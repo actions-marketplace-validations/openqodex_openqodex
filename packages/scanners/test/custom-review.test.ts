@@ -15,7 +15,15 @@
 //    changed-line filter, which then never finishes.
 // 6. A scanner leaving a FIFO or a symlink to /dev/zero at {report} hangs the
 //    run or exhausts memory.
-import { execFile } from "node:child_process";
+// Second pass:
+// 7. A repo folder whose name starts with two dots ("..tools") counts as
+//    outside the repo, so a binary in it is approved.
+// 8. A lock left by a dead process is taken over automatically, which can
+//    admit two writers; a live holder is waited for forever.
+// 9. Two approvals of the same entry and artifact from two repos at once
+//    delete or replace each other's install folder.
+// 10. An install: path binary swapped after the adapter was built still runs.
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +32,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { parseConfig, type CustomScanner } from "@openqodex/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { approve, customAdapters, resolveCustomArtifact, trustState, type ResolvedArtifact } from "../src/custom/index.js";
+import { approve, customAdapters, resolveCustomArtifact, revoke, trustState, type ResolvedArtifact } from "../src/custom/index.js";
 import { parseJsonMap } from "../src/formats/json-map.js";
 import { parseSarif } from "../src/formats/sarif.js";
 
@@ -193,4 +201,62 @@ describe("custom scanner review fixes", () => {
       expect(result.findings).toEqual([]);
     });
   }
+
+  it("7: an install: path binary in a repo folder named '..tools' is refused as inside the repo", async () => {
+    const repo = repoWith("a.txt");
+    script(join(repo, "..tools"), "dscan", "exit 0");
+    process.env.PATH = `${join(repo, "..tools")}:${saved.path}`;
+    const entry = entryFrom(`    - { source: "https://github.com/a/dscan", run: "dscan", install: path }`);
+    await expect(resolveCustomArtifact(entry).then((art) => approve(repo, entry, art))).rejects.toThrow(/inside the repo/);
+  });
+
+  it("8: a trust lock left by a dead process is not taken over; the error names the lock file", () => {
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid!;
+    const lock = join(home, "tools", "custom", ".lock");
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, `${dead} feedfacefeedface\n`);
+    expect(() => revoke(tmp("oq-r-"), "x")).toThrow(lock);
+    expect(readFileSync(lock, "utf8")).toContain("feedface");
+  });
+
+  it("8: a trust lock held by a live process is waited for, then refused with a plain error", { timeout: 30_000 }, () => {
+    const holder = spawn("sleep", ["30"]);
+    try {
+      const lock = join(home, "tools", "custom", ".lock");
+      mkdirSync(dirname(lock), { recursive: true });
+      writeFileSync(lock, `${holder.pid} feedfacefeedface\n`);
+      const started = Date.now();
+      expect(() => revoke(tmp("oq-r-"), "x")).toThrow(/locked/);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(9_000);
+    } finally {
+      holder.kill();
+    }
+  });
+
+  it("9: two repos approving the same entry and artifact at once both keep a working install", async () => {
+    const entry = entryFrom(`    - { source: "https://github.com/a/scan", name: scan, version: "1", run: "scan" }`);
+    const [repoA, repoB] = [tmp("oq-a-"), tmp("oq-b-")];
+    const bytes = "#!/bin/sh\necho same\n";
+    await Promise.all([approve(repoA, entry, quarantined(bytes)), approve(repoB, entry, quarantined(bytes))]);
+    const config = { ...parseConfig("").config, custom: [entry] };
+    for (const repo of [repoA, repoB]) {
+      const record = trustState(repo, config)[0]!.record!;
+      expect(readFileSync(record.artifact.binary, "utf8")).toBe(bytes);
+    }
+  });
+
+  it("10: an install: path binary swapped after the adapter was built does not run", async () => {
+    const bin = tmp("oq-bin-");
+    const ran = join(bin, "ran");
+    const path = script(bin, "lscan", `cat <<'EOF'\n${sarifFor("a.txt")}\nEOF`);
+    process.env.PATH = `${bin}:${saved.path}`;
+    const repo = repoWith("a.txt");
+    const entry = entryFrom(`    - { source: "https://github.com/a/lscan", run: "lscan", install: path }`);
+    await approve(repo, entry, await resolveCustomArtifact(entry));
+    const [adapter] = customAdapters(repo, { ...parseConfig("").config, custom: [entry] });
+    writeFileSync(path, `#!/bin/sh\ntouch ${JSON.stringify(ran)}\n`);
+    const result = await adapter!.run({ repoDir: repo, changedPaths: ["a.txt"] });
+    expect(result.error).toBe("the approved binary changed: run `openqodex trust`");
+    expect(existsSync(ran)).toBe(false);
+  });
 });

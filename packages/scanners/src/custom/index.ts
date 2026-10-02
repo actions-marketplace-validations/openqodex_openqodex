@@ -33,7 +33,7 @@ import { parseJsonMap } from "../formats/json-map.js";
 import { parseSarif } from "../formats/sarif.js";
 import type { CustomAdapter } from "../run.js";
 import { extractArchive, isRegularFileInside, run, smallEnv, which } from "../toolchain/fetch.js";
-import { installTool, npmCommand, readLock, releaseLock, takeOverStaleLock } from "../toolchain/install.js";
+import { installTool, isLocked, npmCommand, readLock, releaseLock } from "../toolchain/install.js";
 import { openqodexHome, toolDir, toolsDir, type ArchiveKind } from "../toolchain/table.js";
 import { expandArgs, splitCommand } from "./command.js";
 import { resolveRelease } from "./release.js";
@@ -67,7 +67,7 @@ export type TrustRow = {
 
 const REPORT_MAX_BYTES = 8 * 1024 * 1024;
 const INSTALL_TIMEOUT_MS = 20 * 60_000;
-const LOCK_WAIT_MS = 30_000;
+const LOCK_WAIT_MS = 10_000;
 
 const NOT_APPROVED = "not approved yet: run `openqodex trust`";
 const ENTRY_CHANGED = "changed since it was approved: run `openqodex trust`";
@@ -153,43 +153,82 @@ function readTrust(): TrustFile {
 
 const LOCK_NAME = "custom";
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Every change to trust.json is a read, an edit and a write under one
-// cross-process lock (the toolchain's lock file for the custom tool folder),
-// so two processes never lose each other's change.
-function updateTrust(edit: (records: TrustRecord[]) => TrustRecord[]): void {
+// One cross-process lock (the toolchain's lock file for the custom tool
+// folder) around every change to approvals. Trust changes are rare and started
+// by a person, so it fails closed: a lock left by a dead process is never
+// taken over automatically; the developer is told to delete it.
+type TrustLock = { home: string; token: string };
+
+// One attempt: the lock when it was free, null while a live process holds it.
+function tryLock(): TrustLock | null {
   const home = openqodexHome();
   const dir = toolDir(home, LOCK_NAME);
   mkdirSync(dir, { recursive: true });
   const lock = join(dir, ".lock");
   const token = randomBytes(8).toString("hex");
   const mine = join(dir, `.lock-${token}`);
-  const giveUp = Date.now() + LOCK_WAIT_MS;
   try {
-    for (;;) {
-      writeFileSync(mine, `${process.pid} ${token}\n`);
-      try {
-        linkSync(mine, lock);
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new OpenQodexError(`cannot write ${home}`);
-      }
-      // Takes the lock only when its holder is no longer alive.
-      if (takeOverStaleLock(lock, readLock(lock), mine, token)) break;
-      if (Date.now() > giveUp) throw new OpenQodexError("another openqodex process kept the trust file locked");
-      sleepSync(20);
+    writeFileSync(mine, `${process.pid} ${token}\n`);
+    try {
+      linkSync(mine, lock);
+      return { home, token };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new OpenQodexError(`cannot write ${home}`);
     }
   } finally {
     rmSync(mine, { force: true });
   }
+  // The holder is stale only when the same holder is seen before and after a
+  // liveness check that failed; a lock released or passed on meanwhile is retried.
+  const holder = readLock(lock);
+  if (holder === null || isLocked(home, LOCK_NAME)) return null;
+  if (readLock(lock)?.token === holder.token) {
+    throw new OpenQodexError(`${lock} was left by an openqodex process that is no longer running: delete it and run the command again`);
+  }
+  return null;
+}
+
+const busy = () =>
+  new OpenQodexError(`${join(toolDir(openqodexHome(), LOCK_NAME), ".lock")}: another openqodex process kept approvals locked for ${LOCK_WAIT_MS / 1000} seconds; run the command again when it has finished`);
+
+function lockSync(): TrustLock {
+  const giveUp = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    const held = tryLock();
+    if (held) return held;
+    if (Date.now() > giveUp) throw busy();
+    sleepSync(50);
+  }
+}
+
+async function lockAsync(): Promise<TrustLock> {
+  const giveUp = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    const held = tryLock();
+    if (held) return held;
+    if (Date.now() > giveUp) throw busy();
+    await sleep(50);
+  }
+}
+
+const unlock = ({ home, token }: TrustLock) => releaseLock(home, LOCK_NAME, token);
+
+// Read, edit and write trust.json. The caller holds the lock.
+function editTrust(edit: (records: TrustRecord[]) => TrustRecord[]): void {
+  const file = readTrust();
+  const path = trustPath();
+  const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify({ ...file, records: edit(file.records) }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tmp, path);
+}
+
+function sameBytes(record: TrustRecord): boolean {
   try {
-    const file = readTrust();
-    const path = trustPath();
-    const tmp = `${path}.${token}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ ...file, records: edit(file.records) }, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tmp, path);
-  } finally {
-    releaseLock(home, LOCK_NAME, token);
+    return sha256Of(record.artifact.binary) === record.artifact.sha256;
+  } catch {
+    return false; // gone or unreadable
   }
 }
 
@@ -203,15 +242,7 @@ function assess(repoRoot: string, config: Config): Assessed[] {
     if (record === null) return { entry, record, state: "untrusted", reason: NOT_APPROVED };
     if (record.entryHash !== customEntryHash(entry)) return { entry, record, state: "changed", reason: ENTRY_CHANGED };
     // A binary from PATH is not ours to keep: check it is the same bytes every time.
-    if (entry.install.kind === "path") {
-      let same = false;
-      try {
-        same = sha256Of(record.artifact.binary) === record.artifact.sha256;
-      } catch {
-        // gone or unreadable
-      }
-      if (!same) return { entry, record, state: "changed", reason: BINARY_CHANGED };
-    }
+    if (entry.install.kind === "path" && !sameBytes(record)) return { entry, record, state: "changed", reason: BINARY_CHANGED };
     return { entry, record, state: "trusted", reason: null };
   });
 }
@@ -222,7 +253,19 @@ export function trustState(repoRoot: string, config: Config): TrustRow[] {
 
 export function revoke(repoRoot: string, name: string): void {
   const key = repoKey(repoRoot);
-  updateTrust((records) => records.filter((r) => !(r.repoRoot === key && r.name === name)));
+  const lock = lockSync();
+  try {
+    editTrust((records) => records.filter((r) => !(r.repoRoot === key && r.name === name)));
+  } finally {
+    unlock(lock);
+  }
+}
+
+// True when `path` is `dir` or below it. "..tools" is a folder inside; only
+// ".." itself or ".." followed by a separator leaves.
+function inside(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return !(rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel));
 }
 
 // ---------- install on approval ----------
@@ -257,7 +300,7 @@ function installedBinary(folder: string): string | null {
   try {
     const rel = (JSON.parse(readFileSync(join(folder, MARKER), "utf8")) as { binary: string }).binary;
     const binary = join(folder, rel);
-    return relative(folder, binary).startsWith("..") ? null : binary;
+    return inside(folder, binary) ? binary : null;
   } catch {
     return null;
   }
@@ -367,6 +410,17 @@ async function installPackage(entry: CustomScanner, spec: string, kind: "npm" | 
 // artifact, never by text from the entry or the release; an existing
 // approved folder is reused, never replaced.
 export async function approve(repoRoot: string, entry: CustomScanner, artifact: ResolvedArtifact): Promise<void> {
+  // Held across the marker check, the install and the record write, so two
+  // approvals of the same artifact never touch one folder at the same time.
+  const lock = await lockAsync();
+  try {
+    await approveLocked(repoRoot, entry, artifact);
+  } finally {
+    unlock(lock);
+  }
+}
+
+async function approveLocked(repoRoot: string, entry: CustomScanner, artifact: ResolvedArtifact): Promise<void> {
   const home = openqodexHome();
   const key = repoKey(repoRoot);
   const entryHash = customEntryHash(entry);
@@ -376,7 +430,7 @@ export async function approve(repoRoot: string, entry: CustomScanner, artifact: 
     if (!isAbsolute(binary) || sha256Of(binary) !== artifact.sha256) {
       throw new OpenQodexError(`${entry.name}: ${binary} changed after it was checked; run \`openqodex trust\` again`);
     }
-    if (!relative(key, realpathSync(binary)).startsWith("..")) {
+    if (inside(key, realpathSync(binary))) {
       throw new OpenQodexError(`${entry.name}: ${binary} is inside the repo; a checkout could replace it, so it cannot be approved`);
     }
   } else {
@@ -406,7 +460,7 @@ export async function approve(repoRoot: string, entry: CustomScanner, artifact: 
     artifact: { ...artifact, binary, quarantinePath: null },
     approvedAt: new Date().toISOString(),
   };
-  updateTrust((records) => [...records.filter((r) => !(r.repoRoot === key && r.name === entry.name)), record]);
+  editTrust((records) => [...records.filter((r) => !(r.repoRoot === key && r.name === entry.name)), record]);
 }
 
 // ---------- the adapters ----------
@@ -461,6 +515,8 @@ function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapte
         const targets = entry.target === "repo" ? [repoDir] : matching(changedPaths);
         const args = expandArgs(tokens.slice(1), { report, repo: repoDir, targets });
         const timeoutMs = entry.timeoutSeconds * 1000;
+        // A binary from PATH is checked right before it runs, not only when the adapter was built.
+        if (entry.install.kind === "path" && !sameBytes(record)) return { findings: [], error: BINARY_CHANGED, version };
         const result = await execTool(record.artifact.binary, args, { cwd: repoDir, timeoutMs, maxBytes: REPORT_MAX_BYTES });
         const failed = describeFailure(entry.name, result, timeoutMs);
         if (failed) return { findings: [], error: failed, version };
