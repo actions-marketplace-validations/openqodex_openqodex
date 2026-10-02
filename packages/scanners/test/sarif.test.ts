@@ -19,7 +19,7 @@
 //    `rule.id` or `ruleIndex`.
 // 10. The message is empty when the result has no message text, and the
 //     reference ignores the rule's helpUri.
-import { cpSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -64,10 +64,12 @@ describe("parseSarif", () => {
   });
 
   it("reads real trivy SARIF: file:// base, percent-encoding, symlinked repo folder (3, 4, 5)", () => {
-    const repoDir = sampleRepo();
-    // The fixture names /tmp/s6-sample as its root; point it at the real path of
-    // the temp copy while the parser is given the symlinked path.
-    const realBase = pathToFileURL(realpathSync(repoDir)).href + "/";
+    // The parser is given a symlink to the repo while the report names the real
+    // path. The test makes its own symlink: only macOS temp folders are links.
+    const realRepo = realpathSync(sampleRepo());
+    const repoDir = join(realpathSync(mkdtempSync(join(tmpdir(), "oq-sarif-link-"))), "repo");
+    symlinkSync(realRepo, repoDir);
+    const realBase = pathToFileURL(realRepo).href + "/";
     expect(realpathSync(repoDir)).not.toBe(repoDir);
     const json = read("trivy.sarif").replaceAll("file:///tmp/s6-sample/", realBase);
     const findings = parseSarif(json, { repoDir, source: "custom:trivy" });

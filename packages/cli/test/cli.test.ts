@@ -491,7 +491,8 @@ describe("guide", () => {
         expect(t.stdout).toBe(readFileSync(join(docs, `${topic}.md`), "utf8"));
       }
     }
-  });
+    // npm pack and npm install take longer than the default limit on a CI runner.
+  }, 120_000);
 });
 
 describe("demo", () => {
