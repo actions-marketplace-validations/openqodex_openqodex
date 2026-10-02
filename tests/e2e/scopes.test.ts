@@ -1,0 +1,30 @@
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { expect, it } from "vitest";
+import "./global-setup.js";
+import { demo, git, report, run } from "./support.js";
+
+it("separates uncommitted work from upstream changes and ignores gitignored files", () => {
+  const dir = demo("scopes");
+  const bare = join(dir, "../remote.git"); git(dir, "init", "--bare", bare);
+  git(dir, "remote", "add", "origin", bare); git(dir, "push", "-u", "origin", "HEAD:main");
+  const committed = ["Dockerfile", "scripts/deploy.sh", "package-lock.json"];
+  git(dir, "add", ...committed); git(dir, "commit", "-qm", "First half");
+  const work = run("scope-uncommitted", dir, ["scan", "--uncommitted", "--format", "json"]);
+  expect(work.status).toBe(0);
+  expect(report(dir).findings.every((f) => !committed.includes(f.file_path))).toBe(true);
+  const all = run("scope-upstream", dir, ["scan", "--format", "json"]);
+  expect(all.status).toBe(0);
+  const paths = new Set(report(dir).findings.map((f) => f.file_path));
+  expect(paths.has("Dockerfile")).toBe(true); expect(paths.has("app/config.py")).toBe(true);
+  writeFileSync(join(dir, ".gitignore"), "ignored-secret.py\n");
+  copyFileSync(join(dir, "app/config.py"), join(dir, "ignored-secret.py"));
+  const ignored = run("scope-ignored", dir, ["scan", "--format", "json"]);
+  expect(ignored.status).toBe(0);
+  expect(report(dir).findings.some((f) => f.file_path === "ignored-secret.py")).toBe(false);
+  mkdirSync(join(dir, "new"), { recursive: true });
+  writeFileSync(join(dir, "new/config.py"), readFileSync(join(dir, "app/config.py")));
+  const untracked = run("scope-untracked", dir, ["scan", "--format", "json"]);
+  expect(untracked.status).toBe(0);
+  expect(report(dir).findings.some((f) => f.file_path === "new/config.py")).toBe(true);
+}, 600_000);
