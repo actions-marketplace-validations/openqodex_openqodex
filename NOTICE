@@ -1,0 +1,33 @@
+OpenQodex
+Copyright 2026 The OpenQodex Authors
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+Scanners
+
+OpenQodex does not include any scanner. It downloads each scanner at run
+time onto the user's machine, from the scanner's own release or package
+registry. Each scanner keeps its own licence:
+
+- semgrep, LGPL-2.1: https://github.com/semgrep/semgrep
+- gitleaks, MIT: https://github.com/gitleaks/gitleaks
+- bandit, Apache-2.0: https://github.com/PyCQA/bandit
+- ruff, MIT: https://github.com/astral-sh/ruff
+- oxlint, MIT: https://github.com/oxc-project/oxc
+- osv-scanner, Apache-2.0: https://github.com/google/osv-scanner
+- actionlint, MIT: https://github.com/rhysd/actionlint
+- hadolint, GPL-3.0: https://github.com/hadolint/hadolint
+- shellcheck, GPL-3.0: https://github.com/koalaman/shellcheck
+- golangci-lint, GPL-3.0: https://github.com/golangci/golangci-lint
+- brakeman, Brakeman Public Use License: https://github.com/presidentbeef/brakeman
+- rubocop, MIT: https://github.com/rubocop/rubocop
+- rubocop-rails, MIT: https://github.com/rubocop/rubocop-rails
+- rubocop-performance, MIT: https://github.com/rubocop/rubocop-performance
+- uv, Apache-2.0 or MIT: https://github.com/astral-sh/uv
+
+Semgrep rules
+
+semgrep fetches its rule packs from the Semgrep registry at run time, onto
+the user's machine, for the user's own code. The rules are licensed under
+the Semgrep Rules License v1.0: https://semgrep.dev/legal/rules-license
+OpenQodex never bundles, vendors or redistributes them.

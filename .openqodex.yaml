@@ -1,0 +1,9 @@
+# OpenQodex's own config for this repository.
+version: 1
+review:
+  paths:
+    # These folders hold bugs planted on purpose: the demo repository and the
+    # scanner test fixtures. A review of this repository must not report them.
+    exclude:
+      - examples/demo-repo/**
+      - packages/scanners/test/fixtures/**
