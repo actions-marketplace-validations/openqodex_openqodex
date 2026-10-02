@@ -1,0 +1,7 @@
+# One case-insensitive regular expression per line. Lines starting with # are ignored.
+qodeclaw
+agents\.qodex\.ai/admin
+credential pool
+bugsnag
+posthog
+—
