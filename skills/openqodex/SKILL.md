@@ -19,7 +19,7 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
 1. From the repository, run:
 
    ```
-   npx -y openqodex@0.1.0 review --agent
+   npx -y openqodex@0.0.0 review --agent
    ```
 
    It works out the change (the commits not yet pushed plus everything uncommitted, untracked files included), runs the scanners and prints the brief. Read the whole brief before doing anything else.
@@ -41,7 +41,7 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
 6. Run:
 
    ```
-   npx -y openqodex@0.1.0 review --finalize
+   npx -y openqodex@0.0.0 review --finalize
    ```
 
    If it exits with code 2 and names a wrong field or a citation that does not match, fix what it names in your findings file and run finalize again. If it says the change moved or the config changed, run step 1 again and review from the new brief: the review must describe the change and the settings as they are now. Never change the developer's code or config to make finalize pass.
@@ -123,7 +123,7 @@ Category says what kind of problem it is:
   - `installing`: it is being downloaded for the first time; it is included from the next run. Say so to the developer rather than waiting.
   - `not installed`: it could not be installed here; the reason says why.
   - `needs Ruby 2.7+` or `needs Go`: brakeman and rubocop need Ruby, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
-  - `untrusted`: a custom scanner from `.openqodex.yaml` that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.1.0 trust`).
+  - `untrusted`: a custom scanner from `.openqodex.yaml` that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.0.0 trust`).
   - `failed`: the scanner ran and broke; the reason has its error. A scanner problem never changes the exit code.
 
 ## Inside a sandbox
@@ -131,11 +131,11 @@ Category says what kind of problem it is:
 Some agents run commands in a sandbox that cannot reach the network or write outside the project. There the first run cannot download the scanners, and each scanner reports why it was not included. The review still runs with whatever is available. Tell the developer to run this once in their own terminal, outside the agent:
 
 ```
-npx -y openqodex@0.1.0 doctor --install
+npx -y openqodex@0.0.0 doctor --install
 ```
 
 It downloads every scanner that fits the machine into `~/.openqodex/tools/`. After that, reviews inside the sandbox include them.
 
 ## More
 
-`npx -y openqodex@0.1.0 guide` prints this guide. `npx -y openqodex@0.1.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`.
+`npx -y openqodex@0.0.0 guide` prints this guide. `npx -y openqodex@0.0.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`.
