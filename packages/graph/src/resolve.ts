@@ -94,8 +94,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
   const defsByFile = new Map<string, GraphNode[]>();
   const defById = new Map<string, Def>();
   const topByFile = new Map<string, Map<string, string[]>>();
-  const nestedByFile = new Map<string, Map<string, string[]>>();
-  const pkgTop = new Map<string, Map<string, string[]>>(); // Go folder to name to ids
+  const pkgTop = new Map<string, Map<string, string[]>>(); // Go package (folder, or folder#test) to name to ids
   const pkgName = new Map<string, string>(); // Go folder to package name
   const classes = new Map<string, ClassInfo>();
   const classOfId = new Map<string, string>();
@@ -117,18 +116,29 @@ export function resolveGraph(input: ResolveInput): Resolved {
     return inner;
   };
 
+  // A Go package is its folder; an external test package (`package x_test`)
+  // in the same folder is a package of its own.
+  const pkgOf = (file: string): string => {
+    const pkg = facts.get(file)?.goPackage;
+    return pkg?.endsWith("_test") ? `${dirOf(file)}#test` : dirOf(file);
+  };
+
   const classKey = (family: Family, file: string, qualified: string) => {
     if (family === "ruby") return `rb::${qualified}`;
-    if (family === "go") return `go:${dirOf(file)}::${qualified}`;
+    if (family === "go") return `go:${pkgOf(file)}::${qualified}`;
     return `${file}::${qualified}`;
   };
+  // Methods called on the class itself ("s") and on an instance ("i") are
+  // indexed apart; Python methods are reachable both ways.
+  type Side = "s" | "i";
+  const sideKey = (key: string, side: Side) => `${key}\u0000${side}`;
 
   // ---------- index the definitions ----------
   for (const { path, facts: f } of input.files) {
     const family = familyOf(f.lang);
     const lineCount = f.defs.reduce((m, d) => Math.max(m, d.endLine), 1);
     nodes.set(path, { id: path, file: path, name: posix.basename(path), kind: "file", startLine: 1, endLine: lineCount, snapshot: "current", exported: true, lang: f.lang });
-    if (family === "go" && f.goPackage) pkgName.set(dirOf(path), f.goPackage);
+    if (family === "go" && f.goPackage && !f.goPackage.endsWith("_test") && !pkgName.has(dirOf(path))) pkgName.set(dirOf(path), f.goPackage);
     const list: GraphNode[] = [];
     for (const d of f.defs) {
       const id = symbolId(path, d);
@@ -140,16 +150,17 @@ export function resolveGraph(input: ResolveInput): Resolved {
       if (!names) filesByName.set(`${family}:${d.name}`, (names = new Set()));
       names.add(path);
       if (d.kind === "method") {
-        push(nameIndex(methods, classKey(family, path, d.owner ?? "")), d.name, id);
+        const key = classKey(family, path, d.owner ?? "");
+        if (family === "python" || d.static) push(nameIndex(methods, sideKey(key, "s")), d.name, id);
+        if (family === "python" || !d.static) push(nameIndex(methods, sideKey(key, "i")), d.name, id);
       } else if (family === "go") {
-        if (d.topLevel) push(nameIndex(pkgTop, dirOf(path)), d.name, id);
+        if (d.topLevel) push(nameIndex(pkgTop, pkgOf(path)), d.name, id);
       } else if (family === "ruby" && d.kind === "function") {
         push(rbTop, d.name, id);
       } else if (d.topLevel) {
         push(nameIndex(topByFile, path), d.name, id);
-      } else {
-        push(nameIndex(nestedByFile, path), d.name, id);
       }
+      // A nested definition is reached only through the scopes that declare it (CallFact.local).
       if (d.kind === "class" || d.kind === "module" || d.kind === "type") {
         const qualified = family === "ruby" && d.owner ? `${d.owner}::${d.name}` : d.name;
         const key = classKey(family, path, qualified);
@@ -297,8 +308,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
       }
       if (imp.namespace && family === "python") {
         // `import a.b` binds `a`; `import a.b as c` binds `c` to `a.b`.
-        const plain = imp.spec.split(".")[0] === imp.namespace;
-        b.names.set(imp.namespace, { kind: "pyns", dotted: plain ? imp.namespace : imp.spec });
+        b.names.set(imp.namespace, { kind: "pyns", dotted: imp.alias ? imp.spec : imp.namespace });
       } else if (imp.namespace) b.names.set(imp.namespace, { kind: "ns", target });
       for (const n of imp.names) b.names.set(n.local, { kind: "named", target, imported: n.imported });
     }
@@ -312,11 +322,14 @@ export function resolveGraph(input: ResolveInput): Resolved {
     const f = facts.get(file);
     if (!f) return known.has(file) ? { v: "miss", target: file, name } : null;
     const family = familyOf(f.lang);
-    if (family === "go") return pkgValue(dirOf(file), name);
+    if (family === "go") return pkgValue(pkgOf(file), name);
     if (family === "js") {
+      // The export table: exported declarations, `export { a as b }`,
+      // `export default`, CommonJS assignments, then re-exports. A private
+      // top-level definition is never an export.
       if (name === "default" && f.defaultExport) return resolveLocal(file, f.defaultExport, depth + 1);
-      const top = topByFile.get(file)?.get(name);
-      if (top) return { v: "sym", ids: top };
+      const top = topByFile.get(file)?.get(name)?.filter((id) => defById.get(id)?.exported);
+      if (top && top.length > 0) return { v: "sym", ids: top };
       for (const e of f.exportsLocal) if (e.exported === name) return resolveLocal(file, e.local, depth + 1);
       let starHit: Value | null = null;
       for (const imp of f.imports) {
@@ -363,7 +376,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
     if (!f || depth > MAX_DEPTH) return null;
     const family = familyOf(f.lang);
     if (family === "go") {
-      const ids = pkgTop.get(dirOf(file))?.get(name);
+      const ids = pkgTop.get(pkgOf(file))?.get(name);
       if (ids) return { v: "sym", ids };
     } else {
       const top = topByFile.get(file)?.get(name);
@@ -386,8 +399,6 @@ export function resolveGraph(input: ResolveInput): Resolved {
       // Dot imports bring a package's names into scope.
       for (const star of bindings(file).stars) if (star === "ext") return null;
     }
-    const nested = nestedByFile.get(file)?.get(name);
-    if (nested && nested.length === 1) return { v: "sym", ids: nested };
     return null;
   };
 
@@ -406,7 +417,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
     }
     const key = value.ids.length === 1 ? classOfId.get(value.ids[0] as string) : undefined;
     if (!key) return null;
-    const m = methodOn(key, name, 0);
+    const m = methodOn(key, name, "s", 0);
     return m ? { v: "sym", ids: m } : { v: "miss", target: key, name };
   };
 
@@ -456,12 +467,19 @@ export function resolveGraph(input: ResolveInput): Resolved {
     return out;
   };
 
-  function methodOn(key: string, name: string, depth: number): string[] | null {
+  function methodOn(key: string, name: string, side: Side, depth: number): string[] | null {
     if (depth > MAX_DEPTH) return null;
-    const own = methods.get(key)?.get(name);
+    const own = methods.get(sideKey(key, side))?.get(name);
     if (own) return own;
+    // A Ruby module's instance methods are called on the module itself
+    // through module_function or extend self.
+    const info = classes.get(key);
+    if (side === "s" && info?.family === "ruby" && info.ids.every((id) => defById.get(id)?.kind === "module")) {
+      const viaModule = methods.get(sideKey(key, "i"))?.get(name);
+      if (viaModule) return viaModule;
+    }
     for (const base of basesOf(key)) {
-      const hit = methodOn(base, name, depth + 1);
+      const hit = methodOn(base, name, side, depth + 1);
       if (hit) return hit;
     }
     return null;
@@ -509,14 +527,18 @@ export function resolveGraph(input: ResolveInput): Resolved {
     if (v.v === "ext") return "ignore";
     if (v.v === "miss") return { miss: v };
     if (v.v === "sym") return { ids: v.ids, confidence: "high", evidence };
+    // A CommonJS module called as a function calls what `module.exports` holds.
+    if (v.v === "mod" && familyOf(facts.get(v.file)?.lang ?? "go") === "js" && facts.get(v.file)?.defaultExport) {
+      return fromValue(lookupExport(v.file, "default", 0), evidence);
+    }
     return "ignore"; // a module, a package or an outside module called as a function
   };
 
-  const onClass = (key: string | null, name: string, evidence: GraphSite["evidence"]): Outcome => {
+  const onClass = (key: string | null, name: string, side: Side, evidence: GraphSite["evidence"]): Outcome => {
     if (!key) return "unresolved";
     const info = classes.get(key);
-    if (name === "new" && info?.family === "ruby") return { ids: info.ids, confidence: "high", evidence };
-    const ids = methodOn(key, name, 0);
+    if (name === "new" && side === "s" && info?.family === "ruby") return { ids: info.ids, confidence: "high", evidence };
+    const ids = methodOn(key, name, side, 0);
     return ids ? { ids, confidence: "high", evidence } : { miss: { target: key, name } };
   };
 
@@ -542,16 +564,23 @@ export function resolveGraph(input: ResolveInput): Resolved {
     switch (r.kind) {
       case "none": {
         if (family === "ruby") return builtin ? "ignore" : rbGlobal(call.name);
+        if (call.local !== undefined) {
+          const ids = [symbolId(file, facts.get(file)?.defs[call.local] as DefFact)];
+          return { ids, confidence: "high", evidence: "binding" };
+        }
+        if (call.shadowed) return "unresolved";
         const v = resolveLocal(file, call.name);
         if (!v) {
           if (builtin) return "ignore";
-          return { miss: { target: family === "go" ? `go:${dirOf(file)}` : file, name: call.name } };
+          return { miss: { target: family === "go" ? `go:${pkgOf(file)}` : file, name: call.name } };
         }
         return fromValue(v, "binding");
       }
       case "self": {
+        // self in a static method or a class body is the class; a field of it is an instance.
+        const side: Side = call.static && r.path.length === 0 ? "s" : "i";
         const key = followPath(enclosingClass(file, family, caller), r.path);
-        const out = onClass(key, call.name, "receiver-type");
+        const out = onClass(key, call.name, side, "receiver-type");
         if (family === "ruby" && r.path.length === 0 && typeof out === "object" && "miss" in out) {
           const global = rbGlobal(call.name);
           if (global !== "unresolved") return global;
@@ -562,16 +591,16 @@ export function resolveGraph(input: ResolveInput): Resolved {
       case "super": {
         const key = enclosingClass(file, family, caller);
         const base = key ? basesOf(key)[0] : undefined;
-        return base ? onClass(base, call.name, "receiver-type") : "unresolved";
+        return base ? onClass(base, call.name, call.static ? "s" : "i", "receiver-type") : "unresolved";
       }
       case "type": {
         const key = followPath(typeKey(file, family, r.type), r.path);
-        return onClass(key, call.name, "receiver-type");
+        return onClass(key, call.name, "i", "receiver-type");
       }
       case "name": {
         if (family === "ruby") {
           const key = rbConst(r.name, r.nesting);
-          return key ? onClass(key, call.name, "autoload") : "ignore";
+          return key ? onClass(key, call.name, "s", "autoload") : "ignore";
         }
         let v = resolveLocal(file, r.name);
         if (!v) return BUILTINS[family].has(r.name) ? "ignore" : "unresolved";
@@ -580,7 +609,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
         if (!v) return "unresolved";
         if (v.v === "sym") {
           const key = v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
-          return key ? onClass(key, call.name, "receiver-type") : "unresolved";
+          return key ? onClass(key, call.name, "s", "receiver-type") : "unresolved";
         }
         return fromValue(attr(v, call.name), "binding");
       }
@@ -608,8 +637,8 @@ export function resolveGraph(input: ResolveInput): Resolved {
       }
       // Several ids only when one name has several definitions in one place
       // (overloads, a reopened Ruby class): each gets the site.
+      // A recursive call is kept as a self-edge; the impact walk stops cycles.
       for (const to of out.ids) {
-        if (to === callerId) continue;
         addEdge(callerId, to, "calls", { file: path, line: call.line, column: call.column, confidence: out.confidence, evidence: out.evidence });
       }
     }

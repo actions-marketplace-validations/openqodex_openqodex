@@ -9,12 +9,13 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 3;
+export const EXTRACTOR_VERSION = 4;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
   cls: string | null; // set on a class or module frame: its qualified name
   locals: Map<string, TypeRef | null> | null; // null: no scope of its own
+  fns?: Map<string, number>; // definitions declared in this scope, by name
 };
 
 type Leave = () => void;
@@ -67,6 +68,10 @@ class Ctx {
   defaultExport: string | null = null;
   goPackage: string | null = null;
   frames: Frame[] = [{ def: -1, cls: null, locals: new Map() }];
+  // Bare calls with the scopes around them, bound when the walk ends: a
+  // scope's names are known only once all of it has been read (hoisting in
+  // JavaScript, any assignment makes a Python name local).
+  private bare: { call: CallFact; frames: Frame[] }[] = [];
 
   constructor(readonly lang: Lang) {}
 
@@ -107,6 +112,7 @@ class Ctx {
     return undefined;
   }
 
+  // A declaration: the name is new in the innermost scope.
   setLocal(name: string, type: TypeRef | null): void {
     for (let i = this.frames.length - 1; i >= 0; i--) {
       const locals = (this.frames[i] as Frame).locals;
@@ -115,6 +121,46 @@ class Ctx {
         return;
       }
     }
+  }
+
+  // An assignment to a name that may exist already. A declared type stands;
+  // otherwise the receiver evidence survives only when the new value has the
+  // same type, since either value may reach a later call.
+  // `innermost`: Python, where assigning in a function makes a new local.
+  assign(name: string, type: TypeRef | null, innermost = false): void {
+    for (let i = this.frames.length - 1; i >= 0; i--) {
+      const locals = (this.frames[i] as Frame).locals;
+      if (innermost && !locals) continue;
+      if (innermost && !locals?.has(name)) break;
+      if (locals?.has(name)) {
+        const old = locals.get(name) ?? null;
+        if (old?.declared) return;
+        const same = old !== null && type !== null && old.name === type.name && old.qualifier === type.qualifier && !old.elem === !type.elem && old.result === type.result;
+        locals.set(name, same ? old : null);
+        return;
+      }
+    }
+    this.setLocal(name, type);
+  }
+
+  // A nested definition is visible by name in the scope that declares it.
+  declareFn(name: string, def: number): void {
+    for (let i = this.frames.length - 1; i >= 1; i--) {
+      const f = this.frames[i] as Frame;
+      if (f.locals) {
+        f.fns ??= new Map();
+        f.fns.set(name, def);
+        return;
+      }
+    }
+  }
+
+  // The enclosing definition, as an owner for a nested one.
+  ownerName(): string | null {
+    const def = this.caller();
+    if (def < 0) return null;
+    const d = this.defs[def] as DefFact;
+    return d.owner ? `${d.owner}.${d.name}` : d.name;
   }
 
   addDef(node: Node, nameNode: Node, kind: DefFact["kind"], fields: Partial<DefFact> = {}, spanNode: Node = node): number {
@@ -139,10 +185,30 @@ class Ctx {
     const { line, column } = pos(nameNode);
     const call: CallFact = { name: nameNode.text, line, column, caller: this.caller(), recv };
     if (implicit) call.implicit = true;
+    const callerDef = call.caller >= 0 ? this.defs[call.caller] : undefined;
+    if (callerDef?.static || callerDef?.kind === "class" || callerDef?.kind === "module") call.static = true;
     this.calls.push(call);
+    if (recv.kind === "none" && this.lang !== "ruby") this.bare.push({ call, frames: this.frames.slice() });
   }
 
   facts(): FileFacts {
+    const topNames = new Set(this.defs.filter((d) => d.topLevel).map((d) => d.name));
+    for (const { call, frames } of this.bare) {
+      for (let i = frames.length - 1; i >= 0; i--) {
+        const f = frames[i] as Frame;
+        const fn = f.fns?.get(call.name);
+        if (fn !== undefined) {
+          call.local = fn;
+          break;
+        }
+        if (f.locals?.has(call.name)) {
+          // A module-level variable hides only names it is not also defined as.
+          if (i > 0 || !topNames.has(call.name)) call.shadowed = true;
+          break;
+        }
+      }
+    }
+    this.bare = [];
     return {
       lang: this.lang,
       defs: this.defs,
@@ -265,6 +331,15 @@ function jsCallee(ctx: Ctx, fn: Node | null): void {
   }
 }
 
+// A type from an annotation: a reassignment cannot change it.
+function declared(t: TypeRef | null): TypeRef | null {
+  return t ? { ...t, declared: true } : null;
+}
+
+function isStatic(node: Node): boolean {
+  return node.children.some((c) => c.type === "static");
+}
+
 function jsParams(ctx: Ctx, fn: Node, locals: Map<string, TypeRef | null>): void {
   const params = fn.childForFieldName("parameters");
   if (!params) {
@@ -278,7 +353,7 @@ function jsParams(ctx: Ctx, fn: Node, locals: Map<string, TypeRef | null>): void
       continue;
     }
     const pattern = p.childForFieldName("pattern");
-    if (pattern?.type === "identifier") locals.set(pattern.text, jsTypeRef(p.childForFieldName("type")));
+    if (pattern?.type === "identifier") locals.set(pattern.text, declared(jsTypeRef(p.childForFieldName("type"))));
   }
 }
 
@@ -355,6 +430,42 @@ function jsExport(ctx: Ctx, node: Node): void {
   }
 }
 
+function isDefaultExport(node: Node): boolean {
+  return node.parent?.type === "export_statement" && node.parent.children.some((c) => c.type === "default");
+}
+
+// CommonJS exports: `module.exports = { a, b: c }`, `module.exports = a`,
+// `module.exports.x = a`, `exports.x = a`, `exports.x = function () {}`.
+function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): Leave | boolean {
+  if (!right || !ctx.atModuleLevel() || ctx.caller() >= 0) return false;
+  const target = left.text.replace(/\s+/g, "");
+  if (target === "module.exports") {
+    if (right.type === "identifier") ctx.defaultExport = right.text;
+    for (const p of right.type === "object" ? right.namedChildren : []) {
+      if (p.type === "shorthand_property_identifier") ctx.exportsLocal.push({ local: p.text, exported: p.text });
+      else if (p.type === "pair") {
+        const key = p.childForFieldName("key");
+        const value = p.childForFieldName("value");
+        if (key && value?.type === "identifier") ctx.exportsLocal.push({ local: value.text, exported: key.text });
+      }
+    }
+    return true;
+  }
+  const m = /^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/.exec(target);
+  if (!m) return false;
+  const name = m[1] as string;
+  if (right.type === "identifier") {
+    ctx.exportsLocal.push({ local: right.text, exported: name });
+    return true;
+  }
+  if (["arrow_function", "function_expression", "function"].includes(right.type)) {
+    const prop = left.childForFieldName("property") as Node;
+    const def = ctx.addDef(node, prop, "function", { topLevel: true, exported: true, results: jsResults(right) });
+    return ctx.push({ def, cls: null, locals: null });
+  }
+  return false;
+}
+
 // `const x = require("./m")` and `const { a, b: c } = require("./m")`.
 function jsRequire(ctx: Ctx, node: Node, nameNode: Node, value: Node): boolean {
   if (value.type !== "call_expression" || value.childForFieldName("function")?.text !== "require") return false;
@@ -423,7 +534,9 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         const name = node.childForFieldName("name");
         if (!name) return fnFrame(node, -1);
         const top = ctx.atModuleLevel();
-        const def = ctx.addDef(node, name, "function", { topLevel: top, exported: isExportedDecl(node), results: jsResults(node) });
+        const owner = top ? null : ctx.ownerName();
+        const def = ctx.addDef(node, name, "function", { owner, topLevel: top, exported: isExportedDecl(node) && !isDefaultExport(node), results: jsResults(node) });
+        if (!top) ctx.declareFn(name.text, def);
         return fnFrame(node, def);
       }
       case "class_declaration":
@@ -438,7 +551,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           const ref = value ? jsTypeRef(value) : null;
           if (ref) bases.push(ref);
         }
-        const def = ctx.addDef(node, name, "class", { topLevel: ctx.atModuleLevel(), exported: isExportedDecl(node), bases });
+        const def = ctx.addDef(node, name, "class", { topLevel: ctx.atModuleLevel(), exported: isExportedDecl(node) && !isDefaultExport(node), bases });
         return ctx.push({ def, cls: name.text, locals: null });
       }
       case "method_definition": {
@@ -447,7 +560,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         if (!name || name.type === "computed_property_name" || node.parent?.type !== "class_body" || !cls) {
           return fnFrame(node, -1);
         }
-        const def = ctx.addDef(node, name, "method", { owner: cls.cls, exported: true, results: jsResults(node) });
+        const def = ctx.addDef(node, name, "method", { owner: cls.cls, exported: true, results: jsResults(node), static: isStatic(node) });
         if (name.text === "constructor") {
           // Parameter properties: constructor(private repo: Repo) declares a field.
           const fields = (ctx.defs[cls.def] as DefFact).fields;
@@ -469,7 +582,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         const type = jsTypeRef(node.childForFieldName("type")) ?? newType(value);
         if (type) (ctx.defs[cls.def] as DefFact).fields[name.text] = type;
         if (value && (value.type === "arrow_function" || value.type === "function_expression")) {
-          const def = ctx.addDef(node, name, "method", { owner: cls.cls, exported: true });
+          const def = ctx.addDef(node, name, "method", { owner: cls.cls, exported: true, static: isStatic(node) });
           return ctx.push({ def, cls: null, locals: null });
         }
         return;
@@ -487,7 +600,13 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           const def = ctx.addDef(node, name, "function", { topLevel: true, exported: isExportedDecl(node), results: jsResults(value as Node) });
           return ctx.push({ def, cls: null, locals: null });
         }
-        ctx.setLocal(name.text, jsTypeRef(node.childForFieldName("type")) ?? newType(value) ?? callType(value));
+        if (isFn && ctx.caller() >= 0) {
+          // const inner = () => ... inside a function: a definition of that scope.
+          const def = ctx.addDef(node, name, "function", { owner: ctx.ownerName(), results: jsResults(value as Node) });
+          ctx.declareFn(name.text, def);
+          return ctx.push({ def, cls: null, locals: null });
+        }
+        ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value));
         return;
       }
       case "interface_declaration":
@@ -514,7 +633,16 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
       case "assignment_expression": {
         // this.repo = new Repo() in a method declares the field's type.
         const left = node.childForFieldName("left");
-        const type = newType(node.childForFieldName("right"));
+        const right = node.childForFieldName("right");
+        const type = newType(right);
+        if (left?.type === "identifier") {
+          ctx.assign(left.text, type ?? callType(right));
+          return;
+        }
+        if (left?.type === "member_expression") {
+          const exported = jsCommonExport(ctx, node, left, right);
+          if (exported) return typeof exported === "function" ? exported : undefined;
+        }
         const cls = ctx.cls();
         if (type && cls && left?.type === "member_expression" && left.childForFieldName("object")?.type === "this") {
           const prop = left.childForFieldName("property");
@@ -540,8 +668,10 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
       }
     }
   });
-  const exported = new Set(ctx.exportsLocal.map((e) => e.local));
-  if (ctx.defaultExport) exported.add(ctx.defaultExport);
+  // A definition is exported under its own name only through `export` on it
+  // or `export { x }`; `export default` and `export { x as y }` export it
+  // under another name, which the resolver reads from the export table.
+  const exported = new Set(ctx.exportsLocal.filter((e) => e.local === e.exported).map((e) => e.local));
   for (const d of ctx.defs) if (d.topLevel && exported.has(d.name)) d.exported = true;
   return ctx.facts();
 }
@@ -638,6 +768,7 @@ function extractPython(tree: Tree): FileFacts {
           } else if (n.type === "aliased_import") {
             fact.spec = n.childForFieldName("name")?.text ?? "";
             fact.namespace = n.childForFieldName("alias")?.text ?? null;
+            fact.alias = true;
           } else continue;
           ctx.imports.push(fact);
         }
@@ -683,20 +814,21 @@ function extractPython(tree: Tree): FileFacts {
           if (p.type === "identifier") locals.set(p.text, null);
           else if (p.type === "typed_parameter") {
             const id = p.namedChildren.find((c) => c.type === "identifier");
-            if (id) locals.set(id.text, pyTypeRef(p.childForFieldName("type")));
+            if (id) locals.set(id.text, declared(pyTypeRef(p.childForFieldName("type"))));
           } else {
             const id = p.childForFieldName("name");
-            if (id) locals.set(id.text, pyTypeRef(p.childForFieldName("type")));
+            if (id) locals.set(id.text, declared(pyTypeRef(p.childForFieldName("type"))));
           }
         }
         if (!name) return ctx.push({ def: -1, cls: null, locals });
         const top = ctx.atModuleLevel() && !isMethod;
+        const nested = !top && !isMethod;
         const def = ctx.addDef(
           node,
           name,
           isMethod ? "method" : "function",
           {
-            owner: isMethod ? inner.cls : null,
+            owner: isMethod ? inner.cls : nested ? ctx.ownerName() : null,
             topLevel: top,
             exported: !name.text.startsWith("_") || /^__\w+__$/.test(name.text),
             results: (() => {
@@ -706,6 +838,7 @@ function extractPython(tree: Tree): FileFacts {
           },
           span,
         );
+        if (nested) ctx.declareFn(name.text, def);
         return ctx.push({ def, cls: null, locals });
       }
       case "lambda":
@@ -721,12 +854,14 @@ function extractPython(tree: Tree): FileFacts {
       case "assignment": {
         const left = node.childForFieldName("left");
         const right = node.childForFieldName("right");
-        const type = pyTypeRef(node.childForFieldName("type")) ?? pyCallType(right);
+        const annotation = declared(pyTypeRef(node.childForFieldName("type")));
+        const type = annotation ?? pyCallType(right);
         const inner = ctx.frames[ctx.frames.length - 1] as Frame;
         if (left?.type === "identifier") {
           if (inner.cls !== null && inner.locals === null) {
             if (type) (ctx.defs[inner.def] as DefFact).fields[left.text] = type;
-          } else ctx.setLocal(left.text, type);
+          } else if (annotation) ctx.setLocal(left.text, annotation);
+          else ctx.assign(left.text, type, true);
         } else if (left?.type === "attribute" && left.childForFieldName("object")?.text === "self") {
           const attr = left.childForFieldName("attribute");
           const cls = ctx.cls();
@@ -1043,7 +1178,7 @@ function extractRuby(tree: Tree): FileFacts {
         const locals = methodLocals(node);
         if (!name) return ctx.push({ def: -1, cls: null, locals });
         const owner = nesting();
-        const def = ctx.addDef(node, name, owner ? "method" : "function", { owner, topLevel: owner === null, exported: true });
+        const def = ctx.addDef(node, name, owner ? "method" : "function", { owner, topLevel: owner === null, exported: true, static: node.type === "singleton_method" });
         return ctx.push({ def, cls: null, locals });
       }
       case "block":
@@ -1065,7 +1200,7 @@ function extractRuby(tree: Tree): FileFacts {
           const recv = right.childForFieldName("receiver");
           if (recv && (recv.type === "constant" || recv.type === "scope_resolution")) type = { name: recv.text, qualifier: nesting(), ...pos(recv) };
         }
-        if (left?.type === "identifier") ctx.setLocal(left.text, type);
+        if (left?.type === "identifier") ctx.assign(left.text, type);
         else if (left?.type === "instance_variable" && type) {
           const cls = ctx.cls();
           if (cls && cls.def >= 0) (ctx.defs[cls.def] as DefFact).fields[left.text] = type;

@@ -18,7 +18,8 @@ export function familyOf(lang: Lang): Family {
 // `result`: the type is what calling the function `name` returns, at that
 // position of its results (Go has several). `elem`: a slice, array, map or
 // list of the type; a loop over it or an index into it yields the type.
-export type TypeRef = { name: string; qualifier: string | null; line: number; column: number; result?: number; elem?: boolean };
+// `declared`: from a type annotation, so a reassignment cannot change it.
+export type TypeRef = { name: string; qualifier: string | null; line: number; column: number; result?: number; elem?: boolean; declared?: boolean };
 
 export type DefFact = {
   name: string;
@@ -32,6 +33,7 @@ export type DefFact = {
   bases: TypeRef[]; // classes: extends, superclasses, include; Go: embedded fields
   fields: Record<string, TypeRef>; // classes and structs: field name to its declared or constructed type
   results?: (TypeRef | null)[]; // functions and methods: the declared result types
+  static?: boolean; // methods called on the class itself: JS `static`, Ruby `def self.x`
 };
 
 // What stands before the dot of a call.
@@ -52,6 +54,12 @@ export type CallFact = {
   // Ruby: a bare identifier that may be a method call. Bound only when the
   // enclosing class defines it, never counted as unresolved.
   implicit?: boolean;
+  // A bare call bound by the enclosing scopes: `local` is a nested
+  // definition (index into defs); `shadowed` means a parameter or local
+  // variable of that name hides every outer definition.
+  local?: number;
+  shadowed?: boolean;
+  static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
 };
 
 export type ImportFact = {
@@ -64,6 +72,7 @@ export type ImportFact = {
   reexport: boolean; // `export ... from`
   typeOnly: boolean;
   relative?: boolean; // Ruby require_relative
+  alias?: boolean; // Python `import a.b as c`
 };
 
 export type FileFacts = {

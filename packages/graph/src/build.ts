@@ -5,7 +5,7 @@
 // process alive after the build.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, rmSync } from "node:fs";
 import { extname, join, posix } from "node:path";
 import { promisify } from "node:util";
 import type { Parser } from "web-tree-sitter";
@@ -13,6 +13,7 @@ import { EXTRACTOR_VERSION, extract } from "./extract.js";
 import { grammarVersion, parserFor } from "./parser.js";
 import type { FileInput, TsPaths } from "./resolve.js";
 import { resolveGraph, symbolId } from "./resolve.js";
+import { RepoReader, isFileFacts, readNoFollow, safeCacheDir, writeExclusive } from "./safe-fs.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode, Lang } from "./types.js";
 
 const run = promisify(execFile);
@@ -108,7 +109,10 @@ function stripJsonComments(text: string): string {
 
 // `paths` and `baseUrl` from the root tsconfig.json, following relative
 // `extends`. Package-level tsconfig files are not read.
-function readTsPaths(repoRoot: string, known: ReadonlySet<string>): TsPaths {
+const META_BYTES = 1024 * 1024;
+const CACHE_ENTRY_BYTES = 32 * 1024 * 1024;
+
+function readTsPaths(reader: RepoReader, known: ReadonlySet<string>): TsPaths {
   let file = "tsconfig.json";
   let paths: [string, string[]][] | null = null;
   let baseUrl: string | null = null;
@@ -116,7 +120,9 @@ function readTsPaths(repoRoot: string, known: ReadonlySet<string>): TsPaths {
   for (let hop = 0; hop < 5 && known.has(file); hop++) {
     let config: { extends?: unknown; compilerOptions?: { paths?: Record<string, string[]>; baseUrl?: string } };
     try {
-      config = JSON.parse(stripJsonComments(readFileSync(join(repoRoot, file), "utf8"))) as typeof config;
+      const text = reader.read(file, META_BYTES);
+      if (text === null) break;
+      config = JSON.parse(stripJsonComments(text)) as typeof config;
     } catch {
       break;
     }
@@ -135,13 +141,13 @@ function readTsPaths(repoRoot: string, known: ReadonlySet<string>): TsPaths {
   return { baseDir, paths: paths ?? [], baseUrl };
 }
 
-function readGoModules(repoRoot: string, all: string[]): [string, string][] {
+function readGoModules(reader: RepoReader, all: string[]): [string, string][] {
   const out: [string, string][] = [];
   for (const f of all) {
     if (f !== "go.mod" && !f.endsWith("/go.mod")) continue;
     if (f.split("/").some((part) => SKIP_DIRS.has(part))) continue;
     try {
-      const m = /^module\s+(\S+)/m.exec(readFileSync(join(repoRoot, f), "utf8"));
+      const m = /^module\s+(\S+)/m.exec(reader.read(f, META_BYTES) ?? "");
       if (m?.[1]) out.push([m[1].replace(/^"|"$/g, ""), posix.dirname(f) === "." ? "" : posix.dirname(f)]);
     } catch {
       // unreadable go.mod: its imports stay outside the repo
@@ -158,42 +164,29 @@ class FactCache {
   parses = 0;
   private parsers = new Map<Lang, Parser>();
 
-  constructor(readonly dir: string) {
-    try {
-      mkdirSync(dir, { recursive: true });
-    } catch {
-      // an unwritable cache only costs speed
-    }
-  }
+  // `dir` null: no cache this build (a link in its path, or files of the
+  // repo's own in it); everything is parsed and nothing is written.
+  constructor(readonly dir: string | null) {}
 
   key(lang: Lang, content: Buffer | string): string {
     return createHash("sha1").update(`${EXTRACTOR_VERSION}\0${lang}\0${grammarVersion(lang)}\0`).update(content).digest("hex");
   }
 
   read(key: string): FileFacts | null {
+    if (!this.dir) return null;
+    const text = readNoFollow(join(this.dir, `${key}.json`), CACHE_ENTRY_BYTES);
+    if (text === null) return null;
     try {
-      const entry = JSON.parse(readFileSync(join(this.dir, `${key}.json`), "utf8")) as CacheEntry;
-      if (entry.key === key && entry.facts && Array.isArray(entry.facts.defs) && Array.isArray(entry.facts.calls)) return entry.facts;
+      const entry = JSON.parse(text) as CacheEntry;
+      if (entry.key === key && isFileFacts(entry.facts)) return entry.facts;
     } catch {
-      // missing or corrupt: parse again and rewrite
+      // corrupt: parse again and rewrite
     }
     return null;
   }
 
   write(key: string, facts: FileFacts): void {
-    const path = join(this.dir, `${key}.json`);
-    const tmp = `${path}.${process.pid}.tmp`;
-    try {
-      writeFileSync(tmp, JSON.stringify({ key, facts } satisfies CacheEntry));
-      renameSync(tmp, path);
-    } catch {
-      // an unwritable cache only costs speed
-      try {
-        rmSync(tmp, { force: true });
-      } catch {
-        // nothing was written
-      }
-    }
+    if (this.dir) writeExclusive(join(this.dir, `${key}.json`), JSON.stringify({ key, facts } satisfies CacheEntry));
   }
 
   async facts(lang: Lang, content: string, canParse: boolean): Promise<FileFacts | null> {
@@ -223,7 +216,9 @@ class FactCache {
   }
 
   // Entries this build did not use belong to files that changed or are gone.
+  // Only regular files named the way this cache names them are removed.
   prune(): void {
+    if (!this.dir) return;
     let names: string[];
     try {
       names = readdirSync(this.dir);
@@ -231,12 +226,31 @@ class FactCache {
       return;
     }
     for (const name of names) {
-      if (name.endsWith(".json") && !this.used.has(name.slice(0, -5))) rmSync(join(this.dir, name), { force: true });
+      if (!/^[0-9a-f]{40}\.json$/.test(name) || this.used.has(name.slice(0, -5))) continue;
+      const path = join(this.dir, name);
+      try {
+        if (lstatSync(path).isFile()) rmSync(path);
+      } catch {
+        // gone already
+      }
     }
   }
 
   close(): void {
     for (const p of this.parsers.values()) p.delete();
+  }
+}
+
+// The cache folder when it is safe to use: no link in its path and no file
+// in it that git tracks (a repo could ship forged entries).
+async function usableCacheDir(repoRoot: string, dir: string): Promise<string | null> {
+  const safe = safeCacheDir(repoRoot, dir);
+  if (safe === null) return null;
+  try {
+    const { stdout } = await run("git", ["ls-files", "-z", "--", safe], { cwd: repoRoot, maxBuffer: 16 * 1024 * 1024 });
+    return stdout.length > 0 ? null : safe;
+  } catch {
+    return safe; // outside the repo: nothing there is tracked
   }
 }
 
@@ -268,7 +282,10 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const firstSet = new Set(first);
   const order = [...first, ...eligible.filter((f) => !firstSet.has(f))];
 
-  const cache = new FactCache(args.cacheDir);
+  const reader = new RepoReader(args.repoRoot);
+  const cacheDir = await usableCacheDir(args.repoRoot, args.cacheDir);
+  if (cacheDir === null) args.onProgress?.("openqodex: the code graph cache is not used: its folder is a link, holds tracked files or cannot be made");
+  const cache = new FactCache(cacheDir);
   const inputs: FileInput[] = [];
   let tooBig = 0;
   let overBudget = 0;
@@ -280,19 +297,20 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
         continue;
       }
       const lang = langOf(path) as Lang;
-      const abs = join(args.repoRoot, path);
-      let content: string;
+      let size: number;
       try {
-        const st = lstatSync(abs);
+        const st = lstatSync(join(args.repoRoot, path));
         if (!st.isFile()) continue; // a symbolic link or a folder
-        if (st.size > maxFileBytes) {
-          tooBig++;
-          continue;
-        }
-        content = readFileSync(abs, "utf8");
+        size = st.size;
       } catch {
-        continue; // gone or unreadable since git listed it
+        continue; // gone since git listed it
       }
+      if (size > maxFileBytes) {
+        tooBig++;
+        continue;
+      }
+      const content = reader.read(path, maxFileBytes);
+      if (content === null) continue; // a link in its path, or changed under us
       // Past the budget only cached facts are used; nothing more is parsed.
       const canParse = performance.now() - started < budgetMs;
       const facts = await cache.facts(lang, content, canParse);
@@ -303,23 +321,35 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       inputs.push({ path, facts });
     }
 
-    // The base side of each changed file, for removed symbols.
+    // The base side of each changed file, for removed symbols. Only a file
+    // whose current side was read, or that is deleted, is compared: a file
+    // left out by a cap would otherwise look emptied. Base parses count
+    // against the same budget and file cap.
     const baseDefs = new Map<string, { file: string; facts: FileFacts }>();
+    const current = new Set(inputs.map((i) => i.path));
+    let baseParsed = 0;
+    let removalUnchecked = 0;
     for (const f of args.base?.files ?? []) {
-      if (f.status === "added") continue;
+      if (f.status === "added" || !args.base) continue;
       const basePath = f.oldPath ?? f.path;
       const lang = langOf(basePath);
-      if (!lang || !args.base) continue;
-      const content = await gitShow(args.repoRoot, args.base.sha, basePath);
-      if (content === null || Buffer.byteLength(content) > maxFileBytes) continue;
-      const facts = await cache.facts(lang, content, true);
-      if (facts) baseDefs.set(f.path, { file: basePath, facts });
+      if (!lang) continue;
       known.add(basePath);
+      if (f.status !== "deleted" && !current.has(f.path)) continue;
+      const canParse = performance.now() - started < budgetMs && inputs.length + baseParsed < maxFiles;
+      const content = await gitShow(args.repoRoot, args.base.sha, basePath);
+      const facts = content === null || Buffer.byteLength(content) > maxFileBytes ? null : await cache.facts(lang, content, canParse);
+      if (!facts) {
+        removalUnchecked++;
+        continue;
+      }
+      baseParsed++;
+      baseDefs.set(f.path, { file: basePath, facts });
     }
     cache.prune();
 
-    const goModules = readGoModules(args.repoRoot, all);
-    const resolved = resolveGraph({ files: inputs, known, tsPaths: readTsPaths(args.repoRoot, new Set(all)), goModules });
+    const goModules = readGoModules(reader, all);
+    const resolved = resolveGraph({ files: inputs, known, tsPaths: readTsPaths(reader, new Set(all)), goModules });
 
     // Symbols in the base version of a changed file and gone now.
     const removed = new Map<string, GraphNode[]>();
@@ -352,6 +382,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
 
     const skipped = tooBig + overBudget + overCap;
     const reasons: string[] = [];
+    if (removalUnchecked > 0) reasons.push(`removed symbols were not checked in ${plural(removalUnchecked, "changed file")}`);
     if (overBudget > 0) reasons.push(`the ${(budgetMs / 1000).toFixed(budgetMs < 1000 ? 3 : 0)} s budget ran out with ${plural(overBudget, "file")} not parsed`);
     if (overCap > 0) reasons.push(`the ${plural(maxFiles, "file")} cap left out ${plural(overCap, "file")}`);
     if (tooBig > 0) reasons.push(`${plural(tooBig, "file")} over ${Math.round(maxFileBytes / 1024)} KB not parsed`);
@@ -370,7 +401,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       removed,
       misses: resolved.misses,
       status: {
-        status: skipped > 0 ? "partial" : "ok",
+        status: skipped > 0 || removalUnchecked > 0 ? "partial" : "ok",
         reason: reasons[0] ?? null,
         reasons,
         filesParsed: inputs.length,
