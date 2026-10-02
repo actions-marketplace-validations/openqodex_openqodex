@@ -1,0 +1,25 @@
+rules:
+  - id: shell-true
+    languages: [python]
+    severity: ERROR
+    message: subprocess called with shell=True runs the argument through a shell
+    pattern: subprocess.call(..., shell=True)
+    metadata:
+      references: ["https://docs.python.org/3/library/subprocess.html#security-considerations"]
+  - id: sql-format
+    languages: [python]
+    severity: WARNING
+    message: SQL built with string formatting
+    pattern: $CUR.execute("..." % $X)
+  - id: eval-call
+    languages: [python]
+    severity: INFO
+    message: eval on input
+    pattern: eval(...)
+    metadata:
+      security-severity: "9.3"
+  - id: last-user-root
+    languages: [dockerfile]
+    severity: WARNING
+    message: the last USER is root
+    pattern: USER root

@@ -1,0 +1,5 @@
+Tool: semgrep 1.176.0 (Homebrew build, /opt/homebrew/bin/semgrep), produced 2026-10-02.
+Input: the files in ../sample, copied to /tmp/s6-sample, with the local rules in semgrep-rules.yml copied to /tmp/s6-rules/rules.yml.
+Command, run inside /tmp/s6-sample:
+  semgrep scan --config /tmp/s6-rules/rules.yml --sarif --metrics=off -q -o semgrep.sarif .
+Unchanged output. Local rules are used instead of registry packs so no Semgrep registry rule text is stored here.
