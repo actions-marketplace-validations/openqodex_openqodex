@@ -2,58 +2,82 @@
 //   --agent            scan, then write the brief for the host agent and print it
 //   --finalize [path]  check the agent's findings without a model and write the report
 //   neither            the same as `scan`, plus how to get the AI review
+//   --all              the whole repository instead of the change: the scanners
+//                      on every file, then the brief, with or without --agent.
+//                      There is never a scan-only report of the whole repo.
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   OpenQodexError,
+  DIFF_CAP_BYTES,
+  INVENTORY_FILE,
   buildBrief,
+  buildInventory,
+  buildWholeRepoBrief,
   configHash,
   finalizeReview,
   getChange,
+  getWholeRepo,
+  loadLensCatalog,
   openReportDir,
   readLatest,
   readManifest,
   readScan,
   STATE_DIR,
   selectLenses,
+  selectLensesForDiff,
   writeLatest,
   writeManifest,
   writeReportFiles,
   writeScan,
 } from "@openqodex/core";
-import type { ChangeScope, ImpactSummary } from "@openqodex/core";
+import type { Change, ChangeScope, ImpactSummary, SelectedLens, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { EXIT_OK } from "../exit-codes.js";
-import { parseFlags, scannerList } from "../flags.js";
+import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
-import { buildImpact, emitReport, exitFor, loadRepo, nothingToReview, reportFiles, runPipeline, warn } from "../pipeline.js";
+import {
+  buildHotSpots,
+  buildImpact,
+  emitReport,
+  exitFor,
+  loadRepo,
+  nothingToReview,
+  redactStored,
+  reportFiles,
+  runPipeline,
+  scanChange,
+  warn,
+} from "../pipeline.js";
 import { SCOPE_BOOLS, SCOPE_VALUES, runScan, scopeFrom } from "./scan.js";
 
 const FINDINGS_FILE = "agent-findings.json";
 const IMPACT_FILE = "impact.json";
-// Read here until flags.ts takes it: turns the code graph off for one run.
-const NO_GRAPH = "--no-graph";
 const RUN_FILE = "run.json";
 const RUN_AGAIN = "run openqodex review --agent first";
 
 // run.json beside the manifest: the scope the brief was made with, so
-// finalize recomputes the same change.
-type RunFile = { version: 1; scope: ChangeScope };
+// finalize recomputes the same change ("all" for the whole repository).
+type RunFile = { version: 1; scope: ChangeScope | "all" };
 
-export async function run(rawArgs: string[]): Promise<number> {
-  const noGraph = rawArgs.includes(NO_GRAPH);
-  const args = rawArgs.filter((a) => a !== NO_GRAPH);
+export async function run(args: string[]): Promise<number> {
   const { global, bools, values, positionals } = parseFlags(args, {
-    bools: [...SCOPE_BOOLS, "--agent", "--finalize"],
+    bools: [...SCOPE_BOOLS, "--agent", "--finalize", ALL, NO_GRAPH],
     values: [...SCOPE_VALUES, "--only", "--skip"],
     positionals: 1,
   });
   const agent = bools.has("--agent");
   const finalize = bools.has("--finalize");
+  const noGraph = bools.has(NO_GRAPH);
   if (agent && finalize) throw new OpenQodexError("--agent and --finalize cannot be used together");
   if (positionals.length > 0 && !finalize) throw new OpenQodexError(`unexpected argument: ${positionals[0]}`);
+  if (bools.has(ALL) && (values.has("--base") || bools.has("--uncommitted"))) {
+    throw new OpenQodexError("--all reviews the whole repository and cannot be used with --base or --uncommitted");
+  }
 
+  // Finalize reads the scope from the run, so --all changes nothing there.
   if (finalize) return runFinalize(global, positionals[0]);
+  if (bools.has(ALL)) return runAll(global, agent, values.get("--only"), values.get("--skip"), noGraph);
   const scope = scopeFrom(bools, values);
   if (agent) return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
 
@@ -121,6 +145,91 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
     verdict: null,
   });
   process.stdout.write(brief);
+  return EXIT_OK;
+}
+
+// Every line of every text file counts as changed for the lens triggers, the
+// same rule finalize applies, up to the size the brief's diff may carry.
+function wholeRepoLenses(change: Change): SelectedLens[] {
+  const text: string[] = [];
+  let bytes = 0;
+  for (const path of change.changedPaths) {
+    if (!change.coverage.has(path)) continue;
+    let body: string;
+    try {
+      body = readFileSync(join(change.repoRoot, path), "utf8");
+    } catch {
+      continue;
+    }
+    bytes += Buffer.byteLength(body, "utf8");
+    if (bytes > DIFF_CAP_BYTES) break;
+    text.push(...body.split("\n").map((l) => `+${l}`));
+  }
+  return selectLensesForDiff({ diff: text.join("\n"), files: change.changedPaths, catalog: loadLensCatalog() });
+}
+
+async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
+  const { repoRoot, config } = await loadRepo(flags);
+  const whole = await getWholeRepo({ repoRoot, exclude: config.exclude });
+  const p = await scanChange<WholeRepo>({
+    repoRoot,
+    config,
+    change: whole,
+    flags,
+    only: scannerList("--only", only),
+    skip: scannerList("--skip", skip),
+  });
+  if (p.scan === null) {
+    warn("Nothing to review: the repository has no files");
+    return EXIT_OK;
+  }
+
+  const lenses = wholeRepoLenses(p.change);
+  const dir = openReportDir(repoRoot, p.change.shortId);
+  writeManifest(dir, {
+    version: 1,
+    change_id: p.change.id,
+    config_hash: configHash(config),
+    created_at: new Date().toISOString(),
+    lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
+  });
+  writeScan(dir, p.scan);
+  const { impact, hot, note } = await buildHotSpots(p, flags, noGraph);
+  const inventory = buildInventory(p.change, p.scan);
+  const brief = buildWholeRepoBrief({
+    change: p.change,
+    scan: p.scan,
+    lenses,
+    config,
+    secrets: p.secrets,
+    findingsPath: join(dir, FINDINGS_FILE),
+    finalizeCommand: finalizeCommand(repoRoot, flags.config, join(dir, FINDINGS_FILE)),
+    inventory,
+    inventoryPath: join(dir, INVENTORY_FILE),
+    hot,
+    graphNote: note,
+  });
+  const runFile: RunFile = { version: 1, scope: "all" };
+  writeReportFiles(dir, {
+    [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
+    "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
+    [INVENTORY_FILE]: `${JSON.stringify(redactStored(inventory, p.secrets), null, 2)}\n`,
+    [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
+    "brief.md": brief,
+  });
+  writeLatest(repoRoot, {
+    dir: relative(repoRoot, dir),
+    change_id: p.change.id,
+    kind: "review",
+    finalized: false,
+    verdict: null,
+  });
+  process.stdout.write(brief);
+  if (!agent) {
+    process.stdout.write(
+      "\nThis is the brief, not the review: the review is done when your coding agent writes its findings and runs the finalize command above. Ask it: review my whole repo with openqodex\n",
+    );
+  }
   return EXIT_OK;
 }
 
@@ -214,8 +323,13 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined): Promis
   if (manifest.config_hash !== configHash(config)) {
     throw new OpenQodexError("the config changed since the brief (.openqodex.yaml or --config); run openqodex review --agent again");
   }
-  const change = await getChange({ repoRoot, scope: runFile.scope, exclude: config.exclude, defaultBase: config.defaultBase });
-  const report = { ...finalizeReview({ change, scan, manifest, config, submission }), impact: readImpact(dir) };
+  const wholeRepo = runFile.scope === "all";
+  const change =
+    runFile.scope === "all"
+      ? await getWholeRepo({ repoRoot, exclude: config.exclude })
+      : await getChange({ repoRoot, scope: runFile.scope, exclude: config.exclude, defaultBase: config.defaultBase });
+  // A whole-repo run has no change to trace, so its report carries no blast radius.
+  const report = { ...finalizeReview({ change, scan, manifest, config, submission, wholeRepo }), impact: wholeRepo ? null : readImpact(dir) };
 
   writeReportFiles(dir, reportFiles(report));
   writeLatest(repoRoot, {

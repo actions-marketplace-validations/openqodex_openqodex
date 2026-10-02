@@ -150,6 +150,24 @@ function touchesChange(f: AgentFinding, change: Change): string | null {
   return `${where} not a line this change added or modified`;
 }
 
+// `review --all`: the whole repository is the change and coverage holds every
+// line of every text file, so a finding is in scope when its file is in the
+// inventory and its lines exist. Anything else is a wrong citation, rejected
+// like one, so nothing lands outside the change.
+function checkInRepo(sub: AgentSubmission, change: Change, clean: (text: string) => string): void {
+  sub.findings.forEach((f, i) => {
+    const at = `finding ${i} ("${clean(f.title)}")`;
+    const lines = change.coverage.get(f.file_path);
+    if (!lines) {
+      throw new OpenQodexError(`${at} names ${clean(f.file_path)}, which is not a text file in this review's inventory`);
+    }
+    const end = f.line_end ?? f.line_number;
+    if (!lines.has(f.line_number) || !lines.has(end)) {
+      throw new OpenQodexError(`${at} cites line ${end > f.line_number ? `${f.line_number} to ${end}` : f.line_number} of ${clean(f.file_path)}, which has ${lines.size} lines`);
+    }
+  });
+}
+
 // Removes only true duplicates: same file, range and category, and the same
 // candidate, or the same source when no candidate is cited, or the same title
 // when neither is. Keeps the higher severity, then the first.
@@ -193,6 +211,8 @@ export function finalizeReview(args: {
   manifest: RunManifest;
   config: Config;
   submission: unknown;
+  // The run reviewed the whole repository (`review --all`).
+  wholeRepo?: boolean;
 }): Report {
   const { change, scan, manifest, config } = args;
   const sub = parseSubmission(args.submission);
@@ -201,6 +221,7 @@ export function finalizeReview(args: {
   }
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
   checkCitations(sub, scan, manifest, clean);
+  if (args.wholeRepo) checkInRepo(sub, change, clean);
   const floors = new Map(manifest.lenses.map((l) => [l.name, l.confidenceFloor]));
 
   const findings: ReportFinding[] = [];

@@ -47,13 +47,15 @@ Progress goes to stderr. The report goes to stdout.
 ## review
 
 ```
-openqodex review [--agent | --finalize [path]] [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>]
+openqodex review [--agent | --finalize [path]] [--all | --base <ref> | --uncommitted] [--no-graph] [--only <list>] [--skip <list>]
 ```
 
 - `--agent`: run the scanners, write the brief and print it. Your agent runs this.
 - `--finalize [path]`: check the agent's findings and write the report. Without a path it reads `agent-findings.json` in the newest report folder. With a path it finds the run by the `change_id` in that file.
 - Neither flag: the same as `scan`, plus one line on how to get the AI review from your agent.
 - `--base`, `--uncommitted`: see "Which change is checked".
+- `--all`: review the whole repository instead of the change. See "Reviewing the whole repository".
+- `--no-graph`: do not build the code graph for this run.
 - `--only <list>`: run only these scanners, comma separated.
 - `--skip <list>`: skip these scanners, comma separated.
 
@@ -67,6 +69,16 @@ A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a cu
 - a finding cites a scanner rule or candidate that is not in this scan.
 
 It never repairs a finding. Fix what it names, or run `review --agent` again.
+
+### Reviewing the whole repository
+
+`review --all` treats every file in the repository as the change: every tracked file and every untracked file git does not ignore, as they are on disk, minus `exclude` and `.openqodex/`. Every line of every text file is in scope, so the scanners report on the whole repository with no changed-line filter. Submodules, symbolic links, unreadable files and files over 5 MB are listed in the brief as left out.
+
+There is no scan-only report of the whole repository. With or without `--agent`, the command runs the scanners and prints a brief for your agent: the most-called functions from the code graph and the files with the most scanner hits, as places to start; the 50 most severe scanner candidates, with all of them in `candidates.json`; the matching patterns; and the file inventory in `inventory.json`. Without `--agent` it adds one line saying the review is done when your agent finalizes it. Ask your agent: review my whole repo with openqodex.
+
+`review --finalize` then works as for a change. A finding must name a file in the inventory and a line that exists in it, or finalize exits 2. Any edit to any file after the brief moves the review id, and finalize says the change moved.
+
+`--all` cannot be combined with `--base` or `--uncommitted`. The git hook and the GitHub Action never run it.
 
 ## scan
 

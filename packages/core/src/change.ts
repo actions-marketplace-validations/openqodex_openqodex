@@ -8,14 +8,14 @@
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readlink, rm } from "node:fs/promises";
+import { createReadStream, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createCoverageParser, unquoteDiffPath } from "./diff.js";
 import { matchesGlob } from "./glob.js";
 import { STATE_DIR } from "./report-files.js";
-import type { Change, ChangedFile, ChangeScope } from "./types.js";
+import type { Change, ChangedFile, ChangeScope, DiffCoverage } from "./types.js";
 import { OpenQodexError } from "./types.js";
 
 // Text handed to the brief is capped; files past the cap are left out whole.
@@ -529,4 +529,116 @@ export async function getChange(args: {
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+}
+
+// ---------- the whole repo (`review --all`) ----------
+
+// The whole-repo scope, with each file's size on disk for the brief's inventory.
+export type WholeRepo = Change & { sizes: Map<string, number> };
+
+// git's own test for a binary file: a NUL byte in the first 8000 bytes.
+const BINARY_PROBE_BYTES = 8000;
+
+function lineCount(buf: Buffer): number {
+  let n = 0;
+  for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) n++;
+  return buf.length > 0 && buf[buf.length - 1] !== 10 ? n + 1 : n;
+}
+
+// The blob hash git would give these bytes, so an untracked file and an
+// unstaged edit move the id exactly like a staged one.
+function blobHash(buf: Buffer): string {
+  return createHash("sha1").update(`blob ${buf.length}\0`).update(buf).digest("hex");
+}
+
+// The same hash for a file too large to hold in memory.
+function streamBlobHash(full: string, size: number): Promise<string> {
+  return new Promise((done, fail) => {
+    const hash = createHash("sha1").update(`blob ${size}\0`);
+    createReadStream(full)
+      .on("data", (b) => hash.update(b))
+      .on("error", fail)
+      .on("end", () => done(hash.digest("hex")));
+  });
+}
+
+// Every file in the repo as it sits on disk: tracked files plus untracked
+// files git does not ignore, minus `exclude` and `.openqodex/`. Each is an
+// added file whose every line is in scope. The id hashes path, mode and
+// content of every file, so an edit anywhere moves it. Submodules, nested
+// repositories, symbolic links, unreadable files and files over 5 MB are
+// listed as not reviewed and left out of the scope.
+export async function getWholeRepo(args: { repoRoot: string; exclude: string[] }): Promise<WholeRepo> {
+  const { repoRoot, exclude } = args;
+  const head = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+  const baseSha = head ?? (await gitOk(repoRoot, ["hash-object", "-t", "tree", "--stdin"])).toString("utf8").trim();
+
+  // `-s -z`: "<mode> <hash> <stage>\t<path>\0". A conflicted path appears once per stage.
+  const modes = new Map<string, string>();
+  for (const rec of splitNul(await gitOk(repoRoot, ["ls-files", "-s", "-z"]))) {
+    const tab = rec.indexOf("\t");
+    modes.set(rec.slice(tab + 1), rec.slice(0, rec.indexOf(" ")));
+  }
+  const untracked = splitNul(await gitOk(repoRoot, ["ls-files", "-z", "--others", "--exclude-standard"]));
+  const paths = [...new Set([...modes.keys(), ...untracked])].filter((p) => !excluded(p, exclude)).sort();
+
+  const files: ChangedFile[] = [];
+  const coverage: DiffCoverage = new Map();
+  const sizes = new Map<string, number>();
+  const notReviewed: string[] = [];
+  const idLines: string[] = [];
+  let lines = 0;
+  for (const path of paths) {
+    const full = join(repoRoot, path);
+    let stat;
+    try {
+      stat = await lstat(full);
+    } catch {
+      continue; // deleted in the working tree: not part of the repo any more
+    }
+    // A submodule, a nested repository (git lists it as "dir/") or a link.
+    if (modes.get(path) === "160000" || !stat.isFile()) {
+      notReviewed.push(path.replace(/\/$/, ""));
+      idLines.push(`${path}\t${modes.get(path) ?? (stat.isSymbolicLink() ? "120000" : "040000")}\t${stat.isSymbolicLink() ? await readlink(full).catch(() => "") : ""}`);
+      continue;
+    }
+    const mode = stat.mode & 0o100 ? "100755" : "100644";
+    if (stat.size > DIFF_CAP_BYTES) {
+      notReviewed.push(path);
+      idLines.push(`${path}\t${mode}\t${await streamBlobHash(full, stat.size).catch(() => "unreadable")}`);
+      continue;
+    }
+    let buf: Buffer;
+    try {
+      buf = await readFile(full);
+    } catch {
+      notReviewed.push(path);
+      idLines.push(`${path}\t${mode}\tunreadable`);
+      continue;
+    }
+    idLines.push(`${path}\t${mode}\t${blobHash(buf)}`);
+    const binary = buf.subarray(0, BINARY_PROBE_BYTES).includes(0);
+    files.push({ path, status: "added", oldPath: null, binary });
+    sizes.set(path, buf.length);
+    if (binary) continue;
+    const n = lineCount(buf);
+    lines += n;
+    coverage.set(path, new Set(Array.from({ length: n }, (_, i) => i + 1)));
+  }
+
+  const id = createHash("sha256").update(idLines.join("\n")).digest("hex");
+  return {
+    repoRoot,
+    baseRef: "all",
+    baseSha,
+    id,
+    shortId: id.slice(0, 12),
+    files,
+    changedPaths: files.map((f) => f.path),
+    coverage,
+    diff: "",
+    notReviewed,
+    stats: { files: files.length, additions: lines, deletions: 0 },
+    sizes,
+  };
 }
