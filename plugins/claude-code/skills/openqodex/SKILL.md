@@ -28,6 +28,8 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
    - real: raise it as a finding with `source` set to the token and `candidate` set to the id;
    - not real (a test fixture, dead code, a pattern the code already guards): put it under `dropped` with a one-line reason.
 
+   Several candidates often describe one problem (two scanners, or two rules of one scanner, on the same line). Raise one of them and drop the others with the reason `duplicate of c<id>`.
+
    Every candidate must end up in one of the two. A candidate you leave out is reported as "Not reviewed by the agent" and counts toward the verdict at its scanner severity.
 
 3. Weigh each pattern listed under "Patterns to weigh". Each one describes a kind of bug that changes like this one often carry. Check the changed lines against it. When a pattern leads you to a finding, set `source` to `lens:<name>`.
