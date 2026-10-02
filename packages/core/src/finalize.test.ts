@@ -23,6 +23,9 @@
 //     candidate at the threshold, or blocks on something below it.
 // 13. scanReport maps categories or severities wrongly, or ignores the
 //     threshold.
+// 14. review.severity_threshold hides a finding at or above
+//     block_on_severity, so a blocked verdict names nothing; hides a
+//     not-reviewed candidate; or loses count of what it hid.
 import { describe, expect, it } from "vitest";
 import { finalizeReview, scanReport } from "./finalize.js";
 import {
@@ -398,5 +401,35 @@ describe("finalizeReview: review round 1", () => {
       ["SQL built from request input", "critical"],
       ["Hard-coded credential", "critical"],
     ]);
+  });
+});
+
+describe("severity_threshold", () => {
+  const nitpick = finding({ severity: "nitpick", category: "style", title: "Unused import", source: null, candidate: null, file_path: "app/settings.py", line_number: 1, line_end: 1 });
+
+  it("counts a nitpick below the threshold instead of listing it, and keeps not-reviewed candidates", () => {
+    const report = run(makeSubmission({ findings: [...(makeSubmission().findings as unknown[]), nitpick] }), {
+      config: { severityThreshold: "minor" },
+    });
+    expect(report.findings.map((f) => f.title)).toEqual(["SQL built from request input"]);
+    expect(report.below_threshold).toBe(1);
+    expect(report.not_reviewed.map((c) => c.id)).toEqual([LINT_CANDIDATE.id]);
+  });
+
+  it("never hides a finding at or above block_on_severity, in a review or a scan", () => {
+    const config = { severityThreshold: "critical" as const, blockOnSeverity: "nitpick" as const };
+    const review = run(makeSubmission({ findings: [nitpick] }), { config });
+    expect(review.findings.map((f) => f.title)).toEqual(["Unused import"]);
+    expect(review.below_threshold).toBe(0);
+    expect(review.verdict).toBe("blocked");
+    const scan = scanReport({ change: makeChange(), scan: makeScan(), config: makeConfig(config) });
+    expect(scan.findings).toHaveLength(3);
+    expect(scan.below_threshold).toBe(0);
+  });
+
+  it("hides scanner findings below the threshold in a scan report", () => {
+    const scan = scanReport({ change: makeChange(), scan: makeScan(), config: makeConfig({ severityThreshold: "major" }) });
+    expect(scan.findings.map((f) => f.source)).toEqual([SQL_CANDIDATE.token, KEY_CANDIDATE.token]);
+    expect(scan.below_threshold).toBe(1);
   });
 });

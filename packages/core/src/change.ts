@@ -172,7 +172,7 @@ async function mergeBaseWithHead(repoRoot: string, ref: string): Promise<string 
   return gitLine(repoRoot, ["merge-base", "HEAD", ref]);
 }
 
-async function resolveBase(repoRoot: string, scope: ChangeScope): Promise<Base> {
+async function resolveBase(repoRoot: string, scope: ChangeScope, defaultBase: string | null): Promise<Base> {
   const head = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
 
   if (scope.base !== undefined) {
@@ -195,6 +195,19 @@ async function resolveBase(repoRoot: string, scope: ChangeScope): Promise<Base> 
   if (upstream !== null) {
     const mb = await mergeBaseWithHead(repoRoot, upstream);
     if (mb !== null) return { ref: upstream, sha: mb };
+  }
+
+  // review.default_base: the ref as written, else the same name on origin,
+  // so a branch that was never checked out here is still found.
+  if (defaultBase !== null) {
+    for (const ref of [defaultBase, `origin/${defaultBase}`]) {
+      const sha = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]);
+      const mb = sha === null ? null : await mergeBaseWithHead(repoRoot, sha);
+      if (mb !== null) return { ref, sha: mb };
+    }
+    throw new OpenQodexError(
+      `review.default_base: ${defaultBase} is not a ref here or a branch on origin, or shares no history with HEAD; fetch it or change the config`,
+    );
   }
 
   const remoteHead = await gitLine(repoRoot, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
@@ -352,9 +365,11 @@ export async function getChange(args: {
   repoRoot: string;
   scope: ChangeScope;
   exclude: string[];
+  // Config.defaultBase: what the default scope diffs against with no upstream.
+  defaultBase?: string | null;
 }): Promise<Change> {
   const { repoRoot, scope, exclude } = args;
-  const base = await resolveBase(repoRoot, scope);
+  const base = await resolveBase(repoRoot, scope, args.defaultBase ?? null);
 
   const absGitPath = async (name: string): Promise<string> => {
     const p = (await gitOk(repoRoot, ["rev-parse", "--git-path", name])).toString("utf8").trim();

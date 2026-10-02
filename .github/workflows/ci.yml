@@ -57,5 +57,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Skill and plugin manifests
         run: node scripts/validate-skill.mjs
+      - name: Config docs
+        run: node scripts/config-docs.mjs --check
       - name: Private material scrub
         run: node scripts/scrub.mjs
