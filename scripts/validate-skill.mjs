@@ -47,7 +47,7 @@ if (existsSync(join(root, skill)) && existsSync(join(root, pluginSkill))) {
     errors.push(`${pluginSkill}: differs from ${skill}`);
   } else console.log(`ok: ${pluginSkill} matches the skill`);
 }
-for (const rel of [skill, pluginSkill, "plugins/claude-code/hooks/hooks.json"]) {
+for (const rel of [skill, pluginSkill, "plugins/claude-code/hooks/hooks.json", ".pre-commit-hooks.yaml"]) {
   if (!existsSync(join(root, rel))) continue;
   const pins = readFileSync(join(root, rel), "utf8").match(/openqodex@[0-9][^\s"`)]*/g) ?? [];
   const wrong = [...new Set(pins)].filter((pin) => pin !== `openqodex@${version}`);

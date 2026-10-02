@@ -1,0 +1,14 @@
+# The OpenQodex scan as a pre-commit hook, for the pre-push stage.
+# It scans the default change: the commits not yet pushed plus the working tree.
+# It needs Node 22 and npx on the machine. The release workflow keeps the
+# pinned version equal to the published package.
+- id: openqodex-scan
+  name: OpenQodex scan
+  description: Run the OpenQodex scanners on the change before it is pushed.
+  # Only exit 1 (a finding at or above review.block_on_severity) stops the
+  # push. A scan that fails for its own reasons (exit 2) never does.
+  entry: sh -c 'npx -y openqodex@0.1.0 scan; s=$?; [ "$s" -eq 1 ] && exit 1; exit 0'
+  language: system
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]

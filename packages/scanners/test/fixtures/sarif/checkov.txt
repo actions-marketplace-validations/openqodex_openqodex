@@ -1,0 +1,5 @@
+Tool: checkov 3.3.22 (PyPI, run through uvx with Python 3.11), produced 2026-10-02.
+Input: the files in ../sample, copied to /tmp/s6-sample.
+Command, run inside /tmp/s6-sample:
+  uvx --python 3.11 checkov -d . -o sarif --output-file-path /tmp/s6-checkov-out --quiet
+Unchanged output (results_sarif.sarif). It has no uriBaseId and percent-encodes the space in "infra dir".
