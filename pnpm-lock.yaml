@@ -54,9 +54,20 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
-  packages/scanners: {}
+  packages/scanners:
+    dependencies:
+      '@openqodex/core':
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 
