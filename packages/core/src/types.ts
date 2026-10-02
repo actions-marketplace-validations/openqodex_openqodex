@@ -191,6 +191,12 @@ export type Config = {
   graph: { enabled: boolean; budgetMs: number; maxFiles: number; maxFileBytes: number }; // the code graph in the brief; enabled by default
 };
 
+export type LoadedConfig = {
+  config: Config;
+  path: string | null; // null: no config file, defaults in use
+  warnings: string[];
+};
+
 // ---------- code graph, as the report and the brief see it ----------
 // Serializable. The graph package builds it; the brief and the report show it.
 // Ids reference `symbols`. Counts describe what was observed, never what was
