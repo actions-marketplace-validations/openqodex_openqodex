@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "url";
 import {
   groupGoPackagesByModule,
   nearestGoModuleRoot,
@@ -10,9 +11,10 @@ import {
 
 describe("parseGolangciJson", () => {
   it("empty output or null Issues from a clean run yields no findings instead of a parse error", () => {
-    expect(parseGolangciJson("")).toEqual([]);
-    expect(parseGolangciJson(JSON.stringify({ Issues: null }))).toEqual([]);
-    expect(parseGolangciJson(JSON.stringify({ Issues: "nope" }))).toEqual([]);
+    const empty = { findings: [], typecheckErrors: [] };
+    expect(parseGolangciJson("")).toEqual(empty);
+    expect(parseGolangciJson(JSON.stringify({ Issues: null }))).toEqual(empty);
+    expect(parseGolangciJson(JSON.stringify({ Issues: "nope" }))).toEqual(empty);
   });
 
   it("a golangci issue takes its linter as rule id, its file and line from Pos, and gosec ranks high", () => {
@@ -27,7 +29,7 @@ describe("parseGolangciJson", () => {
       ],
       Report: { Linters: [{ Name: "gosec", Enabled: true }] },
     };
-    const out = parseGolangciJson(JSON.stringify(report));
+    const out = parseGolangciJson(JSON.stringify(report)).findings;
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({
       source: "golangci",
@@ -51,9 +53,22 @@ describe("parseGolangciJson", () => {
       ],
     };
     const noisy = `level=warning msg="running with deprecated flag"\n${JSON.stringify(report)}`;
-    const out = parseGolangciJson(noisy);
+    const out = parseGolangciJson(noisy).findings;
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ ruleId: "golangci", filePath: "a.go", lineStart: 8 });
+  });
+
+  // Real output, see fixtures/golangci/typecheck-newer-go.txt: Go 1.27 on
+  // PATH, golangci-lint built with Go 1.26. The package was never linted, and
+  // the one issue sits in the standard library, so as a finding it was
+  // dropped by the changed-line filter and the scan read as clean.
+  it("a typecheck issue means the package was not linted: it comes back as an error, never as a finding", () => {
+    const fixture = fileURLToPath(new URL("../../test/fixtures/golangci/typecheck-newer-go.json", import.meta.url));
+    const out = parseGolangciJson(fs.readFileSync(fixture, "utf8"));
+    expect(out.findings).toEqual([]);
+    expect(out.typecheckErrors).toEqual([
+      "/usr/local/go/src/internal/poll/splice_linux.go:237: unknown field rfd in struct literal of type splicePipe",
+    ]);
   });
 });
 

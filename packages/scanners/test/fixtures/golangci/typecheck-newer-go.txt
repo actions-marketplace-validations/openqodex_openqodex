@@ -1,0 +1,5 @@
+golangci-lint 2.12.2 (built with go1.26.2), Go 1.27.1 on PATH, linux/arm64, in the golang:latest container.
+Planted repo: go.mod "module example.com/tiny" with "go 1.22", main.go importing crypto/md5 and calling md5.New().
+Command, run in the planted repo with GOTOOLCHAIN=local GOPROXY=off:
+golangci-lint run --no-config --modules-download-mode=readonly --path-mode=abs --output.json.path=stdout --show-stats=false --enable=gosec .
+Exit code 1, nothing on stderr. The only issue is a typecheck error inside the Go standard library, so gosec never ran.

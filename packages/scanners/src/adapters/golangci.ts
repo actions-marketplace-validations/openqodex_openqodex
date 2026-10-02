@@ -17,12 +17,20 @@
 //
 // Needs the developer's Go toolchain (the resolver reports "needs Go"
 // when it is missing). GOTOOLCHAIN=local keeps a scanned go.mod from
-// triggering a toolchain download. Its analysis cache and Go's build cache
-// live in the user cache folder, outside the repo; package loading runs in
-// read-only module mode, so go.mod and go.sum are never rewritten. All errors are captured into the result; the runner never
-// throws on a scanner failure: static analysis is additive context, not a
-// gate.
+// triggering a toolchain download. Go's build cache lives in the user cache
+// folder and golangci-lint's own cache in the OpenQodex home, one folder per
+// module checkout, both outside the repo; package loading runs in read-only
+// module mode, so go.mod and go.sum are never rewritten.
+//
+// A package golangci-lint cannot type-check is not analyzed at all, and the
+// only sign of it is a "typecheck" issue in the JSON report, often on a file
+// outside the repo (a Go newer than the one golangci-lint was built with
+// fails inside the standard library). Those issues become the module's
+// error, so a broken Go setup reads as a failed scan, never a clean one.
+// All errors are captured into the result; the runner never throws on a
+// scanner failure: static analysis is additive context, not a gate.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type {
@@ -32,6 +40,7 @@ import type {
   StaticFinding,
 } from "@openqodex/core";
 import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { openqodexHome } from "../toolchain/table.js";
 import type { Adapter } from "./index.js";
 
 // golangci-lint loads + type-checks each package, so give it more
@@ -213,7 +222,10 @@ export async function runGolangci(args: GolangciRunArgs): Promise<AdapterResult>
     }
 
     try {
-      findings.push(...reanchorToRunDir(parseGolangciJson(stdout), group.moduleRoot));
+      const report = parseGolangciJson(stdout);
+      findings.push(...reanchorToRunDir(report.findings, group.moduleRoot));
+      const first = report.typecheckErrors[0];
+      if (first) notes.push(`${group.moduleRoot}: could not type-check: ${first.slice(0, 200)}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notes.push(`${group.moduleRoot}: parse: ${message.slice(0, 150)}`);
@@ -264,7 +276,7 @@ async function execGolangci(
     cwd,
     timeoutMs,
     maxBytes: GOLANGCI_OUTPUT_MAX_BYTES,
-    env: { ...tool.env, GOTOOLCHAIN: "local" },
+    env: { ...tool.env, GOTOOLCHAIN: "local", GOLANGCI_LINT_CACHE: golangciCacheDir(cwd) },
   });
   // golangci-lint exit codes: 0 = no issues, 1 = issues found,
   // higher = config / analysis error. It writes the JSON report
@@ -282,19 +294,43 @@ async function execGolangci(
   return result.stdout;
 }
 
+// golangci-lint keys its issue cache on package content, not location, and
+// stores absolute positions: two checkouts holding the same package (two
+// worktrees of one repo) get the first checkout's paths back, which match no
+// changed line and are dropped. One cache folder per module checkout keeps
+// the speed of a warm cache without replaying another folder's paths.
+function golangciCacheDir(moduleDir: string): string {
+  let real = moduleDir;
+  try {
+    real = fs.realpathSync(moduleDir);
+  } catch {
+    // The run itself reports a missing folder.
+  }
+  const key = createHash("sha256").update(real).digest("hex").slice(0, 16);
+  return path.join(openqodexHome(), "cache", "golangci", key);
+}
+
 type GolangciIssue = {
   FromLinter?: unknown;
   Text?: unknown;
   Pos?: { Filename?: unknown; Line?: unknown };
 };
 
-export function parseGolangciJson(json: string): StaticFinding[] {
+export type GolangciReport = {
+  findings: StaticFinding[];
+  // "file:line: text" for each issue from the typecheck pseudo-linter: the
+  // package it names was not analyzed by any linter.
+  typecheckErrors: string[];
+};
+
+export function parseGolangciJson(json: string): GolangciReport {
+  const report: GolangciReport = { findings: [], typecheckErrors: [] };
   const body = extractJsonObject(json);
-  if (!body) return [];
+  if (!body) return report;
   const parsed = JSON.parse(body) as { Issues?: unknown };
   // golangci emits Issues: null (not []) when there are no findings.
-  if (!parsed || !Array.isArray(parsed.Issues)) return [];
-  const out: StaticFinding[] = [];
+  if (!parsed || !Array.isArray(parsed.Issues)) return report;
+  const out = report.findings;
   for (const raw of parsed.Issues as GolangciIssue[]) {
     if (!raw || typeof raw !== "object") continue;
     const filePath = typeof raw.Pos?.Filename === "string" ? raw.Pos.Filename : "";
@@ -303,6 +339,10 @@ export function parseGolangciJson(json: string): StaticFinding[] {
     // "staticcheck"); it becomes the citation token "golangci:gosec".
     const linter = typeof raw.FromLinter === "string" && raw.FromLinter ? raw.FromLinter : "golangci";
     const message = typeof raw.Text === "string" ? raw.Text : "";
+    if (linter === "typecheck") {
+      report.typecheckErrors.push(trimMessage(`${filePath || "?"}:${line}: ${message}`));
+      continue;
+    }
     if (!filePath || line <= 0) continue;
     out.push({
       source: "golangci",
@@ -315,7 +355,7 @@ export function parseGolangciJson(json: string): StaticFinding[] {
       reference: null,
     });
   }
-  return out;
+  return report;
 }
 
 // Trim any leading log noise before the JSON object. golangci writes

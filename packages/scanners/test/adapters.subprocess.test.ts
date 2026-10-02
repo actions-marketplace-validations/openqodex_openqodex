@@ -71,6 +71,17 @@ describe("builtin scanner subprocesses", () => {
     expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: spec.scanner, ruleId: spec.rule, filePath: spec.anchor }));
   }, 300_000);
 
+  // golangci-lint caches issues by package content and replays the first
+  // folder's absolute paths for the same package elsewhere (two worktrees of
+  // one repo), which matched no changed line, so the second scan read clean.
+  it("golangci reports gosec in a second checkout of the same package", async () => {
+    const spec = cases.find((c) => c.scanner === "golangci")!;
+    const first = await scan(spec);
+    if (first.scan.scanners[0]!.status === "not_installed") { process.stdout.write(`golangci: ${first.scan.scanners[0]!.reason}\n`); return; }
+    const second = await scan(spec);
+    expect(second.scan.candidates).toContainEqual(expect.objectContaining({ source: "golangci", ruleId: spec.rule, filePath: spec.anchor }));
+  }, 300_000);
+
   it("gitleaks finds a secret and never puts its value in the scan result", async () => {
     const result = await scan(cases[0]!);
     expect(result.scan.candidates.some((c) => c.ruleId === "stripe-access-token")).toBe(true);
