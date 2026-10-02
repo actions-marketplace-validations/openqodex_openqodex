@@ -1,12 +1,26 @@
-import { expect, it } from "vitest";
-import { demo, inventory, report, run, toolsHome } from "./support.js";
 import { mkdirSync } from "node:fs";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { Report } from "@openqodex/core";
+import { demo, listing, report, run, toolsHome } from "./support.js";
 
-it("disables network scanners offline without changing the tools folder", () => {
-  const dir = demo("offline"); mkdirSync(toolsHome, { recursive: true });
-  const before = inventory(toolsHome);
-  const result = run("offline-scan", dir, ["scan", "--offline", "--format", "json"]);
-  expect(result.status).toBe(0);
-  expect(report(dir).scanners.find((s) => s.scanner === "osv-scanner")).toMatchObject({ status: "disabled", reason: "offline, dependency lookups are off" });
-  expect(inventory(toolsHome)).toEqual(before);
+describe("scan --offline", () => {
+  let status: number | null; let found: Report; let before: Record<string, string>; let after: Record<string, string>;
+  beforeAll(() => {
+    const dir = demo("offline"); mkdirSync(toolsHome, { recursive: true });
+    before = listing(toolsHome);
+    status = run("offline-scan", dir, ["scan", "--offline", "--format", "json"]).status;
+    after = listing(toolsHome);
+    found = report(dir);
+  }, 300_000);
+
+  it("disables the two scanners that need the network and says why", () => {
+    expect(status).toBe(0);
+    expect(found.scanners.filter((s) => s.status === "disabled").map((s) => [s.scanner, s.reason])).toEqual([
+      ["semgrep", "offline, the rule packs need the network"],
+      ["osv-scanner", "offline, dependency lookups are off"],
+    ]);
+  });
+  it("downloads or writes nothing in the tools folder", () => {
+    expect(after).toEqual(before);
+  });
 });
