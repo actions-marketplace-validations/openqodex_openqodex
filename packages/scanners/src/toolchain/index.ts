@@ -86,6 +86,16 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const remaining = (deadline: number) => Math.max(0, deadline - Date.now());
 const TIMED_OUT = Symbol("timed out");
 
+// Waits for the promise for at most `ms`. The timer is cleared as soon as the
+// race settles, so it never keeps the process alive after the work is done.
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function installedResolution(home: string, tool: string, recipe: Recipe): Promise<ToolResolution> {
   return { ok: true, tool: await resolvedTool(home, tool, recipe) };
 }
@@ -130,7 +140,7 @@ async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promi
   // The probe is shared and may finish in the background; this caller waits
   // for it only as long as its budget allows.
   const probe = missingRuntime(recipe);
-  const runtime = deadline === null ? await probe : await Promise.race([probe, sleep(remaining(deadline)).then((): typeof TIMED_OUT => TIMED_OUT)]);
+  const runtime = deadline === null ? await probe : await withDeadline(probe, remaining(deadline));
   if (runtime === TIMED_OUT) return { ok: false, status: "not_installed", reason: "still checking for the runtime; it will be included next run" };
   if (runtime) return { ok: false, status: "not_installed", reason: runtime };
   if (isInstalled(home, scanner, recipe)) return installedResolution(home, scanner, recipe);
