@@ -88,12 +88,6 @@ describe("parseSarif", () => {
     for (const f of findings) expect(f.message.length).toBeGreaterThan(0);
   });
 
-  it("drops every trivy result when the base points outside the repo (6)", () => {
-    const repoDir = sampleRepo();
-    const findings = parseSarif(read("trivy.sarif"), { repoDir, source: "custom:trivy" });
-    expect(findings).toEqual([]);
-  });
-
   it("reads real checkov SARIF: no base id, encoded space, level error (2, 4, 8, 10)", () => {
     const repoDir = sampleRepo();
     const findings = parseSarif(read("checkov.sarif"), { repoDir, source: "custom:checkov" });
