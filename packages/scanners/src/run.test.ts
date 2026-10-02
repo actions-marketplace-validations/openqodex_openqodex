@@ -88,6 +88,9 @@ function repo(files: Record<string, string>): string {
 function config(over: Partial<Config> = {}): Config {
   return {
     blockOnSeverity: null,
+    severityThreshold: "info",
+    baseBranches: [],
+    graph: { enabled: true },
     exclude: [],
     disabledRules: [],
     includeFixtures: false,

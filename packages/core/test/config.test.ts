@@ -92,6 +92,9 @@ describe("loadConfig", () => {
     expect(warnings).toEqual([]);
     expect(config).toEqual({
       blockOnSeverity: "major",
+      severityThreshold: "info",
+      baseBranches: [],
+      graph: { enabled: true },
       exclude: ["vendor/**", "*.min.js"],
       disabledRules: ["gitleaks:generic-api-key", "lens:react-*"],
       includeFixtures: true,

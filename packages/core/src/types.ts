@@ -181,11 +181,41 @@ export type CustomScanner = {
 
 export type Config = {
   blockOnSeverity: Severity | null; // null: warn only
+  severityThreshold: Severity; // findings below this stay out of the report; default "info" (everything)
   exclude: string[];
   disabledRules: string[];
+  baseBranches: string[]; // branches the default scope may diff against when there is no upstream; empty: the remote's default branch
   includeFixtures: boolean;
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
+  graph: { enabled: boolean }; // the code graph in the brief; default true
+};
+
+// ---------- code graph, as the report and the brief see it ----------
+
+export type ImpactSite = { file: string; line: number };
+
+export type ImpactSymbol = {
+  file: string;
+  line: number;
+  name: string;
+  kind: string;
+};
+
+export type ImpactCaller = ImpactSymbol & {
+  hops: number;
+  confidence: "high" | "low";
+  sites: ImpactSite[]; // the lines in the caller that call the touched symbol
+};
+
+export type ImpactSummary = {
+  status: "ok" | "partial" | "off" | "skipped" | "failed";
+  reason: string | null; // one line when status is not "ok"
+  risk: "none" | "low" | "medium" | "high";
+  touched: ImpactSymbol[];
+  callers: ImpactCaller[];
+  callees: ImpactSymbol[];
+  importers: string[]; // files that import a changed file
 };
 
 export type LoadedConfig = {
@@ -267,6 +297,8 @@ export type Report = {
   // review only: candidates the agent dropped, with its reason
   dropped: { candidate: Candidate; reason: string }[];
   scanners: ScannerRunSummary[];
+  // The code graph's view of the change; null when the graph did not run.
+  impact: ImpactSummary | null;
   not_reviewed_paths: string[]; // Change.notReviewed
   stats: { files: number; additions: number; deletions: number };
 };

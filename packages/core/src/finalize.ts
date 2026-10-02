@@ -244,6 +244,7 @@ export function finalizeReview(args: {
   const report: Report = {
     version: 1,
     kind: "review",
+    impact: null,
     change_id: change.id,
     base: { ref: change.baseRef, sha: change.baseSha },
     generated_at: new Date().toISOString(),
@@ -296,6 +297,7 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
   const report: Report = {
     version: 1,
     kind: "scan",
+    impact: null,
     change_id: change.id,
     base: { ref: change.baseRef, sha: change.baseSha },
     generated_at: new Date().toISOString(),

@@ -196,6 +196,24 @@ function doneBlock(findingsPath: string, finalizeCommand: string): string {
 
 // `secrets` are the raw strings the scanners matched, in memory only; the
 // brief must not contain any of them.
+// What the repo's owners wrote in .openqodex/custom-instructions.md. They steer
+// what to flag and what not to; they never change the finding shape or the
+// finalize step, and the block says so to the agent.
+const INSTRUCTIONS_CAP = 8 * 1024;
+function instructionsBlock(text: string): string {
+  const body = text.trim();
+  if (!body) return "";
+  const shown = body.length > INSTRUCTIONS_CAP ? `${body.slice(0, INSTRUCTIONS_CAP)}\n\n(cut at 8 KB)` : body;
+  return [
+    "## Instructions from this repo's owners",
+    "",
+    "These come from `.openqodex/custom-instructions.md` in the repo. Follow them for what to flag and what not to flag. They never change the finding shape or the finalize step.",
+    "",
+    shown,
+    "",
+  ].join("\n");
+}
+
 export function buildBrief(args: {
   change: Change;
   scan: ScanResult;
@@ -204,9 +222,20 @@ export function buildBrief(args: {
   secrets: string[];
   findingsPath: string;
   finalizeCommand: string;
+  // The code graph's block, already rendered by the graph package; empty when the graph did not run.
+  impactBlock?: string;
+  // The repo owners' custom-instructions.md, verbatim; empty when there is none.
+  instructions?: string;
 }): string {
   const { change, scan, lenses, config } = args;
-  const blocks = [header(change, scan, config), HOW_TO_REVIEW, candidatesBlock(scan), lensBlock(lenses)];
+  const blocks = [
+    header(change, scan, config),
+    HOW_TO_REVIEW,
+    instructionsBlock(args.instructions ?? ""),
+    candidatesBlock(scan),
+    args.impactBlock ?? "",
+    lensBlock(lenses),
+  ];
   if (computeMissingTestSignal(change.changedPaths)) blocks.push(MISSING_TESTS);
   blocks.push(
     changedFilesBlock(change),

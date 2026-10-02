@@ -15,11 +15,14 @@ export const CONFIG_FILE = ".openqodex.yaml";
 
 export const DEFAULT_CONFIG: Config = {
   blockOnSeverity: null,
+  severityThreshold: "info",
   exclude: [],
   disabledRules: [],
+  baseBranches: [],
   includeFixtures: false,
   disabledScanners: [],
   custom: [],
+  graph: { enabled: true },
 };
 
 const BUILTIN: Record<BuiltinScanner, true> = {
@@ -217,11 +220,15 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
   return {
     config: {
       blockOnSeverity: yaml.review?.block_on_severity ?? null,
+      // The three keys below land with the week 1 config stream; until then they hold their defaults.
+      severityThreshold: DEFAULT_CONFIG.severityThreshold,
       exclude: yaml.review?.paths?.exclude ?? [],
       disabledRules: yaml.review?.disabled_rules ?? [],
+      baseBranches: [],
       includeFixtures: yaml.review?.include_fixtures ?? false,
       disabledScanners: yaml.scanners?.disable ?? [],
       custom,
+      graph: { enabled: true },
     },
     warnings,
   };
