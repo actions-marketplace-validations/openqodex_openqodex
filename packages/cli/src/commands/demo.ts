@@ -62,7 +62,16 @@ async function git(dir: string, args: string[]): Promise<void> {
 }
 
 export async function run(args: string[]): Promise<number> {
-  const { global, positionals } = parseFlags(args, { positionals: 1 });
+  const { global, positionals } = parseFlags(args, {
+    positionals: 1,
+    globals: ["--no-color", "--quiet", "--verbose", "--no-install", "--offline"],
+  });
+  // An inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and the like would
+  // send the demo's commit and its scan into another repository. The demo
+  // repo is the only one this command touches.
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith("GIT_")) delete process.env[key];
+  }
   const source = assetPath("demo");
   const dir = targetDir(positionals[0]);
 
@@ -81,9 +90,16 @@ export async function run(args: string[]): Promise<number> {
   }
 
   warn(`Demo repo built in ${dir}`);
-  await runScan({ flags: { ...global, cwd: dir, config: undefined }, scope: {} });
+  const outcome = await runScan({ flags: { ...global, cwd: dir }, scope: {} });
   warn("");
   warn(`The demo repo is in ${dir}`);
+  const installing = outcome.report?.scanners.filter((s) => s.status === "installing").length ?? 0;
+  if (installing > 0) {
+    warn(
+      `${installing} scanner${installing === 1 ? " is" : "s are"} still installing; ` +
+        "run `npx openqodex scan` here again in a minute to include them.",
+    );
+  }
   warn("For the AI review, open this folder in your coding agent and say: review my change with openqodex");
   warn("To install OpenQodex into your coding agent: npx openqodex init");
   return EXIT_OK;

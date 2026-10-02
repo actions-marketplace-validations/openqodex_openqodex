@@ -27,8 +27,37 @@
 //    installed package or another folder; an unknown topic exits 0.
 // 10. demo writes into a non-empty folder, commits the planted change,
 //     ships a fixed secret, or needs the user's git identity.
+// Added after the review round:
+// 11. finalize with a path picks a newer run of the same change instead of
+//     the run whose folder holds the findings file.
+// 12. finalize follows a traversal in latest.json or a symbolic link and
+//     reads or writes outside the repo's .openqodex/reviews/.
+// 13. scan leaves a copy of the diff (change.diff) in the report folder.
+// 14. a matched secret that also sits in another stored string (a file
+//     name) is written to scan.json or candidates.json.
+// 15. the hidden install worker takes any name, so a path like ../../x
+//     reaches the home folder, and a worker failure exits 1.
+// 16. demo's commit lands in the repo an inherited GIT_DIR points to.
+// 17. --output writes through a symbolic link and truncates its target.
+// 18. doctor --install installs while --offline or --no-install is given.
+// 19. doctor exits 0 for a --config or --cwd that does not exist.
+// 20. --only constructor or --only=, selects nothing and passes.
+// 21. the finalize command in the brief drops --cwd or --config, or breaks
+//     on a path with a space or a quote.
+// 22. demo accepts a flag it ignores, such as --config.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -208,14 +237,84 @@ describe("review --agent and --finalize", () => {
     expect(status(repo)).toBe(before);
   });
 
-  it("a findings file outside the report folder cannot find its run", () => {
+  it("finalize with a path picks a newer run of the same change instead of the path's own run", () => {
+    const repo = repoWithChange();
+    const a = brief(repo);
+    const b = brief(repo);
+    expect(b.dir).not.toBe(a.dir);
+    submit(a.dir, a.changeId, []);
+    const r = cli(["review", "--finalize", join(a.dir, "agent-findings.json")], repo);
+    expect(r.code).toBe(0);
+    expect(existsSync(join(a.dir, "report.json"))).toBe(true);
+    expect(existsSync(join(b.dir, "report.json"))).toBe(false);
+  });
+
+  it("a findings file outside a report folder is accepted", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
     const elsewhere = join(temp("findings"), "findings.json");
     writeFileSync(elsewhere, JSON.stringify({ version: 1, change_id: changeId, summary: "ok", findings: [] }));
     const r = cli(["review", "--finalize", elsewhere], repo);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("not in a report folder");
+    expect(existsSync(join(dir, "report.json"))).toBe(false);
+  });
+
+  it("finalize follows a traversal in latest.json or a symbolic link out of the repo", () => {
+    const repo = repoWithChange();
+    const { dir, changeId } = brief(repo);
+    submit(dir, changeId, []);
+    const outside = join(temp("outside"), "run");
+    cpSync(dir, outside, { recursive: true });
+
+    // latest.json pointing out of the repo
+    const latestPath = join(repo, ".openqodex", "latest.json");
+    const latest = JSON.parse(readFileSync(latestPath, "utf8")) as Record<string, unknown>;
+    writeFileSync(latestPath, JSON.stringify({ ...latest, dir: `../../../../../../../..${outside}` }));
+    let r = cli(["review", "--finalize"], repo);
+    expect(r.code).toBe(2);
+    expect(existsSync(join(outside, "report.json"))).toBe(false);
+    writeFileSync(latestPath, JSON.stringify(latest));
+
+    // the run folder replaced by a link to a folder outside the repo
+    renameSync(dir, `${dir}-moved`);
+    symlinkSync(outside, dir);
+    r = cli(["review", "--finalize"], repo);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("symbolic link");
+    expect(existsSync(join(outside, "report.json"))).toBe(false);
+  });
+
+  it("a symbolic link as the findings file is read", () => {
+    const repo = repoWithChange();
+    const { dir, changeId } = brief(repo);
+    const real = join(temp("real"), "f.json");
+    writeFileSync(real, JSON.stringify({ version: 1, change_id: changeId, summary: "ok", findings: [] }));
+    symlinkSync(real, join(dir, "agent-findings.json"));
+    const r = cli(["review", "--finalize"], repo);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("symbolic link");
+  });
+
+  it("the finalize command in the brief drops --cwd or --config, or breaks on a quote in a path", () => {
+    const repo = repoWithChange();
+    const cfgDir = join(temp("cfg"), "it's here");
+    mkdirSync(cfgDir);
+    const cfg = join(cfgDir, "policy.yaml");
+    writeFileSync(cfg, "version: 1\nreview:\n  block_on_severity: critical\n");
+    const r = cli(["review", "--agent", "--no-install", "--config", cfg], repo);
     expect(r.code).toBe(0);
-    expect(existsSync(join(dir, "report.json"))).toBe(true);
+    const command = /`(npx -y openqodex@\S+ review --finalize [^`]+)`/.exec(r.stdout)?.[1];
+    expect(command).toBeDefined();
+    const dir = latestDir(repo);
+    const changeId = (JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { change_id: string }).change_id;
+    submit(dir, changeId, [finding({ severity: "critical" })]);
+    // Run it the way an agent would, through a shell, from another folder,
+    // with the built CLI in place of npx.
+    const line = (command as string).replace(/^npx -y openqodex@\S+/, `"${process.execPath}" "${BIN}"`);
+    const run = spawnSync("sh", ["-c", line], { cwd: temp("other"), encoding: "utf8", env: cliEnv({}) });
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(1);
   });
 
   it("a wrong change id, invalid JSON or a schema error still writes a report", () => {
@@ -293,10 +392,70 @@ describe("scan", () => {
     expect(r.code).toBe(0);
     expect((JSON.parse(r.stdout) as { kind: string }).kind).toBe("scan");
     const dir = latestDir(repo);
-    for (const f of ["scan.json", "change.diff", "report.md", "report.json", "report.sarif"]) {
+    for (const f of ["scan.json", "report.md", "report.json", "report.sarif"]) {
       expect(existsSync(join(dir, f)), f).toBe(true);
     }
     expect(status(repo)).toBe(before);
+  });
+
+  it("scan leaves a copy of the diff in the report folder", () => {
+    const repo = repoWithChange();
+    expect(cli(["scan", "--no-install"], repo).code).toBe(0);
+    expect(existsSync(join(latestDir(repo), "change.diff"))).toBe(false);
+  });
+
+  it("--output writes through a symbolic link and truncates its target", () => {
+    const repo = repoWithChange();
+    const victim = join(temp("victim"), "package.json");
+    writeFileSync(victim, "keep me");
+    const out = join(temp("out"), "report.json");
+    symlinkSync(victim, out);
+    const r = cli(["scan", "--no-install", "--format", "json", "--output", out], repo);
+    expect(r.code).toBe(0);
+    expect(readFileSync(victim, "utf8")).toBe("keep me");
+    expect(lstatSync(out).isSymbolicLink()).toBe(false);
+    expect((JSON.parse(readFileSync(out, "utf8")) as { kind: string }).kind).toBe("scan");
+  });
+
+  it("--only with a prototype name or an empty list selects nothing and passes", () => {
+    const repo = repoWithChange();
+    for (const args of [["--only", "constructor"], ["--only=,"], ["--skip", "toString"]]) {
+      const r = cli(["scan", "--no-install", ...args], repo);
+      expect(r.code, args.join(" ")).toBe(2);
+    }
+  });
+});
+
+describe("install worker", () => {
+  it("the hidden install worker takes any name and a failure exits 1", () => {
+    const h = temp("whome");
+    for (const name of ["../../victim", "constructor", "sqllint"]) {
+      const r = cli(["__install", name], tmpdir(), { OPENQODEX_HOME: h });
+      expect(r.code, name).toBe(2);
+    }
+    expect(readdirSync(h)).toEqual([]);
+  });
+});
+
+describe("doctor", () => {
+  it("doctor --install installs while --offline or --no-install is given", () => {
+    for (const flag of ["--offline", "--no-install"]) {
+      const h = temp("dhome");
+      const r = cli(["doctor", "--install", flag], tmpdir(), { OPENQODEX_HOME: h });
+      expect(r.code, flag).toBe(2);
+      expect(r.stderr.trim().split("\n")).toHaveLength(1);
+      expect(readdirSync(h)).toEqual([]);
+    }
+  });
+
+  it("doctor exits 0 for a --config or --cwd that does not exist", () => {
+    const repo = repoWithChange();
+    let r = cli(["doctor", "--config", join(repo, "missing.yaml")], repo);
+    expect(r.code).toBe(2);
+    expect(r.stdout).toContain("config file not found");
+    r = cli(["doctor", "--cwd", join(repo, "no-such-folder")], repo);
+    expect(r.code).toBe(2);
+    expect(r.stdout).toContain("Scanners");
   });
 });
 
@@ -354,6 +513,27 @@ describe("demo", () => {
       keys.push(key as string);
     }
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("demo's commit lands in the repo an inherited GIT_DIR points to", () => {
+    const other = repoWithChange();
+    const head = git(other, ["rev-parse", "HEAD"]);
+    const dir = join(temp("demo"), "repo");
+    const r = cli(["demo", dir, "--no-install"], tmpdir(), {
+      GIT_DIR: join(other, ".git"),
+      GIT_WORK_TREE: other,
+      GIT_INDEX_FILE: join(other, ".git", "index"),
+    });
+    expect(r.code).toBe(0);
+    expect(git(other, ["rev-parse", "HEAD"])).toBe(head);
+    expect(git(dir, ["log", "--format=%s"]).trim()).toBe("Demo baseline");
+  });
+
+  it("demo accepts a flag it ignores", () => {
+    for (const args of [["--config", "/tmp/x.yaml"], ["--format", "json"], ["--cwd", "/tmp"]]) {
+      const r = cli(["demo", join(temp("demo"), "repo"), ...args], tmpdir());
+      expect(r.code, args.join(" ")).toBe(2);
+    }
   });
 
   it("demo writes into a folder that is not empty", () => {

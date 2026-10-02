@@ -1,7 +1,7 @@
 // `openqodex scan`: the scanners only, on the current change. Used by the
 // git hook, the Action and pre-commit, and by `review` without --agent.
 import { relative } from "node:path";
-import { openReportDir, redactSecrets, scanReport, writeLatest, writeReportFiles, writeScan } from "@openqodex/core";
+import { openReportDir, scanReport, writeLatest, writeReportFiles, writeScan } from "@openqodex/core";
 import type { ChangeScope, Report } from "@openqodex/core";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
@@ -38,10 +38,7 @@ export async function runScan(args: {
   const report = scanReport({ change: p.change, scan: p.scan, config: p.config });
   const dir = openReportDir(p.repoRoot, p.change.shortId);
   writeScan(dir, p.scan);
-  writeReportFiles(dir, {
-    "change.diff": redactSecrets(p.change.diff, p.secrets),
-    ...reportFiles(report),
-  });
+  writeReportFiles(dir, reportFiles(report));
   writeLatest(p.repoRoot, {
     dir: relative(p.repoRoot, dir),
     change_id: p.change.id,

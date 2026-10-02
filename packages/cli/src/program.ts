@@ -56,8 +56,16 @@ export async function main(argv: string[]): Promise<void> {
   program
     .command("__install <tool>", { hidden: true })
     .action(async (tool: string) => {
-      const { runInstallWorker } = await import("@openqodex/scanners");
-      process.exitCode = await runInstallWorker(tool);
+      const { ADAPTERS, IN_PROCESS, runInstallWorker } = await import("@openqodex/scanners");
+      // Only a name from the toolchain reaches the worker: the name becomes a
+      // folder under the home folder.
+      const known = new Set<string>(["uv", ...ADAPTERS.map((a) => a.source).filter((s) => !IN_PROCESS.has(s))]);
+      if (!known.has(tool)) {
+        process.stderr.write(`openqodex: unknown tool: ${tool}\n`);
+        process.exitCode = EXIT_TOOL_FAILED;
+        return;
+      }
+      process.exitCode = (await runInstallWorker(tool)) === 0 ? 0 : EXIT_TOOL_FAILED;
     });
 
   try {

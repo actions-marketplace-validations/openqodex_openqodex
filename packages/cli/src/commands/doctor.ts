@@ -3,7 +3,8 @@
 // --install is given, and then waits for every install.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { findRepoRoot, loadConfig } from "@openqodex/core";
+import { statSync } from "node:fs";
+import { OpenQodexError, findRepoRoot, loadConfig } from "@openqodex/core";
 import type { ToolStatus } from "@openqodex/core";
 import { installTools, openqodexHome, toolStatuses, trustState } from "@openqodex/scanners";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
@@ -65,17 +66,27 @@ function text(r: Report): string {
 }
 
 export async function run(args: string[]): Promise<number> {
-  const { global, bools } = parseFlags(args, { bools: ["--install", "--json"] });
+  const { global, bools, values } = parseFlags(args, { bools: ["--install", "--json"] });
+  if (bools.has("--install") && global.noInstall) {
+    throw new OpenQodexError("--install cannot be used with --offline or --no-install");
+  }
   const git = await gitVersion();
 
+  // A folder or config the developer named that does not work is an input
+  // error: the table is still printed, and the exit code is 2.
+  let inputError = false;
   let repo: string | null = null;
-  try {
-    repo = await findRepoRoot(global.cwd);
-  } catch {
-    // not in a repository is fine for doctor
+  if (values.has("--cwd") && !statSync(global.cwd, { throwIfNoEntry: false })?.isDirectory()) {
+    inputError = true;
+  } else {
+    try {
+      repo = await findRepoRoot(global.cwd);
+    } catch {
+      // not in a repository is fine for doctor
+    }
   }
 
-  let configLine = "no repository, defaults in use";
+  let configLine = inputError ? `folder not found: ${global.cwd}` : "no repository, defaults in use";
   const custom: Report["custom"] = [];
   if (repo !== null) {
     try {
@@ -94,6 +105,7 @@ export async function run(args: string[]): Promise<number> {
       }
     } catch (error) {
       configLine = (error as Error).message;
+      inputError = true;
     }
   }
 
@@ -108,5 +120,5 @@ export async function run(args: string[]): Promise<number> {
     home: openqodexHome(),
   };
   process.stdout.write(bools.has("--json") ? `${JSON.stringify(report, null, 2)}\n` : text(report));
-  return git === null ? EXIT_TOOL_FAILED : EXIT_OK;
+  return git === null || inputError ? EXIT_TOOL_FAILED : EXIT_OK;
 }

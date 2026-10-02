@@ -2,19 +2,19 @@
 //   --agent            scan, then write the brief for the host agent and print it
 //   --finalize [path]  check the agent's findings without a model and write the report
 //   neither            the same as `scan`, plus how to get the AI review
-import { existsSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   OpenQodexError,
   buildBrief,
   configHash,
   finalizeReview,
-  findReportDir,
   getChange,
   openReportDir,
   readLatest,
   readManifest,
   readScan,
+  STATE_DIR,
   selectLenses,
   writeLatest,
   writeManifest,
@@ -56,6 +56,20 @@ export async function run(args: string[]): Promise<number> {
   return outcome.exitCode;
 }
 
+// Quoted for a POSIX shell: the agent pastes this line as it is.
+function shellQuote(arg: string): string {
+  return /^[A-Za-z0-9_./:@=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+// The exact command that finalizes this run, from any folder: the repo and an
+// explicit config are named so the config hash and the change match.
+function finalizeCommand(repoRoot: string, config: string | undefined, findingsPath: string): string {
+  const args = ["npx", "-y", `openqodex@${__OPENQODEX_VERSION__}`, "review", "--finalize", "--cwd", repoRoot];
+  if (config !== undefined) args.push("--config", isAbsolute(config) ? config : resolve(repoRoot, config));
+  args.push(findingsPath);
+  return args.map(shellQuote).join(" ");
+}
+
 async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, skip?: string): Promise<number> {
   const p = await runPipeline({
     scope,
@@ -82,7 +96,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, s
     config: p.config,
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
-    finalizeCommand: `npx -y openqodex@${__OPENQODEX_VERSION__} review --finalize`,
+    finalizeCommand: finalizeCommand(p.repoRoot, flags.config, join(dir, FINDINGS_FILE)),
   });
   const runFile: RunFile = { version: 1, scope };
   writeReportFiles(dir, {
@@ -115,29 +129,60 @@ function readJsonFile(path: string, what: string): unknown {
   }
 }
 
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+// The run folder must be a real folder directly under this repo's
+// .openqodex/reviews/, reached through no symbolic link, and the findings
+// file must not be a link either: finalize reads and writes only there.
+function checkRunDir(repoRoot: string, dir: string, findingsPath: string): void {
+  const state = join(repoRoot, STATE_DIR);
+  const reviews = join(state, "reviews");
+  const outside = new OpenQodexError(
+    `${findingsPath} is not in a report folder under ${reviews}; write the findings where the brief says`,
+  );
+  if (isLink(state) || isLink(reviews) || isLink(dir) || isLink(findingsPath)) {
+    throw new OpenQodexError(`a symbolic link in ${findingsPath}; openqodex reads and writes only real files there`);
+  }
+  let parent: string;
+  let root: string;
+  try {
+    parent = realpathSync(dirname(dir));
+    root = realpathSync(reviews);
+  } catch {
+    throw outside;
+  }
+  if (parent !== root || !lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw outside;
+}
+
 // The report folder this submission belongs to: the newest run when no path
-// is given, else the newest run for the change id the submission names.
-function findRun(repoRoot: string, path: string | undefined): { dir: string; findingsPath: string; submission: unknown } {
+// is given, else the folder that holds the findings file.
+function findRun(repoRoot: string, path: string | undefined): { dir: string; submission: unknown } {
+  let dir: string;
+  let findingsPath: string;
   if (path === undefined) {
     const latest = readLatest(repoRoot);
-    if (latest === null) throw new OpenQodexError(`no review brief found in this repository; ${RUN_AGAIN}`);
-    const dir = join(repoRoot, latest.dir);
-    const findingsPath = join(dir, FINDINGS_FILE);
+    if (latest === null || typeof latest.dir !== "string") {
+      throw new OpenQodexError(`no review brief found in this repository; ${RUN_AGAIN}`);
+    }
+    dir = resolve(repoRoot, latest.dir);
+    findingsPath = join(dir, FINDINGS_FILE);
+    checkRunDir(repoRoot, dir, findingsPath);
     if (readManifest(dir) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
     if (!existsSync(findingsPath)) {
       throw new OpenQodexError(`no agent findings at ${findingsPath}; write them there as the brief says, then run this again`);
     }
-    return { dir, findingsPath, submission: readJsonFile(findingsPath, "agent findings") };
+  } else {
+    findingsPath = resolve(path);
+    dir = dirname(findingsPath);
+    checkRunDir(repoRoot, dir, findingsPath);
   }
-  const findingsPath = resolve(path);
-  const submission = readJsonFile(findingsPath, "agent findings");
-  const changeId = (submission as { change_id?: unknown } | null)?.change_id;
-  if (typeof changeId !== "string" || changeId === "") {
-    throw new OpenQodexError("agent findings are invalid at change_id: expected the change id from the brief");
-  }
-  const dir = findReportDir(repoRoot, changeId);
-  if (dir === null) throw new OpenQodexError(`no review brief for change ${changeId.slice(0, 12)}; ${RUN_AGAIN}`);
-  return { dir, findingsPath, submission };
+  return { dir, submission: readJsonFile(findingsPath, "agent findings") };
 }
 
 async function runFinalize(flags: GlobalFlags, path: string | undefined): Promise<number> {

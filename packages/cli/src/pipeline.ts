@@ -1,11 +1,13 @@
 // The scan pipeline every command shares: find the repo, load the config,
 // work out the change, run the scanners on it. Progress goes to stderr.
-import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   findRepoRoot,
   getChange,
   loadConfig,
+  redactSecrets,
   renderJson,
   renderMarkdown,
   renderSarif,
@@ -72,7 +74,23 @@ export async function runPipeline(args: {
     skip: args.skip,
     onProgress,
   });
-  return { repoRoot, config, change, scan, secrets };
+  return { repoRoot, config, change, scan: redactStored(scan, secrets), secrets };
+}
+
+// Every string in the scan passes through the secret redaction before it is
+// kept or written: the runner redacts messages, but a matched secret can sit
+// in any other string too (a file name). Candidate ids and tokens are the
+// citations finalize matches on and are kept as they are.
+export function redactStored<T>(value: T, secrets: string[]): T {
+  const walk = (v: unknown, key: string | null): unknown => {
+    if (typeof v === "string") return key === "id" || key === "token" ? v : redactSecrets(v, secrets);
+    if (Array.isArray(v)) return v.map((x) => walk(x, null));
+    if (v !== null && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
+    }
+    return v;
+  };
+  return secrets.length === 0 ? value : (walk(value, null) as T);
 }
 
 export function nothingToReview(change: Change): number {
@@ -100,7 +118,16 @@ export function emitReport(report: Report, flags: GlobalFlags): void {
           ? renderSarif(report)
           : renderTerminal(report, { color: flags.color && flags.output === undefined });
   if (flags.output !== undefined) {
-    writeFileSync(resolve(flags.output), text);
+    // A temp file beside it, then a rename: an existing entry, a symbolic
+    // link included, is replaced and never written through.
+    const out = resolve(flags.output);
+    const tmp = join(dirname(out), `.${basename(out)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
+    try {
+      writeFileSync(tmp, text, { flag: "wx" });
+      renameSync(tmp, out);
+    } finally {
+      rmSync(tmp, { force: true });
+    }
   } else {
     process.stdout.write(text);
   }

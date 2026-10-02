@@ -33,10 +33,12 @@ const GLOBAL_BOOLS = ["--no-color", "--quiet", "--verbose", "--no-install", "--o
 
 export function parseFlags(
   args: string[],
-  spec: { bools?: string[]; values?: string[]; positionals?: number },
+  // `globals`: the global flags this command uses; default all of them.
+  spec: { bools?: string[]; values?: string[]; positionals?: number; globals?: string[] },
 ): Parsed {
-  const boolNames = new Set([...GLOBAL_BOOLS, ...(spec.bools ?? [])]);
-  const valueNames = new Set([...GLOBAL_VALUES, ...(spec.values ?? [])]);
+  const used = (name: string) => spec.globals === undefined || spec.globals.includes(name);
+  const boolNames = new Set([...GLOBAL_BOOLS.filter(used), ...(spec.bools ?? [])]);
+  const valueNames = new Set([...GLOBAL_VALUES.filter(used), ...(spec.values ?? [])]);
   const bools = new Set<string>();
   const values = new Map<string, string>();
   const positionals: string[] = [];
@@ -116,8 +118,9 @@ const BUILTINS: Record<BuiltinScanner, true> = {
 export function scannerList(flag: string, value: string | undefined): ScannerSource[] | undefined {
   if (value === undefined) return undefined;
   const names = value.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (names.length === 0) throw new OpenQodexError(`${flag} needs at least one scanner name`);
   for (const name of names) {
-    if (!(name in BUILTINS) && !/^custom:.+/.test(name)) {
+    if (!Object.hasOwn(BUILTINS, name) && !/^custom:.+/.test(name)) {
       throw new OpenQodexError(`${flag}: unknown scanner ${name} (builtins: ${Object.keys(BUILTINS).join(", ")})`);
     }
   }
