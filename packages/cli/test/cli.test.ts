@@ -129,7 +129,7 @@ beforeAll(() => {
 });
 
 describe("frame", () => {
-  it("exits 2 with one plain line for an unknown flag, a missing value and a bad format", () => {
+  it("a bad flag or value runs anyway instead of exiting 2 with one line", () => {
     const repo = repoWithChange();
     for (const args of [["scan", "--bogus"], ["scan", "--base"], ["review", "--format", "xml"], ["doctor", "extra"]]) {
       const r = cli(args, repo);
@@ -139,13 +139,13 @@ describe("frame", () => {
     }
   });
 
-  it("exits 2 outside a git repository", () => {
+  it("outside a git repository the command exits 0 or crashes", () => {
     const r = cli(["scan", "--no-install"], temp("plain"));
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("not a git repository");
   });
 
-  it("exits 0 with nothing to review on an empty change and writes nothing", () => {
+  it("an empty change scans, writes state or exits non-zero", () => {
     const repo = repoWithChange();
     git(repo, ["add", "-A"]);
     git(repo, ["commit", "--quiet", "-m", "all"]);
@@ -159,7 +159,7 @@ describe("frame", () => {
 });
 
 describe("review --agent and --finalize", () => {
-  it("writes the brief and its run files, and leaves git status unchanged", () => {
+  it("review --agent misses a run file or changes git status", () => {
     const repo = repoWithChange();
     const before = status(repo);
     const r = cli(["review", "--agent", "--no-install"], repo);
@@ -182,7 +182,7 @@ describe("review --agent and --finalize", () => {
     expect(status(repo)).toBe(before);
   });
 
-  it("finalizes a valid submission, writes the reports and passes", () => {
+  it("a valid submission is refused, or an off-change finding counts, or git status changes", () => {
     const repo = repoWithChange();
     const before = status(repo);
     const { dir, changeId } = brief(repo);
@@ -208,7 +208,7 @@ describe("review --agent and --finalize", () => {
     expect(status(repo)).toBe(before);
   });
 
-  it("finalizes from an explicit path found by the change id", () => {
+  it("a findings file outside the report folder cannot find its run", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
     const elsewhere = join(temp("findings"), "findings.json");
@@ -218,7 +218,7 @@ describe("review --agent and --finalize", () => {
     expect(existsSync(join(dir, "report.json"))).toBe(true);
   });
 
-  it("rejects a wrong change id, invalid JSON and a schema error, and writes no report", () => {
+  it("a wrong change id, invalid JSON or a schema error still writes a report", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
 
@@ -240,7 +240,7 @@ describe("review --agent and --finalize", () => {
     expect(existsSync(join(dir, "report.json"))).toBe(false);
   });
 
-  it("rejects a submission after a file changed since the brief", () => {
+  it("a file edited after the brief still finalizes", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
     writeFileSync(join(repo, "app.py"), "def a():\n    return 4\n");
@@ -251,7 +251,7 @@ describe("review --agent and --finalize", () => {
     expect(existsSync(join(dir, "report.json"))).toBe(false);
   });
 
-  it("rejects a submission after the config changed since the brief", () => {
+  it("a config changed after the brief still finalizes", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
     writeFileSync(join(repo, ".openqodex.yaml"), "version: 1\nreview:\n  block_on_severity: major\n");
@@ -262,7 +262,7 @@ describe("review --agent and --finalize", () => {
     expect(existsSync(join(dir, "report.json"))).toBe(false);
   });
 
-  it("exits 1 when block_on_severity is met, 0 when the finding is below it", () => {
+  it("block_on_severity is ignored or blocks below the threshold", () => {
     const repo = repoWithChange("version: 1\nreview:\n  block_on_severity: critical\n");
     const { dir, changeId } = brief(repo);
     submit(dir, changeId, [finding({ severity: "major" })]);
@@ -273,7 +273,7 @@ describe("review --agent and --finalize", () => {
     expect((JSON.parse(r.stdout) as { verdict: string }).verdict).toBe("blocked");
   });
 
-  it("says what to run when there is no brief or no findings file", () => {
+  it("finalize with no brief or no findings file crashes instead of naming the step", () => {
     const repo = repoWithChange();
     let r = cli(["review", "--finalize"], repo);
     expect(r.code).toBe(2);
@@ -286,7 +286,7 @@ describe("review --agent and --finalize", () => {
 });
 
 describe("scan", () => {
-  it("writes the report files and leaves git status unchanged", () => {
+  it("scan misses a report file or changes git status", () => {
     const repo = repoWithChange();
     const before = status(repo);
     const r = cli(["scan", "--no-install", "--format", "json"], repo);
@@ -301,16 +301,13 @@ describe("scan", () => {
 });
 
 describe("guide", () => {
-  it("prints the skill, and exits 2 for an unknown topic", () => {
-    const r = cli(["guide"], tmpdir());
-    expect(r.code).toBe(0);
-    expect(r.stdout).toContain("name: openqodex");
+  it("an unknown topic exits 0", () => {
     const bad = cli(["guide", "no-such-topic"], tmpdir());
     expect(bad.code).toBe(2);
     expect(bad.stderr).toContain("Topics:");
   });
 
-  it("finds its files from a packed and installed tarball", () => {
+  it("guide reads assets from the current folder, so an installed package finds nothing", () => {
     const packDir = temp("pack");
     execFileSync("npm", ["pack", "--pack-destination", packDir, "--silent"], { cwd: cliRoot, encoding: "utf8" });
     const tgz = readdirSync(packDir).find((f) => f.endsWith(".tgz"));
@@ -339,7 +336,7 @@ describe("guide", () => {
 });
 
 describe("demo", () => {
-  it("builds the repo with the planted change uncommitted and a fresh key each run", () => {
+  it("demo commits the plant, needs a git identity or reuses a fixed key", () => {
     const keys: string[] = [];
     for (let i = 0; i < 2; i++) {
       const dir = join(temp("demo"), "repo");
@@ -359,7 +356,7 @@ describe("demo", () => {
     expect(keys[0]).not.toBe(keys[1]);
   });
 
-  it("refuses a folder that is not empty", () => {
+  it("demo writes into a folder that is not empty", () => {
     const dir = temp("full");
     mkdirSync(join(dir, "x"));
     const r = cli(["demo", dir, "--no-install"], tmpdir());

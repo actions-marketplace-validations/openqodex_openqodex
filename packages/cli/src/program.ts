@@ -51,6 +51,15 @@ export async function main(argv: string[]): Promise<void> {
       });
   }
 
+  // Hidden: one scanner install, run as a detached process by the toolchain
+  // so it keeps going after the command that started it exits.
+  program
+    .command("__install <tool>", { hidden: true })
+    .action(async (tool: string) => {
+      const { runInstallWorker } = await import("@openqodex/scanners");
+      process.exitCode = await runInstallWorker(tool);
+    });
+
   try {
     await program.parseAsync(argv);
   } catch (error) {

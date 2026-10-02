@@ -67,7 +67,7 @@ export async function runPipeline(args: {
       installBudgetMs: INSTALL_BUDGET_MS,
       onProgress,
     }),
-    custom: customAdapters(repoRoot, config),
+    custom: config.custom.length > 0 ? customAdapters(repoRoot, config) : [],
     only: args.only,
     skip: args.skip,
     onProgress,

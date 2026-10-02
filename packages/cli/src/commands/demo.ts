@@ -81,7 +81,7 @@ export async function run(args: string[]): Promise<number> {
   }
 
   warn(`Demo repo built in ${dir}`);
-  await runScan({ flags: { ...global, cwd: dir, config: undefined }, scope: { uncommitted: true } });
+  await runScan({ flags: { ...global, cwd: dir, config: undefined }, scope: {} });
   warn("");
   warn(`The demo repo is in ${dir}`);
   warn("For the AI review, open this folder in your coding agent and say: review my change with openqodex");
