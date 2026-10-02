@@ -1,0 +1,9 @@
+{
+  "name": "demo-shop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Front-end helpers for the demo shop.",
+  "dependencies": {
+    "lodash": "4.17.15"
+  }
+}

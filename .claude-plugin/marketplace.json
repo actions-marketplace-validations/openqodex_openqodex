@@ -1,0 +1,14 @@
+{
+  "name": "openqodex",
+  "owner": { "name": "Qodex" },
+  "metadata": {
+    "description": "OpenQodex: open source code review that runs inside your coding agent before you push."
+  },
+  "plugins": [
+    {
+      "name": "openqodex",
+      "source": "./plugins/claude-code",
+      "description": "Code review before you push, run by Claude Code on its own model."
+    }
+  ]
+}

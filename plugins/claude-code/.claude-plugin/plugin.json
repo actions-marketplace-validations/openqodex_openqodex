@@ -1,0 +1,10 @@
+{
+  "name": "openqodex",
+  "version": "0.1.0",
+  "description": "Code review before you push: the scanners that fit your change, any scanner by link, and a review by Claude itself. No key, no account.",
+  "author": { "name": "Qodex", "url": "https://qodex.ai" },
+  "homepage": "https://openqodex.com",
+  "repository": "https://github.com/openqodex/openqodex",
+  "license": "Apache-2.0",
+  "keywords": ["code-review", "security", "pre-push", "static-analysis"]
+}
