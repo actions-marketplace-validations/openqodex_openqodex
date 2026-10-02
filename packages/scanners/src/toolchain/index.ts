@@ -65,8 +65,15 @@ export function installWorkerArgv(tool: string): string[] {
   return [workerEntry(), INSTALL_WORKER_COMMAND, tool];
 }
 
+// The worker runs in another folder, so it gets this process's absolute home:
+// a relative OPENQODEX_HOME would otherwise name a different place there.
 function startWorker(tool: string) {
-  return spawn(process.execPath, installWorkerArgv(tool), { cwd: homedir(), detached: true, stdio: "ignore" });
+  return spawn(process.execPath, installWorkerArgv(tool), {
+    cwd: homedir(),
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, OPENQODEX_HOME: openqodexHome() },
+  });
 }
 
 const STILL_INSTALLING: ToolResolution = {
@@ -75,7 +82,9 @@ const STILL_INSTALLING: ToolResolution = {
   reason: "first run only, still installing; it will be included next run",
 };
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const remaining = (deadline: number) => Math.max(0, deadline - Date.now());
+const TIMED_OUT = Symbol("timed out");
 
 async function installedResolution(home: string, tool: string, recipe: Recipe): Promise<ToolResolution> {
   return { ok: true, tool: await resolvedTool(home, tool, recipe) };
@@ -118,7 +127,11 @@ async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promi
   const recipe = table.tools[scanner];
   if (!recipe) return { ok: false, status: "failed", reason: "runs inside openqodex, no tool to resolve" };
   const home = openqodexHome();
-  const runtime = await missingRuntime(recipe);
+  // The probe is shared and may finish in the background; this caller waits
+  // for it only as long as its budget allows.
+  const probe = missingRuntime(recipe);
+  const runtime = deadline === null ? await probe : await Promise.race([probe, sleep(remaining(deadline)).then((): typeof TIMED_OUT => TIMED_OUT)]);
+  if (runtime === TIMED_OUT) return { ok: false, status: "not_installed", reason: "still checking for the runtime; it will be included next run" };
   if (runtime) return { ok: false, status: "not_installed", reason: runtime };
   if (isInstalled(home, scanner, recipe)) return installedResolution(home, scanner, recipe);
   const unsupported = unsupportedReason(table, recipe);
@@ -134,7 +147,7 @@ async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promi
   if (isLocked(home, scanner)) {
     while (isLocked(home, scanner)) {
       if (deadline !== null && Date.now() >= deadline) return STILL_INSTALLING;
-      await sleep(250);
+      await sleep(deadline === null ? 250 : Math.min(250, remaining(deadline)));
     }
     if (isInstalled(home, scanner, recipe)) return installedResolution(home, scanner, recipe);
     if (lastInstallError(home, scanner)) return failedResolution(home, scanner);
