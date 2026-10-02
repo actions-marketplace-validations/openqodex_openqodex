@@ -21,7 +21,9 @@ type RecipeBase = { version: string; binary: string; needs?: string };
 export type Recipe =
   | (RecipeBase & { method: "github-release"; repo: string; tag: string; assets: Partial<Record<Platform, ReleaseAsset | null>> })
   | (RecipeBase & { method: "npm"; package: string })
-  | (RecipeBase & { method: "uv"; package: string; python: string })
+  // `with`: extra packages pinned beside the tool, for a dependency the tool
+  // itself leaves unpinned (semgrep needs a setuptools that still ships pkg_resources).
+  | (RecipeBase & { method: "uv"; package: string; python: string; with?: string[] })
   | (RecipeBase & { method: "gem"; gems: string[] });
 
 export type Toolchain = { schema: 1; tools: Record<string, Recipe> };

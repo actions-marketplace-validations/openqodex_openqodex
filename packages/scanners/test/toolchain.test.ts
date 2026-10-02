@@ -19,6 +19,8 @@
 //    instead of one plain line naming the fix.
 // 9. A missing developer runtime (Ruby 2.7 or newer, Go) is not named.
 // 10. openqodexHome ignores OPENQODEX_HOME.
+// 11. An installed launcher fails when started the way scanners are started:
+//     a small environment (PATH, HOME, TMPDIR, LANG) with the tool env on top.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -160,6 +162,15 @@ describe("toolchain", () => {
       reason: `cannot write ${home} here: run \`npx openqodex doctor --install\` in your own terminal`,
     });
   });
+
+  it("runs an npm launcher with only the small scanner environment plus its env", async () => {
+    freshHome();
+    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: null })("oxlint");
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) return;
+    const env = { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", TMPDIR: tmpdir(), LANG: "en_US.UTF-8", ...r.tool.env };
+    expect(execFileSync(r.tool.path, ["--version"], { encoding: "utf8", env })).toContain(table.tools.oxlint.version);
+  }, 90_000);
 
   it("names the missing runtime instead of installing", async () => {
     freshHome();

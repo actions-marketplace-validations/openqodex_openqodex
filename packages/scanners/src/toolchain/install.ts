@@ -2,7 +2,8 @@
 // detached install process (`openqodex __install <tool>`), so a slow install
 // finishes even when the run that started it has exited.
 import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync, accessSync, constants } from "node:fs";
-import { dirname, join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { delimiter, dirname, join } from "node:path";
 import type { ResolvedTool } from "@openqodex/core";
 import { InstallError, downloadVerified, extractArchive, run, which } from "./fetch.js";
 import {
@@ -28,14 +29,54 @@ export function isInstalled(home: string, tool: string, recipe: Recipe): boolean
   return existsSync(markerPath(home, tool, recipe)) && existsSync(binaryPath(home, tool, recipe));
 }
 
-export function resolvedTool(home: string, tool: string, recipe: Recipe): ResolvedTool {
+// The full PATH a tool needs: its own folders first, then the current PATH.
+// Scanners start from a small allowlisted environment and `env` is applied on
+// top, so a PATH here replaces the whole value and must carry everything.
+function pathWith(first: string[]): string {
+  return [...first, process.env.PATH ?? ""].filter((p) => p !== "").join(delimiter);
+}
+
+let goEnvCache: Record<string, string> | null = null;
+
+// Go's own folders, read once from the developer's go. The scanner allowlist
+// drops Go's variables, so golangci-lint gets them here.
+function goEnv(): Record<string, string> {
+  if (goEnvCache) return goEnvCache;
   const env: Record<string, string> = {};
-  if (recipe.method === "gem") {
-    env.GEM_HOME = versionDir(home, tool, recipe);
-    env.GEM_PATH = versionDir(home, tool, recipe);
+  const go = which("go");
+  if (go) {
+    try {
+      const out = execFileSync(go, ["env", "GOPATH", "GOMODCACHE", "GOCACHE"], { encoding: "utf8", timeout: 15_000 });
+      const [gopath, modcache, cache] = out.split("\n");
+      if (gopath) env.GOPATH = gopath;
+      if (modcache) env.GOMODCACHE = modcache;
+      if (cache) env.GOCACHE = cache;
+    } catch {
+      // go is present but broken; golangci-lint reports its own error
+    }
+    env.PATH = pathWith([dirname(go)]);
   }
-  // A scanned go.mod must never make Go download a toolchain.
-  if (parseNeeds(recipe.needs)?.runtime === "go") env.GOTOOLCHAIN = "local";
+  goEnvCache = env;
+  return env;
+}
+
+export function resolvedTool(home: string, tool: string, recipe: Recipe): ResolvedTool {
+  const dir = versionDir(home, tool, recipe);
+  let env: Record<string, string> = {};
+  if (recipe.method === "uv") {
+    // semgrep's launcher starts pysemgrep from PATH; the tool's bin folder holds it.
+    env.PATH = pathWith([join(dir, "bin")]);
+  } else if (recipe.method === "npm") {
+    // The npm launcher is `#!/usr/bin/env node`: run it on the node running openqodex.
+    env.PATH = pathWith([dirname(process.execPath)]);
+  } else if (recipe.method === "gem") {
+    const ruby = which("ruby");
+    env = { GEM_HOME: dir, GEM_PATH: dir, PATH: pathWith([join(dir, "bin"), ...(ruby ? [dirname(ruby)] : [])]) };
+  }
+  if (parseNeeds(recipe.needs)?.runtime === "go") {
+    // A scan never downloads a Go toolchain or modules, and sends no module path anywhere.
+    env = { ...env, ...goEnv(), GOTOOLCHAIN: "local", GOPROXY: "off" };
+  }
   return { path: binaryPath(home, tool, recipe), version: recipe.version, env };
 }
 
@@ -237,7 +278,14 @@ async function installInPlace(home: string, tool: string, recipe: Recipe, table:
     if (recipe.method === "uv") {
       const uv = which("uv") ?? (await installTool("uv", { table })).path;
       const python = join(toolsDir(home), "uv-python");
-      await runInstaller(uv, ["tool", "install", "--python", recipe.python, `${recipe.package}==${recipe.version}`], {
+      await runInstaller(uv, [
+        "tool",
+        "install",
+        "--python",
+        recipe.python,
+        ...(recipe.with ?? []).flatMap((pin) => ["--with", pin]),
+        `${recipe.package}==${recipe.version}`,
+      ], {
         ...process.env,
         UV_PYTHON_INSTALL_DIR: python,
         UV_PYTHON_BIN_DIR: join(python, "bin"),

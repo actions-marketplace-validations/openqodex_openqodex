@@ -309,6 +309,9 @@
       "method": "uv",
       "package": "semgrep",
       "python": "3.11",
+      "with": [
+        "setuptools==80.10.2"
+      ],
       "binary": "semgrep"
     },
     "bandit": {
