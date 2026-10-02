@@ -30,6 +30,11 @@ export function scannerEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
+// True when the run must make no network request (`--offline` sets it).
+export function isOffline(): boolean {
+  return process.env.OPENQODEX_OFFLINE === "1";
+}
+
 export type ExecResult = {
   stdout: string;
   stderr: string;

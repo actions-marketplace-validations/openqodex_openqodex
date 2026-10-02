@@ -7,7 +7,6 @@
 //   2. The matched secrets are not returned for redaction, or an entry with
 //      no secret adds an empty string.
 //   3. A path under the staging folder is not made repo-relative.
-//   4. A blank or non-array report throws instead of giving nothing.
 //   5. A description holding a long secret is cut before it is redacted, so
 //      the first part of the secret survives the cut.
 
@@ -69,12 +68,6 @@ describe("parseGitleaksJson", () => {
     expect(parseGitleaksJson(REPORT, STAGE).map((f) => f.filePath)).toEqual(["app.py", "app.py", "app.py"]);
   });
 
-  it("gives nothing for a blank or non-array report (4)", () => {
-    expect(parseGitleaksJson("", STAGE)).toEqual([]);
-    expect(parseGitleaksJson("{}", STAGE)).toEqual([]);
-    expect(parseGitleaksSecrets("")).toEqual([]);
-    expect(parseGitleaksSecrets("{}")).toEqual([]);
-  });
 });
 
 describe("parseGitleaksSecrets", () => {

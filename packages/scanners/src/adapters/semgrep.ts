@@ -9,7 +9,7 @@
 // under ~/.semgrep, outside the repo, and writes nothing into the working tree.
 
 import type { AdapterResult, ResolvedTool, StaticFinding } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { describeFailure, execTool, isOffline, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 
@@ -28,6 +28,14 @@ const RULE_PACKS = ["p/default", "p/security-audit", "p/secrets"];
 // and --disable-version-check are checked against semgrep 1.94.0.
 const SEMGREP_ENV = { SEMGREP_ENABLE_VERSION_CHECK: "0" };
 
+export const SEMGREP_OFFLINE_REASON = "offline, the rule packs need the network";
+
+// Known before any tool is resolved, so an offline run never installs or
+// starts semgrep (it would fetch the registry rule packs).
+function offlineReason(): string | null {
+  return isOffline() ? SEMGREP_OFFLINE_REASON : null;
+}
+
 export type SemgrepRunArgs = {
   repoDir: string;
   // Paths (relative to repoDir) to lint. We pass them as positional
@@ -42,6 +50,8 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
   // remote rules); the "--" terminator below is defense in depth.
   const targets = safeFileArgs(args.changedPaths);
   if (targets.length === 0) return { findings: [], error: null };
+  const skipped = offlineReason();
+  if (skipped) return { findings: [], error: null, skipped };
   if (!args.tool) return { findings: [], error: "not installed" };
 
   const cliArgs = [
@@ -100,6 +110,7 @@ async function execSemgrep(tool: ResolvedTool, cliArgs: string[], cwd: string): 
 export const semgrep: Adapter = {
   source: "semgrep",
   wants: (changedPaths) => safeFileArgs(changedPaths).length > 0,
+  skip: offlineReason,
   run: (args) => runSemgrep(args),
 };
 

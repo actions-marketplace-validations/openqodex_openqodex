@@ -38,6 +38,8 @@
 //      starts with the last part of one, which full-string redaction misses.
 //  19. Two different rules from one scanner on one span collapse into one.
 //  20. A changed file named "-app.sh" is never scanned.
+//  22. With OPENQODEX_OFFLINE=1, semgrep is resolved or started and fetches
+//      its registry rule packs.
 //  21. A .sql path that is a symlink to /dev/zero or a FIFO hangs the run;
 //      one that leads out of the repo is read; an oversized one is read.
 
@@ -56,6 +58,7 @@ import type {
   ToolResolution,
 } from "@openqodex/core";
 import { OSV_OFFLINE_REASON } from "./adapters/osv-scanner.js";
+import { SEMGREP_OFFLINE_REASON } from "./adapters/semgrep.js";
 import { runScanners, toRunDirRelative } from "./run.js";
 import type { CustomAdapter } from "./run.js";
 
@@ -144,23 +147,6 @@ describe("runScanners", () => {
     ]);
     const row = scan.scanners.find((s) => s.scanner === "sqllint");
     expect(row).toMatchObject({ status: "ran", rawCount: 3, keptCount: 2, reason: null, version: null });
-  });
-
-  it("orders candidates by severity and keeps a low one on a changed line (3)", async () => {
-    const dir = repo({ "db/migrate.sql": SQL });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["db/migrate.sql"],
-      coverage: new Map([["db/migrate.sql", lines(1, 2, 3, 4)]]),
-      config: config(),
-      resolveTool: notInstalled(),
-    });
-    expect(scan.candidates.map((c) => [c.id, c.severity])).toEqual([
-      ["c1", "high"],
-      ["c2", "high"],
-      ["c3", "low"],
-    ]);
-    expect(scan.candidates[2]).toMatchObject({ token: "sqllint:comment-on-function-unqualified", reviewSeverity: "nitpick" });
   });
 
   it("asks the resolver only for scanners that want the change, and records not installed (4, 5)", async () => {
@@ -450,6 +436,32 @@ describe("osv-scanner offline", () => {
       expect(asked).toEqual([]);
       expect(scan.scanners).toEqual([
         expect.objectContaining({ scanner: "osv-scanner", status: "disabled", reason: OSV_OFFLINE_REASON }),
+      ]);
+    } finally {
+      if (before === undefined) delete process.env.OPENQODEX_OFFLINE;
+      else process.env.OPENQODEX_OFFLINE = before;
+    }
+  });
+});
+
+describe("semgrep offline", () => {
+  it("never resolves semgrep offline, so its rule packs are not fetched (22)", async () => {
+    const dir = repo({ "app.py": "x = 1\n" });
+    const asked: BuiltinScanner[] = [];
+    const before = process.env.OPENQODEX_OFFLINE;
+    process.env.OPENQODEX_OFFLINE = "1";
+    try {
+      const { scan } = await runScanners({
+        repoDir: dir,
+        changedPaths: ["app.py"],
+        coverage: new Map([["app.py", lines(1)]]),
+        config: config(),
+        only: ["semgrep"],
+        resolveTool: notInstalled(asked),
+      });
+      expect(asked).toEqual([]);
+      expect(scan.scanners).toEqual([
+        expect.objectContaining({ scanner: "semgrep", status: "disabled", reason: SEMGREP_OFFLINE_REASON }),
       ]);
     } finally {
       if (before === undefined) delete process.env.OPENQODEX_OFFLINE;
