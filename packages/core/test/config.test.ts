@@ -22,6 +22,8 @@
 //     naming its path and why.
 // 16. With both the folder file and the 0.1.0 root file, the root file is
 //     read, the run fails, or nothing says the root file was skipped.
+// 18. A 0.1.0 root file without severity_threshold silently loses nitpick
+//     and info findings after the upgrade to the minor default.
 // 17. The default config text that init writes reads back to something
 //     other than DEFAULT_CONFIG, warns, or misses a key the schema reads.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -197,6 +199,16 @@ describe("config file location", () => {
     expect(loaded.warnings).toHaveLength(1);
     expect(loaded.warnings[0]).toContain(".openqodex/config.yaml");
     expect(loaded.warnings[0]).toContain(".openqodex.yaml");
+  });
+
+  it("warns a 0.1.0 root file without severity_threshold about the new minor default, and nothing else", () => {
+    const warning =
+      "the report now hides findings below minor by default; set review.severity_threshold: info in .openqodex.yaml to keep seeing them";
+    expect(loadConfig(repoWith("review: { block_on_severity: major }\n")).warnings).toEqual([warning]);
+    expect(loadConfig(repoWith("pr_review: { block_on_severity: major }\n")).warnings).toContain(warning);
+    expect(loadConfig(repoWith("review: { severity_threshold: info }\n")).warnings).toEqual([]);
+    expect(loadConfig(repoWith("pr_review: { severity_threshold: info }\n")).warnings).not.toContain(warning);
+    expect(loadConfig(repoWith(null, "review: { block_on_severity: major }\n")).warnings).toEqual([]);
   });
 
   it("names the 0.1.0 root file in an error from it", () => {

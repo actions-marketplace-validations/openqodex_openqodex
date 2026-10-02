@@ -394,6 +394,11 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
   };
 }
 
+function setsThreshold(data: unknown): boolean {
+  if (!isRecord(data)) return false;
+  return [data.review, data.pr_review].some((block) => isRecord(block) && "severity_threshold" in block);
+}
+
 // `--config` wins. Otherwise .openqodex/config.yaml, then the 0.1.0 file at
 // the root. With both, the folder file is read and a warning names both, so a
 // 0.1.0 repo keeps working once `init` has written the folder file.
@@ -406,7 +411,15 @@ export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfi
   const found = [CONFIG_FILE, LEGACY_CONFIG_FILE].filter((name) => existsSync(join(repoRoot, name)));
   if (found.length === 0) return { config: structuredClone(DEFAULT_CONFIG), path: null, warnings: [] };
   const path = join(repoRoot, found[0]);
-  const { config, warnings } = parseConfig(readFileSync(path, "utf8"), found[0]);
+  const text = readFileSync(path, "utf8");
+  const { config, warnings } = parseConfig(text, found[0]);
+  // The threshold default went from info to minor after 0.1.0; a file from
+  // then that never set it would lose findings without a word.
+  if (found[0] === LEGACY_CONFIG_FILE && !setsThreshold(parseYaml(text))) {
+    warnings.push(
+      `the report now hides findings below ${DEFAULT_CONFIG.severityThreshold} by default; set review.severity_threshold: info in ${LEGACY_CONFIG_FILE} to keep seeing them`,
+    );
+  }
   if (found.length === 2) {
     warnings.unshift(
       `both ${CONFIG_FILE} and ${LEGACY_CONFIG_FILE} exist; read ${CONFIG_FILE} only, so move anything still needed from ${LEGACY_CONFIG_FILE} into it and delete it`,
