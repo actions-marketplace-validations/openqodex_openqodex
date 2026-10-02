@@ -138,11 +138,11 @@ None. OpenQodex sends no usage data. semgrep runs with its own metrics switched 
 
 ## Security
 
-Report a vulnerability through GitHub's private vulnerability reporting on this repo. Never open a public issue for one. See [SECURITY.md](SECURITY.md).
+Report a vulnerability through GitHub's private vulnerability reporting on this repo. Never open a public issue for one. See [SECURITY.md](https://github.com/openqodex/openqodex/blob/main/SECURITY.md).
 
 ## Status
 
-OpenQodex is new and on the way to 1.0. Commands, flags and the config file can change between minor releases. [CHANGELOG.md](CHANGELOG.md) records every change.
+OpenQodex is new and on the way to 1.0. Commands, flags and the config file can change between minor releases. [CHANGELOG.md](https://github.com/openqodex/openqodex/blob/main/CHANGELOG.md) records every change.
 
 ## Made by Qodex
 
