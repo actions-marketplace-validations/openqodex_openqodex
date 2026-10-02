@@ -27,6 +27,10 @@ export function sandbox(files: Record<string, string> = {}, rootName = "oq test 
   mkdirSync(home, { recursive: true });
   mkdirSync(repo, { recursive: true });
   git(repo, "init", "-q", "-b", "main");
+  // Git may start background maintenance after a commit and leave a lock file
+  // for a moment; the snapshot tests compare every file, so switch it off.
+  git(repo, "config", "maintenance.auto", "false");
+  git(repo, "config", "gc.auto", "0");
   git(repo, "config", "user.email", "test@example.com");
   git(repo, "config", "user.name", "Test");
   git(repo, "config", "commit.gpgsign", "false");
