@@ -1,0 +1,134 @@
+// The process helper every scanner goes through. Real processes only: the
+// child is this machine's own node binary.
+//
+// Failure list, written before the tests:
+//   1. scannerEnv passes a variable outside the allowlist (a token, a cloud
+//      credential) to the scanner.
+//   2. scannerEnv drops an allowed variable: PATH, HOME, an LC_ variable or
+//      a proxy setting in either case.
+//   3. `extra` is ignored, or loses to the developer's own value.
+//   4. execTool rejects when the binary is missing instead of resolving
+//      with failure "not_found".
+//   5. A non-zero exit is reported as a failure instead of an exit code
+//      with the output kept.
+//   6. A process that runs past its timeout is not stopped, or is not
+//      reported as "timeout".
+//   7. Output past the cap is not reported as "overflow".
+//   8. Arguments go through a shell, so a ";" or "$(...)" in one runs.
+//   9. The child runs somewhere other than `cwd`.
+//  10. A child that ignores SIGTERM keeps execTool pending past its deadline.
+//  11. A grandchild that holds the output open keeps execTool pending.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { execTool, scannerEnv } from "./exec.js";
+
+const NODE = process.execPath;
+const opts = (over: Partial<{ timeoutMs: number; maxBytes: number; env: Record<string, string> }> = {}) => ({
+  cwd: os.tmpdir(),
+  timeoutMs: 10_000,
+  maxBytes: 1024 * 1024,
+  ...over,
+});
+
+const saved = { ...process.env };
+afterEach(() => {
+  for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+  Object.assign(process.env, saved);
+});
+
+describe("scannerEnv", () => {
+  it("passes only the allowlist (1, 2)", () => {
+    process.env.OPENQODEX_TEST_TOKEN = "do-not-pass";
+    process.env.AWS_SECRET_ACCESS_KEY = "do-not-pass";
+    process.env.LC_ALL = "en_US.UTF-8";
+    process.env.https_proxy = "http://proxy.local:3128";
+    process.env.NO_PROXY = "localhost";
+    const env = scannerEnv();
+    expect(env.OPENQODEX_TEST_TOKEN).toBeUndefined();
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(env.HOME).toBe(process.env.HOME);
+    expect(env.LC_ALL).toBe("en_US.UTF-8");
+    expect(env.https_proxy).toBe("http://proxy.local:3128");
+    expect(env.NO_PROXY).toBe("localhost");
+    const allowed = /^(PATH|HOME|TMPDIR|LANG|LC_.*|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy)$/;
+    for (const key of Object.keys(env)) expect(key).toMatch(allowed);
+  });
+
+  it("adds extra and lets it win (3)", () => {
+    const env = scannerEnv({ GEM_HOME: "/tools/gems", HOME: "/elsewhere" });
+    expect(env.GEM_HOME).toBe("/tools/gems");
+    expect(env.HOME).toBe("/elsewhere");
+  });
+});
+
+describe("execTool", () => {
+  it("resolves not_found for a missing binary (4)", async () => {
+    const r = await execTool(path.join(os.tmpdir(), "openqodex-no-such-binary"), [], opts());
+    expect(r.failure).toBe("not_found");
+    expect(r.exitCode).toBeNull();
+  });
+
+  it("keeps the output and the code of a non-zero exit (5)", async () => {
+    const r = await execTool(NODE, ["-e", "process.stdout.write('out'); process.exit(3)"], opts());
+    expect(r).toMatchObject({ stdout: "out", exitCode: 3, failure: null });
+  });
+
+  it("stops a process at its timeout (6)", async () => {
+    const r = await execTool(NODE, ["-e", "setTimeout(() => {}, 60000)"], opts({ timeoutMs: 300 }));
+    expect(r.failure).toBe("timeout");
+    expect(r.exitCode).toBeNull();
+  });
+
+  it("reports output past the cap as overflow (7)", async () => {
+    const r = await execTool(NODE, ["-e", "process.stdout.write('x'.repeat(10000))"], opts({ maxBytes: 100 }));
+    expect(r.failure).toBe("overflow");
+  });
+
+  it("never uses a shell, and gives the child only the small environment (8, 1)", async () => {
+    process.env.OPENQODEX_TEST_TOKEN = "do-not-pass";
+    const r = await execTool(
+      NODE,
+      ["-e", "console.log(JSON.stringify({ argv: process.argv.slice(1), env: process.env }))", "a; echo hi", "$(id)"],
+      opts({ env: { EXTRA_ONE: "1" } }),
+    );
+    const out = JSON.parse(r.stdout) as { argv: string[]; env: Record<string, string> };
+    expect(out.argv).toEqual(["a; echo hi", "$(id)"]);
+    expect(out.env.OPENQODEX_TEST_TOKEN).toBeUndefined();
+    expect(out.env.EXTRA_ONE).toBe("1");
+  });
+
+  it("runs in cwd (9)", async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "openqodex-exec-")));
+    try {
+      const r = await execTool(NODE, ["-e", "process.stdout.write(process.cwd())"], { ...opts(), cwd: dir });
+      expect(r.stdout).toBe(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops a child that ignores SIGTERM at the deadline (10)", async () => {
+    const started = Date.now();
+    const r = await execTool(
+      NODE,
+      ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      opts({ timeoutMs: 300 }),
+    );
+    expect(r.failure).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 10_000);
+
+  it("resolves when a grandchild keeps the output open (11)", async () => {
+    const started = Date.now();
+    const script =
+      "require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 8000)'], { stdio: 'inherit' });" +
+      "setInterval(() => {}, 1000)";
+    const r = await execTool(NODE, ["-e", script], opts({ timeoutMs: 300 }));
+    expect(r.failure).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 10_000);
+});
