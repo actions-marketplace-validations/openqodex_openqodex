@@ -2,6 +2,8 @@
 // ~/.openqodex/tools/<tool>/<version>/. A builtin scanner is never taken from
 // PATH, so two machines report the same findings.
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BuiltinScanner, ResolveTool, ToolResolution, ToolStatus } from "@openqodex/core";
 import { InstallError } from "./fetch.js";
@@ -44,21 +46,27 @@ const ALL_SCANNERS = Object.keys(builtins) as BuiltinScanner[];
 // The hidden CLI command that runs one install: `openqodex __install <tool>`.
 export const INSTALL_WORKER_COMMAND = "__install";
 
-// In the published package this file is bundled into the CLI's bin.js, so the
-// install process is the CLI itself. Tests point it at a small script instead.
-let workerEntry = fileURLToPath(import.meta.url);
+let workerOverride: string | null = null;
 
+// For tests: the program to start as the install process.
 export function setInstallWorkerEntry(path: string): void {
-  workerEntry = path;
+  workerOverride = path;
+}
+
+// The running program itself. In the published package that is the one
+// bundled CLI file, whose hidden `__install <tool>` command runs runInstallWorker.
+function workerEntry(): string {
+  if (workerOverride) return workerOverride;
+  return process.argv[1] ? resolve(process.argv[1]) : fileURLToPath(import.meta.url);
 }
 
 // The arguments after the node executable for one install process.
 export function installWorkerArgv(tool: string): string[] {
-  return [workerEntry, INSTALL_WORKER_COMMAND, tool];
+  return [workerEntry(), INSTALL_WORKER_COMMAND, tool];
 }
 
 function startWorker(tool: string) {
-  return spawn(process.execPath, installWorkerArgv(tool), { detached: true, stdio: "ignore" });
+  return spawn(process.execPath, installWorkerArgv(tool), { cwd: homedir(), detached: true, stdio: "ignore" });
 }
 
 const STILL_INSTALLING: ToolResolution = {
@@ -67,9 +75,20 @@ const STILL_INSTALLING: ToolResolution = {
   reason: "first run only, still installing; it will be included next run",
 };
 
-// Runs the install in a detached process from the start, so it keeps going if
-// this process exits, and waits for it up to the budget.
-function installDetached(tool: string, recipe: Recipe, home: string, budgetMs: number | null): Promise<ToolResolution> {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function installedResolution(home: string, tool: string, recipe: Recipe): Promise<ToolResolution> {
+  return { ok: true, tool: await resolvedTool(home, tool, recipe) };
+}
+
+function failedResolution(home: string, tool: string): ToolResolution {
+  const failure = lastInstallError(home, tool);
+  return failure ? { ok: false, ...failure } : { ok: false, status: "failed", reason: "install failed" };
+}
+
+// Starts the install in a detached process, so it keeps going if this process
+// exits, and waits for it until `deadline` (null: no limit).
+function installDetached(tool: string, recipe: Recipe, home: string, deadline: number | null): Promise<ToolResolution> {
   return new Promise((done) => {
     let timer: NodeJS.Timeout | undefined;
     const child = startWorker(tool);
@@ -79,18 +98,13 @@ function installDetached(tool: string, recipe: Recipe, home: string, budgetMs: n
     });
     child.once("exit", () => {
       clearTimeout(timer);
-      if (isInstalled(home, tool, recipe)) {
-        done({ ok: true, tool: resolvedTool(home, tool, recipe) });
-        return;
-      }
-      const failure = lastInstallError(home, tool);
-      done(failure ? { ok: false, ...failure } : { ok: false, status: "failed", reason: "install failed" });
+      done(isInstalled(home, tool, recipe) ? installedResolution(home, tool, recipe) : failedResolution(home, tool));
     });
-    if (budgetMs !== null) {
+    if (deadline !== null) {
       timer = setTimeout(() => {
         child.unref();
         done(STILL_INSTALLING);
-      }, budgetMs);
+      }, Math.max(0, deadline - Date.now()));
     }
   });
 }
@@ -98,13 +112,17 @@ function installDetached(tool: string, recipe: Recipe, home: string, budgetMs: n
 type ResolverOptions = { allowInstall: boolean; installBudgetMs: number | null; onProgress?: (line: string) => void };
 
 async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promise<ToolResolution> {
+  // The budget covers everything below, the runtime probes included.
+  const deadline = opts.installBudgetMs === null ? null : Date.now() + opts.installBudgetMs;
   const table = loadToolchain();
   const recipe = table.tools[scanner];
   if (!recipe) return { ok: false, status: "failed", reason: "runs inside openqodex, no tool to resolve" };
   const home = openqodexHome();
-  if (isInstalled(home, scanner, recipe)) return { ok: true, tool: resolvedTool(home, scanner, recipe) };
-  const blocked = (await missingRuntime(recipe)) ?? unsupportedReason(table, recipe);
-  if (blocked) return { ok: false, status: "not_installed", reason: blocked };
+  const runtime = await missingRuntime(recipe);
+  if (runtime) return { ok: false, status: "not_installed", reason: runtime };
+  if (isInstalled(home, scanner, recipe)) return installedResolution(home, scanner, recipe);
+  const unsupported = unsupportedReason(table, recipe);
+  if (unsupported) return { ok: false, status: "not_installed", reason: unsupported };
   if (!opts.allowInstall) return { ok: false, status: "not_installed", reason: "not installed (installs are off)" };
   try {
     ensureWritable(home, scanner);
@@ -112,8 +130,17 @@ async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promi
     if (error instanceof InstallError) return { ok: false, status: error.status, reason: error.message };
     throw error;
   }
+  // Another process is installing it: wait on that one instead of starting another.
+  if (isLocked(home, scanner)) {
+    while (isLocked(home, scanner)) {
+      if (deadline !== null && Date.now() >= deadline) return STILL_INSTALLING;
+      await sleep(250);
+    }
+    if (isInstalled(home, scanner, recipe)) return installedResolution(home, scanner, recipe);
+    if (lastInstallError(home, scanner)) return failedResolution(home, scanner);
+  }
   opts.onProgress?.(`installing ${scanner} ${recipe.version} (first run only)`);
-  return installDetached(scanner, recipe, home, opts.installBudgetMs);
+  return installDetached(scanner, recipe, home, deadline);
 }
 
 // installBudgetMs null means wait for every install to finish.
@@ -135,11 +162,11 @@ async function statusOf(scanner: BuiltinScanner): Promise<ToolStatus> {
   if (!recipe) return { scanner, state: "ready", version: "built in", detail: "runs inside openqodex" };
   const home = openqodexHome();
   const version = recipe.version;
-  if (isInstalled(home, scanner, recipe)) {
-    return { scanner, state: "ready", version, detail: resolvedTool(home, scanner, recipe).path };
-  }
   const runtime = await missingRuntime(recipe);
   if (runtime) return { scanner, state: "needs_runtime", version, detail: runtime };
+  if (isInstalled(home, scanner, recipe)) {
+    return { scanner, state: "ready", version, detail: (await resolvedTool(home, scanner, recipe)).path };
+  }
   const unsupported = unsupportedReason(table, recipe);
   if (unsupported) return { scanner, state: "unsupported", version, detail: unsupported };
   if (isLocked(home, scanner)) return { scanner, state: "installing", version, detail: null };
@@ -157,8 +184,8 @@ export async function installTools(
   onProgress?: (line: string) => void,
 ): Promise<ToolStatus[]> {
   const list = scanners ?? ALL_SCANNERS;
-  const resolve = createToolResolver({ allowInstall: true, installBudgetMs: null, onProgress });
-  await Promise.all(list.map((scanner) => resolve(scanner)));
+  const resolveTool = createToolResolver({ allowInstall: true, installBudgetMs: null, onProgress });
+  await Promise.all(list.map((scanner) => resolveTool(scanner)));
   return Promise.all(list.map(statusOf));
 }
 
@@ -168,7 +195,7 @@ export function installToolsDetached(scanners: BuiltinScanner[] | null): void {
   const home = openqodexHome();
   for (const scanner of scanners ?? ALL_SCANNERS) {
     const recipe = table.tools[scanner];
-    if (!recipe || isInstalled(home, scanner, recipe) || unsupportedReason(table, recipe)) continue;
+    if (!recipe || isInstalled(home, scanner, recipe) || isLocked(home, scanner) || unsupportedReason(table, recipe)) continue;
     // The install process checks the runtime itself and records why it stopped.
     const child = startWorker(scanner);
     child.once("error", () => undefined);

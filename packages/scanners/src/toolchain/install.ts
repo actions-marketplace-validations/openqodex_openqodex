@@ -1,11 +1,27 @@
 // Installs one pinned tool into the OpenQodex home folder. Runs inside the
 // detached install process (`openqodex __install <tool>`), so a slow install
 // finishes even when the run that started it has exited.
-import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync, accessSync, constants } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import {
+  accessSync,
+  appendFileSync,
+  chmodSync,
+  constants,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { ResolvedTool } from "@openqodex/core";
-import { InstallError, downloadVerified, extractArchive, run, which } from "./fetch.js";
+import { InstallError, downloadVerified, extractArchive, isRegularFileInside, run, smallEnv, which } from "./fetch.js";
 import {
   binaryPath,
   currentPlatform,
@@ -19,9 +35,10 @@ import {
   type Toolchain,
 } from "./table.js";
 
-const LOCK_STALE_MS = 10 * 60_000;
-const HEARTBEAT_MS = 30_000;
 const INSTALL_TIMEOUT_MS = 20 * 60_000;
+const PROBE_TIMEOUT_MS = 15_000;
+// How long an install waits for another process's install of the same tool.
+const LOCK_WAIT_MS = 40 * 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -29,61 +46,15 @@ export function isInstalled(home: string, tool: string, recipe: Recipe): boolean
   return existsSync(markerPath(home, tool, recipe)) && existsSync(binaryPath(home, tool, recipe));
 }
 
-// The full PATH a tool needs: its own folders first, then the current PATH.
-// Scanners start from a small allowlisted environment and `env` is applied on
-// top, so a PATH here replaces the whole value and must carry everything.
-function pathWith(first: string[]): string {
-  return [...first, process.env.PATH ?? ""].filter((p) => p !== "").join(delimiter);
-}
-
-let goEnvCache: Record<string, string> | null = null;
-
-// Go's own folders, read once from the developer's go. The scanner allowlist
-// drops Go's variables, so golangci-lint gets them here.
-function goEnv(): Record<string, string> {
-  if (goEnvCache) return goEnvCache;
-  const env: Record<string, string> = {};
-  const go = which("go");
-  if (go) {
-    try {
-      const out = execFileSync(go, ["env", "GOPATH", "GOMODCACHE", "GOCACHE"], { encoding: "utf8", timeout: 15_000 });
-      const [gopath, modcache, cache] = out.split("\n");
-      if (gopath) env.GOPATH = gopath;
-      if (modcache) env.GOMODCACHE = modcache;
-      if (cache) env.GOCACHE = cache;
-    } catch {
-      // go is present but broken; golangci-lint reports its own error
-    }
-    env.PATH = pathWith([dirname(go)]);
-  }
-  goEnvCache = env;
-  return env;
-}
-
-export function resolvedTool(home: string, tool: string, recipe: Recipe): ResolvedTool {
-  const dir = versionDir(home, tool, recipe);
-  let env: Record<string, string> = {};
-  if (recipe.method === "uv") {
-    // semgrep's launcher starts pysemgrep from PATH; the tool's bin folder holds it.
-    env.PATH = pathWith([join(dir, "bin")]);
-  } else if (recipe.method === "npm") {
-    // The npm launcher is `#!/usr/bin/env node`: run it on the node running openqodex.
-    env.PATH = pathWith([dirname(process.execPath)]);
-  } else if (recipe.method === "gem") {
-    const ruby = which("ruby");
-    env = { GEM_HOME: dir, GEM_PATH: dir, PATH: pathWith([join(dir, "bin"), ...(ruby ? [dirname(ruby)] : [])]) };
-  }
-  if (parseNeeds(recipe.needs)?.runtime === "go") {
-    // A scan never downloads a Go toolchain or modules, and sends no module path anywhere.
-    env = { ...env, ...goEnv(), GOTOOLCHAIN: "local", GOPROXY: "off" };
-  }
-  return { path: binaryPath(home, tool, recipe), version: recipe.version, env };
-}
-
 // ---------- the developer's runtimes (never installed by OpenQodex) ----------
 
+type Runtime = { reason: string | null; env: Record<string, string> };
+
+// Go never downloads a toolchain or a module and never sends a module path
+// anywhere: not while probing, not while scanning.
+const GO_OFFLINE = { GOTOOLCHAIN: "local", GOPROXY: "off" };
+
 const runtimeNames: Record<string, string> = { ruby: "Ruby", go: "Go" };
-const versionArgs: Record<string, string[]> = { ruby: ["-e", "print RUBY_VERSION"], go: ["version"] };
 
 function parseNeeds(needs: string | undefined): { runtime: string; minimum: string | null } | null {
   if (!needs) return null;
@@ -103,12 +74,41 @@ function atLeast(version: string, minimum: string): boolean {
   return true;
 }
 
-const runtimeChecks = new Map<string, Promise<string | null>>();
+// The full PATH a tool needs: its own folders first, then the current PATH.
+// Scanners start from a small allowlisted environment and `env` is applied on
+// top, so a PATH here replaces the whole value and must carry everything.
+function pathWith(first: string[]): string {
+  return [...first, process.env.PATH ?? ""].filter((p) => p !== "").join(delimiter);
+}
 
-// The plain reason a tool cannot run here because a runtime is missing, or null.
-export function missingRuntime(recipe: Recipe): Promise<string | null> {
+// One probe per runtime: its version, plus what a scanner run needs from it.
+// Probes run in the user's home folder, never the repo, so a repo's go.mod or
+// .ruby-version cannot change what they do.
+async function probe(runtime: string, file: string): Promise<{ version: string; env: Record<string, string> } | null> {
+  const opts = { cwd: homedir(), timeoutMs: PROBE_TIMEOUT_MS };
+  if (runtime === "go") {
+    const out = await run(file, ["env", "GOVERSION", "GOPATH", "GOMODCACHE", "GOCACHE"], { ...opts, env: smallEnv(GO_OFFLINE) });
+    if (out.code !== 0) return null;
+    const [goversion = "", gopath = "", modcache = "", cache = ""] = out.stdout.split("\n");
+    const env: Record<string, string> = { ...GO_OFFLINE, PATH: pathWith([dirname(file)]) };
+    if (gopath) env.GOPATH = gopath;
+    if (modcache) env.GOMODCACHE = modcache;
+    if (cache) env.GOCACHE = cache;
+    return { version: goversion.replace(/^go/, ""), env };
+  }
+  const args = runtime === "ruby" ? ["-e", "print RUBY_VERSION"] : ["--version"];
+  const out = await run(file, args, { ...opts, env: smallEnv() });
+  if (out.code !== 0) return null;
+  return { version: /(\d+\.\d+(?:\.\d+)?)/.exec(out.stdout)?.[1] ?? "", env: { PATH: pathWith([dirname(file)]) } };
+}
+
+const runtimeChecks = new Map<string, Promise<Runtime>>();
+
+// Whether the developer's runtime for this tool is here, and the environment
+// the tool needs from it. Checked once per process.
+export function checkRuntime(recipe: Recipe): Promise<Runtime> {
   const needs = parseNeeds(recipe.needs);
-  if (!needs) return Promise.resolve(null);
+  if (!needs) return Promise.resolve({ reason: null, env: {} });
   const key = `${needs.runtime}>=${needs.minimum ?? ""}|${process.env.PATH ?? ""}`;
   let check = runtimeChecks.get(key);
   if (!check) {
@@ -116,16 +116,39 @@ export function missingRuntime(recipe: Recipe): Promise<string | null> {
       const name = runtimeNames[needs.runtime] ?? needs.runtime;
       const reason = needs.minimum ? `needs ${name} ${needs.minimum} or newer` : `needs ${name}`;
       const file = which(needs.runtime);
-      if (!file) return reason;
-      const out = await run(file, versionArgs[needs.runtime] ?? ["--version"], { timeoutMs: 15_000 });
-      if (out.code !== 0) return reason;
-      if (!needs.minimum) return null;
-      const version = /(\d+\.\d+(?:\.\d+)?)/.exec(out.stdout)?.[1];
-      return version && atLeast(version, needs.minimum) ? null : reason;
+      const found = file ? await probe(needs.runtime, file) : null;
+      if (!found) return { reason, env: {} };
+      if (needs.minimum && !(found.version && atLeast(found.version, needs.minimum))) return { reason, env: {} };
+      return { reason: null, env: found.env };
     })();
     runtimeChecks.set(key, check);
   }
   return check;
+}
+
+export async function missingRuntime(recipe: Recipe): Promise<string | null> {
+  return (await checkRuntime(recipe)).reason;
+}
+
+// The resolved tool, with the environment it needs to start from the small
+// scanner environment.
+export async function resolvedTool(home: string, tool: string, recipe: Recipe): Promise<ResolvedTool> {
+  const dir = versionDir(home, tool, recipe);
+  const runtime = await checkRuntime(recipe);
+  let env: Record<string, string> = {};
+  if (recipe.method === "uv") {
+    // semgrep's launcher starts pysemgrep from PATH; the tool's bin folder holds it.
+    env.PATH = pathWith([join(dir, "bin")]);
+  } else if (recipe.method === "npm") {
+    // The npm launcher is `#!/usr/bin/env node`: run it on the node running openqodex.
+    env.PATH = pathWith([dirname(process.execPath)]);
+  } else if (recipe.method === "gem") {
+    const ruby = runtime.env.PATH ? [runtime.env.PATH.split(delimiter)[0]!] : [];
+    env = { GEM_HOME: dir, GEM_PATH: dir, PATH: pathWith([join(dir, "bin"), ...ruby]) };
+  } else {
+    env = { ...runtime.env };
+  }
+  return { path: binaryPath(home, tool, recipe), version: recipe.version, env };
 }
 
 // The plain reason this machine has no way to get the tool, or null.
@@ -160,53 +183,93 @@ export function ensureWritable(home: string, tool: string): string {
 }
 
 // ---------- the per-tool lock ----------
+// The lock file holds "<pid> <token>". It is created atomically with its
+// content (a hard link of a finished temp file), counts as stale only when its
+// pid is no longer alive, and is released only by the holder of its token.
 
 function lockPath(home: string, tool: string): string {
   return join(toolDir(home, tool), ".lock");
 }
 
-function isStale(lock: string): boolean {
+function readLock(path: string): { pid: number; token: string } | null {
   try {
-    return Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS;
+    const [pid = "", token = ""] = readFileSync(path, "utf8").trim().split(/\s+/);
+    return Number.isInteger(Number(pid)) && Number(pid) > 0 ? { pid: Number(pid), token } : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-// True while another process holds a fresh lock on this tool.
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+// True while a live process holds the lock on this tool.
 export function isLocked(home: string, tool: string): boolean {
+  const holder = readLock(lockPath(home, tool));
+  return holder !== null && isAlive(holder.pid);
+}
+
+async function acquireLock(home: string, tool: string): Promise<string> {
+  const dir = toolDir(home, tool);
   const lock = lockPath(home, tool);
-  return existsSync(lock) && !isStale(lock);
+  const token = randomBytes(8).toString("hex");
+  const mine = join(dir, `.lock-${token}`);
+  writeFileSync(mine, `${process.pid} ${token}\n`);
+  const giveUp = Date.now() + LOCK_WAIT_MS;
+  try {
+    for (;;) {
+      try {
+        linkSync(mine, lock);
+        return token;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new InstallError("not_installed", cannotWriteReason(home));
+      }
+      const holder = readLock(lock);
+      if (holder === null || !isAlive(holder.pid)) {
+        // Take over atomically: only one process can rename the stale lock away.
+        const aside = join(dir, `.lock-stale-${token}`);
+        try {
+          renameSync(lock, aside);
+        } catch {
+          continue;
+        }
+        const moved = readLock(aside);
+        if (moved && moved.token !== holder?.token && isAlive(moved.pid)) {
+          // A live holder replaced the stale lock between the read and the rename: give it back.
+          try {
+            linkSync(aside, lock);
+          } catch {
+            // someone else holds it now; the loop waits on them
+          }
+        }
+        rmSync(aside, { force: true });
+        continue;
+      }
+      if (Date.now() > giveUp) throw new InstallError("failed", `another install of ${tool} did not finish`);
+      await sleep(250);
+    }
+  } finally {
+    rmSync(mine, { force: true });
+  }
+}
+
+function releaseLock(home: string, tool: string, token: string): void {
+  const lock = lockPath(home, tool);
+  if (readLock(lock)?.token === token) rmSync(lock, { force: true });
 }
 
 async function withLock<T>(home: string, tool: string, fn: () => Promise<T>): Promise<T> {
-  const lock = lockPath(home, tool);
-  for (;;) {
-    try {
-      const fd = openSync(lock, "wx");
-      writeSync(fd, `${process.pid}\n`);
-      closeSync(fd);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new InstallError("not_installed", cannotWriteReason(home));
-      if (isStale(lock)) rmSync(lock, { force: true });
-      else await sleep(250);
-    }
-  }
-  // The holder touches the lock while it works, so only a dead holder's lock goes stale.
-  const heartbeat = setInterval(() => {
-    try {
-      const now = new Date();
-      utimesSync(lock, now, now);
-    } catch {
-      // the next beat tries again
-    }
-  }, HEARTBEAT_MS);
+  const token = await acquireLock(home, tool);
   try {
     return await fn();
   } finally {
-    clearInterval(heartbeat);
-    rmSync(lock, { force: true });
+    releaseLock(home, tool, token);
   }
 }
 
@@ -238,7 +301,10 @@ async function installRelease(home: string, tool: string, recipe: Extract<Recipe
       mkdirSync(unpacked);
       await extractArchive(download, asset.archive, unpacked);
       source = join(unpacked, asset.binaryPath);
-      if (!existsSync(source)) throw new InstallError("failed", `install failed: ${asset.binaryPath} is not in ${asset.name}`);
+      // Only bytes the checksum covered: a regular file inside the unpacked folder.
+      if (!isRegularFileInside(source, unpacked)) {
+        throw new InstallError("failed", `install failed: ${asset.binaryPath} is not a file in ${asset.name}`);
+      }
     }
     const ready = join(staging, "version");
     mkdirSync(join(ready, "bin"), { recursive: true });
@@ -262,8 +328,12 @@ export function npmCommand(): { file: string; args: string[] } | null {
   return /\.c?js$/.test(real) ? { file: process.execPath, args: [real] } : { file: real, args: [] };
 }
 
-async function runInstaller(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-  const out = await run(file, args, { env, timeoutMs: INSTALL_TIMEOUT_MS });
+// Installers run with the small environment plus what OpenQodex sets, in the
+// OpenQodex home folder, never the repo: a variable or a project config file
+// cannot change where they read from or write to.
+async function runInstaller(home: string, file: string, args: string[], extra: Record<string, string>): Promise<void> {
+  const out = await run(file, args, { cwd: home, env: smallEnv(extra), timeoutMs: INSTALL_TIMEOUT_MS });
+  if (out.timedOut) throw new InstallError("failed", "install failed: not finished after 20 minutes");
   if (out.code !== 0) throw new InstallError("failed", `install failed: ${lastLine(out.stderr) || `exit ${out.code}`}`);
 }
 
@@ -278,15 +348,15 @@ async function installInPlace(home: string, tool: string, recipe: Recipe, table:
     if (recipe.method === "uv") {
       const uv = which("uv") ?? (await installTool("uv", { table })).path;
       const python = join(toolsDir(home), "uv-python");
-      await runInstaller(uv, [
+      const args = [
         "tool",
         "install",
         "--python",
         recipe.python,
         ...(recipe.with ?? []).flatMap((pin) => ["--with", pin]),
         `${recipe.package}==${recipe.version}`,
-      ], {
-        ...process.env,
+      ];
+      await runInstaller(home, uv, args, {
         UV_PYTHON_INSTALL_DIR: python,
         UV_PYTHON_BIN_DIR: join(python, "bin"),
         UV_PYTHON_PREFERENCE: "only-managed",
@@ -299,10 +369,11 @@ async function installInPlace(home: string, tool: string, recipe: Recipe, table:
       const ruby = which("ruby");
       const gem = ruby && existsSync(join(dirname(ruby), "gem")) ? join(dirname(ruby), "gem") : which("gem");
       if (!gem) throw new InstallError("not_installed", "needs RubyGems");
-      await runInstaller(gem, ["install", "--no-document", "--install-dir", dir, "--bindir", join(dir, "bin"), ...recipe.gems], {
-        ...process.env,
+      const args = ["install", "--no-document", "--install-dir", dir, "--bindir", join(dir, "bin"), ...recipe.gems];
+      await runInstaller(home, gem, args, {
         GEM_HOME: dir,
         GEM_PATH: dir,
+        GEM_SPEC_CACHE: join(home, "cache", "gem-specs"),
       });
     } else if (recipe.method === "npm") {
       const npm = npmCommand();
@@ -322,7 +393,7 @@ async function installInPlace(home: string, tool: string, recipe: Recipe, table:
         join(home, "cache", "npm"),
         `${recipe.package}@${recipe.version}`,
       ];
-      await runInstaller(npm.file, args, process.env);
+      await runInstaller(home, npm.file, args, {});
     }
     if (!existsSync(binaryPath(home, tool, recipe))) {
       throw new InstallError("failed", `install failed: ${recipe.binary} missing after install`);
@@ -345,9 +416,9 @@ export async function installTool(
   const recipe = table.tools[tool];
   if (!recipe) throw new InstallError("failed", `${tool} is not in the toolchain table`);
   const home = openqodexHome();
-  if (isInstalled(home, tool, recipe)) return resolvedTool(home, tool, recipe);
   const runtime = await missingRuntime(recipe);
   if (runtime) throw new InstallError("not_installed", runtime);
+  if (isInstalled(home, tool, recipe)) return resolvedTool(home, tool, recipe);
   const unsupported = unsupportedReason(table, recipe);
   if (unsupported) throw new InstallError("not_installed", unsupported);
   const dir = ensureWritable(home, tool);

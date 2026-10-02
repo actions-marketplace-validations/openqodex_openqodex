@@ -21,14 +21,29 @@
 // 10. openqodexHome ignores OPENQODEX_HOME.
 // 11. An installed launcher fails when started the way scanners are started:
 //     a small environment (PATH, HOME, TMPDIR, LANG) with the tool env on top.
+// 12. An archive member that is a symlink or hardlink selects bytes the
+//     checksum never covered.
+// 13. The developer's environment (npm_config_*, UV_*, TAR_OPTIONS,
+//     GEM_SPEC_CACHE) redirects where an installer reads or writes.
+// 14. Two processes both take a stale lock, or a live holder loses its lock.
+// 15. With no override, the install process started is not a program that
+//     installs anything.
+// 16. A child that ignores SIGTERM hangs a probe or an install for ever.
+// 17. A download that trickles data never ends, or one that never stops
+//     growing fills the disk.
+// 18. Every resolve starts another install process while one is running.
+// 19. A relative OPENQODEX_HOME gives a relative tool path.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { run } from "../src/toolchain/fetch.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist", "index.js");
@@ -126,15 +141,11 @@ describe("toolchain", () => {
 
   it("returns installing past the budget and finishes after the caller exits", async () => {
     const home = freshHome();
-    // A separate caller process: resolves with a 1 ms budget, prints the result, exits.
-    const caller = `
-      const tc = await import(${JSON.stringify(dist)});
-      tc.setInstallWorkerEntry(${JSON.stringify(worker)});
-      const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: 1 })("actionlint");
-      process.stdout.write(JSON.stringify(r));
-    `;
+    // A separate caller process: resolves with a 1 ms budget, prints the result,
+    // exits. It sets no worker entry, so the default (the running program,
+    // which answers __install like the CLI does) starts the install.
     const started = Date.now();
-    const out = execFileSync(process.execPath, ["--input-type=module", "-e", caller], {
+    const out = execFileSync(process.execPath, [worker, "resolve", "actionlint", "1"], {
       encoding: "utf8",
       env: { ...process.env, OPENQODEX_HOME: home },
       timeout: 15_000,
@@ -165,12 +176,49 @@ describe("toolchain", () => {
 
   it("runs an npm launcher with only the small scanner environment plus its env", async () => {
     freshHome();
-    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: null })("oxlint");
+    // A registry setting in the developer's environment must not reach the installer.
+    process.env.npm_config_registry = "http://127.0.0.1:9/";
+    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: null })("oxlint").finally(() => {
+      delete process.env.npm_config_registry;
+    });
     expect(r).toMatchObject({ ok: true });
     if (!r.ok) return;
     const env = { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", TMPDIR: tmpdir(), LANG: "en_US.UTF-8", ...r.tool.env };
     expect(execFileSync(r.tool.path, ["--version"], { encoding: "utf8", env })).toContain(table.tools.oxlint.version);
   }, 90_000);
+
+  it("takes over a lock whose holder is dead", async () => {
+    const home = freshHome();
+    const dead = execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+    mkdirSync(join(home, "tools", "actionlint"), { recursive: true });
+    writeFileSync(join(home, "tools", "actionlint", ".lock"), `${dead} deadtoken\n`);
+    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: 60_000 })("actionlint");
+    expect(r).toMatchObject({ ok: true });
+  }, 90_000);
+
+  it("waits on a live lock without starting another install", async () => {
+    const home = freshHome();
+    const lock = join(home, "tools", "actionlint", ".lock");
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, `${process.pid} livetoken\n`);
+    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: 1500 })("actionlint");
+    expect(r).toMatchObject({ status: "installing" });
+    // The holder (this test) lets go without installing. A second install
+    // process, had one been started, would now install.
+    rmSync(lock);
+    await new Promise((done) => setTimeout(done, 6000));
+    expect(existsSync(join(home, "tools", "actionlint", actionlintVersion))).toBe(false);
+  }, 30_000);
+
+  it("makes a relative OPENQODEX_HOME absolute", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oq-rel-"));
+    const out = execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", `const tc = await import(${JSON.stringify(dist)}); process.stdout.write(tc.openqodexHome());`],
+      { encoding: "utf8", cwd, env: { ...process.env, OPENQODEX_HOME: "rel-home" } },
+    );
+    expect(out).toBe(join(realpathSync(cwd), "rel-home"));
+  });
 
   it("names the missing runtime instead of installing", async () => {
     freshHome();
@@ -204,6 +252,19 @@ describe("downloadVerified and extractArchive", () => {
     expect(readdirSync(dest)).toEqual([]);
   });
 
+  it("refuses symlink and hardlink members", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
+    const payload = join(dir, "payload");
+    writeFileSync(payload, "#!/bin/sh\necho payload\n", { mode: 0o755 });
+    for (const [type, link] of [["2", payload], ["1", payload]] as const) {
+      const archive = join(dir, `link${type}.tar.gz`);
+      writeFileSync(archive, gzipSync(tarOf([["gitleaks", "", type, link]])));
+      const dest = mkdtempSync(join(dir, "out-"));
+      await expect(tc.extractArchive(archive, "tar.gz", dest)).rejects.toThrow(/link/);
+      expect(readdirSync(dest)).toEqual([]);
+    }
+  });
+
   it("unpacks a normal archive", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
     const archive = join(dir, "good.tar.gz");
@@ -223,12 +284,45 @@ describe("downloadVerified and extractArchive", () => {
     await expect(tc.downloadVerified(asset.url, "f".repeat(64), join(dir, "b"))).rejects.toThrow("checksum mismatch");
     expect(existsSync(join(dir, "b"))).toBe(false);
   }, 60_000);
+
+  it("stops a download that trickles past its deadline or grows past its cap", async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(200);
+      if (req.url === "/big") {
+        res.end(Buffer.alloc(4096));
+        return;
+      }
+      const timer = setInterval(() => res.write("x"), 100);
+      res.on("close", () => clearInterval(timer));
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const dir = mkdtempSync(join(tmpdir(), "oq-dl-"));
+    try {
+      const started = Date.now();
+      await expect(tc.downloadVerified(`${base}/slow`, null, join(dir, "a"), { deadlineMs: 1000 })).rejects.toThrow(/download failed/);
+      expect(Date.now() - started).toBeLessThan(5000);
+      await expect(tc.downloadVerified(`${base}/big`, null, join(dir, "b"), { maxBytes: 1000 })).rejects.toThrow(/download failed/);
+      expect(existsSync(join(dir, "b"))).toBe(false);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("hard-kills a child that ignores SIGTERM at its deadline", async () => {
+    const started = Date.now();
+    const out = await run(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { timeoutMs: 500 });
+    expect(out.code).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(5000);
+  }, 20_000);
 });
 
-// A minimal ustar archive, written by hand so a member can carry ../ in its name.
-function tarOf(files: [string, string][]): Buffer {
+// A minimal ustar archive, written by hand so a member can carry ../ in its
+// name or be a link (type "2" symlink, "1" hardlink) to any path.
+function tarOf(files: (readonly [string, string] | readonly [string, string, string, string])[]): Buffer {
   const blocks: Buffer[] = [];
-  for (const [name, text] of files) {
+  for (const [name, text, type = "0", link = ""] of files) {
     const body = Buffer.from(text);
     const header = Buffer.alloc(512);
     header.write(name, 0, 100, "utf8");
@@ -238,7 +332,8 @@ function tarOf(files: [string, string][]): Buffer {
     header.write(body.length.toString(8).padStart(11, "0") + "\0", 124);
     header.write("00000000000\0", 136);
     header.write("        ", 148);
-    header.write("0", 156);
+    header.write(type, 156);
+    header.write(link, 157, 100, "utf8");
     header.write("ustar\0", 257);
     header.write("00", 263);
     let sum = 0;

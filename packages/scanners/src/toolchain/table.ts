@@ -1,7 +1,7 @@
 // The pinned scanner table (toolchain.json) and where installed tools live.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type Platform = "darwin-arm64" | "darwin-x64" | "linux-x64" | "linux-arm64";
@@ -28,10 +28,11 @@ export type Recipe =
 
 export type Toolchain = { schema: 1; tools: Record<string, Recipe> };
 
-// $OPENQODEX_HOME or ~/.openqodex.
+// $OPENQODEX_HOME or ~/.openqodex, always absolute: tools run with the repo
+// as their working directory, so a relative home would point somewhere else.
 export function openqodexHome(): string {
   const fromEnv = process.env.OPENQODEX_HOME;
-  return fromEnv && fromEnv.length > 0 ? fromEnv : join(homedir(), ".openqodex");
+  return fromEnv && fromEnv.length > 0 ? resolve(fromEnv) : join(homedir(), ".openqodex");
 }
 
 export function toolsDir(home: string): string {
