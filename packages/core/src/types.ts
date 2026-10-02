@@ -213,8 +213,8 @@ export type AgentFinding = {
   line_end?: number;
   title: string;
   description: string;
-  suggested_change?: string | null; // left out reads as null
-  source?: string | null; // null or left out, a candidate token, or "lens:<name>"
+  suggested_change: string | null; // the schema reads a missing value as null
+  source: string | null; // null, a candidate token, or "lens:<name>"; missing reads as null
   candidate?: string | null; // the candidate id this finding raises, when it raises one
 };
 
