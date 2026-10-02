@@ -113,8 +113,9 @@ npx openqodex trust
 - Semgrep rule packs (`p/default`, `p/security-audit`, `p/secrets`), fetched from the Semgrep registry on each run.
 - When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code.
 
-`--offline` skips osv-scanner and semgrep and turns scanner downloads off.
 - `openqodex trust` reads the custom scanner's release from the GitHub API and downloads it.
+
+`--offline` skips osv-scanner and semgrep and turns scanner downloads off.
 
 The built-in scanners send no code anywhere. Your agent's model sees what your agent reads, as always. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
 

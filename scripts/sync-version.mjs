@@ -12,10 +12,23 @@ for (const rel of [
   "skills/openqodex/SKILL.md",
   "plugins/claude-code/skills/openqodex/SKILL.md",
   "plugins/claude-code/hooks/hooks.json",
+  ".pre-commit-hooks.yaml",
 ]) {
   const file = join(root, rel);
   const before = readFileSync(file, "utf8");
   const after = before.replace(/openqodex@[0-9][^\s"`)]*/g, `openqodex@${version}`);
+  if (after !== before) writeFileSync(file, after);
+  console.log(`${after === before ? "unchanged" : "updated"}: ${rel}`);
+}
+
+// The Action's default version and the docs example that pins a release tag.
+for (const [rel, pattern, replacement] of [
+  ["action.yml", /^(    default: ")\d[^"]*(")$/m, `$1${version}$2`],
+  ["docs/github-action.md", /rev: v\d[^\s]*/, `rev: v${version}`],
+]) {
+  const file = join(root, rel);
+  const before = readFileSync(file, "utf8");
+  const after = before.replace(pattern, replacement);
   if (after !== before) writeFileSync(file, after);
   console.log(`${after === before ? "unchanged" : "updated"}: ${rel}`);
 }

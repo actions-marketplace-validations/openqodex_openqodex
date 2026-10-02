@@ -75,7 +75,8 @@
       "class": "container runs as root",
       "file": "Dockerfile",
       "lines": [11, 11],
-      "detectors": [{ "scanner": "semgrep", "rule_id": "dockerfile.security.missing-user.missing-user" }]
+      "detectors": null,
+      "note": "The change removes the USER line. semgrep reports the missing user on the last line, which the change does not touch, so the changed-line filter drops it. Only a reviewer reading the diff finds it."
     },
     {
       "id": "vulnerable-lodash",
