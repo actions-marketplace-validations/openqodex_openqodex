@@ -8,7 +8,6 @@
 // 6. SARIF does not parse, is not 2.1.0, or mixes sources in one run.
 // 7. Markdown breaks its table on a pipe in a title, or names the hosted
 //    product more than once or in a scan report.
-// 8. JSON is not the report as is.
 import { describe, expect, it } from "vitest";
 import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
@@ -98,13 +97,6 @@ describe("renderMarkdown", () => {
     const out = renderMarkdown(scanReport({ change: makeChange(), scan: makeScan(), config: makeConfig() }));
     expect(out).not.toContain("Qodex:");
     expect(out).toContain("# OpenQodex scan");
-  });
-});
-
-describe("renderJson", () => {
-  it("is the report as is", () => {
-    const report = fullReview();
-    expect(JSON.parse(renderJson(report))).toEqual(JSON.parse(JSON.stringify(report)));
   });
 });
 

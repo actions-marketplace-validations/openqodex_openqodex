@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { parseOxlintJson } from "./oxlint.js";
 
 describe("parseOxlintJson", () => {
-  it("returns empty array on blank or diagnostics-less input", () => {
+  it("empty or diagnostics-less output yields no findings instead of a parse error", () => {
     expect(parseOxlintJson("")).toEqual([]);
     expect(parseOxlintJson(JSON.stringify({}))).toEqual([]);
     expect(parseOxlintJson(JSON.stringify({ diagnostics: "nope" }))).toEqual([]);
   });
 
-  it("normalizes a typical correctness diagnostic, anchoring on the first label span", () => {
+  it("an oxlint diagnostic takes its line from the first label and its rule id as eslint/rule, not eslint(rule)", () => {
     const report = {
       diagnostics: [
         {
@@ -49,7 +49,7 @@ describe("parseOxlintJson", () => {
     expect(out.map((f) => f.severity)).toEqual(["high", "info", "medium"]);
   });
 
-  it("defaults the rule id and skips diagnostics with no filename or no label line", () => {
+  it("a diagnostic without a code gets a rule id; one without a file or a labelled line is dropped", () => {
     const report = {
       diagnostics: [
         { message: "syntax", filename: "a.js", labels: [{ span: { line: 9 } }] },

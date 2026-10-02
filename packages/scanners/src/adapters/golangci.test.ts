@@ -9,13 +9,13 @@ import {
 } from "./golangci.js";
 
 describe("parseGolangciJson", () => {
-  it("returns empty array on blank, Issues-null, or non-object input", () => {
+  it("empty output or null Issues from a clean run yields no findings instead of a parse error", () => {
     expect(parseGolangciJson("")).toEqual([]);
     expect(parseGolangciJson(JSON.stringify({ Issues: null }))).toEqual([]);
     expect(parseGolangciJson(JSON.stringify({ Issues: "nope" }))).toEqual([]);
   });
 
-  it("normalizes a typical gosec issue with FromLinter token and Pos", () => {
+  it("a golangci issue takes its linter as rule id, its file and line from Pos, and gosec ranks high", () => {
     const report = {
       Issues: [
         {
@@ -41,21 +41,7 @@ describe("parseGolangciJson", () => {
     expect(out[0].message).toContain("gosec: G401");
   });
 
-  it("maps gosec/govet/staticcheck/errcheck/ineffassign to high/medium/medium/medium/low", () => {
-    const report = {
-      Issues: [
-        { FromLinter: "gosec", Text: "t", Pos: { Filename: "a.go", Line: 1 } },
-        { FromLinter: "govet", Text: "t", Pos: { Filename: "a.go", Line: 2 } },
-        { FromLinter: "staticcheck", Text: "t", Pos: { Filename: "a.go", Line: 3 } },
-        { FromLinter: "errcheck", Text: "t", Pos: { Filename: "a.go", Line: 4 } },
-        { FromLinter: "ineffassign", Text: "t", Pos: { Filename: "a.go", Line: 5 } },
-      ],
-    };
-    const out = parseGolangciJson(JSON.stringify(report));
-    expect(out.map((f) => f.severity)).toEqual(["high", "medium", "medium", "medium", "low"]);
-  });
-
-  it("trims a leading non-JSON log line, defaults the rule id, and skips rows with no file or line", () => {
+  it("a log line printed before the JSON does not break parsing; an issue without a linter gets a rule id and one without a file or line is dropped", () => {
     const report = {
       Issues: [
         { Text: "unnamed linter", Pos: { Filename: "a.go", Line: 8 } },

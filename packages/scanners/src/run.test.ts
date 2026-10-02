@@ -48,7 +48,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { matchesGlob, REDACTED } from "@openqodex/core";
+import { REDACTED } from "@openqodex/core";
 import type {
   BuiltinScanner,
   Config,
@@ -268,17 +268,7 @@ describe("runScanners", () => {
     expect(kept.scan.fixturesDropped).toBe(0);
   });
 
-  // matchesGlob belongs to the core change stream; until it lands the stub
-  // throws, and this case waits for it.
-  const globBuilt = (() => {
-    try {
-      matchesGlob("a", "a");
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  it.skipIf(!globBuilt)("drops rules matched by disabled_rules (10)", async () => {
+  it("drops rules matched by disabled_rules (10)", async () => {
     const dir = repo({ "db/migrate.sql": SQL });
     const { scan } = await runScanners({
       repoDir: dir,

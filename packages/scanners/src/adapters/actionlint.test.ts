@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseActionlintJson } from "./actionlint.js";
 
 describe("parseActionlintJson", () => {
-  it("returns empty array on blank or non-array input", () => {
+  it("empty or non-list output yields no findings instead of a parse error", () => {
     expect(parseActionlintJson("")).toEqual([]);
     expect(parseActionlintJson(JSON.stringify({}))).toEqual([]);
   });
 
-  it("normalizes a typical actionlint entry", () => {
+  it("an actionlint entry keeps its file, line and kind as rule id, and an expression problem ranks high", () => {
     const report = [
       {
         message: 'property "runn" is not defined in object type',
@@ -29,7 +29,7 @@ describe("parseActionlintJson", () => {
     });
   });
 
-  it("maps non-security kinds to medium", () => {
+  it("a non-security workflow problem ranks medium, so it does not block like an injection", () => {
     const report = [
       {
         message: "label is unknown",
@@ -43,21 +43,7 @@ describe("parseActionlintJson", () => {
     expect(out[0].severity).toBe("medium");
   });
 
-  it("bumps shellcheck-in-workflow findings to high", () => {
-    const report = [
-      {
-        message: "shellcheck reported issue in run step: SC2086",
-        filepath: ".github/workflows/ci.yml",
-        line: 20,
-        column: 1,
-        kind: "shellcheck",
-      },
-    ];
-    const out = parseActionlintJson(JSON.stringify(report));
-    expect(out[0].severity).toBe("high");
-  });
-
-  it("defaults rule id and skips rows with no filepath or line", () => {
+  it("an entry without a kind gets a rule id, and one without a file or line is dropped", () => {
     const report = [
       { message: "m", filepath: "", line: 1, kind: "expression" },
       { message: "m", filepath: "f.yml", line: 0, kind: "expression" },

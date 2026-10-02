@@ -66,12 +66,6 @@ describe("ruleClassFor", () => {
 });
 
 describe("dedupByRuleClass", () => {
-  it("returns the input unchanged when nothing collides", () => {
-    const a = fakeFinding({ ruleId: "rule-a", filePath: "x.ts", lineStart: 1 });
-    const b = fakeFinding({ ruleId: "rule-b", filePath: "y.ts", lineStart: 2 });
-    expect(dedupByRuleClass([a, b])).toEqual([a, b]);
-  });
-
   it("collapses two findings on the same span sharing a rule_class", () => {
     // gitleaks ("secret") + semgrep secret rule on the same line →
     // same span + same class. Higher-severity wins.
@@ -126,7 +120,7 @@ describe("dedupByRuleClass", () => {
     expect(dedupByRuleClass([a, b])).toHaveLength(2);
   });
 
-  it("preserves input order for survivors", () => {
+  it("findings that do not collide are all kept, in their order", () => {
     const a = fakeFinding({ ruleId: "rule-a", filePath: "x.ts", lineStart: 1 });
     const b = fakeFinding({ ruleId: "rule-b", filePath: "y.ts", lineStart: 2 });
     const c = fakeFinding({ ruleId: "rule-c", filePath: "z.ts", lineStart: 3 });

@@ -60,7 +60,7 @@ afterAll(() => {
 });
 
 describe("custom scanner trust flow", () => {
-  it("skips, quarantines, installs on approval, runs, and stops after an edit or a revoke", { timeout: 180_000 }, async () => {
+  it("an unapproved, edited or revoked custom scanner never runs, and an altered download is never installed", { timeout: 180_000 }, async () => {
     const config = parseConfig(yaml(RUN)).config;
     const changed = [".github/workflows/ci.yml"];
 

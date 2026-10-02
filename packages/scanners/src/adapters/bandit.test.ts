@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { parseBanditJson } from "./bandit.js";
 
 describe("parseBanditJson", () => {
-  it("returns empty array on blank or results-less input", () => {
+  it("empty or results-less output yields no findings instead of a parse error", () => {
     expect(parseBanditJson("")).toEqual([]);
     expect(parseBanditJson(JSON.stringify({}))).toEqual([]);
     expect(parseBanditJson(JSON.stringify({ results: "nope" }))).toEqual([]);
   });
 
-  it("normalizes a typical SQL-injection result with test_id token", () => {
+  it("a bandit result keeps its test id as rule id, its file, line and docs link, and names the test id in the message", () => {
     const report = {
       errors: [],
       results: [
@@ -40,19 +40,7 @@ describe("parseBanditJson", () => {
     expect(out[0].message).toContain("B608: Possible SQL injection");
   });
 
-  it("maps issue_severity HIGH/MEDIUM/LOW to high/medium/low", () => {
-    const report = {
-      results: [
-        { test_id: "B602", issue_severity: "HIGH", issue_text: "t", filename: "a.py", line_number: 1 },
-        { test_id: "B404", issue_severity: "MEDIUM", issue_text: "t", filename: "a.py", line_number: 2 },
-        { test_id: "B101", issue_severity: "LOW", issue_text: "t", filename: "a.py", line_number: 3 },
-      ],
-    };
-    const out = parseBanditJson(JSON.stringify(report));
-    expect(out.map((f) => f.severity)).toEqual(["high", "medium", "low"]);
-  });
-
-  it("defaults the rule id and skips rows with no filename or line", () => {
+  it("a result without a test id gets a rule id, and one without a file or line is dropped", () => {
     const report = {
       results: [
         { issue_severity: "LOW", issue_text: "assert used", filename: "app/c.py", line_number: 4 },

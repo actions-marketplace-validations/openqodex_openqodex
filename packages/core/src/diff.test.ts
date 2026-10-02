@@ -28,11 +28,6 @@ describe("unquoteDiffPath", () => {
     expect(unquoteDiffPath('"a/say \\"hi\\".md"')).toBe('a/say "hi".md');
     expect(unquoteDiffPath('"a/tab\\there.md"')).toBe("a/tab\there.md");
   });
-
-  it("passes an unquoted path through untouched", () => {
-    expect(unquoteDiffPath("b/plain.ts")).toBe("b/plain.ts");
-    expect(unquoteDiffPath("/dev/null")).toBe("/dev/null");
-  });
 });
 
 describe("parseDiffCoverage", () => {

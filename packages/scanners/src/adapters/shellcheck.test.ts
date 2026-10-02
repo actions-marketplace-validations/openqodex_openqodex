@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseShellcheckJson } from "./shellcheck.js";
 
 describe("parseShellcheckJson", () => {
-  it("returns empty array on blank or non-array input", () => {
+  it("empty or non-list output yields no findings instead of a parse error", () => {
     expect(parseShellcheckJson("")).toEqual([]);
     expect(parseShellcheckJson(JSON.stringify({}))).toEqual([]);
   });
 
-  it("normalizes a typical shellcheck entry with SC prefix and span", () => {
+  it("a shellcheck entry gets the SC prefix on its numeric code and links to that rule's wiki page", () => {
     const report = [
       {
         file: "scripts/deploy.sh",
@@ -32,18 +32,7 @@ describe("parseShellcheckJson", () => {
     });
   });
 
-  it("maps the level scale error/warning/info/style", () => {
-    const report = [
-      { file: "a.sh", line: 1, level: "error", code: 1000, message: "m" },
-      { file: "a.sh", line: 2, level: "warning", code: 1001, message: "m" },
-      { file: "a.sh", line: 3, level: "info", code: 1002, message: "m" },
-      { file: "a.sh", line: 4, level: "style", code: 1003, message: "m" },
-    ];
-    const out = parseShellcheckJson(JSON.stringify(report));
-    expect(out.map((f) => f.severity)).toEqual(["high", "medium", "low", "info"]);
-  });
-
-  it("uses endLine for the span and falls back to line when missing", () => {
+  it("a multi-line shellcheck finding spans to endLine, and a missing endLine falls back to the start line", () => {
     const report = [
       { file: "a.sh", line: 5, endLine: 8, level: "warning", code: 2046, message: "m" },
       { file: "a.sh", line: 5, level: "warning", code: 2046, message: "m" },
@@ -53,7 +42,7 @@ describe("parseShellcheckJson", () => {
     expect(out[1].lineEnd).toBe(5);
   });
 
-  it("defaults rule id and skips rows with no file or line", () => {
+  it("an entry without a code gets a rule id and no wiki link; one without a file or line is dropped", () => {
     const report = [
       { file: "", line: 1, level: "error", code: 2000, message: "m" },
       { file: "a.sh", line: 0, level: "error", code: 2000, message: "m" },

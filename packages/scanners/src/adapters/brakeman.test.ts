@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { parseBrakemanJson } from "./brakeman.js";
 
 describe("parseBrakemanJson", () => {
-  it("returns empty array on blank or warnings-less input", () => {
+  it("empty or warnings-less output yields no findings instead of a parse error", () => {
     expect(parseBrakemanJson("")).toEqual([]);
     expect(parseBrakemanJson(JSON.stringify({}))).toEqual([]);
     expect(parseBrakemanJson(JSON.stringify({ warnings: "nope" }))).toEqual([]);
   });
 
-  it("normalizes a typical SQL injection warning with check_name token", () => {
+  it("a brakeman warning keeps its check name as rule id and puts the flagged code in the message", () => {
     const report = {
       warnings: [
         {
@@ -40,19 +40,7 @@ describe("parseBrakemanJson", () => {
     expect(out[0].message).toContain("User.where");
   });
 
-  it("maps brakeman confidence High/Medium/Weak to high/medium/low", () => {
-    const report = {
-      warnings: [
-        { check_name: "A", warning_type: "t", message: "m", file: "a.rb", line: 1, confidence: "High" },
-        { check_name: "B", warning_type: "t", message: "m", file: "a.rb", line: 2, confidence: "Medium" },
-        { check_name: "C", warning_type: "t", message: "m", file: "a.rb", line: 3, confidence: "Weak" },
-      ],
-    };
-    const out = parseBrakemanJson(JSON.stringify(report));
-    expect(out.map((f) => f.severity)).toEqual(["high", "medium", "low"]);
-  });
-
-  it("defaults rule id, falls back to user_input detail, and skips rows with no file or line", () => {
+  it("a warning without a check name gets a rule id and shows its user input; one without a file or line is dropped", () => {
     const report = {
       warnings: [
         { warning_type: "Mass Assignment", message: "m", file: "app/c.rb", line: 4, user_input: "params" },

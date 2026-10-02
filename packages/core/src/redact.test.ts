@@ -18,7 +18,7 @@ describe("redact", () => {
     expect(out).toBe(`rotate ${REDACTED} now`);
   });
 
-  it("leaves text without the secret unchanged and ignores very short secrets", () => {
+  it("text without a secret is unchanged, and a very short secret is ignored so it cannot shred the report", () => {
     expect(redactByFingerprint("nothing here", fingerprintSecrets([SECRET]))).toBe("nothing here");
     expect(redactSecrets("a b c", ["b"])).toBe("a b c");
     expect(fingerprintSecrets(["b"])).toEqual([]);

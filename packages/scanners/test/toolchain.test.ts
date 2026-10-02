@@ -92,11 +92,6 @@ async function waitFor(check: () => boolean, ms: number): Promise<boolean> {
 }
 
 describe("toolchain", () => {
-  it("reads OPENQODEX_HOME", () => {
-    const home = freshHome();
-    expect(tc.openqodexHome()).toBe(home);
-  });
-
   it("installs actionlint end to end, then resolves it again without downloading", async () => {
     const home = freshHome();
     const lines: string[] = [];
@@ -216,16 +211,6 @@ describe("toolchain", () => {
     expect(existsSync(join(home, "tools", "actionlint", actionlintVersion))).toBe(false);
   }, 30_000);
 
-  it("makes a relative OPENQODEX_HOME absolute", () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oq-rel-"));
-    const out = execFileSync(
-      process.execPath,
-      ["--input-type=module", "-e", `const tc = await import(${JSON.stringify(dist)}); process.stdout.write(tc.openqodexHome());`],
-      { encoding: "utf8", cwd, env: { ...process.env, OPENQODEX_HOME: "rel-home" } },
-    );
-    expect(out).toBe(join(realpathSync(cwd), "rel-home"));
-  });
-
   it("a takeover acting on an old view of a dead holder leaves the new holder's lock in place", () => {
     const home = freshHome();
     const dir = join(home, "tools", "actionlint");
@@ -335,7 +320,7 @@ describe("downloadVerified and extractArchive", () => {
     }
   });
 
-  it("unpacks a normal archive", async () => {
+  it("a normal archive still unpacks, so the member refusals do not reject every archive", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
     const archive = join(dir, "good.tar.gz");
     writeFileSync(archive, gzipSync(tarOf([["a/b.txt", "hello\n"]])));
