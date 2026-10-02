@@ -15,10 +15,12 @@
 // cross-file / cross-migration reasoning (migration ordering, downstream
 // contract breaks) are out of scope here: they belong to the lenses.
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import type { AdapterResult, StaticFinding } from "@openqodex/core";
 import type { Adapter } from "./index.js";
+import { readRepoFile } from "./read.js";
+
+// A migration bigger than this is not read.
+const SQL_MAX_BYTES = 5 * 1024 * 1024;
 
 export type SqlLintRunArgs = {
   repoDir: string;
@@ -207,7 +209,7 @@ export async function runSqlLint(args: SqlLintRunArgs): Promise<AdapterResult> {
   const errors: string[] = [];
   for (const rel of sqlPaths) {
     try {
-      const content = await readFile(path.join(args.repoDir, rel), "utf8");
+      const content = await readRepoFile(args.repoDir, rel, SQL_MAX_BYTES);
       findings.push(...lintSqlSource(rel, content));
     } catch (err) {
       errors.push(`${rel}: ${err instanceof Error ? err.message : String(err)}`);

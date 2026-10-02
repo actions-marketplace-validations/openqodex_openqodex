@@ -11,8 +11,8 @@
 // app/ directory at the repo root, AND a changed Rails-relevant file.
 // We anchor the warnings to changed lines downstream (the ensemble's
 // filterToChangedLines), so a project-wide scan only ever surfaces hits
-// on lines this change touched. With these flags it prints its report to
-// stdout and writes nothing to disk.
+// on lines this change touched. It gets OpenQodex's own empty config, prints
+// its report to stdout and writes nothing to disk.
 //
 // All errors are captured into the result; the runner never throws on a
 // scanner failure: static analysis is additive context, not a gate.
@@ -27,6 +27,7 @@ import type {
 } from "@openqodex/core";
 import { describeFailure, execTool, stderrTail } from "../exec.js";
 import type { Adapter } from "./index.js";
+import { withOwnedConfig } from "./owned-config.js";
 
 // Brakeman walks the whole app tree, so give it more headroom than the
 // file-scoped scanners.
@@ -70,23 +71,27 @@ export async function runBrakeman(args: {
   if (!looksLikeRails(args.repoDir, args.changedPaths)) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
-  // -q quiet, -f json the stable machine shape, --no-progress to keep
-  // stdout pure JSON. No path arg: brakeman defaults to the cwd we set.
-  const cliArgs = ["-q", "-f", "json", "--no-progress"];
-
-  let stdout: string;
+  const tool = args.tool;
   try {
-    stdout = await execBrakeman(args.tool, cliArgs, args.repoDir);
+    // -c <owned>: brakeman loads the first config it finds, and an explicit
+    // one comes first, so the repo's config/brakeman.yml (which can name
+    // output files, overwriting source with the report) is never read; the
+    // report goes to stdout. Checked against the brakeman 6.2.1 source.
+    // -q quiet, -f json the stable machine shape, --no-progress to keep
+    // stdout pure JSON. No path arg: brakeman defaults to the cwd we set.
+    return await withOwnedConfig("brakeman.yml", "--- {}\n", async (configPath) => {
+      const cliArgs = ["-c", configPath, "-q", "-f", "json", "--no-progress"];
+      const stdout = await execBrakeman(tool, cliArgs, args.repoDir);
+      try {
+        return { findings: parseBrakemanJson(stdout), error: null };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { findings: [], error: `parse: ${message.slice(0, 200)}` };
+      }
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
-  }
-
-  try {
-    return { findings: parseBrakemanJson(stdout), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
   }
 }
 

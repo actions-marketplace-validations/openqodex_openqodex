@@ -6,8 +6,8 @@
 // `correctness` rule set (ESLint-rule-compatible: no-cond-assign,
 // no-unused-vars, no-debugger, no-constant-condition, the
 // always-a-bug class). That makes it the right zero-setup linter for
-// the ensemble where a repo's own ESLint may not be runnable. It does
-// still honor an `.oxlintrc.json` if the repo ships one.
+// the ensemble where a repo's own ESLint may not be runnable. A repo's
+// `.oxlintrc.json` is not loaded: it can load JavaScript plugins.
 //
 // We invoke it only on changed .js/.jsx/.ts/.tsx/.mjs/.cjs/.cts/.mts
 // files so a change without them is a no-op. oxlint emits one JSON object
@@ -27,6 +27,7 @@ import type {
 import { describeFailure, execTool, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
+import { withOwnedConfig } from "./owned-config.js";
 
 const OXLINT_TIMEOUT_MS = 60_000;
 const OXLINT_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
@@ -45,23 +46,27 @@ export async function runOxlint(args: {
   if (jsFiles.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
-  // --format=json: the stable machine shape. Changed files are passed
-  // positionally so it lints only those.
-  const cliArgs = ["--format=json", "--", ...jsFiles];
-
-  let stdout: string;
+  const tool = args.tool;
   try {
-    stdout = await execOxlint(args.tool, cliArgs, args.repoDir);
+    // -c <owned> and --disable-nested-config: no repo config is loaded, at
+    // the root or in any folder. A repo's .oxlintrc.json can name JavaScript
+    // plugins (jsPlugins), which oxlint runs in Node: code from the change
+    // running on the developer's machine. Reproduced with oxlint 1.71.0.
+    // --format=json: the stable machine shape. Changed files are passed
+    // positionally so it lints only those.
+    return await withOwnedConfig("oxlintrc.json", "{}\n", async (configPath) => {
+      const cliArgs = ["-c", configPath, "--disable-nested-config", "--format=json", "--", ...jsFiles];
+      const stdout = await execOxlint(tool, cliArgs, args.repoDir);
+      try {
+        return { findings: parseOxlintJson(stdout), error: null };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { findings: [], error: `parse: ${message.slice(0, 200)}` };
+      }
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
-  }
-
-  try {
-    return { findings: parseOxlintJson(stdout), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
   }
 }
 

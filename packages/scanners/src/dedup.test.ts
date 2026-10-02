@@ -133,19 +133,25 @@ describe("dedupByRuleClass", () => {
     expect(dedupByRuleClass([a, b, c])).toEqual([a, b, c]);
   });
 
-  it("breaks severity ties by first occurrence", () => {
-    // Two semgrep secret rules on same span, both medium: first one
-    // wins (preserves whichever the adapter listed first).
-    const first = fakeFinding({
-      ruleId: "javascript.audit.hardcoded-secret-one",
-      severity: "medium",
-    });
-    const second = fakeFinding({
-      ruleId: "javascript.audit.hardcoded-secret-two",
-      severity: "medium",
-    });
+  it("breaks severity ties across scanners by first occurrence", () => {
+    // semgrep and gitleaks on the same secret, both high: the first one
+    // (semgrep, earlier in the ensemble) wins.
+    const first = fakeFinding({ ruleId: "javascript.audit.hardcoded-secret", severity: "high" });
+    const second = fakeFinding({ source: "gitleaks", ruleId: "generic-api-key", severity: "high" });
     const result = dedupByRuleClass([first, second]);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toBe(first);
+    expect(result).toEqual([first]);
+  });
+
+  it("keeps two rules of one class from the same scanner on one span", () => {
+    // Two different problems one scanner found on one line: both stay.
+    const sql = fakeFinding({ ruleId: "python.sql-injection", lineStart: 7, lineEnd: 7 });
+    const cmd = fakeFinding({ ruleId: "python.command-injection", lineStart: 7, lineEnd: 7 });
+    expect(dedupByRuleClass([sql, cmd])).toEqual([sql, cmd]);
+  });
+
+  it("collapses an exact repeat from one scanner", () => {
+    const a = fakeFinding({ ruleId: "rule-x" });
+    const b = fakeFinding({ ruleId: "rule-x" });
+    expect(dedupByRuleClass([a, b])).toEqual([a]);
   });
 });

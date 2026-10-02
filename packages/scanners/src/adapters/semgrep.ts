@@ -24,7 +24,8 @@ const SEMGREP_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
 const RULE_PACKS = ["p/default", "p/security-audit", "p/secrets"];
 
 // Semgrep asks semgrep.dev for the latest version on every run unless told
-// not to; the rule packs are the only network use allowed.
+// not to; the rule packs are the only network use allowed. Both the variable
+// and --disable-version-check are checked against semgrep 1.94.0.
 const SEMGREP_ENV = { SEMGREP_ENABLE_VERSION_CHECK: "0" };
 
 export type SemgrepRunArgs = {
@@ -50,6 +51,7 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
     "--quiet",
     "--metrics",
     "off",
+    "--disable-version-check",
     "--no-git-ignore",
     "--timeout",
     String(SEMGREP_PER_RULE_TIMEOUT_SEC),

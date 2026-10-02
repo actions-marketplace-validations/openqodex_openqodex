@@ -41,20 +41,36 @@ export type ExecResult = {
 
 type ExecError = Error & { code?: unknown; killed?: boolean; signal?: unknown };
 
-// execFile, never a shell. Never rejects: the caller reads the result.
+// How long after the deadline execTool resolves on its own when the process
+// (or a child it started that still holds its output open) has not closed.
+const CLOSE_GRACE_MS = 2_000;
+
+// execFile, never a shell. Never rejects: the caller reads the result. At the
+// deadline, and when output passes the cap, the process gets SIGKILL, which
+// it cannot catch; if its output still does not close soon after, the
+// result is returned anyway.
 export function execTool(
   file: string,
   args: string[],
   opts: { cwd: string; timeoutMs: number; maxBytes: number; env?: Record<string, string> },
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
+    let settled = false;
+    let hardStop: NodeJS.Timeout | null = null;
+    const settle = (result: ExecResult): void => {
+      if (settled) return;
+      settled = true;
+      if (hardStop) clearTimeout(hardStop);
+      resolve(result);
+    };
     try {
-      execFile(
+      const child = execFile(
         file,
         args,
         {
           cwd: opts.cwd,
           timeout: opts.timeoutMs,
+          killSignal: "SIGKILL",
           maxBuffer: opts.maxBytes,
           env: scannerEnv(opts.env),
           encoding: "utf8",
@@ -64,36 +80,42 @@ export function execTool(
           const out = stdout ?? "";
           const errText = stderr ?? "";
           if (!err) {
-            resolve({ stdout: out, stderr: errText, exitCode: 0, failure: null });
+            settle({ stdout: out, stderr: errText, exitCode: 0, failure: null });
             return;
           }
           const e = err as ExecError;
           if (typeof e.code === "number") {
-            resolve({ stdout: out, stderr: errText, exitCode: e.code, failure: null });
+            settle({ stdout: out, stderr: errText, exitCode: e.code, failure: null });
             return;
           }
           if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-            resolve({ stdout: out, stderr: errText, exitCode: null, failure: "overflow" });
+            settle({ stdout: out, stderr: errText, exitCode: null, failure: "overflow" });
             return;
           }
           // Node sets `killed` only when it ended the process itself, and the
           // buffer case is handled above, so this is the timeout.
           if (e.killed) {
-            resolve({ stdout: out, stderr: errText, exitCode: null, failure: "timeout" });
+            settle({ stdout: out, stderr: errText, exitCode: null, failure: "timeout" });
             return;
           }
           if (typeof e.signal === "string") {
-            resolve({ stdout: out, stderr: errText, exitCode: null, failure: "killed" });
+            settle({ stdout: out, stderr: errText, exitCode: null, failure: "killed" });
             return;
           }
           // ENOENT, EACCES and the like: the process never started.
-          resolve({ stdout: out, stderr: e.message, exitCode: null, failure: "not_found" });
+          settle({ stdout: out, stderr: e.message, exitCode: null, failure: "not_found" });
         },
       );
+      hardStop = setTimeout(() => {
+        child.kill("SIGKILL");
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        settle({ stdout: "", stderr: "", exitCode: null, failure: "timeout" });
+      }, opts.timeoutMs + CLOSE_GRACE_MS);
     } catch (err) {
       // execFile throws synchronously on an argument it cannot pass (a NUL byte).
       const message = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: message, exitCode: null, failure: "not_found" });
+      settle({ stdout: "", stderr: message, exitCode: null, failure: "not_found" });
     }
   });
 }

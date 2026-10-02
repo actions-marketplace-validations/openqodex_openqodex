@@ -1,5 +1,5 @@
 // golangci-lint adapter (Go lint + SAST). Runs
-// `golangci-lint run --output.json.path=stdout --enable=gosec <pkgs>`
+// `golangci-lint run --no-config ... --output.json.path=stdout --enable=gosec <pkgs>`
 // from each changed module's root, scoped to the directories of changed
 // .go files, and normalizes the vendor JSON `Issues[]` into
 // StaticFinding[]. golangci-lint bundles a dozen Go analyzers behind
@@ -18,9 +18,8 @@
 // Needs the developer's Go toolchain (the resolver reports "needs Go"
 // when it is missing). GOTOOLCHAIN=local keeps a scanned go.mod from
 // triggering a toolchain download. Its analysis cache and Go's build cache
-// live in the user cache folder, outside the repo; package loading runs
-// with Go's default read-only module mode, so go.mod and go.sum are never
-// rewritten. All errors are captured into the result; the runner never
+// live in the user cache folder, outside the repo; package loading runs in
+// read-only module mode, so go.mod and go.sum are never rewritten. All errors are captured into the result; the runner never
 // throws on a scanner failure: static analysis is additive context, not a
 // gate.
 
@@ -179,13 +178,23 @@ export async function runGolangci(args: GolangciRunArgs): Promise<AdapterResult>
       notes.push(`timed out before module ${group.moduleRoot}`);
       break;
     }
-    // --output.json.path=stdout: emit the JSON report to stdout (the v2
-    // flag; v1's --out-format was removed). --enable=gosec layers the
+    // --no-config: a repo's .golangci.yml is never loaded, since it can turn
+    // on fixes that rewrite source, module downloads, or extra report files
+    // inside the repo. --modules-download-mode=readonly: go.mod and go.sum
+    // are never updated. --path-mode=abs: absolute paths, which the runner
+    // rebases onto the repo root, so a nested module never gets its folder
+    // prefixed twice. --output.json.path=stdout and --show-stats=false: the
+    // JSON report is the only output, on stdout. --enable=gosec layers the
     // security linter on top of the default bug set. Package dirs are
-    // positional so we analyze only changed packages.
+    // positional so we analyze only changed packages. Every flag was checked
+    // against the help of golangci-lint 2.12.2.
     const cliArgs = [
       "run",
+      "--no-config",
+      "--modules-download-mode=readonly",
+      "--path-mode=abs",
       "--output.json.path=stdout",
+      "--show-stats=false",
       "--enable=gosec",
       ...group.packages,
     ];

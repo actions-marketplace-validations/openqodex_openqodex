@@ -16,6 +16,8 @@
 //   7. Output past the cap is not reported as "overflow".
 //   8. Arguments go through a shell, so a ";" or "$(...)" in one runs.
 //   9. The child runs somewhere other than `cwd`.
+//  10. A child that ignores SIGTERM keeps execTool pending past its deadline.
+//  11. A grandchild that holds the output open keeps execTool pending.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -108,4 +110,25 @@ describe("execTool", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("stops a child that ignores SIGTERM at the deadline (10)", async () => {
+    const started = Date.now();
+    const r = await execTool(
+      NODE,
+      ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      opts({ timeoutMs: 300 }),
+    );
+    expect(r.failure).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 10_000);
+
+  it("resolves when a grandchild keeps the output open (11)", async () => {
+    const started = Date.now();
+    const script =
+      "require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 8000)'], { stdio: 'inherit' });" +
+      "setInterval(() => {}, 1000)";
+    const r = await execTool(NODE, ["-e", script], opts({ timeoutMs: 300 }));
+    expect(r.failure).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 10_000);
 });

@@ -11,9 +11,10 @@
 // the tool that ranges from disabling checks to remote rule loading to
 // arbitrary code execution.
 //
-// Defense in depth: callers drop "-"-prefixed paths via safeFileArgs AND
-// pass a "--" end-of-options marker before the file list, so even a tool
-// that does not honor "--" never sees a flag-shaped path.
+// Defense in depth: callers pass such a path as "./-name", which every tool
+// reads as a path, AND pass a "--" end-of-options marker before the file
+// list. The file is still scanned; dropping it would let a change hide
+// vulnerable code in a file named "-app.py".
 export function safeFileArgs(paths: string[]): string[] {
-  return paths.filter((p) => !p.startsWith("-"));
+  return paths.map((p) => (p.startsWith("-") ? `./${p}` : p));
 }

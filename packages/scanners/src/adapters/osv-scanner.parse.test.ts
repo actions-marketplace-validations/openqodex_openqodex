@@ -36,6 +36,11 @@
 //      matches the diff.
 //  12. The message loses the package, version or CVE alias a reviewer
 //      needs.
+//  13. An unchanged declaration that carries the version
+//      (`"lodash": "^4.17.20"`) takes the anchor from the changed resolved
+//      entry, so the changed-line filter drops the advisory.
+//  14. A nested lockfile's findings take the root lockfile's path because
+//      its printed path ends with the root key.
 
 import { describe, expect, it } from "vitest";
 import { parseOsvScannerJson } from "./osv-scanner.js";
@@ -181,5 +186,46 @@ describe("what yields nothing (D)", () => {
     expect(parseOsvScannerJson("", new Map())).toEqual([]);
     expect(parseOsvScannerJson("{}", new Map())).toEqual([]);
     expect(parseOsvScannerJson(JSON.stringify({ results: "nope" }), new Map())).toEqual([]);
+  });
+});
+
+describe("choosing the place to anchor (13, 14)", () => {
+  const DECLARED = [
+    "{",
+    '  "dependencies": {',
+    '    "lodash": "^4.17.20"',
+    "  },",
+    '  "node_modules/lodash": {',
+    '    "version": "4.17.20",',
+    '    "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz"',
+    "  }",
+    "}",
+  ];
+
+  it("anchors to the candidate that touches a changed line (13)", () => {
+    const [finding] = parseOsvScannerJson(
+      report("package-lock.json", [pkg("lodash", "4.17.20", [{ id: "GHSA-x" }])]),
+      new Map([["package-lock.json", DECLARED]]),
+      { coverage: new Map([["package-lock.json", new Set([6, 7])]]) },
+    );
+    expect(finding).toMatchObject({ lineStart: 5, lineEnd: 6 });
+  });
+
+  it("keeps the first candidate when no changed lines are given (13)", () => {
+    const [finding] = parseOsvScannerJson(
+      report("package-lock.json", [pkg("lodash", "4.17.20", [{ id: "GHSA-x" }])]),
+      new Map([["package-lock.json", DECLARED]]),
+    );
+    expect(finding).toMatchObject({ lineStart: 3, lineEnd: 3 });
+  });
+
+  it("gives a nested lockfile its own path, with or without the repo root (14)", () => {
+    const files = new Map([
+      ["package-lock.json", LOCK],
+      ["service/package-lock.json", LOCK],
+    ]);
+    const json = report("/work/repo/service/package-lock.json", [pkg("lodash", "4.17.20", [{ id: "GHSA-x" }])]);
+    expect(parseOsvScannerJson(json, files, { repoDir: "/work/repo" })[0].filePath).toBe("service/package-lock.json");
+    expect(parseOsvScannerJson(json, files)[0].filePath).toBe("service/package-lock.json");
   });
 });

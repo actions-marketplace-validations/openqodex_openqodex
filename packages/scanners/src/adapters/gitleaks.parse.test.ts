@@ -8,6 +8,8 @@
 //      no secret adds an empty string.
 //   3. A path under the staging folder is not made repo-relative.
 //   4. A blank or non-array report throws instead of giving nothing.
+//   5. A description holding a long secret is cut before it is redacted, so
+//      the first part of the secret survives the cut.
 
 import { describe, expect, it } from "vitest";
 import { parseGitleaksJson, parseGitleaksSecrets } from "./gitleaks.js";
@@ -78,5 +80,16 @@ describe("parseGitleaksJson", () => {
 describe("parseGitleaksSecrets", () => {
   it("returns every matched secret and skips empty ones (2)", () => {
     expect(parseGitleaksSecrets(REPORT)).toEqual([AWS, GENERIC]);
+  });
+});
+
+describe("redaction before the cut", () => {
+  it("redacts the secret before trimming the message (5)", () => {
+    const long = "Q".repeat(5) + ["x9", "k2"].join("").repeat(150);
+    const json = JSON.stringify([
+      { RuleID: "custom", Description: `found ${long}`, StartLine: 1, EndLine: 1, File: `${STAGE}/a.txt`, Secret: long },
+    ]);
+    const [finding] = parseGitleaksJson(json, STAGE, parseGitleaksSecrets(json));
+    expect(finding.message).toBe("found [redacted]");
   });
 });

@@ -1,7 +1,7 @@
 // The thirteen builtin scanners. Each adapter gates itself on the changed
 // files (`wants`), so the toolchain is never asked for a tool the change
 // does not need, and runs its tool from the resolved path (`run`).
-import type { AdapterResult, BuiltinScanner, ResolvedTool } from "@openqodex/core";
+import type { AdapterResult, BuiltinScanner, DiffCoverage, ResolvedTool } from "@openqodex/core";
 import { actionlint } from "./actionlint.js";
 import { bandit } from "./bandit.js";
 import { brakeman } from "./brakeman.js";
@@ -20,8 +20,18 @@ export type Adapter = {
   source: BuiltinScanner;
   // True when this scanner has something to check in the change.
   wants(changedPaths: string[], repoDir: string): boolean;
-  // `tool` is null only for the in-process sqllint.
-  run(args: { repoDir: string; changedPaths: string[]; tool: ResolvedTool | null }): Promise<AdapterResult>;
+  // A reason this scanner must not run at all (for example dependency
+  // lookups while offline), known before any tool is resolved.
+  skip?(): string | null;
+  // `tool` is null only for the in-process sqllint. `coverage` is the
+  // changed lines, for adapters that choose between places to anchor a
+  // finding.
+  run(args: {
+    repoDir: string;
+    changedPaths: string[];
+    tool: ResolvedTool | null;
+    coverage?: DiffCoverage;
+  }): Promise<AdapterResult>;
 };
 
 // Scanners that run inside OpenQodex and need no tool resolved.

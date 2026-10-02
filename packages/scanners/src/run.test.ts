@@ -29,9 +29,19 @@
 //  14. onProgress does not get one line per scanner.
 //  15. An absolute path a scanner prints, through a symlinked directory, is
 //      not rebased onto the repo root (toRunDirRelative).
-//  16. With OPENQODEX_OFFLINE=1, osv-scanner still starts (it would send
-//      dependency names to osv.dev) instead of giving its plain reason.
+//  16. With OPENQODEX_OFFLINE=1, osv-scanner is resolved or started (it
+//      would send dependency names to osv.dev), or is not recorded as
+//      disabled with its plain reason.
+//  17. A scanner's error text carries a matched secret into its saved reason
+//      or a progress line.
+//  18. A message or reason cut short ends in the first part of a secret, or
+//      starts with the last part of one, which full-string redaction misses.
+//  19. Two different rules from one scanner on one span collapse into one.
+//  20. A changed file named "-app.sh" is never scanned.
+//  21. A .sql path that is a symlink to /dev/zero or a FIFO hangs the run;
+//      one that leads out of the repo is read; an oversized one is read.
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -378,7 +388,8 @@ describe("runScanners", () => {
             findings: [
               // Same severity as sqllint's: sorted after the builtins.
               finding({ ruleId: "function-default-public-execute", lineStart: 1, lineEnd: 1, severity: "high" }),
-              // Two secret-class rules on one span: deduped to the first.
+              // Two secret-class rules from one scanner on one span: distinct
+              // problems, both kept.
               finding({ ruleId: "generic-api-key", lineStart: 2, lineEnd: 2 }),
               finding({ ruleId: "hardcoded-token", lineStart: 2, lineEnd: 2 }),
               // Off the changed lines: dropped.
@@ -398,6 +409,7 @@ describe("runScanners", () => {
       ["c3", "sqllint:security-definer-no-search-path"],
       ["c4", "custom:demo:function-default-public-execute"],
       ["c5", "custom:demo:generic-api-key"],
+      ["c6", "custom:demo:hardcoded-token"],
     ]);
     expect(scan.candidates[0]?.filePath).toBe("db/migrate.sql");
     expect(scan.scanners.at(-1)?.scanner).toBe("custom:demo");
@@ -416,13 +428,14 @@ describe("runScanners", () => {
     });
     expect(progress).toHaveLength(13);
     expect(progress.find((l) => l.startsWith("sqllint:"))).toMatch(/^sqllint: ran, 3 raw finding\(s\) in /);
-    expect(progress.find((l) => l.startsWith("semgrep:"))).toBe("semgrep: not installed: semgrep is not installed");
+    expect(progress.find((l) => l.startsWith("semgrep:"))).toBe("semgrep: not installed");
   });
 });
 
 describe("osv-scanner offline", () => {
   it("skips itself with a plain reason and never starts the tool (16)", async () => {
     const dir = repo({ "package-lock.json": "{}\n" });
+    const asked: BuiltinScanner[] = [];
     const before = process.env.OPENQODEX_OFFLINE;
     process.env.OPENQODEX_OFFLINE = "1";
     try {
@@ -432,17 +445,157 @@ describe("osv-scanner offline", () => {
         coverage: new Map([["package-lock.json", lines(1)]]),
         config: config(),
         only: ["osv-scanner"],
-        // A path that cannot start: reaching it would fail with a different reason.
-        resolveTool: async () => ({ ok: true, tool: { path: path.join(dir, "no-such-tool"), version: "1.9.2", env: {} } }),
+        resolveTool: notInstalled(asked),
       });
+      expect(asked).toEqual([]);
       expect(scan.scanners).toEqual([
-        expect.objectContaining({ scanner: "osv-scanner", reason: OSV_OFFLINE_REASON }),
+        expect.objectContaining({ scanner: "osv-scanner", status: "disabled", reason: OSV_OFFLINE_REASON }),
       ]);
     } finally {
       if (before === undefined) delete process.env.OPENQODEX_OFFLINE;
       else process.env.OPENQODEX_OFFLINE = before;
     }
   });
+});
+
+describe("secrets in reasons and cut text", () => {
+  const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5Ab6Cd0Ef"].join("_");
+  const holder = (): CustomAdapter =>
+    custom({
+      source: "custom:holder",
+      run: async () => ({ findings: [], error: null, secrets: [secret], version: null }),
+    });
+
+  it("redacts a secret from another scanner's error and never prints it (17)", async () => {
+    const dir = repo({ "a.txt": "x\n" });
+    const progress: string[] = [];
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["a.txt"],
+      coverage: new Map([["a.txt", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+      only: ["custom:holder", "custom:leaky"],
+      onProgress: (line) => progress.push(line),
+      custom: [
+        holder(),
+        custom({
+          source: "custom:leaky",
+          run: async () => ({ findings: [], error: `bad input ${secret} here`, version: null }),
+        }),
+      ],
+    });
+    expect(JSON.stringify(scan)).not.toContain(secret);
+    expect(progress.join("\n")).not.toContain(secret);
+    expect(progress.join("\n")).not.toContain("bad input");
+    expect(scan.scanners.find((s) => s.scanner === "custom:leaky")?.reason).toBe(`bad input ${REDACTED} here`);
+  });
+
+  it("redacts a secret cut at the end of a message or the start of a reason (18)", async () => {
+    const dir = repo({ "a.txt": "x\n" });
+    const cut = `${"word ".repeat(95)}${secret.slice(0, 20)}...`;
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["a.txt"],
+      coverage: new Map([["a.txt", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+      only: ["custom:holder", "custom:cut"],
+      custom: [
+        holder(),
+        custom({
+          source: "custom:cut",
+          run: async () => ({
+            findings: [finding({ source: "custom:cut", filePath: "a.txt", message: cut })],
+            error: `${secret.slice(-12)} was rejected`,
+            version: null,
+          }),
+        }),
+      ],
+    });
+    const message = scan.candidates[0]?.message ?? "";
+    expect(message).not.toContain(secret.slice(0, 6));
+    expect(message.endsWith(`${REDACTED}...`)).toBe(true);
+    const reason = scan.scanners.find((s) => s.scanner === "custom:cut")?.reason ?? "";
+    expect(reason).not.toContain(secret.slice(-6));
+    expect(reason).toBe(`${REDACTED} was rejected`);
+  });
+});
+
+describe("dedup across scanners only", () => {
+  it("keeps two rules from one scanner on one span, merges the same class across scanners (19)", async () => {
+    const dir = repo({ "app.py": "x\n" });
+    const at = { filePath: "app.py", lineStart: 1, lineEnd: 1, severity: "high" as const };
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app.py"],
+      coverage: new Map([["app.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+      only: ["custom:a", "custom:b"],
+      custom: [
+        custom({
+          source: "custom:a",
+          run: async () => ({
+            findings: [
+              finding({ ...at, source: "custom:a", ruleId: "sql-injection" }),
+              finding({ ...at, source: "custom:a", ruleId: "command-injection" }),
+            ],
+            error: null,
+            version: null,
+          }),
+        }),
+        custom({
+          source: "custom:b",
+          run: async () => ({
+            findings: [finding({ ...at, source: "custom:b", ruleId: "tainted-sql-string" })],
+            error: null,
+            version: null,
+          }),
+        }),
+      ],
+    });
+    expect(scan.candidates.map((c) => c.token)).toEqual(["custom:a:sql-injection", "custom:a:command-injection"]);
+  });
+});
+
+describe("files the change can use against the scan", () => {
+  it("scans a file whose name starts with a dash (20)", async () => {
+    const dir = repo({ "-app.sh": "echo $1\n" });
+    const asked: BuiltinScanner[] = [];
+    await runScanners({
+      repoDir: dir,
+      changedPaths: ["-app.sh"],
+      coverage: new Map([["-app.sh", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(asked),
+    });
+    expect(asked).toContain("shellcheck");
+  });
+
+  it("refuses device, FIFO, outside and oversized .sql files without hanging (21)", async () => {
+    const outside = repo({ "secret.sql": SQL });
+    const dir = repo({ "good.sql": SQL, "big.sql": `${SQL}${"-- pad\n".repeat(800_000)}` });
+    fs.symlinkSync("/dev/zero", path.join(dir, "zero.sql"));
+    fs.symlinkSync(path.join(outside, "secret.sql"), path.join(dir, "out.sql"));
+    fs.symlinkSync(outside, path.join(dir, "linked"));
+    execFileSync("mkfifo", [path.join(dir, "pipe.sql")]);
+    const changed = ["good.sql", "zero.sql", "pipe.sql", "out.sql", "linked/secret.sql", "big.sql"];
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: changed,
+      coverage: new Map(changed.map((p) => [p, lines(1, 2, 3, 4)])),
+      config: config(),
+      resolveTool: notInstalled(),
+      only: ["sqllint"],
+    });
+    expect(new Set(scan.candidates.map((c) => c.filePath))).toEqual(new Set(["good.sql"]));
+    const reason = scan.scanners[0]?.reason ?? "";
+    expect(reason).toContain("zero.sql: not a regular file");
+    expect(reason).toContain("pipe.sql: not a regular file");
+    expect(reason).toContain("linked/secret.sql: outside the repo");
+    expect(reason).toContain("big.sql: larger than");
+  }, 10_000);
 });
 
 // Copied from the source product's path round-trip tests.

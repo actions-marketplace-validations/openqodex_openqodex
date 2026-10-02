@@ -1,5 +1,5 @@
 // Ruff adapter (Python lint). Runs
-// `ruff check --output-format json --no-fix --no-cache <files>` against
+// `ruff check --output-format json --no-fix --no-fix-only --no-cache <files>` against
 // the changed Python files in the working tree and normalizes the vendor
 // JSON into StaticFinding[]. Fast, near-zero config, and covers the Python
 // rule space the rest of the ensemble misses: bugbear gotchas (mutable
@@ -42,7 +42,9 @@ export async function runRuff(args: {
   if (pyFiles.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
-  // --no-fix: report only, never rewrite the working tree. --no-cache:
+  // --no-fix and --no-fix-only: report only, never rewrite the working
+  // tree (a repo config with `fix-only = true` applies fixes even under
+  // --no-fix; checked against ruff 0.8.4). --no-cache:
   // ruff otherwise writes .ruff_cache into the project. --output-format
   // json: the stable machine shape. We let Ruff honor the repo's own
   // pyproject/ruff.toml when present (near-zero config), but pass the
@@ -52,6 +54,7 @@ export async function runRuff(args: {
     "--output-format",
     "json",
     "--no-fix",
+    "--no-fix-only",
     "--no-cache",
     "--quiet",
     "--",

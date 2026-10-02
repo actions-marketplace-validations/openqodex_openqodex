@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { safeFileArgs } from "./safe-args.js";
 
+// Failure list:
+//   1. A path that starts with "-" reaches the tool as a flag.
+//   2. A path that starts with "-" is dropped, so the file is never scanned.
+//   3. An ordinary path is changed.
+
 describe("safeFileArgs", () => {
-  it("drops flag-shaped (hyphen-prefixed) paths that would smuggle CLI flags", () => {
+  it("keeps flag-shaped paths as ./-prefixed paths so they are scanned, not parsed as flags (1, 2)", () => {
     expect(
       safeFileArgs([
         "app/models/user.rb",
@@ -11,16 +16,18 @@ describe("safeFileArgs", () => {
         "src/index.ts",
         "--config=https://attacker/rules.yaml",
       ]),
-    ).toEqual(["app/models/user.rb", "src/index.ts"]);
+    ).toEqual([
+      "app/models/user.rb",
+      "./--require=evil.rb",
+      "./-rf",
+      "src/index.ts",
+      "./--config=https://attacker/rules.yaml",
+    ]);
   });
 
-  it("passes normal paths through unchanged", () => {
+  it("passes normal paths through unchanged (3)", () => {
     const paths = ["a/b.py", "c.go", "Dockerfile", "Gemfile"];
     expect(safeFileArgs(paths)).toEqual(paths);
-  });
-
-  it("returns [] when every path is flag-shaped", () => {
-    expect(safeFileArgs(["--x", "-y"])).toEqual([]);
   });
 
   it("returns [] for an empty input", () => {

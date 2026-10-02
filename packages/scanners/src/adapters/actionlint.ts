@@ -1,8 +1,7 @@
 // actionlint adapter (GitHub Actions workflow lint). Runs
 // `actionlint -format '{{json .}}' <changed workflow files>` in the
 // working tree and normalizes the vendor JSON into StaticFinding[].
-// High signal for CI-heavy repos: catches shellcheck issues in run:
-// steps, invalid `${{ }}` expressions, untrusted-input injection in
+// High signal for CI-heavy repos: catches invalid `${{ }}` expressions, untrusted-input injection in
 // workflow expressions, deprecated runner images, and bad job/needs
 // wiring that a generic linter never sees.
 //
@@ -44,7 +43,10 @@ export async function runActionlint(args: {
   if (workflows.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
-  const cliArgs = ["-format", "{{json .}}", "-no-color", "--", ...workflows];
+  // -shellcheck= and -pyflakes= switch off the run: step checks that call
+  // whatever shellcheck and pyflakes are on PATH, so two machines report
+  // the same findings (flags checked against actionlint 1.7.7).
+  const cliArgs = ["-format", "{{json .}}", "-no-color", "-shellcheck=", "-pyflakes=", "--", ...workflows];
 
   let stdout: string;
   try {

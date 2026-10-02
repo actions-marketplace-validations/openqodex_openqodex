@@ -19,6 +19,7 @@ import {
   fingerprintSecrets,
   mapScannerSeverity,
   matchesGlob,
+  REDACTED,
   redactSecrets,
 } from "@openqodex/core";
 import type {
@@ -54,6 +55,8 @@ export type RunScannersResult = {
 };
 
 // One scanner's run before the shared pipeline.
+// `summary.reason` is the raw text here; it is redacted and cut to one line
+// only once every scanner's secrets are known.
 type Outcome = {
   summary: ScannerRunSummary;
   findings: StaticFinding[];
@@ -120,7 +123,7 @@ export async function runScanners(args: {
 
   const candidates: Candidate[] = deduped.map((f, i) => ({
     ...f,
-    message: redactSecrets(f.message, secrets),
+    message: redactCut(f.message, secrets),
     id: `c${i + 1}`,
     token: `${f.source}:${f.ruleId}`,
     reviewSeverity: mapScannerSeverity(f.severity),
@@ -128,7 +131,11 @@ export async function runScanners(args: {
 
   const kept = new Map<ScannerSource, number>();
   for (const c of candidates) kept.set(c.source, (kept.get(c.source) ?? 0) + 1);
-  const scanners = outcomes.map((o) => ({ ...o.summary, keptCount: kept.get(o.summary.scanner) ?? 0 }));
+  const scanners = outcomes.map((o) => ({
+    ...o.summary,
+    keptCount: kept.get(o.summary.scanner) ?? 0,
+    reason: o.summary.reason === null ? null : oneLine(redactCut(o.summary.reason, secrets)),
+  }));
 
   return {
     scan: {
@@ -143,7 +150,13 @@ export async function runScanners(args: {
 
 async function runBuiltin(
   adapter: Adapter,
-  args: { repoDir: string; changedPaths: string[]; config: Config; resolveTool: ResolveTool },
+  args: {
+    repoDir: string;
+    changedPaths: string[];
+    coverage: DiffCoverage;
+    config: Config;
+    resolveTool: ResolveTool;
+  },
 ): Promise<Outcome> {
   const started = Date.now();
   const source = adapter.source;
@@ -153,6 +166,8 @@ async function runBuiltin(
   if (!adapter.wants(args.changedPaths, args.repoDir)) {
     return skippedOutcome(source, "no_matching_files", null, started);
   }
+  const skipReason = adapter.skip?.() ?? null;
+  if (skipReason) return skippedOutcome(source, "disabled", skipReason, started);
 
   let tool = null;
   if (!IN_PROCESS.has(source)) {
@@ -162,7 +177,12 @@ async function runBuiltin(
   }
 
   const ranFrom = Date.now();
-  const result = await adapter.run({ repoDir: args.repoDir, changedPaths: args.changedPaths, tool });
+  const result = await adapter.run({
+    repoDir: args.repoDir,
+    changedPaths: args.changedPaths,
+    tool,
+    coverage: args.coverage,
+  });
   return ranOutcome(source, result, tool?.version ?? null, ranFrom);
 }
 
@@ -186,7 +206,7 @@ async function guard(source: ScannerSource, run: () => Promise<Outcome>): Promis
     return await run();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return skippedOutcome(source, "failed", oneLine(message), started);
+    return skippedOutcome(source, "failed", message, started);
   }
 }
 
@@ -205,13 +225,15 @@ function skippedOutcome(
 
 // A scanner that ran. An error with no findings is a failure; an error next
 // to findings (one Go module of several failed, one .sql file unreadable)
-// keeps the findings and the note.
+// keeps the findings and the note. An adapter that chose not to run is
+// disabled, with its reason.
 function ranOutcome(
   scanner: ScannerSource,
   result: AdapterResult,
   version: string | null,
   started: number,
 ): Outcome {
+  if (result.skipped) return skippedOutcome(scanner, "disabled", result.skipped, started);
   const failed = result.error !== null && result.findings.length === 0;
   return {
     summary: {
@@ -221,7 +243,7 @@ function ranOutcome(
       rawCount: result.findings.length,
       keptCount: 0,
       durationMs: Date.now() - started,
-      reason: result.error === null ? null : oneLine(result.error),
+      reason: result.error,
     },
     findings: result.findings,
     secrets: result.secrets ?? [],
@@ -232,16 +254,47 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
+// Name, status and counts only: a reason can quote tool output, and secrets
+// are not all known until every scanner has finished.
 function progressLine(s: ScannerRunSummary): string {
   const seconds = `${(s.durationMs / 1000).toFixed(1)}s`;
   switch (s.status) {
     case "ran":
-      return `${s.scanner}: ran, ${s.rawCount} raw finding(s) in ${seconds}${s.reason ? ` (${s.reason})` : ""}`;
+      return `${s.scanner}: ran, ${s.rawCount} raw finding(s) in ${seconds}`;
     case "no_matching_files":
       return `${s.scanner}: nothing to check in this change`;
     default:
-      return `${s.scanner}: ${s.status.replace(/_/g, " ")}${s.reason ? `: ${s.reason}` : ""}`;
+      return `${s.scanner}: ${s.status.replace(/_/g, " ")}`;
   }
+}
+
+// The shortest piece of a secret treated as a leak at the edge of cut text.
+const MIN_PIECE = 6;
+
+// Redacts every whole secret, then the pieces a cut can leave: text that
+// ends (before a trailing "...") with the start of a secret, or begins with
+// the end of one. Messages and reasons are cut to a length before they reach
+// the runner, and a cut through a secret defeats whole-string redaction.
+export function redactCut(text: string, secrets: string[]): string {
+  let out = redactSecrets(text, secrets);
+  const ellipsis = out.endsWith("...") ? "..." : "";
+  let body = out.slice(0, out.length - ellipsis.length);
+  for (const secret of secrets) {
+    for (let k = Math.min(secret.length - 1, body.length); k >= MIN_PIECE; k--) {
+      if (body.endsWith(secret.slice(0, k))) {
+        body = body.slice(0, body.length - k) + REDACTED;
+        break;
+      }
+    }
+    for (let k = Math.min(secret.length - 1, body.length); k >= MIN_PIECE; k--) {
+      if (body.startsWith(secret.slice(secret.length - k))) {
+        body = REDACTED + body.slice(k);
+        break;
+      }
+    }
+  }
+  out = body + ellipsis;
+  return out;
 }
 
 /**
@@ -359,11 +412,14 @@ export function ruleClassFor(f: StaticFinding): string {
   return `${f.source}:${f.ruleId}`;
 }
 
-// Group by (file, lineStart, lineEnd, ruleClass); pick the highest-
-// severity hit per group. Ties on severity break to the first
-// occurrence (semgrep precedes gitleaks in the input order, which
-// matches the typical preference of having a semgrep rule's
-// descriptive message over gitleaks's terse "Generic API Key").
+// Group by (file, lineStart, lineEnd, ruleClass). The class merge is only
+// across scanners: semgrep and gitleaks reporting the same secret on one
+// line is one problem, so the scanner with the highest-severity hit keeps
+// its findings in the group and the others' are dropped (ties go to the
+// first occurrence: semgrep precedes gitleaks in the input order, and its
+// rule message is the more descriptive). Two different rules from one
+// scanner on one span are two problems and both stay; only an exact repeat
+// (same scanner, same rule) collapses.
 // Exported for unit tests.
 export function dedupByRuleClass(findings: StaticFinding[]): StaticFinding[] {
   const groups = new Map<string, StaticFinding[]>();
@@ -373,23 +429,18 @@ export function dedupByRuleClass(findings: StaticFinding[]): StaticFinding[] {
     if (bucket) bucket.push(f);
     else groups.set(key, [f]);
   }
-  const winners: StaticFinding[] = [];
-  // Preserve input order for unaffected findings by walking the input
-  // once and emitting each finding the first time we hit its group's
-  // winner. Avoids reordering the non-deduped tail.
   const emitted = new Set<StaticFinding>();
   for (const bucket of groups.values()) {
-    if (bucket.length === 1) {
-      emitted.add(bucket[0]);
-      continue;
-    }
     const winner = [...bucket].sort(
       (a, b) => severityRank(b.severity) - severityRank(a.severity),
     )[0];
-    emitted.add(winner);
+    const seenRules = new Set<string>();
+    for (const f of bucket) {
+      if (f.source !== winner.source || seenRules.has(f.ruleId)) continue;
+      seenRules.add(f.ruleId);
+      emitted.add(f);
+    }
   }
-  for (const f of findings) {
-    if (emitted.has(f)) winners.push(f);
-  }
-  return winners;
+  // Walk the input once so survivors keep their input order.
+  return findings.filter((f) => emitted.has(f));
 }

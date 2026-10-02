@@ -21,6 +21,7 @@ import { redactSecrets } from "@openqodex/core";
 import type { AdapterResult, ResolvedTool, StaticFinding } from "@openqodex/core";
 import { describeFailure, execTool } from "../exec.js";
 import type { Adapter } from "./index.js";
+import { repoFileOrReason } from "./read.js";
 
 const GITLEAKS_TIMEOUT_MS = 60_000;
 const REPORT_MAX_BYTES = 8 * 1024 * 1024;
@@ -116,11 +117,7 @@ export async function runGitleaks(args: GitleaksRunArgs): Promise<AdapterResult>
       // staging prefix is what puts them back in the repo-relative frame
       // the coverage filter matches against.
       const secrets = parseGitleaksSecrets(reportRaw);
-      const findings = parseGitleaksJson(reportRaw, staged.dir).map((f) => ({
-        ...f,
-        message: redactSecrets(f.message, secrets),
-      }));
-      return { findings, error: null, secrets };
+      return { findings: parseGitleaksJson(reportRaw, staged.dir, secrets), error: null, secrets };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { findings: [], error: `parse: ${message.slice(0, 200)}` };
@@ -184,15 +181,13 @@ export async function stageChangedFiles(
     const src = path.join(repoDir, normalized);
     const dest = path.join(dir, normalized);
     try {
-      // lstat, NOT stat: stat() follows a symlink. A repository that adds a
-      // symlink at a changed path, pointing at a file elsewhere on the
-      // machine or at another directory outside the repo, would otherwise
-      // get that target copied into the staging tree, scanned, and any
-      // secret in it reported as a finding on the symlink's own
-      // repo-relative path. isFile() is false for a symlink under lstat,
-      // so this skips them outright.
-      const stat = await fs.lstat(src);
-      if (!stat.isFile()) continue;
+      // Only a regular file inside the repo. A symlink at a changed path, or
+      // a symlinked directory on the way, pointing at a file elsewhere on
+      // the machine would otherwise get that target copied into the staging
+      // tree, scanned, and any secret in it reported as a finding on the
+      // link's own repo-relative path.
+      const checked = await repoFileOrReason(repoDir, normalized, Number.MAX_SAFE_INTEGER);
+      if ("reason" in checked) continue;
       await fs.mkdir(path.dirname(dest), { recursive: true });
       try {
         await fs.link(src, dest);
@@ -235,7 +230,9 @@ type GitleaksReportEntry = {
   Secret?: unknown;
 };
 
-export function parseGitleaksJson(json: string, repoDir: string): StaticFinding[] {
+// `secrets` are redacted from each message before it is trimmed, so a cut
+// can never leave the first part of a secret behind.
+export function parseGitleaksJson(json: string, repoDir: string, secrets: string[] = []): StaticFinding[] {
   if (!json.trim()) return [];
   const parsed = JSON.parse(json);
   if (!Array.isArray(parsed)) return [];
@@ -266,7 +263,7 @@ export function parseGitleaksJson(json: string, repoDir: string): StaticFinding[
       lineStart,
       lineEnd,
       severity: "high",
-      message: trimMessage(description),
+      message: trimMessage(redactSecrets(description, secrets)),
       reference: null,
     });
   }

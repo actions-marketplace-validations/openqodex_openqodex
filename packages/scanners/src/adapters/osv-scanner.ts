@@ -21,10 +21,11 @@
 // into the result; the runner never throws on a scanner failure: static
 // analysis is additive context, not a gate.
 
-import { readFile } from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
 import type {
   AdapterResult,
+  DiffCoverage,
   ResolvedTool,
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
@@ -32,11 +33,21 @@ import type {
 import { describeFailure, execTool } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
+import { readRepoFile } from "./read.js";
 
 const OSV_TIMEOUT_MS = 90_000;
 const OSV_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
+// A lockfile bigger than this is not read for line mapping; its advisories
+// anchor to line 1.
+const LOCKFILE_MAX_BYTES = 50 * 1024 * 1024;
 
-export const OSV_OFFLINE_REASON = "skipped: offline, dependency lookups are off";
+export const OSV_OFFLINE_REASON = "offline, dependency lookups are off";
+
+// Known before any tool is resolved, so an offline run never installs or
+// starts osv-scanner.
+function offlineReason(): string | null {
+  return process.env.OPENQODEX_OFFLINE === "1" ? OSV_OFFLINE_REASON : null;
+}
 
 // Lockfile / manifest basenames OSV-Scanner understands. We only invoke
 // it when the change touched one of these, so a non-dependency change is a
@@ -73,6 +84,7 @@ export type OsvScannerRunArgs = {
   repoDir: string;
   changedPaths: string[];
   tool: ResolvedTool | null;
+  coverage?: DiffCoverage;
 };
 
 function isLockfilePath(p: string): boolean {
@@ -84,7 +96,8 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
   // --lockfile flag, but a flag-shaped path is never handed on.
   const lockfiles = safeFileArgs(args.changedPaths.filter(isLockfilePath));
   if (lockfiles.length === 0) return { findings: [], error: null };
-  if (process.env.OPENQODEX_OFFLINE === "1") return { findings: [], error: OSV_OFFLINE_REASON };
+  const skipped = offlineReason();
+  if (skipped) return { findings: [], error: null, skipped };
   if (!args.tool) return { findings: [], error: "not installed" };
 
   const cliArgs = [
@@ -111,8 +124,8 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
   const lockfileLines = new Map<string, string[]>();
   for (const rel of lockfiles) {
     try {
-      const content = await readFile(path.join(args.repoDir, rel), "utf8");
-      lockfileLines.set(rel, content.split("\n"));
+      const content = await readRepoFile(args.repoDir, rel, LOCKFILE_MAX_BYTES);
+      lockfileLines.set(path.normalize(rel), content.split("\n"));
     } catch {
       // Best effort; missing content falls back to line 1 in the parser.
     }
@@ -120,7 +133,10 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
 
   let findings: StaticFinding[];
   try {
-    findings = parseOsvScannerJson(run.stdout, lockfileLines);
+    findings = parseOsvScannerJson(run.stdout, lockfileLines, {
+      repoDir: args.repoDir,
+      coverage: args.coverage,
+    });
   } catch (err) {
     // THE JSON IS THE RESULT, AND ONLY AN UNREADABLE ONE IS A FAILURE.
     // osv-scanner uses its exit code to describe what it found (1 is
@@ -147,6 +163,7 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
 export const osvScanner: Adapter = {
   source: "osv-scanner",
   wants: (changedPaths) => safeFileArgs(changedPaths.filter(isLockfilePath)).length > 0,
+  skip: offlineReason,
   run: (args) => runOsvScanner(args),
 };
 
@@ -173,6 +190,7 @@ type OsvResultEntry = {
 export function parseOsvScannerJson(
   json: string,
   lockfileLines: Map<string, string[]>,
+  opts: { repoDir?: string; coverage?: DiffCoverage } = {},
 ): StaticFinding[] {
   if (!json.trim()) return [];
   const parsed = JSON.parse(json) as { results?: unknown };
@@ -181,7 +199,7 @@ export function parseOsvScannerJson(
   for (const result of parsed.results as OsvResultEntry[]) {
     if (!result || typeof result !== "object") continue;
     const sourcePath = typeof result.source?.path === "string" ? result.source.path : "";
-    const relPath = relativeLockfilePath(sourcePath, lockfileLines);
+    const relPath = relativeLockfilePath(sourcePath, lockfileLines, opts.repoDir);
     const lines = lockfileLines.get(relPath) ?? null;
     if (!Array.isArray(result.packages)) continue;
     for (const pkg of result.packages as OsvPackageEntry[]) {
@@ -189,7 +207,7 @@ export function parseOsvScannerJson(
       const pkgName = typeof pkg.package?.name === "string" ? pkg.package.name : "";
       const pkgVersion =
         typeof pkg.package?.version === "string" ? pkg.package.version : "";
-      const range = entryRangeForPackage(lines, pkgName, pkgVersion);
+      const range = entryRangeForPackage(lines, pkgName, pkgVersion, opts.coverage?.get(relPath));
       const maxSeverityByVulnId = groupSeverityById(pkg.groups);
       if (!Array.isArray(pkg.vulnerabilities)) continue;
       for (const vuln of pkg.vulnerabilities as OsvVulnerability[]) {
@@ -215,42 +233,66 @@ export function parseOsvScannerJson(
   return out;
 }
 
-// OSV emits the lockfile path it was given (relative when --lockfile was
-// relative). Match it against our known lockfile keys so file_path lines
-// up with DiffCoverage. Falls back to the raw path if no key matches.
+// OSV prints the lockfile path it was given, often made absolute. Rebase it
+// onto the repo root (under either spelling of a symlinked root) and look it
+// up exactly, so `service/package-lock.json` never takes the root lockfile's
+// path. Without a repo root, the longest key that ends the path at a folder
+// boundary wins. Falls back to the raw path if nothing matches.
 function relativeLockfilePath(
   sourcePath: string,
   lockfileLines: Map<string, string[]>,
+  repoDir?: string,
 ): string {
   if (lockfileLines.has(sourcePath)) return sourcePath;
-  for (const key of lockfileLines.keys()) {
-    if (sourcePath.endsWith(key)) return key;
+  if (repoDir && path.isAbsolute(sourcePath)) {
+    const roots = [repoDir];
+    try {
+      roots.push(fs.realpathSync(repoDir));
+    } catch {
+      // The plain spelling is enough.
+    }
+    for (const root of roots) {
+      const rel = path.relative(root, sourcePath);
+      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel) && lockfileLines.has(rel)) return rel;
+    }
   }
-  return sourcePath;
+  if (!path.isAbsolute(sourcePath) && lockfileLines.has(path.normalize(sourcePath))) {
+    return path.normalize(sourcePath);
+  }
+  let best: string | null = null;
+  for (const key of lockfileLines.keys()) {
+    const boundary = sourcePath.length === key.length || sourcePath[sourcePath.length - key.length - 1] === "/";
+    if (sourcePath.endsWith(key) && boundary && (!best || key.length > best.length)) best = key;
+  }
+  return best ?? sourcePath;
 }
 
 // Lockfile range for a package's entry: from the line that names the
 // package through the line carrying its flagged version. Anchoring to a
 // RANGE (not just the name line) is what lets the changed-line filter
 // keep advisories for BUMPED dependencies: on a version bump the
-// name/key line is unchanged while the version/integrity lines change,
-// so a single-line anchor on the name was dropped by the filter even
-// though the change introduced the vulnerable version. Iterating name
-// occurrences and requiring the version nearby also picks the resolved
-// dependency entry (name + version co-located) over a bare top-level
-// declaration. Falls back to a small window from the first name line
-// when the version is not found verbatim (hashed lockfiles), and to
-// line 1 when content is unavailable (a wholesale-added file still
+// name/key line is unchanged while the version/integrity lines change.
+//
+// A package can match in several places: a top-level declaration
+// (`"lodash": "^4.17.20"`, unchanged by a lockfile refresh) and the resolved
+// entry that carries the version. Every place where the name has the version
+// nearby is a candidate; the first one that touches a changed line wins, so
+// the advisory stays on the entry the change actually moved. Without changed
+// lines the first candidate wins. Falls back to a small window from the
+// first name line when the version is not found verbatim (hashed lockfiles),
+// and to line 1 when content is unavailable (a wholesale-added file still
 // overlaps).
 function entryRangeForPackage(
   lines: string[] | null,
   pkgName: string,
   pkgVersion: string,
+  changed?: Set<number>,
 ): { start: number; end: number } {
   if (!lines || !pkgName) return { start: 1, end: 1 };
   const name = pkgName.toLowerCase();
   const ver = pkgVersion ? pkgVersion.toLowerCase() : "";
   let firstNameLine = -1;
+  const candidates: { start: number; end: number }[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].toLowerCase().includes(name)) continue;
     if (firstNameLine === -1) firstNameLine = i;
@@ -258,10 +300,20 @@ function entryRangeForPackage(
       const windowEnd = Math.min(lines.length, i + 9);
       for (let j = i; j < windowEnd; j++) {
         if (lines[j].toLowerCase().includes(ver)) {
-          return { start: i + 1, end: j + 1 };
+          candidates.push({ start: i + 1, end: j + 1 });
+          break;
         }
       }
     }
+  }
+  if (candidates.length > 0) {
+    const touched = changed
+      ? candidates.find((c) => {
+          for (let n = c.start; n <= c.end; n++) if (changed.has(n)) return true;
+          return false;
+        })
+      : undefined;
+    return touched ?? candidates[0];
   }
   if (firstNameLine === -1) return { start: 1, end: 1 };
   return {

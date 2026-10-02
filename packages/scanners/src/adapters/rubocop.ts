@@ -1,22 +1,19 @@
-// RuboCop adapter (Ruby lint). Runs `rubocop --format json
-// --force-exclusion --cache false <changed ruby files>` at the repo root
-// so it picks up the repo's own .rubocop.yml when present, and
-// normalizes the vendor JSON `files[].offenses[]` into StaticFinding[].
+// RuboCop adapter (Ruby lint). Runs `rubocop --config <owned> --format json
+// --force-exclusion --cache false <changed ruby files>` from a temp folder
+// and normalizes the vendor JSON `files[].offenses[]` into StaticFinding[].
 // Covers the Ruby rule space the rest of the ensemble misses: Lint
 // real-bug cops (useless assignments, shadowed exceptions, ambiguous
 // blocks), Security cops (eval, Marshal.load, open with interpolation),
 // and Performance cops.
 //
 // We invoke it only on changed Ruby source files so a change without Ruby
-// is a no-op. Noise control: when the repo has NO rubocop config we only
-// emit Lint / Security / Performance offenses (skipping the Style /
-// Layout opinions the team never opted into); when a config IS present
-// we respect it and emit whatever rubocop reports on changed lines.
+// is a no-op. The repo's own .rubocop.yml is never loaded (it can run
+// code), so only Lint / Security / Performance offenses are emitted,
+// skipping the Style / Layout opinions nobody opted into.
 //
 // All errors are captured into the result; the runner never throws on a
 // scanner failure: static analysis is additive context, not a gate.
 
-import fs from "node:fs";
 import path from "node:path";
 import type {
   AdapterResult,
@@ -25,8 +22,8 @@ import type {
   StaticFinding,
 } from "@openqodex/core";
 import { describeFailure, execTool, stderrTail } from "../exec.js";
-import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
+import { withOwnedConfig } from "./owned-config.js";
 
 const RUBOCOP_TIMEOUT_MS = 60_000;
 const RUBOCOP_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
@@ -45,49 +42,53 @@ function isRubyLintPath(p: string): boolean {
   return base === "Gemfile" || base === "Rakefile";
 }
 
-// True when the repo ships a rubocop config at its root. Drives the
-// noise gate: with a config the team opted into rubocop's full ruleset,
-// so we emit everything; without one we restrict to bug / security /
-// performance departments.
-function hasRubocopConfig(repoDir: string): boolean {
-  try {
-    return (
-      fs.existsSync(path.join(repoDir, ".rubocop.yml")) ||
-      fs.existsSync(path.join(repoDir, ".rubocop.yaml"))
-    );
-  } catch {
-    return false;
-  }
-}
+// OpenQodex's own rubocop config: the default cops plus the Rails and
+// Performance cops the toolchain installs. Passed with --config, so no repo
+// config (nested ones included) is loaded: a repo's .rubocop.yml can
+// `require` Ruby files and run ERB, which is code from the change running on
+// the developer's machine.
+const OWNED_CONFIG = [
+  "require:",
+  "  - rubocop-rails",
+  "  - rubocop-performance",
+  "AllCops:",
+  "  NewCops: disable",
+  "  SuggestExtensions: false",
+  "",
+].join("\n");
 
 export async function runRubocop(args: {
   repoDir: string;
   changedPaths: string[];
   tool: ResolvedTool | null;
 }): Promise<AdapterResult> {
-  const rubyFiles = safeFileArgs(args.changedPaths.filter(isRubyLintPath));
+  const rubyFiles = args.changedPaths.filter(isRubyLintPath);
   if (rubyFiles.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
+  const tool = args.tool;
 
-  // --format json: stable machine shape. --force-exclusion: honor the
-  // repo's Exclude config even though we pass the files positionally.
-  // --cache false: rubocop's result cache would otherwise be written to a
-  // folder a repo's config can point inside the working tree.
-  const cliArgs = ["--format", "json", "--force-exclusion", "--cache", "false", "--", ...rubyFiles];
-
-  let stdout: string;
   try {
-    stdout = await execRubocop(args.tool, cliArgs, args.repoDir);
+    return await withOwnedConfig("rubocop.yml", OWNED_CONFIG, async (configPath, configDir) => {
+      // rubocop also reads extra command-line arguments from a `.rubocop`
+      // file in its working folder, so it runs from the temp folder, never
+      // the repo, and gets absolute paths. --format json: stable machine
+      // shape. --force-exclusion: honor the owned config's Exclude even for
+      // files passed positionally. --cache false: no result cache written.
+      const targets = rubyFiles.map((rel) => path.join(args.repoDir, rel));
+      const cliArgs = ["--config", configPath, "--format", "json", "--force-exclusion", "--cache", "false", "--", ...targets];
+      const stdout = await execRubocop(tool, cliArgs, configDir);
+      try {
+        // The owned config is not a team's opt-in to every cop, so only the
+        // bug, security and performance departments are kept.
+        return { findings: parseRubocopJson(stdout, { hasConfig: false }), error: null };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { findings: [], error: `parse: ${message.slice(0, 200)}` };
+      }
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
-  }
-
-  try {
-    return { findings: parseRubocopJson(stdout, { hasConfig: hasRubocopConfig(args.repoDir) }), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
   }
 }
 
@@ -110,7 +111,7 @@ async function execRubocop(tool: ResolvedTool, cliArgs: string[], cwd: string): 
 
 export const rubocop: Adapter = {
   source: "rubocop",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isRubyLintPath)).length > 0,
+  wants: (changedPaths) => changedPaths.some(isRubyLintPath),
   run: (args) => runRubocop(args),
 };
 
