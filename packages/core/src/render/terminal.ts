@@ -4,17 +4,20 @@ import {
   SEVERITIES_DESC,
   candidateLocation,
   coverageLine,
+  display,
   firstLine,
   location,
   sourceLabel,
   verdictLine,
 } from "./common.js";
 
+// Every value that came from a scanner or the agent goes through `display`
+// before the renderer adds its own colour codes.
 function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>): string[] {
-  const lines = [`  ${c.bold(location(f))}  ${f.title}`];
-  const desc = firstLine(f.description);
+  const lines = [`  ${c.bold(display(location(f)))}  ${display(f.title)}`];
+  const desc = display(firstLine(f.description));
   if (desc) lines.push(`    ${desc}`);
-  lines.push(`    ${c.dim(sourceLabel(f))}`);
+  lines.push(`    ${c.dim(display(sourceLabel(f)))}`);
   return lines;
 }
 
@@ -38,23 +41,24 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
   if (report.not_reviewed.length > 0) {
     out.push("", "Not reviewed by the agent");
     for (const cand of report.not_reviewed) {
-      out.push(`  ${cand.id} [${cand.token}] ${candidateLocation(cand)} (${cand.reviewSeverity}) ${firstLine(cand.message)}`);
+      const where = display(`${cand.id} [${cand.token}] ${candidateLocation(cand)}`);
+      out.push(`  ${where} (${cand.reviewSeverity}) ${display(firstLine(cand.message))}`);
     }
   }
   if (report.dropped.length > 0) {
     out.push("", "Dropped by the agent");
     for (const d of report.dropped) {
-      out.push(`  ${d.candidate.id} [${d.candidate.token}] ${candidateLocation(d.candidate)}: ${firstLine(d.reason)}`);
+      out.push(`  ${display(`${d.candidate.id} [${d.candidate.token}] ${candidateLocation(d.candidate)}: ${firstLine(d.reason)}`)}`);
     }
   }
   if (report.low_confidence.length > 0) {
     out.push("", "Below the confidence floor (not counted)");
     for (const l of report.low_confidence) {
-      out.push(`  ${l.file_path}  ${l.title} (confidence ${l.confidence}, floor ${l.floor})`);
+      out.push(`  ${display(l.file_path)}  ${display(l.title)} (confidence ${l.confidence}, floor ${l.floor})`);
     }
   }
   if (report.not_reviewed_paths.length > 0) {
-    out.push("", `Not reviewed, change too large: ${report.not_reviewed_paths.join(", ")}`);
+    out.push("", `Not reviewed, change too large: ${display(report.not_reviewed_paths.join(", "))}`);
   }
   out.push("", c.dim(coverageLine(report.scanners)));
   return `${out.join("\n")}\n`;

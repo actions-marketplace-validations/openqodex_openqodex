@@ -221,18 +221,18 @@ describe("finalizeReview: filters", () => {
     expect(report.findings).toHaveLength(1);
   });
 
-  it("dedups by file, line and category keeping the highest severity", () => {
+  it("dedups a repeated finding keeping the highest severity, and keeps another category", () => {
     const report = run(
       makeSubmission({
         findings: [
           finding({ severity: "minor", source: null, candidate: null }),
-          finding({ severity: "critical", source: null, candidate: null, title: "Worse" }),
+          finding({ severity: "critical", source: null, candidate: null, description: "Worse" }),
           finding({ severity: "minor", source: null, candidate: null, category: "bug" }),
         ],
       }),
     );
     expect(report.findings.map((f) => [f.category, f.severity, f.title])).toEqual([
-      ["security", "critical", "Worse"],
+      ["security", "critical", "SQL built from request input"],
       ["bug", "minor", "SQL built from request input"],
     ]);
   });
@@ -337,5 +337,89 @@ describe("scanReport", () => {
       config: makeConfig({ blockOnSeverity: "minor" }),
     });
     expect(passed.verdict).toBe("passed");
+  });
+});
+
+// Review round 1, each written to fail on the code before its fix:
+// R1. An error message echoes a secret from the agent's title or source.
+// R2. A secret survives in a field outside the cleaned list (a file path, a
+//     scanner reason).
+// R4. A huge line_end stalls finalize.
+// R5. Two distinct problems on one line in one category collapse into one.
+describe("finalizeReview: review round 1", () => {
+  function message(submission: unknown): string {
+    try {
+      run(submission);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return "did not throw";
+  }
+
+  it("R1: redacts the agent's text in error messages", () => {
+    const viaTitle = message(makeSubmission({ findings: [finding({ title: `key ${SECRET}`, source: "nope:x", candidate: null })] }));
+    expect(viaTitle).toMatch(/cites source "nope:x"/);
+    expect(viaTitle).not.toContain(SECRET);
+    const viaSource = message(makeSubmission({ findings: [finding({ source: `x:${SECRET}`, candidate: null })] }));
+    expect(viaSource).toMatch(/cites source/);
+    expect(viaSource).not.toContain(SECRET);
+    const viaCandidate = message(makeSubmission({ findings: [finding({ candidate: SECRET })] }));
+    expect(viaCandidate).toMatch(/raises candidate/);
+    expect(viaCandidate).not.toContain(SECRET);
+    const viaDropped = message(makeSubmission({ dropped: [{ candidate: SECRET, reason: "x" }] }));
+    expect(viaDropped).toMatch(/dropped\[0\]/);
+    expect(viaDropped).not.toContain(SECRET);
+  });
+
+  it("R2: redacts every string in the report, file paths and scanner reasons included", () => {
+    const change = makeChange();
+    const scan = makeScan();
+    const leakyScan = {
+      ...scan,
+      scanners: scan.scanners.map((s) => (s.scanner === "brakeman" ? { ...s, reason: `failed near ${SECRET}` } : s)),
+    };
+    const report = finalizeReview({
+      change,
+      scan: leakyScan,
+      manifest: makeManifest(change),
+      config: makeConfig(),
+      submission: makeSubmission({
+        findings: [
+          finding({ source: null, candidate: null, file_path: `debug/${SECRET}.py` }),
+          finding({ source: null, candidate: null, file_path: `low/${SECRET}.py`, confidence: 0.5 }),
+        ],
+      }),
+    });
+    expect(report.outside_change).toHaveLength(1);
+    expect(report.low_confidence).toHaveLength(1);
+    expect(JSON.stringify(report)).not.toContain(SECRET);
+    const scanOnly = scanReport({ change, scan: leakyScan, config: makeConfig() });
+    expect(JSON.stringify(scanOnly)).not.toContain(SECRET);
+  });
+
+  it("R4: a huge line_end is checked against coverage in bounded time", () => {
+    const started = Date.now();
+    const report = run(makeSubmission({ findings: [finding({ source: null, candidate: null, line_number: 16, line_end: 300_000_000 })] }));
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(report.outside_change).toHaveLength(1);
+    const reaching = run(makeSubmission({ findings: [finding({ line_number: 1, line_end: 300_000_000 })] }));
+    expect(reaching.findings).toHaveLength(1);
+  });
+
+  it("R5: keeps distinct problems on one line, removes only true duplicates", () => {
+    const report = run(
+      makeSubmission({
+        findings: [
+          finding({}),
+          finding({ source: null, candidate: null, title: "Hard-coded credential" }),
+          finding({ source: null, candidate: null, title: "Hard-coded credential", severity: "major" }),
+          finding({ severity: "major", title: "Same candidate again" }),
+        ],
+      }),
+    );
+    expect(report.findings.map((f) => [f.title, f.severity])).toEqual([
+      ["SQL built from request input", "critical"],
+      ["Hard-coded credential", "critical"],
+    ]);
   });
 });

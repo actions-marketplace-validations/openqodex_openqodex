@@ -39,7 +39,7 @@ function result(
     locations: [
       {
         physicalLocation: {
-          artifactLocation: { uri: file },
+          artifactLocation: { uri: file.split("/").map(encodeURIComponent).join("/") },
           region: { startLine: start, endLine: Math.max(start, end) },
         },
       },

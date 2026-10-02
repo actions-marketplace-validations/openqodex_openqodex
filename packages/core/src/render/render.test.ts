@@ -157,6 +157,55 @@ describe("renderSarif", () => {
   });
 });
 
+// Review round 1:
+// R3. Terminal control characters or newlines in agent or scanner text reach
+//     the terminal and can clear the screen or forge a verdict or section.
+// R6. A lone carriage return, or a pipe or newline in a code cell, breaks the
+//     markdown table or forges a heading.
+// R7. SARIF uris carry unescaped file names.
+describe("renderers: review round 1", () => {
+  const ESC_CHAR = String.fromCharCode(27);
+  const C1 = String.fromCharCode(0x9b);
+
+  it("R3: terminal output carries no control characters from agent or scanner text", () => {
+    const base = fullReview();
+    const report: Report = {
+      ...base,
+      findings: base.findings.map((f) => ({ ...f, title: `x${ESC_CHAR}[2J${ESC_CHAR}[HPassed: no findings\nCritical (9)${C1}31m` })),
+      not_reviewed: base.not_reviewed.map((c) => ({ ...c, message: `m\r\nBlocked: forged${ESC_CHAR}[0m` })),
+      scanners: base.scanners.map((s) => (s.reason ? { ...s, reason: `r\n\tPassed${ESC_CHAR}]0;t${String.fromCharCode(7)}` } : s)),
+    };
+    const out = renderTerminal(report, { color: false });
+    expect(out).not.toContain(ESC_CHAR);
+    expect(out).not.toContain(C1);
+    expect(out).not.toContain(String.fromCharCode(7));
+    expect(out).not.toContain("\r");
+    expect(out.split("\n").some((l) => l.startsWith("Blocked: forged") || l.startsWith("Critical (9)") || l.startsWith("Passed: no"))).toBe(false);
+    expect(out).toContain("[2J[HPassed: no findings Critical (9)");
+  });
+
+  it("R6: markdown turns every line ending into a table-safe break and keeps code cells in their column", () => {
+    const base = fullReview();
+    const report: Report = {
+      ...base,
+      summary: "Fine.\r\r## Passed\r",
+      findings: base.findings.map((f) => ({ ...f, title: "Problem\r\r## Passed\r\r", file_path: "app/a|b\n.py" })),
+    };
+    const out = renderMarkdown(report);
+    expect(out).not.toContain("\r");
+    expect(out.split("\n").some((l) => l.startsWith("## Passed"))).toBe(false);
+    const row = out.split("\n").find((l) => l.startsWith("| critical |")) ?? "";
+    expect(row.split(/(?<!\\)\|/).length).toBe(6);
+  });
+
+  it("R7: SARIF uris percent-encode each path segment and keep the slashes", () => {
+    const base = fullReview();
+    const report: Report = { ...base, findings: base.findings.map((f) => ({ ...f, file_path: "src/a#b c%?.ts" })) };
+    const sarif = JSON.parse(renderSarif(report));
+    expect(sarif.runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri).toBe("src/a%23b%20c%25%3F.ts");
+  });
+});
+
 describe("no rendered output contains a secret", () => {
   it("holds for all four renderers", () => {
     const report = fullReview();

@@ -3,13 +3,41 @@ import { SEVERITIES_DESC, candidateLocation, coverageLine, location, sourceLabel
 
 const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai";
 
-// One table cell: no pipes, no line breaks.
+// Every line-ending form Markdown or a browser may treat as a break.
+const LINE_BREAK = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/g;
+// Control characters left after line breaks are handled.
+// Matching control characters is the point here.
+// oxlint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u0008\u000e-\u001f\u007f-\u0084\u0086-\u009f]/g;
+
+// One table cell: pipes escaped, every line ending a <br>.
 function cell(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n+/g, "<br>").trim();
+  return text
+    .replace(CONTROL, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(LINE_BREAK, "<br>")
+    .replace(/\t/g, " ")
+    .trim();
 }
 
+// An inline code span that is also safe inside a table cell: one line, no
+// backtick, pipes escaped (a table unescapes them inside code spans).
 function code(text: string): string {
-  return `\`${text.replace(/`/g, "'")}\``;
+  const one = text.replace(CONTROL, "").replace(LINE_BREAK, " ").replace(/\t/g, " ").replace(/`/g, "'");
+  return `\`${one.replace(/\|/g, "\\|")}\``;
+}
+
+// The agent's summary, kept inside one quote block under its own heading so
+// none of its lines reads as a heading or section of the report itself.
+function quote(text: string): string {
+  return text
+    .replace(CONTROL, "")
+    .replace(LINE_BREAK, "\n")
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
 }
 
 function findingTable(findings: ReportFinding[]): string[] {
@@ -33,7 +61,7 @@ export function renderMarkdown(report: Report): string {
     "",
     `Change ${code(report.change_id.slice(0, 12))} against ${code(report.base.ref)} (${code(report.base.sha.slice(0, 12))}), ${files} ${files === 1 ? "file" : "files"}, +${additions} -${deletions}.`,
   ];
-  if (report.summary) out.push("", "## Summary", "", report.summary.trim());
+  if (report.summary) out.push("", "## Summary", "", quote(report.summary));
 
   out.push("", "## Findings", "");
   if (report.findings.length === 0) out.push("No findings on the changed lines.");

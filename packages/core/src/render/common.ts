@@ -6,6 +6,16 @@ import type { Candidate, Report, ReportFinding, ScannerRunSummary, Severity } fr
 // Highest first, the order findings are shown in.
 export const SEVERITIES_DESC: readonly Severity[] = [...SEVERITIES].reverse();
 
+// Text from a scanner or the agent made safe for a terminal: every run of
+// whitespace (line breaks included) becomes one space, and every remaining
+// C0 or C1 control character is dropped, so nothing can move the cursor,
+// clear the screen or start a new line.
+export function display(text: string): string {
+// Matching control characters is the point here.
+// oxlint-disable-next-line no-control-regex
+  return text.replace(/\s+/g, " ").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+}
+
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -19,7 +29,7 @@ export function coverageLine(scanners: ScannerRunSummary[]): string {
   const parts = [`${plural(ran, "scanner", "scanners")} ran`];
   if (idle > 0) parts.push(`${idle} had nothing to check`);
   if (out.length > 0) {
-    const reasons = out.map((s) => `${s.scanner}: ${s.reason ?? s.status.replace(/_/g, " ")}`).join("; ");
+    const reasons = out.map((s) => display(`${s.scanner}: ${s.reason ?? s.status.replace(/_/g, " ")}`)).join("; ");
     parts.push(`${out.length} not included (${reasons})`);
   }
   return parts.join(", ");
