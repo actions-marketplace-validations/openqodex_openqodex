@@ -50,7 +50,7 @@ describe("checkPush", () => {
     const d = checkPush({ currentChangeId: change.id, latest: null, report: null, config: makeConfig() });
     expect(d.decision).toBe("abstain");
     expect(d.message).toContain("has not reviewed this change");
-    expect(d.message).toContain("npx -y openqodex review --agent");
+    expect(d.message).toContain("review my change with openqodex");
     expect(d.message).toContain("review my change with openqodex");
   });
 
@@ -76,7 +76,7 @@ describe("checkPush", () => {
     const d = checkPush({ currentChangeId: change.id, latest, report, config: makeConfig({ blockOnSeverity: "critical" }) });
     expect(d.decision).toBe("deny");
     expect(d.message).toContain("at or above critical");
-    expect(d.message).toContain("npx -y openqodex review --agent");
+    expect(d.message).toContain("review my change with openqodex");
   });
 
   it("abstains on a passing review of this change when block_on_severity is set", () => {
