@@ -1,6 +1,6 @@
 {
   "name": "openqodex",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Code review before you push: the scanners that fit your change, any scanner by link, and a review by Claude itself. No key, no account.",
   "author": {
     "name": "Qodex",

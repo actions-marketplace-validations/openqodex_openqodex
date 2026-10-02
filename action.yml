@@ -9,7 +9,7 @@ inputs:
   version:
     description: The openqodex version to run. The release workflow sets the default to the version it publishes.
     required: false
-    default: "0.0.0"
+    default: "0.1.0"
   upload-sarif:
     description: Upload the findings to GitHub code scanning as SARIF.
     required: false
