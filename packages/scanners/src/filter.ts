@@ -19,10 +19,10 @@ export function filterToChangedLines(
 function overlapsCoverage(f: StaticFinding, coverage: DiffCoverage): boolean {
   const lines = coverage.get(f.filePath);
   if (!lines || lines.size === 0) return false;
-  // Most findings are single-line. Iterate the span; cheaper than
-  // building a temporary Set just to intersect.
-  for (let n = f.lineStart; n <= f.lineEnd; n++) {
-    if (lines.has(n)) return true;
+  // Walk the changed lines, not the span: a scanner's report can carry any
+  // line number, and past 2^53 a counter over the span never advances.
+  for (const line of lines) {
+    if (f.lineStart <= line && line <= f.lineEnd) return true;
   }
   return false;
 }

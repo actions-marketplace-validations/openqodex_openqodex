@@ -30,7 +30,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool } from "../exec.js";
+import { describeFailure, execTool, isOffline } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 import { readRepoFile } from "./read.js";
@@ -46,7 +46,7 @@ export const OSV_OFFLINE_REASON = "offline, dependency lookups are off";
 // Known before any tool is resolved, so an offline run never installs or
 // starts osv-scanner.
 function offlineReason(): string | null {
-  return process.env.OPENQODEX_OFFLINE === "1" ? OSV_OFFLINE_REASON : null;
+  return isOffline() ? OSV_OFFLINE_REASON : null;
 }
 
 // Lockfile / manifest basenames OSV-Scanner understands. We only invoke

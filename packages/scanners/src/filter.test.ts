@@ -57,6 +57,20 @@ describe("filterToChangedLines", () => {
   });
 });
 
+describe("filterToChangedLines with an unsafe line number", () => {
+  // A custom scanner's report can carry any number. Past 2^53, n + 1 === n,
+  // so a loop over the span never ends.
+  it("does not loop forever on a span ending at 2^53", () => {
+    const coverage = new Map([["src/a.ts", new Set([3])]]);
+    const huge = 9007199254740992;
+    const kept = filterToChangedLines(
+      [finding({ lineStart: 1, lineEnd: huge }), finding({ lineStart: huge - 1, lineEnd: huge })],
+      coverage,
+    );
+    expect(kept.map((f) => f.lineStart)).toEqual([1]);
+  }, 5_000);
+});
+
 describe("isFixturePath", () => {
   it("matches __fixtures__ / fixtures / __mocks__ / mocks dirs", () => {
     expect(isFixturePath("src/__fixtures__/data.json")).toBe(true);

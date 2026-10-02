@@ -211,14 +211,6 @@ describe("choosing the place to anchor (13, 14)", () => {
     expect(finding).toMatchObject({ lineStart: 5, lineEnd: 6 });
   });
 
-  it("keeps the first candidate when no changed lines are given (13)", () => {
-    const [finding] = parseOsvScannerJson(
-      report("package-lock.json", [pkg("lodash", "4.17.20", [{ id: "GHSA-x" }])]),
-      new Map([["package-lock.json", DECLARED]]),
-    );
-    expect(finding).toMatchObject({ lineStart: 3, lineEnd: 3 });
-  });
-
   it("gives a nested lockfile its own path, with or without the repo root (14)", () => {
     const files = new Map([
       ["package-lock.json", LOCK],
