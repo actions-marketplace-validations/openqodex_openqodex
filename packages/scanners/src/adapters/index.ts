@@ -1,10 +1,20 @@
-// Contract stub. The owning stream replaces this file; the exported names and
-// signatures are frozen (see packages/core/src/types.ts).
+// The thirteen builtin scanners. Each adapter gates itself on the changed
+// files (`wants`), so the toolchain is never asked for a tool the change
+// does not need, and runs its tool from the resolved path (`run`).
 import type { AdapterResult, BuiltinScanner, ResolvedTool } from "@openqodex/core";
-
-const notBuilt = (name: string): never => {
-  throw new Error(`${name} is not built yet`);
-};
+import { actionlint } from "./actionlint.js";
+import { bandit } from "./bandit.js";
+import { brakeman } from "./brakeman.js";
+import { gitleaks } from "./gitleaks.js";
+import { golangci } from "./golangci.js";
+import { hadolint } from "./hadolint.js";
+import { osvScanner } from "./osv-scanner.js";
+import { oxlint } from "./oxlint.js";
+import { rubocop } from "./rubocop.js";
+import { ruff } from "./ruff.js";
+import { semgrep } from "./semgrep.js";
+import { shellcheck } from "./shellcheck.js";
+import { sqllint } from "./sql-lint.js";
 
 export type Adapter = {
   source: BuiltinScanner;
@@ -14,8 +24,34 @@ export type Adapter = {
   run(args: { repoDir: string; changedPaths: string[]; tool: ResolvedTool | null }): Promise<AdapterResult>;
 };
 
+// Scanners that run inside OpenQodex and need no tool resolved.
+export const IN_PROCESS: ReadonlySet<BuiltinScanner> = new Set<BuiltinScanner>(["sqllint"]);
+
 // The ensemble in merge order. The order is load-bearing: dedup ties go to
 // the first, so semgrep precedes gitleaks.
-export const ADAPTERS: readonly Adapter[] = [];
-
-void notBuilt;
+export const ADAPTERS: readonly Adapter[] = [
+  semgrep,
+  gitleaks,
+  // In-process SQL / Postgres analyzer. No-op without changed .sql files.
+  sqllint,
+  // Dependency vulnerabilities. No-op unless a lockfile changed.
+  osvScanner,
+  // GitHub Actions workflows under .github/workflows/.
+  actionlint,
+  // Dockerfiles.
+  hadolint,
+  // .sh / .bash scripts.
+  shellcheck,
+  // Python lint.
+  ruff,
+  // Rails SAST: a changed Rails-relevant file in a repo with a Gemfile and app/.
+  brakeman,
+  // Ruby lint.
+  rubocop,
+  // Python SAST.
+  bandit,
+  // JavaScript and TypeScript lint.
+  oxlint,
+  // Go lint and gosec.
+  golangci,
+];
