@@ -12,10 +12,6 @@ jobs:
   gate:
     name: Gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    env:
-      # The custom scanner tests read a release from the GitHub API. Hosted
-      # runners share addresses, so the anonymous rate limit is often spent.
-      GITHUB_TOKEN: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,12 +43,18 @@ jobs:
         run: pnpm typecheck
       - name: Lint
         run: pnpm lint
+      # Only the two test steps get the token: the custom scanner tests read a
+      # release from the GitHub API, and hosted runners share addresses, so the
+      # anonymous rate limit is often spent. Install and build never see it.
       - name: Unit tests
         run: pnpm test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - name: End-to-end tests
         run: pnpm test:e2e
         env:
           OPENQODEX_E2E_HOME: ${{ runner.temp }}/openqodex-e2e-home
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Skill and plugin manifests
         run: node scripts/validate-skill.mjs
       - name: Private material scrub
