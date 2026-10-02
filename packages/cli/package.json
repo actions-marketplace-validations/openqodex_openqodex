@@ -36,6 +36,7 @@
     "templates",
     "demo",
     "toolchain.json",
+    "wasm",
     "README.md",
     "LICENSE",
     "NOTICE"
@@ -48,6 +49,7 @@
   "devDependencies": {
     "@clack/prompts": "^1.8.1",
     "@openqodex/core": "workspace:*",
+    "@openqodex/graph": "workspace:*",
     "@openqodex/scanners": "workspace:*",
     "commander": "^14.0.3",
     "picocolors": "^1.1.1",

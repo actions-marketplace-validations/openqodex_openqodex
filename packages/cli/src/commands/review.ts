@@ -21,14 +21,18 @@ import {
   writeReportFiles,
   writeScan,
 } from "@openqodex/core";
-import type { ChangeScope } from "@openqodex/core";
+import type { ChangeScope, ImpactSummary } from "@openqodex/core";
+import { renderImpactBlock } from "@openqodex/graph";
 import { EXIT_OK } from "../exit-codes.js";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
-import { emitReport, exitFor, loadRepo, nothingToReview, reportFiles, runPipeline, warn } from "../pipeline.js";
+import { buildImpact, emitReport, exitFor, loadRepo, nothingToReview, reportFiles, runPipeline, warn } from "../pipeline.js";
 import { SCOPE_BOOLS, SCOPE_VALUES, runScan, scopeFrom } from "./scan.js";
 
 const FINDINGS_FILE = "agent-findings.json";
+const IMPACT_FILE = "impact.json";
+// Read here until flags.ts takes it: turns the code graph off for one run.
+const NO_GRAPH = "--no-graph";
 const RUN_FILE = "run.json";
 const RUN_AGAIN = "run openqodex review --agent first";
 
@@ -36,7 +40,9 @@ const RUN_AGAIN = "run openqodex review --agent first";
 // finalize recomputes the same change.
 type RunFile = { version: 1; scope: ChangeScope };
 
-export async function run(args: string[]): Promise<number> {
+export async function run(rawArgs: string[]): Promise<number> {
+  const noGraph = rawArgs.includes(NO_GRAPH);
+  const args = rawArgs.filter((a) => a !== NO_GRAPH);
   const { global, bools, values, positionals } = parseFlags(args, {
     bools: [...SCOPE_BOOLS, "--agent", "--finalize"],
     values: [...SCOPE_VALUES, "--only", "--skip"],
@@ -49,7 +55,7 @@ export async function run(args: string[]): Promise<number> {
 
   if (finalize) return runFinalize(global, positionals[0]);
   const scope = scopeFrom(bools, values);
-  if (agent) return runAgent(global, scope, values.get("--only"), values.get("--skip"));
+  if (agent) return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
 
   const outcome = await runScan({ flags: global, scope, only: values.get("--only"), skip: values.get("--skip") });
   if (outcome.report !== null) warn("For the AI review, ask your coding agent: review my change with openqodex");
@@ -70,7 +76,7 @@ function finalizeCommand(repoRoot: string, config: string | undefined, findingsP
   return args.map(shellQuote).join(" ");
 }
 
-async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, skip?: string): Promise<number> {
+async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
   const p = await runPipeline({
     scope,
     flags,
@@ -89,6 +95,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, s
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
   });
   writeScan(dir, p.scan);
+  const impact = await buildImpact(p, flags, noGraph);
   const brief = buildBrief({
     change: p.change,
     scan: p.scan,
@@ -97,11 +104,13 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, s
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
     finalizeCommand: finalizeCommand(p.repoRoot, flags.config, join(dir, FINDINGS_FILE)),
+    impactBlock: renderImpactBlock(impact),
   });
   const runFile: RunFile = { version: 1, scope };
   writeReportFiles(dir, {
     [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
     "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
+    [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
     "brief.md": brief,
   });
   writeLatest(p.repoRoot, {
@@ -113,6 +122,14 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, s
   });
   process.stdout.write(brief);
   return EXIT_OK;
+}
+
+// The graph's summary the brief was made with; null for a run from before the graph.
+function readImpact(dir: string): ImpactSummary | null {
+  const path = join(dir, IMPACT_FILE);
+  if (!existsSync(path)) return null;
+  const value = readJsonFile(path, "graph impact") as ImpactSummary | null;
+  return value !== null && typeof value === "object" && value.version === 1 ? value : null;
 }
 
 function readJsonFile(path: string, what: string): unknown {
@@ -198,7 +215,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined): Promis
     throw new OpenQodexError("the config changed since the brief (.openqodex.yaml or --config); run openqodex review --agent again");
   }
   const change = await getChange({ repoRoot, scope: runFile.scope, exclude: config.exclude, defaultBase: config.defaultBase });
-  const report = finalizeReview({ change, scan, manifest, config, submission });
+  const report = { ...finalizeReview({ change, scan, manifest, config, submission }), impact: readImpact(dir) };
 
   writeReportFiles(dir, reportFiles(report));
   writeLatest(repoRoot, {
