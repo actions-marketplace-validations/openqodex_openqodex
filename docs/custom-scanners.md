@@ -2,7 +2,7 @@
 
 You can add any scanner by its GitHub link. Its findings join the same report as the built-in scanners. Only findings on changed lines are kept.
 
-A custom scanner is an arbitrary command that runs on your machine with your permissions. OpenQodex never downloads or runs one until you approve that exact entry with `openqodex trust`.
+A custom scanner is an arbitrary command that runs on your machine with your permissions. Only `openqodex trust` downloads a custom scanner, and it asks you first. `scan` and `review` never download one. Nothing is installed or run before you approve that exact entry.
 
 ## Add one
 
@@ -48,24 +48,26 @@ On yes, the asset is installed and the approval is stored. On no, the scanner is
 
 OpenQodex matches words in each asset's file name:
 
-- system: `darwin`, `macos`, `osx` or `linux`;
+- system: `darwin`, `macos`, `osx`, `apple` or `linux`;
 - CPU: `arm64`, `aarch64`, `x86_64`, `amd64`, `x64` or `64bit`;
 - format: `.tar.gz`, `.tar.xz`, `.zip`, or a bare program.
 
-When no asset matches, or more than one does, `trust` stops. It prints the candidates and the line to add. Name the asset by hand:
+When no asset matches, or more than one does, `trust` stops. It prints the candidates and the line to add. Name the asset by hand. `{version}`, `{os}` and `{arch}` stand for the version and the name words above, so one line fits every machine:
 
 ```yaml
     - source: https://github.com/aquasecurity/trivy
       run: trivy config --format sarif --output {report} {target}
       install:
-        asset: trivy_0.58.1_macOS-ARM64.tar.gz
+        asset: "trivy_{version}_{os}-{arch}.tar.gz"
 ```
+
+The name must match exactly one asset.
 
 Other install forms:
 
-- `install: path`: use the program on your `PATH`. Nothing is downloaded.
-- `install: { npm: <package@version> }`: install from npm.
-- `install: { uv: <package==version> }`: install from PyPI through uv.
+- `install: path`: use the program on your `PATH`. Nothing is downloaded. `trust` records the program's sha256. When the program changes, the scanner is skipped until you approve it again.
+- `install: { npm: <package@1.2.3> }`: install from npm. The spec must name an exact version.
+- `install: { uv: <package==1.2.3> }`: install from PyPI through uv. The spec must name an exact version.
 
 ## What the stored hash means
 
@@ -89,7 +91,7 @@ Any edit to the entry changes its hash. The scanner is then skipped as `untruste
 
 SARIF is a standard JSON format for scanner results. Many scanners write it with a flag. It is the default `format`.
 
-OpenQodex reads each result's rule id, file, start and end line, and message. The severity comes from the rule's `security-severity` score when present:
+OpenQodex reads each result's rule id, file, start and end line, and message. The severity comes from a `security-severity` score. A score on the result wins over a score on its rule:
 
 - 9 or more: critical
 - 7 or more: high

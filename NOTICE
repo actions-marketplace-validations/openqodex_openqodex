@@ -20,6 +20,8 @@ registry. Each scanner keeps its own licence:
 - shellcheck, GPL-3.0: https://github.com/koalaman/shellcheck
 - golangci-lint, GPL-3.0: https://github.com/golangci/golangci-lint
 - brakeman, Brakeman Public Use License: https://github.com/presidentbeef/brakeman
+  This is not an open source licence. OpenQodex does not bundle brakeman.
+  It downloads brakeman at run time onto the user's machine.
 - rubocop, MIT: https://github.com/rubocop/rubocop
 - rubocop-rails, MIT: https://github.com/rubocop/rubocop-rails
 - rubocop-performance, MIT: https://github.com/rubocop/rubocop-performance

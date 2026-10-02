@@ -43,8 +43,7 @@ jobs:
           # openqodex@<version> in the skill, the plugin, the Action and the
           # pre-commit hook, so the gate's version check passes.
           version-script: pnpm version-packages
-          # Builds, runs the gate, then publishes with pnpm, which rewrites
-          # workspace: links in the published package.json.
+          # Builds, then publishes through changeset publish.
           publish-script: pnpm release
           commit-message: Version packages
           pr-title: Version packages

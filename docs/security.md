@@ -15,13 +15,13 @@ A repository can hold config files that make a scanner run code or rewrite files
 
 ## The trust step
 
-A custom scanner is an arbitrary command. It runs on your machine with your permissions. The config file that names it comes from whatever repository you cloned. So OpenQodex never downloads or runs a custom scanner until you approve that exact entry:
+A custom scanner is an arbitrary command. It runs on your machine with your permissions. The config file that names it comes from whatever repository you cloned. So nothing installs or runs a custom scanner until you approve that exact entry:
 
 ```
 npx openqodex trust
 ```
 
-`trust` downloads the release asset to a quarantine folder and runs nothing. It prints the version, the asset, its sha256, the program and the run line, then asks yes or no. The approval covers that repository and that entry only. An edited entry needs a new approval. `scan` and `review` skip an unapproved entry and list it as `untrusted`.
+`trust` downloads the release asset to a quarantine folder before it asks. Nothing is installed or run before your yes. `scan` and `review` never download a custom scanner. `trust` prints the version, the asset, its sha256, the program and the run line, then asks yes or no. The approval covers that repository and that entry only. An edited entry needs a new approval. `scan` and `review` skip an unapproved entry and list it as `untrusted`.
 
 The stored sha256 is checked against the project's checksum file when the project publishes one. Otherwise it is the hash of your first download. `custom-scanners` explains the difference.
 
@@ -29,23 +29,28 @@ Agents that follow the OpenQodex skill are told never to run `openqodex trust` w
 
 ## What is sent where
 
-Your code is sent nowhere by OpenQodex. The review runs on the model your agent already uses, which sees what the agent reads.
+OpenQodex and the built-in scanners send no code anywhere. The review runs on the model your agent already uses, which sees what the agent reads. A custom scanner you approved does whatever its own command does.
 
 OpenQodex and the built-in scanners use the network for these things only:
 
 - Scanner downloads on first use. GitHub release files are checked against sha256 sums pinned in the package. semgrep and bandit come from PyPI through uv, with a Python 3.11 that uv downloads. oxlint comes from npm. brakeman and rubocop come from RubyGems. These package installs are pinned by version.
 - Semgrep rule packs. semgrep fetches `p/default`, `p/security-audit` and `p/secrets` from the Semgrep registry on each run. Its metrics are off. The rules are never bundled in the package.
-- The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code. `--offline` skips this lookup.
-- Go modules. golangci-lint loads the changed Go packages, and Go can download the modules they need through your module proxy.
+- The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code.
 - Custom scanners. `openqodex trust` reads the release from the GitHub API and downloads the asset. After approval, a custom scanner does whatever its own command does.
 
-`--offline` also stops every scanner download. It does not stop semgrep from fetching its rule packs. Add `--skip semgrep` for that.
+golangci-lint runs with the Go module proxy off, so it downloads no modules.
+
+`--offline` skips osv-scanner and semgrep, which the report lists as disabled. It also turns scanner downloads off.
 
 OpenQodex sends no telemetry. See `telemetry`.
 
 ## Secrets
 
-When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. It keeps only the length and sha256 of each secret, to redact any text the agent quotes. No file OpenQodex writes holds the secret.
+When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. It keeps the length and sha256 of each secret, to redact any text the agent quotes.
+
+gitleaks writes its raw report to a temporary file outside the repository. That file holds the matched secrets. OpenQodex deletes it when the run ends. No file OpenQodex keeps holds the secret.
+
+A secret is redacted only when a scanner matched it. When gitleaks did not run, the brief shows the change as it is.
 
 ## Where files are written
 
@@ -55,6 +60,7 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 - `tools/uv-python/`: the Python 3.11 for semgrep and bandit.
 - `cache/`: the download caches for uv and npm.
 - `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`.
+- `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
 - `trust.json`: your approvals of custom scanners.
 
 In the repository, under `.openqodex/` only:

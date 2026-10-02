@@ -1,6 +1,8 @@
 # Scanners
 
-OpenQodex has thirteen built-in scanners. Each one runs only when the change holds a file it reads. Each one is pinned to one version, so two machines report the same findings. OpenQodex never uses a copy of a built-in scanner from your `PATH`.
+OpenQodex has thirteen built-in scanners. Each one runs only when the change holds a file it reads. Every downloaded scanner is pinned to one version. OpenQodex never uses a copy of a built-in scanner from your `PATH`.
+
+Pinned versions do not make findings identical on every machine. semgrep fetches its registry rule packs at run time, and OpenQodex does not pin their version.
 
 Every scanner reads the whole changed file. OpenQodex keeps only the findings on changed lines.
 
@@ -13,13 +15,15 @@ Scanners download on first use into `~/.openqodex/tools/<scanner>/<version>/`. `
 - oxlint installs from npm, with the npm that ships beside your Node. Package install scripts are switched off.
 - brakeman and rubocop install from RubyGems with your Ruby's `gem` command.
 
-A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing, and it joins the next run. `openqodex doctor --install` installs every scanner and waits.
+A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. `openqodex doctor --install` installs every scanner and waits.
+
+Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
 
 OpenQodex does not install Ruby or Go. Without them, the report lists the scanners that need them as not installed, with the reason.
 
 ## Status in the report
 
-The report lists every scanner with one status:
+The report lists every selected scanner with one status. A scanner left out with `--only` or `--skip` is not listed.
 
 - `ran`: it ran.
 - `no_matching_files`: the change holds no file it reads.
@@ -38,15 +42,17 @@ A scanner problem never changes the exit code.
 - Needs: Python 3.11, which OpenQodex downloads through uv. About 86 MB with uv and bandit, measured on Apple Silicon.
 - Rules: the registry packs `p/default`, `p/security-audit` and `p/secrets`.
 - Sends: semgrep fetches those rule packs from the Semgrep registry on each run. It runs with its metrics switched off. The rules are never bundled in the OpenQodex package.
+- `--offline` skips it. The report lists it as disabled.
 
 ## gitleaks
 
 - Version: 8.21.2.
 - Runs when: any file changed.
 - Needs: nothing. 2.9 MB on Apple Silicon, 3.0 MB on Linux x64.
-- Writes: links the changed files into a temporary folder and scans that folder. It reads the repo's `.gitleaks.toml` or `gitleaks.toml` when present.
+- Writes: links the changed files into a temporary folder outside the repo and scans that folder. It reads the repo's `.gitleaks.toml` or `gitleaks.toml` when present.
+- gitleaks writes its raw report to a temporary file outside the repo. That file holds the matched secrets. OpenQodex deletes it when the run ends.
 - Sends: nothing.
-- Secrets it finds are redacted from the brief, every report file and the terminal. OpenQodex keeps only the length and sha256 of each secret.
+- Secrets it finds are redacted from the brief, every report file and the terminal. No file OpenQodex keeps holds the secret.
 
 ## bandit
 
@@ -106,15 +112,17 @@ A scanner problem never changes the exit code.
 - Runs when: a `.go` file changed. It checks the packages that hold the changed files.
 - Needs: Go on your `PATH`. 14.4 MB on Apple Silicon, 15.0 MB on Linux x64.
 - Uses OpenQodex's own settings, with gosec switched on. A `.golangci.yml` in the repo is not loaded. It never rewrites `go.mod` or `go.sum`.
-- Sends: Go can download the modules the repo needs into your Go module cache. It uses your own module proxy, as a build would.
+- Runs with the Go module proxy off. The modules the repo needs must already be in your Go module cache. Nothing is downloaded.
+- Sends: nothing.
 
 ## brakeman
 
 - Version: 6.2.1.
-- Runs when: a Ruby or Rails file changed (`.rb`, `.rake`, `.gemspec`, `.erb`, `.haml`, `.slim`, `Gemfile`, `Rakefile`, `config.ru`), and the repo has a `Gemfile` and an `app/` folder.
+- Runs when: a Ruby or Rails file changed, and the repo has a `Gemfile` and an `app/` folder. The files are `.rb`, `.rake`, `.gemspec`, `.erb`, `.haml`, `.slim`, `Gemfile`, `Rakefile` and `config.ru`.
 - Needs: Ruby 2.7 or newer. It installs from RubyGems.
 - Uses OpenQodex's own settings. The repo's brakeman config is not loaded.
 - Sends: nothing.
+- Licence: the Brakeman Public Use License, which is not an open source licence. OpenQodex does not bundle brakeman. It downloads brakeman at run time onto your machine. Read the licence before you use it, or switch it off with `scanners.disable: [brakeman]`.
 
 ## rubocop
 

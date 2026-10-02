@@ -48,7 +48,7 @@ Findings outside the changed lines never count toward the verdict.
 
 ## review.paths.exclude
 
-A list of globs. A matching file is left out of the change entirely: no scanner reads it and the brief does not show it. The default is an empty list.
+A list of globs. The default is an empty list. A matching file is left out of the change. The brief does not show it, and no finding in it is kept. Scanners do not receive it as a changed file. A scanner that reads a whole project, such as brakeman or golangci-lint, may still read it.
 
 Globs match the path from the repository root, with forward slashes:
 
@@ -73,7 +73,7 @@ A list of globs matched against a finding's citation, `<source>:<rule>`. A match
 
 `true` or `false`. The default is `false`.
 
-With `false`, scanner findings in test fixtures, mocks, stubs, fakes and snapshots are dropped. A path counts as one when a folder in it is `fixtures`, `__fixtures__`, `mocks`, `__mocks__`, `snapshots`, `__snapshots__`, `fakes`, `stubs` or `testdata`. It also counts when the file name holds `.fixture.`, `.mock.` or `.stub.` (or their plurals), or ends in `.snap`. Test files themselves are not dropped.
+With `false`, scanner findings in test fixtures, mocks, stubs, fakes and snapshots are dropped. A path counts when one of its folders is `fixtures`, `__fixtures__`, `mocks`, `__mocks__`, `snapshots`, `__snapshots__`, `fakes`, `stubs` or `testdata`. It also counts when the file name holds `.fixture.`, `.mock.` or `.stub.` (or their plurals), or ends in `.snap`. Test files themselves are not dropped.
 
 ## scanners.disable
 

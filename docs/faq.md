@@ -6,7 +6,7 @@ No. The review runs on the model your coding agent already uses. OpenQodex itsel
 
 ## Does OpenQodex send my code anywhere?
 
-No. The network use is listed in `security`: scanner downloads, Semgrep rule packs, and dependency names and versions sent to osv.dev. Your agent's model sees what your agent reads, as it always does.
+Not through the built-in scanners. Their network use is listed in `security`: scanner downloads, Semgrep rule packs, and dependency names and versions sent to osv.dev. Your agent's model sees what your agent reads, as it always does. A custom scanner you approved does whatever its own command does.
 
 ## Will it block my push?
 
@@ -14,7 +14,7 @@ Not by default. Without `review.block_on_severity` in `.openqodex.yaml`, OpenQod
 
 ## Why did a scanner not run?
 
-The report lists every scanner with a status and a reason. The usual reasons:
+The report lists every selected scanner with a status and a reason. The usual reasons:
 
 - The change holds no file it reads.
 - It is still downloading on first use. It joins the next run.
@@ -39,7 +39,7 @@ Yes, by its GitHub link. Add two lines to `.openqodex.yaml` and approve the entr
 
 ## Does it change my repository?
 
-The review writes only inside `.openqodex/`, which ignores itself in git. `git status` does not change. Scanners run with fixes switched off, and their caches live outside the repository. `init` in user scope adds any repository file it writes to `.git/info/exclude`.
+The review writes only inside `.openqodex/`, which ignores itself in git. `git status` does not change. The built-in scanners run with fixes switched off, and their caches live outside the repository. A custom scanner you approved does whatever its own command does. `init` in user scope adds any repository file it writes to `.git/info/exclude`.
 
 ## Where are the reports?
 

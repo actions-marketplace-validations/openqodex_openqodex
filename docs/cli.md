@@ -6,7 +6,7 @@ Run every command with `npx openqodex <command>`, or `openqodex <command>` when 
 
 - `0`: clean, or warnings only.
 - `1`: a finding at or above `review.block_on_severity`. Without that key, no command exits 1.
-- `2`: OpenQodex itself failed: a wrong flag, an invalid config, not a git repository, a stale review, or an internal error.
+- `2`: OpenQodex itself failed: a wrong flag, an invalid config, not a git repository, a stale review, or an internal error. `doctor` prints its table first and then exits 2.
 
 A scanner that fails or is missing never changes the exit code. The report lists it with the reason.
 
@@ -22,19 +22,21 @@ By default the change is the commits not yet pushed plus everything uncommitted,
 
 A repository with no commits checks every file. OpenQodex never fetches from a remote.
 
-## Flags every command below accepts
+## Shared flags
 
-These apply to `scan`, `review`, `doctor`, `trust`, `guide` and `demo`.
+`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init` and `hook` accept none of them.
 
-- `--cwd <dir>`: run as if started in `<dir>`.
+- `--cwd <dir>`: find the repository from `<dir>`. A relative `--output` path still resolves from the folder you ran the command in.
 - `--config <path>`: read this config file instead of `.openqodex.yaml` at the repo root.
-- `--format <terminal|markdown|json|sarif>`: the report format on stdout. The default is `terminal`.
-- `--output <file>`: write the report to `<file>` instead of stdout.
+- `--format <terminal|markdown|json|sarif>`: the report format. The default is `terminal`. Only `scan` and `review` use it.
+- `--output <file>`: write the report to `<file>` instead of stdout. Only `scan` and `review` use it.
 - `--no-color`: no colour. `NO_COLOR` set in the environment does the same.
 - `--quiet`: no progress lines on stderr.
 - `--verbose`: print the stack when OpenQodex itself fails.
-- `--no-install`: do not download missing scanners. They are listed as not installed.
-- `--offline`: skip the osv.dev dependency lookup and every scanner download. Semgrep still fetches its rule packs; add `--skip semgrep` to stop that too.
+- `--no-install`: do not download missing scanners. The report lists them as not installed.
+- `--offline`: no built-in scanner goes online. osv-scanner and semgrep are skipped and listed as disabled. Scanner downloads are off.
+
+`doctor --install` together with `--offline` or `--no-install` exits 2.
 
 Progress goes to stderr. The report goes to stdout.
 
@@ -83,7 +85,7 @@ Installs OpenQodex into your coding agents.
 - `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
 - `--yes`, `-y`: do not ask. Without a terminal, `init` needs this flag.
-- `--uninstall`: remove exactly what `init` wrote.
+- `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
 - `--dry-run`: print the plan and write nothing.
 
 `init` does not take the flags listed under "Flags every command below accepts". `agents` lists each file it writes.
@@ -99,7 +101,11 @@ Prints the Node and git versions, the repository, the config, the OpenQodex home
 - `--install`: download every scanner that fits this machine, and wait for all of them.
 - `--json`: print the same facts as JSON.
 
-`doctor` exits 2 when git is missing.
+`doctor` always prints its table. It then exits 2 in three cases:
+
+- git is missing;
+- the config does not load;
+- the `--cwd` folder does not exist.
 
 ## trust
 
@@ -124,8 +130,9 @@ openqodex hook uninstall
 ```
 
 - `hook check`: the push gate. The Claude Code and Codex hooks call it before a shell command. It reads the hook's JSON on stdin. It always exits 0.
-- `hook install`: add a git pre-push hook to this repository. It runs `scan` before each push. It stops the push only when the scan exits 1. It refuses to replace a hook it did not write, unless you pass `--force`. With `--force`, the old hook is kept as `pre-push.openqodex.bak`.
-- `hook uninstall`: remove that hook and put back the one it replaced.
+- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `scan` before each push. It stops the push only when the scan exits 1. A scan that fails for its own reasons never stops the push.
+- `hook install` refuses to replace a hook it did not write. `--force` replaces it and keeps the old hook as `pre-push.openqodex.bak`.
+- `hook uninstall`: remove that hook and put back the one it replaced. A hook you edited after install is left in place.
 
 When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook.
 
@@ -145,7 +152,7 @@ Prints the skill without a topic. With a topic, it prints that page of these doc
 openqodex demo [dir]
 ```
 
-Builds the demo repository in `<dir>`, or in a new temporary folder. The folder must be empty or new. The demo commits a clean baseline, then adds a change with planted bugs and leaves it uncommitted. It scans that change and prints the report. The secret in the demo is generated each time and works nowhere.
+Builds the demo repository in `<dir>`, or in a new temporary folder. A relative `<dir>` resolves from the folder you run the command in. The folder must be empty or new. The demo commits a clean baseline, then adds a change with planted bugs and leaves it uncommitted. It scans that change and prints the report. When some scanners are still installing, it says so and asks you to run `scan` again. The secret in the demo is generated each time and works nowhere.
 
 ## Environment variables
 

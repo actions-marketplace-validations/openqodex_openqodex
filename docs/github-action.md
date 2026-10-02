@@ -42,11 +42,11 @@ jobs:
 1. Sets up Node 22.
 2. Restores `~/.openqodex/tools` from the Actions cache, keyed on the runner and the `openqodex` version.
 3. Runs `npx -y openqodex@<version> doctor --install`, which installs every scanner and waits.
-4. Runs `npx -y openqodex@<version> scan --base <pull request base commit> --format sarif --output openqodex.sarif`.
-5. Uploads `openqodex.sarif` to code scanning, when `upload-sarif` is `true` and the scan wrote a report.
-6. Fails the job when the scan exited 1.
+4. Runs `npx -y openqodex@<version> scan --base <pull request base commit> --format sarif`. The SARIF goes to a new folder under the runner's temporary folder, never into the checkout.
+5. Uploads that SARIF to code scanning, when `upload-sarif` is `true` and the scan wrote a report.
+6. Fails the job when the scan exited 1 or 2.
 
-The scan exits 1 only when `.openqodex.yaml` sets `review.block_on_severity` and a finding on a changed line meets it. Without that key, the job never fails on findings. A scan that fails for its own reasons, with exit 2, also fails the job.
+The scan exits 1 only when `.openqodex.yaml` sets `review.block_on_severity` and a finding on a changed line meets it. Without that key, the job never fails on findings. A scan that fails for its own reasons exits 2, and the job fails too.
 
 ## Config
 
@@ -70,4 +70,4 @@ Then install the pre-push hook:
 pre-commit install --hook-type pre-push
 ```
 
-The hook runs `npx -y openqodex@<version> scan` on the commits not yet pushed plus the working tree. It needs Node 22 and npx on your machine.
+The hook runs `npx -y openqodex@<version> scan` on the commits not yet pushed plus the working tree. It stops the push only when the scan exits 1. A scan that fails for its own reasons never stops the push. The hook needs Node 22, npx and `sh` on your machine.

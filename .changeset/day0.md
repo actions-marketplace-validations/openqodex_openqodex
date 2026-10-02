@@ -17,4 +17,4 @@ First release of OpenQodex, open source code review that runs inside your coding
 - `openqodex demo` builds a small repository with planted bugs and scans it.
 - `openqodex guide` prints the docs offline.
 - A GitHub Action and a pre-commit hook run the scan.
-- `--offline` skips the osv.dev dependency lookup and every scanner download.
+- `--offline` skips osv-scanner and semgrep, the two built-in scanners that go online, and turns scanner downloads off.

@@ -71,7 +71,7 @@ The gate runs in Claude Code and Codex, through the hooks above. It never approv
 
 Without `review.block_on_severity` in `.openqodex.yaml`, the gate never stops a push:
 
-- When a finished review of the current change exists, it adds the finding counts and the report path.
+- When a finished review of the current change has findings, it adds the finding counts and the report path. A clean review adds nothing.
 - When none exists, it adds a note that the change was not reviewed and how to review it.
 
 With `review.block_on_severity` set, the gate denies the push unless a finished review of the current change passed. The reason names the next step.
@@ -88,7 +88,7 @@ For pushes from any tool, add a git pre-push hook to one repository:
 npx openqodex hook install
 ```
 
-It runs `openqodex scan` before each push. It stops the push only when `.openqodex.yaml` sets `review.block_on_severity` and the scan meets it. `init` never installs it. `cli` has the details.
+It runs `openqodex scan` before each push, through the launcher. It stops the push only when `.openqodex.yaml` sets `review.block_on_severity` and the scan meets it. A scan that fails for its own reasons never stops the push. `init` never installs it. `cli` has the details.
 
 ## Other ways to install
 
@@ -111,11 +111,11 @@ The review writes its files inside the repository, in `.openqodex/`. So it works
 npx openqodex init --uninstall
 ```
 
-Add `--project` to remove project files. `--uninstall` removes exactly what `init` wrote:
+Add `--project` to remove project files. `init` records what it wrote in `~/.openqodex/install.json`. `--uninstall` removes only what that record holds:
 
 - A skill or rule file is removed only when it is unchanged since `init` wrote it.
 - The hook entry is removed from the settings file. Other settings stay. When `init` saved a backup and nothing else changed, the backup is put back.
 - The `.git/info/exclude` lines are removed.
-- The launcher and the runtime copies are removed when no other agent's hook still uses them.
+- The launcher and the runtime copies are removed when no hook still calls them. The git pre-push hook counts as one.
 
 Scanners stay in `~/.openqodex/tools/`. Delete that folder to remove them too.

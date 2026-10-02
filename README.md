@@ -56,9 +56,13 @@ OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows
 
 ## First run
 
-Scanners download on first use into `~/.openqodex/tools/`. Only the scanners your change needs download. A typical change needs about 100 MB, and semgrep with its Python takes about 86 MB of that. The table below gives each size.
+Scanners download on first use into `~/.openqodex/tools/`. Only the scanners your change needs download. The table below gives each download size.
 
-A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing, and it joins the next run. To install every scanner up front, run `npx openqodex doctor --install`.
+Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
+
+A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. To install every scanner up front, run `npx openqodex doctor --install`.
+
+One measured first run: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `openqodex demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners. Your times depend on your line.
 
 OpenQodex does not install language runtimes. brakeman and rubocop need Ruby 2.7 or newer. golangci-lint needs Go. Without them, the report lists those scanners as not installed, with the reason.
 
@@ -76,11 +80,13 @@ OpenQodex does not install language runtimes. brakeman and rubocop need Ruby 2.7
 | hadolint | 2.15.1 | a Dockerfile | nothing | 102.6 MB, 55.7 MB |
 | shellcheck | 0.10.0 | `.sh`, `.bash` | `xz` to unpack | 7.2 MB, 2.4 MB |
 | golangci-lint | 2.12.2 | `.go` | Go | 14.4 MB, 15.0 MB |
-| brakeman | 6.2.1 | a Ruby or Rails file, in a repo with a `Gemfile` and an `app/` folder | Ruby 2.7 or newer | from RubyGems, not measured |
+| brakeman | 6.2.1 | a Ruby or Rails file, in a repo with a `Gemfile` and an `app/` folder | Ruby 2.7 or newer; see its licence below | from RubyGems, not measured |
 | rubocop | 1.69.2 | `.rb`, `.rake`, `.gemspec`, `Gemfile`, `Rakefile` | Ruby 2.7 or newer | from RubyGems, not measured |
 | sqllint | built in | `.sql` | nothing, it runs inside OpenQodex | none |
 
 [docs/scanners.md](docs/scanners.md) lists every file each scanner reads and what each one sends.
+
+brakeman's licence is the Brakeman Public Use License, which is not an open source licence. OpenQodex does not bundle brakeman. It downloads brakeman at run time onto your machine. `scanners.disable: [brakeman]` switches it off.
 
 ## Add any scanner
 
@@ -105,16 +111,18 @@ npx openqodex trust
 
 - Scanner downloads on first use: GitHub release files checked against pinned sha256 sums, and pinned packages from PyPI, npm and RubyGems.
 - Semgrep rule packs (`p/default`, `p/security-audit`, `p/secrets`), fetched from the Semgrep registry on each run.
-- When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code. `--offline` skips this lookup.
+- When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code.
+
+`--offline` skips osv-scanner and semgrep and turns scanner downloads off.
 - `openqodex trust` reads the custom scanner's release from the GitHub API and downloads it.
 
-Your code goes nowhere except to the model your agent already uses. [docs/security.md](docs/security.md) gives the full list.
+The built-in scanners send no code anywhere. Your agent's model sees what your agent reads, as always. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
 
 ## Packages
 
 | Package | What it is |
 |---|---|
-| [`openqodex`](https://www.npmjs.com/package/openqodex) | The CLI, the skill, the agent templates and the docs, in one bundled file with no runtime dependencies. |
+| [`openqodex`](https://www.npmjs.com/package/openqodex) | One package. It holds the CLI as one bundled file with no runtime dependencies. The skill, the agent templates, the docs, the review patterns and the demo ship as separate files beside it. |
 
 `@openqodex/core` and `@openqodex/scanners` are internal workspace packages. The CLI bundles them, and they are not published.
 
