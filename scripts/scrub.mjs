@@ -24,8 +24,11 @@ for (const file of files) {
   const path = join(root, file);
   if (!existsSync(path)) continue;
   const buffer = readFileSync(path);
-  if (buffer.includes(0)) continue;
-  const lines = buffer.toString("utf8").split("\n");
+  // No file is exempt. UTF-16 text is decoded; anything else is read as UTF-8,
+  // which still exposes ASCII patterns inside a binary file.
+  const utf16 = buffer.length >= 2 && ((buffer[0] === 0xff && buffer[1] === 0xfe) || (buffer[0] === 0xfe && buffer[1] === 0xff));
+  const text = utf16 ? new TextDecoder(buffer[0] === 0xff ? "utf-16le" : "utf-16be").decode(buffer) : buffer.toString("utf8");
+  const lines = text.split("\n");
   lines.forEach((line, index) => {
     for (const { source, regex } of patterns) {
       if (regex.test(line)) {

@@ -16,7 +16,7 @@ for (const rel of [
 ]) {
   const file = join(root, rel);
   const before = readFileSync(file, "utf8");
-  const after = before.replace(/openqodex@[0-9][^\s"`)]*/g, `openqodex@${version}`);
+  const after = before.replace(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g, `openqodex@${version}`);
   if (after !== before) writeFileSync(file, after);
   console.log(`${after === before ? "unchanged" : "updated"}: ${rel}`);
 }
