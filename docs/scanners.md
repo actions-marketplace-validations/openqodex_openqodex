@@ -112,6 +112,7 @@ A scanner problem never changes the exit code.
 - Runs when: a `.go` file changed. It checks the packages that hold the changed files.
 - Needs: Go on your `PATH`. 14.4 MB on Apple Silicon, 15.0 MB on Linux x64.
 - Uses OpenQodex's own settings, with gosec switched on. A `.golangci.yml` in the repo is not loaded. It never rewrites `go.mod` or `go.sum`.
+- golangci-lint 2.12.2 is built with Go 1.26. With a newer Go on your PATH it cannot check the code. The report then lists golangci as failed, with the reason.
 - Runs with the Go module proxy off. The modules the repo needs must already be in your Go module cache. Nothing is downloaded.
 - Sends: nothing.
 

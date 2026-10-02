@@ -27,7 +27,8 @@ jobs:
       # any scanner is skipped.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
+          # golangci-lint 2.12.2 is built with Go 1.26 and cannot check a newer Go.
+          go-version: "1.26"
           cache: false
       - run: pnpm install --frozen-lockfile
       # The end-to-end tests install the pinned scanners once into this folder.
