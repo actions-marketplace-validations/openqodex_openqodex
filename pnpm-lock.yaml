@@ -38,6 +38,9 @@ importers:
       '@openqodex/core':
         specifier: workspace:*
         version: link:../core
+      '@openqodex/graph':
+        specifier: workspace:*
+        version: link:../graph
       '@openqodex/scanners':
         specifier: workspace:*
         version: link:../scanners
@@ -65,6 +68,19 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+
+  packages/graph:
+    dependencies:
+      '@openqodex/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@vscode/tree-sitter-wasm':
+        specifier: ^0.3.1
+        version: 0.3.1
+      web-tree-sitter:
+        specifier: ^0.26.9
+        version: 0.26.13
 
   packages/scanners:
     dependencies:
@@ -712,6 +728,9 @@ packages:
 
   '@vitest/spy@5.0.3':
     resolution: {integrity: sha512-XhFysQTB8AZ+P4gMi+Lpo99vg2AZi0qKpaB9yXQl37+CaMEAPO3iH/wGVnSyL5MPERiLezpqTVtrR6UZH5GCXg==}
+
+  '@vscode/tree-sitter-wasm@0.3.1':
+    resolution: {integrity: sha512-RJFoomET6FajjG511fmQxeBQfU6M24a0aFZPqpid+ttIxanWf1VGytBG0UmsGjt07qmIPJS8U31D+aecuCucsQ==}
 
   acorn@8.18.0:
     resolution: {integrity: sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ==}
@@ -1446,6 +1465,9 @@ packages:
       jsdom:
         optional: true
 
+  web-tree-sitter@0.26.13:
+    resolution: {integrity: sha512-5bUZ7vbQ1kcondet96wzP974+JfCZDeQ7bTpacICm2nnvHpa5cO0ByRsoMcAhUP+743vpkb4m0BFlVSm+Ye9VA==}
+
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
@@ -1980,6 +2002,8 @@ snapshots:
       vite: 8.3.2(@types/node@22.20.5)(esbuild@0.27.7)(yaml@2.9.1)
 
   '@vitest/spy@5.0.3': {}
+
+  '@vscode/tree-sitter-wasm@0.3.1': {}
 
   acorn@8.18.0: {}
 
@@ -2613,6 +2637,8 @@ snapshots:
       '@types/node': 22.20.5
     transitivePeerDependencies:
       - msw
+
+  web-tree-sitter@0.26.13: {}
 
   webidl-conversions@3.0.1: {}
 

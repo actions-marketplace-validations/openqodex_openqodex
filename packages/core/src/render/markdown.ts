@@ -1,5 +1,6 @@
 import type { Report, ReportFinding } from "../types.js";
 import { SEVERITIES_DESC, candidateLocation, coverageLine, location, sourceLabel, verdictLine } from "./common.js";
+import { impactLine } from "./terminal.js";
 
 const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai";
 
@@ -59,6 +60,7 @@ export function renderMarkdown(report: Report): string {
     "",
     `**${verdictLine(report)}**`,
     "",
+    ...(impactLine(report) ? [cell(impactLine(report) as string), ""] : []),
     `Change ${code(report.change_id.slice(0, 12))} against ${code(report.base.ref)} (${code(report.base.sha.slice(0, 12))}), ${files} ${files === 1 ? "file" : "files"}, +${additions} -${deletions}.`,
   ];
   if (report.summary) out.push("", "## Summary", "", quote(report.summary));

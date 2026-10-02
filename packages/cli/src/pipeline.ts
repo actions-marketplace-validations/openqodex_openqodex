@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  STATE_DIR,
   findRepoRoot,
   getChange,
   loadConfig,
@@ -13,7 +14,8 @@ import {
   renderSarif,
   renderTerminal,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, Report, ScanResult, ScannerSource } from "@openqodex/core";
+import type { Change, ChangeScope, Config, ImpactSummary, Report, ScanResult, ScannerSource } from "@openqodex/core";
+import { buildGraph, detectImpact, emptyImpact, langOf } from "@openqodex/graph";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
 import { EXIT_FINDINGS, EXIT_OK } from "./exit-codes.js";
 import type { GlobalFlags } from "./flags.js";
@@ -91,6 +93,33 @@ export function redactStored<T>(value: T, secrets: string[]): T {
     return v;
   };
   return secrets.length === 0 ? value : (walk(value, null) as T);
+}
+
+// The code graph's view of the change. Never throws: a graph that cannot be
+// built is reported as "failed" with one line and the review goes on.
+export async function buildImpact(p: PipelineResult, flags: GlobalFlags, noGraph: boolean): Promise<ImpactSummary> {
+  if (noGraph) return emptyImpact("off", "--no-graph was given");
+  if (!p.config.graph.enabled) return emptyImpact("off", "graph.enabled is false in the config");
+  if (!p.change.files.some((f) => langOf(f.path) !== null || (f.oldPath !== null && langOf(f.oldPath) !== null))) {
+    return emptyImpact("skipped", "no changed file is TypeScript, JavaScript, Python, Go or Ruby");
+  }
+  try {
+    const graph = await buildGraph({
+      repoRoot: p.repoRoot,
+      files: p.change.changedPaths,
+      budgetMs: p.config.graph.budgetMs,
+      maxFiles: p.config.graph.maxFiles,
+      maxFileBytes: p.config.graph.maxFileBytes,
+      cacheDir: join(p.repoRoot, STATE_DIR, "graph"),
+      onProgress: progress(flags),
+      base: { sha: p.change.baseSha, files: p.change.files },
+    });
+    return redactStored(detectImpact(graph, p.change), p.secrets);
+  } catch (error) {
+    const reason = ((error as Error).message ?? String(error)).split("\n")[0] ?? "unknown error";
+    warn(`openqodex: the code graph could not be built: ${reason}`);
+    return emptyImpact("failed", reason);
+  }
 }
 
 export function nothingToReview(change: Change): number {

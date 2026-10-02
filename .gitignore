@@ -20,6 +20,7 @@ packages/cli/docs
 packages/cli/skills
 packages/cli/demo
 packages/cli/toolchain.json
+packages/cli/wasm
 packages/cli/README.md
 packages/cli/LICENSE
 packages/cli/NOTICE
