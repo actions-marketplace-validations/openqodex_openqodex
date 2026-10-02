@@ -33,6 +33,11 @@
 //     growing fills the disk.
 // 18. Every resolve starts another install process while one is running.
 // 19. A relative OPENQODEX_HOME gives a relative tool path.
+// 20. A taker acting on an old view of a dead holder replaces a live lock.
+// 21. A worker that lost the lock, or finds the version already installed,
+//     publishes over it or deletes a folder it did not create.
+// 22. The install process puts a relative home somewhere the caller never looks.
+// 23. The caller waits past its budget on a poll interval.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -44,6 +49,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { run } from "../src/toolchain/fetch.js";
+import { publishVersion, readLock, takeOverStaleLock } from "../src/toolchain/install.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist", "index.js");
@@ -220,6 +226,70 @@ describe("toolchain", () => {
     expect(out).toBe(join(realpathSync(cwd), "rel-home"));
   });
 
+  it("a takeover acting on an old view of a dead holder leaves the new holder's lock in place", () => {
+    const home = freshHome();
+    const dir = join(home, "tools", "actionlint");
+    mkdirSync(dir, { recursive: true });
+    const lock = join(dir, ".lock");
+    const dead = execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+    writeFileSync(lock, `${dead} oldtoken\n`);
+    const observed = readLock(lock);
+    // A and B both saw the dead holder; A takes over first.
+    writeFileSync(join(dir, "a"), `${process.pid} tokenA\n`);
+    expect(takeOverStaleLock(lock, observed, join(dir, "a"), "tokenA")).toBe(true);
+    writeFileSync(join(dir, "b"), `${process.pid} tokenB\n`);
+    expect(takeOverStaleLock(lock, observed, join(dir, "b"), "tokenB")).toBe(false);
+    expect(readLock(lock)?.token).toBe("tokenA");
+  });
+
+  it("a worker that lost the lock publishes nothing and deletes only its own folder", () => {
+    const home = freshHome();
+    const dir = join(home, "tools", "actionlint");
+    const other = join(dir, ".staging-other");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(dir, ".lock"), `${process.pid} someoneelse\n`);
+    const built = builtVersion(join(dir, ".staging-mine", "version"), "mine");
+    expect(publishVersion(home, "actionlint", table.tools.actionlint, built, "mytoken", "move")).toBe("lost_lock");
+    expect(existsSync(join(dir, actionlintVersion))).toBe(false);
+    expect(existsSync(built)).toBe(false);
+    expect(existsSync(other)).toBe(true);
+  });
+
+  it("publishing over a version another worker already installed keeps theirs", () => {
+    const home = freshHome();
+    const dir = join(home, "tools", "actionlint");
+    builtVersion(join(dir, actionlintVersion), "theirs");
+    writeFileSync(join(dir, ".lock"), `${process.pid} mytoken\n`);
+    const built = builtVersion(join(dir, ".staging-mine", "version"), "mine");
+    expect(publishVersion(home, "actionlint", table.tools.actionlint, built, "mytoken", "move")).toBe("already_installed");
+    expect(readFileSync(actionlintBin(home), "utf8")).toBe("theirs");
+    expect(existsSync(built)).toBe(false);
+  });
+
+  it("a relative OPENQODEX_HOME installs where the caller looks", () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "oq-relinstall-")));
+    const out = execFileSync(process.execPath, [worker, "resolve", "actionlint", "null"], {
+      encoding: "utf8",
+      cwd,
+      env: { ...process.env, OPENQODEX_HOME: "rel-home" },
+      timeout: 60_000,
+    });
+    const r = JSON.parse(out);
+    expect(r.ok).toBe(true);
+    expect(r.tool.path).toBe(join(cwd, "rel-home", "tools", "actionlint", actionlintVersion, "bin", "actionlint"));
+    expect(existsSync(r.tool.path)).toBe(true);
+  }, 90_000);
+
+  it("a 50 ms budget against a live lock returns at its deadline, not after a full poll interval", async () => {
+    const home = freshHome();
+    mkdirSync(join(home, "tools", "actionlint"), { recursive: true });
+    writeFileSync(join(home, "tools", "actionlint", ".lock"), `${process.pid} livetoken\n`);
+    const started = Date.now();
+    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: 50 })("actionlint");
+    expect(r).toMatchObject({ status: "installing" });
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
   it("names the missing runtime instead of installing", async () => {
     freshHome();
     // An empty PATH has neither Ruby nor Go; the caller is a separate process
@@ -317,6 +387,14 @@ describe("downloadVerified and extractArchive", () => {
     expect(Date.now() - started).toBeLessThan(5000);
   }, 20_000);
 });
+
+// A finished version folder as a worker leaves it before publishing.
+function builtVersion(dir: string, content: string): string {
+  mkdirSync(join(dir, "bin"), { recursive: true });
+  writeFileSync(join(dir, "bin", "actionlint"), content);
+  writeFileSync(join(dir, ".installed"), "{}\n");
+  return dir;
+}
 
 // A minimal ustar archive, written by hand so a member can carry ../ in its
 // name or be a link (type "2" symlink, "1" hardlink) to any path.

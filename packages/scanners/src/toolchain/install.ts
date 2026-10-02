@@ -9,17 +9,18 @@ import {
   constants,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import type { ResolvedTool } from "@openqodex/core";
 import { InstallError, downloadVerified, extractArchive, isRegularFileInside, run, smallEnv, which } from "./fetch.js";
 import {
@@ -186,12 +187,22 @@ export function ensureWritable(home: string, tool: string): string {
 // The lock file holds "<pid> <token>". It is created atomically with its
 // content (a hard link of a finished temp file), counts as stale only when its
 // pid is no longer alive, and is released only by the holder of its token.
+//
+// Node has no kernel file lock, so one window remains: two takers that both
+// re-checked the same dead holder can both rename over the lock, and the first
+// may read back its own token before the second renames. Both then install.
+// That cannot leave a half install that looks installed: every worker builds
+// in a folder only it created and deletes only that folder, the version
+// becomes visible through one atomic rename of a finished folder (with its
+// marker already inside), and a worker that finds the version already in
+// place, or no longer reads its own token before publishing, discards its own
+// work. The cost of the window is a duplicated download, nothing more.
 
 function lockPath(home: string, tool: string): string {
   return join(toolDir(home, tool), ".lock");
 }
 
-function readLock(path: string): { pid: number; token: string } | null {
+export function readLock(path: string): { pid: number; token: string } | null {
   try {
     const [pid = "", token = ""] = readFileSync(path, "utf8").trim().split(/\s+/);
     return Number.isInteger(Number(pid)) && Number(pid) > 0 ? { pid: Number(pid), token } : null;
@@ -215,15 +226,35 @@ export function isLocked(home: string, tool: string): boolean {
   return holder !== null && isAlive(holder.pid);
 }
 
-async function acquireLock(home: string, tool: string): Promise<string> {
+export function holdsLock(home: string, tool: string, token: string): boolean {
+  return readLock(lockPath(home, tool))?.token === token;
+}
+
+// Replaces a stale lock with the taker's own finished lock file. `observed` is
+// the holder seen dead earlier; the lock is re-read right before the rename and
+// the takeover goes ahead only if it is still that same dead holder. Returns
+// true when the lock read back afterwards carries the taker's token.
+export function takeOverStaleLock(lock: string, observed: { pid: number; token: string } | null, mine: string, token: string): boolean {
+  const now = readLock(lock);
+  const same = now === null ? observed === null : observed !== null && now.token === observed.token && now.pid === observed.pid;
+  if (!same || (now !== null && isAlive(now.pid))) return false;
+  try {
+    renameSync(mine, lock);
+  } catch {
+    return false;
+  }
+  return readLock(lock)?.token === token;
+}
+
+export async function acquireLock(home: string, tool: string): Promise<string> {
   const dir = toolDir(home, tool);
   const lock = lockPath(home, tool);
   const token = randomBytes(8).toString("hex");
   const mine = join(dir, `.lock-${token}`);
-  writeFileSync(mine, `${process.pid} ${token}\n`);
   const giveUp = Date.now() + LOCK_WAIT_MS;
   try {
     for (;;) {
+      writeFileSync(mine, `${process.pid} ${token}\n`);
       try {
         linkSync(mine, lock);
         return token;
@@ -232,23 +263,7 @@ async function acquireLock(home: string, tool: string): Promise<string> {
       }
       const holder = readLock(lock);
       if (holder === null || !isAlive(holder.pid)) {
-        // Take over atomically: only one process can rename the stale lock away.
-        const aside = join(dir, `.lock-stale-${token}`);
-        try {
-          renameSync(lock, aside);
-        } catch {
-          continue;
-        }
-        const moved = readLock(aside);
-        if (moved && moved.token !== holder?.token && isAlive(moved.pid)) {
-          // A live holder replaced the stale lock between the read and the rename: give it back.
-          try {
-            linkSync(aside, lock);
-          } catch {
-            // someone else holds it now; the loop waits on them
-          }
-        }
-        rmSync(aside, { force: true });
+        if (takeOverStaleLock(lock, holder, mine, token)) return token;
         continue;
       }
       if (Date.now() > giveUp) throw new InstallError("failed", `another install of ${tool} did not finish`);
@@ -259,15 +274,14 @@ async function acquireLock(home: string, tool: string): Promise<string> {
   }
 }
 
-function releaseLock(home: string, tool: string, token: string): void {
-  const lock = lockPath(home, tool);
-  if (readLock(lock)?.token === token) rmSync(lock, { force: true });
+export function releaseLock(home: string, tool: string, token: string): void {
+  if (holdsLock(home, tool, token)) rmSync(lockPath(home, tool), { force: true });
 }
 
-async function withLock<T>(home: string, tool: string, fn: () => Promise<T>): Promise<T> {
+async function withLock<T>(home: string, tool: string, fn: (token: string) => Promise<T>): Promise<T> {
   const token = await acquireLock(home, tool);
   try {
-    return await fn();
+    return await fn(token);
   } finally {
     releaseLock(home, tool, token);
   }
@@ -284,9 +298,63 @@ function writeMarker(dir: string, version: string): void {
   writeFileSync(join(dir, ".installed"), `${JSON.stringify({ version, installedAt: new Date().toISOString() })}\n`);
 }
 
-// Download, verify, unpack, then rename the finished version folder into place
-// so a half install never looks installed.
-async function installRelease(home: string, tool: string, recipe: Extract<Recipe, { method: "github-release" }>): Promise<void> {
+type Published = "published" | "already_installed" | "lost_lock";
+
+// Makes `built` (a finished folder with its marker inside, created by this
+// worker) the installed version with one atomic rename: the folder itself
+// (`move`) or a link to it (`link`, for installs that cannot move). Before
+// that, the worker must still read its own token in the lock; when it does
+// not, or the version is already installed, it deletes its own folder and
+// publishes nothing.
+export function publishVersion(
+  home: string,
+  tool: string,
+  recipe: Recipe,
+  built: string,
+  token: string,
+  how: "move" | "link",
+): Published {
+  const final = versionDir(home, tool, recipe);
+  const discard = (result: Published): Published => {
+    rmSync(built, { recursive: true, force: true });
+    return result;
+  };
+  if (isInstalled(home, tool, recipe)) return discard("already_installed");
+  if (!holdsLock(home, tool, token)) return discard("lost_lock");
+  // A version folder without its marker is debris from an install that died
+  // under the earlier in-place layout; no live worker writes there any more.
+  if (existsSync(final) || isSymlink(final)) rmSync(final, { recursive: true, force: true });
+  try {
+    if (how === "move") {
+      renameSync(built, final);
+    } else {
+      const link = `${built}.link`;
+      symlinkSync(basename(built), link);
+      renameSync(link, final);
+    }
+  } catch (error) {
+    if (isInstalled(home, tool, recipe)) return discard("already_installed");
+    throw error;
+  }
+  return "published";
+}
+
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+// Download, verify, unpack into this worker's own staging folder, then publish
+// the finished version folder, so a half install never looks installed.
+async function installRelease(
+  home: string,
+  tool: string,
+  recipe: Extract<Recipe, { method: "github-release" }>,
+  token: string,
+): Promise<Published> {
   const platform = currentPlatform();
   const asset = platform ? recipe.assets[platform] : null;
   if (!asset) throw new InstallError("not_installed", "no download for this platform");
@@ -312,9 +380,7 @@ async function installRelease(home: string, tool: string, recipe: Extract<Recipe
     renameSync(source, target);
     chmodSync(target, 0o755);
     writeMarker(ready, recipe.version);
-    const final = versionDir(home, tool, recipe);
-    rmSync(final, { recursive: true, force: true });
-    renameSync(ready, final);
+    return publishVersion(home, tool, recipe, ready, token, "move");
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
@@ -338,12 +404,12 @@ async function runInstaller(home: string, file: string, args: string[], extra: R
 }
 
 // Tools installed by a package manager cannot be moved after install (absolute
-// paths in scripts), so they install in place and the marker, written last, is
-// what makes them count as installed.
-async function installInPlace(home: string, tool: string, recipe: Recipe, table: Toolchain): Promise<void> {
-  const dir = versionDir(home, tool, recipe);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
+// paths in scripts), so each worker installs into a folder of its own that
+// stays where it is, writes the marker there, and publishes the version as a
+// link to it.
+async function installInPlace(home: string, tool: string, recipe: Recipe, table: Toolchain, token: string): Promise<Published> {
+  const dir = mkdtempSync(join(toolDir(home, tool), `.build-${recipe.version}-`));
+  chmodSync(dir, 0o755);
   try {
     if (recipe.method === "uv") {
       const uv = which("uv") ?? (await installTool("uv", { table })).path;
@@ -395,10 +461,10 @@ async function installInPlace(home: string, tool: string, recipe: Recipe, table:
       ];
       await runInstaller(home, npm.file, args, {});
     }
-    if (!existsSync(binaryPath(home, tool, recipe))) {
-      throw new InstallError("failed", `install failed: ${recipe.binary} missing after install`);
-    }
+    const bin = recipe.method === "npm" ? join(dir, "node_modules", ".bin", recipe.binary) : join(dir, "bin", recipe.binary);
+    if (!existsSync(bin)) throw new InstallError("failed", `install failed: ${recipe.binary} missing after install`);
     writeMarker(dir, recipe.version);
+    return publishVersion(home, tool, recipe, dir, token, "link");
   } catch (error) {
     rmSync(dir, { recursive: true, force: true });
     throw error;
@@ -422,18 +488,24 @@ export async function installTool(
   const unsupported = unsupportedReason(table, recipe);
   if (unsupported) throw new InstallError("not_installed", unsupported);
   const dir = ensureWritable(home, tool);
-  return withLock(home, tool, async () => {
-    if (isInstalled(home, tool, recipe)) return resolvedTool(home, tool, recipe);
-    opts.onProgress?.(`installing ${tool} ${recipe.version} (first run only)`);
-    // Leftovers of an install whose process died; we hold the lock, so none is live.
-    for (const name of readdirSync(dir)) {
-      if (name.startsWith(".staging-")) rmSync(join(dir, name), { recursive: true, force: true });
-    }
-    if (recipe.method === "github-release") await installRelease(home, tool, recipe);
-    else await installInPlace(home, tool, recipe, table);
-    appendFileSync(join(dir, "install.log"), `${new Date().toISOString()} installed ${tool} ${recipe.version}\n`);
-    return resolvedTool(home, tool, recipe);
-  });
+  // A worker that lost the lock to another installer goes back to waiting on
+  // the lock, then finds the other's install in place.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await withLock(home, tool, async (token) => {
+      if (isInstalled(home, tool, recipe)) return "already_installed" as const;
+      opts.onProgress?.(`installing ${tool} ${recipe.version} (first run only)`);
+      const published =
+        recipe.method === "github-release"
+          ? await installRelease(home, tool, recipe, token)
+          : await installInPlace(home, tool, recipe, table, token);
+      if (published === "published") {
+        appendFileSync(join(dir, "install.log"), `${new Date().toISOString()} installed ${tool} ${recipe.version}\n`);
+      }
+      return published;
+    });
+    if (result !== "lost_lock" && isInstalled(home, tool, recipe)) return resolvedTool(home, tool, recipe);
+  }
+  throw new InstallError("failed", "install failed: another install kept taking the lock");
 }
 
 // ---------- the detached install process ----------
