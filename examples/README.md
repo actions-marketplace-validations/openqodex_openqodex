@@ -20,7 +20,7 @@ The baseline is clean: every scanner that reads its files reports nothing. The p
 | `Dockerfile` | 3 | `apt-get install` without `-y`, version pins, `--no-install-recommends` or cleanup | hadolint `DL3008`, `DL3015`, `DL3009`, `DL3014` |
 | `Dockerfile` | 6 | `ADD` for a local file | hadolint `DL3020` |
 | `Dockerfile` | 7 | `pip install` keeps its cache in the image | hadolint `DL3042` |
-| `Dockerfile` | 11 | no `USER`, so the container runs as root | semgrep `missing-user` |
+| `Dockerfile` | 11 | no `USER`, so the container runs as root | no scanner: the change removes the `USER` line and leaves line 11 untouched, so only a reviewer reading the diff finds it |
 | `package-lock.json` | 11 | lodash 4.17.15, with known advisories (CVE-2020-8203 among them) | osv-scanner |
 | `scripts/deploy.sh` | 7 | `rm -rf $DEPLOY_DIR/` unquoted: an empty variable deletes from `/` | shellcheck `SC2115`, `SC2086` |
 | `scripts/deploy.sh` | 11 | a loop over unquoted `ls` output | shellcheck `SC2045`, `SC2086` |
