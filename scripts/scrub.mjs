@@ -1,5 +1,6 @@
 // Fails when a tracked file contains private material. The patterns live in
-// scripts/scrub-patterns.txt, one case-insensitive regular expression per line.
+// scripts/scrub-patterns.txt, one case-insensitive regular expression per line,
+// plus a private list that stays out of the repo.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,7 +10,15 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const patternFile = "scripts/scrub-patterns.txt";
 const excluded = new Set([patternFile, "scripts/scrub.mjs"]);
 
-const patterns = readFileSync(join(root, patternFile), "utf8")
+// The private list is not in the repo. It holds names that must never be
+// published; a checkout without it still runs the public patterns.
+const privatePatternFile = ".private/scrub-patterns.txt";
+const patternText = [patternFile, privatePatternFile]
+  .filter((file) => existsSync(join(root, file)))
+  .map((file) => readFileSync(join(root, file), "utf8"))
+  .join("\n");
+
+const patterns = patternText
   .split("\n")
   .map((line) => line.trim())
   .filter((line) => line && !line.startsWith("#"))

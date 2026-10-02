@@ -1,7 +1,5 @@
 # One case-insensitive regular expression per line. Lines starting with # are ignored.
-qodeclaw
-agents\.qodex\.ai/admin
-credential pool
+# A second, private list is read from .private/scrub-patterns.txt when that file exists.
 bugsnag
 posthog
 —
