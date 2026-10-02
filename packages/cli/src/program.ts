@@ -37,7 +37,7 @@ function reportError(error: unknown, command: string, args: string[]): number {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`openqodex failed: ${message}\n`);
     if (args.includes("--verbose") && error instanceof Error && error.stack) process.stderr.write(`${error.stack}\n`);
-    noteInternalError(command, args, message);
+    noteInternalError(command, args, error);
   }
   return EXIT_TOOL_FAILED;
 }

@@ -163,10 +163,12 @@ openqodex report "<what went wrong>"
 openqodex report --send-last
 ```
 
-- `report "<what went wrong>"`: report a problem with OpenQodex. It prints the issue it would create and the two choices, the same as after a failure. It exits 0.
-- `report --send-last`: create the last issue shown in this repository, exactly as it was shown. Outside a repository it uses the last one shown outside a repository.
+- `report "<what went wrong>"`: report a problem with OpenQodex. It prints the issue it would create and the two choices, the same as after a failure. It exits 0. Words that hold a path, a file name, a key or token, or an email address are refused with exit 2: remove them and run it again. Your user name and the repository's name are replaced with `<name>`.
+- `report --send-last`: print the last issue shown in this repository again, then create it exactly as it was shown. Outside a repository it uses the last one shown outside a repository. It refuses a saved issue that is a link, is not in the saved shape, or changed after it was shown.
 
-The issue holds only the command and its flags, the error line or your words, the status of each scanner, the operating system, the CPU type and the Node version. Every path, key-shaped token, changed file name, user name and repository name is removed first. It never holds code, diffs, findings, config or logs.
+The issue holds only the command and its flags, a short diagnostic, the status of each scanner, the operating system, the CPU type and the Node version. For a scanner the diagnostic is its failure class only, such as `exited with code 2` or `timed out after 60 s`, never its output. For an internal error it is the error's class and first line, cut to 120 characters. Every path, file name, key or token, email address, user name and repository name is removed first, and a custom scanner is shown as `custom scanner`. It never holds code, diffs, findings, config or logs.
+
+When the issue could not be saved, OpenQodex says so and does not offer `--send-last`.
 
 In a terminal, press 1 or 2. Any other key, Enter, Ctrl-C or the end of input counts as 2. Without a terminal (an agent, a git hook, CI), OpenQodex prints the issue and how to create it later with `openqodex report --send-last`; doing nothing ignores it.
 

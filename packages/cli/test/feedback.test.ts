@@ -20,8 +20,21 @@
 //    shown, or sends nothing.
 // 6. `hook check` prints the offer, so the agent's push gate gets noise, or
 //    exits other than 0.
+// Added after the review round:
+// 7. A scanner's stderr or an error's free text reaches the body; a scanner
+//    diagnostic must be a fixed failure class only.
+// 8. A token with no digit (ghp_ with letters only), a labelled secret
+//    (token=...), an email or a bare file name survives in the body.
+// 9. A quoted path with spaces leaves a word of it behind, or a one or two
+//    letter user name survives.
+// 10. A custom scanner's name, which comes from the repo's config, appears in
+//     the body.
+// 11. A report that could not be saved still advertises --send-last, which
+//     then sends an older issue.
+// 12. --send-last follows a symbolic link, or sends a saved body that was
+//     edited after it was shown, or sends without printing it again.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,7 +106,7 @@ describe("feedback offer", () => {
   it("an internal error prints the exact issue with the two choices, sends nothing, keeps paths out and exits 2", () => {
     const h = harness();
     const dir = repo((d) => writeFileSync(join(d, "notes.txt"), "a\nb\n"));
-    const missing = join(dir, "no-such-folder", "out.txt");
+    const missing = join(dir, "Acme Private Project", "out.txt");
     const r = cli(["scan", "--no-install", "--only", "sqllint", "--output", missing], dir, h);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("openqodex failed: ENOENT");
@@ -103,7 +116,7 @@ describe("feedback offer", () => {
       "Issue body:",
       "Command: scan --no-install --only sqllint --output <path>",
       "Component: cli",
-      "Diagnostic: ENOENT: no such file or directory, open '<path>'",
+      "Diagnostic: Error: ENOENT: no such file or directory, open <path>",
       "Scanners: sqllint no_matching_files",
       ENVIRONMENT,
       "1 create a GitHub issue",
@@ -116,6 +129,7 @@ describe("feedback offer", () => {
     const kept = JSON.parse(readFileSync(join(dir, ".openqodex", "last-report.json"), "utf8")) as { body: string };
     expect(kept.body).not.toContain(dir);
     expect(kept.body).not.toContain(basename(dir));
+    expect(kept.body).not.toContain("Private");
   });
 
   it("a scanner that failed prints the offer once without the file name, and a scanner not installed prints none", () => {
@@ -129,6 +143,7 @@ describe("feedback offer", () => {
     const issue = shown(r.stderr);
     expect(issue.title).toBe(`OpenQodex ${VERSION}: scanner-failed`);
     expect(issue.body).toContain("Component: scanner:sqllint");
+    expect(issue.body).toContain("Diagnostic: sqllint: not a regular file\n");
     expect(issue.body).toContain("Scanners: sqllint failed");
     expect(issue.body).not.toContain("ledger-migration");
     expect(issue.body).not.toContain(basename(failing));
@@ -141,22 +156,84 @@ describe("feedback offer", () => {
     expect(offers(quiet.stderr)).toBe(0);
   });
 
-  it("report strips paths, the user name, the repo name and a key-shaped token from a hostile message", () => {
+  it("a custom scanner's name from the repo's config never reaches the issue", () => {
+    const h = harness();
+    const config = "scanners:\n  custom:\n    - source: https://github.com/acme/zorbpay-lint\n      run: zorbpay-lint {target}\n";
+    const dir = repo((d) => {
+      writeFileSync(join(d, ".openqodex.yaml"), config);
+      symlinkSync("/dev/null", join(d, "ledger.sql"));
+    });
+    const r = cli(["scan", "--no-install", "--only", "sqllint,custom:zorbpay-lint"], dir, h);
+    const issue = shown(r.stderr);
+    expect(issue.body).toContain("custom scanner untrusted");
+    expect(issue.body).not.toContain("zorbpay");
+  });
+
+  it("report refuses words that hold a path, a file name, a key-shaped token or an email, and saves nothing", () => {
+    const h = harness();
+    const dir = repo(() => {});
+    const hostile = [
+      "it broke in /srv/app/x",
+      "it broke on payroll.csv",
+      "my token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij leaked",
+      "api_key=abcdefghijklmnopqrstuvwxyz was printed",
+      "mail alice@example.com about it",
+    ];
+    for (const words of hostile) {
+      const r = cli(["report", words], dir, h);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("remove");
+      expect(offers(r.stderr)).toBe(0);
+      expect(existsSync(join(dir, ".openqodex", "last-report.json"))).toBe(false);
+    }
+  });
+
+  it("report replaces the user name, even a two letter one, and the repo name in the developer's words", () => {
     const h = harness();
     const dir = repo(() => {});
     const name = basename(dir);
-    const words =
-      `scan crashed in /Users/zorbuser/${name}/src/pay.ts and C:\\Users\\zorbuser\\cache ` +
-      `after ~/.config/x; zorbuser saw ${name} print ghp_AbCdEf0123456789XyZaBcDeF012345`;
-    const r = cli(["report", words], dir, h, { USER: "zorbuser" });
+    const r = cli(["report", `zq ran the review in ${name} and it hung`], dir, h, { USER: "zq" });
     expect(r.code).toBe(0);
     const issue = shown(r.stderr);
     expect(issue.title).toBe(`OpenQodex ${VERSION}: developer-report`);
-    expect(issue.body).toContain("Command: report\nComponent: report\n");
-    expect(issue.body).toContain(
-      "Diagnostic: scan crashed in <path> and <path> after <path>; <name> saw <name> print <secret>",
-    );
-    for (const leak of ["zorbuser", name, "/Users", "\\", "~", "ghp_", "pay.ts"]) expect(issue.body).not.toContain(leak);
+    expect(issue.body).toContain("Command: report\nComponent: report\nDiagnostic: <name> ran the review in <name> and it hung\n");
+    expect(existsSync(h.record)).toBe(false);
+  });
+
+  it("a report that could not be saved does not offer --send-last", () => {
+    const h = harness();
+    const dir = repo(() => {});
+    const elsewhere = join(temp("elsewhere"), "target.json");
+    writeFileSync(elsewhere, "untouched\n");
+    mkdirSync(join(dir, ".openqodex"));
+    symlinkSync(elsewhere, join(dir, ".openqodex", "last-report.json"));
+    const r = cli(["report", "the review hung"], dir, h);
+    expect(offers(r.stderr)).toBe(1);
+    expect(r.stderr).toContain("the report could not be saved; nothing to send");
+    expect(r.stderr).not.toContain("--send-last");
+    expect(readFileSync(elsewhere, "utf8")).toBe("untouched\n");
+  });
+
+  it("report --send-last refuses a linked or edited saved report and sends nothing", () => {
+    const h = harness();
+    const dir = repo(() => {});
+    cli(["report", "the review hung"], dir, h);
+    const saved = join(dir, ".openqodex", "last-report.json");
+    const original = readFileSync(saved, "utf8");
+
+    const edited = JSON.parse(original) as { body: string };
+    edited.body = edited.body.replace("the review hung", "SELECT * FROM customers");
+    writeFileSync(saved, JSON.stringify(edited));
+    const tampered = cli(["report", "--send-last"], dir, h);
+    expect(tampered.code).toBe(2);
+    expect(existsSync(h.record)).toBe(false);
+
+    const real = join(temp("linked"), "last-report.json");
+    writeFileSync(real, original);
+    rmSync(saved);
+    symlinkSync(real, saved);
+    const linked = cli(["report", "--send-last"], dir, h);
+    expect(linked.code).toBe(2);
     expect(existsSync(h.record)).toBe(false);
   });
 
@@ -169,6 +246,7 @@ describe("feedback offer", () => {
 
     const sent = cli(["report", "--send-last"], dir, h);
     expect(sent.code).toBe(0);
+    expect(sent.stderr).toContain(`Issue title: ${issue.title}\nIssue body:\n${issue.body}\n`);
     const url = new URL(readFileSync(h.record, "utf8"));
     expect(`${url.origin}${url.pathname}`).toBe("https://github.com/openqodex/openqodex/issues/new");
     expect(url.searchParams.get("title")).toBe(issue.title);

@@ -4,7 +4,7 @@
 // as it was shown.
 import { OpenQodexError } from "@openqodex/core";
 import { EXIT_OK } from "../exit-codes.js";
-import { offer, readLast, sendIssue } from "../feedback.js";
+import { offer, readLast, redact, sendIssue } from "../feedback.js";
 import { parseFlags } from "../flags.js";
 
 const USAGE = 'usage: openqodex report "<what went wrong>" | openqodex report --send-last';
@@ -18,12 +18,20 @@ export async function run(args: string[]): Promise<number> {
   if (bools.has("--send-last")) {
     if (positionals.length > 0) throw new OpenQodexError(USAGE);
     const issue = await readLast(global.cwd);
-    if (issue === null) throw new OpenQodexError("no problem report has been shown here, so there is nothing to send");
+    if (typeof issue === "string") throw new OpenQodexError(issue);
+    // What is sent is printed again first, so it is never a surprise.
+    process.stderr.write(`Sending this issue:\nIssue title: ${issue.title}\nIssue body:\n${issue.body}\n`);
     process.stdout.write(`${await sendIssue(issue)}\n`);
     return EXIT_OK;
   }
   const words = positionals[0]?.trim() ?? "";
   if (words === "") throw new OpenQodexError(USAGE);
+  // The words are the developer's own, so they are refused rather than
+  // silently rewritten: nothing is shown or saved until they are clean.
+  const found = [...redact(words).found];
+  if (found.length > 0) {
+    throw new OpenQodexError(`your words hold ${found.join(", ")}; remove it and run report again. Nothing was saved or sent.`);
+  }
   await offer({ code: "developer-report", component: "report", diagnostic: words }, "report", [], global.cwd);
   return EXIT_OK;
 }

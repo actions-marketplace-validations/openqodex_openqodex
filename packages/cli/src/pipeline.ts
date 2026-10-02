@@ -75,7 +75,7 @@ export async function runPipeline(args: {
     skip: args.skip,
     onProgress,
   });
-  noteScan(repoRoot, scan, change.changedPaths);
+  noteScan(repoRoot, scan);
   return { repoRoot, config, change, scan: redactStored(scan, secrets), secrets };
 }
 
