@@ -61,3 +61,7 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 ## Not written on Day 0
 
 No MCP server configuration is written for any agent.
+
+## Placeholders
+
+`{{VERSION}}` is the running package version. `{{LAUNCHER}}` is the absolute launcher path, and `init` must substitute it already quoted for a POSIX shell (single quotes, with any single quote inside escaped), because a home folder can contain a space and the hook command is run through a shell.
