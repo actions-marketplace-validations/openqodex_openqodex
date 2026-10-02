@@ -28,6 +28,9 @@
 //     or change the patch shape.
 // 20. A partial clone fetches a missing object during the review.
 // 21. A repo path with a colon breaks the alternate object folder.
+// 22. Without an upstream, review.default_base is ignored in favour of the
+//     remote's default branch, a branch that exists only on origin is not
+//     found, or a name that exists nowhere silently falls back.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -197,6 +200,33 @@ describe("getChange", () => {
     expect(c.baseRef).toBe("origin/main");
     expect(c.baseSha).toBe(baseSha);
     expect(paths(c)).toEqual(["f.ts"]);
+  });
+
+  it("uses review.default_base over the remote's default branch, finding it on origin when it is not local", async () => {
+    const { repo } = withUpstream();
+    git(repo, "remote", "set-head", "origin", "main");
+    git(repo, "checkout", "-q", "-b", "develop");
+    write(repo, "on-develop.ts", "d\n");
+    commitAll(repo, "develop work");
+    const developSha = git(repo, "rev-parse", "HEAD").trim();
+    git(repo, "push", "-q", "origin", "develop");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "branch", "-q", "-D", "develop");
+    git(repo, "checkout", "-q", "-b", "feature", developSha);
+    write(repo, "f.ts", "f\n");
+    commitAll(repo, "feature work");
+
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [], defaultBase: "develop" });
+    expect(c.baseRef).toBe("origin/develop");
+    expect(c.baseSha).toBe(developSha);
+    expect(paths(c)).toEqual(["f.ts"]);
+
+    git(repo, "branch", "-q", "develop", developSha);
+    expect((await getChange({ repoRoot: repo, scope: {}, exclude: [], defaultBase: "develop" })).baseRef).toBe("develop");
+    expect((await getChange({ repoRoot: repo, scope: {}, exclude: [], defaultBase: null })).baseRef).toBe("origin/main");
+    await expect(getChange({ repoRoot: repo, scope: {}, exclude: [], defaultBase: "release" })).rejects.toThrow(
+      /^review\.default_base: release is not a ref here or a branch on origin/,
+    );
   });
 
   it("reviews only the working tree with uncommitted, after committing half", async () => {

@@ -16,6 +16,7 @@ step "lint" pnpm lint
 step "unit tests" pnpm test
 step "e2e tests" pnpm test:e2e
 step "skill and plugin manifests" node scripts/validate-skill.mjs
+step "config docs" node scripts/config-docs.mjs --check
 step "private material scrub" node scripts/scrub.mjs
 
 printf '\ngate: green\n'

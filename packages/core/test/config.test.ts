@@ -16,11 +16,28 @@
 // 12. Invalid YAML throws something other than OpenQodexError.
 // 13. Dropping an unknown key edits the parsed YAML, so a YAML alias shared
 //     by two sections loses a valid key too.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+// 14. A hosted file's pr_review block is ignored instead of read as review,
+//     or an error inside it names review, a key the developer never wrote.
+// 15. A hosted-only key stops the run, or is ignored without a warning
+//     naming its path and why.
+// 16. With both the folder file and the 0.1.0 root file, the root file is
+//     read, the run fails, or nothing says the root file was skipped.
+// 17. The default config text that init writes reads back to something
+//     other than DEFAULT_CONFIG, warns, or misses a key the schema reads.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { configHash, customEntryHash, DEFAULT_CONFIG, loadConfig, parseConfig } from "../src/config.js";
+import {
+  CONFIG_KEYS,
+  configHash,
+  customEntryHash,
+  DEFAULT_CONFIG,
+  DEFAULT_CONFIG_YAML,
+  loadConfig,
+  parseConfig,
+  schemaKeys,
+} from "../src/config.js";
 import { OpenQodexError } from "../src/types.js";
 
 const dirs: string[] = [];
@@ -28,10 +45,15 @@ afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-function repoWith(yaml: string | null): string {
+// `yaml` goes to the 0.1.0 root file; `folder` to .openqodex/config.yaml.
+function repoWith(yaml: string | null, folder: string | null = null): string {
   const d = mkdtempSync(join(tmpdir(), "oq-config-test-"));
   dirs.push(d);
   if (yaml !== null) writeFileSync(join(d, ".openqodex.yaml"), yaml);
+  if (folder !== null) {
+    mkdirSync(join(d, ".openqodex"));
+    writeFileSync(join(d, ".openqodex", "config.yaml"), folder);
+  }
   return d;
 }
 
@@ -48,9 +70,11 @@ function error(yaml: string): string {
 const FULL = `
 version: 1
 review:
+  severity_threshold: nitpick
   block_on_severity: major
   paths: { exclude: ["vendor/**", "*.min.js"] }
   disabled_rules: ["gitleaks:generic-api-key", "lens:react-*"]
+  default_base: develop
   include_fixtures: true
 scanners:
   disable: [brakeman, rubocop]
@@ -76,6 +100,11 @@ scanners:
         message: text
         reference: url
         severity_map: { error: high, warning: medium }
+graph:
+  enabled: false
+  budget_ms: 2500
+  max_files: 900
+  max_file_bytes: 65536
 `;
 
 describe("loadConfig", () => {
@@ -92,9 +121,9 @@ describe("loadConfig", () => {
     expect(warnings).toEqual([]);
     expect(config).toEqual({
       blockOnSeverity: "major",
-      severityThreshold: "info",
-      baseBranches: [],
-      graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024 },
+      severityThreshold: "nitpick",
+      defaultBase: "develop",
+      graph: { enabled: false, budgetMs: 2500, maxFiles: 900, maxFileBytes: 65536 },
       exclude: ["vendor/**", "*.min.js"],
       disabledRules: ["gitleaks:generic-api-key", "lens:react-*"],
       includeFixtures: true,
@@ -153,6 +182,75 @@ describe("loadConfig", () => {
   });
 });
 
+describe("config file location", () => {
+  it("reads the folder file first, and warns naming both when the 0.1.0 root file is also there", () => {
+    const only = repoWith(null, "review: { block_on_severity: major }\n");
+    expect(loadConfig(only)).toEqual({
+      config: { ...DEFAULT_CONFIG, blockOnSeverity: "major" },
+      path: join(only, ".openqodex", "config.yaml"),
+      warnings: [],
+    });
+    const both = repoWith("review: { block_on_severity: critical }\n", "review: { block_on_severity: major }\n");
+    const loaded = loadConfig(both);
+    expect(loaded.config.blockOnSeverity).toBe("major");
+    expect(loaded.path).toBe(join(both, ".openqodex", "config.yaml"));
+    expect(loaded.warnings).toHaveLength(1);
+    expect(loaded.warnings[0]).toContain(".openqodex/config.yaml");
+    expect(loaded.warnings[0]).toContain(".openqodex.yaml");
+  });
+
+  it("names the 0.1.0 root file in an error from it", () => {
+    expect(() => loadConfig(repoWith("review: { include_fixtures: 3 }\n"))).toThrow(
+      /^\.openqodex\.yaml: review\.include_fixtures: /,
+    );
+  });
+});
+
+describe("the default config text", () => {
+  it("reads back to DEFAULT_CONFIG with no warning, in under 60 lines", () => {
+    expect(parseConfig(DEFAULT_CONFIG_YAML)).toEqual({ config: DEFAULT_CONFIG, warnings: [] });
+    expect(DEFAULT_CONFIG_YAML.split("\n").length).toBeLessThan(60);
+  });
+
+  it("lists every key the schema reads, so init writes and the docs show each one", () => {
+    expect(CONFIG_KEYS.map((k) => k.key)).toEqual(schemaKeys());
+  });
+});
+
+describe("keys from the hosted file", () => {
+  it("reads pr_review as review and warns, naming pr_review in errors", () => {
+    const { config, warnings } = parseConfig("pr_review:\n  severity_threshold: major\n  block_on_severity: critical\n");
+    expect(config.severityThreshold).toBe("major");
+    expect(config.blockOnSeverity).toBe("critical");
+    expect(warnings).toEqual(["pr_review is the hosted name of the review block; it is read as review"]);
+    expect(error("pr_review:\n  include_fixtures: 3\n")).toMatch(/: pr_review\.include_fixtures: /);
+    expect(parseConfig("pr_review:\n  colour: x\n").warnings).toContain("unknown key pr_review.colour is ignored");
+    expect(error("review: {}\npr_review: {}\n")).toMatch(/pr_review: review and pr_review are the same block/);
+  });
+
+  it("warns once for each hosted-only key, with its full path, and ignores it", () => {
+    const hosted = [
+      "enabled: false",
+      "block_pr_merge: true",
+      "allow_approve: true",
+      "authors: [octocat]",
+      "base_branches: [staging]",
+      "style_placement_threshold: major",
+    ];
+    const reason = "is used by the hosted review only and is ignored";
+    for (const block of ["review", "pr_review"]) {
+      const { config, warnings } = parseConfig(
+        `${block}:\n${hosted.map((l) => `  ${l}`).join("\n")}\nprobes:\n  allow_non_get: true\n`,
+      );
+      expect(config).toEqual(DEFAULT_CONFIG);
+      expect(warnings.filter((w) => w.endsWith(reason)).sort()).toEqual(
+        [...hosted.map((l) => `${block}.${l.split(":")[0]} ${reason}`), `probes ${reason}`].sort(),
+      );
+      expect(warnings.filter((w) => w.startsWith("unknown key"))).toEqual([]);
+    }
+  });
+});
+
 describe("parseConfig", () => {
   it("fills every default for the minimal two-line custom entry", () => {
     const { config } = parseConfig(`
@@ -200,7 +298,7 @@ scanners:
   });
 
   it("refuses a wrong type and names the key path", () => {
-    expect(error("review:\n  include_fixtures: yes please\n")).toMatch(/^\.openqodex\.yaml: review\.include_fixtures: /);
+    expect(error("review:\n  include_fixtures: yes please\n")).toMatch(/^\.openqodex\/config\.yaml: review\.include_fixtures: /);
     expect(error("review:\n  block_on_severity: high\n")).toMatch(/review\.block_on_severity: /);
     expect(error("review:\n  paths:\n    exclude: vendor\n")).toMatch(/review\.paths\.exclude: /);
     expect(error("scanners:\n  disable: [nope]\n")).toMatch(/scanners\.disable\[0\]: /);
@@ -217,7 +315,7 @@ scanners:
   });
 
   it("refuses invalid YAML with a plain error", () => {
-    expect(error("review: [unclosed\n")).toMatch(/^\.openqodex\.yaml: not valid YAML: /);
+    expect(error("review: [unclosed\n")).toMatch(/^\.openqodex\/config\.yaml: not valid YAML: /);
   });
 
   it("maps each install form to its kind", () => {

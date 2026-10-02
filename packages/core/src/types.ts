@@ -181,14 +181,20 @@ export type CustomScanner = {
 
 export type Config = {
   blockOnSeverity: Severity | null; // null: warn only
-  severityThreshold: Severity; // findings below this stay out of the report; default "info" (everything)
+  severityThreshold: Severity; // findings below this stay out of the report, unless at or above blockOnSeverity; default "minor", as in the hosted product
   exclude: string[];
   disabledRules: string[];
-  baseBranches: string[]; // branches the default scope may diff against when there is no upstream; empty: the remote's default branch
+  defaultBase: string | null; // the branch or ref the default scope diffs against when there is no upstream; null: the remote's default branch
   includeFixtures: boolean;
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
   graph: { enabled: boolean; budgetMs: number; maxFiles: number; maxFileBytes: number }; // the code graph in the brief; enabled by default
+};
+
+export type LoadedConfig = {
+  config: Config;
+  path: string | null; // null: no config file, defaults in use
+  warnings: string[];
 };
 
 // ---------- code graph, as the report and the brief see it ----------
@@ -316,6 +322,9 @@ export type Report = {
   // Findings on lines the developer changed. Only these and `not_reviewed`
   // count toward the verdict.
   findings: ReportFinding[];
+  // How many findings on changed lines were left out of `findings` because
+  // they sit below review.severity_threshold (and below block_on_severity).
+  below_threshold: number;
   // Findings whose file is not in the change or whose line range touches no
   // changed line. Shown, never counted toward the verdict.
   outside_change: ReportFinding[];

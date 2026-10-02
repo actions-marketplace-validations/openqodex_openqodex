@@ -1,27 +1,59 @@
 # Configuration
 
-OpenQodex reads `.openqodex.yaml` at the root of the repository. Every key is optional. With no file, the defaults apply, and OpenQodex warns but never blocks.
+OpenQodex reads `.openqodex/config.yaml` in the repository. Every key is optional. With no file, the defaults apply, and OpenQodex warns but never blocks.
 
-`--config <path>` reads another file instead.
+- `.openqodex.yaml` at the root, the 0.1.0 location, is still read when `.openqodex/config.yaml` does not exist. With both, OpenQodex reads `.openqodex/config.yaml` only and warns.
+- `--config <path>` reads another file instead of either.
 
 An unknown key prints a warning and is ignored. A value of the wrong type stops the run with exit 2 and names the key.
+
+## Every key
+
+<!-- config-keys:start -->
+| Key | Default | What it does |
+| --- | --- | --- |
+| `version` | `1` | The file format version. 1 is the only one. |
+| `review.severity_threshold` | `minor` | Findings below this severity stay out of the report; one at or above block_on_severity is always shown. |
+| `review.block_on_severity` | `null` | Exit 1 and deny the push when a finding on a changed line is at or above this severity; null never blocks. |
+| `review.paths.exclude` | `[]` | Globs of files left out of the change. |
+| `review.disabled_rules` | `[]` | Globs on a finding's citation, such as gitleaks:generic-api-key or lens:react-*. |
+| `review.default_base` | `null` | The branch or ref to diff against when the branch has no upstream; null uses the remote's default branch. |
+| `review.include_fixtures` | `false` | Keep scanner findings in test fixtures, mocks and snapshots. |
+| `scanners.disable` | `[]` | Built-in scanners to switch off, by name. |
+| `scanners.custom` | `[]` | Open source scanners to add by GitHub link; each runs only after openqodex trust. |
+| `graph.enabled` | `true` | Show the callers and importers of the changed code in the brief. |
+| `graph.budget_ms` | `10000` | Time the code graph may take, in milliseconds. |
+| `graph.max_files` | `4000` | Files past this count are left out of the code graph. |
+| `graph.max_file_bytes` | `524288` | Files larger than this, in bytes, are left out of the code graph. |
+<!-- config-keys:end -->
 
 ## A full example
 
 ```yaml
 version: 1
 review:
+  severity_threshold: minor
   block_on_severity: critical
   paths:
     exclude: ["vendor/**", "**/*.min.js", "*.min.js"]
   disabled_rules: ["gitleaks:generic-api-key", "lens:react-*"]
+  default_base: develop
   include_fixtures: false
 scanners:
   disable: [brakeman]
   custom:
     - source: https://github.com/aquasecurity/trivy
       run: trivy config --format sarif --output {report} {target}
+graph:
+  enabled: true
 ```
+
+## Keys from the hosted review
+
+The keys mirror the `.qodex.yaml` file of the hosted Qodex review where the meaning is the same, so one file can serve both.
+
+- `pr_review` is read as `review`, with a warning. A file with both is refused.
+- These keys are used by the hosted review only. Each prints a warning naming it and is ignored: `review.enabled`, `review.block_pr_merge`, `review.allow_approve`, `review.authors`, `review.base_branches`, `review.style_placement_threshold` and the whole `probes` block. `review.base_branches` there picks which pull requests are reviewed; `review.default_base` is the local key for the branch a change is compared with.
 
 ## Severity
 
@@ -36,6 +68,12 @@ OpenQodex uses one scale: `critical`, `major`, `minor`, `nitpick`, `info`. Scann
 ## version
 
 `1`, the only version. Optional.
+
+## review.severity_threshold
+
+One of `critical`, `major`, `minor`, `nitpick`, `info`. The default is `minor`, the same as the hosted review.
+
+A finding below this severity is left out of the report's findings and counted in `below_threshold` instead. Set `info` to see everything. A finding at or above `block_on_severity` is always shown, whatever this is set to. Scanner results the agent did not review are never hidden by it.
 
 ## review.block_on_severity
 
@@ -68,6 +106,12 @@ A list of globs matched against a finding's citation, `<source>:<rule>`. A match
 - `semgrep:python.lang.*` drops a family of semgrep rules.
 - `lens:react-*` drops agent findings that cite a review pattern whose name starts with `react-`.
 - `custom:trivy:*` drops every finding of the custom scanner named `trivy`.
+
+## review.default_base
+
+A branch or ref, or `null`. The default is `null`.
+
+With no `--base` and no `--uncommitted`, OpenQodex compares the change with the branch's upstream. When the branch has no upstream, it uses this value: the ref as written, else the branch of that name on `origin`. With `null`, it uses the remote's default branch. A value that names nothing in the repository stops the run and says so.
 
 ## review.include_fixtures
 
@@ -163,3 +207,12 @@ How OpenQodex gets the scanner. The default downloads the GitHub release asset t
 - `install: { uv: <package==version> }`: install the scanner from PyPI through uv.
 
 `asset`, `binary` and `sha256` combine. `npm` and `uv` stand alone.
+
+## graph
+
+The code graph lists the callers and importers of the code a change touches, for the brief.
+
+- `graph.enabled`: `true` or `false`. The default is `true`.
+- `graph.budget_ms`: the time the graph may take, in milliseconds. The default is `10000`.
+- `graph.max_files`: the most files the graph reads. The default is `4000`.
+- `graph.max_file_bytes`: a file larger than this, in bytes, is left out of the graph. The default is `524288`.

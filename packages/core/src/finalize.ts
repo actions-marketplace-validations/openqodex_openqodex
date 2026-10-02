@@ -175,6 +175,14 @@ function redactAll<T>(value: T, clean: (text: string) => string): T {
   return value;
 }
 
+// review.severity_threshold: a finding below it is counted, not listed. A
+// finding at or above block_on_severity is always listed, whatever the
+// threshold, so a blocked verdict always names what blocked it.
+function shown(f: ReportFinding, config: Config): boolean {
+  if (atOrAbove(f.severity, config.severityThreshold)) return true;
+  return config.blockOnSeverity !== null && atOrAbove(f.severity, config.blockOnSeverity);
+}
+
 function verdictFor(threshold: Severity | null, severities: Severity[]): Verdict {
   return threshold && severities.some((s) => atOrAbove(s, threshold)) ? "blocked" : "passed";
 }
@@ -235,7 +243,8 @@ export function finalizeReview(args: {
     .filter((c) => droppedIds.has(c.id))
     .map((c) => ({ candidate: c, reason: droppedIds.get(c.id) ?? "" }));
 
-  const kept = dedup(findings);
+  const deduped = dedup(findings);
+  const kept = deduped.filter((f) => shown(f, config));
   const verdict = verdictFor(config.blockOnSeverity, [
     ...kept.map((f) => f.severity),
     ...notReviewed.map((c) => c.reviewSeverity),
@@ -252,6 +261,7 @@ export function finalizeReview(args: {
     block_on_severity: config.blockOnSeverity,
     summary: sub.summary,
     findings: kept,
+    below_threshold: deduped.length - kept.length,
     outside_change: outside,
     low_confidence: lowConfidence,
     not_reviewed: notReviewed,
@@ -291,9 +301,8 @@ function candidateFinding(c: Candidate): ReportFinding {
 export function scanReport(args: { change: Change; scan: ScanResult; config: Config }): Report {
   const { change, scan, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
-  const findings = scan.candidates
-    .filter((c) => !disabled(c.token, config))
-    .map((c) => candidateFinding(c));
+  const live = scan.candidates.filter((c) => !disabled(c.token, config)).map((c) => candidateFinding(c));
+  const findings = live.filter((f) => shown(f, config));
   const report: Report = {
     version: 1,
     kind: "scan",
@@ -308,6 +317,7 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
     block_on_severity: config.blockOnSeverity,
     summary: null,
     findings,
+    below_threshold: live.length - findings.length,
     outside_change: [],
     low_confidence: [],
     not_reviewed: [],

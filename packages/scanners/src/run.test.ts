@@ -89,7 +89,7 @@ function config(over: Partial<Config> = {}): Config {
   return {
     blockOnSeverity: null,
     severityThreshold: "info",
-    baseBranches: [],
+    defaultBase: null,
     graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024 },
     exclude: [],
     disabledRules: [],
