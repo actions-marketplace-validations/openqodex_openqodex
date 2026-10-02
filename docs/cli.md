@@ -10,6 +10,8 @@ Run every command with `npx openqodex <command>`, or `openqodex <command>` when 
 
 A scanner that fails or is missing never changes the exit code. The report lists it with the reason.
 
+When OpenQodex itself fails (exit 2 with `openqodex failed:`) or a scanner ends `failed`, OpenQodex prints the GitHub issue it would create and two choices: `1 create a GitHub issue` and `2 ignore`. `report` explains the choices. A missing scanner, a wrong flag or a finding never prints them. `hook check` never prints them.
+
 ## Which change is checked
 
 By default the change is the commits not yet pushed plus everything uncommitted, untracked files included. OpenQodex finds the base in this order:
@@ -153,6 +155,22 @@ openqodex demo [dir]
 ```
 
 Builds the demo repository in `<dir>`, or in a new temporary folder. A relative `<dir>` resolves from the folder you run the command in. The folder must be empty or new. The demo commits a clean baseline, then adds a change with planted bugs and leaves it uncommitted. It scans that change and prints the report. When some scanners are still installing, it says so and asks you to run `scan` again. The secret in the demo is generated each time and works nowhere.
+
+## report
+
+```
+openqodex report "<what went wrong>"
+openqodex report --send-last
+```
+
+- `report "<what went wrong>"`: report a problem with OpenQodex. It prints the issue it would create and the two choices, the same as after a failure. It exits 0.
+- `report --send-last`: create the last issue shown in this repository, exactly as it was shown. Outside a repository it uses the last one shown outside a repository.
+
+The issue holds only the command and its flags, the error line or your words, the status of each scanner, the operating system, the CPU type and the Node version. Every path, key-shaped token, changed file name, user name and repository name is removed first. It never holds code, diffs, findings, config or logs.
+
+In a terminal, press 1 or 2. Any other key, Enter, Ctrl-C or the end of input counts as 2. Without a terminal (an agent, a git hook, CI), OpenQodex prints the issue and how to create it later with `openqodex report --send-last`; doing nothing ignores it.
+
+Choice 1 creates the issue with the GitHub CLI when `gh auth status` says you are signed in. Otherwise it opens the new issue page on GitHub with the title and body filled in, and prints the link. OpenQodex never signs you in. Choice 2 sends nothing. Nothing leaves your machine without choice 1. The last issue shown is kept in `.openqodex/last-report.json`, which git ignores.
 
 ## Environment variables
 

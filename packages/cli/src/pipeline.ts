@@ -16,6 +16,7 @@ import {
 import type { Change, ChangeScope, Config, Report, ScanResult, ScannerSource } from "@openqodex/core";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
 import { EXIT_FINDINGS, EXIT_OK } from "./exit-codes.js";
+import { noteScan } from "./feedback.js";
 import type { GlobalFlags } from "./flags.js";
 
 export const INSTALL_BUDGET_MS = 45_000;
@@ -74,6 +75,7 @@ export async function runPipeline(args: {
     skip: args.skip,
     onProgress,
   });
+  noteScan(repoRoot, scan, change.changedPaths);
   return { repoRoot, config, change, scan: redactStored(scan, secrets), secrets };
 }
 

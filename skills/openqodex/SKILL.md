@@ -112,6 +112,7 @@ Category says what kind of problem it is:
 - Never set `OPENQODEX_SKIP`. It is the developer's switch, not yours.
 - When the verdict is `blocked`, do not push. Show the developer the findings; push only if they say so after seeing them.
 - An empty findings list is a valid review. Do not pad it.
+- When OpenQodex prints "OpenQodex had a problem. Nothing has been sent." with `1 create a GitHub issue` and `2 ignore`, tell the developer in one line what went wrong and give them the two choices. Never choose 1 yourself. If they say 1, run `npx -y openqodex@0.1.0 report --send-last` from the same folder. Anything else means 2: do nothing.
 
 ## Reading the report
 
