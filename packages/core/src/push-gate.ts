@@ -5,7 +5,7 @@ import { countedSeverities, severityBreakdown } from "./render/common.js";
 import type { Config, Latest, PushDecision, Report } from "./types.js";
 
 const REVIEW_STEP =
-  'run `npx -y openqodex review --agent`, or ask the agent to "review my change with openqodex"';
+  'ask the agent to "review my change with openqodex" (the openqodex skill runs the review)';
 
 function reportPath(latest: Latest): string {
   return `${latest.dir}/report.md`;
