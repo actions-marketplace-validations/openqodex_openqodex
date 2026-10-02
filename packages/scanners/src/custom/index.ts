@@ -3,9 +3,28 @@
 // only while the approval recorded for this repo matches its exact contents;
 // before that nothing from it is executed or installed onto a tool path.
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  createReadStream,
+  existsSync,
+  fstatSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { OpenQodexError, customEntryHash, matchesGlob } from "@openqodex/core";
 import type { Config, CustomScanner, ScannerSource, StaticFinding } from "@openqodex/core";
@@ -14,16 +33,18 @@ import { parseJsonMap } from "../formats/json-map.js";
 import { parseSarif } from "../formats/sarif.js";
 import type { CustomAdapter } from "../run.js";
 import { extractArchive, isRegularFileInside, run, smallEnv, which } from "../toolchain/fetch.js";
-import { installTool, npmCommand } from "../toolchain/install.js";
-import { openqodexHome, toolsDir, type ArchiveKind } from "../toolchain/table.js";
+import { installTool, npmCommand, readLock, releaseLock, takeOverStaleLock } from "../toolchain/install.js";
+import { openqodexHome, toolDir, toolsDir, type ArchiveKind } from "../toolchain/table.js";
 import { expandArgs, splitCommand } from "./command.js";
 import { resolveRelease } from "./release.js";
 
 // What `openqodex trust` shows before the yes: the exact thing that will run.
 export type ResolvedArtifact = {
   version: string;
-  assetName: string | null; // null when the binary comes from PATH, npm or uv
+  // The release asset; for npm and uv the exact pinned spec; null for PATH.
+  assetName: string | null;
   url: string | null;
+  // The download's hash, or for PATH the binary's own hash.
   sha256: string | null;
   checksumSource: "upstream" | "first-download" | null;
   binary: string;
@@ -46,12 +67,34 @@ export type TrustRow = {
 
 const REPORT_MAX_BYTES = 8 * 1024 * 1024;
 const INSTALL_TIMEOUT_MS = 20 * 60_000;
+const LOCK_WAIT_MS = 30_000;
+
+const NOT_APPROVED = "not approved yet: run `openqodex trust`";
+const ENTRY_CHANGED = "changed since it was approved: run `openqodex trust`";
+const BINARY_CHANGED = "the approved binary changed: run `openqodex trust`";
 
 // The program named by the run line, before it is replaced by the installed path.
 function commandName(entry: CustomScanner): string {
   const first = splitCommand(entry.run)[0];
   if (!first) throw new OpenQodexError(`${entry.name}: run is empty`);
   return first;
+}
+
+const sha256Of = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+
+// The exact version an npm or uv spec pins, or null when it pins none.
+const NPM_PIN = /^((?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
+const UV_PIN = /^([A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9,._-]+\])?)==([0-9][0-9A-Za-z.+!-]*)$/;
+function pinnedVersion(spec: string, kind: "npm" | "uv"): string | null {
+  return (kind === "npm" ? NPM_PIN : UV_PIN).exec(spec.trim())?.[2] ?? null;
+}
+
+// A binary on PATH, looked up through absolute PATH entries only, as its real path.
+function fromPath(name: string): string | null {
+  if (name.includes("/")) return isAbsolute(name) && existsSync(name) ? realpathSync(name) : null;
+  const absolute = (process.env.PATH ?? "").split(delimiter).filter((dir) => isAbsolute(dir)).join(delimiter);
+  const found = which(name, absolute);
+  return found ? realpathSync(found) : null;
 }
 
 // Reads the release, picks the asset for this OS and CPU, downloads it to
@@ -64,22 +107,22 @@ export async function resolveCustomArtifact(entry: CustomScanner): Promise<Resol
     case "github-release":
       return resolveRelease({ ...entry, install }, install.binary ?? name);
     case "path": {
-      const found = which(name);
-      if (!found) throw new OpenQodexError(`${entry.name}: ${name} is not on PATH`);
-      return { version: entry.version ?? "path", assetName: null, url: null, sha256: null, checksumSource: null, binary: found, quarantinePath: null };
+      const found = fromPath(name);
+      if (!found) throw new OpenQodexError(`${entry.name}: ${name} is not on PATH (only absolute PATH entries are searched)`);
+      const version = entry.version ?? "path";
+      return { version, assetName: null, url: null, sha256: sha256Of(found), checksumSource: null, binary: found, quarantinePath: null };
     }
     case "npm":
     case "uv": {
-      const version = entry.version ?? specVersion(install.spec, install.kind) ?? "latest";
-      return { version, assetName: null, url: null, sha256: null, checksumSource: null, binary: name, quarantinePath: null };
+      const pin = pinnedVersion(install.spec, install.kind);
+      const form = install.kind === "npm" ? "name@1.2.3" : "name==1.2.3";
+      if (!pin) throw new OpenQodexError(`${entry.name}: ${install.kind} "${install.spec}" must name an exact version (${form})`);
+      if (entry.version !== null && entry.version.replace(/^v/, "") !== pin) {
+        throw new OpenQodexError(`${entry.name}: version ${entry.version} differs from the exact version ${pin} in "${install.spec}"`);
+      }
+      return { version: pin, assetName: install.spec.trim(), url: null, sha256: null, checksumSource: null, binary: name, quarantinePath: null };
     }
   }
-}
-
-function specVersion(spec: string, kind: "npm" | "uv"): string | null {
-  if (kind === "uv") return spec.split("==")[1] ?? null;
-  const at = spec.lastIndexOf("@");
-  return at > 0 ? spec.slice(at + 1) : null;
 }
 
 // ---------- the trust file ----------
@@ -108,29 +151,78 @@ function readTrust(): TrustFile {
   }
 }
 
-function writeTrust(file: TrustFile): void {
-  const path = trustPath();
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tmp, path);
+const LOCK_NAME = "custom";
+const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// Every change to trust.json is a read, an edit and a write under one
+// cross-process lock (the toolchain's lock file for the custom tool folder),
+// so two processes never lose each other's change.
+function updateTrust(edit: (records: TrustRecord[]) => TrustRecord[]): void {
+  const home = openqodexHome();
+  const dir = toolDir(home, LOCK_NAME);
+  mkdirSync(dir, { recursive: true });
+  const lock = join(dir, ".lock");
+  const token = randomBytes(8).toString("hex");
+  const mine = join(dir, `.lock-${token}`);
+  const giveUp = Date.now() + LOCK_WAIT_MS;
+  try {
+    for (;;) {
+      writeFileSync(mine, `${process.pid} ${token}\n`);
+      try {
+        linkSync(mine, lock);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new OpenQodexError(`cannot write ${home}`);
+      }
+      // Takes the lock only when its holder is no longer alive.
+      if (takeOverStaleLock(lock, readLock(lock), mine, token)) break;
+      if (Date.now() > giveUp) throw new OpenQodexError("another openqodex process kept the trust file locked");
+      sleepSync(20);
+    }
+  } finally {
+    rmSync(mine, { force: true });
+  }
+  try {
+    const file = readTrust();
+    const path = trustPath();
+    const tmp = `${path}.${token}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify({ ...file, records: edit(file.records) }, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, path);
+  } finally {
+    releaseLock(home, LOCK_NAME, token);
+  }
 }
 
-export function trustState(repoRoot: string, config: Config): TrustRow[] {
+type Assessed = TrustRow & { reason: string | null };
+
+function assess(repoRoot: string, config: Config): Assessed[] {
   const key = repoKey(repoRoot);
   const records = readTrust().records.filter((r) => r.repoRoot === key);
   return config.custom.map((entry) => {
     const record = records.find((r) => r.name === entry.name) ?? null;
-    const state = record === null ? "untrusted" : record.entryHash === customEntryHash(entry) ? "trusted" : "changed";
-    return { entry, state, record };
+    if (record === null) return { entry, record, state: "untrusted", reason: NOT_APPROVED };
+    if (record.entryHash !== customEntryHash(entry)) return { entry, record, state: "changed", reason: ENTRY_CHANGED };
+    // A binary from PATH is not ours to keep: check it is the same bytes every time.
+    if (entry.install.kind === "path") {
+      let same = false;
+      try {
+        same = sha256Of(record.artifact.binary) === record.artifact.sha256;
+      } catch {
+        // gone or unreadable
+      }
+      if (!same) return { entry, record, state: "changed", reason: BINARY_CHANGED };
+    }
+    return { entry, record, state: "trusted", reason: null };
   });
+}
+
+export function trustState(repoRoot: string, config: Config): TrustRow[] {
+  return assess(repoRoot, config).map(({ entry, state, record }) => ({ entry, state, record }));
 }
 
 export function revoke(repoRoot: string, name: string): void {
   const key = repoKey(repoRoot);
-  const file = readTrust();
-  const records = file.records.filter((r) => !(r.repoRoot === key && r.name === name));
-  if (records.length !== file.records.length) writeTrust({ ...file, records });
+  updateTrust((records) => records.filter((r) => !(r.repoRoot === key && r.name === name)));
 }
 
 // ---------- install on approval ----------
@@ -159,12 +251,22 @@ function findFiles(dir: string, name: string): string[] {
   return found;
 }
 
-const versionFolder = (version: string) => version.replace(/[^A-Za-z0-9._-]/g, "_");
+// Written last into an install folder: the binary's path inside it.
+const MARKER = ".approved";
+function installedBinary(folder: string): string | null {
+  try {
+    const rel = (JSON.parse(readFileSync(join(folder, MARKER), "utf8")) as { binary: string }).binary;
+    const binary = join(folder, rel);
+    return relative(folder, binary).startsWith("..") ? null : binary;
+  } catch {
+    return null;
+  }
+}
 
 // Unpacks the quarantined download into a staging folder, then moves it into
 // place. Returns the absolute path of the binary. Only a regular file the
 // checksum covered can become the binary: never a link, never outside.
-async function installRelease(entry: CustomScanner, artifact: ResolvedArtifact, final: string): Promise<string> {
+async function installRelease(entry: CustomScanner, artifact: ResolvedArtifact, folder: string): Promise<string> {
   const quarantined = artifact.quarantinePath;
   if (!quarantined || !existsSync(quarantined)) {
     throw new OpenQodexError(`${entry.name}: the download is no longer in quarantine; run \`openqodex trust\` again`);
@@ -172,7 +274,7 @@ async function installRelease(entry: CustomScanner, artifact: ResolvedArtifact, 
   if ((await fileSha256(quarantined)) !== artifact.sha256) {
     throw new OpenQodexError(`${entry.name}: the quarantined download changed after it was checked; run \`openqodex trust\` again`);
   }
-  const staging = mkdtempSync(join(dirname(final), ".staging-"));
+  const staging = mkdtempSync(join(dirname(folder), ".staging-"));
   try {
     const tree = join(staging, "tree");
     mkdirSync(tree);
@@ -190,17 +292,17 @@ async function installRelease(entry: CustomScanner, artifact: ResolvedArtifact, 
       binary = hits[0]!;
     } else {
       mkdirSync(join(tree, "bin"));
-      binary = join(tree, "bin", basename(artifact.binary));
+      binary = join(tree, "bin", "tool");
       renameSync(quarantined, binary);
     }
     if (!isRegularFileInside(binary, tree)) {
-      throw new OpenQodexError(`${entry.name}: ${relative(tree, binary)} is not a regular file inside ${artifact.assetName}`);
+      throw new OpenQodexError(`${entry.name}: ${artifact.binary} is not a regular file inside ${artifact.assetName}`);
     }
     chmodSync(binary, 0o755);
     const rel = relative(tree, binary);
-    rmSync(final, { recursive: true, force: true });
-    renameSync(tree, final);
-    return join(final, rel);
+    writeFileSync(join(tree, MARKER), `${JSON.stringify({ binary: rel })}\n`);
+    renameSync(tree, folder);
+    return join(folder, rel);
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
@@ -208,11 +310,11 @@ async function installRelease(entry: CustomScanner, artifact: ResolvedArtifact, 
 
 // npm and uv tools keep absolute paths in their scripts, so they install in
 // place, the same way the pinned toolchain installs them.
-async function installPackage(entry: CustomScanner, spec: string, kind: "npm" | "uv", dir: string): Promise<string> {
+async function installPackage(entry: CustomScanner, spec: string, kind: "npm" | "uv", folder: string): Promise<string> {
   const home = openqodexHome();
   const name = commandName(entry);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
+  rmSync(folder, { recursive: true, force: true });
+  mkdirSync(folder, { recursive: true });
   try {
     let file: string;
     let args: string[];
@@ -222,8 +324,8 @@ async function installPackage(entry: CustomScanner, spec: string, kind: "npm" | 
       const npm = npmCommand();
       if (!npm) throw new OpenQodexError(`${entry.name}: needs npm`);
       file = npm.file;
-      args = [...npm.args, "install", "--prefix", dir, "--no-save", "--no-package-lock", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", "--cache", join(home, "cache", "npm"), spec];
-      binary = join(dir, "node_modules", ".bin", name);
+      args = [...npm.args, "install", "--prefix", folder, "--no-save", "--no-package-lock", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", "--cache", join(home, "cache", "npm"), spec];
+      binary = join(folder, "node_modules", ".bin", name);
     } else {
       file = which("uv") ?? (await installTool("uv")).path;
       args = ["tool", "install", spec];
@@ -232,12 +334,12 @@ async function installPackage(entry: CustomScanner, spec: string, kind: "npm" | 
         UV_PYTHON_INSTALL_DIR: python,
         UV_PYTHON_BIN_DIR: join(python, "bin"),
         UV_PYTHON_PREFERENCE: "only-managed",
-        UV_TOOL_DIR: join(dir, "uv-tools"),
-        UV_TOOL_BIN_DIR: join(dir, "bin"),
+        UV_TOOL_DIR: join(folder, "uv-tools"),
+        UV_TOOL_BIN_DIR: join(folder, "bin"),
         UV_CACHE_DIR: join(home, "cache", "uv"),
         UV_NO_PROGRESS: "1",
       };
-      binary = join(dir, "bin", name);
+      binary = join(folder, "bin", name);
     }
     const out = await run(file, args, { cwd: home, env: smallEnv(extra), timeoutMs: INSTALL_TIMEOUT_MS });
     if (out.timedOut) throw new OpenQodexError(`${entry.name}: install not finished after 20 minutes`);
@@ -249,45 +351,88 @@ async function installPackage(entry: CustomScanner, spec: string, kind: "npm" | 
     } catch {
       throw new OpenQodexError(`${entry.name}: ${name} is missing after installing ${spec}`);
     }
-    if (!real.startsWith(realpathSync(dir) + sep) || !statSync(real).isFile()) {
+    if (!real.startsWith(realpathSync(folder) + sep) || !statSync(real).isFile()) {
       throw new OpenQodexError(`${entry.name}: ${name} does not point at a file inside the install`);
     }
+    writeFileSync(join(folder, MARKER), `${JSON.stringify({ binary: relative(folder, binary) })}\n`);
     return binary;
   } catch (error) {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(folder, { recursive: true, force: true });
     throw error;
   }
 }
 
-// Records the approval and installs the quarantined artifact.
+// Records the approval and installs the quarantined artifact. Each approval
+// installs into its own folder, named by a hash of the entry and the exact
+// artifact, never by text from the entry or the release; an existing
+// approved folder is reused, never replaced.
 export async function approve(repoRoot: string, entry: CustomScanner, artifact: ResolvedArtifact): Promise<void> {
   const home = openqodexHome();
-  const final = join(home, "tools", "custom", entry.name, versionFolder(artifact.version));
+  const key = repoKey(repoRoot);
+  const entryHash = customEntryHash(entry);
   let binary = artifact.binary;
   const install = entry.install;
-  if (install.kind === "github-release") {
-    mkdirSync(dirname(final), { recursive: true });
-    binary = await installRelease(entry, artifact, final);
-    const quarantineRoot = join(home, "quarantine");
-    if (artifact.quarantinePath && relative(quarantineRoot, artifact.quarantinePath).split(sep).length === 2) {
-      rmSync(dirname(artifact.quarantinePath), { recursive: true, force: true });
+  if (install.kind === "path") {
+    if (!isAbsolute(binary) || sha256Of(binary) !== artifact.sha256) {
+      throw new OpenQodexError(`${entry.name}: ${binary} changed after it was checked; run \`openqodex trust\` again`);
     }
-  } else if (install.kind === "npm" || install.kind === "uv") {
-    binary = await installPackage(entry, install.spec, install.kind, final);
+    if (!relative(key, realpathSync(binary)).startsWith("..")) {
+      throw new OpenQodexError(`${entry.name}: ${binary} is inside the repo; a checkout could replace it, so it cannot be approved`);
+    }
+  } else {
+    const identity = install.kind === "github-release" ? artifact.sha256 : `${install.kind}:${artifact.assetName}`;
+    const id = createHash("sha256").update(`${entryHash}\n${identity}`).digest("hex").slice(0, 32);
+    const folder = join(home, "tools", "custom", id);
+    mkdirSync(dirname(folder), { recursive: true });
+    const existing = installedBinary(folder);
+    if (existing) binary = existing;
+    else {
+      // A folder without its marker is an install that died part way.
+      rmSync(folder, { recursive: true, force: true });
+      binary =
+        install.kind === "github-release"
+          ? await installRelease(entry, artifact, folder)
+          : await installPackage(entry, install.spec, install.kind, folder);
+    }
+    if (install.kind === "github-release" && artifact.quarantinePath) {
+      const rel = relative(join(home, "quarantine"), artifact.quarantinePath).split(sep);
+      if (rel.length === 2 && rel[0] !== "..") rmSync(dirname(artifact.quarantinePath), { recursive: true, force: true });
+    }
   }
-  const key = repoKey(repoRoot);
-  const file = readTrust();
   const record: TrustRecord = {
     repoRoot: key,
     name: entry.name,
-    entryHash: customEntryHash(entry),
+    entryHash,
     artifact: { ...artifact, binary, quarantinePath: null },
     approvedAt: new Date().toISOString(),
   };
-  writeTrust({ ...file, records: [...file.records.filter((r) => !(r.repoRoot === key && r.name === entry.name)), record] });
+  updateTrust((records) => [...records.filter((r) => !(r.repoRoot === key && r.name === entry.name)), record]);
 }
 
 // ---------- the adapters ----------
+
+// Reads the report a scanner left, refusing a link, a FIFO, a device or
+// anything past the cap. Null when there is no file.
+function readReport(path: string): { text: string } | { error: string } | null {
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    return { error: code === "ELOOP" ? "the report is a link" : `the report cannot be read (${code})` };
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return { error: "the report is not a regular file" };
+    const buffer = Buffer.alloc(REPORT_MAX_BYTES + 1);
+    let size = 0;
+    for (let n = 1; n > 0 && size < buffer.length; size += n) n = readSync(fd, buffer, size, buffer.length - size, size);
+    if (size > REPORT_MAX_BYTES) return { error: "the report is larger than 8 MB" };
+    return { text: buffer.subarray(0, size).toString("utf8") };
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function skippedAdapter(source: ScannerSource, reason: string): CustomAdapter {
   return {
@@ -322,9 +467,10 @@ function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapte
         const exit = `exit ${result.exitCode}${stderrTail(result) ? `: ${stderrTail(result)}` : ""}`;
         let text: string;
         if (usesReport) {
-          if (!existsSync(report)) return { findings: [], error: `${entry.name} wrote no report (${exit})`, version };
-          if (statSync(report).size > REPORT_MAX_BYTES) return { findings: [], error: `${entry.name} report is larger than 8 MB`, version };
-          text = readFileSync(report, "utf8");
+          const read = readReport(report);
+          if (read === null) return { findings: [], error: `${entry.name} wrote no report (${exit})`, version };
+          if ("error" in read) return { findings: [], error: `${entry.name}: ${read.error}`, version };
+          text = read.text;
         } else {
           text = result.stdout;
         }
@@ -349,10 +495,7 @@ function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapte
 
 // One adapter per custom entry; an entry that is not approved comes back with `skipped` set.
 export function customAdapters(repoRoot: string, config: Config): CustomAdapter[] {
-  return trustState(repoRoot, config).map(({ entry, state, record }) => {
-    const source: ScannerSource = `custom:${entry.name}`;
-    if (state === "untrusted") return skippedAdapter(source, "not approved yet: run `openqodex trust`");
-    if (state === "changed" || record === null) return skippedAdapter(source, "changed since it was approved: run `openqodex trust`");
-    return trustedAdapter(entry, record);
-  });
+  return assess(repoRoot, config).map(({ entry, state, record, reason }) =>
+    state === "trusted" && record ? trustedAdapter(entry, record) : skippedAdapter(`custom:${entry.name}`, reason ?? NOT_APPROVED),
+  );
 }

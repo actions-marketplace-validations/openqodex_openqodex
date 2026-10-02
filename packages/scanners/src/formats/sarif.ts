@@ -96,7 +96,11 @@ function severityOf(result: Obj, rule: Obj | null): ScannerSeverity {
   );
 }
 
-const positiveInt = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : null);
+const positiveInt = (v: unknown): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v >= 1 ? v : null);
+
+// A range longer than this is not a finding about a change, and walking it
+// line by line would stall the changed-line filter.
+export const MAX_SPAN_LINES = 100_000;
 
 export function parseSarif(json: string, opts: { repoDir: string; source: ScannerSource }): StaticFinding[] {
   let log: unknown;
@@ -135,7 +139,10 @@ export function parseSarif(json: string, opts: { repoDir: string; source: Scanne
       if (!filePath) continue;
       const lineStart = positiveInt(get(loc, "region", "startLine"));
       if (!lineStart) continue;
-      const lineEnd = Math.max(lineStart, positiveInt(get(loc, "region", "endLine")) ?? lineStart);
+      const rawEnd = get(loc, "region", "endLine");
+      if (rawEnd !== undefined && positiveInt(rawEnd) === null) continue;
+      const lineEnd = Math.max(lineStart, positiveInt(rawEnd) ?? lineStart);
+      if (lineEnd - lineStart + 1 > MAX_SPAN_LINES) continue;
 
       findings.push({
         source: opts.source,

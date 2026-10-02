@@ -8,14 +8,14 @@
 // 2. Resolving installs or executes the download instead of leaving it in
 //    quarantine, or skips the upstream checksum when the release has one.
 // 3. A quarantined file swapped or altered between resolve and approve is installed.
-// 4. Approve does not install under tools/custom/<name>/<version>/, leaves the
+// 4. Approve does not install under its own tools/custom/<hash>/ folder, leaves the
 //    quarantine behind, or records no approval.
 // 5. The approved adapter does not run the installed binary, does not pass the
 //    matching changed files, treats the tool's exit 1 on findings as a
 //    failure, or returns findings under another source.
 // 6. Editing the entry's run line keeps it running without a new approval.
 // 7. Revoking keeps it running.
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseConfig } from "@openqodex/core";
@@ -35,6 +35,11 @@ scanners:
 const RUN = "actionlint -no-color -format '{{json .}}' {target}";
 
 let home: string;
+// Approved install folders under tools/custom (staging and lock files start with a dot).
+const installed = () => {
+  const dir = join(home, "tools", "custom");
+  return existsSync(dir) ? readdirSync(dir).filter((n) => !n.startsWith(".")) : [];
+};
 let repo: string;
 const savedHome = process.env.OPENQODEX_HOME;
 
@@ -79,7 +84,7 @@ describe("custom scanner trust flow", () => {
     copyFileSync(artifact.quarantinePath!, aside);
     appendFileSync(artifact.quarantinePath!, "x");
     await expect(approve(repo, config.custom[0]!, artifact)).rejects.toThrow(/changed after it was checked/);
-    expect(existsSync(join(home, "tools", "custom", "actionlint", "1.7.12"))).toBe(false);
+    expect(installed()).toEqual([]);
     expect(trustState(repo, config)[0]?.state).toBe("untrusted");
     copyFileSync(aside, artifact.quarantinePath!);
 
@@ -87,7 +92,8 @@ describe("custom scanner trust flow", () => {
     await approve(repo, config.custom[0]!, artifact);
     const row = trustState(repo, config)[0]!;
     expect(row.state).toBe("trusted");
-    expect(row.record?.artifact.binary).toBe(join(home, "tools", "custom", "actionlint", "1.7.12", "actionlint"));
+    expect(installed()).toHaveLength(1);
+    expect(row.record?.artifact.binary).toBe(join(home, "tools", "custom", installed()[0]!, "actionlint"));
     expect(existsSync(artifact.quarantinePath!)).toBe(false);
     expect(JSON.parse(readFileSync(join(home, "trust.json"), "utf8")).records).toHaveLength(1);
 

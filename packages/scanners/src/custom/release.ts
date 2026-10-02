@@ -155,14 +155,15 @@ export async function resolveRelease(entry: CustomScanner & { install: { kind: "
   );
   const asset = release.assets.find((a) => a.name === assetName)!;
 
-  const quarantine = join(openqodexHome(), "quarantine", `${entry.name}-${randomBytes(6).toString("hex")}`);
+  const quarantine = join(openqodexHome(), "quarantine", randomBytes(12).toString("hex"));
   mkdirSync(quarantine, { recursive: true });
   try {
     const upstream = await upstreamHash(release, assetName, quarantine);
     if (upstream && entry.install.sha256 && upstream !== entry.install.sha256) {
       throw new OpenQodexError(`${entry.name}: install.sha256 differs from the checksum ${repo} publishes for ${assetName}`);
     }
-    const quarantinePath = join(quarantine, assetName);
+    // Named by the code, never by release text.
+    const quarantinePath = join(quarantine, "download");
     let sha256: string;
     try {
       ({ sha256 } = await downloadVerified(asset.browser_download_url, upstream ?? entry.install.sha256, quarantinePath));

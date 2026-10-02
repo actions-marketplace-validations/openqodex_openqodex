@@ -2,7 +2,7 @@
 // that cannot write SARIF. Dotted keys and `[n]` indexes only: no JSONPath,
 // no wildcards, no expressions.
 import type { JsonMap, ScannerSeverity, ScannerSource, StaticFinding } from "@openqodex/core";
-import { toRepoPath } from "./sarif.js";
+import { MAX_SPAN_LINES, toRepoPath } from "./sarif.js";
 
 type Step = string | number;
 
@@ -39,7 +39,7 @@ const text = (v: unknown): string | null =>
 
 function line(v: unknown): number | null {
   const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
-  return typeof n === "number" && Number.isInteger(n) && n >= 1 ? n : null;
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 1 ? n : null;
 }
 
 export function parseJsonMap(json: string, map: JsonMap, opts: { repoDir: string; source: ScannerSource }): StaticFinding[] {
@@ -72,7 +72,10 @@ export function parseJsonMap(json: string, map: JsonMap, opts: { repoDir: string
     if (!file || !lineStart) continue;
     const filePath = toRepoPath(file, opts.repoDir);
     if (!filePath) continue;
-    const lineEnd = Math.max(lineStart, (at.endLine && line(read(item, at.endLine))) || lineStart);
+    const rawEnd = at.endLine ? read(item, at.endLine) : undefined;
+    if (rawEnd !== undefined && rawEnd !== null && line(rawEnd) === null) continue;
+    const lineEnd = Math.max(lineStart, line(rawEnd) ?? lineStart);
+    if (lineEnd - lineStart + 1 > MAX_SPAN_LINES) continue;
     const ruleId = text(read(item, at.rule)) ?? "unknown";
     const rawSeverity = at.severity ? text(read(item, at.severity)) : null;
     const severity: ScannerSeverity =
