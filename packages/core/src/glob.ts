@@ -11,5 +11,5 @@ export function matchesGlob(path: string, glob: string): boolean {
     .replace(/\*/g, "[^/]*") // * is a run without a slash
     .replace(/\?/g, "[^/]") // ? is one character that is not a slash
     .replaceAll("\x00", ".*"); // ** is anything
-  return new RegExp(`^${re}$`).test(path);
+  return new RegExp(`^${re}$`, "s").test(path);
 }

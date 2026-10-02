@@ -4,6 +4,8 @@
 // 3. A pattern matches a prefix or a suffix instead of the whole path.
 // 4. A regex metacharacter in the pattern throws or matches something else.
 // 5. "?" matches a slash or more than one character.
+// 6. "**" stops at a newline in a file name, or the end anchor matches
+//    before a final newline.
 import { describe, expect, it } from "vitest";
 import { matchesGlob } from "./glob.js";
 
@@ -38,5 +40,11 @@ describe("matchesGlob", () => {
     expect(matchesGlob("a1.ts", "a?.ts")).toBe(true);
     expect(matchesGlob("a/.ts", "a?.ts")).toBe(false);
     expect(matchesGlob("a12.ts", "a?.ts")).toBe(false);
+  });
+
+  it("crosses a newline with ** and anchors at the true end", () => {
+    expect(matchesGlob("vendor/a\nb.js", "vendor/**")).toBe(true);
+    expect(matchesGlob("a.js\n", "a.js")).toBe(false);
+    expect(matchesGlob("a.js\n", "*.js")).toBe(false);
   });
 });

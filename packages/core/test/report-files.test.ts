@@ -10,7 +10,13 @@
 // 6. findReportDir returns an older folder for the same change, or one for a
 //    different change.
 // 7. A report file name escapes the folder.
+// 8. A repo ships .openqodex or .openqodex/reviews as a symlink and sends
+//    writes and pruning outside the repo.
+// 9. Two runs of the same change in the same second share a folder.
+// 10. A failed rename leaves its temp file behind.
 import { execFileSync } from "node:child_process";
+import { symlinkSync } from "node:fs";
+import { OpenQodexError } from "../src/types.js";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -122,5 +128,51 @@ describe("report files", () => {
     const dir = openReportDir(r, ID);
     expect(() => writeReportFiles(dir, { "../escape.md": "x" })).toThrow();
     expect(existsSync(join(dir, "..", "escape.md"))).toBe(false);
+  });
+
+  it("refuses a symlinked state folder or reviews folder before writing or pruning", () => {
+    const outside = repo();
+    const victim = join(outside, "reviews");
+    mkdirSync(join(victim, `20200101-000000-${ID}`), { recursive: true });
+    for (let i = 0; i < 25; i++) mkdirSync(join(victim, `20200102-0000${String(i).padStart(2, "0")}-${ID}`));
+
+    const a = repo();
+    symlinkSync(outside, join(a, ".openqodex"));
+    expect(() => openReportDir(a, ID)).toThrow(OpenQodexError);
+    expect(() => writeLatest(a, { dir: "d", change_id: ID, kind: "scan", finalized: false, verdict: null })).toThrow(
+      OpenQodexError,
+    );
+
+    const b = repo();
+    mkdirSync(join(b, ".openqodex"));
+    symlinkSync(victim, join(b, ".openqodex", "reviews"));
+    expect(() => openReportDir(b, ID)).toThrow(OpenQodexError);
+
+    expect(readdirSync(victim)).toHaveLength(26);
+    expect(existsSync(join(outside, ".gitignore"))).toBe(false);
+    expect(existsSync(join(outside, "latest.json"))).toBe(false);
+  });
+
+  it("gives every run its own folder and finds the newest", () => {
+    const r = repo();
+    const made = [openReportDir(r, ID), openReportDir(r, ID), openReportDir(r, ID)];
+    expect(new Set(made).size).toBe(3);
+    expect(findReportDir(r, ID)).toBe(made[2]);
+  });
+
+  it("orders same-second folders by their numeric suffix", () => {
+    const r = repo();
+    const reviews = join(r, ".openqodex", "reviews");
+    for (const n of ["", "-2", "-10"]) mkdirSync(join(reviews, `20240101-000000-${ID}${n}`), { recursive: true });
+    expect(findReportDir(r, ID)).toBe(join(reviews, `20240101-000000-${ID}-10`));
+  });
+
+  it("removes its temp file when the rename fails", () => {
+    const r = repo();
+    const dir = openReportDir(r, ID);
+    mkdirSync(join(dir, "report.md"));
+    writeFileSync(join(dir, "report.md", "keep"), "x");
+    expect(() => writeReportFiles(dir, { "report.md": "# r\n" })).toThrow();
+    expect(readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 });

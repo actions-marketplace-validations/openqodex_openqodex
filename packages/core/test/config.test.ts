@@ -14,6 +14,8 @@
 // 10. The hashes change with key order, or do not change with a value.
 // 11. An explicit config path that does not exist is silently ignored.
 // 12. Invalid YAML throws something other than OpenQodexError.
+// 13. Dropping an unknown key edits the parsed YAML, so a YAML alias shared
+//     by two sections loses a valid key too.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -268,5 +270,11 @@ describe("hashes", () => {
     );
     expect(customEntryHash({ ...entry, run: `${entry.run} --quiet` })).not.toBe(customEntryHash(entry));
     expect(configHash(DEFAULT_CONFIG)).toBe(configHash({ ...DEFAULT_CONFIG }));
+  });
+
+  it("keeps a valid key when an alias shares it with a section where it is unknown", () => {
+    const { config, warnings } = parseConfig("review: &r { block_on_severity: critical }\nscanners: *r\n");
+    expect(config.blockOnSeverity).toBe("critical");
+    expect(warnings).toEqual(["unknown key scanners.block_on_severity is ignored"]);
   });
 });

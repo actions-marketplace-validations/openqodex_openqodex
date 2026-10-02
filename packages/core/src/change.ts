@@ -12,7 +12,7 @@ import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { parseDiffCoverage } from "./diff.js";
+import { createCoverageParser, unquoteDiffPath } from "./diff.js";
 import { matchesGlob } from "./glob.js";
 import { STATE_DIR } from "./report-files.js";
 import type { Change, ChangedFile, ChangeScope } from "./types.js";
@@ -20,6 +20,14 @@ import { OpenQodexError } from "./types.js";
 
 // Text handed to the brief is capped; files past the cap are left out whole.
 export const DIFF_CAP_BYTES = 5 * 1024 * 1024;
+
+// Changed-line coverage is held as one number per added line, so it is capped
+// too. A file that would take the total past this gets no coverage and is
+// left out of the brief; it is listed as not reviewed.
+export const COVERAGE_MAX_LINES = 500_000;
+
+// Coverage needs only the first character of a patch line and the headers.
+const COVERAGE_MAX_LINE_BYTES = 64 * 1024;
 
 // Our own run state never counts as part of a change.
 const STATE_PATHSPEC = `:(top,exclude)${STATE_DIR}`;
@@ -41,20 +49,33 @@ const DIFF_FLAGS = [
   "--no-textconv",
   "--no-relative",
   "--find-renames",
+  "--inter-hunk-context=0",
+  "--ignore-submodules=none",
+  "--submodule=short",
 ];
 
 type GitResult = { code: number; stdout: Buffer; stderr: string };
 
-function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<GitResult> {
+// Settings for one call, on top of GIT_CONFIG.
+type GitOptions = { env?: NodeJS.ProcessEnv; config?: string[] };
+
+function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+  // It would override -U0 and widen the changed lines.
+  delete out.GIT_DIFF_OPTS;
+  return out;
+}
+
+function spawnGit(cwd: string, args: string[], opts: GitOptions) {
   const argv: string[] = [];
-  for (const c of GIT_CONFIG) argv.push("-c", c);
+  for (const c of [...GIT_CONFIG, ...(opts.config ?? [])]) argv.push("-c", c);
   argv.push(...args);
+  return spawn("git", argv, { cwd, env: childEnv(opts.env ?? process.env), stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function git(cwd: string, args: string[], opts: GitOptions = {}): Promise<GitResult> {
   return new Promise((done, fail) => {
-    const child = spawn("git", argv, {
-      cwd,
-      env: { ...env, GIT_OPTIONAL_LOCKS: "0" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawnGit(cwd, args, opts);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (b: Buffer) => out.push(b));
@@ -66,12 +87,70 @@ function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = process.env):
   });
 }
 
-async function gitOk(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<Buffer> {
-  const r = await git(cwd, args, env);
-  if (r.code !== 0) {
-    throw new OpenQodexError(`git ${args[0]} failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+function failure(args: string[], code: number, stderr: string): OpenQodexError {
+  if (/lazy fetch|promisor|missing (blob|tree|object)/i.test(stderr)) {
+    return new OpenQodexError(
+      "a file this change needs is not downloaded in this partial clone, and openqodex never fetches; " +
+        `run git fetch and try again (git ${args[0]}: ${stderr.trim()})`,
+    );
   }
+  return new OpenQodexError(`git ${args[0]} failed: ${stderr.trim() || `exit ${code}`}`);
+}
+
+async function gitOk(cwd: string, args: string[], opts?: GitOptions): Promise<Buffer> {
+  const r = await git(cwd, args, opts);
+  if (r.code !== 0) throw failure(args, r.code, r.stderr);
   return r.stdout;
+}
+
+// Runs git and hands stdout over one line at a time. A line longer than
+// maxLine is cut to its first maxLine bytes and flagged, so memory stays
+// bounded whatever the size of the output.
+function gitLines(
+  cwd: string,
+  args: string[],
+  opts: GitOptions,
+  maxLine: number,
+  onLine: (line: string, cut: boolean) => void,
+): Promise<void> {
+  return new Promise((done, fail) => {
+    const child = spawnGit(cwd, args, opts);
+    let pending: Buffer[] = [];
+    let pendingBytes = 0;
+    let cut = false;
+    const keep = (b: Buffer): void => {
+      const room = maxLine - pendingBytes;
+      if (b.length > room) cut = true;
+      const part = b.length > room ? b.subarray(0, Math.max(room, 0)) : b;
+      if (part.length > 0) {
+        pending.push(Buffer.from(part));
+        pendingBytes += part.length;
+      }
+    };
+    const flush = (): void => {
+      onLine(Buffer.concat(pending).toString("utf8"), cut);
+      pending = [];
+      pendingBytes = 0;
+      cut = false;
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      let start = 0;
+      for (let nl = chunk.indexOf(10); nl !== -1; nl = chunk.indexOf(10, start)) {
+        keep(chunk.subarray(start, nl));
+        flush();
+        start = nl + 1;
+      }
+      if (start < chunk.length) keep(chunk.subarray(start));
+    });
+    const err: Buffer[] = [];
+    child.stderr.on("data", (b: Buffer) => err.push(b));
+    child.on("error", (e) => fail(new OpenQodexError(`could not run git: ${e.message}`)));
+    child.on("close", (code) => {
+      if (pendingBytes > 0 || cut) flush();
+      if (code === 0) done();
+      else fail(failure(args, code ?? 1, Buffer.concat(err).toString("utf8")));
+    });
+  });
 }
 
 async function gitLine(cwd: string, args: string[]): Promise<string | null> {
@@ -155,27 +234,118 @@ type NumStat = { additions: number; deletions: number; binary: boolean };
 
 // `--numstat -z`: "<add>\t<del>\t<path>\0", or for a rename
 // "<add>\t<del>\t\0<old>\0<new>\0". A binary file shows "-" for both counts.
-function parseNumstat(buf: Buffer): NumStat[] {
+// Keyed by the new path; records for the same path are added together.
+function parseNumstat(buf: Buffer): Map<string, NumStat> {
   const parts = splitNul(buf);
-  const out: NumStat[] = [];
+  const out = new Map<string, NumStat>();
   for (let i = 0; i < parts.length; ) {
-    const [add, del, path] = parts[i++].split("\t");
-    if (path === "") i += 2;
+    const [add, del, inline] = parts[i++].split("\t");
+    let path = inline;
+    if (path === "") {
+      path = parts[i + 1];
+      i += 2;
+    }
     const binary = add === "-" && del === "-";
-    out.push({ binary, additions: binary ? 0 : Number(add), deletions: binary ? 0 : Number(del) });
+    const prev = out.get(path) ?? { additions: 0, deletions: 0, binary: false };
+    out.set(path, {
+      binary: prev.binary || binary,
+      additions: prev.additions + (binary ? 0 : Number(add)),
+      deletions: prev.deletions + (binary ? 0 : Number(del)),
+    });
   }
   return out;
 }
 
-// One block per file pair, in the same order git lists the pairs.
-function splitDiffBlocks(diff: string): string[] {
-  if (diff === "") return [];
-  return diff.split(/^(?=diff --git )/m);
+const EXTENDED_HEADER =
+  /^(old mode|new mode|deleted file mode|new file mode|similarity index|dissimilarity index|rename from|rename to|copy from|copy to|index) /;
+
+// The path a "diff --git a/<p> b/<p>" line names when both sides are the same
+// path (every pair except a rename), or null.
+function samePathFromHeader(line: string): string | null {
+  const rest = line.slice("diff --git ".length);
+  if ((rest.length - 1) % 2 !== 0) return null;
+  const half = (rest.length - 1) / 2;
+  if (rest[half] !== " ") return null;
+  const a = unquoteDiffPath(rest.slice(0, half));
+  const b = unquoteDiffPath(rest.slice(half + 1));
+  if (!a.startsWith("a/") || !b.startsWith("b/") || a.slice(2) !== b.slice(2)) return null;
+  return a.slice(2);
+}
+
+// Streams a patch and hands each line to onLine together with the path of
+// the file pair it belongs to. A pair can produce more than one block (a
+// type change is shown as a deletion and an addition), so callers key by
+// path, never by position. The path is known once the extended header lines
+// are past; the block is held until then, and those lines are short.
+async function streamPatch(
+  run: (onLine: (line: string, cut: boolean) => void) => Promise<void>,
+  onLine: (path: string | null, line: string, cut: boolean) => void,
+): Promise<void> {
+  let held: string[] = [];
+  let path: string | null = null;
+  let deciding = false;
+  const release = (): void => {
+    deciding = false;
+    for (const l of held) onLine(path, l, false);
+    held = [];
+  };
+  await run((line, cut) => {
+    if (line.startsWith("diff --git ")) {
+      if (deciding) release();
+      path = samePathFromHeader(line);
+      deciding = true;
+      held = [line];
+      return;
+    }
+    if (deciding) {
+      if (line.startsWith("rename to ")) path = unquoteDiffPath(line.slice("rename to ".length));
+      if (EXTENDED_HEADER.test(line)) {
+        held.push(line);
+        return;
+      }
+      release();
+    }
+    onLine(path, line, cut);
+  });
+  if (deciding) release();
 }
 
 function excluded(path: string, exclude: string[]): boolean {
   if (path === STATE_DIR || path.startsWith(`${STATE_DIR}/`)) return true;
   return exclude.some((g) => matchesGlob(path, g));
+}
+
+// git separates alternate object folders with ":", so a path is C-quoted to
+// survive a colon (or a leading quote) in it.
+function quoteAlternate(path: string): string {
+  return `"${path.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+// Every configured filter driver is switched off for the temp add: a clean
+// filter is the user's own program and may write inside .git (large file
+// storage does). The file is then staged as it sits on disk.
+async function filtersOff(repoRoot: string): Promise<string[]> {
+  const r = await git(repoRoot, ["config", "--get-regexp", "^filter\\..*\\.(clean|process)$"]);
+  if (r.code !== 0) return [];
+  const off = new Set<string>();
+  for (const line of r.stdout.toString("utf8").split("\n")) {
+    const key = line.split(" ", 1)[0];
+    if (key === "") continue;
+    off.add(`${key}=`);
+    off.add(`${key.slice(0, key.lastIndexOf("."))}.required=false`);
+  }
+  return [...off];
+}
+
+// Pathspecs that keep git from producing patches for files left out anyway.
+// Only an optimisation: past this size the list is not passed and the
+// streamed lines for those files are dropped instead.
+const MAX_SKIP_PATHSPEC_BYTES = 64 * 1024;
+
+function skipPathspecs(paths: string[]): string[] {
+  const specs = paths.map((p) => `:(top,literal,exclude)${p}`);
+  const bytes = specs.reduce((n, s) => n + Buffer.byteLength(s) + 1, 0);
+  return bytes <= MAX_SKIP_PATHSPEC_BYTES ? specs : [];
 }
 
 export async function getChange(args: {
@@ -192,6 +362,7 @@ export async function getChange(args: {
   };
   const indexPath = await absGitPath("index");
   const objectsPath = await absGitPath("objects");
+  const noFilters = await filtersOff(repoRoot);
 
   const tmp = await mkdtemp(join(tmpdir(), "openqodex-change-"));
   try {
@@ -203,55 +374,126 @@ export async function getChange(args: {
       ...process.env,
       GIT_INDEX_FILE: tmpIndex,
       GIT_OBJECT_DIRECTORY: tmpObjects,
-      GIT_ALTERNATE_OBJECT_DIRECTORIES: objectsPath,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(objectsPath),
     };
 
-    await gitOk(repoRoot, ["add", "-A", "--", ".", STATE_PATHSPEC], env);
+    await gitOk(repoRoot, ["add", "-A", "--", ".", STATE_PATHSPEC], { env, config: noFilters });
 
-    const diffArgs = (...extra: string[]): string[] => ["diff", ...DIFF_FLAGS, ...extra, base.sha, "--", STATE_PATHSPEC];
-    const [nameStatus, numstat, raw, u0, u3] = await Promise.all([
-      gitOk(repoRoot, diffArgs("--name-status", "-z"), env),
-      gitOk(repoRoot, diffArgs("--numstat", "-z"), env),
-      gitOk(repoRoot, diffArgs("--raw", "-z", "--no-abbrev"), env),
-      gitOk(repoRoot, diffArgs("-U0", "--src-prefix=a/", "--dst-prefix=b/"), env),
-      gitOk(repoRoot, diffArgs("-U3", "--src-prefix=a/", "--dst-prefix=b/"), env),
+    const diffArgs = (extra: string[], skip: string[] = []): string[] => [
+      "diff",
+      ...DIFF_FLAGS,
+      ...extra,
+      base.sha,
+      "--",
+      STATE_PATHSPEC,
+      ...skip,
+    ];
+    const [nameStatus, numstatBuf, raw] = await Promise.all([
+      gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }),
+      gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env }),
+      gitOk(repoRoot, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
     ]);
 
     const id = createHash("sha256").update(`${base.sha}\n`).update(raw).digest("hex");
+    const numstat = parseNumstat(numstatBuf);
 
-    const pairs = parseNameStatus(nameStatus);
-    const stats = parseNumstat(numstat);
-    const blocks = splitDiffBlocks(u3.toString("utf8"));
-    if (stats.length !== pairs.length || blocks.length !== pairs.length) {
-      throw new OpenQodexError(
-        `git listed ${pairs.length} changed files but ${stats.length} counts and ${blocks.length} diff blocks`,
-      );
-    }
-
+    // Decide from the counts alone, before any patch is read, which files get
+    // coverage and which may go into the brief.
     const files: ChangedFile[] = [];
-    const notReviewed: string[] = [];
-    const diffParts: string[] = [];
-    let diffBytes = 0;
+    const skipped: string[] = []; // excluded by the developer
+    const covered = new Set<string>();
+    const briefable = new Set<string>();
+    const tooLarge = new Set<string>();
     let additions = 0;
     let deletions = 0;
-    for (let i = 0; i < pairs.length; i++) {
-      if (excluded(pairs[i].path, exclude)) continue;
-      files.push({ ...pairs[i], binary: stats[i].binary });
-      additions += stats[i].additions;
-      deletions += stats[i].deletions;
-      const size = Buffer.byteLength(blocks[i], "utf8");
-      if (diffBytes + size > DIFF_CAP_BYTES) {
-        notReviewed.push(pairs[i].path);
+    let coveredLines = 0;
+    let briefLowerBound = 0;
+    for (const pair of parseNameStatus(nameStatus)) {
+      if (excluded(pair.path, exclude)) {
+        skipped.push(pair.path);
         continue;
       }
-      diffParts.push(blocks[i]);
-      diffBytes += size;
+      const stat = numstat.get(pair.path) ?? { additions: 0, deletions: 0, binary: false };
+      files.push({ ...pair, binary: stat.binary });
+      additions += stat.additions;
+      deletions += stat.deletions;
+      if (pair.status !== "deleted") {
+        if (coveredLines + stat.additions > COVERAGE_MAX_LINES) {
+          tooLarge.add(pair.path);
+          continue;
+        }
+        coveredLines += stat.additions;
+        covered.add(pair.path);
+      }
+      // Each added or removed line costs at least two bytes of patch.
+      const minimum = 2 * (stat.additions + stat.deletions);
+      if (briefLowerBound + minimum > DIFF_CAP_BYTES) {
+        tooLarge.add(pair.path);
+        continue;
+      }
+      briefLowerBound += minimum;
+      briefable.add(pair.path);
     }
 
+    const textArgs = ["--src-prefix=a/", "--dst-prefix=b/"];
+    const opts = { env };
+
+    const parser = createCoverageParser();
+    await streamPatch(
+      (onLine) =>
+        gitLines(
+          repoRoot,
+          diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+          opts,
+          COVERAGE_MAX_LINE_BYTES,
+          onLine,
+        ),
+      (path, line) => {
+        if (path !== null && covered.has(path)) parser.push(line);
+        else if (line.startsWith("diff --git ")) parser.push(line);
+      },
+    );
+    const coverage = parser.result();
+    for (const path of coverage.keys()) if (!covered.has(path)) coverage.delete(path);
+
+    // The brief's diff, kept per path within the cap; a file that does not
+    // fit is dropped whole as soon as it overflows.
+    const text = new Map<string, string[]>();
+    const size = new Map<string, number>();
+    let total = 0;
+    await streamPatch(
+      (onLine) =>
+        gitLines(
+          repoRoot,
+          diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+          opts,
+          DIFF_CAP_BYTES + 1,
+          onLine,
+        ),
+      (path, line, cut) => {
+        if (path === null || !briefable.has(path) || tooLarge.has(path)) return;
+        const bytes = Buffer.byteLength(line, "utf8") + 1;
+        if (cut || total + bytes > DIFF_CAP_BYTES) {
+          total -= size.get(path) ?? 0;
+          text.delete(path);
+          size.delete(path);
+          tooLarge.add(path);
+          return;
+        }
+        const lines = text.get(path) ?? [];
+        lines.push(line);
+        text.set(path, lines);
+        size.set(path, (size.get(path) ?? 0) + bytes);
+        total += bytes;
+      },
+    );
+
+    const notReviewed = files.filter((f) => tooLarge.has(f.path)).map((f) => f.path);
+    const diff = files
+      .filter((f) => text.has(f.path))
+      .map((f) => `${text.get(f.path)!.join("\n")}\n`)
+      .join("");
     const changedPaths = files.filter((f) => f.status !== "deleted").map((f) => f.path);
-    const keep = new Set(changedPaths);
-    const coverage = parseDiffCoverage(u0.toString("utf8"));
-    for (const path of coverage.keys()) if (!keep.has(path)) coverage.delete(path);
 
     return {
       repoRoot,
@@ -262,7 +504,7 @@ export async function getChange(args: {
       files,
       changedPaths,
       coverage,
-      diff: diffParts.join(""),
+      diff,
       notReviewed,
       stats: { files: files.length, additions, deletions },
     };

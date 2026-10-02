@@ -56,6 +56,14 @@ export function unquoteDiffPath(raw: string): string {
 }
 
 export function parseDiffCoverage(diff: string): DiffCoverage {
+  const parser = createCoverageParser();
+  for (const rawLine of diff.split("\n")) parser.push(rawLine);
+  return parser.result();
+}
+
+// The same parser fed one line at a time, so a streamed diff is never held
+// whole in memory.
+export function createCoverageParser(): { push(rawLine: string): void; result(): DiffCoverage } {
   const out: DiffCoverage = new Map();
   let currentFile: string | null = null;
   let rightLine = 0;
@@ -68,11 +76,13 @@ export function parseDiffCoverage(diff: string): DiffCoverage {
   // payload branch below and is counted as the added line it actually is.
   let inHunk = false;
 
-  for (const rawLine of diff.split("\n")) {
+  const push = (rawLine: string): void => {
     // File header on the new side: "+++ b/<path>", or "+++ /dev/null" for a
     // deletion. currentFile is set only when there is a new-side file.
     if (!inHunk && rawLine.startsWith("+++ ")) {
-      const target = unquoteDiffPath(rawLine.slice(4).trim());
+      // git ends a header path that contains a space with a tab; only that
+      // tab is removed, so a name ending in a space keeps it.
+      const target = unquoteDiffPath(rawLine.slice(4).replace(/\t$/, ""));
       if (target === "/dev/null") {
         currentFile = null;
       } else if (target.startsWith("b/")) {
@@ -83,23 +93,23 @@ export function parseDiffCoverage(diff: string): DiffCoverage {
         currentFile = target;
         if (!out.has(currentFile)) out.set(currentFile, new Set());
       }
-      continue;
+      return;
     }
-    if (!inHunk && rawLine.startsWith("--- ")) continue;
+    if (!inHunk && rawLine.startsWith("--- ")) return;
     if (rawLine.startsWith("diff --git ")) {
       // New file boundary. Wait for the +++ line to set currentFile.
       currentFile = null;
       inHunk = false;
-      continue;
+      return;
     }
     if (rawLine.startsWith("@@")) {
       inHunk = true;
       // Hunk header: @@ -<oldStart>,<oldLen> +<newStart>,<newLen> @@ <ctx>
       const m = /\+(\d+)(?:,\d+)?/.exec(rawLine);
       if (m) rightLine = parseInt(m[1], 10);
-      continue;
+      return;
     }
-    if (!currentFile) continue;
+    if (!currentFile) return;
 
     const c = rawLine[0];
     if (c === "+") {
@@ -112,6 +122,6 @@ export function parseDiffCoverage(diff: string): DiffCoverage {
     // "-" is an old-side line and does not advance the new side. Other
     // markers (the "\ No newline at end of file" sentinel, blank lines
     // outside any hunk) are ignored without changing line state.
-  }
-  return out;
+  };
+  return { push, result: () => out };
 }

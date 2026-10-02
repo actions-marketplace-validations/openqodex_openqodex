@@ -47,61 +47,70 @@ const strings = z.array(z.string());
 const text = z.union([z.string(), z.number()]).transform(String);
 const scannerSeverity = z.enum(["critical", "high", "medium", "low", "info"]);
 
-const mapSchema = z.strictObject({
-  items: z.string(),
-  file: z.string(),
-  line: z.string(),
-  end_line: z.string().nullish(),
-  rule: z.string(),
-  severity: z.string().nullish(),
-  message: z.string(),
-  reference: z.string().nullish(),
-  severity_map: z.record(z.string(), scannerSeverity).optional(),
-});
+// Built twice: strict, to name every unknown key, and stripping, to read the
+// values. The parsed YAML is never edited, because a YAML alias can share one
+// object between two sections.
+function schemas(strict: boolean) {
+  const obj = strict ? z.strictObject : z.object;
 
-const installSchema = z.union([
-  z.literal("path"),
-  z.strictObject({
-    asset: z.string().nullish(),
-    binary: z.string().nullish(),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/, "expected a sha256 in lowercase hex").nullish(),
-    npm: z.string().optional(),
-    uv: z.string().optional(),
-  }),
-]);
+  const map = obj({
+    items: z.string(),
+    file: z.string(),
+    line: z.string(),
+    end_line: z.string().nullish(),
+    rule: z.string(),
+    severity: z.string().nullish(),
+    message: z.string(),
+    reference: z.string().nullish(),
+    severity_map: z.record(z.string(), scannerSeverity).optional(),
+  });
 
-const customSchema = z.strictObject({
-  source: z.string(),
-  run: z.string().trim().min(1, "expected a command"),
-  name: z.string().regex(NAME, "expected letters, digits, dot, dash or underscore").optional(),
-  version: text.nullish(),
-  format: z.enum(["sarif", "json-map"]).optional(),
-  map: mapSchema.optional(),
-  paths: strings.nullish(),
-  target: z.enum(["changed", "repo"]).optional(),
-  timeout_seconds: z.number().int().positive().optional(),
-  install: installSchema.optional(),
-});
+  const install = z.union([
+    z.literal("path"),
+    obj({
+      asset: z.string().nullish(),
+      binary: z.string().nullish(),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/, "expected a sha256 in lowercase hex").nullish(),
+      npm: z.string().optional(),
+      uv: z.string().optional(),
+    }),
+  ]);
 
-const fileSchema = z.strictObject({
-  version: z.literal(1).optional(),
-  review: z
-    .strictObject({
+  const custom = obj({
+    source: z.string(),
+    run: z.string().trim().min(1, "expected a command"),
+    name: z.string().regex(NAME, "expected letters, digits, dot, dash or underscore").optional(),
+    version: text.nullish(),
+    format: z.enum(["sarif", "json-map"]).optional(),
+    map: map.optional(),
+    paths: strings.nullish(),
+    target: z.enum(["changed", "repo"]).optional(),
+    timeout_seconds: z.number().int().positive().optional(),
+    install: install.optional(),
+  });
+
+  const file = obj({
+    version: z.literal(1).optional(),
+    review: obj({
       block_on_severity: z.enum(SEVERITIES as [Severity, ...Severity[]]).nullish(),
-      paths: z.strictObject({ exclude: strings.optional() }).optional(),
+      paths: obj({ exclude: strings.optional() }).optional(),
       disabled_rules: strings.optional(),
       include_fixtures: z.boolean().optional(),
-    })
-    .optional(),
-  scanners: z
-    .strictObject({
+    }).optional(),
+    scanners: obj({
       disable: z.array(z.enum(BUILTIN_NAMES)).optional(),
-      custom: z.array(customSchema).optional(),
-    })
-    .optional(),
-});
+      custom: z.array(custom).optional(),
+    }).optional(),
+  });
 
-type CustomYaml = z.infer<typeof customSchema>;
+  return { file, map, custom };
+}
+
+const STRICT = schemas(true);
+const STRIPPING = schemas(false);
+
+type CustomYaml = z.infer<typeof STRIPPING.custom>;
+type MapYaml = z.infer<typeof STRIPPING.map>;
 
 function keyPath(path: PropertyKey[]): string {
   let out = "";
@@ -111,21 +120,6 @@ function keyPath(path: PropertyKey[]): string {
 
 function fail(file: string, path: PropertyKey[], message: string): never {
   throw new OpenQodexError(`${file}: ${keyPath(path)}: ${message}`);
-}
-
-// Removes the keys zod reported as unknown, returning one warning per key.
-function dropUnknownKeys(data: unknown, issues: z.core.$ZodIssue[]): string[] {
-  const warnings: string[] = [];
-  for (const issue of issues) {
-    if (issue.code !== "unrecognized_keys") continue;
-    let node = data as Record<PropertyKey, unknown>;
-    for (const p of issue.path) node = node[p] as Record<PropertyKey, unknown>;
-    for (const key of issue.keys) {
-      warnings.push(`unknown key ${keyPath([...issue.path, key])} is ignored`);
-      delete node[key];
-    }
-  }
-  return warnings;
 }
 
 function toInstall(file: string, path: PropertyKey[], raw: CustomYaml["install"]): CustomInstall {
@@ -146,7 +140,7 @@ function toInstall(file: string, path: PropertyKey[], raw: CustomYaml["install"]
   };
 }
 
-function toMap(raw: z.infer<typeof mapSchema>): JsonMap {
+function toMap(raw: MapYaml): JsonMap {
   return {
     items: raw.items,
     file: raw.file,
@@ -199,15 +193,18 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
   }
   if (data === null || data === undefined) return { config: { ...DEFAULT_CONFIG }, warnings: [] };
 
-  let result = fileSchema.safeParse(data);
-  let warnings: string[] = [];
-  if (!result.success) {
-    const real = result.error.issues.find((i) => i.code !== "unrecognized_keys");
+  const strict = STRICT.file.safeParse(data);
+  const warnings: string[] = [];
+  if (!strict.success) {
+    const real = strict.error.issues.find((i) => i.code !== "unrecognized_keys");
     if (real) fail(file, real.path, real.message);
-    warnings = dropUnknownKeys(data, result.error.issues);
-    result = fileSchema.safeParse(data);
-    if (!result.success) fail(file, result.error.issues[0].path, result.error.issues[0].message);
+    for (const issue of strict.error.issues) {
+      if (issue.code !== "unrecognized_keys") continue;
+      for (const key of issue.keys) warnings.push(`unknown key ${keyPath([...issue.path, key])} is ignored`);
+    }
   }
+  const result = STRIPPING.file.safeParse(data);
+  if (!result.success) fail(file, result.error.issues[0].path, result.error.issues[0].message);
   const yaml = result.data;
 
   const custom = (yaml.scanners?.custom ?? []).map((c, i) => toCustom(file, i, c));

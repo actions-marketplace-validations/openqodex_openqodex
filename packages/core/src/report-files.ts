@@ -10,19 +10,38 @@
 // Every write is a temp file in the same folder, then a rename, because an
 // agent may read a file while a second run writes it.
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Latest, Report, RunManifest, ScanResult } from "./types.js";
+import { OpenQodexError } from "./types.js";
 
 export const STATE_DIR = ".openqodex";
 export const KEEP_REPORTS = 20;
 
-const REPORT_DIR_NAME = /^\d{8}-\d{6}-[0-9a-f]{12}$/;
+// <yyyymmdd-hhmmss>-<shortid>, with "-2", "-3", ... for a second run of the
+// same change in the same second.
+const REPORT_DIR_NAME = /^(\d{8}-\d{6}-[0-9a-f]{12})(?:-(\d+))?$/;
 
 function writeAtomic(path: string, content: string): void {
   const tmp = join(path, "..", `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-  writeFileSync(tmp, content);
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, content);
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+// A repo could ship .openqodex or .openqodex/reviews as a symlink and send
+// writes and pruning somewhere else; refuse before touching anything.
+function refuseSymlink(path: string): void {
+  let isLink = false;
+  try {
+    isLink = lstatSync(path).isSymbolicLink();
+  } catch {
+    return; // not there yet
+  }
+  if (isLink) throw new OpenQodexError(`${path} is a symbolic link; openqodex writes only to a real folder there`);
 }
 
 function readJson<T>(path: string): T | null {
@@ -39,6 +58,8 @@ function json(value: unknown): string {
 
 function ensureStateDir(repoRoot: string): string {
   const dir = join(repoRoot, STATE_DIR);
+  refuseSymlink(dir);
+  refuseSymlink(join(dir, "reviews"));
   mkdirSync(dir, { recursive: true });
   const ignore = join(dir, ".gitignore");
   let current: string | null = null;
@@ -64,11 +85,18 @@ function reportDirNames(repoRoot: string): string[] {
   } catch {
     return [];
   }
+  const key = (name: string): [string, number] => {
+    const m = REPORT_DIR_NAME.exec(name)!;
+    return [m[1], m[2] === undefined ? 1 : Number(m[2])];
+  };
   return entries
     .filter((e) => e.isDirectory() && REPORT_DIR_NAME.test(e.name))
     .map((e) => e.name)
-    .sort()
-    .reverse();
+    .sort((a, b) => {
+      const [ab, an] = key(a);
+      const [bb, bn] = key(b);
+      return ab === bb ? bn - an : ab < bb ? 1 : -1;
+    });
 }
 
 function timestamp(d: Date): string {
@@ -84,9 +112,19 @@ function timestamp(d: Date): string {
 export function openReportDir(repoRoot: string, shortId: string): string {
   if (!/^[0-9a-f]{12}$/.test(shortId)) throw new Error(`not a short change id: ${shortId}`);
   ensureStateDir(repoRoot);
-  const name = `${timestamp(new Date())}-${shortId}`;
+  mkdirSync(reviewsDir(repoRoot), { recursive: true });
+  const stem = `${timestamp(new Date())}-${shortId}`;
+  let name = stem;
+  for (let n = 2; ; n++) {
+    try {
+      mkdirSync(join(reviewsDir(repoRoot), name));
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      name = `${stem}-${n}`;
+    }
+  }
   const dir = join(reviewsDir(repoRoot), name);
-  mkdirSync(dir, { recursive: true });
   for (const old of reportDirNames(repoRoot).filter((n) => n !== name).slice(KEEP_REPORTS - 1)) {
     rmSync(join(reviewsDir(repoRoot), old), { recursive: true, force: true });
   }
@@ -96,8 +134,8 @@ export function openReportDir(repoRoot: string, shortId: string): string {
 // The newest report folder for a change id, or null. Takes the full id or
 // the 12-character short id.
 export function findReportDir(repoRoot: string, changeId: string): string | null {
-  const suffix = `-${changeId.slice(0, 12)}`;
-  const name = reportDirNames(repoRoot).find((n) => n.endsWith(suffix));
+  const short = changeId.slice(0, 12);
+  const name = reportDirNames(repoRoot).find((n) => REPORT_DIR_NAME.exec(n)![1].endsWith(`-${short}`));
   return name === undefined ? null : join(reviewsDir(repoRoot), name);
 }
 

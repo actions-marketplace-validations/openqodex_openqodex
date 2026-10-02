@@ -17,13 +17,24 @@
 //     changes, a file appears in .git, or the run fails with .git read-only.
 // 14. The tool's own .openqodex/ folder is reported as part of the change.
 // 15. A folder that is not in a git repository is not reported as such.
+// 16. A huge change (a forgotten dump or node_modules) is buffered whole or
+//     expanded into per-line coverage instead of being left out.
+// 17. A type change (symlink to regular file) gives two patch blocks for one
+//     file and breaks the file-to-patch pairing.
+// 18. A configured clean filter runs during the temp add and writes inside
+//     .git.
+// 19. Inherited settings (GIT_DIFF_OPTS, diff.interHunkContext,
+//     diff.ignoreSubmodules, diff.submodule) widen coverage, hide a change
+//     or change the patch shape.
+// 20. A partial clone fetches a missing object during the review.
+// 21. A repo path with a colon breaks the alternate object folder.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DIFF_CAP_BYTES, findRepoRoot, getChange } from "../src/change.js";
+import { COVERAGE_MAX_LINES, DIFF_CAP_BYTES, findRepoRoot, getChange } from "../src/change.js";
 import { OpenQodexError } from "../src/types.js";
 
 const roots: string[] = [];
@@ -67,6 +78,7 @@ function write(repo: string, path: string, content: string | Buffer): void {
 }
 
 function newRepo(dir = tempDir()): string {
+  mkdirSync(dir, { recursive: true });
   git(dir, "init", "-q", "-b", "main");
   git(dir, "config", "user.name", "Test");
   git(dir, "config", "user.email", "test@example.com");
@@ -348,5 +360,136 @@ describe("getChange", () => {
     expect(paths(c)).toEqual(["a.ts", "staged.ts", "untracked.ts"]);
     expect(indexHash(repo)).toBe(indexBefore);
     expect(git(repo, "status", "--porcelain")).toBe(statusBefore);
+  });
+
+  it("leaves a change past the coverage line cap out of coverage and the brief", async () => {
+    const repo = seeded();
+    write(repo, "a.ts", lines(10).replace("line 2\n", "line two\n"));
+    write(repo, "dump.sql", "x\n".repeat(COVERAGE_MAX_LINES + 1));
+    write(repo, "zz.ts", "z\n");
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+    expect(c.notReviewed).toEqual(["dump.sql"]);
+    expect(c.coverage.has("dump.sql")).toBe(false);
+    expect(c.coverage.get("a.ts")).toEqual(new Set([2]));
+    expect(c.coverage.get("zz.ts")).toEqual(new Set([1]));
+    expect(c.diff).not.toContain("dump.sql");
+    expect(c.changedPaths).toContain("dump.sql");
+    expect(c.stats.additions).toBe(COVERAGE_MAX_LINES + 3);
+  });
+
+  it("leaves out a single line too long for the brief without holding it", async () => {
+    const repo = seeded();
+    write(repo, "app.min.js", "y".repeat(DIFF_CAP_BYTES + 10) + "\n");
+    write(repo, "b.ts", "b\n");
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+    expect(c.notReviewed).toEqual(["app.min.js"]);
+    expect(c.coverage.get("app.min.js")).toEqual(new Set([1]));
+    expect(c.diff).toContain("+b");
+    expect(c.diff).not.toContain("yyyy");
+  });
+
+  it("handles a tracked symlink replaced by a regular file", async () => {
+    const repo = seeded();
+    symlinkSync("a.ts", join(repo, "link"));
+    commitAll(repo, "link");
+    rmSync(join(repo, "link"));
+    write(repo, "link", "plain\n");
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+    expect(c.files).toEqual([{ path: "link", status: "modified", oldPath: null, binary: false }]);
+    expect(c.coverage.get("link")).toEqual(new Set([1]));
+    expect(c.diff).toContain("deleted file mode 120000");
+    expect(c.diff).toContain("+plain");
+  });
+
+  it("never runs a configured clean filter during the temp add", async () => {
+    const repo = seeded();
+    const marker = join(repo, ".git", "filter-ran");
+    git(repo, "config", "filter.mark.clean", `touch '${marker}'; cat`);
+    git(repo, "config", "filter.mark.required", "true");
+    write(repo, ".gitattributes", "*.dat filter=mark\n");
+    commitAll(repo, "attributes");
+    rmSync(marker, { force: true });
+    write(repo, "new.dat", "raw content\n");
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+    expect(existsSync(marker)).toBe(false);
+    expect(paths(c)).toEqual(["new.dat"]);
+    expect(c.diff).toContain("+raw content");
+    execFileSync("chmod", ["-R", "a-w", join(repo, ".git")]);
+    try {
+      await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+    } finally {
+      execFileSync("chmod", ["-R", "u+w", join(repo, ".git")]);
+    }
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("keeps zero-context coverage despite GIT_DIFF_OPTS and diff.interHunkContext", async () => {
+    const repo = seeded();
+    git(repo, "config", "diff.interHunkContext", "10");
+    write(repo, "a.ts", lines(10).replace("line 2\n", "line two\n").replace("line 6\n", "line six\n"));
+    const saved = process.env.GIT_DIFF_OPTS;
+    process.env.GIT_DIFF_OPTS = "--unified=3";
+    try {
+      const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+      expect(c.coverage.get("a.ts")).toEqual(new Set([2, 6]));
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIFF_OPTS;
+      else process.env.GIT_DIFF_OPTS = saved;
+    }
+  });
+
+  it("shows a moved submodule whatever the submodule diff settings say", async () => {
+    const repo = seeded();
+    const sub = newRepo(join(repo, "sub"));
+    write(sub, "s.txt", "1\n");
+    commitAll(sub, "s1");
+    const first = git(sub, "rev-parse", "HEAD").trim();
+    git(repo, "update-index", "--add", "--cacheinfo", `160000,${first},sub`);
+    git(repo, "commit", "-q", "-m", "gitlink");
+    write(sub, "s.txt", "2\n");
+    commitAll(sub, "s2");
+    git(repo, "config", "diff.ignoreSubmodules", "all");
+    git(repo, "config", "diff.submodule", "log");
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+    expect(paths(c)).toEqual(["sub"]);
+    expect(c.diff).toContain("Subproject commit");
+  });
+
+  it("never fetches a missing object in a partial clone", async () => {
+    const bare = tempDir();
+    git(bare, "init", "-q", "--bare", "-b", "main");
+    git(bare, "config", "uploadpack.allowFilter", "true");
+    const src = seeded();
+    write(src, "a.ts", lines(11));
+    commitAll(src, "second");
+    git(src, "push", "-q", bare, "main");
+    const clone = join(tempDir(), "clone");
+    git(tempDir(), "clone", "-q", "--filter=blob:none", `file://${bare}`, clone);
+    const oldBlob = git(clone, "rev-parse", "HEAD~1:a.ts").trim();
+    const missing = (): boolean => {
+      try {
+        execFileSync("git", ["cat-file", "-e", oldBlob], { cwd: clone, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" }, stdio: "ignore" });
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    expect(missing()).toBe(true);
+    // A lazy fetch would land in the temp object folder and let the diff
+    // succeed; with fetching off, the diff cannot be built and says why.
+    await expect(getChange({ repoRoot: clone, scope: { base: "HEAD~1" }, exclude: [] })).rejects.toThrow(
+      /not downloaded/,
+    );
+    expect(missing()).toBe(true);
+  });
+
+  it("works in a repo whose path contains a colon", async () => {
+    const parent = tempDir();
+    const repo = newRepo(join(parent, "proj:one"));
+    write(repo, "a.ts", lines(3));
+    commitAll(repo, "base");
+    write(repo, "a.ts", lines(4));
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
+    expect(c.coverage.get("a.ts")).toEqual(new Set([4]));
   });
 });

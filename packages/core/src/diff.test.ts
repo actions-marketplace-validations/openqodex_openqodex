@@ -8,6 +8,8 @@
 // 5. In a zero-context diff, deleted lines advance the new-side counter, so
 //    the wrong lines count as changed.
 // 6. A second hunk in the same file keeps the first hunk's counter.
+// 7. A file name ending in a space loses the space (git ends such a header
+//    path with a tab).
 import { describe, expect, it } from "vitest";
 import { parseDiffCoverage, unquoteDiffPath } from "./diff.js";
 
@@ -64,5 +66,12 @@ describe("parseDiffCoverage", () => {
       "@@ -20,0 +20,2 @@\n+p\n+q\n" +
       "\\ No newline at end of file\n";
     expect(parseDiffCoverage(diff).get("a.ts")).toEqual(new Set([2, 20, 21]));
+  });
+
+  it("keeps a trailing space in a file name", () => {
+    // Real git output for a file named "sp " (git adds a tab after the path).
+    const diff = "diff --git a/sp  b/sp \nindex 7898192..422c2b7 100644\n--- a/sp \t\n+++ b/sp \t\n@@ -1,0 +2 @@ a\n+b\n";
+    expect([...parseDiffCoverage(diff).keys()]).toEqual(["sp "]);
+    expect(parseDiffCoverage(diff).get("sp ")).toEqual(new Set([2]));
   });
 });
