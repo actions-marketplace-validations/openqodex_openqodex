@@ -1,0 +1,156 @@
+// ShellCheck adapter (shell script lint). Runs `shellcheck -f json
+// <files>` against the changed shell scripts in the working tree and
+// normalizes the vendor JSON into StaticFinding[]. Catches the
+// dangerous shell footguns: unquoted expansions (word-splitting /
+// glob injection), unsafe `rm` patterns, `cd` without error handling,
+// missing `set -e`, and command-substitution mistakes.
+//
+// We invoke it only on changed files that look like shell scripts (.sh
+// / .bash extension) so a change without one is a no-op. ShellCheck emits
+// a JSON array (one object per finding) with span lines and a per-finding
+// level we map to our severity scale. It writes nothing to disk.
+//
+// All errors are captured into the result; the runner never throws on a
+// scanner failure: static analysis is additive context, not a gate.
+
+import type {
+  AdapterResult,
+  ResolvedTool,
+  ScannerSeverity as StaticFindingSeverity,
+  StaticFinding,
+} from "@openqodex/core";
+import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { safeFileArgs } from "../safe-args.js";
+import type { Adapter } from "./index.js";
+
+const SHELLCHECK_TIMEOUT_MS = 60_000;
+const SHELLCHECK_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
+
+// Match .sh / .bash by extension. We deliberately don't try to sniff
+// shebangs of extensionless files: that needs a file read per path and
+// most CI/repo scripts carry an extension. Keeps the adapter cheap and
+// predictable.
+function isShellPath(p: string): boolean {
+  return /\.(sh|bash)$/i.test(p);
+}
+
+export async function runShellcheck(args: {
+  repoDir: string;
+  changedPaths: string[];
+  tool: ResolvedTool | null;
+}): Promise<AdapterResult> {
+  const scripts = safeFileArgs(args.changedPaths.filter(isShellPath));
+  if (scripts.length === 0) return { findings: [], error: null };
+  if (!args.tool) return { findings: [], error: "not installed" };
+
+  // -f json gives the array form (not json1's wrapped object);
+  // --severity=style emits every level so our mapping decides what
+  // matters, not shellcheck.
+  const cliArgs = ["-f", "json", "--severity=style", "--", ...scripts];
+
+  let stdout: string;
+  try {
+    stdout = await execShellcheck(args.tool, cliArgs, args.repoDir);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { findings: [], error: message.slice(0, 300) };
+  }
+
+  try {
+    return { findings: parseShellcheckJson(stdout), error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
+  }
+}
+
+async function execShellcheck(tool: ResolvedTool, cliArgs: string[], cwd: string): Promise<string> {
+  const result = await execTool(tool.path, cliArgs, {
+    cwd,
+    timeoutMs: SHELLCHECK_TIMEOUT_MS,
+    maxBytes: SHELLCHECK_OUTPUT_MAX_BYTES,
+    env: tool.env,
+  });
+  // ShellCheck exit codes: 0 = clean, 1 = findings present, 2 =
+  // bad invocation / file not found, 3/4 = other usage errors.
+  // We want stdout for both 0 and 1.
+  const failed = describeFailure("shellcheck", result, SHELLCHECK_TIMEOUT_MS);
+  if (failed) throw new Error(failed);
+  if (result.exitCode !== null && result.exitCode >= 2) {
+    throw new Error(`shellcheck exit ${result.exitCode}: ${stderrTail(result)}`);
+  }
+  return result.stdout;
+}
+
+export const shellcheck: Adapter = {
+  source: "shellcheck",
+  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isShellPath)).length > 0,
+  run: (args) => runShellcheck(args),
+};
+
+type ShellcheckEntry = {
+  file?: unknown;
+  line?: unknown;
+  endLine?: unknown;
+  column?: unknown;
+  level?: unknown;
+  code?: unknown;
+  message?: unknown;
+};
+
+export function parseShellcheckJson(json: string): StaticFinding[] {
+  if (!json.trim()) return [];
+  const parsed = JSON.parse(json);
+  if (!Array.isArray(parsed)) return [];
+  const out: StaticFinding[] = [];
+  for (const raw of parsed as ShellcheckEntry[]) {
+    if (!raw || typeof raw !== "object") continue;
+    const filePath = typeof raw.file === "string" ? raw.file : "";
+    const lineStart = numberOrZero(raw.line);
+    const lineEnd = Math.max(lineStart, numberOrZero(raw.endLine) || lineStart);
+    // ShellCheck codes are numeric (e.g. 2086). Stamp the conventional
+    // "SC" prefix so the citation token matches the wiki / docs.
+    const codeNum = numberOrZero(raw.code);
+    const ruleId = codeNum > 0 ? `SC${codeNum}` : "shellcheck";
+    const message = typeof raw.message === "string" ? raw.message : "";
+    if (!filePath || lineStart <= 0) continue;
+    out.push({
+      source: "shellcheck",
+      ruleId,
+      filePath,
+      lineStart,
+      lineEnd,
+      severity: normalizeShellcheckLevel(raw.level),
+      message: trimMessage(message),
+      reference: codeNum > 0 ? `https://www.shellcheck.net/wiki/SC${codeNum}` : null,
+    });
+  }
+  return out;
+}
+
+// ShellCheck levels: error, warning, info, style. Map to our scale.
+function normalizeShellcheckLevel(raw: unknown): StaticFindingSeverity {
+  if (typeof raw !== "string") return "medium";
+  switch (raw.toLowerCase()) {
+    case "error":
+      return "high";
+    case "warning":
+      return "medium";
+    case "info":
+      return "low";
+    case "style":
+      return "info";
+    default:
+      return "medium";
+  }
+}
+
+function numberOrZero(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return Math.floor(v);
+  return 0;
+}
+
+function trimMessage(m: string): string {
+  const collapsed = m.replace(/\s+/g, " ").trim();
+  return collapsed.length > 500 ? collapsed.slice(0, 497) + "..." : collapsed;
+}
