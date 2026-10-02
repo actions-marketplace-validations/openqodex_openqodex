@@ -1,0 +1,72 @@
+import { createHash } from "node:crypto";
+import type { SecretFingerprint } from "./types.js";
+
+export const REDACTED = "[redacted]";
+
+// Shorter matches are too likely to hit ordinary text.
+const MIN_SECRET_LENGTH = 6;
+
+type Span = [start: number, end: number];
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+function usable(secrets: string[]): string[] {
+  return [...new Set(secrets)].filter((s) => s.length >= MIN_SECRET_LENGTH);
+}
+
+// Replaces every span, merging spans that overlap or touch. All matches are
+// found on the original text first, so one secret overlapping another is
+// removed whole instead of leaving its tail behind.
+function replaceSpans(text: string, spans: Span[]): string {
+  if (spans.length === 0) return text;
+  spans.sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let cursor = 0;
+  let [start, end] = spans[0] as Span;
+  for (const [s, e] of spans.slice(1)) {
+    if (s <= end) {
+      end = Math.max(end, e);
+      continue;
+    }
+    out += text.slice(cursor, start) + REDACTED;
+    cursor = end;
+    [start, end] = [s, e];
+  }
+  return out + text.slice(cursor, start) + REDACTED + text.slice(end);
+}
+
+// Replace every occurrence of each secret.
+export function redactSecrets(text: string, secrets: string[]): string {
+  const spans: Span[] = [];
+  for (const secret of usable(secrets)) {
+    for (let at = text.indexOf(secret); at !== -1; at = text.indexOf(secret, at + 1)) {
+      spans.push([at, at + secret.length]);
+    }
+  }
+  return replaceSpans(text, spans);
+}
+
+export function fingerprintSecrets(secrets: string[]): SecretFingerprint[] {
+  return usable(secrets).map((s) => ({ length: s.length, sha256: sha256(s) }));
+}
+
+// Redact without knowing the secrets: slide a window of each fingerprint's
+// length over the text and replace the windows whose hash matches. Meant for
+// short text (a finding's title, description and suggested change).
+export function redactByFingerprint(text: string, fingerprints: SecretFingerprint[]): string {
+  const byLength = new Map<number, Set<string>>();
+  for (const f of fingerprints) {
+    const set = byLength.get(f.length) ?? new Set<string>();
+    set.add(f.sha256);
+    byLength.set(f.length, set);
+  }
+  const spans: Span[] = [];
+  for (const [length, hashes] of byLength) {
+    for (let i = 0; i + length <= text.length; i += 1) {
+      if (hashes.has(sha256(text.slice(i, i + length)))) spans.push([i, i + length]);
+    }
+  }
+  return replaceSpans(text, spans);
+}

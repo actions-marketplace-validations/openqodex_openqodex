@@ -1,0 +1,57 @@
+{
+  "name": "openqodex",
+  "version": "0.1.0",
+  "description": "Open source code review that runs inside your coding agent, before you push.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/openqodex/openqodex#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openqodex/openqodex.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/openqodex/openqodex/issues"
+  },
+  "keywords": [
+    "code-review",
+    "static-analysis",
+    "claude-code",
+    "cursor",
+    "codex",
+    "cline",
+    "pre-commit"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "openqodex": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "lenses",
+    "docs",
+    "skills",
+    "templates",
+    "demo",
+    "toolchain.json",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@clack/prompts": "^1.8.1",
+    "@openqodex/core": "workspace:*",
+    "@openqodex/scanners": "workspace:*",
+    "commander": "^14.0.3",
+    "picocolors": "^1.1.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  }
+}

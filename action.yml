@@ -1,0 +1,81 @@
+name: OpenQodex
+description: Run the OpenQodex scanners on a pull request's change and upload the findings to code scanning.
+author: OpenQodex
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  version:
+    description: The openqodex version to run. The release workflow sets the default to the version it publishes.
+    required: false
+    default: "0.1.0"
+  upload-sarif:
+    description: Upload the findings to GitHub code scanning as SARIF.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 22
+
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.openqodex/tools
+        key: openqodex-tools-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+
+    - name: Install the scanners
+      shell: bash
+      env:
+        OPENQODEX_VERSION: ${{ inputs.version }}
+      run: npx -y "openqodex@${OPENQODEX_VERSION}" doctor --install
+
+    # Inputs and event values reach the shell through the environment only,
+    # never pasted into the script, so a branch name cannot inject a command.
+    - name: Scan the change
+      id: scan
+      shell: bash
+      env:
+        OPENQODEX_VERSION: ${{ inputs.version }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      # The SARIF goes to a fresh folder under RUNNER_TEMP, never into the
+      # checkout, so a file the pull request ships cannot pass as the result.
+      run: |
+        out_dir="$(mktemp -d "${RUNNER_TEMP}/openqodex-XXXXXX")"
+        sarif="${out_dir}/openqodex.sarif"
+        args=(scan --format sarif --output "$sarif")
+        if [ -n "$BASE_SHA" ]; then args+=(--base "$BASE_SHA"); fi
+        set +e
+        npx -y "openqodex@${OPENQODEX_VERSION}" "${args[@]}"
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -f "$sarif" ]; then
+          echo "sarif=true" >> "$GITHUB_OUTPUT"
+          echo "sarif-file=$sarif" >> "$GITHUB_OUTPUT"
+        else
+          echo "sarif=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload SARIF
+      if: inputs.upload-sarif == 'true' && steps.scan.outputs.sarif == 'true'
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        category: openqodex
+
+    - name: Fail on blocking findings
+      if: steps.scan.outputs.exit-code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        if [ "$CODE" = "1" ]; then
+          echo "OpenQodex found findings at or above review.block_on_severity."
+        else
+          echo "OpenQodex failed with exit code $CODE. The scan output above says why."
+        fi
+        exit 1

@@ -1,0 +1,141 @@
+---
+name: openqodex
+description: Review the current code change before it is pushed. Runs the security and lint scanners that fit the changed files, then guides you through verifying their findings and reviewing the change yourself, and writes a report. Use before every git push, when asked to review changes, and when a push was blocked or warned by OpenQodex.
+---
+
+# OpenQodex: review the change before it is pushed
+
+OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shellcheck, actionlint, osv-scanner and others) on the files that changed, keeps only what they report on changed lines, and hands you a review brief. You review the change with your own tools and model, write your findings to a file in a fixed shape, and OpenQodex checks that file without a model and writes the report. No key and no account are needed. OpenQodex sends no code anywhere. One scanner goes online: when the change touches a dependency file, osv-scanner asks osv.dev about the names and versions of the dependencies; `--offline` on the review command skips that lookup. A custom scanner the developer approved does whatever its own command does.
+
+## When to run
+
+- Before any `git push`.
+- When the developer asks you to review their changes.
+- When a push was blocked or warned by the OpenQodex hook.
+- After fixing findings, to check the change again.
+
+## Procedure
+
+1. From the repository, run:
+
+   ```
+   npx -y openqodex@0.1.0 review --agent
+   ```
+
+   It works out the change (the commits not yet pushed plus everything uncommitted, untracked files included), runs the scanners and prints the brief. Read the whole brief before doing anything else.
+
+2. Verify each scanner candidate against the code. Every candidate has an id (`c1`, `c2`, ...) and a token like `[semgrep:python.lang.security.audit.formatted-sql-query]`. Open the file at the line and decide:
+   - real: raise it as a finding with `source` set to the token and `candidate` set to the id;
+   - not real (a test fixture, dead code, a pattern the code already guards): put it under `dropped` with a one-line reason.
+
+   Several candidates often describe one problem (two scanners, or two rules of one scanner, on the same line). Raise one of them and drop the others with the reason `duplicate of c<id>`.
+
+   Every candidate must end up in one of the two. A candidate you leave out is reported as "Not reviewed by the agent" and counts toward the verdict at its scanner severity.
+
+3. Weigh each pattern listed under "Patterns to weigh". Each one describes a kind of bug that changes like this one often carry. Check the changed lines against it. When a pattern leads you to a finding, set `source` to `lens:<name>`.
+
+4. Review the change yourself. Use your own tools to read the callers and the tests of every function the change touches. Look for wrong behaviour, missing checks, broken edge cases and changed behaviour with no test. Findings from your own reading have `source: null`.
+
+5. Write the findings to the exact path the brief names (it ends in `agent-findings.json`), in the shape below.
+
+6. Run:
+
+   ```
+   npx -y openqodex@0.1.0 review --finalize
+   ```
+
+   If it exits with code 2 and names a wrong field or a citation that does not match, fix what it names in your findings file and run finalize again. If it says the change moved or the config changed, run step 1 again and review from the new brief: the review must describe the change and the settings as they are now. Never change the developer's code or config to make finalize pass.
+
+7. Tell the developer the verdict, the counts by severity, the most serious findings in one line each, and the path of `report.md`. Do not paste the whole report.
+
+## The finding shape
+
+```json
+{
+  "version": 1,
+  "change_id": "3f9a1c0b2d4e",
+  "summary": "Adds a search endpoint and a deploy script.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/search.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "SQL injection in item search",
+      "description": "The query is built with an f-string from request.args, so a caller controls the SQL. Pass the value as a query parameter.",
+      "suggested_change": "cur.execute(\"SELECT * FROM items WHERE name = ?\", (q,))",
+      "source": "semgrep:python.lang.security.audit.formatted-sql-query",
+      "candidate": "c2"
+    }
+  ],
+  "dropped": [
+    { "candidate": "c5", "reason": "test fixture, not a real key" }
+  ]
+}
+```
+
+- `change_id`: copy it from the brief.
+- `summary`: what the change does, in one or two sentences. Not the findings.
+- `file_path`: relative to the repository root. `line_number` and `line_end` point at the code line that holds the problem, never at a comment or a blank line, and at an import only when the import itself is the problem. `line_end` is optional and defaults to `line_number`.
+- `title`: a short noun phrase naming the problem. No line numbers, no quoted code.
+- `description`: one to three sentences: what is wrong, why it matters, the fix.
+- `suggested_change`: the replacement text for the cited lines when the fix fits in a few lines, matching the indentation. Otherwise `null`, and explain the fix in `description`.
+- `source`: `null` for your own finding, the candidate's token when raising a candidate, or `lens:<name>` when a listed pattern led to it.
+- `candidate`: the candidate id when raising one, else leave it out. The id and the token must belong to the same candidate.
+- `confidence`: from 0 to 1, how sure you are that the problem is real, based on what you read.
+
+Severity says how much harm the problem does, not how sure you are:
+
+- `critical`: data loss, a security breach, a crash on a common path, broken authentication.
+- `major`: wrong behaviour under realistic conditions, a performance regression, a broken edge case someone would be paged for.
+- `minor`: a real bug that is unlikely to show in practice.
+- `nitpick`: style, naming or a convention preference.
+- `info`: worth knowing, no action needed.
+
+Category says what kind of problem it is:
+
+- `bug`: the code does the wrong thing.
+- `security`: the code can be abused, or leaks something it should not.
+- `performance`: the code is slower or uses more resources than it needs to.
+- `maintainability`: the code works but is hard to change safely (missing test, duplicated logic, unclear structure).
+- `style`: formatting, naming and conventions.
+
+## Rules
+
+- Raise only what you verified in the code. A guess with nothing in the code to point at is not a finding.
+- A finding with confidence under 0.7 is not raised. Finalize drops it and lists it as low confidence.
+- Every scanner candidate is either raised or listed under `dropped` with a reason.
+- Never edit code during the review. Review first, report, then fix only what the developer asks you to fix.
+- Never run `openqodex trust` without asking the developer first. It approves a custom scanner, which is a command that runs on their machine.
+- Never set `OPENQODEX_SKIP`. It is the developer's switch, not yours.
+- When the verdict is `blocked`, do not push. Show the developer the findings; push only if they say so after seeing them.
+- An empty findings list is a valid review. Do not pad it.
+
+## Reading the report
+
+- The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest one. The folder ignores itself in git, so it never shows in `git status`.
+- The verdict is `passed` (with or without warnings) or `blocked`. It is `blocked` only when the repository's `.openqodex.yaml` sets `block_on_severity` and a finding is at or above it. With no config, OpenQodex warns and never blocks.
+- "Outside the changed lines" lists findings on lines the developer did not change. They are shown but never count toward the verdict.
+- The coverage list says, for each scanner, whether it ran. A scanner that did not run has a one-line reason:
+  - `no matching files`: nothing in the change is the kind of file it reads.
+  - `installing`: it is being downloaded for the first time; it is included from the next run. Say so to the developer rather than waiting.
+  - `not installed`: it could not be installed here; the reason says why.
+  - `needs Ruby 2.7+` or `needs Go`: brakeman and rubocop need Ruby, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
+  - `untrusted`: a custom scanner from `.openqodex.yaml` that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.1.0 trust`).
+  - `failed`: the scanner ran and broke; the reason has its error. A scanner problem never changes the exit code.
+
+## Inside a sandbox
+
+Some agents run commands in a sandbox that cannot reach the network or write outside the project. There the first run cannot download the scanners, and each scanner reports why it was not included. The review still runs with whatever is available. Tell the developer to run this once in their own terminal, outside the agent:
+
+```
+npx -y openqodex@0.1.0 doctor --install
+```
+
+It downloads every scanner that fits the machine into `~/.openqodex/tools/`. After that, reviews inside the sandbox include them.
+
+## More
+
+`npx -y openqodex@0.1.0 guide` prints this guide. `npx -y openqodex@0.1.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`.

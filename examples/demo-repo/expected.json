@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "secret": {
+    "file": "planted/app/config.py",
+    "placeholder": "{{GENERATED_SECRET}}",
+    "shape": "sk_live_ followed by 24 random letters and digits, generated when the demo is built"
+  },
+  "observed_with": {
+    "date": "2026-10-02",
+    "gitleaks": "8.30.1",
+    "hadolint": "2.15.1",
+    "shellcheck": "0.11.0",
+    "actionlint": "1.7.12",
+    "bandit": "1.9.4",
+    "osv-scanner": "2.6.0",
+    "semgrep": "1.176.0 with p/default, p/security-audit and p/secrets"
+  },
+  "bugs": [
+    {
+      "id": "secret",
+      "class": "hardcoded secret",
+      "file": "app/config.py",
+      "lines": [2, 2],
+      "detectors": [
+        { "scanner": "gitleaks", "rule_id": "stripe-access-token" },
+        { "scanner": "semgrep", "rule_id": "generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key" }
+      ]
+    },
+    {
+      "id": "sql-injection",
+      "class": "SQL injection",
+      "file": "app/search.py",
+      "lines": [14, 14],
+      "detectors": [
+        { "scanner": "bandit", "rule_id": "B608" },
+        { "scanner": "semgrep", "rule_id": "python.lang.security.audit.formatted-sql-query.formatted-sql-query" },
+        { "scanner": "semgrep", "rule_id": "python.flask.security.injection.tainted-sql-string.tainted-sql-string" }
+      ]
+    },
+    {
+      "id": "docker-latest-base",
+      "class": "unpinned base image",
+      "file": "Dockerfile",
+      "lines": [1, 1],
+      "detectors": [{ "scanner": "hadolint", "rule_id": "DL3007" }]
+    },
+    {
+      "id": "docker-apt-install",
+      "class": "unpinned and uncleaned apt install",
+      "file": "Dockerfile",
+      "lines": [3, 3],
+      "detectors": [
+        { "scanner": "hadolint", "rule_id": "DL3008" },
+        { "scanner": "hadolint", "rule_id": "DL3015" },
+        { "scanner": "hadolint", "rule_id": "DL3009" },
+        { "scanner": "hadolint", "rule_id": "DL3014" }
+      ]
+    },
+    {
+      "id": "docker-add",
+      "class": "ADD used for a local file",
+      "file": "Dockerfile",
+      "lines": [6, 6],
+      "detectors": [{ "scanner": "hadolint", "rule_id": "DL3020" }]
+    },
+    {
+      "id": "docker-pip-cache",
+      "class": "pip cache kept in the image",
+      "file": "Dockerfile",
+      "lines": [7, 7],
+      "detectors": [{ "scanner": "hadolint", "rule_id": "DL3042" }]
+    },
+    {
+      "id": "docker-root",
+      "class": "container runs as root",
+      "file": "Dockerfile",
+      "lines": [11, 11],
+      "detectors": null,
+      "note": "The change removes the USER line. semgrep reports the missing user on the last line, which the change does not touch, so the changed-line filter drops it. Only a reviewer reading the diff finds it."
+    },
+    {
+      "id": "vulnerable-lodash",
+      "class": "vulnerable dependency (lodash 4.17.15, CVE-2020-8203)",
+      "file": "package-lock.json",
+      "lines": [11, 11],
+      "detectors": [{ "scanner": "osv-scanner", "rule_id": "GHSA-p6mc-m468-83gw" }]
+    },
+    {
+      "id": "shell-rm-unquoted",
+      "class": "rm -rf on an unquoted variable",
+      "file": "scripts/deploy.sh",
+      "lines": [7, 7],
+      "detectors": [
+        { "scanner": "shellcheck", "rule_id": "SC2115" },
+        { "scanner": "shellcheck", "rule_id": "SC2086" }
+      ]
+    },
+    {
+      "id": "shell-ls-loop",
+      "class": "loop over unquoted ls output",
+      "file": "scripts/deploy.sh",
+      "lines": [11, 11],
+      "detectors": [
+        { "scanner": "shellcheck", "rule_id": "SC2045" },
+        { "scanner": "shellcheck", "rule_id": "SC2086" }
+      ]
+    },
+    {
+      "id": "workflow-injection",
+      "class": "script injection in a GitHub workflow",
+      "file": ".github/workflows/ci.yml",
+      "lines": [15, 15],
+      "detectors": [
+        { "scanner": "actionlint", "rule_id": "expression" },
+        { "scanner": "semgrep", "rule_id": "yaml.github-actions.security.run-shell-injection.run-shell-injection" }
+      ]
+    },
+    {
+      "id": "pagination-off-by-one",
+      "class": "logic bug: the first page is skipped",
+      "file": "app/server.py",
+      "lines": [23, 23],
+      "detectors": null
+    }
+  ]
+}

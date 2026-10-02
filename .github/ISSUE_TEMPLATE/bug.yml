@@ -1,0 +1,49 @@
+name: Bug report
+description: OpenQodex did something wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never report a security problem here. Use the private reporting form in the Security tab instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest steps that show it. A tiny repository or a change to the demo repository helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `npx openqodex doctor`
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options:
+        - None, from the terminal
+        - Claude Code
+        - Codex CLI
+        - Cursor
+        - Cline
+        - GitHub Action
+        - pre-commit
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report or error output
+      description: Remove anything private first. OpenQodex redacts secrets that gitleaks finds, but check before you paste.
+      render: text

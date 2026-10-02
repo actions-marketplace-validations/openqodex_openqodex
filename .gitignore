@@ -13,3 +13,15 @@ coverage/
 # Private charter and local Claude settings
 CLAUDE.md
 .claude/
+
+# Assets copied beside the CLI bundle at build time (scripts/copy-assets.mjs)
+packages/cli/lenses
+packages/cli/docs
+packages/cli/skills
+packages/cli/demo
+packages/cli/toolchain.json
+packages/cli/README.md
+packages/cli/LICENSE
+packages/cli/NOTICE
+*.tgz
+tests/e2e/runs/

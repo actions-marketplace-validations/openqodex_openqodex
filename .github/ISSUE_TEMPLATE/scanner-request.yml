@@ -1,0 +1,35 @@
+name: Scanner request
+description: Ask for a scanner to become built in.
+labels: [scanner]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Any scanner can already run as a custom scanner, by its GitHub link. See docs/custom-scanners.md. Ask here when a scanner should ship built in.
+  - type: input
+    id: source
+    attributes:
+      label: GitHub link of the scanner
+      placeholder: https://github.com/owner/repo
+    validations:
+      required: true
+  - type: input
+    id: licence
+    attributes:
+      label: Licence
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What it finds that the built-in scanners miss
+      description: One real example, with the file type it reads.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output format and install
+      description: Does it write SARIF or JSON? Does it publish release files for macOS and Linux, on Intel and ARM? Does it need a language runtime?
+    validations:
+      required: true
