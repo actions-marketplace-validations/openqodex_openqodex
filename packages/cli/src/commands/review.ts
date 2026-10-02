@@ -197,7 +197,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined): Promis
   if (manifest.config_hash !== configHash(config)) {
     throw new OpenQodexError("the config changed since the brief (.openqodex.yaml or --config); run openqodex review --agent again");
   }
-  const change = await getChange({ repoRoot, scope: runFile.scope, exclude: config.exclude });
+  const change = await getChange({ repoRoot, scope: runFile.scope, exclude: config.exclude, defaultBase: config.defaultBase });
   const report = finalizeReview({ change, scan, manifest, config, submission });
 
   writeReportFiles(dir, reportFiles(report));

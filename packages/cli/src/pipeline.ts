@@ -56,7 +56,7 @@ export async function runPipeline(args: {
 }): Promise<PipelineResult> {
   const { flags } = args;
   const { repoRoot, config } = await loadRepo(flags);
-  const change = await getChange({ repoRoot, scope: args.scope, exclude: config.exclude });
+  const change = await getChange({ repoRoot, scope: args.scope, exclude: config.exclude, defaultBase: config.defaultBase });
   if (change.files.length === 0) return { repoRoot, config, change, scan: null, secrets: [] };
 
   const onProgress = progress(flags);
