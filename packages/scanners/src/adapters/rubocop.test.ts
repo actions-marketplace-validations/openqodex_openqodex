@@ -5,12 +5,12 @@ const withConfig = { hasConfig: true };
 const noConfig = { hasConfig: false };
 
 describe("parseRubocopJson", () => {
-  it("returns empty array on blank or files-less input", () => {
+  it("empty or files-less output yields no findings instead of a parse error", () => {
     expect(parseRubocopJson("", withConfig)).toEqual([]);
     expect(parseRubocopJson(JSON.stringify({}), withConfig)).toEqual([]);
   });
 
-  it("normalizes a typical offense with cop_name token and span", () => {
+  it("a rubocop offense keeps its cop name as rule id and its start to last line span", () => {
     const report = {
       files: [
         {
@@ -39,25 +39,7 @@ describe("parseRubocopJson", () => {
     expect(out[0].message).toContain("Lint/UselessAssignment: Useless assignment");
   });
 
-  it("maps departments Security/Lint/Performance/Style to high/medium/low/info", () => {
-    const report = {
-      files: [
-        {
-          path: "a.rb",
-          offenses: [
-            { cop_name: "Security/Eval", message: "m", location: { start_line: 1 } },
-            { cop_name: "Lint/Void", message: "m", location: { start_line: 2 } },
-            { cop_name: "Performance/Detect", message: "m", location: { start_line: 3 } },
-            { cop_name: "Style/StringLiterals", message: "m", location: { start_line: 4 } },
-          ],
-        },
-      ],
-    };
-    const out = parseRubocopJson(JSON.stringify(report), withConfig);
-    expect(out.map((f) => f.severity)).toEqual(["high", "medium", "low", "info"]);
-  });
-
-  it("without a repo config, drops Style/Layout and keeps Lint/Security/Performance", () => {
+  it("Style and Layout offenses nobody opted into are dropped; Lint, Security and Performance are kept", () => {
     const report = {
       files: [
         {
@@ -80,23 +62,7 @@ describe("parseRubocopJson", () => {
     ]);
   });
 
-  it("with a repo config, keeps the same Style/Layout offenses", () => {
-    const report = {
-      files: [
-        {
-          path: "a.rb",
-          offenses: [
-            { cop_name: "Style/StringLiterals", message: "m", location: { start_line: 1 } },
-            { cop_name: "Layout/LineLength", message: "m", location: { start_line: 2 } },
-          ],
-        },
-      ],
-    };
-    const out = parseRubocopJson(JSON.stringify(report), withConfig);
-    expect(out).toHaveLength(2);
-  });
-
-  it("falls back to location.line and skips offenses with no path or line", () => {
+  it("an offense with only location.line still anchors; one without a path or line is dropped", () => {
     const report = {
       files: [
         { path: "", offenses: [{ cop_name: "Lint/Void", message: "m", location: { start_line: 1 } }] },

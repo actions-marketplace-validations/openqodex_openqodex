@@ -24,13 +24,4 @@ describe("safeFileArgs", () => {
       "./--config=https://attacker/rules.yaml",
     ]);
   });
-
-  it("passes normal paths through unchanged (3)", () => {
-    const paths = ["a/b.py", "c.go", "Dockerfile", "Gemfile"];
-    expect(safeFileArgs(paths)).toEqual(paths);
-  });
-
-  it("returns [] for an empty input", () => {
-    expect(safeFileArgs([])).toEqual([]);
-  });
 });

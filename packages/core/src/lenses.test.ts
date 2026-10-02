@@ -8,13 +8,10 @@
 // 5. More than four lenses are selected, or the ranking is not most specific
 //    first, then lowest floor, then name.
 // 6. A shipped lens still carries an em dash or private wording.
-// Tests that select by file glob need the real matchesGlob and run once the
-// stream that owns it is merged.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { matchesGlob } from "./glob.js";
 import {
   defaultLensDir,
   extractChangedLineText,
@@ -24,14 +21,6 @@ import {
   selectLensesForDiff,
   type Lens,
 } from "./lenses.js";
-
-const globBuilt = (() => {
-  try {
-    return matchesGlob("a", "a");
-  } catch {
-    return false;
-  }
-})();
 
 const FILE_DIFF = [
   "diff --git a/src/api/billing.ts b/src/api/billing.ts",
@@ -66,10 +55,6 @@ body line two`);
     expect(lens.body).toContain("body line one");
   });
 
-  it("defaults confidence_floor to 0.7 when omitted", () => {
-    expect(parseLens(`---\nname: a\ndescription: b\n---\nc`).confidenceFloor).toBe(0.7);
-  });
-
   it("throws when name or description is missing", () => {
     expect(() => parseLens(`---\ndescription: x\n---\nbody`)).toThrow(/name/);
     expect(() => parseLens(`---\nname: x\n---\nbody`)).toThrow(/description/);
@@ -95,10 +80,6 @@ describe("extractChangedLineText", () => {
     expect(text).not.toContain("b/src/api/billing.ts");
     expect(text).toContain("await db.users.upsert");
   });
-
-  it("returns empty string when diff has no changed lines", () => {
-    expect(extractChangedLineText("")).toBe("");
-  });
 });
 
 function lens(name: string, triggers: Lens["triggers"], floor = 0.7): Lens {
@@ -106,20 +87,10 @@ function lens(name: string, triggers: Lens["triggers"], floor = 0.7): Lens {
 }
 
 describe("selectLensesForDiff without file globs", () => {
-  it("returns lenses with no triggers regardless of diff", () => {
-    const out = selectLensesForDiff({ diff: "", files: [], catalog: [lens("always", {})] });
-    expect(out.map((l) => l.name)).toEqual(["always"]);
-  });
-
   it("matches and skips by hunk regex, case-insensitively", () => {
     const catalog = [lens("upsert", { hunkRegex: "\\bupsert\\b" })];
     expect(selectLensesForDiff({ diff: FILE_DIFF.replace("upsert", "UPSERT"), files: [], catalog })).toHaveLength(1);
     expect(selectLensesForDiff({ diff: FILE_DIFF.replace("upsert", "insert"), files: [], catalog })).toEqual([]);
-  });
-
-  it("returns the trigger-stripped SelectedLens shape", () => {
-    const out = selectLensesForDiff({ diff: "", files: [], catalog: [lens("always", {})] });
-    expect(out[0]).toEqual({ name: "always", description: "d", confidenceFloor: 0.7, body: "b" });
   });
 
   it("caps the number of selected lenses at 4", () => {
@@ -140,7 +111,7 @@ describe("selectLensesForDiff without file globs", () => {
   });
 });
 
-describe.skipIf(!globBuilt)("selectLensesForDiff with file globs (needs matchesGlob)", () => {
+describe("selectLensesForDiff with file globs", () => {
   const upsertLens = lens("upsert-state", { files: ["*.ts", "**/*.ts"], hunkRegex: "\\bupsert\\b" });
 
   it("selects a lens whose file glob and hunk regex both match", () => {

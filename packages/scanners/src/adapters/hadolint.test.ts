@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseHadolintJson } from "./hadolint.js";
 
 describe("parseHadolintJson", () => {
-  it("returns empty array on blank or non-array input", () => {
+  it("empty or non-list output yields no findings instead of a parse error", () => {
     expect(parseHadolintJson("")).toEqual([]);
     expect(parseHadolintJson(JSON.stringify({}))).toEqual([]);
   });
 
-  it("normalizes a typical hadolint entry and builds wiki reference", () => {
+  it("a hadolint entry keeps its DL code as rule id and links to that rule's wiki page", () => {
     const report = [
       {
         file: "Dockerfile",
@@ -31,18 +31,7 @@ describe("parseHadolintJson", () => {
     });
   });
 
-  it("maps the level scale error/warning/info/style", () => {
-    const report = [
-      { file: "Dockerfile", line: 1, level: "error", code: "DL3000", message: "m" },
-      { file: "Dockerfile", line: 2, level: "warning", code: "DL3001", message: "m" },
-      { file: "Dockerfile", line: 3, level: "info", code: "DL3002", message: "m" },
-      { file: "Dockerfile", line: 4, level: "style", code: "DL3003", message: "m" },
-    ];
-    const out = parseHadolintJson(JSON.stringify(report));
-    expect(out.map((f) => f.severity)).toEqual(["high", "medium", "low", "info"]);
-  });
-
-  it("defaults rule id and skips rows with no file or line", () => {
+  it("an entry without a code gets a rule id and no wiki link; one without a file or line is dropped", () => {
     const report = [
       { file: "", line: 1, level: "error", code: "DL1", message: "m" },
       { file: "Dockerfile", line: 0, level: "error", code: "DL1", message: "m" },

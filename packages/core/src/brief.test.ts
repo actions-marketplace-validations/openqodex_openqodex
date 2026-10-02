@@ -14,18 +14,9 @@
 // 8. Blocks are out of order.
 import { describe, expect, it } from "vitest";
 import { buildBrief } from "./brief.js";
-import { matchesGlob } from "./glob.js";
 import { selectLenses } from "./lenses.js";
 import { SECRET, SQL_CANDIDATE, makeChange, makeConfig, makeScan } from "./test-fixtures.js";
 import type { Candidate, Change, SelectedLens } from "./types.js";
-
-const globBuilt = (() => {
-  try {
-    return matchesGlob("a", "a");
-  } catch {
-    return false;
-  }
-})();
 
 const LENS: SelectedLens = {
   name: "sql-string-concatenation",
@@ -127,7 +118,7 @@ describe("buildBrief", () => {
   });
 });
 
-describe.skipIf(!globBuilt)("buildBrief with lenses from the shipped catalog (needs matchesGlob)", () => {
+describe("buildBrief with lenses from the shipped catalog", () => {
   it("names the candidates and at least one lens for a small Python change", () => {
     const change = makeChange();
     const lenses = selectLenses(change);

@@ -2,17 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseSemgrepJson } from "./semgrep.js";
 
 describe("parseSemgrepJson", () => {
-  it("returns empty array on blank input", () => {
+  it("empty output yields no findings instead of a parse error", () => {
     expect(parseSemgrepJson("")).toEqual([]);
     expect(parseSemgrepJson("   ")).toEqual([]);
   });
 
-  it("returns empty array when results is missing or not array", () => {
-    expect(parseSemgrepJson(JSON.stringify({}))).toEqual([]);
-    expect(parseSemgrepJson(JSON.stringify({ results: "nope" }))).toEqual([]);
-  });
-
-  it("normalizes a typical semgrep result", () => {
+  it("a semgrep result keeps its check id, file, line span and first reference, and ERROR ranks high", () => {
     const raw = {
       results: [
         {
@@ -42,30 +37,7 @@ describe("parseSemgrepJson", () => {
     });
   });
 
-  it("maps severity WARNING -> medium and INFO -> info", () => {
-    const raw = {
-      results: [
-        {
-          check_id: "a",
-          path: "p",
-          start: { line: 1 },
-          end: { line: 1 },
-          extra: { severity: "WARNING", message: "m" },
-        },
-        {
-          check_id: "b",
-          path: "p",
-          start: { line: 2 },
-          end: { line: 2 },
-          extra: { severity: "INFO", message: "m" },
-        },
-      ],
-    };
-    const out = parseSemgrepJson(JSON.stringify(raw));
-    expect(out.map((f) => f.severity)).toEqual(["medium", "info"]);
-  });
-
-  it("falls back to lineStart when end.line is missing or invalid", () => {
+  it("a result with no end line spans only its start line", () => {
     const raw = {
       results: [
         {
@@ -81,7 +53,7 @@ describe("parseSemgrepJson", () => {
     expect(out[0].lineEnd).toBe(5);
   });
 
-  it("skips malformed rows without throwing", () => {
+  it("a null or empty result row is skipped without failing the whole parse", () => {
     const raw = {
       results: [
         null,

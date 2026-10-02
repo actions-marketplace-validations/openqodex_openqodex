@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseRuffJson } from "./ruff.js";
 
 describe("parseRuffJson", () => {
-  it("returns empty array on blank or non-array input", () => {
+  it("empty or non-list output yields no findings instead of a parse error", () => {
     expect(parseRuffJson("")).toEqual([]);
     expect(parseRuffJson(JSON.stringify({}))).toEqual([]);
   });
 
-  it("normalizes a typical ruff diagnostic with location span", () => {
+  it("a ruff diagnostic keeps its code, file, line and rule link", () => {
     const report = [
       {
         code: "F401",
@@ -31,7 +31,7 @@ describe("parseRuffJson", () => {
     });
   });
 
-  it("maps security S-rules to high and pure style to info", () => {
+  it("a ruff S rule (security) ranks high and a pure style rule ranks info", () => {
     const report = [
       {
         code: "S602",
@@ -52,7 +52,7 @@ describe("parseRuffJson", () => {
     expect(out.map((f) => f.severity)).toEqual(["high", "info"]);
   });
 
-  it("spans multiple lines via end_location.row", () => {
+  it("a multi-line ruff diagnostic spans to its end row", () => {
     const report = [
       {
         code: "B006",
@@ -68,7 +68,7 @@ describe("parseRuffJson", () => {
     expect(out[0].severity).toBe("low");
   });
 
-  it("defaults rule id and skips rows with no filename or row", () => {
+  it("a diagnostic with a null code (a syntax error) gets a rule id; one without a file or row is dropped", () => {
     const report = [
       { code: "F401", message: "m", filename: "", location: { row: 1 } },
       { code: "F401", message: "m", filename: "a.py", location: { row: 0 } },
