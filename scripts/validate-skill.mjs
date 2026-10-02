@@ -38,6 +38,27 @@ if (present(skill)) {
   if (!errors.length) console.log(`ok: ${skill}`);
 }
 
+// The plugin ships a copy of the skill, and every pinned command must name the
+// version being released. Both drift silently unless the gate checks them.
+const pluginSkill = "plugins/claude-code/skills/openqodex/SKILL.md";
+const version = JSON.parse(readFileSync(join(root, "packages/cli/package.json"), "utf8")).version;
+if (existsSync(join(root, skill)) && existsSync(join(root, pluginSkill))) {
+  if (readFileSync(join(root, skill), "utf8") !== readFileSync(join(root, pluginSkill), "utf8")) {
+    errors.push(`${pluginSkill}: differs from ${skill}`);
+  } else console.log(`ok: ${pluginSkill} matches the skill`);
+}
+for (const rel of [skill, pluginSkill, "plugins/claude-code/hooks/hooks.json"]) {
+  if (!existsSync(join(root, rel))) continue;
+  const pins = readFileSync(join(root, rel), "utf8").match(/openqodex@[0-9][^\s"`)]*/g) ?? [];
+  const wrong = [...new Set(pins)].filter((pin) => pin !== `openqodex@${version}`);
+  if (wrong.length) errors.push(`${rel}: pins ${wrong.join(", ")} but the package is ${version}`);
+}
+const pluginJson = "plugins/claude-code/.claude-plugin/plugin.json";
+if (existsSync(join(root, pluginJson))) {
+  const pluginVersion = JSON.parse(readFileSync(join(root, pluginJson), "utf8")).version;
+  if (pluginVersion !== version) errors.push(`${pluginJson}: version ${pluginVersion} but the package is ${version}`);
+}
+
 const plugin = "plugins/claude-code/.claude-plugin/plugin.json";
 if (present(plugin)) {
   const json = readJson(plugin);

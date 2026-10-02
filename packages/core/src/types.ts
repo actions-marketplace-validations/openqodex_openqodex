@@ -87,6 +87,9 @@ export type AdapterResult = {
   findings: StaticFinding[];
   error: string | null;
   secrets?: string[];
+  // Set when the adapter chose not to run (for example dependency lookups
+  // while offline). The runner records status "disabled" with this reason.
+  skipped?: string | null;
 };
 
 // One row of `openqodex doctor`.
@@ -210,8 +213,8 @@ export type AgentFinding = {
   line_end?: number;
   title: string;
   description: string;
-  suggested_change: string | null;
-  source: string | null; // null, a candidate token, or "lens:<name>"
+  suggested_change?: string | null; // left out reads as null
+  source?: string | null; // null or left out, a candidate token, or "lens:<name>"
   candidate?: string | null; // the candidate id this finding raises, when it raises one
 };
 
