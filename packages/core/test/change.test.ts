@@ -293,6 +293,18 @@ describe("getChange", () => {
     expect(c.stats).toEqual({ files: 1, additions: 1, deletions: 0 });
   });
 
+  it("still works when the repo's own .gitignore lists .openqodex and the folder exists", async () => {
+    // Failure this guards: git refuses a pathspec that names an ignored path,
+    // so the second run in such a repo died with "paths are ignored".
+    const repo = seeded();
+    write(repo, ".gitignore", ".openqodex/\n");
+    commitAll(repo, "ignore the report folder");
+    write(repo, ".openqodex/reviews/one/report.md", "old report\n");
+    write(repo, "src/new.ts", "export const n = 1;\n");
+    const change = await getChange({ repoRoot: repo, scope: { uncommitted: true }, exclude: [] });
+    expect(paths(change)).toEqual(["src/new.ts"]);
+  });
+
   it("never counts its own .openqodex folder", async () => {
     const repo = seeded();
     write(repo, ".openqodex/reviews/x/report.md", "r\n");

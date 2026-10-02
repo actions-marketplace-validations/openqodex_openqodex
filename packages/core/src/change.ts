@@ -377,7 +377,10 @@ export async function getChange(args: {
       GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(objectsPath),
     };
 
-    await gitOk(repoRoot, ["add", "-A", "--", ".", STATE_PATHSPEC], { env, config: noFilters });
+    // No exclude pathspec here: git refuses a pathspec that names a path the
+    // repo's own .gitignore ignores. The report folder is left out by the
+    // pathspec on every diff below instead.
+    await gitOk(repoRoot, ["add", "-A", "--", "."], { env, config: noFilters });
 
     const diffArgs = (extra: string[], skip: string[] = []): string[] => [
       "diff",
