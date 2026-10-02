@@ -24,6 +24,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The end-to-end tests install the pinned scanners once into this folder.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/openqodex-e2e-home
+          key: scanners-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/scanners/toolchain.json') }}
       # The steps below mirror scripts/gate.sh one for one.
       - name: Build
         run: pnpm build
@@ -35,6 +40,8 @@ jobs:
         run: pnpm test
       - name: End-to-end tests
         run: pnpm test:e2e
+        env:
+          OPENQODEX_E2E_HOME: ${{ runner.temp }}/openqodex-e2e-home
       - name: Skill and plugin manifests
         run: node scripts/validate-skill.mjs
       - name: Private material scrub
