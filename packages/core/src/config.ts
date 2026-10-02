@@ -22,7 +22,7 @@ export const DEFAULT_CONFIG: Config = {
   includeFixtures: false,
   disabledScanners: [],
   custom: [],
-  graph: { enabled: true },
+  graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024 },
 };
 
 const BUILTIN: Record<BuiltinScanner, true> = {
@@ -228,7 +228,7 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
       includeFixtures: yaml.review?.include_fixtures ?? false,
       disabledScanners: yaml.scanners?.disable ?? [],
       custom,
-      graph: { enabled: true },
+      graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024 },
     },
     warnings,
   };

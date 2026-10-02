@@ -188,40 +188,70 @@ export type Config = {
   includeFixtures: boolean;
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
-  graph: { enabled: boolean }; // the code graph in the brief; default true
+  graph: { enabled: boolean; budgetMs: number; maxFiles: number; maxFileBytes: number }; // the code graph in the brief; enabled by default
 };
 
 // ---------- code graph, as the report and the brief see it ----------
+// Serializable. The graph package builds it; the brief and the report show it.
+// Ids reference `symbols`. Counts describe what was observed, never what was
+// not seen. "ok" means the extraction finished, not that every call resolved.
 
-export type ImpactSite = { file: string; line: number };
+export type ImpactKind = "file" | "function" | "method" | "class" | "module" | "type";
 
 export type ImpactSymbol = {
+  id: string; // file, lexical owner, name and declaration position; unique in the graph
   file: string;
-  line: number;
   name: string;
-  kind: string;
+  kind: ImpactKind;
+  startLine: number;
+  endLine: number;
+  snapshot: "base" | "current"; // "base" for a symbol that the change removed
 };
 
-export type ImpactCaller = ImpactSymbol & {
-  hops: number;
+export type ImpactSite = {
+  file: string;
+  line: number;
+  column: number;
   confidence: "high" | "low";
-  sites: ImpactSite[]; // the lines in the caller that call the touched symbol
+  // What proved the edge: a lexical or import binding, a receiver whose type
+  // is known, or a Ruby constant found by autoload convention.
+  evidence: "binding" | "receiver-type" | "autoload";
+};
+
+export type ImpactEdge = {
+  from: string; // symbol id
+  to: string; // symbol id
+  kind: "calls" | "inherits" | "imports";
+  sites: ImpactSite[]; // every site, never only the first
+};
+
+// A caller reached in one or two hops, with the actual edges walked.
+export type ImpactPath = {
+  seed: string; // the touched symbol id
+  edges: [ImpactEdge] | [ImpactEdge, ImpactEdge];
 };
 
 export type ImpactSummary = {
+  version: 1;
   status: "ok" | "partial" | "off" | "skipped" | "failed";
-  reason: string | null; // one line when status is not "ok"
-  risk: "none" | "low" | "medium" | "high";
-  touched: ImpactSymbol[];
-  callers: ImpactCaller[];
-  callees: ImpactSymbol[];
-  importers: string[]; // files that import a changed file
-};
-
-export type LoadedConfig = {
-  config: Config;
-  path: string | null; // null: no config file, defaults in use
-  warnings: string[];
+  reasons: string[]; // one plain line each when status is not "ok"
+  risk: "none" | "low" | "medium" | "high" | null; // null when the graph did not run
+  build: {
+    durationMs: number;
+    cacheHits: number;
+    eligibleFiles: number;
+    parsedFiles: number;
+    omittedFiles: number; // over the size cap, past the budget or the file cap
+    unresolvedSites: number; // call sites no rule could bind
+  };
+  symbols: ImpactSymbol[];
+  touched: string[]; // symbol ids whose span overlaps a changed line
+  removed: string[]; // symbol ids present in the base version of a changed file and gone now
+  callers: ImpactPath[];
+  callees: ImpactPath[];
+  importers: ImpactEdge[]; // files that import a changed file
+  hubs: { symbol: string; callers: number; sites: number; files: number }[];
+  truncated: { walk: boolean; inline: boolean; omittedSites: number | null };
 };
 
 // ---------- review ----------
@@ -297,7 +327,8 @@ export type Report = {
   // review only: candidates the agent dropped, with its reason
   dropped: { candidate: Candidate; reason: string }[];
   scanners: ScannerRunSummary[];
-  // The code graph's view of the change; null when the graph did not run.
+  // The code graph's view of the change. Always present: status "off",
+  // "skipped" or "failed" says why there is nothing in it.
   impact: ImpactSummary | null;
   not_reviewed_paths: string[]; // Change.notReviewed
   stats: { files: number; additions: number; deletions: number };

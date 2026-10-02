@@ -199,11 +199,12 @@ function doneBlock(findingsPath: string, finalizeCommand: string): string {
 // What the repo's owners wrote in .openqodex/custom-instructions.md. They steer
 // what to flag and what not to; they never change the finding shape or the
 // finalize step, and the block says so to the agent.
-const INSTRUCTIONS_CAP = 8 * 1024;
+// The caller refuses a file over its size limit before this runs: the text is
+// never cut here, an instruction after a cut would vanish without a trace.
 function instructionsBlock(text: string): string {
   const body = text.trim();
   if (!body) return "";
-  const shown = body.length > INSTRUCTIONS_CAP ? `${body.slice(0, INSTRUCTIONS_CAP)}\n\n(cut at 8 KB)` : body;
+  const shown = body;
   return [
     "## Instructions from this repo's owners",
     "",
