@@ -1,0 +1,11 @@
+# Private planning material: task lists, briefs and decisions stay out of the public repo.
+.private/
+
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+*.log
+.DS_Store
+.openqodex/
