@@ -14,7 +14,10 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "gate": "bash scripts/gate.sh",
     "changeset": "changeset",
-    "docs:index": "node scripts/docs-index.mjs"
+    "docs:index": "node scripts/docs-index.mjs",
+    "version-packages": "changeset version && node scripts/sync-version.mjs && pnpm install --lockfile-only",
+    "release": "pnpm build && changeset publish",
+    "toolchain:verify": "node scripts/refresh-toolchain.mjs --verify"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
