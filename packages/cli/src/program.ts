@@ -1,4 +1,5 @@
 import { Command, CommanderError } from "commander";
+import { OpenQodexError } from "@openqodex/core";
 import { EXIT_TOOL_FAILED } from "./exit-codes.js";
 
 type CommandModule = { run: (args: string[]) => Promise<number> };
@@ -15,6 +16,19 @@ const commands: Record<string, { summary: string; load: () => Promise<CommandMod
   demo: { summary: "Build the demo repo with planted bugs", load: () => import("./commands/demo.js") },
 };
 
+// An input or usage problem prints its one line. Anything else is a bug in
+// OpenQodex: one line, with the stack only under --verbose.
+function reportError(error: unknown, verbose: boolean): number {
+  if (error instanceof OpenQodexError) {
+    process.stderr.write(`openqodex: ${error.message}\n`);
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`openqodex failed: ${message}\n`);
+    if (verbose && error instanceof Error && error.stack) process.stderr.write(`${error.stack}\n`);
+  }
+  return EXIT_TOOL_FAILED;
+}
+
 export async function main(argv: string[]): Promise<void> {
   const program = new Command("openqodex")
     .description("Open source code review that runs inside your coding agent, before you push.")
@@ -29,7 +43,11 @@ export async function main(argv: string[]): Promise<void> {
       .allowExcessArguments()
       .action(async (_options: unknown, command: Command) => {
         const mod = await entry.load();
-        process.exitCode = await mod.run(command.args);
+        try {
+          process.exitCode = await mod.run(command.args);
+        } catch (error) {
+          process.exitCode = reportError(error, command.args.includes("--verbose"));
+        }
       });
   }
 
