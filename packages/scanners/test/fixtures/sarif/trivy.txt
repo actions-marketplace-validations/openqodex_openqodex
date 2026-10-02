@@ -1,0 +1,5 @@
+Tool: trivy 0.75.0 (trivy_0.75.0_macOS-ARM64.tar.gz from github.com/aquasecurity/trivy releases), produced 2026-10-02.
+Input: the files in ../sample, copied to /tmp/s6-sample.
+Command, run inside /tmp/s6-sample:
+  trivy config --format sarif --output trivy.sarif .
+Unchanged output. It names the scanned folder as originalUriBaseIds.ROOTPATH = file:///tmp/s6-sample/ and percent-encodes the space in "infra dir".

@@ -1,0 +1,5 @@
+Tool: semgrep 1.176.0 (Homebrew build, /opt/homebrew/bin/semgrep), produced 2026-10-02.
+Input and rules: the same as ../sarif/semgrep.txt.
+Command, run inside /tmp/s6-sample:
+  semgrep scan --config /tmp/s6-rules/rules.yml --json --metrics=off -q -o semgrep.json .
+Unchanged output. The test maps it with json-map and expects the same files, lines and rule ids as ../sarif/semgrep.sarif.
