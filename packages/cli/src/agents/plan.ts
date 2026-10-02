@@ -1,32 +1,34 @@
-// Turns targets into a list of actions, each with what it will do and how,
-// so `init` prints the full plan before it writes anything.
-import { existsSync, readdirSync, renameSync, rmdirSync, rmSync } from "node:fs";
+// Turns targets into actions, each saying what it will do, so `init` prints
+// the full plan before it writes anything. Ownership comes from the
+// installation record: a thing is changed or removed only while it is still
+// exactly what we wrote. In project scope a machine with no record (a
+// teammate's) counts a thing as ours only when it equals the current output.
+import { readdirSync, rmdirSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { readText, hasMarker, writeAtomic } from "./files.js";
-import type { HookGroup, HookHandler, Target } from "./targets.js";
+import type { AgentId } from "./detect.js";
+import { assertNoSymlinkInRepo, readText, sha256, writeAtomic, writeBackup } from "./files.js";
+import { canonical, type InstallRecord } from "./record.js";
+import type { Scope, Target } from "./targets.js";
 import { SECTION_END, SECTION_START } from "./targets.js";
 
-export type Verb = "create" | "update" | "merge" | "append" | "replace" | "remove" | "restore" | "skip" | "refuse";
+export type Verb = "create" | "update" | "merge" | "append" | "replace" | "remove" | "restore" | "skip" | "keep" | "refuse";
 
 export type Action = {
   verb: Verb;
   path: string;
   note: string;
-  // Set when the file could not be handled; init exits 2 after the rest.
+  agent?: AgentId;
+  // Set when the thing could not be handled; init exits 2 after the rest.
   failed?: boolean;
-  // Absent for "skip" and "refuse".
+  // The bytes the plan was built from; the write is refused if they changed.
+  guard?: { path: string; before: string | null };
+  // Absent for skip, keep and refuse.
   apply?: () => void | Promise<void>;
 };
 
-export const BACKUP_SUFFIX = ".openqodex.bak";
+export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null };
 
-// A hook command that `init` wrote, from any version: the launcher or npx
-// form, followed by `hook check`.
-export function isOurHookCommand(command: unknown): boolean {
-  return typeof command === "string" && /(^|[/'"\s])openqodex(@\S+)?'?\s+hook\s+check(\s|$)/.test(command);
-}
-
-type Settings = { hooks?: { PreToolUse?: HookGroup[]; [k: string]: unknown }; [k: string]: unknown };
+type Settings = { hooks?: { PreToolUse?: unknown[]; [k: string]: unknown }; [k: string]: unknown };
 
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -37,7 +39,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 // Parses a settings file and checks the parts we touch have the shape the
-// agent expects. Returns a reason string when the file must be left alone.
+// agent expects. Returns the reason when the file must be left alone.
 function parseSettings(text: string): Settings | string {
   let data: unknown;
   try {
@@ -54,48 +56,24 @@ function parseSettings(text: string): Settings | string {
   return data as Settings;
 }
 
-// Removes every handler of ours; drops groups, lists and objects that end
-// up empty because of it. Returns how many handlers were removed.
-function removeOurHandlers(data: Settings): number {
+function commandsOf(group: unknown): string[] {
+  if (!isObject(group) || !Array.isArray(group.hooks)) return [];
+  return group.hooks.filter(isObject).map((h) => h.command).filter((c): c is string => typeof c === "string");
+}
+
+// Removes the groups equal to any of `entries`; drops lists and objects left
+// empty by it. Returns how many were removed.
+function removeGroups(data: Settings, entries: unknown[]): number {
   const pre = data.hooks?.PreToolUse;
   if (!pre) return 0;
-  let removed = 0;
-  const kept: HookGroup[] = [];
-  for (const group of pre) {
-    if (!isObject(group) || !Array.isArray(group.hooks)) {
-      kept.push(group);
-      continue;
-    }
-    const handlers = (group.hooks as HookHandler[]).filter((h) => !(isObject(h) && isOurHookCommand(h.command)));
-    removed += group.hooks.length - handlers.length;
-    if (handlers.length === group.hooks.length) kept.push(group);
-    else if (handlers.length > 0) kept.push({ ...group, hooks: handlers });
-  }
+  const keys = new Set(entries.map(canonical));
+  const kept = pre.filter((g) => !keys.has(canonical(g)));
+  const removed = pre.length - kept.length;
   if (removed === 0) return 0;
   if (kept.length > 0) data.hooks!.PreToolUse = kept;
   else delete data.hooks!.PreToolUse;
   if (Object.keys(data.hooks!).length === 0) delete data.hooks;
   return removed;
-}
-
-function ourCommands(data: Settings): string[] {
-  const out: string[] = [];
-  for (const group of data.hooks?.PreToolUse ?? []) {
-    if (!isObject(group) || !Array.isArray(group.hooks)) continue;
-    for (const h of group.hooks as unknown[]) if (isObject(h) && isOurHookCommand(h.command)) out.push(h.command as string);
-  }
-  return out;
-}
-
-export function hasOurHook(path: string): boolean {
-  const text = readText(path);
-  if (text === null) return false;
-  const data = parseSettings(text);
-  return typeof data !== "string" && ourCommands(data).length > 0;
-}
-
-function saveBackupOnce(path: string, text: string): void {
-  if (!existsSync(path + BACKUP_SUFFIX)) writeAtomic(path + BACKUP_SUFFIX, text);
 }
 
 // Removes the file, then its folder when the folder is named openqodex and
@@ -114,97 +92,290 @@ function sectionBounds(text: string): { start: number; end: number } | null {
   return { start, end: endAt + SECTION_END.length };
 }
 
-export function planInstall(t: Target): Action {
-  const text = readText(t.path);
+function setFile(record: InstallRecord, path: string, content: string, usesLauncher = false): void {
+  record.files = record.files.filter((f) => f.path !== path);
+  record.files.push({ path, sha256: sha256(content), usesLauncher });
+}
+
+function dropFile(record: InstallRecord, path: string): void {
+  record.files = record.files.filter((f) => f.path !== path);
+}
+
+// The recorded file entry when the file on disk is still what we wrote.
+export function ownedFile(record: InstallRecord, path: string, text: string | null): boolean {
+  const rec = record.files.find((f) => f.path === path);
+  return rec !== undefined && text !== null && sha256(text) === rec.sha256;
+}
+
+function checkRepoPath(t: Target, ctx: Ctx): void {
+  if (t.inRepo && ctx.repoRoot !== null) assertNoSymlinkInRepo(ctx.repoRoot, t.path);
+}
+
+export function planInstall(t: Target, ctx: Ctx): Action {
+  const { record } = ctx;
+  checkRepoPath(t, ctx);
+  const before = readText(t.path);
+  const base = { path: t.path, agent: t.agent, guard: { path: t.path, before } };
   switch (t.kind) {
     case "file": {
-      if (text === null) return { verb: "create", path: t.path, note: t.label, apply: () => writeAtomic(t.path, t.content) };
-      if (text === t.content || text === t.plain) return { verb: "skip", path: t.path, note: `${t.label} already present` };
-      if (hasMarker(text)) return { verb: "update", path: t.path, note: t.label, apply: () => writeAtomic(t.path, t.content) };
-      return { verb: "refuse", path: t.path, note: `${t.label}: the file exists with other content and is left alone` };
+      const write = (): void => {
+        writeAtomic(t.path, t.content);
+        setFile(record, t.path, t.content);
+      };
+      if (before === null) return { ...base, verb: "create", note: t.label, apply: write };
+      if (before === t.content) return { ...base, verb: "skip", note: `${t.label} already present` };
+      if (ownedFile(record, t.path, before)) return { ...base, verb: "update", note: t.label, apply: write };
+      const recorded = record.files.some((f) => f.path === t.path);
+      return {
+        ...base,
+        verb: "keep",
+        note: recorded ? `${t.label} was edited after install; left as it is` : `${t.label}: a file with other content is there; left alone`,
+      };
     }
     case "hook-json": {
-      if (text === null) {
+      const recs = record.hooks.filter((h) => h.path === t.path);
+      const entry = { path: t.path, entry: t.group, usesLauncher: t.usesLauncher };
+      if (before === null) {
         return {
+          ...base,
           verb: "create",
-          path: t.path,
           note: t.label,
-          apply: () => writeAtomic(t.path, json({ hooks: { PreToolUse: [t.group] } })),
+          apply: () => {
+            writeAtomic(t.path, json({ hooks: { PreToolUse: [t.group] } }), t.inRepo ? 0o644 : 0o600);
+            record.hooks.push({ ...entry, createdFile: true });
+          },
         };
       }
-      const data = parseSettings(text);
+      const data = parseSettings(before);
       if (typeof data === "string") {
-        return { verb: "refuse", path: t.path, note: `${t.label}: the file ${data}; left untouched, fix it and run init again`, failed: true };
+        return { ...base, verb: "refuse", failed: true, note: `${t.label}: the file ${data}; left untouched, fix it and run init again` };
       }
-      const ours = ourCommands(data);
-      if (ours.length === 1 && ours[0] === t.command) return { verb: "skip", path: t.path, note: `${t.label} already present` };
-      const verb: Verb = ours.length > 0 ? "update" : "merge";
-      removeOurHandlers(data);
+      const groups = data.hooks?.PreToolUse ?? [];
+      const current = canonical(t.group);
+      if (groups.some((g) => canonical(g) === current)) {
+        // Exactly what we would write: ours, recorded or not.
+        if (!recs.some((r) => canonical(r.entry) === current)) record.hooks.push({ ...entry, createdFile: false });
+        return { ...base, verb: "skip", note: `${t.label} already present` };
+      }
+      const oldIndex = groups.findIndex((g) => recs.some((r) => canonical(r.entry) === canonical(g)));
+      if (oldIndex !== -1) {
+        const old = recs.find((r) => canonical(r.entry) === canonical(groups[oldIndex]))!;
+        groups[oldIndex] = t.group;
+        return {
+          ...base,
+          verb: "update",
+          note: `${t.label}, replacing the one an earlier openqodex wrote`,
+          apply: () => {
+            writeAtomic(t.path, json(data));
+            record.hooks = record.hooks.filter((r) => r !== old);
+            record.hooks.push({ ...entry, createdFile: old.createdFile });
+          },
+        };
+      }
+      const ourCommands = new Set([...commandsOf(t.group), ...recs.flatMap((r) => commandsOf(r.entry))]);
+      if (groups.some((g) => commandsOf(g).some((c) => ourCommands.has(c)))) {
+        return { ...base, verb: "keep", note: `${t.label} was edited after install; left as it is` };
+      }
       data.hooks ??= {};
-      data.hooks.PreToolUse = [...(data.hooks.PreToolUse ?? []), t.group];
+      data.hooks.PreToolUse = [...groups, t.group];
+      const hasBackup = record.backups.some((b) => b.of === t.path);
       return {
-        verb,
-        path: t.path,
-        note: `${t.label}, other settings kept (previous file saved as ${basename(t.path)}${BACKUP_SUFFIX})`,
+        ...base,
+        verb: "merge",
+        note: `${t.label}, other settings kept${hasBackup ? "" : ` (the file as it was is saved beside it as ${basename(t.path)}.openqodex.bak)`}`,
         apply: () => {
-          saveBackupOnce(t.path, text);
+          if (!hasBackup) record.backups.push({ path: writeBackup(t.path, before), of: t.path });
           writeAtomic(t.path, json(data));
+          record.hooks.push({ ...entry, createdFile: false });
         },
       };
     }
     case "md-section": {
-      const section = `${t.section}\n`;
-      if (text === null) return { verb: "create", path: t.path, note: t.label, apply: () => writeAtomic(t.path, section) };
-      const at = sectionBounds(text);
-      if (at === null) {
-        const joined = text === "" ? section : `${text}${text.endsWith("\n") ? "\n" : "\n\n"}${section}`;
-        return { verb: "append", path: t.path, note: `${t.label} section`, apply: () => writeAtomic(t.path, joined) };
+      const rec = record.sections.find((s) => s.path === t.path);
+      const section = t.section;
+      const remember = (createdFile: boolean): void => {
+        record.sections = record.sections.filter((s) => s.path !== t.path);
+        record.sections.push({ path: t.path, text: section, createdFile });
+      };
+      if (before === null) {
+        return {
+          ...base,
+          verb: "create",
+          note: t.label,
+          apply: () => {
+            writeAtomic(t.path, `${section}\n`);
+            remember(true);
+          },
+        };
       }
-      if (text.slice(at.start, at.end) === t.section) return { verb: "skip", path: t.path, note: `${t.label} section already present` };
-      const replaced = text.slice(0, at.start) + t.section + text.slice(at.end);
-      return { verb: "replace", path: t.path, note: `${t.label} section`, apply: () => writeAtomic(t.path, replaced) };
+      const at = sectionBounds(before);
+      if (at === null) {
+        const joined = before === "" ? `${section}\n` : `${before}${before.endsWith("\n") ? "\n" : "\n\n"}${section}\n`;
+        return {
+          ...base,
+          verb: "append",
+          note: `${t.label} section`,
+          apply: () => {
+            writeAtomic(t.path, joined);
+            remember(false);
+          },
+        };
+      }
+      const existing = before.slice(at.start, at.end);
+      if (existing === section) {
+        if (!rec) remember(false);
+        return { ...base, verb: "skip", note: `${t.label} section already present` };
+      }
+      if (rec && existing === rec.text) {
+        const replaced = before.slice(0, at.start) + section + before.slice(at.end);
+        return {
+          ...base,
+          verb: "replace",
+          note: `${t.label} section`,
+          apply: () => {
+            writeAtomic(t.path, replaced);
+            remember(rec.createdFile);
+          },
+        };
+      }
+      return { ...base, verb: "keep", note: `${t.label} section was edited; left as it is` };
     }
   }
 }
 
-// Null when there is nothing of ours to remove.
-export function planUninstall(t: Target): Action | null {
-  const text = readText(t.path);
-  if (text === null) return null;
+// Null when there is nothing of ours there.
+export function planUninstall(t: Target, ctx: Ctx): Action | null {
+  const { record, scope } = ctx;
+  checkRepoPath(t, ctx);
+  const before = readText(t.path);
+  const base = { path: t.path, agent: t.agent, guard: { path: t.path, before } };
   switch (t.kind) {
     case "file": {
-      if (text === t.content) return { verb: "remove", path: t.path, note: t.label, apply: () => removeFile(t.path) };
-      if (hasMarker(text)) return { verb: "skip", path: t.path, note: `${t.label} was changed after init; left in place` };
-      return null;
+      const recorded = record.files.some((f) => f.path === t.path);
+      const ours = recorded ? ownedFile(record, t.path, before) : scope === "project" && before === t.content;
+      if (before === null || (!ours && !recorded)) {
+        dropFile(record, t.path);
+        return null;
+      }
+      if (!ours) {
+        dropFile(record, t.path);
+        return { ...base, verb: "keep", note: `${t.label} was edited after install; left in place` };
+      }
+      return {
+        ...base,
+        verb: "remove",
+        note: t.label,
+        apply: () => {
+          removeFile(t.path);
+          dropFile(record, t.path);
+        },
+      };
     }
     case "hook-json": {
-      const data = parseSettings(text);
-      if (typeof data === "string") return { verb: "refuse", path: t.path, note: `${t.label}: the file ${data}; left untouched`, failed: true };
-      if (removeOurHandlers(data) === 0) return null;
-      const backup = readText(t.path + BACKUP_SUFFIX);
-      if (backup !== null && json(data) === json(parseSettings(backup))) {
+      const recs = record.hooks.filter((h) => h.path === t.path);
+      const forget = (): void => {
+        record.hooks = record.hooks.filter((h) => h.path !== t.path);
+      };
+      if (before === null) {
+        forget();
+        return null;
+      }
+      const data = parseSettings(before);
+      if (typeof data === "string") {
+        return recs.length > 0 || scope === "project"
+          ? { ...base, verb: "refuse", failed: true, note: `${t.label}: the file ${data}; left untouched` }
+          : null;
+      }
+      const candidates = [...recs.map((r) => r.entry), ...(recs.length === 0 && scope === "project" ? [t.group] : [])];
+      if (removeGroups(data, candidates) === 0) {
+        forget();
+        return recs.length > 0 ? { ...base, verb: "keep", note: `${t.label} was edited after install; left in place` } : null;
+      }
+      const backup = record.backups.find((b) => b.of === t.path);
+      const backupText = backup ? readText(backup.path) : null;
+      const backupData = backupText === null ? null : parseSettings(backupText);
+      const dropBackup = (): void => {
+        record.backups = record.backups.filter((b) => b !== backup);
+      };
+      if (backup && backupText !== null && typeof backupData !== "string" && canonical(backupData) === canonical(data)) {
         return {
+          ...base,
           verb: "restore",
-          path: t.path,
-          note: `${t.label} removed, the file put back as it was before init`,
-          apply: () => renameSync(t.path + BACKUP_SUFFIX, t.path),
+          note: `${t.label} removed; the file is back as it was before install`,
+          apply: () => {
+            writeAtomic(t.path, backupText);
+            rmSync(backup.path, { force: true });
+            dropBackup();
+            forget();
+          },
         };
       }
-      if (backup === null && Object.keys(data).length === 0) {
-        return { verb: "remove", path: t.path, note: `${t.label} (init created this file)`, apply: () => removeFile(t.path) };
+      const created = recs.length > 0 ? recs.some((r) => r.createdFile) : scope === "project";
+      if (created && Object.keys(data).length === 0) {
+        return {
+          ...base,
+          verb: "remove",
+          note: `${t.label} (init created this file)`,
+          apply: () => {
+            removeFile(t.path);
+            forget();
+          },
+        };
       }
-      return { verb: "update", path: t.path, note: `${t.label} removed, other settings kept`, apply: () => writeAtomic(t.path, json(data)) };
+      return {
+        ...base,
+        verb: "update",
+        note: `${t.label} removed, other settings kept${backup ? ` (the copy from before install stays at ${backup.path})` : ""}`,
+        apply: () => {
+          writeAtomic(t.path, json(data));
+          dropBackup();
+          forget();
+        },
+      };
     }
     case "md-section": {
-      const at = sectionBounds(text);
-      if (at === null) return null;
-      let before = text.slice(0, at.start);
-      let after = text.slice(at.end);
-      if (after.startsWith("\n")) after = after.slice(1);
-      if (after === "" && before.endsWith("\n\n")) before = before.slice(0, -1);
-      const rest = before + after;
-      if (rest.trim() === "") return { verb: "remove", path: t.path, note: `${t.label} (only our section was in it)`, apply: () => removeFile(t.path) };
-      return { verb: "update", path: t.path, note: `${t.label} section removed`, apply: () => writeAtomic(t.path, rest) };
+      const rec = record.sections.find((s) => s.path === t.path);
+      const forget = (): void => {
+        record.sections = record.sections.filter((s) => s.path !== t.path);
+      };
+      const at = before === null ? null : sectionBounds(before);
+      if (before === null || at === null) {
+        forget();
+        return null;
+      }
+      const existing = before.slice(at.start, at.end);
+      const ours = rec ? existing === rec.text : scope === "project" && existing === t.section;
+      if (!ours) {
+        forget();
+        return rec ? { ...base, verb: "keep", note: `${t.label} section was edited; left in place` } : null;
+      }
+      let head = before.slice(0, at.start);
+      let tail = before.slice(at.end);
+      if (tail.startsWith("\n")) tail = tail.slice(1);
+      if (tail === "" && head.endsWith("\n\n")) head = head.slice(0, -1);
+      const rest = head + tail;
+      const created = rec ? rec.createdFile : true;
+      if (rest.trim() === "" && created) {
+        return {
+          ...base,
+          verb: "remove",
+          note: `${t.label} (only our section was in it)`,
+          apply: () => {
+            removeFile(t.path);
+            forget();
+          },
+        };
+      }
+      return {
+        ...base,
+        verb: "update",
+        note: `${t.label} section removed`,
+        apply: () => {
+          writeAtomic(t.path, rest);
+          forget();
+        },
+      };
     }
   }
 }
+

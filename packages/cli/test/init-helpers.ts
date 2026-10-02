@@ -18,8 +18,10 @@ export function git(cwd: string, ...args: string[]): string {
   return r.stdout;
 }
 
-export function sandbox(files: Record<string, string> = { "README.md": "hello\n" }): Sandbox {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "oq test ")));
+// A temp home and a temp repo with one commit holding `files`. The default
+// repo tracks no file, so `init` starts no scanner install from a test.
+export function sandbox(files: Record<string, string> = {}, rootName = "oq test "): Sandbox {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), rootName)));
   const home = join(root, "home dir");
   const repo = join(root, "the repo");
   mkdirSync(home, { recursive: true });
@@ -33,7 +35,7 @@ export function sandbox(files: Record<string, string> = { "README.md": "hello\n"
     writeFileSync(join(repo, path), content);
   }
   git(repo, "add", "-A");
-  git(repo, "commit", "-q", "-m", "start");
+  git(repo, "commit", "-q", "--allow-empty", "-m", "start");
   return { root, home, oqHome: join(home, ".openqodex"), repo };
 }
 

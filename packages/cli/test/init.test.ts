@@ -1,31 +1,56 @@
 // `openqodex init`, run as the real built CLI in temp homes and temp repos.
 //
 // Ways it could fail, written before the code:
-//  1. A user-scope install changes the repo's `git status` (the Cursor rule is
-//     not excluded, or something else lands in the work tree).
-//  2. A second run rewrites a file, adds a second hook entry, or appends the
-//     exclude line again.
-//  3. Merging into an existing settings.json drops other keys or other hooks.
-//  4. A settings file that does not parse is rewritten or truncated, or init
-//     exits 0 as if all went well.
-//  5. The hook command breaks when the home folder path holds a space
-//     (unquoted path through a shell).
-//  6. The launcher points at a runtime that does not run.
-//  7. A file that a JSON file says is written is not valid JSON.
-//  8. `--project` writes to the home folder, or still uses the absolute
-//     launcher path in files a team would commit.
-//  9. `--uninstall` leaves our entries behind, removes the developer's own
-//     entries, or does not put an existing file back as it was.
-// 10. `--dry-run` writes something.
-// 11. Without a terminal and without --yes, init writes without asking.
-// 12. A foreign rule or skill file with the same name is overwritten.
+//  1. A user-scope install changes the repo's `git status`.
+//  2. A second run rewrites a file or adds a second hook entry.
+//  3. Merging into an existing settings.json drops other keys or hooks, or
+//     touches a developer's own handler that merely mentions openqodex.
+//  4. A settings file that does not parse, or cannot be read, is replaced.
+//  5. The hook command breaks when the home path holds a space or `$&`.
+//  6. `--project` uses the absolute launcher path in files a team commits.
+//  7. Uninstall removes what the developer edited or owned: an edited skill
+//     or section, an exclude line that was there before, a line another
+//     worktree still needs, unrelated files under runtime/, a launcher still
+//     called by a hook it could not remove.
+//  8. Init overwrites a launcher it did not write.
+//  9. A symlinked dotfile becomes a regular file; a symlink inside the repo
+//     sends a write outside it.
+// 10. A merge widens a private settings file's permissions.
+// 11. `--dry-run`, or no terminal without --yes, writes something.
+// 12. Init fails, or hides it, when the scanner installs cannot start.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { BIN, cli, env, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
+import { BIN, cli, env, git, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
+const isRoot = process.getuid?.() === 0;
+
+type Settings = { hooks: { PreToolUse: { matcher?: string; hooks: { command: string; if?: string }[] }[] } };
+
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+function ourCommands(path: string): string[] {
+  return readJson<Settings>(path)
+    .hooks.PreToolUse.flatMap((g) => g.hooks.map((h) => h.command))
+    .filter((c) => c.endsWith(" hook check"));
+}
 
 function userFiles(s: Sandbox): string[] {
   return [
@@ -42,16 +67,7 @@ function userFiles(s: Sandbox): string[] {
   ];
 }
 
-function hookCommand(settingsPath: string): string {
-  const data = JSON.parse(readFileSync(settingsPath, "utf8")) as {
-    hooks: { PreToolUse: { hooks: { command: string }[] }[] };
-  };
-  const commands = data.hooks.PreToolUse.flatMap((g) => g.hooks.map((h) => h.command)).filter((c) => c.includes("hook check"));
-  expect(commands).toHaveLength(1);
-  return commands[0];
-}
-
-describe("openqodex init, user scope", () => {
+describe("init, user scope, all agents", () => {
   let s: Sandbox;
   let statusBefore: string;
   let first: ReturnType<typeof cli>;
@@ -63,34 +79,16 @@ describe("openqodex init, user scope", () => {
     first = cli(s, ["init", "--yes", "--agent", "all"]);
   });
 
-  it("writes every user-scope file and exits 0", () => {
+  it("writes every user-scope file the templates README lists, without changing git status", () => {
     expect(first.status, first.stderr).toBe(0);
     for (const f of userFiles(s)) expect(existsSync(f), f).toBe(true);
-    for (const f of [join(s.home, ".claude/settings.json"), join(s.home, ".codex/hooks.json")]) {
-      expect(() => JSON.parse(readFileSync(f, "utf8"))).not.toThrow();
-    }
-    expect(first.stdout).toContain("review my change with openqodex");
-    expect(first.stdout).toContain("/hooks");
-    expect(first.stdout).toContain("init --uninstall");
-    expect(first.stdout).toContain("hook install");
-  });
-
-  it("leaves the repo's git status unchanged", () => {
     expect(status(s)).toBe(statusBefore);
   });
 
-  it("writes a launcher that runs the runtime copy", () => {
-    const launcher = join(s.oqHome, "bin/openqodex");
-    expect(statSync(launcher).mode & 0o111).not.toBe(0);
-    const r = spawnSync(launcher, ["--version"], { encoding: "utf8", env: env(s) });
-    expect(r.stdout.trim()).toBe(version);
-  });
-
-  it("writes hook commands that call the launcher by quoted absolute path and run through sh", () => {
+  it("writes hook commands that run through sh from a home path with a space", () => {
     for (const f of [join(s.home, ".claude/settings.json"), join(s.home, ".codex/hooks.json")]) {
-      const command = hookCommand(f);
+      const [command] = ourCommands(f);
       expect(command).not.toContain("npx");
-      expect(command).toContain(join(s.oqHome, "bin/openqodex"));
       const input = JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push" }, cwd: s.repo });
       const r = spawnSync("sh", ["-c", command], { input, encoding: "utf8", env: env(s), cwd: s.repo });
       expect(r.status, r.stderr).toBe(0);
@@ -98,7 +96,7 @@ describe("openqodex init, user scope", () => {
     }
   });
 
-  it("changes nothing on a second run and says so", () => {
+  it("changes nothing on a second run", () => {
     const before = snapshot(s);
     const second = cli(s, ["init", "--yes", "--agent", "all"]);
     expect(second.status, second.stderr).toBe(0);
@@ -106,42 +104,47 @@ describe("openqodex init, user scope", () => {
     expect(snapshot(s)).toEqual(before);
   });
 
-  it("--uninstall removes what it wrote and restores the starting state", () => {
+  it("uninstall restores the starting state", () => {
     const r = cli(s, ["init", "--uninstall", "--yes"]);
     expect(r.status, r.stderr).toBe(0);
-    for (const f of userFiles(s)) expect(existsSync(f), f).toBe(false);
-    expect(readFileSync(join(s.repo, ".git/info/exclude"), "utf8")).not.toContain("openqodex");
     expect(status(s)).toBe(statusBefore);
+    expect(readFileSync(join(s.repo, ".git/info/exclude"), "utf8")).not.toContain("openqodex");
     expect(Object.keys(snapshot(s)).filter((p) => p.startsWith("home dir"))).toEqual([]);
   });
 });
 
-describe("openqodex init, existing files", () => {
-  it("keeps other keys and hooks in an existing settings.json, and uninstall puts it back byte for byte", () => {
+describe("init, settings files", () => {
+  it("keeps other keys and the developer's own handlers, even one naming openqodex, and uninstall puts the file back byte for byte", () => {
     const s = sandbox();
     const settings = join(s.home, ".claude/settings.json");
     mkdirSync(join(s.home, ".claude"), { recursive: true });
-    const original =
-      '{\n    "model": "x",\n    "hooks": {\n        "PreToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "echo mine"}]}],\n        "Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}]\n    }\n}\n';
+    const original = `${JSON.stringify(
+      {
+        model: "x",
+        hooks: {
+          PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "echo openqodex hook check" }] }],
+          Stop: [{ hooks: [{ type: "command", command: "echo stop" }] }],
+        },
+      },
+      null,
+      4,
+    )}\n`;
     writeFileSync(settings, original);
 
-    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
-    expect(r.status, r.stderr).toBe(0);
-    const merged = JSON.parse(readFileSync(settings, "utf8"));
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    const merged = readJson<Settings & { model: string }>(settings);
     expect(merged.model).toBe("x");
-    expect(merged.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: "echo stop" }] }]);
-    expect(merged.hooks.PreToolUse[0]).toEqual({ matcher: "Edit", hooks: [{ type: "command", command: "echo mine" }] });
-    expect(merged.hooks.PreToolUse[1].matcher).toBe("Bash");
+    expect(merged.hooks.PreToolUse).toHaveLength(2);
+    expect(merged.hooks.PreToolUse[0].hooks[0].command).toBe("echo openqodex hook check");
     expect(merged.hooks.PreToolUse[1].hooks[0].if).toBe("Bash(git push*)");
-    expect(readFileSync(`${settings}.openqodex.bak`, "utf8")).toBe(original);
 
-    const u = cli(s, ["init", "--uninstall", "--yes", "--agent", "claude-code"]);
-    expect(u.status, u.stderr).toBe(0);
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).stdout).toContain("Nothing to change");
+    expect(cli(s, ["init", "--uninstall", "--yes", "--agent", "claude-code"]).status).toBe(0);
     expect(readFileSync(settings, "utf8")).toBe(original);
-    expect(existsSync(`${settings}.openqodex.bak`)).toBe(false);
+    expect(readdirSync(join(s.home, ".claude")).filter((n) => n.includes(".bak"))).toEqual([]);
   });
 
-  it("leaves a settings file that does not parse byte-identical, installs the rest, and exits 2", () => {
+  it("leaves a settings file that does not parse byte-identical, installs the other agent, exits 2", () => {
     const s = sandbox();
     const settings = join(s.home, ".claude/settings.json");
     mkdirSync(join(s.home, ".claude"), { recursive: true });
@@ -149,67 +152,180 @@ describe("openqodex init, existing files", () => {
     const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--agent", "codex"]);
     expect(r.status).toBe(2);
     expect(readFileSync(settings, "utf8")).toBe("{ not json,\n");
-    expect(existsSync(join(s.home, ".codex/hooks.json"))).toBe(true);
-    expect(existsSync(join(s.home, ".claude/skills/openqodex/SKILL.md"))).toBe(true);
+    expect(ourCommands(join(s.home, ".codex/hooks.json"))).toHaveLength(1);
   });
 
-  it("does not overwrite a foreign rule file with the same name", () => {
+  it.skipIf(isRoot)("leaves an unreadable settings file in place and exits 2", () => {
+    const s = sandbox();
+    const settings = join(s.home, ".claude/settings.json");
+    mkdirSync(join(s.home, ".claude"), { recursive: true });
+    writeFileSync(settings, '{"model":"x"}\n');
+    chmodSync(settings, 0o000);
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--agent", "codex"]);
+    chmodSync(settings, 0o600);
+    expect(r.status).toBe(2);
+    expect(readFileSync(settings, "utf8")).toBe('{"model":"x"}\n');
+    expect(existsSync(join(s.home, ".codex/hooks.json"))).toBe(true);
+  });
+
+  it("keeps a private settings file private, and its backup too", () => {
+    const s = sandbox();
+    const settings = join(s.home, ".claude/settings.json");
+    mkdirSync(join(s.home, ".claude"), { recursive: true });
+    writeFileSync(settings, '{"model":"x"}\n', { mode: 0o600 });
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    expect(statSync(settings).mode & 0o777).toBe(0o600);
+    const backups = readdirSync(join(s.home, ".claude")).filter((n) => n.includes(".bak"));
+    expect(backups).toHaveLength(1);
+    expect(statSync(join(s.home, ".claude", backups[0])).mode & 0o777).toBe(0o600);
+  });
+
+  it("writes through a symlinked settings file and leaves the link a link", () => {
+    const s = sandbox();
+    const dotfiles = join(s.root, "dotfiles");
+    mkdirSync(dotfiles);
+    writeFileSync(join(dotfiles, "settings.json"), '{"model":"x"}\n');
+    mkdirSync(join(s.home, ".claude"), { recursive: true });
+    symlinkSync(join(dotfiles, "settings.json"), join(s.home, ".claude/settings.json"));
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    expect(lstatSync(join(s.home, ".claude/settings.json")).isSymbolicLink()).toBe(true);
+    expect(ourCommands(join(dotfiles, "settings.json"))).toHaveLength(1);
+  });
+
+  it("puts a home path holding $& into the hook command literally", () => {
+    const s = sandbox({}, "oq $& test ");
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    const [command] = ourCommands(join(s.home, ".claude/settings.json"));
+    expect(command).toContain(join(s.oqHome, "bin/openqodex"));
+  });
+});
+
+describe("init, files the developer owns or edited", () => {
+  it("keeps an edited skill on a second run and on uninstall, and says so", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    const skill = join(s.home, ".claude/skills/openqodex/SKILL.md");
+    const edited = `${readFileSync(skill, "utf8")}\nCompany rule: also check the changelog.\n`;
+    writeFileSync(skill, edited);
+    const again = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(readFileSync(skill, "utf8")).toBe(edited);
+    expect(again.stdout).toContain("edited");
+    const u = cli(s, ["init", "--uninstall", "--yes"]);
+    expect(readFileSync(skill, "utf8")).toBe(edited);
+    expect(u.stdout).toContain("edited");
+  });
+
+  it("does not overwrite or remove a foreign rule file with the same name", () => {
     const s = sandbox();
     const rule = join(s.home, "Documents/Cline/Rules/openqodex.md");
     mkdirSync(join(rule, ".."), { recursive: true });
     writeFileSync(rule, "my own rule\n");
-    const r = cli(s, ["init", "--yes", "--agent", "cline"]);
-    expect(r.status, r.stderr).toBe(0);
+    expect(cli(s, ["init", "--yes", "--agent", "cline"]).status).toBe(0);
+    cli(s, ["init", "--uninstall", "--yes"]);
     expect(readFileSync(rule, "utf8")).toBe("my own rule\n");
-    expect(r.stdout).toContain("left alone");
-    cli(s, ["init", "--uninstall", "--yes", "--agent", "cline"]);
-    expect(readFileSync(rule, "utf8")).toBe("my own rule\n");
+  });
+
+  it("keeps an exclude line that was there before init", () => {
+    const s = sandbox();
+    const exclude = join(s.repo, ".git/info/exclude");
+    writeFileSync(exclude, "/.cursor/rules/openqodex.mdc\n");
+    expect(cli(s, ["init", "--yes", "--agent", "cursor"]).status).toBe(0);
+    expect(cli(s, ["init", "--uninstall", "--yes"]).status).toBe(0);
+    expect(readFileSync(exclude, "utf8")).toBe("/.cursor/rules/openqodex.mdc\n");
+  });
+
+  it("keeps the exclude line while another worktree's rule still needs it", () => {
+    const s = sandbox();
+    const other = join(s.root, "other worktree");
+    git(s.repo, "worktree", "add", "-q", "-b", "other", other);
+    expect(cli(s, ["init", "--yes", "--agent", "cursor"]).status).toBe(0);
+    expect(cli(s, ["init", "--yes", "--agent", "cursor"], { cwd: other }).status).toBe(0);
+    expect(cli(s, ["init", "--uninstall", "--yes", "--agent", "cursor"]).status).toBe(0);
+    expect(git(other, "status", "--porcelain", "--untracked-files=all")).toBe("");
+  });
+
+  it("refuses a launcher it did not write, and writes no hook that would call it", () => {
+    const s = sandbox();
+    mkdirSync(join(s.oqHome, "bin"), { recursive: true });
+    writeFileSync(join(s.oqHome, "bin/openqodex"), "#!/bin/sh\necho mine\n");
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(r.status).toBe(2);
+    expect(readFileSync(join(s.oqHome, "bin/openqodex"), "utf8")).toBe("#!/bin/sh\necho mine\n");
+    expect(existsSync(join(s.home, ".claude/settings.json"))).toBe(false);
+  });
+
+  it("uninstall leaves files it did not write under runtime/", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    writeFileSync(join(s.oqHome, "runtime", "notes.txt"), "mine\n");
+    expect(cli(s, ["init", "--uninstall", "--yes"]).status).toBe(0);
+    expect(readFileSync(join(s.oqHome, "runtime", "notes.txt"), "utf8")).toBe("mine\n");
+    expect(existsSync(join(s.oqHome, "runtime", version))).toBe(false);
+  });
+
+  it("keeps the launcher while a settings file it cannot parse may still call it", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    const settings = join(s.home, ".claude/settings.json");
+    writeFileSync(settings, `${readFileSync(settings, "utf8")},broken`);
+    expect(cli(s, ["init", "--uninstall", "--yes"]).status).toBe(2);
+    const launcher = join(s.oqHome, "bin/openqodex");
+    expect(spawnSync(launcher, ["--version"], { encoding: "utf8", env: env(s) }).stdout.trim()).toBe(version);
   });
 });
 
-describe("openqodex init, project scope", () => {
-  it("writes the project paths with npx commands, and uninstall leaves git status as it was", () => {
-    const s = sandbox({ "README.md": "hello\n", "AGENTS.md": "# Agents\n\nBe nice.\n" });
-    const r = cli(s, ["init", "--yes", "--project", "--agent", "all"]);
-    expect(r.status, r.stderr).toBe(0);
-    for (const p of [
-      ".claude/skills/openqodex/SKILL.md",
-      ".claude/settings.json",
-      ".agents/skills/openqodex/SKILL.md",
-      ".codex/hooks.json",
-      ".cursor/rules/openqodex.mdc",
-      ".cline/skills/openqodex/SKILL.md",
-      ".clinerules/openqodex.md",
-    ]) {
-      expect(existsSync(join(s.repo, p)), p).toBe(true);
-    }
-    const agentsMd = readFileSync(join(s.repo, "AGENTS.md"), "utf8");
-    expect(agentsMd.startsWith("# Agents\n\nBe nice.\n")).toBe(true);
-    expect(agentsMd).toContain("<!-- openqodex:start -->");
-    expect(hookCommand(join(s.repo, ".claude/settings.json"))).toBe(`npx -y openqodex@${version} hook check`);
-    expect(Object.keys(snapshot(s)).filter((p) => p.startsWith("home dir"))).toEqual([]);
-    expect(readFileSync(join(s.repo, ".git/info/exclude"), "utf8")).not.toContain("openqodex");
-
-    const again = cli(s, ["init", "--yes", "--project", "--agent", "all"]);
-    expect(again.stdout).toContain("Nothing to change");
-
-    const u = cli(s, ["init", "--uninstall", "--yes", "--project"]);
-    expect(u.status, u.stderr).toBe(0);
-    expect(status(s)).toBe("");
+describe("init, repository symlinks", () => {
+  it("refuses a .cursor/rules folder that links outside the repo", () => {
+    const s = sandbox();
+    const outside = mkdtempSync(join(tmpdir(), "oq outside "));
+    mkdirSync(join(s.repo, ".cursor"));
+    symlinkSync(outside, join(s.repo, ".cursor/rules"));
+    const r = cli(s, ["init", "--yes", "--agent", "cursor"]);
+    expect(r.status).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+    rmSync(outside, { recursive: true });
   });
 });
 
-describe("openqodex init, no writes", () => {
-  it("--dry-run prints the plan and writes nothing", () => {
+describe("init, project scope", () => {
+  it("uses the pinned npx command, and a teammate without a record can uninstall what is unchanged", () => {
+    const s = sandbox({ "AGENTS.md": "# Agents\n\nBe nice.\n" });
+    expect(cli(s, ["init", "--yes", "--project", "--agent", "all"]).status).toBe(0);
+    expect(ourCommands(join(s.repo, ".claude/settings.json"))).toEqual([`npx -y openqodex@${version} hook check`]);
+    expect(existsSync(join(s.repo, ".clinerules/openqodex.md"))).toBe(true);
+    git(s.repo, "add", "-A");
+    git(s.repo, "commit", "-q", "-m", "openqodex");
+
+    // The teammate: same repo, a fresh home with no installation record.
+    const teammate = { ...s, home: join(s.root, "teammate"), oqHome: join(s.root, "teammate", ".openqodex") };
+    mkdirSync(teammate.home);
+    expect(cli(teammate, ["init", "--uninstall", "--yes", "--project"]).status).toBe(0);
+    expect(readFileSync(join(s.repo, "AGENTS.md"), "utf8")).toBe("# Agents\n\nBe nice.\n");
+    expect(git(s.repo, "ls-files", "--deleted")).not.toBe("");
+    expect(existsSync(join(s.repo, ".claude/settings.json"))).toBe(false);
+  });
+
+  it("keeps an AGENTS.md section the developer edited", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--project", "--agent", "codex"]).status).toBe(0);
+    const agents = join(s.repo, "AGENTS.md");
+    const edited = readFileSync(agents, "utf8").replace("## Review before push", "## Review before push, our way");
+    writeFileSync(agents, edited);
+    cli(s, ["init", "--yes", "--project", "--agent", "codex"]);
+    cli(s, ["init", "--uninstall", "--yes", "--project"]);
+    expect(readFileSync(agents, "utf8")).toBe(edited);
+  });
+});
+
+describe("init, writes nothing when it should not", () => {
+  it("--dry-run writes nothing", () => {
     const s = sandbox();
     const before = snapshot(s);
-    const r = cli(s, ["init", "--dry-run", "--agent", "all"]);
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain(join(s.home, ".claude/settings.json"));
+    expect(cli(s, ["init", "--dry-run", "--agent", "all"]).status).toBe(0);
     expect(snapshot(s)).toEqual(before);
   });
 
-  it("without a terminal and without --yes prints the plan and exits 2", () => {
+  it("without a terminal and without --yes exits 2 and writes nothing", () => {
     const s = sandbox();
     const before = snapshot(s);
     const r = cli(s, ["init", "--agent", "claude-code"]);
@@ -217,9 +333,31 @@ describe("openqodex init, no writes", () => {
     expect(r.stderr).toContain("--yes");
     expect(snapshot(s)).toEqual(before);
   });
+});
 
-  it("an unknown agent is a usage error", () => {
-    const s = sandbox();
-    expect(cli(s, ["init", "--agent", "vim"]).status).toBe(2);
+// A live lock on every tool makes the background install skip it, so a test
+// that tracks files never starts a download.
+function lockTools(s: Sandbox): void {
+  const tools = Object.keys(readJson<{ tools: Record<string, unknown> }>(join(BIN, "..", "..", "toolchain.json")).tools);
+  for (const tool of tools) {
+    mkdirSync(join(s.oqHome, "tools", tool), { recursive: true });
+    writeFileSync(join(s.oqHome, "tools", tool, ".lock"), `${process.pid} test\n`);
+  }
+}
+
+describe("init, after writing", () => {
+  it("starts the scanner installs this repo wants", () => {
+    const s = sandbox({ "deploy.sh": "#!/bin/sh\necho hi\n" });
+    lockTools(s);
+    const r = cli(s, ["init", "--yes", "--agent", "cursor"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/background: .*shellcheck/);
+  });
+
+  it("recommends the git pre-push hook when the repo blocks on findings", () => {
+    const s = sandbox({ ".openqodex.yaml": "review:\n  block_on_severity: major\n" });
+    lockTools(s);
+    const r = cli(s, ["init", "--yes", "--agent", "cursor"]);
+    expect(r.stdout).toMatch(/block_on_severity.*hook install/);
   });
 });

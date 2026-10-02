@@ -4,16 +4,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assetPath } from "../assets.js";
 import type { AgentId } from "./detect.js";
-import { withMarker } from "./files.js";
 
 export type Scope = "user" | "project";
 
 export type Target =
-  // A whole file we own (rule or skill). `content` carries our marker;
-  // `plain` is the same text without it, which counts as already present.
-  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; plain: string; inRepo: boolean }
-  // One handler merged under hooks.PreToolUse of a JSON settings file.
-  | { kind: "hook-json"; agent: AgentId; label: string; path: string; group: HookGroup; command: string }
+  // A whole file (rule or skill).
+  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean }
+  // One hook group merged under hooks.PreToolUse of a JSON settings file.
+  | { kind: "hook-json"; agent: AgentId; label: string; path: string; group: HookGroup; inRepo: boolean; usesLauncher: boolean }
   // A section between the openqodex markers in a markdown file.
   | { kind: "md-section"; agent: AgentId; label: string; path: string; section: string; inRepo: boolean };
 
@@ -28,7 +26,7 @@ function template(...segments: string[]): string {
 }
 
 function fill(text: string, version: string): string {
-  return text.replaceAll("{{VERSION}}", version);
+  return text.replaceAll("{{VERSION}}", () => version);
 }
 
 // The hook group from a JSON template, with the command put in after
@@ -36,7 +34,7 @@ function fill(text: string, version: string): string {
 function hookGroup(file: string, runner: string): HookGroup {
   const parsed = JSON.parse(template(file)) as { hooks: { PreToolUse: HookGroup[] } };
   const group = parsed.hooks.PreToolUse[0];
-  for (const h of group.hooks) h.command = h.command.replace("{{LAUNCHER}}", runner);
+  for (const h of group.hooks) h.command = h.command.replace("{{LAUNCHER}}", () => runner);
   return group;
 }
 
@@ -44,8 +42,8 @@ function skill(version: string): string {
   return fill(readFileSync(assetPath("skills", "openqodex", "SKILL.md"), "utf8"), version);
 }
 
-function fileTarget(agent: AgentId, label: string, path: string, plain: string, inRepo: boolean): Target {
-  return { kind: "file", agent, label, path, content: withMarker(plain), plain, inRepo };
+function fileTarget(agent: AgentId, label: string, path: string, content: string, inRepo: boolean): Target {
+  return { kind: "file", agent, label, path, content, inRepo };
 }
 
 export function targetsFor(args: {
@@ -58,7 +56,6 @@ export function targetsFor(args: {
   runner: string;
 }): { targets: Target[]; skipped: string[] } {
   const { agent, scope, home, repoRoot, version, runner } = args;
-  const hookCommand = `${runner} hook check`;
   const targets: Target[] = [];
   const skipped: string[] = [];
   const user = scope === "user";
@@ -77,7 +74,8 @@ export function targetsFor(args: {
         label: "Claude Code push hook",
         path: at(".claude", "settings.json"),
         group: hookGroup("claude-code/settings-hook.json", runner),
-        command: hookCommand,
+        inRepo: !user,
+        usesLauncher: user,
       });
       break;
     case "codex":
@@ -98,7 +96,8 @@ export function targetsFor(args: {
         label: "Codex push hook",
         path: at(".codex", "hooks.json"),
         group: hookGroup("codex/hooks.json", runner),
-        command: hookCommand,
+        inRepo: !user,
+        usesLauncher: user,
       });
       break;
     case "cursor": {

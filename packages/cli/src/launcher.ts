@@ -1,15 +1,17 @@
-// The stable command every agent hook calls. `init` copies the installed
-// package to <home>/runtime/<version>/ and writes <home>/bin/openqodex, a
-// POSIX sh script that runs that copy with the node binary `init` ran under.
+// The stable command every hook calls. `init` and `hook install` copy the
+// installed package to <home>/runtime/<version>/ and write <home>/bin/openqodex,
+// a POSIX sh script that runs that copy with the node binary they ran under.
 // Hooks then never depend on npx, the npm cache or PATH.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { cpSync, existsSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
+import { openqodexHome } from "@openqodex/scanners";
 import { assetPath } from "./assets.js";
-import { writeAtomic } from "./agents/files.js";
+import { readText, writeAtomic } from "./agents/files.js";
+import { ownedFile, type Action } from "./agents/plan.js";
+import type { InstallRecord } from "./agents/record.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,30 +19,41 @@ export const LAUNCHER_MARKER = "# openqodex launcher, written by openqodex init"
 
 // $OPENQODEX_HOME or ~/.openqodex.
 export function openqodexHomeDir(): string {
-  const fromEnv = process.env.OPENQODEX_HOME;
-  return fromEnv !== undefined && fromEnv !== "" ? fromEnv : join(homedir(), ".openqodex");
+  return openqodexHome();
 }
 
-export function launcherPath(home: string = openqodexHomeDir()): string {
+export function launcherPath(home: string): string {
   return join(home, "bin", "openqodex");
 }
 
-export function runtimeDir(version: string, home: string = openqodexHomeDir()): string {
+export function runtimeDir(version: string, home: string): string {
   return join(home, "runtime", version);
 }
 
 // Single quotes for a POSIX shell; an inner single quote becomes '\''.
 export function shQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replace(/'/g, () => `'\\''`)}'`;
 }
 
+// `hook check` must never fail a push by accident, so for that command the
+// script exits 0 whatever happens (no node, a broken runtime, an old node),
+// with one line on stderr saying how to repair it. Every other command gets
+// exit 2 when it cannot start, which the git hook does not treat as a finding.
 export function launcherScript(nodePath: string, binJs: string): string {
+  const repair = "run npx openqodex init again to repair it";
   return [
     "#!/bin/sh",
     LAUNCHER_MARKER,
     `node=${shQuote(nodePath)}`,
-    '[ -x "$node" ] || node=node',
-    `exec "$node" ${shQuote(binJs)} "$@"`,
+    `bin=${shQuote(binJs)}`,
+    '[ -x "$node" ] || node=$(command -v node 2>/dev/null) || node=""',
+    'if [ "$1" = hook ] && [ "$2" = check ]; then',
+    `  if [ -z "$node" ] || [ ! -f "$bin" ]; then echo "openqodex: the push check could not start (no node or no runtime); ${repair}" >&2; exit 0; fi`,
+    `  "$node" "$bin" "$@" || echo "openqodex: the push check failed to run; ${repair}" >&2`,
+    "  exit 0",
+    "fi",
+    `if [ -z "$node" ] || [ ! -f "$bin" ]; then echo "openqodex: cannot start (no node or no runtime); ${repair}" >&2; exit 2; fi`,
+    'exec "$node" "$bin" "$@"',
     "",
   ].join("\n");
 }
@@ -72,12 +85,8 @@ function sameTree(a: string, b: string): boolean {
 }
 
 // The installed package folder: the one that holds dist/.
-export function packageDir(): string {
+function packageDir(): string {
   return assetPath();
-}
-
-export function runtimeIsCurrent(version: string, home: string): boolean {
-  return sameTree(packageDir(), runtimeDir(version, home));
 }
 
 async function checkRuns(binJs: string, version: string): Promise<void> {
@@ -87,15 +96,12 @@ async function checkRuns(binJs: string, version: string): Promise<void> {
 
 // Copies the package to a temp folder beside the target, checks it runs,
 // then swaps it in, so a failed copy never replaces a working runtime.
-export async function installRuntime(version: string, home: string): Promise<void> {
+async function installRuntime(version: string, home: string): Promise<void> {
   const target = runtimeDir(version, home);
   const tmp = `${target}.tmp-${process.pid}`;
   rmSync(tmp, { recursive: true, force: true });
   try {
-    cpSync(packageDir(), tmp, {
-      recursive: true,
-      filter: (src) => !SKIP.has(src.split(/[\\/]/).pop() ?? ""),
-    });
+    cpSync(packageDir(), tmp, { recursive: true, filter: (src) => !SKIP.has(src.split(/[\\/]/).pop() ?? "") });
     await checkRuns(join(tmp, "dist", "bin.js"), version);
     const old = `${target}.old-${process.pid}`;
     if (existsSync(target)) renameSync(target, old);
@@ -106,24 +112,105 @@ export async function installRuntime(version: string, home: string): Promise<voi
   }
 }
 
-export function writeLauncher(version: string, home: string): void {
-  writeAtomic(launcherPath(home), launcherScript(process.execPath, join(runtimeDir(version, home), "dist", "bin.js")), 0o755);
+// The runtime copy and the launcher, as plan actions. A runtime folder or a
+// launcher that is there and not recorded as ours is refused, never replaced.
+export function planRuntime(record: InstallRecord, version: string, home: string): Action[] {
+  const rt = runtimeDir(version, home);
+  const launcher = launcherPath(home);
+  const actions: Action[] = [];
+  const recorded = record.runtimes.includes(rt);
+  if (sameTree(packageDir(), rt)) {
+    if (!recorded) record.runtimes.push(rt);
+    actions.push({ verb: "skip", path: rt, note: "runtime already present" });
+  } else if (existsSync(rt) && !recorded) {
+    actions.push({ verb: "refuse", failed: true, path: rt, note: "a folder openqodex init did not write is in the way; move it aside" });
+  } else {
+    actions.push({
+      verb: existsSync(rt) ? "update" : "create",
+      path: rt,
+      note: "a copy of this openqodex that the hooks run",
+      apply: async () => {
+        await installRuntime(version, home);
+        if (!record.runtimes.includes(rt)) record.runtimes.push(rt);
+      },
+    });
+  }
+
+  const script = launcherScript(process.execPath, join(rt, "dist", "bin.js"));
+  const before = readText(launcher);
+  const remember = (): void => {
+    record.files = record.files.filter((f) => f.path !== launcher);
+    record.files.push({ path: launcher, sha256: createHash("sha256").update(script).digest("hex"), usesLauncher: false });
+  };
+  const write = (): void => {
+    writeAtomic(launcher, script, 0o755);
+    remember();
+  };
+  if (before === script) {
+    // Exactly what we would write, down to the paths: ours.
+    if (!ownedFile(record, launcher, before)) remember();
+    actions.push({ verb: "skip", path: launcher, note: "launcher already present" });
+  } else if (before === null || ownedFile(record, launcher, before)) {
+    actions.push({ verb: before === null ? "create" : "update", path: launcher, note: "launcher the hooks call", guard: { path: launcher, before }, apply: write });
+  } else {
+    actions.push({ verb: "refuse", failed: true, path: launcher, note: "a launcher openqodex init did not write is in the way; move it aside" });
+  }
+  return actions;
 }
 
-export function launcherIsCurrent(version: string, home: string): boolean {
-  const path = launcherPath(home);
-  try {
-    const expected = launcherScript(process.execPath, join(runtimeDir(version, home), "dist", "bin.js"));
-    return readFileSync(path, "utf8") === expected && (statSync(path).mode & 0o111) !== 0;
-  } catch {
-    return false;
-  }
+// What still calls the launcher once this run is done: recorded agent hooks
+// (including one in a file that could not be parsed) and recorded git hooks
+// that are still on disk as we wrote them.
+export function launcherUsers(record: InstallRecord): string[] {
+  const hooks = record.hooks.filter((h) => h.usesLauncher).map((h) => h.path);
+  const gitHooks = record.files.filter((f) => f.usesLauncher && ownedFile(record, f.path, readText(f.path))).map((f) => f.path);
+  return [...new Set([...hooks, ...gitHooks])];
 }
 
-export function launcherIsOurs(home: string): boolean {
-  try {
-    return readFileSync(launcherPath(home), "utf8").split("\n")[1] === LAUNCHER_MARKER;
-  } catch {
-    return false;
+// Removes the recorded runtimes and launcher once nothing recorded calls them.
+export function planRuntimeRemoval(record: InstallRecord, home: string, willStay: string[]): Action[] {
+  const launcher = launcherPath(home);
+  if (willStay.length > 0) {
+    return [{ verb: "keep", path: launcher, note: `launcher and runtime kept: still called by ${willStay.join(", ")}` }];
   }
+  const actions: Action[] = [];
+  for (const rt of record.runtimes) {
+    actions.push({
+      verb: "remove",
+      path: rt,
+      note: "runtime copy of openqodex",
+      apply: () => {
+        if (launcherUsers(record).length > 0) throw new Error(`kept: still called by ${launcherUsers(record).join(", ")}`);
+        rmSync(rt, { recursive: true, force: true });
+        try {
+          rmdirSync(dirname(rt));
+        } catch {
+          // other files are there; they are not ours
+        }
+        record.runtimes = record.runtimes.filter((r) => r !== rt);
+      },
+    });
+  }
+  const text = readText(launcher);
+  if (ownedFile(record, launcher, text)) {
+    actions.push({
+      verb: "remove",
+      path: launcher,
+      note: "launcher",
+      guard: { path: launcher, before: text },
+      apply: () => {
+        if (launcherUsers(record).length > 0) throw new Error(`kept: still called by ${launcherUsers(record).join(", ")}`);
+        rmSync(launcher, { force: true });
+        try {
+          rmdirSync(dirname(launcher));
+        } catch {
+          // not empty
+        }
+        record.files = record.files.filter((f) => f.path !== launcher);
+      },
+    });
+  } else if (record.files.some((f) => f.path === launcher)) {
+    record.files = record.files.filter((f) => f.path !== launcher);
+  }
+  return actions;
 }
