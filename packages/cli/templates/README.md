@@ -1,0 +1,63 @@
+# Templates that `openqodex init` writes
+
+Each file here is copied or merged by `openqodex init`. Two placeholders are filled at install time and no others exist:
+
+- `{{VERSION}}`: the version of the running `openqodex` package.
+- `{{LAUNCHER}}`: the absolute path of the launcher, `~/.openqodex/bin/openqodex` expanded.
+
+The skill itself is not a template: `init` copies `skills/openqodex/SKILL.md` from the package unchanged.
+
+User scope is the default. Project scope (`--project`) writes into the repository for a team to commit. A repository file written in user scope is added to `.git/info/exclude` so `git status` does not change.
+
+Every path below was read from the source named beside it on 2026-10-01. Anything marked "assumption, untested" was not confirmed and must not be written by `init` as if it were.
+
+## Claude Code
+
+| What | Template | User scope | Project scope |
+|---|---|---|---|
+| Skill | `skills/openqodex/SKILL.md` | `~/.claude/skills/openqodex/SKILL.md` | `.claude/skills/openqodex/SKILL.md` |
+| Push gate hook | `claude-code/settings-hook.json`, merged | `~/.claude/settings.json` | `.claude/settings.json` |
+
+- Settings paths: https://code.claude.com/docs/en/hooks, section "Hook locations".
+- Skill paths: the `skills` CLI agent table (github.com/vercel-labs/skills, README, "Supported agents"), and the same hooks page, which names `~/.claude/skills/` and `.claude/skills/`.
+- The hook: `matcher: "Bash"` with `if: "Bash(git push*)"` on the handler. The `if` field uses permission-rule syntax and is checked against each subcommand (same hooks page, "Bash if matching"). The page also says a pattern longer than the command name runs the hook anyway when the command holds `$()`, backticks or `$VAR`, so `hook check` must itself confirm the command is a push.
+- Merge rule: append the one entry under `hooks.PreToolUse`, keep every other key, do nothing when an entry with the same command already exists.
+
+## Codex CLI
+
+| What | Template | User scope | Project scope |
+|---|---|---|---|
+| Skill | `skills/openqodex/SKILL.md` | see the note below | `.agents/skills/openqodex/SKILL.md` |
+| Instructions | `codex/AGENTS-section.md`, between its markers | not written | `AGENTS.md` (replace the text between the markers, or append) |
+| Push gate hook | `codex/hooks.json`, merged | `~/.codex/hooks.json` | `.codex/hooks.json` |
+
+- Hook file paths, schema and output: https://learn.chatgpt.com/docs/hooks (where https://developers.openai.com/codex/hooks redirects). `codex features list` on Codex CLI 0.160.0 shows `hooks` as stable and on.
+- Codex hooks have no `if` field: the matcher is a regular expression on the tool name only. The hook therefore runs before every shell command, and `hook check` must abstain at once, printing nothing, when the command is not a `git push`.
+- Codex runs a new user or project hook only after the developer reviews and trusts it with `/hooks` inside Codex; project hooks load only in a trusted project. `init` must print that step.
+- Codex's PreToolUse output supports `permissionDecision` deny, `additionalContext` and `systemMessage`; `ask` is parsed but not implemented. Exit code 2 with the reason on stderr also denies.
+- Skill path conflict: the `skills` CLI table puts the Codex user skill in `~/.codex/skills/`; the Codex docs (https://learn.chatgpt.com/docs/build-skills) list `$HOME/.agents/skills` and repository `.agents/skills`, and do not list `~/.codex/skills/`. Write `~/.agents/skills/openqodex/SKILL.md`, which the Codex docs name. That Codex 0.160.0 still reads `~/.codex/skills/`: assumption, untested.
+
+## Cursor
+
+| What | Template | User scope | Project scope |
+|---|---|---|---|
+| Skill | `skills/openqodex/SKILL.md` | `~/.cursor/skills/openqodex/SKILL.md` | `.agents/skills/openqodex/SKILL.md` |
+| Rule | `cursor/openqodex.mdc` | `.cursor/rules/openqodex.mdc` in the repository, excluded from git | `.cursor/rules/openqodex.mdc` |
+
+- Rule location and frontmatter: https://cursor.com/docs/context/rules. Project rules are `.mdc` files in `.cursor/rules`; the fields are `description`, `globs` and `alwaysApply`; `alwaysApply: true` makes the rule apply to every chat. User rules live in Cursor's settings, not on disk, so there is no user-level rule file.
+- Skill paths: the `skills` CLI table, and https://cursor.com/docs/context/skills, which lists `.agents/skills/`, `.cursor/skills/`, `~/.agents/skills/` and `~/.cursor/skills/` (and the Claude and Codex folders for compatibility).
+- Cursor hooks (`.cursor/hooks.json`) were not checked: no Cursor hook is written. Assumption, untested, that a rule alone is enough for Cursor to review before pushing.
+
+## Cline
+
+| What | Template | User scope | Project scope |
+|---|---|---|---|
+| Skill | `skills/openqodex/SKILL.md` | `~/.cline/skills/openqodex/SKILL.md` | `.cline/skills/openqodex/SKILL.md` |
+| Rule | `cline/openqodex.md` | `~/Documents/Cline/Rules/openqodex.md` | `.clinerules/openqodex.md` |
+
+- Rule paths: https://docs.cline.bot/features/cline-rules. Cline reads every file in `.clinerules/` (or `.cline/rules/`) at the project root; global rules are in `~/Documents/Cline/Rules` on macOS and Linux (`Documents\Cline\Rules` on Windows), with `~/.cline/rules` and `~/Cline/Rules` also searched. A rule with no frontmatter always applies. The plan's default (rule in the repository, excluded from git) also works; the global rule folder avoids touching the repository.
+- Skill path conflict: the `skills` CLI table puts Cline skills in `.agents/skills/` and `~/.agents/skills/`; Cline's docs (https://docs.cline.bot/features/skills) list `.cline/skills/`, `.clinerules/skills/`, `.claude/skills/` and `~/.cline/skills/`, and not `.agents/skills/`. Write the path Cline's docs name. That Cline reads `.agents/skills/`: assumption, untested.
+
+## Not written on Day 0
+
+No MCP server configuration is written for any agent.
