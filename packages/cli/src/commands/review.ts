@@ -2,6 +2,7 @@
 //   --agent            scan, then write the brief for the host agent and print it
 //   --finalize [path]  check the agent's findings without a model and write the report
 //   neither            the same as `scan`, plus how to get the AI review
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -12,8 +13,10 @@ import {
   getChange,
   openReportDir,
   readLatest,
+  readInstructions,
   readManifest,
   readScan,
+  redactSecrets,
   STATE_DIR,
   selectLenses,
   writeLatest,
@@ -22,6 +25,7 @@ import {
   writeScan,
 } from "@openqodex/core";
 import type { ChangeScope } from "@openqodex/core";
+import { announceRepoFiles, instructionsTemplate } from "../agents/repo-folder.js";
 import { EXIT_OK } from "../exit-codes.js";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
@@ -70,6 +74,12 @@ function finalizeCommand(repoRoot: string, config: string | undefined, findingsP
   return args.map(shellQuote).join(" ");
 }
 
+// sha256 of the instructions file, null when there is none. Finalize compares
+// it with the brief's, so a review always follows the instructions as they are.
+function instructionsHash(text: string | null): string | null {
+  return text === null ? null : createHash("sha256").update(text).digest("hex");
+}
+
 async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, skip?: string): Promise<number> {
   const p = await runPipeline({
     scope,
@@ -78,6 +88,12 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, s
     skip: scannerList("--skip", skip),
   });
   if (p.scan === null) return nothingToReview(p.change);
+  announceRepoFiles(p.repoRoot);
+  // Read after the template may have been created, so finalize hashes the
+  // same file. Over the size limit it is refused, never cut.
+  const instructions = readInstructions(p.repoRoot);
+  // The untouched template says nothing about this repo: no block for it.
+  const ownersText = instructions === null || instructions === instructionsTemplate() ? "" : redactSecrets(instructions, p.secrets);
 
   const lenses = selectLenses(p.change);
   const dir = openReportDir(p.repoRoot, p.change.shortId);
@@ -87,6 +103,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, s
     config_hash: configHash(p.config),
     created_at: new Date().toISOString(),
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
+    instructions_hash: instructionsHash(instructions),
   });
   writeScan(dir, p.scan);
   const brief = buildBrief({
@@ -97,6 +114,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only?: string, s
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
     finalizeCommand: finalizeCommand(p.repoRoot, flags.config, join(dir, FINDINGS_FILE)),
+    instructions: ownersText,
   });
   const runFile: RunFile = { version: 1, scope };
   writeReportFiles(dir, {
@@ -196,6 +214,18 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined): Promis
   }
   if (manifest.config_hash !== configHash(config)) {
     throw new OpenQodexError("the config changed since the brief (.openqodex.yaml or --config); run openqodex review --agent again");
+  }
+  // A run from before the field existed has no hash to compare.
+  if (manifest.instructions_hash !== undefined) {
+    let current: string | null;
+    try {
+      current = instructionsHash(readInstructions(repoRoot));
+    } catch {
+      current = "unreadable";
+    }
+    if (current !== manifest.instructions_hash) {
+      throw new OpenQodexError("the instructions changed since the brief (.openqodex/custom-instructions.md); run review again (openqodex review --agent)");
+    }
   }
   const change = await getChange({ repoRoot, scope: runFile.scope, exclude: config.exclude, defaultBase: config.defaultBase });
   const report = finalizeReview({ change, scan, manifest, config, submission });

@@ -19,6 +19,11 @@
 //     the marker, overwrites a foreign hook or an earlier backup, ignores
 //     core.hooksPath, or uninstall removes a hook that is not ours or that
 //     the developer edited.
+//  9. A scan after a finalized review of the same change makes the push
+//     gate forget the review (the scan overwrote the review receipt).
+// 10. The pre-push hook scans the wrong range: a push of a branch the
+//     remote already has is measured from the default base instead of the
+//     remote's tip.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,6 +31,7 @@ import { join, relative } from "node:path";
 import {
   DEFAULT_CONFIG,
   getChange,
+  loadConfig,
   openReportDir,
   scanReport,
   writeLatest,
@@ -130,6 +136,8 @@ async function finalizedPassingReview(repo: string): Promise<void> {
       config: DEFAULT_CONFIG,
     }),
     kind: "review",
+    // Judged under the repo's own threshold, as finalize does.
+    block_on_severity: loadConfig(repo).config.blockOnSeverity,
   };
   const dir = openReportDir(repo, change.shortId);
   writeReportFiles(dir, { "report.json": JSON.stringify(report) });
@@ -284,4 +292,53 @@ describe("hook install and uninstall", () => {
     expect(r.stdout).toContain("husky");
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
   });
+});
+
+// A real review through the CLI: the brief, an empty submission, finalize.
+function reviewAndFinalize(s: Sandbox): void {
+  expect(cli(s, ["review", "--agent", "--no-install"]).status).toBe(0);
+  const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string; change_id: string };
+  const findings = { version: 1, change_id: latest.change_id, summary: "Checked.", findings: [] };
+  writeFileSync(join(s.repo, latest.dir, "agent-findings.json"), JSON.stringify(findings));
+  const r = cli(s, ["review", "--finalize"]);
+  expect(r.status, r.stderr).toBe(0);
+}
+
+describe("the review receipt", () => {
+  it("a scan after a finalized review of the same change does not make the push gate say unreviewed", () => {
+    const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    reviewAndFinalize(s);
+    expect(check(s, "git push").stdout).toBe("");
+    expect(cli(s, ["scan", "--no-install"]).status).toBe(0);
+    expect(check(s, "git push").stdout).toBe("");
+  });
+});
+
+describe("the pre-push hook on a real push", () => {
+  it("scans a branch the remote already has from the remote's tip, passed as --base", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    const remote = join(s.root, "remote.git");
+    git(s.root, "init", "-q", "--bare", remote);
+    git(s.repo, "remote", "add", "origin", remote);
+    git(s.repo, "push", "-q", "origin", "main");
+    git(s.repo, "checkout", "-q", "-b", "feature");
+    writeFileSync(join(s.repo, "notes.txt"), "one\n");
+    git(s.repo, "add", "-A");
+    git(s.repo, "commit", "-q", "-m", "one");
+    // No upstream is set, so the default scope would not see this branch's commits.
+    git(s.repo, "push", "-q", "origin", "feature");
+    const remoteTip = git(s.repo, "rev-parse", "HEAD").trim();
+
+    expect(cli(s, ["hook", "install"]).status).toBe(0);
+    writeFileSync(join(s.repo, "notes.txt"), "one\ntwo\n");
+    git(s.repo, "commit", "-q", "-am", "two");
+    const push = spawnSync("git", ["push", "origin", "feature"], { cwd: s.repo, env: env(s), encoding: "utf8" });
+    expect(push.status, push.stderr).toBe(0);
+
+    const receipt = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest-scan.json"), "utf8")) as { dir: string };
+    const report = JSON.parse(readFileSync(join(s.repo, receipt.dir, "report.json"), "utf8")) as Report;
+    expect(report.base).toEqual({ ref: remoteTip, sha: remoteTip });
+    expect(report.stats.files).toBe(1);
+  }, 60_000);
 });

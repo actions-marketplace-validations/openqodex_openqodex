@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
-import { demo, git, run } from "./support.js";
+import { demo, git, run, writeConfig } from "./support.js";
 
 // `hook install` and a real `git push` to a local bare remote.
 describe("git pre-push hook", () => {
@@ -26,7 +26,7 @@ describe("git pre-push hook", () => {
     expect(remoteHead()).toBe(git(dir, "rev-parse", "HEAD").trim());
   });
   it("refuses the push when block_on_severity: major is met", () => {
-    writeFileSync(join(dir, ".openqodex.yaml"), "review:\n  block_on_severity: major\n");
+    writeConfig(dir, "review:\n  block_on_severity: major\n");
     const config = join(dir, "app/config.py");
     writeFileSync(config, readFileSync(config, "utf8").replace(/sk_live_([A-Za-z0-9])/, (_, c: string) => `sk_live_${c === "A" ? "B" : "A"}`));
     git(dir, "add", "-A"); git(dir, "commit", "-qm", "Change the secret");

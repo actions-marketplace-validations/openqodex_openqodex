@@ -1,9 +1,18 @@
 # Templates that `openqodex init` writes
 
-Each file here is copied or merged by `openqodex init`. Two placeholders are filled at install time and no others exist:
+Each file here is copied or merged by `openqodex init`. Three placeholders are filled at install time and no others exist:
 
 - `{{VERSION}}`: the version of the running `openqodex` package.
 - `{{LAUNCHER}}`: the absolute path of the launcher, `~/.openqodex/bin/openqodex` expanded.
+- `{{INSTRUCTIONS}}`: the instruction section, `instructions-section.md`, markers included.
+
+## The instruction section
+
+`instructions-section.md` is the marked section (between `<!-- openqodex:start -->` and `<!-- openqodex:end -->`) that tells an agent to review with the openqodex skill, in a separate subagent, when a feature or fix is done. `init` prints it before writing, records it, and `--uninstall` removes exactly that section. It goes into each agent's global instruction file in user scope, into the repo's `CLAUDE.md` and `AGENTS.md` in project scope, and inside the Cursor and Cline rules.
+
+## The repo folder
+
+`repo/custom-instructions.md` becomes `.openqodex/custom-instructions.md`, and the default config text from the core package becomes `.openqodex/config.yaml` (not written while a root `.openqodex.yaml` exists). Both are created by `init` in a repo and by the first `scan` or `review`, never touched once they exist, and are meant to be committed. `init` also asks whether to add the git pre-push hook.
 
 The skill itself is not a template: `init` copies `skills/openqodex/SKILL.md` from the package unchanged.
 
@@ -17,6 +26,7 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 |---|---|---|---|
 | Skill | `skills/openqodex/SKILL.md` | `~/.claude/skills/openqodex/SKILL.md` | `.claude/skills/openqodex/SKILL.md` |
 | Push gate hook | `claude-code/settings-hook.json`, merged | `~/.claude/settings.json` | `.claude/settings.json` |
+| Instructions | `instructions-section.md`, between its markers | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
 
 - Settings paths: https://code.claude.com/docs/en/hooks, section "Hook locations".
 - Skill paths: the `skills` CLI agent table (github.com/vercel-labs/skills, README, "Supported agents"), and the same hooks page, which names `~/.claude/skills/` and `.claude/skills/`.
@@ -28,7 +38,7 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 | What | Template | User scope | Project scope |
 |---|---|---|---|
 | Skill | `skills/openqodex/SKILL.md` | see the note below | `.agents/skills/openqodex/SKILL.md` |
-| Instructions | `codex/AGENTS-section.md`, between its markers | not written | `AGENTS.md` (replace the text between the markers, or append) |
+| Instructions | `instructions-section.md`, between its markers | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `AGENTS.md` (replace the text between the markers, or append) |
 | Push gate hook | `codex/hooks.json`, merged | `~/.codex/hooks.json` | `.codex/hooks.json` |
 
 - Hook file paths, schema and output: https://learn.chatgpt.com/docs/hooks (where https://developers.openai.com/codex/hooks redirects). `codex features list` on Codex CLI 0.160.0 shows `hooks` as stable and on.

@@ -51,7 +51,19 @@ const submissionSchema = z.object({
   summary: z.string(),
   findings: z.array(findingSchema),
   dropped: z.array(z.object({ candidate: z.string().min(1), reason: z.string().min(1) })).optional(),
+  reviewer: z.enum(["subagent", "same-agent"]).optional(),
 });
+
+// The first line of the report's summary says who reviewed, so a review by
+// the agent that wrote the code is never silent.
+const REVIEWER_LINE = {
+  subagent: "Reviewed by a separate subagent.",
+  "same-agent": "Not an independent review: the agent that wrote the code reviewed it.",
+} as const;
+
+function summaryWithReviewer(sub: AgentSubmission): string {
+  return sub.reviewer === undefined ? sub.summary : `${REVIEWER_LINE[sub.reviewer]}\n${sub.summary}`;
+}
 
 function formatPath(path: readonly PropertyKey[]): string {
   let out = "";
@@ -259,7 +271,7 @@ export function finalizeReview(args: {
     generated_at: new Date().toISOString(),
     verdict,
     block_on_severity: config.blockOnSeverity,
-    summary: sub.summary,
+    summary: summaryWithReviewer(sub),
     findings: kept,
     below_threshold: deduped.length - kept.length,
     outside_change: outside,

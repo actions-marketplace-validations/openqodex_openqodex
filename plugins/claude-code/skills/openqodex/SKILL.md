@@ -14,6 +14,16 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
 - When a push was blocked or warned by the OpenQodex hook.
 - After fixing findings, to check the change again.
 
+## Who reviews
+
+The agent that wrote the code does not judge its own work. Hand the review to a separate subagent wherever the host has one:
+
+- Claude Code: start a subagent with the Agent tool whose only task is the review. Give it the repository's absolute path and this task: "You are the review subagent for this repository: review my change with openqodex. Follow the openqodex skill from step 1 of the procedure and do not start another subagent." When it finishes, relay its summary to the developer as step 7 says.
+- Codex, Cursor and other hosts: use their sub-task or background agent feature when there is one, with the same task.
+- No subagent available: tell the developer "this review is not independent: the agent that wrote the code is reviewing it", then follow the procedure yourself.
+
+If you are the review subagent, follow the procedure yourself and do not start another subagent. Set `reviewer` in the findings to `"subagent"` when you are one, else `"same-agent"`: the report's summary says which.
+
 ## Procedure
 
 1. From the repository, run:
@@ -22,7 +32,7 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
    npx -y openqodex@0.1.0 review --agent
    ```
 
-   It works out the change (the commits not yet pushed plus everything uncommitted, untracked files included), runs the scanners and prints the brief. Read the whole brief before doing anything else.
+   It works out the change (the commits not yet pushed plus everything uncommitted, untracked files included), runs the scanners and prints the brief. Read the whole brief before doing anything else. When it has a block "Instructions from this repo's owners", follow it for what to flag and what not to flag.
 
 2. Verify each scanner candidate against the code. Every candidate has an id (`c1`, `c2`, ...) and a token like `[semgrep:python.lang.security.audit.formatted-sql-query]`. Open the file at the line and decide:
    - real: raise it as a finding with `source` set to the token and `candidate` set to the id;
@@ -34,7 +44,7 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
 
 3. Weigh each pattern listed under "Patterns to weigh". Each one describes a kind of bug that changes like this one often carry. Check the changed lines against it. When a pattern leads you to a finding, set `source` to `lens:<name>`.
 
-4. Review the change yourself. Use your own tools to read the callers and the tests of every function the change touches. Look for wrong behaviour, missing checks, broken edge cases and changed behaviour with no test. Findings from your own reading have `source: null`.
+4. Review the change yourself. Use your own tools to read the callers and the tests of every function the change touches. Look for wrong behaviour, missing checks, broken edge cases and changed behaviour with no test. Findings from your own reading have `source: null`. You may run the project's own tests to check a suspicion; never run its other scripts or start its services, and remove anything a test run created.
 
 5. Write the findings to the exact path the brief names (it ends in `agent-findings.json`), in the shape below.
 
@@ -44,7 +54,7 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
    npx -y openqodex@0.1.0 review --finalize
    ```
 
-   If it exits with code 2 and names a wrong field or a citation that does not match, fix what it names in your findings file and run finalize again. If it says the change moved or the config changed, run step 1 again and review from the new brief: the review must describe the change and the settings as they are now. Never change the developer's code or config to make finalize pass.
+   If it exits with code 2 and names a wrong field or a citation that does not match, fix what it names in your findings file and run finalize again. If it says the change moved, the config changed or the instructions changed, run step 1 again and review from the new brief: the review must describe the change and the settings as they are now. Never change the developer's code or config to make finalize pass.
 
 7. Tell the developer the verdict, the counts by severity, the most serious findings in one line each, and the path of `report.md`. Do not paste the whole report.
 
@@ -55,6 +65,7 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
   "version": 1,
   "change_id": "3f9a1c0b2d4e",
   "summary": "Adds a search endpoint and a deploy script.",
+  "reviewer": "subagent",
   "findings": [
     {
       "severity": "critical",
@@ -78,6 +89,7 @@ OpenQodex runs deterministic scanners (gitleaks, semgrep, bandit, hadolint, shel
 
 - `change_id`: copy it from the brief.
 - `summary`: what the change does, in one or two sentences. Not the findings.
+- `reviewer`: `"subagent"` when you are a separate subagent doing only this review, `"same-agent"` when you also wrote the code.
 - `file_path`: relative to the repository root. `line_number` and `line_end` point at the code line that holds the problem, never at a comment or a blank line, and at an import only when the import itself is the problem. `line_end` is optional and defaults to `line_number`.
 - `title`: a short noun phrase naming the problem. No line numbers, no quoted code.
 - `description`: one to three sentences: what is wrong, why it matters, the fix.
@@ -108,6 +120,7 @@ Category says what kind of problem it is:
 - A finding with confidence under 0.7 is not raised. Finalize drops it and lists it as low confidence.
 - Every scanner candidate is either raised or listed under `dropped` with a reason.
 - Never edit code during the review. Review first, report, then fix only what the developer asks you to fix.
+- Run the project's own tests if they help, never its other scripts or services, and remove anything a run created.
 - Never run `openqodex trust` without asking the developer first. It approves a custom scanner, which is a command that runs on their machine.
 - Never set `OPENQODEX_SKIP`. It is the developer's switch, not yours.
 - When the verdict is `blocked`, do not push. Show the developer the findings; push only if they say so after seeing them.
@@ -116,15 +129,15 @@ Category says what kind of problem it is:
 
 ## Reading the report
 
-- The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest one. The folder ignores itself in git, so it never shows in `git status`.
-- The verdict is `passed` (with or without warnings) or `blocked`. It is `blocked` only when the repository's `.openqodex.yaml` sets `block_on_severity` and a finding is at or above it. With no config, OpenQodex warns and never blocks.
+- The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest review. The reports never show in `git status`: `.openqodex/.gitignore` keeps them out. The two other files in that folder, `config.yaml` and `custom-instructions.md`, are the team's and are meant to be committed.
+- The verdict is `passed` (with or without warnings) or `blocked`. It is `blocked` only when the repository's config (`.openqodex/config.yaml`, or `.openqodex.yaml` at the root) sets `block_on_severity` and a finding is at or above it. With no config, OpenQodex warns and never blocks.
 - "Outside the changed lines" lists findings on lines the developer did not change. They are shown but never count toward the verdict.
 - The coverage list says, for each scanner, whether it ran. A scanner that did not run has a one-line reason:
   - `no matching files`: nothing in the change is the kind of file it reads.
   - `installing`: it is being downloaded for the first time; it is included from the next run. Say so to the developer rather than waiting.
   - `not installed`: it could not be installed here; the reason says why.
   - `needs Ruby 2.7+` or `needs Go`: brakeman and rubocop need Ruby, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
-  - `untrusted`: a custom scanner from `.openqodex.yaml` that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.1.0 trust`).
+  - `untrusted`: a custom scanner from the repo's config that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.1.0 trust`).
   - `failed`: the scanner ran and broke; the reason has its error. A scanner problem never changes the exit code.
 
 ## Inside a sandbox

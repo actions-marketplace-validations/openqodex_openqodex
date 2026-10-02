@@ -19,10 +19,13 @@ export type InstallRecord = {
   backups: { path: string; of: string }[];
   // Runtime folders we created.
   runtimes: string[];
+  // The answer to init's pre-push hook question, per repo work tree, so a
+  // second init does not ask again.
+  hookChoices: { repo: string; hook: "pre-push" | "none" }[];
 };
 
 export function emptyRecord(): InstallRecord {
-  return { version: 1, files: [], hooks: [], sections: [], excludes: [], backups: [], runtimes: [] };
+  return { version: 1, files: [], hooks: [], sections: [], excludes: [], backups: [], runtimes: [], hookChoices: [] };
 }
 
 export function recordPath(home: string): string {
@@ -43,7 +46,7 @@ export function loadRecord(home: string): InstallRecord {
 
 export function isEmpty(record: InstallRecord): boolean {
   return (
-    record.files.length + record.hooks.length + record.sections.length + record.excludes.length + record.backups.length + record.runtimes.length ===
+    record.files.length + record.hooks.length + record.sections.length + record.excludes.length + record.backups.length + record.runtimes.length + record.hookChoices.length ===
     0
   );
 }

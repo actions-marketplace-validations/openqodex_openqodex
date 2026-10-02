@@ -9,7 +9,7 @@ import { readText, sha256, writeAtomic, writeBackup } from "../agents/files.js";
 import { gitPath, repoRootOf } from "../agents/git.js";
 import { ownedFile, type Action } from "../agents/plan.js";
 import { pushFolders } from "../agents/push-command.js";
-import { loadRecord, saveRecord, serialize, withLock } from "../agents/record.js";
+import { loadRecord, saveRecord, serialize, withLock, type InstallRecord } from "../agents/record.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherPath, openqodexHomeDir, planRuntime, shQuote } from "../launcher.js";
 
@@ -108,7 +108,7 @@ async function decide(input: HookInput): Promise<void> {
   const notes: string[] = [];
   for (const repoRoot of roots) {
     const { config } = core.loadConfig(repoRoot);
-    const change = await core.getChange({ repoRoot, scope: {}, exclude: config.exclude });
+    const change = await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase });
     const latest = core.readLatest(repoRoot);
     const report = latest ? core.readReport(join(repoRoot, latest.dir)) : null;
     const decision = core.checkPush({ currentChangeId: change.id, latest, report, config });
@@ -136,16 +136,49 @@ async function check(): Promise<number> {
 
 // ---------- hook install / uninstall ----------
 
-// Only exit 1 (a finding at or above block_on_severity) stops the push; a
-// scan or a launcher that cannot run exits 2 or 127, which never does.
+// The pre-push hook. Git gives it one line per ref on stdin:
+// `<local ref> <local sha> <remote ref> <remote sha>`. For each ref that sends
+// commits, the scan runs from the remote's tip when the remote has one this
+// clone knows, else with the default scope; one scan per distinct base. The
+// scan covers the checked-out work. Only exit 1 (a finding at or above
+// block_on_severity) stops the push; a scan or a launcher that cannot run
+// exits 2 or 127, which never does.
 export function gitHookScript(launcher: string): string {
-  return ["#!/bin/sh", GIT_HOOK_MARKER, `${shQuote(launcher)} scan`, "status=$?", '[ "$status" -eq 1 ] && exit 1', "exit 0", ""].join("\n");
+  return [
+    "#!/bin/sh",
+    GIT_HOOK_MARKER,
+    `launcher=${shQuote(launcher)}`,
+    "status=0",
+    "lines=0",
+    'seen=" "',
+    "scan() {",
+    '  "$launcher" scan "$@" </dev/null',
+    '  if [ "$?" -eq 1 ]; then status=1; fi',
+    "}",
+    "while read -r local_ref local_sha remote_ref remote_sha; do",
+    "  lines=1",
+    "  # An all-zero local sha deletes the remote ref: nothing is sent.",
+    '  case "$local_sha" in *[!0]*) ;; *) continue ;; esac',
+    '  base=""',
+    '  case "$remote_sha" in *[!0]*) git cat-file -e "$remote_sha^{commit}" 2>/dev/null && base=$remote_sha ;; esac',
+    '  case "$seen" in *" ${base:-default} "*) continue ;; esac',
+    '  seen="$seen${base:-default} "',
+    '  if [ -n "$base" ]; then scan --base "$base"; else scan; fi',
+    "done",
+    '[ "$lines" -eq 0 ] && scan',
+    'exit "$status"',
+    "",
+  ].join("\n");
 }
 
 async function hookFile(): Promise<{ repoRoot: string; path: string } | null> {
   const repoRoot = await repoRootOf(process.cwd());
   if (repoRoot === null) return null;
-  return { repoRoot, path: join(await gitPath(repoRoot, "hooks"), "pre-push") };
+  return { repoRoot, path: await gitHookPath(repoRoot) };
+}
+
+export async function gitHookPath(repoRoot: string): Promise<string> {
+  return join(await gitPath(repoRoot, "hooks"), "pre-push");
 }
 
 function hookManager(repoRoot: string): string | null {
@@ -167,6 +200,113 @@ async function applyAll(actions: Action[]): Promise<void> {
     if (a.guard && readText(a.guard.path) !== a.guard.before) throw new Error(`changed while openqodex was running, nothing written to ${a.guard.path}`);
     await a.apply();
   }
+}
+
+// The answer init records for its hook question; `hook install` records
+// yes and `hook uninstall` forgets it, so a later init does not undo either.
+export function setHookChoice(record: InstallRecord, repo: string, hook: "pre-push" | "none"): void {
+  record.hookChoices = record.hookChoices.filter((c) => c.repo !== repo);
+  record.hookChoices.push({ repo, hook });
+}
+
+export type GitHookPlan = {
+  path: string;
+  // Set when the repo runs its hooks through a hook manager: nothing is written.
+  manager: string | null;
+  // A pre-push hook that is not ours is there and --force was not given.
+  foreign: boolean;
+  action: Action;
+};
+
+// What installing the pre-push hook would do. The runtime and launcher it
+// calls are planned separately (planRuntime).
+export async function planGitHook(repoRoot: string, record: InstallRecord, home: string, force: boolean): Promise<GitHookPlan> {
+  const path = await gitHookPath(repoRoot);
+  const launcher = launcherPath(home);
+  const manager = hookManager(repoRoot);
+  const label = "git pre-push hook";
+  if (manager !== null) {
+    return {
+      path,
+      manager,
+      foreign: false,
+      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager}; add npx -y openqodex@${__OPENQODEX_VERSION__} scan there` },
+    };
+  }
+  const script = gitHookScript(launcher);
+  const current = readText(path);
+  const remember = (): void => {
+    record.files = record.files.filter((f) => f.path !== path);
+    record.files.push({ path, sha256: sha256(script), usesLauncher: true });
+  };
+  if (current === script) {
+    remember();
+    return { path, manager, foreign: false, action: { verb: "skip", path, note: `${label} already present` } };
+  }
+  const foreign = current !== null && !ownedFile(record, path, current);
+  if (foreign && !force) {
+    return {
+      path,
+      manager,
+      foreign: true,
+      action: { verb: "keep", path, note: `${label}: a hook openqodex did not write is there; add ${shQuote(launcher)} scan to it, or run openqodex hook install --force` },
+    };
+  }
+  return {
+    path,
+    manager,
+    foreign: false,
+    action: {
+      verb: current === null ? "create" : foreign ? "replace" : "update",
+      path,
+      note: `${label}: a scan before every push${foreign ? ` (the old hook is saved beside it)` : ""}`,
+      guard: { path, before: current },
+      apply: () => {
+        if (foreign) {
+          const backup = writeBackup(path, current);
+          record.backups.push({ path: backup, of: path });
+          process.stdout.write(`The previous hook is saved as ${backup}\n`);
+        }
+        writeAtomic(path, script, 0o755);
+        chmodSync(path, 0o755);
+        remember();
+      },
+    },
+  };
+}
+
+// What removing the pre-push hook would do; null when no hook is there.
+// The newest hook --force set aside is put back.
+export async function planGitHookRemoval(repoRoot: string, record: InstallRecord, home: string): Promise<Action | null> {
+  const path = await gitHookPath(repoRoot);
+  const current = readText(path);
+  const ours = current !== null && (ownedFile(record, path, current) || current === gitHookScript(launcherPath(home)));
+  const recorded = record.files.some((f) => f.path === path);
+  const forget = (): void => {
+    record.files = record.files.filter((f) => f.path !== path);
+  };
+  if (!ours) {
+    forget();
+    if (current === null) return null;
+    return recorded ? { verb: "keep", path, note: "git pre-push hook was edited after install; left in place" } : null;
+  }
+  const backups = record.backups.filter((b) => b.of === path);
+  const last = backups[backups.length - 1];
+  const restore = last !== undefined && readText(last.path) !== null;
+  return {
+    verb: restore ? "restore" : "remove",
+    path,
+    note: restore ? "git pre-push hook removed; the previous hook is put back" : "git pre-push hook",
+    guard: { path, before: current },
+    apply: () => {
+      rmSync(path, { force: true });
+      if (restore) {
+        renameSync(last.path, path);
+        record.backups = record.backups.filter((b) => b !== last);
+      }
+      forget();
+    },
+  };
 }
 
 async function install(args: string[]): Promise<number> {
@@ -194,34 +334,20 @@ async function install(args: string[]): Promise<number> {
       const refused = runtime.find((a) => a.failed);
       if (refused) return fail(`openqodex hook install: ${refused.path}: ${refused.note}`);
       await applyAll(runtime);
-
-      const script = gitHookScript(launcher);
-      const current = readText(target.path);
-      const remember = (): void => {
-        record.files = record.files.filter((f) => f.path !== target.path);
-        record.files.push({ path: target.path, sha256: sha256(script), usesLauncher: true });
-      };
-      if (current === script) {
-        remember();
+      const plan = await planGitHook(target.repoRoot, record, home, force);
+      if (plan.foreign) {
+        return fail(
+          `openqodex hook install: ${target.path} already exists and is not ours. Add this line to it:\n  ${shQuote(launcher)} scan\nor run openqodex hook install --force to replace it (the old hook is kept beside it).`,
+        );
+      }
+      if (plan.action.verb === "skip") {
         process.stdout.write(`The OpenQodex pre-push hook is already installed: ${target.path}\n`);
         return EXIT_OK;
       }
-      if (current !== null && !ownedFile(record, target.path, current)) {
-        if (!force) {
-          return fail(
-            `openqodex hook install: ${target.path} already exists and is not ours. Add this line to it:\n  ${shQuote(launcher)} scan\nor run openqodex hook install --force to replace it (the old hook is kept beside it).`,
-          );
-        }
-        const backup = writeBackup(target.path, current);
-        record.backups.push({ path: backup, of: target.path });
-        process.stdout.write(`The previous hook is saved as ${backup}\n`);
-      }
-      if (readText(target.path) !== current) return fail(`changed while openqodex was running, nothing written to ${target.path}`);
-      writeAtomic(target.path, script, 0o755);
-      chmodSync(target.path, 0o755);
-      remember();
+      await applyAll([plan.action]);
+      setHookChoice(record, target.repoRoot, "pre-push");
       process.stdout.write(
-        `Installed the OpenQodex pre-push hook: ${target.path}\nIt scans the change before each push and stops the push only when .openqodex.yaml sets block_on_severity and it is met. Undo: openqodex hook uninstall\n`,
+        `Installed the OpenQodex pre-push hook: ${target.path}\nIt scans what each push sends and stops the push only when the config sets block_on_severity and it is met. Undo: openqodex hook uninstall\n`,
       );
       return EXIT_OK;
     } finally {
@@ -240,28 +366,25 @@ async function uninstall(args: string[]): Promise<number> {
     const recordBefore = serialize(record);
     try {
       const current = readText(target.path);
-      const ours = current !== null && (ownedFile(record, target.path, current) || current === gitHookScript(launcherPath(home)));
-      const recorded = record.files.some((f) => f.path === target.path);
-      record.files = record.files.filter((f) => f.path !== target.path);
-      if (!ours) {
+      const action = await planGitHookRemoval(target.repoRoot, record, home);
+      if (action === null || action.apply === undefined) {
         process.stdout.write(
           current === null
             ? "No pre-push hook is installed.\n"
-            : recorded
+            : action !== null
               ? `${target.path} was edited after install; left in place.\n`
               : `${target.path} is not the OpenQodex hook; left in place.\n`,
         );
         return EXIT_OK;
       }
-      rmSync(target.path, { force: true });
-      // Put back the newest hook --force set aside, if it is still there.
-      const backups = record.backups.filter((b) => b.of === target.path);
-      const last = backups[backups.length - 1];
-      if (last && readText(last.path) !== null) {
-        renameSync(last.path, target.path);
-        record.backups = record.backups.filter((b) => b !== last);
-        process.stdout.write(`Removed the OpenQodex pre-push hook and put the previous hook back: ${target.path}\n`);
-      } else process.stdout.write(`Removed the OpenQodex pre-push hook: ${target.path}\n`);
+      await applyAll([action]);
+      // A later init asks again.
+      record.hookChoices = record.hookChoices.filter((c) => c.repo !== target.repoRoot);
+      process.stdout.write(
+        action.verb === "restore"
+          ? `Removed the OpenQodex pre-push hook and put the previous hook back: ${target.path}\n`
+          : `Removed the OpenQodex pre-push hook: ${target.path}\n`,
+      );
       return EXIT_OK;
     } finally {
       saveRecord(home, record, recordBefore);

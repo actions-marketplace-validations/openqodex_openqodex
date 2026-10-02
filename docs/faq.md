@@ -39,7 +39,7 @@ Yes, by its GitHub link. Add two lines to `.openqodex.yaml` and approve the entr
 
 ## Does it change my repository?
 
-The review writes only inside `.openqodex/`, which ignores itself in git. `git status` does not change. The built-in scanners run with fixes switched off, and their caches live outside the repository. A custom scanner you approved does whatever its own command does. `init` in user scope adds any repository file it writes to `.git/info/exclude`.
+The review writes only inside `.openqodex/`. Its `.gitignore` keeps the reports out of git, so the first run adds only `config.yaml`, `custom-instructions.md` and that `.gitignore` to `git status`; they are meant to be committed. The built-in scanners run with fixes switched off, and their caches live outside the repository. A custom scanner you approved does whatever its own command does. `init` in user scope adds the rule files it writes in the repository to `.git/info/exclude`.
 
 ## Where are the reports?
 

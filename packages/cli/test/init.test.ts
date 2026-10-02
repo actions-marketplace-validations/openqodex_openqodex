@@ -18,6 +18,11 @@
 // 10. A merge widens a private settings file's permissions.
 // 11. `--dry-run`, or no terminal without --yes, writes something.
 // 12. Init fails, or hides it, when the scanner installs cannot start.
+// 13. The pre-push hook is not added on --yes, is added on --hook none, or a
+//     second init asks the hook question again.
+// 14. Uninstall leaves the global instruction section behind, or removes the
+//     developer's own text around it.
+// 15. --project leaves the section out of the repo's CLAUDE.md or AGENTS.md.
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -62,10 +67,17 @@ function userFiles(s: Sandbox): string[] {
     join(s.repo, ".cursor/rules/openqodex.mdc"),
     join(s.home, ".cline/skills/openqodex/SKILL.md"),
     join(s.home, "Documents/Cline/Rules/openqodex.md"),
+    join(s.home, ".claude/CLAUDE.md"),
+    join(s.home, ".codex/AGENTS.md"),
+    join(s.repo, ".git/hooks/pre-push"),
     join(s.oqHome, "bin/openqodex"),
     join(s.oqHome, "runtime", version, "dist/bin.js"),
   ];
 }
+
+// What a first init or scan adds to git status: the folder's .gitignore and
+// the two team files, meant to be committed.
+const REPO_FOLDER_STATUS = "?? .openqodex/.gitignore\n?? .openqodex/config.yaml\n?? .openqodex/custom-instructions.md\n";
 
 describe("init, user scope, all agents", () => {
   let s: Sandbox;
@@ -79,10 +91,10 @@ describe("init, user scope, all agents", () => {
     first = cli(s, ["init", "--yes", "--agent", "all"]);
   });
 
-  it("writes every user-scope file the templates README lists, without changing git status", () => {
+  it("writes every user-scope file the templates README lists; git status gains only the repo folder's team files", () => {
     expect(first.status, first.stderr).toBe(0);
     for (const f of userFiles(s)) expect(existsSync(f), f).toBe(true);
-    expect(status(s)).toBe(statusBefore);
+    expect(status(s)).toBe(`${statusBefore}${REPO_FOLDER_STATUS}`);
   });
 
   it("writes hook commands that run through sh from a home path with a space", () => {
@@ -241,7 +253,7 @@ describe("init, files the developer owns or edited", () => {
     expect(cli(s, ["init", "--yes", "--agent", "cursor"]).status).toBe(0);
     expect(cli(s, ["init", "--yes", "--agent", "cursor"], { cwd: other }).status).toBe(0);
     expect(cli(s, ["init", "--uninstall", "--yes", "--agent", "cursor"]).status).toBe(0);
-    expect(git(other, "status", "--porcelain", "--untracked-files=all")).toBe("");
+    expect(git(other, "status", "--porcelain", "--untracked-files=all")).toBe(REPO_FOLDER_STATUS);
   });
 
   it("refuses a launcher it did not write, and writes no hook that would call it", () => {
@@ -309,7 +321,7 @@ describe("init, project scope", () => {
     const s = sandbox();
     expect(cli(s, ["init", "--yes", "--project", "--agent", "codex"]).status).toBe(0);
     const agents = join(s.repo, "AGENTS.md");
-    const edited = readFileSync(agents, "utf8").replace("## Review before push", "## Review before push, our way");
+    const edited = readFileSync(agents, "utf8").replace("## Review with OpenQodex", "## Review with OpenQodex, our way");
     writeFileSync(agents, edited);
     cli(s, ["init", "--yes", "--project", "--agent", "codex"]);
     cli(s, ["init", "--uninstall", "--yes", "--project"]);
@@ -353,11 +365,67 @@ describe("init, after writing", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/background: .*shellcheck/);
   });
+});
 
-  it("recommends the git pre-push hook when the repo blocks on findings", () => {
-    const s = sandbox({ ".openqodex.yaml": "review:\n  block_on_severity: major\n" });
-    lockTools(s);
-    const r = cli(s, ["init", "--yes", "--agent", "cursor"]);
-    expect(r.stdout).toMatch(/block_on_severity.*hook install/);
+const SECTION_START = "<!-- openqodex:start -->";
+
+describe("init, the hook question and the instruction section", () => {
+  it("--yes adds the pre-push hook; a second run without --yes asks nothing and changes nothing", () => {
+    const s = sandbox();
+    const first = cli(s, ["init", "--yes", "--agent", "all"]);
+    expect(first.status, first.stderr).toBe(0);
+    expect(readFileSync(join(s.repo, ".git/hooks/pre-push"), "utf8")).toContain(join(s.oqHome, "bin/openqodex"));
+    expect(first.stdout).toContain("Every push from this repo now gets a scan");
+    const before = snapshot(s);
+    // No terminal and no --yes: a run that had to ask or write would exit 2.
+    const second = cli(s, ["init", "--agent", "all"]);
+    expect(second.status, second.stderr).toBe(0);
+    expect(second.stdout).toContain("Nothing to change");
+    expect(second.stdout).not.toContain("pre-push hook: not asked");
+    expect(snapshot(s)).toEqual(before);
+  });
+
+  it("--hook none writes no hook, and a later --yes run keeps that answer", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]).status).toBe(0);
+    expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
+  });
+
+  it("uninstall removes the global section and the hook, and keeps the developer's own text around the section", () => {
+    const s = sandbox();
+    const claudeMd = join(s.home, ".claude/CLAUDE.md");
+    mkdirSync(join(s.home, ".claude"), { recursive: true });
+    writeFileSync(claudeMd, "# Mine\n\nKeep me.\n");
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    const installed = readFileSync(claudeMd, "utf8");
+    expect(installed).toContain(SECTION_START);
+    expect(installed).toContain("separate subagent");
+    writeFileSync(claudeMd, `${installed}\nMore of mine.\n`);
+
+    const r = cli(s, ["init", "--uninstall", "--yes"]);
+    expect(r.status, r.stderr).toBe(0);
+    const left = readFileSync(claudeMd, "utf8");
+    expect(left.startsWith("# Mine\n\nKeep me.\n")).toBe(true);
+    expect(left.trimEnd().endsWith("More of mine.")).toBe(true);
+    expect(left).not.toContain("openqodex");
+    expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
+  });
+
+  it("writes the section into Codex's AGENTS.md under CODEX_HOME", () => {
+    const s = sandbox();
+    const codexHome = join(s.root, "codex home");
+    expect(cli(s, ["init", "--yes", "--agent", "codex"], { env: { CODEX_HOME: codexHome } }).status).toBe(0);
+    expect(readFileSync(join(codexHome, "AGENTS.md"), "utf8")).toContain(SECTION_START);
+  });
+
+  it("--project writes the section into the repo's CLAUDE.md and AGENTS.md", () => {
+    const s = sandbox({ "CLAUDE.md": "# Repo\n" });
+    expect(cli(s, ["init", "--yes", "--project", "--agent", "all"]).status).toBe(0);
+    const claudeMd = readFileSync(join(s.repo, "CLAUDE.md"), "utf8");
+    expect(claudeMd.startsWith("# Repo\n")).toBe(true);
+    expect(claudeMd).toContain(SECTION_START);
+    expect(readFileSync(join(s.repo, "AGENTS.md"), "utf8")).toContain(SECTION_START);
   });
 });

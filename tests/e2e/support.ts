@@ -61,8 +61,22 @@ export function generatedSecret(dir: string): string {
   return secret;
 }
 export function readJson<T>(path: string): T { return JSON.parse(readFileSync(path, "utf8")) as T; }
+// The newest run's folder: the review receipt or the scan receipt, whichever
+// was written last (a scan never writes the review receipt).
 export function reportDir(dir: string): string {
-  return join(dir, readJson<{ dir: string }>(join(dir, ".openqodex/latest.json")).dir);
+  const receipts = [".openqodex/latest.json", ".openqodex/latest-scan.json"]
+    .map((r) => join(dir, r))
+    .filter((r) => existsSync(r))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  if (receipts.length === 0) throw new Error(`no run receipt in ${dir}/.openqodex`);
+  return join(dir, readJson<{ dir: string }>(receipts[0]).dir);
+}
+
+// The repo's config: the first scan created .openqodex/config.yaml, which is
+// read before a root .openqodex.yaml.
+export function writeConfig(dir: string, text: string): void {
+  mkdirSync(join(dir, ".openqodex"), { recursive: true });
+  writeFileSync(join(dir, ".openqodex/config.yaml"), text);
 }
 export function report(dir: string): Report {
   return readJson<Report>(join(reportDir(dir), "report.json"));
