@@ -26,7 +26,7 @@ A repository with no commits checks every file. OpenQodex never fetches from a r
 
 ## Shared flags
 
-`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init` and `hook` accept none of them.
+`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init`, `hook` and `update` accept none of them.
 
 - `--cwd <dir>`: find the repository from `<dir>`. A relative `--output` path still resolves from the folder you ran the command in.
 - `--config <path>`: read this config file instead of `.openqodex.yaml` at the repo root.
@@ -36,7 +36,7 @@ A repository with no commits checks every file. OpenQodex never fetches from a r
 - `--quiet`: no progress lines on stderr.
 - `--verbose`: print the stack when OpenQodex itself fails.
 - `--no-install`: do not download missing scanners. The report lists them as not installed.
-- `--offline`: no built-in scanner goes online. osv-scanner and semgrep are skipped and listed as disabled. Scanner downloads are off.
+- `--offline`: no built-in scanner goes online. osv-scanner and semgrep are skipped and listed as disabled. Scanner downloads are off. The daily version check does not start after this run.
 
 `doctor --install` together with `--offline` or `--no-install` exits 2.
 
@@ -66,7 +66,10 @@ A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a cu
 - the findings file breaks the shape, naming the first wrong field;
 - the change moved since the brief;
 - the config changed since the brief;
-- a finding cites a scanner rule or candidate that is not in this scan.
+- a finding cites a scanner rule or candidate that is not in this scan;
+- the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`.
+
+The brief's finalize command runs the same openqodex that wrote the brief: the runtime file the launcher ran, or `npx -y openqodex@<version>` when the launcher did not start it. When another version runs `--finalize` and the version that wrote the brief is installed by `init` or an update, it runs that version with the same arguments and exits with its code.
 
 It never repairs a finding. Fix what it names, or run `review --agent` again.
 
@@ -118,6 +121,8 @@ Prints the Node and git versions, the repository, the config, the OpenQodex home
 
 - `--install`: download every scanner that fits this machine, and wait for all of them.
 - `--json`: print the same facts as JSON.
+
+Under "Updates" it prints the running version and whether the launcher started it, the newest version the last check saw and when, the last check, whether updates are on (and why not), and the last update error. For a version not started through the launcher (npx, a project-scope file), it says when that pinned version is behind the newest one a check saw. Without a check on this machine, it says nothing about that.
 
 `doctor` always prints its table. It then exits 2 in three cases:
 
@@ -190,8 +195,27 @@ In a terminal, press 1 or 2. Any other key, Enter, Ctrl-C or the end of input co
 
 Choice 1 creates the issue with the GitHub CLI when `gh auth status` says you are signed in. Otherwise it opens the new issue page on GitHub with the title and body filled in, and prints the link. OpenQodex never signs you in. Choice 2 sends nothing. Nothing leaves your machine without choice 1. The last issue shown is kept in `.openqodex/last-report.json`, which git ignores.
 
+## update
+
+```
+openqodex update [--now | --rollback | --off | --on | --status]
+```
+
+Checks npm for a newer release and installs it now, in the foreground, the same way the daily check does. It works only for an install made with `npx openqodex init`: run through `~/.openqodex/bin/openqodex`, which hooks and the installed skill call. Run any other way (npx, a project-scope file), it exits 2 and says to run `npx openqodex init`.
+
+- No flag: install the newest release that is at least 24 hours old and whose build record verifies, then print what happened.
+- `--now`: also install a release younger than 24 hours. Verification is the same.
+- `--rollback`: point the launcher back at the version that was active before the last update, refresh the agent files to it, and turn updates off. It exits 2 and changes nothing when that version's copy is gone.
+- `--off`, `--on`: write `update: off` or `update: on` to `~/.openqodex/config.yaml`.
+- `--status`: print the same update lines as `doctor`.
+
+Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update refreshes only the agent files `init` recorded and that are still as `init` wrote them; a file you edited is left alone and named. It never writes inside a repository.
+
+After an update the next command prints one line on stderr: `openqodex updated to X (was Y). Roll back: openqodex update --rollback`. The agent push hook does not print it.
+
 ## Environment variables
 
 - `OPENQODEX_HOME`: where OpenQodex keeps scanners, the launcher and approvals. The default is `~/.openqodex`.
 - `OPENQODEX_SKIP=1`: the push gate lets the push through and says so. It is your switch, not your agent's.
+- `OPENQODEX_AUTO_UPDATE=0`: no daily version check. `OPENQODEX_OFFLINE=1` and a set `CI` variable do the same.
 - `NO_COLOR`: no colour in the terminal report.

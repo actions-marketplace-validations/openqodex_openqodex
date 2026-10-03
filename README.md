@@ -114,10 +114,19 @@ npx openqodex trust
 - When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code.
 
 - `openqodex trust` reads the custom scanner's release from the GitHub API and downloads it.
+- For an install made with `init`, a version check at most once a day: the openqodex release list from registry.npmjs.org, and for a newer release its tarball and signed build record. It sends no code and nothing about you.
 
-`--offline` skips osv-scanner and semgrep and turns scanner downloads off.
+`--offline` skips osv-scanner and semgrep and turns scanner downloads and the version check off.
 
 The built-in scanners send no code anywhere. Your agent's model sees what your agent reads, as always. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
+
+## Updates
+
+An install made with `npx openqodex init` from 0.3.0 on keeps itself up to date. At most once a day, after a review, a scan or a push check, a background process looks for a new release. The command never waits for it. A release is installed only when it is at least 24 hours old and its signed build record (npm provenance) shows it was built by this repository's release workflow. The next command says once which version it moved to. `openqodex update --rollback` goes back.
+
+Turn it off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml` or `OPENQODEX_AUTO_UPDATE=0`. It is also off with `--offline` and when `CI` is set.
+
+These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add`, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made with 0.1.0 or 0.2.0 needs one `npx openqodex init` to start updating.
 
 ## Packages
 
