@@ -127,11 +127,11 @@ Checks npm for a newer release and installs it now, in the foreground, the same 
 
 - No flag: install the newest release that is at least 24 hours old and whose build record verifies, then print what happened.
 - `--now`: also install a release younger than 24 hours. Verification is the same.
-- `--rollback`: turn updates off, then point the launcher back at the version that was active before the last update and refresh the agent files to it. It exits 2 and changes nothing when that version's copy is gone or when `update: off` cannot be written.
+- `--rollback`: turn updates off, then point the launcher back at the version that was active before the last update. It exits 2 and changes nothing when that version's copy is gone or when `update: off` cannot be written.
 - `--off`, `--on`: write `update: off` or `update: on` to `~/.openqodex/config.yaml`. `init --uninstall` removes that file when `update` created it and it is unchanged, and removes the update state.
 - `--status`: print the same update lines as `doctor`.
 
-Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update refreshes only the agent files `init` recorded and that are still as `init` wrote them; a file you edited is left alone and named. It never writes inside a repository.
+Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update writes no agent file and never writes inside a repository: the user-scope skill asks the launcher for the procedure with `guide skill`, so it always matches the active version. A foreground `update`, `--rollback`, `--off` and `--on` wait up to 60 seconds while another `init`, uninstall or update runs, then exit 2 with one line. `update` also removes runtime copies older than 7 days, except the one `init` installed, the current one and the previous one.
 
 After an update the next command prints one line on stderr: `openqodex updated to X (was Y). Roll back: openqodex update --rollback`. The agent push hook does not print it.
 

@@ -58,9 +58,11 @@ What it installs: a release that is newer than the running one, in the same majo
 
 A stolen npm publish token is therefore not enough to reach your machine: the release must come out of this repository's release workflow on `main`. The 24 hour age is a window to deprecate a bad release before installs take it.
 
-The Sigstore trust data (Fulcio roots, log keys) ships inside each release, so verification makes no other network call. When Sigstore rotates a key that an old release does not know, that release cannot verify newer ones. It stays on its version and says once a week how to update by hand: `npx openqodex@latest init`.
+The Sigstore trust data (Fulcio roots, log keys) ships inside each release, so verification makes no other network call. When Sigstore rotates a key that an old release does not know, that release cannot verify newer ones. It stays on its version and says once how to update by hand: `npx openqodex@latest init`.
 
-A verified release is unpacked into `~/.openqodex/runtime/<version>/`. A link in the tarball, or a path that leaves the folder, stops it. No install script runs. The new copy must print its own version, and only then, inside the installer's lock, are the agent files `init` recorded refreshed from the new copy's templates and the pointer `~/.openqodex/runtime/current` switched. A file you edited is left alone. Nothing inside a repository changes.
+A verified release is unpacked into a temporary folder under `~/.openqodex/runtime/`. A link in the tarball, or a path that leaves the folder, stops it. No install script runs. The new copy must print its own version. Only then, holding the lock below, the updater checks again that updates are still on, that OpenQodex is still installed and that no other update, rollback or `init` changed the active version meanwhile. It then renames the copy to `~/.openqodex/runtime/<version>/` and switches `~/.openqodex/runtime/current` by a second rename. A version folder is never replaced: when one with other contents is already there, the release is skipped. An update writes no agent file and nothing inside a repository.
+
+The lock: while `init`, `init --uninstall`, `hook install`, `update --rollback`, `update --off`, `update --on` or an update's switch runs, OpenQodex briefly opens a listener on 127.0.0.1, on a port between 20000 and 32000 derived from the path of `~/.openqodex`, so that two of them never run at once; it accepts no data and answers nothing, and the operating system closes it when the process ends, however it ends. When the listener cannot be opened at all, those commands stop with one line saying why, and the daily check skips the switch.
 
 Updates are off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml`, `OPENQODEX_AUTO_UPDATE=0`, `--offline` or `OPENQODEX_OFFLINE=1`, and whenever `CI` is set. A run through `npx` or a project-scope file never checks.
 
@@ -81,9 +83,9 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 - `tools/<scanner>/<version>/`: the scanners.
 - `tools/uv-python/`: the Python 3.11 for semgrep and bandit.
 - `cache/`: the download caches for uv and npm.
-- `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`. Updates add copies beside it. OpenQodex keeps the copy `init` installed, the current one, the previous one and any younger than 7 days.
-- `runtime/current`: the version the launcher runs.
-- `update.json` and `update.lock`: the state of the version check, private to you.
+- `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`. Updates add copies beside it; a copy is never changed after it is written. `init` and `openqodex update` remove copies older than 7 days, except the one `init` installed, the current one and the previous one.
+- `runtime/current`: the version the launcher runs, and on a second line the version a rollback goes back to.
+- `update.json`: the state of the version check, private to you.
 - `config.yaml`: your own settings; today only `update`.
 - `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
 - `trust.json`: your approvals of custom scanners.

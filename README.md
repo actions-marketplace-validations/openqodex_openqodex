@@ -124,7 +124,7 @@ The built-in scanners send no code anywhere. Your agent's model sees what your a
 
 ## Updates
 
-An install made with `npx openqodex init` from 0.3.0 on keeps itself up to date. At most once a day, after a review, a scan or a push check, a background process looks for a new release. The command never waits for it. A release is installed only when it is at least 24 hours old and its signed build record (npm provenance) shows it was built by this repository's release workflow. The next command says once which version it moved to. `openqodex update --rollback` goes back.
+An install made with `npx openqodex init` from 0.3.0 on keeps itself up to date. At most once a day, after a review, a scan or a push check, a background process looks for a new release. The command never waits for it. A release is installed only when it is at least 24 hours old and its signed build record (npm provenance) shows it was built by this repository's release workflow. It goes into a folder of its own beside the version you run, and the switch is one rename of a small file, so a failed or interrupted update leaves the working version in place. An update never rewrites your agent files: in user scope they call the launcher, and the skill asks it for the procedure of whatever version is active. The next command says once which version it moved to. `openqodex update --rollback` goes back.
 
 Turn it off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml` or `OPENQODEX_AUTO_UPDATE=0`. It is also off with `--offline` and when `CI` is set.
 

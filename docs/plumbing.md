@@ -57,10 +57,10 @@ When the repository uses husky or lefthook, `hook install` writes nothing. It pr
 For agents: the skill reads the docs offline with it.
 
 ```
-openqodex guide [topic]
+openqodex guide [skill | topic]
 ```
 
-Prints the skill without a topic. With a topic, it prints that page of these docs. An unknown topic lists the topics and exits 2.
+`guide skill`, and `guide` with no topic, print the full review procedure of the running version: the shipped skill with every command written for the runner that started it, the launcher's full path when the launcher started it, else `npx -y openqodex@<version>`. The skill `init` writes in user scope is a short stub that tells the agent to run `<launcher> guide skill` and follow what it prints. With a topic, it prints that page of these docs. An unknown topic lists the topics and exits 2.
 
 ## demo
 

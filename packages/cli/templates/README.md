@@ -16,13 +16,15 @@ Each file here is copied or merged by `openqodex init`. Three placeholders are f
 
 ## The skill in user scope
 
-The skill is copied from `skills/openqodex/SKILL.md`. In user scope every `npx -y openqodex@<version>` in it becomes the quoted launcher, and the paragraph that tells a skill installed by `npx skills add` to prefer the launcher is dropped. Project scope copies it unchanged.
+In user scope the skill is a stub built from `skills/openqodex/SKILL.md`: its frontmatter and title, its "When to run" and "Who reviews" sections, then a procedure that says to run `<launcher> guide skill` and follow what it prints. `guide skill` prints the shipped skill with every `npx -y openqodex@<version>` written as the launcher. Project scope copies the shipped skill with its pinned version. Both drop the paragraph that tells a skill installed by `npx skills add` to prefer the launcher.
+
+The Cursor and Cline rules: in user scope every `npx -y openqodex@{{VERSION}}` becomes the quoted launcher, and `guide` becomes `guide skill`. Project scope keeps them as the templates write them.
 
 ## The repo folder
 
 `repo/custom-instructions.md` becomes `.openqodex/custom-instructions.md`, and the default config text from the core package becomes `.openqodex/config.yaml` (not written while a root `.openqodex.yaml` exists). Both are created by `init` in a repo and by the first `scan` or `review`, never touched once they exist, and are meant to be committed. `init` also asks whether to add the git pre-push hook.
 
-The skill itself is not a template: `init` copies `skills/openqodex/SKILL.md` from the package, changed in user scope only as "The skill in user scope" says.
+The skill itself is not a template: `init` builds it from `skills/openqodex/SKILL.md` in the package, as "The skill in user scope" says.
 
 User scope is the default. Project scope (`--project`) writes into the repository for a team to commit. A repository file written in user scope is added to `.git/info/exclude` so `git status` does not change, except the team section.
 
