@@ -23,7 +23,9 @@ function readOpen(fd: number, maxBytes: number): string | null {
 export function readNoFollow(abs: string, maxBytes: number): string | null {
   let fd: number;
   try {
-    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // Non-blocking, so a named pipe here cannot hold the open; readOpen then
+    // reads only a regular file.
+    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch {
     return null;
   }

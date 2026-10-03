@@ -3,11 +3,24 @@
 // by init and by the first scan or review in a repo; an existing file is
 // never touched. Init records what it created, and uninstall removes a file
 // only while it is unchanged and not committed.
-import { mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { DEFAULT_CONFIG_YAML, FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, STATE_GITIGNORE, ensureRepoFiles, type RepoFiles } from "@openqodex/core";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  DEFAULT_CONFIG_YAML,
+  FOLDER_CONFIG,
+  INSTRUCTIONS_FILE,
+  STATE_DIR,
+  STATE_GITIGNORE,
+  ensureRepoFiles,
+  listRepoDir,
+  readRepoFile,
+  removeRepoFile,
+  repoStat,
+  writeRepoFile,
+  type RepoFiles,
+} from "@openqodex/core";
 import { assetPath } from "../assets.js";
-import { assertNoSymlinkInRepo, readText, sha256, writeAtomic } from "./files.js";
+import { sha256 } from "./files.js";
 import { isTracked } from "./git.js";
 import { ownedFile, type Action } from "./plan.js";
 import type { InstallRecord } from "./record.js";
@@ -44,7 +57,7 @@ const DAY0_GITIGNORE = "*\n";
 
 function repoFiles(repoRoot: string): { files: RepoFile[]; gitignore: RepoFile; rootConfig: boolean } {
   const dir = join(repoRoot, STATE_DIR);
-  const rootConfig = readText(join(repoRoot, ".openqodex.yaml")) !== null;
+  const rootConfig = repoStat(repoRoot, ".openqodex.yaml") !== null;
   const files: RepoFile[] = [];
   if (!rootConfig) files.push({ path: join(dir, FOLDER_CONFIG), label: "the team's OpenQodex config, to commit", text: DEFAULT_CONFIG_YAML });
   files.push({ path: join(dir, INSTRUCTIONS_FILE), label: "what a reviewer of this repo must know, to commit", text: instructionsTemplate() });
@@ -54,14 +67,8 @@ function repoFiles(repoRoot: string): { files: RepoFile[]; gitignore: RepoFile; 
 // Creates the file only when nothing is there (an exclusive open, never a
 // replacing rename), and records it as ours only when that create succeeded:
 // a first scan running at the same moment keeps its own file.
-function createOwned(record: InstallRecord, f: RepoFile): void {
-  mkdirSync(dirname(f.path), { recursive: true });
-  try {
-    writeFileSync(f.path, f.text, { flag: "wx" });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
-    throw error;
-  }
+function createOwned(repoRoot: string, record: InstallRecord, f: RepoFile): void {
+  if (!writeRepoFile(repoRoot, f.path, f.text, { exclusive: true })) return;
   record.files = record.files.filter((r) => r.path !== f.path);
   record.files.push({ path: f.path, sha256: sha256(f.text), usesLauncher: false });
 }
@@ -72,8 +79,7 @@ export function planRepoFiles(repoRoot: string, record: InstallRecord): { action
   // The .gitignore first, so the reports never show in git status.
   const all = [gitignore, ...files];
   for (const f of all) {
-    assertNoSymlinkInRepo(repoRoot, f.path);
-    const before = readText(f.path);
+    const before = readRepoFile(repoRoot, f.path);
     // The Day 0 folder ignored itself with "*": rewritten once, recorded as a
     // migration with the original bytes, so uninstall puts them back.
     if (f === gitignore && before === DAY0_GITIGNORE) {
@@ -83,7 +89,7 @@ export function planRepoFiles(repoRoot: string, record: InstallRecord): { action
         note: `${f.label}, in place of the old "*"`,
         guard: { path: f.path, before },
         apply: () => {
-          writeAtomic(f.path, f.text);
+          writeRepoFile(repoRoot, f.path, f.text);
           record.migrations = record.migrations.filter((m) => m.path !== f.path);
           record.migrations.push({ path: f.path, original: before, sha256: sha256(f.text) });
         },
@@ -94,7 +100,7 @@ export function planRepoFiles(repoRoot: string, record: InstallRecord): { action
       actions.push({ verb: "skip", path: f.path, note: f === gitignore ? "already there" : "already there; never changed by openqodex" });
       continue;
     }
-    actions.push({ verb: "create", path: f.path, note: f.label, guard: { path: f.path, before }, apply: () => createOwned(record, f) });
+    actions.push({ verb: "create", path: f.path, note: f.label, guard: { path: f.path, before }, apply: () => createOwned(repoRoot, record, f) });
   }
   return { actions, rootConfig };
 }
@@ -111,8 +117,7 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
   };
   const consider = async (f: RepoFile): Promise<void> => {
     if (!record.files.some((r) => r.path === f.path)) return;
-    assertNoSymlinkInRepo(repoRoot, f.path);
-    const before = readText(f.path);
+    const before = readRepoFile(repoRoot, f.path);
     if (before === null) return forget(f.path);
     if (!ownedFile(record, f.path, before)) {
       forget(f.path);
@@ -131,7 +136,7 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
       note: f.label,
       guard: { path: f.path, before },
       apply: () => {
-        rmSync(f.path, { force: true });
+        removeRepoFile(repoRoot, f.path);
         forget(f.path);
       },
     });
@@ -142,24 +147,21 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
   const migration = record.migrations.find((m) => m.path === gitignore.path);
   if (migration) {
     record.migrations = record.migrations.filter((m) => m !== migration);
-    const now = readText(gitignore.path);
+    const now = readRepoFile(repoRoot, gitignore.path);
     if (now !== null && sha256(now) === migration.sha256) {
       actions.push({
         verb: "restore",
         path: gitignore.path,
         note: "the .gitignore as it was before init",
         guard: { path: gitignore.path, before: now },
-        apply: () => writeAtomic(gitignore.path, migration.original),
+        apply: () => {
+          writeRepoFile(repoRoot, gitignore.path, migration.original);
+        },
       });
     }
     return actions;
   }
-  let others: string[] = [];
-  try {
-    others = readdirSync(dir).filter((n) => !removing.has(join(dir, n)) && join(dir, n) !== gitignore.path);
-  } catch {
-    // no folder
-  }
+  const others = listRepoDir(repoRoot, dir).filter((n) => !removing.has(join(dir, n)) && join(dir, n) !== gitignore.path);
   if (others.length === 0) {
     await consider(gitignore);
     const last = actions[actions.length - 1];
@@ -168,7 +170,7 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
       last.apply = () => {
         inner();
         try {
-          rmdirSync(dir);
+          removeRepoFile(repoRoot, dir);
         } catch {
           // something else is there now; it is not ours
         }

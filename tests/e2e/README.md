@@ -15,7 +15,7 @@ Every case guards one failure, named in its title. The groups:
 
 - `demo-flow`: one demo repo through init, the push hook, scan, review --agent and review --finalize; planted bugs found, the secret never shown, the repository unchanged by each command.
 - `review-finalize`: submissions finalize must reject, finalizing an older run by its path, a critical finding that blocks.
-- `block`, `scopes`, `no-tools`, `offline`, `git-hook`, `custom-scanner`, `clean-repo`, `cli`: one behaviour each.
+- `block`, `scopes`, `no-tools`, `offline`, `git-hook`, `hook-links`, `custom-scanner`, `clean-repo`, `cli`: one behaviour each.
 - `adapters`: each of the thirteen builtin scanners on a tiny planted input (`packages/scanners/test/adapters.subprocess.test.ts`).
 
 Receipts go to `tests/e2e/runs/<yyyymmdd-hhmmss>/` (gitignored, path printed at the end). Each command saves its command line, exit code, duration, stdout and stderr; the demo scan also saves `report.json`, `report.md`, `report.sarif` and the terminal output.

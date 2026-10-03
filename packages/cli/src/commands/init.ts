@@ -5,7 +5,7 @@
 // pre-push hook and creates the two team files in `.openqodex/`.
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR } from "@openqodex/core";
+import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, repoStat } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
 import { readText } from "../agents/files.js";
 import { excludeLine, gitPath, planExclude, planUnexclude, repoRootOf, trackedFiles } from "../agents/git.js";
@@ -315,11 +315,8 @@ async function runLocked(s: Setup): Promise<number> {
 // Names the two team files in the repo and what to do with them.
 function closingRepoLines(s: Setup, rootConfig: boolean): void {
   if (s.repoRoot === null) return;
-  const config = join(s.repoRoot, STATE_DIR, FOLDER_CONFIG);
-  const instructions = join(s.repoRoot, STATE_DIR, INSTRUCTIONS_FILE);
-  const files = [readText(config) !== null ? `${STATE_DIR}/${FOLDER_CONFIG}` : null, readText(instructions) !== null ? `${STATE_DIR}/${INSTRUCTIONS_FILE}` : null].filter(
-    (f): f is string => f !== null,
-  );
+  const repoRoot = s.repoRoot;
+  const files = [`${STATE_DIR}/${FOLDER_CONFIG}`, `${STATE_DIR}/${INSTRUCTIONS_FILE}`].filter((f) => repoStat(repoRoot, f) !== null);
   if (files.length > 0) out(`Commit ${files.join(" and ")} so your team shares ${files.length > 1 ? "them" : "it"}.`);
   if (files.includes(`${STATE_DIR}/${INSTRUCTIONS_FILE}`)) out(INSTRUCTIONS_LINE);
   if (rootConfig) out(ROOT_CONFIG_NOTE);
