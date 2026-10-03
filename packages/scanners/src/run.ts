@@ -66,7 +66,9 @@ type Outcome = {
 export async function runScanners(args: {
   repoDir: string;
   changedPaths: string[];
-  coverage: DiffCoverage;
+  // The changed lines. Absent for a whole-repo review: then every finding
+  // in a file of `changedPaths` is kept, whatever its line.
+  coverage?: DiffCoverage;
   config: Config;
   resolveTool: ResolveTool;
   custom?: CustomAdapter[];
@@ -95,9 +97,12 @@ export async function runScanners(args: {
   // Adapters do not agree on what a finding's path is relative to, and the
   // changed-line filter matches coverage keys by exact string, so every
   // path is rebased onto the repo root first.
-  const merged = outcomes.flatMap((o) =>
-    filterToChangedLines(toRunDirRelative(o.findings, args.repoDir), args.coverage),
-  );
+  const inScope = new Set(args.changedPaths);
+  const coverage = args.coverage;
+  const merged = outcomes.flatMap((o) => {
+    const rebased = toRunDirRelative(o.findings, args.repoDir);
+    return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
+  });
 
   // Fixture, mock and snapshot files hold throwaway data shaped like the
   // real thing; hits there are noise unless the developer asks for them.
@@ -153,7 +158,7 @@ async function runBuiltin(
   args: {
     repoDir: string;
     changedPaths: string[];
-    coverage: DiffCoverage;
+    coverage?: DiffCoverage;
     config: Config;
     resolveTool: ResolveTool;
   },

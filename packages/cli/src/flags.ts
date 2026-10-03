@@ -28,6 +28,11 @@ export type Parsed = {
   positionals: string[];
 };
 
+// `review` only: --all reviews the whole repository instead of the change;
+// --no-graph turns the code graph off for one run.
+export const ALL = "--all";
+export const NO_GRAPH = "--no-graph";
+
 const GLOBAL_VALUES = ["--cwd", "--config", "--format", "--output"];
 const GLOBAL_BOOLS = ["--no-color", "--quiet", "--verbose", "--no-install", "--offline"];
 

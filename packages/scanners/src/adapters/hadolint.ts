@@ -20,7 +20,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 
@@ -42,28 +42,32 @@ export async function runHadolint(args: {
   if (dockerfiles.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
-  const cliArgs = ["-f", "json", "--no-color", "--", ...dockerfiles];
+  const cliArgs = (files: string[]): string[] => ["-f", "json", "--no-color", "--", ...files];
 
-  let stdout: string;
+  // One process per chunk of files, so a whole-repo file list stays under
+  // the argument limit; the findings of every chunk are merged.
+  const tool = args.tool;
   try {
-    stdout = await execHadolint(args.tool, cliArgs, args.repoDir);
+    const findings = await runInChunks("hadolint", dockerfiles, HADOLINT_TIMEOUT_MS, async (chunk, left) => {
+      const stdout = await execHadolint(tool, cliArgs(chunk), args.repoDir, left);
+      try {
+        return parseHadolintJson(stdout);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`parse: ${message.slice(0, 200)}`);
+      }
+    });
+    return { findings, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
   }
-
-  try {
-    return { findings: parseHadolintJson(stdout), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
-  }
 }
 
-async function execHadolint(tool: ResolvedTool, cliArgs: string[], cwd: string): Promise<string> {
+async function execHadolint(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
-    timeoutMs: HADOLINT_TIMEOUT_MS,
+    timeoutMs,
     maxBytes: HADOLINT_OUTPUT_MAX_BYTES,
     env: tool.env,
   });

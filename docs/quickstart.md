@@ -39,6 +39,14 @@ review my change with openqodex
 
 The agent runs `openqodex review --agent`. That command works out the change, runs the scanners and prints a brief. The agent verifies each scanner finding, reviews the change itself, and writes its findings to a file. Then it runs `openqodex review --finalize`, which checks those findings without a model and writes the report.
 
+To review the whole repository instead of one change, say:
+
+```
+review my whole repo with openqodex
+```
+
+The agent runs `openqodex review --all --agent`. The scanners check every file, and the brief tells the agent where to start: the most-called functions and the files with the most scanner hits. See `docs/cli.md` for the details.
+
 ## 3. Read the report
 
 The agent tells you the verdict and the most serious findings. The full report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/` ignores itself in git, so `git status` does not change.

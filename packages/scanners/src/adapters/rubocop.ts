@@ -21,7 +21,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import type { Adapter } from "./index.js";
 import { withOwnedConfig } from "./owned-config.js";
 
@@ -74,17 +74,22 @@ export async function runRubocop(args: {
       // the repo, and gets absolute paths. --format json: stable machine
       // shape. --force-exclusion: honor the owned config's Exclude even for
       // files passed positionally. --cache false: no result cache written.
+      // One process per chunk of files, so a whole-repo file list stays
+      // under the argument limit; the findings of every chunk are merged.
       const targets = rubyFiles.map((rel) => path.join(args.repoDir, rel));
-      const cliArgs = ["--config", configPath, "--format", "json", "--force-exclusion", "--cache", "false", "--", ...targets];
-      const stdout = await execRubocop(tool, cliArgs, configDir);
-      try {
-        // The owned config is not a team's opt-in to every cop, so only the
-        // bug, security and performance departments are kept.
-        return { findings: parseRubocopJson(stdout, { hasConfig: false }), error: null };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { findings: [], error: `parse: ${message.slice(0, 200)}` };
-      }
+      const findings = await runInChunks("rubocop", targets, RUBOCOP_TIMEOUT_MS, async (chunk, left) => {
+        const cliArgs = ["--config", configPath, "--format", "json", "--force-exclusion", "--cache", "false", "--", ...chunk];
+        const stdout = await execRubocop(tool, cliArgs, configDir, left);
+        try {
+          // The owned config is not a team's opt-in to every cop, so only the
+          // bug, security and performance departments are kept.
+          return parseRubocopJson(stdout, { hasConfig: false });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`parse: ${message.slice(0, 200)}`);
+        }
+      });
+      return { findings, error: null };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -92,10 +97,10 @@ export async function runRubocop(args: {
   }
 }
 
-async function execRubocop(tool: ResolvedTool, cliArgs: string[], cwd: string): Promise<string> {
+async function execRubocop(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
-    timeoutMs: RUBOCOP_TIMEOUT_MS,
+    timeoutMs,
     maxBytes: RUBOCOP_OUTPUT_MAX_BYTES,
     env: tool.env,
   });

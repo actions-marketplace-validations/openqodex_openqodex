@@ -16,11 +16,14 @@
 //   7. Output past the cap is not reported as "overflow".
 //   8. Arguments go through a shell, so a ";" or "$(...)" in one runs.
 //  10. A child that ignores SIGTERM keeps execTool pending past its deadline.
+//  11. A whole-repo file list is passed to one process, which fails with
+//      E2BIG and loses every finding; or the chunks drop, repeat or reorder
+//      a file when their results are merged.
 
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execTool, scannerEnv } from "./exec.js";
+import { ARG_BUDGET_BYTES, execTool, runInChunks, scannerEnv } from "./exec.js";
 
 const NODE = process.execPath;
 const opts = (over: Partial<{ timeoutMs: number; maxBytes: number; env: Record<string, string> }> = {}) => ({
@@ -109,4 +112,20 @@ describe("execTool", () => {
     expect(Date.now() - started).toBeLessThan(5_000);
   }, 10_000);
 
+});
+
+describe("runInChunks", () => {
+  it("splits 20,000 file names into processes under the argument budget and merges every name back in order", async () => {
+    const files = Array.from({ length: 20_000 }, (_, i) => `src/module-${String(i).padStart(5, "0")}/index.ts`);
+    const sizes: number[] = [];
+    const merged = await runInChunks("echo", files, 60_000, async (chunk, left) => {
+      sizes.push(chunk.reduce((n, f) => n + Buffer.byteLength(f) + 1, 0));
+      const r = await execTool(NODE, ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))", "--", ...chunk], opts({ timeoutMs: left, maxBytes: 4 * 1024 * 1024 }));
+      expect(r.failure).toBeNull();
+      return JSON.parse(r.stdout) as string[];
+    });
+    expect(sizes.length).toBeGreaterThan(1);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(ARG_BUDGET_BYTES);
+    expect(merged).toEqual(files);
+  });
 });

@@ -65,6 +65,10 @@ export type BuildArgs = {
   repoRoot: string;
   // Paths to parse first (the change), so a budget cut never loses them.
   files?: string[];
+  // When set, the only paths the graph may read: anything else is left out
+  // as if it were not in the repo (a whole-repo review passes its inventory,
+  // so an excluded file never reaches the brief).
+  only?: string[];
   budgetMs?: number;
   maxFiles?: number;
   maxFileBytes?: number;
@@ -272,7 +276,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const budgetMs = args.budgetMs ?? DEFAULT_BUDGET_MS;
   const maxFiles = args.maxFiles ?? DEFAULT_MAX_FILES;
   const maxFileBytes = args.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-  const all = await gitFiles(args.repoRoot);
+  const allowed = args.only === undefined ? null : new Set(args.only);
+  const all = (await gitFiles(args.repoRoot)).filter((f) => allowed === null || allowed.has(f));
   const eligible = all.filter((f) => langOf(f) !== null);
   const known = new Set(eligible);
   for (const f of all) if (f.endsWith("__init__.py")) known.add(f);
