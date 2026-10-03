@@ -37,14 +37,16 @@ OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows
 
 ## What it does today
 
+Four commands: `init`, `review`, `update` and `trust`. The commands hooks and agents call are listed in [docs/plumbing.md](docs/plumbing.md).
+
 - `openqodex review --agent` writes a review brief for your agent: the scanner findings to verify, review patterns that fit the change, and the diff.
 - `openqodex review --finalize` checks the agent's findings without a model and writes `report.md`, `report.json` and `report.sarif`.
-- `openqodex scan` runs the scanners only, for git hooks, pre-commit and CI.
+- `openqodex review` with neither flag runs the scanners only and prints their report. Git hooks, pre-commit and CI run the same check as `openqodex scan`.
 - Thirteen built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
 - A push gate for Claude Code and Codex. It warns by default. It blocks only when `.openqodex.yaml` sets `review.block_on_severity`.
 - A GitHub Action and a pre-commit hook that run `openqodex scan`.
-- `openqodex demo` builds a small repo with planted bugs and scans it.
+- `npx openqodex demo` builds a small repo with planted bugs and scans it.
 
 ## What it does not do yet
 
@@ -142,6 +144,7 @@ The docs ship inside the package. `npx openqodex guide <topic>` prints a page of
 
 - [Quickstart](docs/quickstart.md)
 - [Commands](docs/cli.md)
+- [Plumbing commands](docs/plumbing.md)
 - [Configuration](docs/config.md)
 - [Scanners](docs/scanners.md)
 - [Custom scanners](docs/custom-scanners.md)

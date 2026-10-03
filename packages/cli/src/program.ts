@@ -6,18 +6,21 @@ import { noteInternalError, offer, takePending } from "./feedback.js";
 
 type CommandModule = { run: (args: string[]) => Promise<number> };
 
-// Each command is loaded only when it runs, so startup stays fast.
-const commands: Record<string, { summary: string; load: () => Promise<CommandModule> }> = {
-  review: { summary: "Review the current change", load: () => import("./commands/review.js") },
-  scan: { summary: "Run the scanners on the current change", load: () => import("./commands/scan.js") },
+// Each command is loaded only when it runs, so startup stays fast. `--help`
+// shows the four a person uses; the hidden ones stay callable: hooks, the
+// skill, the Action and pre-commit call them (docs/plumbing.md). `scan` is
+// what plain `review` does, kept by its own name for released hooks.
+const commands: Record<string, { summary: string; hidden?: true; load: () => Promise<CommandModule> }> = {
   init: { summary: "Install OpenQodex into your coding agent", load: () => import("./commands/init.js") },
-  doctor: { summary: "Show which scanners are installed", load: () => import("./commands/doctor.js") },
-  hook: { summary: "Run as a git hook", load: () => import("./commands/hook.js") },
-  trust: { summary: "Approve a custom scanner from .openqodex.yaml", load: () => import("./commands/trust.js") },
-  guide: { summary: "Print the docs", load: () => import("./commands/guide.js") },
-  demo: { summary: "Build the demo repo with planted bugs", load: () => import("./commands/demo.js") },
-  report: { summary: "Report a problem with OpenQodex as a GitHub issue", load: () => import("./commands/report.js") },
+  review: { summary: "Review the current change", load: () => import("./commands/review.js") },
   update: { summary: "Update OpenQodex now, roll back, or turn updates off", load: () => import("./commands/update.js") },
+  trust: { summary: "Approve a custom scanner from .openqodex.yaml", load: () => import("./commands/trust.js") },
+  scan: { summary: "Run the scanners on the current change", hidden: true, load: () => import("./commands/scan.js") },
+  doctor: { summary: "Show which scanners are installed", hidden: true, load: () => import("./commands/doctor.js") },
+  hook: { summary: "Run as a git hook", hidden: true, load: () => import("./commands/hook.js") },
+  guide: { summary: "Print the docs", hidden: true, load: () => import("./commands/guide.js") },
+  demo: { summary: "Build the demo repo with planted bugs", hidden: true, load: () => import("./commands/demo.js") },
+  report: { summary: "Report a problem with OpenQodex as a GitHub issue", hidden: true, load: () => import("./commands/report.js") },
 };
 
 // The hook check must stay silent, and report shows its own offer.
@@ -51,7 +54,7 @@ export async function main(argv: string[]): Promise<void> {
 
   for (const [name, entry] of Object.entries(commands)) {
     program
-      .command(name)
+      .command(name, { hidden: entry.hidden === true })
       .description(entry.summary)
       .allowUnknownOption()
       .allowExcessArguments()
