@@ -124,7 +124,7 @@ describe("the user-scope skill calls the launcher", () => {
     expect(r.status, r.stderr).toBe(0);
     const skill = readFileSync(join(s.home, ".cursor/skills/openqodex/SKILL.md"), "utf8");
     expect(skill).not.toContain("npx -y openqodex@");
-    const command = /^\s+('[^']+') review --agent$/m.exec(skill)?.[1];
+    const command = /^('[^']+') guide skill$/m.exec(skill)?.[1];
     expect(command).toBe(`'${launcher(s)}'`);
     const run = spawnSync("sh", ["-c", `${command} --version`], { encoding: "utf8", env: env(s) });
     expect(run.stdout.trim(), run.stderr).toBe(version);

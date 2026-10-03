@@ -1,36 +1,39 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { bin, git, receipt, root, skipNetwork } from "./support.js";
 
-// The self-update worker against the real npm registry, in a temp HOME
-// holding a launcher install of this build made by `init`.
+// The whole update chain against the real npm registry, in a temp HOME.
 //
-// The test seam: OPENQODEX_UPDATE_AS makes the worker select candidates as
-// if it ran that version, and OPENQODEX_UPDATE_MIN_AGE_MS shortens the
-// 24 hour age rule. Both are honoured only with OPENQODEX_E2E=1. With them a
-// worker really downloads the published 0.2.0 tarball, verifies it against
-// its real attestations, unpacks it and runs it. 0.2.0 has no __refresh
-// command, so activating it would leave old agent files behind: the worker
-// skips it with a reason, which is the path these cases prove.
+// `init` from this build installs the launcher; the test then turns that
+// install into one that runs 0.1.0: the installed runtime with its version
+// string changed, in runtime/0.1.0, named by the active record. A normal
+// command through the launcher starts the detached worker, which reads the
+// real registry metadata, downloads the newest published release, checks
+// its integrity and its Sigstore provenance, unpacks it, starts it, and
+// activates it through the commit boundary. The seam (honoured only with
+// OPENQODEX_E2E=1) only shortens the 24 hour age rule and pins the version
+// the worker chooses from; verification is never skipped. Released versions
+// do not know this build's record format, so after the activation only the
+// record, the folder and `--version` are read, then this build rolls back.
 //
 // Ways it could fail, written before the code:
 //  a. The command that starts the check waits for the worker.
-//  b. A release that cannot refresh the agent files is activated, or its
-//     unpacked folder is left in the runtime folder.
-//  c. A version skipped earlier is downloaded again on the next run.
+//  b. A verified release is downloaded but never activated, or the launcher
+//     does not run it afterwards, or an unpacked temp folder is left.
+//  c. Rollback after a real activation leaves the launcher on the new version.
 //  d. The seam works without OPENQODEX_E2E=1.
 //  e. With no release newer than the running one, something is installed.
 
 const offline = skipNetwork("self-update");
 const version = (JSON.parse(readFileSync(join(root, "packages/cli/package.json"), "utf8")) as { version: string }).version;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-const SEAM = { OPENQODEX_E2E: "1", OPENQODEX_UPDATE_AS: "0.1.0", OPENQODEX_UPDATE_MIN_AGE_MS: "0" };
+const FROM = "0.1.0";
+const SEAM = { OPENQODEX_E2E: "1", OPENQODEX_UPDATE_AS: FROM, OPENQODEX_UPDATE_MIN_AGE_MS: "0" };
 
 type Box = { home: string; oqHome: string; repo: string };
-type State = { checkedAt: string | null; latestSeen: string | null; skipped: { version: string; reason: string }[]; lastError: string | null };
 
 function laptop(b: Box, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const e: NodeJS.ProcessEnv = { ...process.env, HOME: b.home, OPENQODEX_HOME: b.oqHome };
@@ -49,6 +52,18 @@ function box(): Box {
   return b;
 }
 
+// The install as one of 0.1.0: this build's runtime with its version string
+// changed, the only runtime there, named by the active record.
+function asOld(b: Box): string {
+  const rt = (v: string): string => join(b.oqHome, "runtime", v);
+  cpSync(rt(version), rt(FROM), { recursive: true });
+  const file = join(rt(FROM), "dist/bin.js");
+  writeFileSync(file, readFileSync(file, "utf8").replaceAll(`"${version}"`, `"${FROM}"`));
+  rmSync(rt(version), { recursive: true });
+  writeFileSync(join(b.oqHome, "runtime/current"), `${FROM}\n\n`);
+  return file;
+}
+
 function launch(b: Box, label: string, args: string[], extra: Record<string, string> = {}, input = "") {
   const started = Date.now();
   const r = spawnSync("sh", [join(b.oqHome, "bin/openqodex"), ...args], { cwd: b.repo, env: laptop(b, extra), encoding: "utf8", input, timeout: 600_000 });
@@ -61,88 +76,70 @@ function launch(b: Box, label: string, args: string[], extra: Record<string, str
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", ms };
 }
 
-function state(b: Box): State {
+const record = (b: Box): string[] => readFileSync(join(b.oqHome, "runtime/current"), "utf8").split("\n").slice(0, 2);
+function state(b: Box): Record<string, unknown> {
   try {
-    return JSON.parse(readFileSync(join(b.oqHome, "update.json"), "utf8")) as State;
+    return JSON.parse(readFileSync(join(b.oqHome, "update.json"), "utf8")) as Record<string, unknown>;
   } catch {
-    return { checkedAt: null, latestSeen: null, skipped: [], lastError: null };
+    return {};
   }
 }
 
-function lockHolder(b: Box): number | null {
-  try {
-    return Number(readFileSync(join(b.oqHome, "update.lock"), "utf8").trim().split(/\s+/)[0]);
-  } catch {
-    return null;
-  }
-}
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-describe.skipIf(offline)("the self-update worker against the real registry", () => {
+describe.skipIf(offline)("the self-update against the real registry", () => {
   let b: Box;
+  let oldBin = "";
+  let latest = "";
   let parentMs = 0;
-  let workerSeenAfterParent = false;
-  let workerGoneMs = 0;
+  let activatedMs = -1;
 
   beforeAll(async () => {
+    const meta = (await (await fetch("https://registry.npmjs.org/openqodex")).json()) as { "dist-tags": { latest: string } };
+    latest = meta["dist-tags"].latest;
     b = box();
+    oldBin = asOld(b);
+    expect(launch(b, "before", ["--version"]).stdout.trim()).toBe(FROM);
     const parent = launch(b, "trigger", ["hook", "check"], SEAM, "{}");
     expect(parent.status).toBe(0);
     parentMs = parent.ms;
     const exitedAt = Date.now();
-    // The worker holds update.lock while it works; the parent has exited.
-    for (let i = 0; i < 100; i++) {
-      const pid = lockHolder(b);
-      if (pid !== null && alive(pid)) {
-        workerSeenAfterParent = true;
+    // The worker is detached: the parent has exited, the switch comes later.
+    for (let i = 0; i < 2400; i++) {
+      if (record(b)[0] !== FROM) {
+        activatedMs = Date.now() - exitedAt;
         break;
       }
-      await sleep(50);
+      if (typeof state(b).lastError === "string") break;
+      await sleep(250);
     }
-    for (let i = 0; i < 1200 && lockHolder(b) !== null; i++) await sleep(250);
-    workerGoneMs = Date.now() - exitedAt;
-  }, 600_000);
+  }, 700_000);
 
   it("a. the command exits without waiting for the worker, which keeps running after it", () => {
-    process.stdout.write(`self-update: parent exit ${parentMs} ms, worker finished ${workerGoneMs} ms after it\n`);
-    expect(workerSeenAfterParent).toBe(true);
+    process.stdout.write(`self-update: parent exit ${parentMs} ms, ${latest} active ${activatedMs} ms after it\n`);
     expect(parentMs).toBeLessThan(5_000);
+    expect(activatedMs, JSON.stringify(state(b))).toBeGreaterThan(0);
   });
 
-  it("b. the real 0.2.0 is downloaded, verified, run and then skipped because it cannot refresh the agent files", () => {
-    const s = state(b);
-    expect(s.checkedAt).not.toBeNull();
-    const skip = s.skipped.find((x) => x.version === "0.2.0");
-    expect(skip?.reason, JSON.stringify(s)).toMatch(/__refresh/);
-    expect(readFileSync(join(b.oqHome, "runtime/current"), "utf8").trim()).toBe(version);
-    // No half-unpacked folder is left, and no 0.2.0 runtime unless this build is 0.2.0.
-    const left = readdirSync(join(b.oqHome, "runtime"));
-    expect(left.filter((n) => n.includes(".tmp-") || n.includes(".old-"))).toEqual([]);
-    if (version !== "0.2.0") expect(left).not.toContain("0.2.0");
+  it("b. the newest published release is downloaded, verified, started and activated; the launcher runs it", () => {
+    expect(record(b), JSON.stringify(state(b))).toEqual([latest, FROM]);
+    const pkg = JSON.parse(readFileSync(join(b.oqHome, "runtime", latest, "package.json"), "utf8")) as { name: string; version: string };
+    expect(pkg).toMatchObject({ name: "openqodex", version: latest });
+    expect(launch(b, "after", ["--version"]).stdout.trim()).toBe(latest);
+    expect(readdirSync(join(b.oqHome, "runtime")).filter((n) => n.includes(".tmp-"))).toEqual([]);
   });
 
-  it("c. a version skipped earlier is not downloaded again", () => {
-    const r = launch(b, "again", ["update", "--now"], SEAM);
+  it("c. rollback by this build after the real activation puts the launcher back on the old version", () => {
+    const r = spawnSync(process.execPath, [oldBin, "update", "--rollback"], { cwd: b.repo, env: laptop(b, { OPENQODEX_LAUNCHER: oldBin }), encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/0\.2\.0.*skipped earlier/);
+    expect(record(b)).toEqual([FROM, latest]);
+    expect(launch(b, "rolled-back", ["--version"]).stdout.trim()).toBe(FROM);
   });
 
   it("d. the seam is ignored without OPENQODEX_E2E=1", () => {
     const fresh = box();
-    const r = launch(fresh, "no-seam", ["update", "--now"], { OPENQODEX_UPDATE_AS: "0.1.0", OPENQODEX_UPDATE_MIN_AGE_MS: "0" });
+    const r = launch(fresh, "no-seam", ["update", "--now"], { OPENQODEX_UPDATE_AS: FROM, OPENQODEX_UPDATE_MIN_AGE_MS: "0" });
     expect(r.status, r.stderr).toBe(0);
-    // Only the seam makes 0.2.0 a candidate. A release newer than this build
-    // (0.2.1 since 2026-10-03) may be tried and skipped; that is not the seam.
-    expect(r.stdout).not.toContain("No newer release than 0.1.0");
-    expect(state(fresh).skipped.map((x) => x.version)).not.toContain("0.2.0");
+    expect(r.stdout).not.toContain(`No newer release than ${FROM}`);
+    expect(record(fresh)[0]).not.toBe("0.2.0");
   });
 
   it("e. with no release newer than the running one, nothing is installed and the latest is recorded", () => {
@@ -152,6 +149,6 @@ describe.skipIf(offline)("the self-update worker against the real registry", () 
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("No newer release than 999.0.0");
     expect(state(fresh).latestSeen).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(readFileSync(join(fresh.oqHome, "runtime/current"), "utf8").trim()).toBe(version);
+    expect(record(fresh)[0]).toBe(version);
   });
 });

@@ -1,8 +1,9 @@
 // The self-update, through the real built CLI and the real launcher in temp
-// homes, with no registry: the trigger, the switches, the notice, activation
-// of a second real runtime, retention, rollback and finalize across versions.
-// The download and verification of real releases is in
-// tests/e2e/self-update.test.ts.
+// homes, with no registry: the trigger, the switches, the notice, retention,
+// rollback and finalize across versions. A second real runtime is activated
+// by the worker's own commit step in a child process. The boundary, crash and
+// race cases are in self-update-safety.test.ts; the download and
+// verification of real releases in tests/e2e/self-update.test.ts.
 //
 // Ways it could fail, written before the code:
 //  1. A check starts within 24 hours of the last one.
@@ -12,23 +13,20 @@
 //  4. The update changes the command's exit code.
 //  5. The update writes anything on stdout, so --format json breaks.
 //  6. The "updated" notice prints twice.
-//  7. A worker killed after unpacking and before the pointer leaves a state
-//     the launcher runs as the new version.
-//  8. Two workers that started from the same version both activate.
-//  9. Refresh overwrites an agent file the developer edited.
-// 10. Refresh creates an integration that was not recorded.
 // 11. Old runtimes are deleted while they are the baked-in, current or previous one.
 // 12. Rollback leaves the launcher pointing at a missing runtime.
 // 13. --rollback does not turn updating off.
 // 14. Finalize after an activation runs the new version on an old brief.
 // 15. Finalize executes a path taken from the manifest.
 // 16. The brief's finalize command names a runner other than the launcher or the pinned npx version.
+// 17. A finalize handed to another version hands off again.
+// 18. An inherited OPENQODEX_FINALIZE_HANDOFF stops a legitimate handoff.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { activate } from "../src/update/activate.js";
 import { readState } from "../src/update/state.js";
+import { bundleChildEntry } from "./bundle.js";
 import { BIN, cli, env, git, sandbox, type Sandbox } from "./init-helpers.js";
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
@@ -74,16 +72,8 @@ function copyRuntime(s: Sandbox, to: string, edit?: (dir: string) => void): stri
   return dir;
 }
 
-function record(s: Sandbox): { runtimes: string[]; files: { path: string }[] } {
-  return JSON.parse(readFileSync(join(s.oqHome, "install.json"), "utf8")) as { runtimes: string[]; files: { path: string }[] };
-}
-
 function current(s: Sandbox): string {
-  return readFileSync(join(s.oqHome, "runtime/current"), "utf8").trim();
-}
-
-function setCurrent(s: Sandbox, v: string): void {
-  writeFileSync(join(s.oqHome, "runtime/current"), `${v}\n`);
+  return readFileSync(join(s.oqHome, "runtime/current"), "utf8").split("\n")[0]!;
 }
 
 function age(path: string, days: number): void {
@@ -149,137 +139,81 @@ describe("what the command prints and returns", () => {
     expect(due.status).toBe(off.status);
   });
 
-  it("the notice goes to stderr, once, and stdout stays one JSON document (failures 5 and 6)", () => {
-    writeState(s, { checkedAt: new Date().toISOString(), installed: version, previous: "0.0.1", notified: false });
-    const first = launch(s, ["scan", "--format", "json", "--no-install"]);
-    const second = launch(s, ["scan", "--format", "json", "--no-install"]);
+  it("the notice goes to stderr, once, and stdout stays one JSON document (failures 5 and 6)", async () => {
+    await activateCopy(s, NEWER, version);
+    writeFileSync(join(s.repo, "app.py"), "print('hello')\n");
+    const first = launch(s, ["scan", "--format", "json", "--no-install"], { OPENQODEX_AUTO_UPDATE: "0" });
+    const second = launch(s, ["scan", "--format", "json", "--no-install"], { OPENQODEX_AUTO_UPDATE: "0" });
     expect(() => JSON.parse(first.stdout)).not.toThrow();
     expect(first.stdout).not.toMatch(NOTICE);
-    expect(first.stderr).toContain(`openqodex updated to ${version} (was 0.0.1). Roll back: openqodex update --rollback`);
+    expect(first.stderr).toContain(`openqodex updated to ${NEWER} (was ${version}). Roll back: openqodex update --rollback`);
     expect(second.stderr).not.toMatch(NOTICE);
   });
 });
 
-describe("activation", () => {
-  let s: Sandbox;
-  const skill = (x: Sandbox) => join(x.home, ".claude/skills/openqodex/SKILL.md");
-  const globalMd = (x: Sandbox) => join(x.home, ".claude/CLAUDE.md");
-  let editedBefore = "";
-  let first: Awaited<ReturnType<typeof activate>>;
-  let second: Awaited<ReturnType<typeof activate>>;
+// A worker's last step for a second real runtime, in a child process that
+// imports this repo's worker module (bundle.ts): the copy is unpacked where
+// the worker unpacks, then activated through the commit boundary.
+async function activateCopy(s: Sandbox, to: string, from: string): Promise<void> {
+  const tmp = join(s.oqHome, "runtime", `${to}.tmp-test`);
+  const pkg = join(tmp, "unpacked", "package");
+  cpSync(join(s.oqHome, "runtime", version), pkg, { recursive: true });
+  const bin = join(pkg, "dist/bin.js");
+  writeFileSync(bin, readFileSync(bin, "utf8").replaceAll(`"${version}"`, `"${to}"`));
+  const code = `const m = await import(${JSON.stringify(child)}); const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(to)}, from: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0 }); process.stdout.write(JSON.stringify(r));`;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...laptop(s), H: s.oqHome }, encoding: "utf8" });
+  expect(r.stdout, r.stderr).toMatch(/"outcome":"activated"/);
+}
 
-  beforeAll(async () => {
-    s = installed();
-    // The newer runtime ships a changed skill and instruction section, so a refresh shows.
-    copyRuntime(s, NEWER, (dir) => {
-      writeFileSync(join(dir, "skills/openqodex/SKILL.md"), `${readFileSync(join(dir, "skills/openqodex/SKILL.md"), "utf8")}\nNEWER SKILL LINE\n`);
-      const section = join(dir, "templates/instructions-section.md");
-      writeFileSync(section, readFileSync(section, "utf8").replace("<!-- openqodex:end -->", "NEWER SECTION LINE\n<!-- openqodex:end -->"));
-    });
-    // The developer edits the global instruction section by hand.
-    writeFileSync(globalMd(s), readFileSync(globalMd(s), "utf8").replace("<!-- openqodex:end -->", "my own note\n<!-- openqodex:end -->"));
-    editedBefore = readFileSync(globalMd(s), "utf8");
-    // The hook file is removed by the developer: refresh must not bring it back.
-    rmSync(join(s.home, ".claude/settings.json"));
-    const e = laptop(s);
-    first = await activate({ home: s.oqHome, version: NEWER, from: version, env: e });
-    second = await activate({ home: s.oqHome, version: NEWER, from: version, env: e });
-  }, 120_000);
+let child = "";
+beforeAll(async () => {
+  child = await bundleChildEntry();
+}, 60_000);
 
-  it("points current at the new runtime, records it and refreshes an owned file from the new runtime's templates", () => {
-    expect(first).toMatchObject({ ok: true });
-    expect(current(s)).toBe(NEWER);
-    expect(record(s).runtimes).toContain(join(s.oqHome, "runtime", NEWER));
-    expect(readFileSync(skill(s), "utf8")).toContain("NEWER SKILL LINE");
-    const launched = launch(s, ["--version"]);
-    expect(launched.stdout.trim()).toBe(NEWER);
-    expect(readState(s.oqHome)).toMatchObject({ installed: NEWER, previous: version, notified: false });
-  });
-
-  it("a second worker from the same starting version does not activate (failure 8)", () => {
-    expect(second.ok).toBe(false);
-    expect(!second.ok && second.reason).toMatch(/active version/);
-  });
-
-  it("refresh leaves a file the developer edited and names it (failure 9)", () => {
-    expect(readFileSync(globalMd(s), "utf8")).toBe(editedBefore);
-    expect(readState(s.oqHome).kept).toContain(globalMd(s));
-  });
-
-  it("refresh creates no integration that was not recorded (failure 10)", () => {
-    expect(existsSync(join(s.home, ".claude/settings.json"))).toBe(false);
-    for (const p of [".codex", ".cursor", ".cline", ".agents", "Documents"]) expect(existsSync(join(s.home, p)), p).toBe(false);
-  });
-});
-
-describe("one worker at a time", () => {
-  it("a second worker exits while a live one holds update.lock, before any network call (failure 8)", () => {
-    const s = installed();
-    // This test process is alive: its pid in the lock is a live holder.
-    writeFileSync(join(s.oqHome, "update.lock"), `${process.pid} sometoken\n`);
-    const r = launch(s, ["update", "--now"]);
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("Another update is running.");
-    expect(readState(s.oqHome).checkedAt).toBeNull();
-  });
-});
-
-describe("a half-finished update", () => {
-  it("a runtime unpacked but not pointed at is not what the launcher runs (failure 7)", () => {
-    const s = installed();
-    copyRuntime(s, NEWER);
-    mkdirSync(join(s.oqHome, "runtime", `${NEWER}.tmp-12345`, "package"), { recursive: true });
-    expect(current(s)).toBe(version);
-    expect(launch(s, ["--version"]).stdout.trim()).toBe(version);
-  });
-});
-
-describe("runtimes kept after an activation", () => {
+describe("runtimes kept by init", () => {
   let s: Sandbox;
   const rt = (v: string) => join(s.oqHome, "runtime", v);
   beforeAll(async () => {
     s = installed();
-    // 0.0.8 is active and old: it becomes the previous one.
-    for (const v of ["0.0.5", "0.0.6", "0.0.7", "0.0.8"]) copyRuntime(s, v);
+    for (const v of ["0.0.5", "0.0.6", "0.0.8"]) copyRuntime(s, v);
+    // 0.0.7 is not an openqodex runtime: not ours to remove.
+    mkdirSync(rt("0.0.7"));
+    writeFileSync(join(rt("0.0.7"), "package.json"), JSON.stringify({ name: "something-else" }));
+    writeFileSync(join(s.oqHome, "runtime/current"), `${NEWER}\n0.0.8\n`);
     copyRuntime(s, NEWER);
-    const rec = JSON.parse(readFileSync(join(s.oqHome, "install.json"), "utf8")) as { runtimes: string[] };
-    // 0.0.7 is not in install.json: not ours to remove.
-    rec.runtimes.push(rt("0.0.5"), rt("0.0.6"), rt("0.0.8"));
-    writeFileSync(join(s.oqHome, "install.json"), JSON.stringify(rec, null, 2));
-    for (const v of [version, "0.0.5", "0.0.7", "0.0.8"]) age(rt(v), 8);
-    setCurrent(s, "0.0.8");
-    const result = await activate({ home: s.oqHome, version: NEWER, from: "0.0.8", env: laptop(s) });
-    expect(result).toMatchObject({ ok: true });
+    for (const v of [version, "0.0.5", "0.0.7", "0.0.8", NEWER]) age(rt(v), 8);
+    const r = cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
   }, 120_000);
 
   it("keeps the baked-in runtime even when it is old (failure 11)", () => expect(existsSync(rt(version))).toBe(true));
-  it("keeps the previous runtime even when it is old (failure 11)", () => expect(existsSync(rt("0.0.8"))).toBe(true));
-  it("keeps the current runtime (failure 11)", () => expect(existsSync(rt(NEWER))).toBe(true));
-  it("keeps a recorded runtime younger than 7 days", () => expect(existsSync(rt("0.0.6"))).toBe(true));
-  it("removes a recorded runtime older than 7 days and drops it from install.json", () => {
+  it("keeps the runtime that was current before init, as previous, even when it is old (failure 11)", () => expect(existsSync(rt(NEWER))).toBe(true));
+  it("keeps a runtime younger than 7 days", () => expect(existsSync(rt("0.0.6"))).toBe(true));
+  it("removes an openqodex runtime older than 7 days that no rule keeps", () => {
     expect(existsSync(rt("0.0.5"))).toBe(false);
-    expect(record(s).runtimes).not.toContain(rt("0.0.5"));
+    expect(existsSync(rt("0.0.8"))).toBe(false);
   });
-  it("leaves a runtime folder install.json does not name", () => expect(existsSync(rt("0.0.7"))).toBe(true));
+  it("leaves a runtime folder that is not openqodex", () => expect(existsSync(rt("0.0.7"))).toBe(true));
+  it("init points the record at its own version with the earlier one as previous", () => {
+    expect(readFileSync(join(s.oqHome, "runtime/current"), "utf8")).toBe(`${version}\n${NEWER}\n`);
+  });
 });
 
 describe("rollback", () => {
   it("points back at the previous runtime and turns updating off (failures 12 and 13)", async () => {
     const s = installed();
-    copyRuntime(s, NEWER);
-    expect(await activate({ home: s.oqHome, version: NEWER, from: version, env: laptop(s) })).toMatchObject({ ok: true });
+    await activateCopy(s, NEWER, version);
     const r = launch(s, ["update", "--rollback"]);
     expect(r.status, r.stderr).toBe(0);
     expect(current(s)).toBe(version);
-    expect(existsSync(join(s.oqHome, "runtime", version, "dist/bin.js"))).toBe(true);
     expect(launch(s, ["--version"]).stdout.trim()).toBe(version);
     expect(readFileSync(join(s.oqHome, "config.yaml"), "utf8")).toMatch(/^update: off$/m);
     expect(launch(s, ["update", "--status"]).stdout).toMatch(/off/);
   }, 120_000);
 
-  it("refuses when the previous runtime is gone and leaves the pointer alone (failure 12)", () => {
+  it("refuses when the previous runtime is gone and leaves the record alone (failure 12)", () => {
     const s = installed();
-    writeState(s, { checkedAt: new Date().toISOString(), installed: version, previous: "0.0.9" });
+    writeFileSync(join(s.oqHome, "runtime/current"), `${version}\n0.0.9\n`);
     const r = launch(s, ["update", "--rollback"]);
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/0\.0\.9/);
@@ -338,8 +272,7 @@ describe("finalize across versions", () => {
     expect(r.status, r.stderr).toBe(0);
     brief = r.stdout;
     submit();
-    copyRuntime(s, NEWER);
-    expect(await activate({ home: s.oqHome, version: NEWER, from: version, env: laptop(s) })).toMatchObject({ ok: true });
+    await activateCopy(s, NEWER, version);
   }, 180_000);
 
   it("the brief names the launcher, as the skill and the permission rule write it, not npx (failure 16)", () => {
@@ -349,19 +282,25 @@ describe("finalize across versions", () => {
     expect(JSON.parse(readFileSync(manifestPath(), "utf8"))).toMatchObject({ version: 3, runtime_version: version });
   });
 
-  it("the new runtime does not finalize a brief from another version when that version is not installed (failure 14)", () => {
-    const rec = JSON.parse(readFileSync(join(s.oqHome, "install.json"), "utf8")) as { runtimes: string[] };
-    const without = { ...rec, runtimes: rec.runtimes.filter((r) => r !== join(s.oqHome, "runtime", version)) };
-    writeFileSync(join(s.oqHome, "install.json"), JSON.stringify(without, null, 2));
+  it("the new runtime does not finalize a brief from another version when that runtime folder is gone (failure 14)", () => {
+    const dir = join(s.oqHome, "runtime", version);
+    renameSync(dir, `${dir}.aside`);
     const r = launch(s, ["review", "--finalize"]);
-    writeFileSync(join(s.oqHome, "install.json"), JSON.stringify(rec, null, 2));
+    renameSync(`${dir}.aside`, dir);
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(new RegExp(`written by openqodex ${version.replaceAll(".", "\\.")}.*review --agent`));
     expect(existsSync(join(findings(), "..", "report.json"))).toBe(false);
   });
 
-  it("finalize after an activation runs the version that wrote the brief (failure 14)", () => {
-    const r = launch(s, ["review", "--finalize"]);
+  it("a runtime reached by a handoff, marked by the hidden argument, does not hand off again (failure 17)", () => {
+    const r = launch(s, ["review", "--finalize", "--handed-off"]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/handed/);
+    expect(existsSync(join(findings(), "..", "report.json"))).toBe(false);
+  });
+
+  it("finalize after an activation runs the version that wrote the brief, even with an inherited handoff variable (failures 14 and 18)", () => {
+    const r = launch(s, ["review", "--finalize"], { OPENQODEX_FINALIZE_HANDOFF: "1" });
     expect(r.status, r.stderr).toBe(0);
     expect(existsSync(join(findings(), "..", "report.json"))).toBe(true);
   });
