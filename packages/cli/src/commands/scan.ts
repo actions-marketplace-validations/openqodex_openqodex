@@ -50,7 +50,7 @@ export async function runScan(args: {
     finalized: false,
     verdict: report.verdict,
   });
-  emitReport(report, flags);
+  emitReport(report, flags, p.repoRoot);
   return { exitCode: exitFor(report), report, dir };
 }
 

@@ -7,12 +7,14 @@ import {
   STATE_DIR,
   findRepoRoot,
   getChange,
+  isRepoState,
   loadConfig,
   redactSecrets,
   renderJson,
   renderMarkdown,
   renderSarif,
   renderTerminal,
+  writeRepoFile,
 } from "@openqodex/core";
 import type { Change, ChangeScope, Config, HotSpot, ImpactSummary, Report, ScanResult, ScannerSource } from "@openqodex/core";
 import { buildGraph, detectImpact, emptyImpact, hotSymbols, langOf } from "@openqodex/graph";
@@ -200,7 +202,7 @@ export function reportFiles(report: Report): Record<string, string> {
 }
 
 // The chosen format to stdout, or to --output.
-export function emitReport(report: Report, flags: GlobalFlags): void {
+export function emitReport(report: Report, flags: GlobalFlags, repoRoot: string): void {
   const text =
     flags.format === "markdown"
       ? renderMarkdown(report)
@@ -213,6 +215,11 @@ export function emitReport(report: Report, flags: GlobalFlags): void {
     // A temp file beside it, then a rename: an existing entry, a symbolic
     // link included, is replaced and never written through.
     const out = resolve(flags.output);
+    // Into the repo state: through the repo state writer, never through a link.
+    if (isRepoState(repoRoot, out)) {
+      writeRepoFile(repoRoot, out, text);
+      return;
+    }
     const tmp = join(dirname(out), `.${basename(out)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
     try {
       writeFileSync(tmp, text, { flag: "wx" });

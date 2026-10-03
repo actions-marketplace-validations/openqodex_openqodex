@@ -33,7 +33,17 @@ function steps(repoRoot: string, path: string): string[] {
 }
 
 function linkError(repoRoot: string, at: string): OpenQodexError {
-  return new OpenQodexError(`${relative(repoRoot, at)} is a symbolic link; openqodex reads and writes only real files and folders there`);
+  return new OpenQodexError(
+    `${relative(repoRoot, at)} is a symbolic link; openqodex reads and writes only real files and folders there: replace the link with a real file (a copy is fine)`,
+  );
+}
+
+// True when `path` names the repo state: `.openqodex` or anything under it,
+// or the root `.openqodex.yaml`. A flag that names such a path goes through
+// this module like every other access to it.
+export function isRepoState(repoRoot: string, path: string): boolean {
+  const rel = relative(repoRoot, resolve(repoRoot, path)).split(sep);
+  return rel.length > 0 && (rel[0] === ".openqodex" || (rel.length === 1 && rel[0] === ".openqodex.yaml"));
 }
 
 // What is at `path` (absolute, or relative to the repo root), by lstat alone:

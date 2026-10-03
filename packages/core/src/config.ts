@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { readFileBounded, readRepoFile } from "./repo-state.js";
+import { isRepoState, readFileBounded, readRepoFile } from "./repo-state.js";
 import { SEVERITIES } from "./severity.js";
 import type { BuiltinScanner, Config, CustomInstall, CustomScanner, JsonMap, LoadedConfig, Severity } from "./types.js";
 import { OpenQodexError } from "./types.js";
@@ -408,8 +408,14 @@ function setsThreshold(data: unknown): boolean {
 export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfig {
   if (explicitPath !== undefined) {
     const path = isAbsolute(explicitPath) ? explicitPath : resolve(repoRoot, explicitPath);
+    // A file in the repo state is read as repo state, never through a link.
+    if (isRepoState(repoRoot, path)) {
+      const text = readRepoFile(repoRoot, path, CONFIG_MAX_BYTES);
+      if (text === null) throw new OpenQodexError(`config file not found: ${path}`);
+      return { ...parseConfig(text, explicitPath), path };
+    }
     if (!existsSync(path)) throw new OpenQodexError(`config file not found: ${path}`);
-    // The developer named this file, so a link is followed; it must still be a regular file within the cap.
+    // Any other file the developer named: a link is followed; it must still be a regular file within the cap.
     return { ...parseConfig(readFileBounded(path, CONFIG_MAX_BYTES), explicitPath), path };
   }
   // The repo's own files: never through a link, never past the cap.

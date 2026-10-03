@@ -25,7 +25,7 @@
 // pre-push and review --finalize, a linked run folder, a linked
 // last-report.json, and a linked .openqodex when report saves its issue.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -150,7 +150,47 @@ describe("the push gates with links in the repo state", () => {
   });
 });
 
+describe("flags that name a path in the repo state", () => {
+  it("--config naming .openqodex/config.yaml never parses the outside file a link there points at", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    const away = outside({ "config.yaml": "scanners:\n  custom:\n    - source: https://github.com/aquasecurity/trivy\n      run: trivy config --format sarif --output {report} {target}\n" });
+    mkdirSync(join(s.repo, ".openqodex"));
+    symlinkSync(join(away, "config.yaml"), join(s.repo, ".openqodex/config.yaml"));
+    const r = bounded(s, ["trust", "--list", "--config", ".openqodex/config.yaml"]);
+    expect(r.stdout).not.toContain("trivy");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is a symbolic link");
+  });
+
+  it("--output into .openqodex never writes through a linked folder there", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    const away = outside({});
+    const before = tree(away);
+    mkdirSync(join(s.repo, ".openqodex"));
+    symlinkSync(away, join(s.repo, ".openqodex/export"));
+    const r = bounded(s, ["scan", "--uncommitted", "--no-install", "--output", ".openqodex/export/report.json"]);
+    expect(tree(away)).toEqual(before);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is a symbolic link");
+  });
+});
+
 describe("finalize with links in the run folder", () => {
+  it("review --finalize refuses a receipt naming a folder outside .openqodex/reviews by its shape, before looking through it", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    const away = outside({});
+    mkdirSync(join(s.repo, ".openqodex"));
+    symlinkSync(away, join(s.repo, ".openqodex/redirect"));
+    // A link inside the outside folder: a check that looks through `redirect` sees it.
+    symlinkSync(join(away, "elsewhere"), join(away, "run"));
+    writeFileSync(join(s.repo, ".openqodex/latest.json"), JSON.stringify({ dir: ".openqodex/redirect/run", change_id: "0".repeat(40), kind: "review", finalized: false, verdict: null }));
+    const r = bounded(s, ["review", "--finalize"]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is not in a report folder");
+    expect(readdirSync(away)).toEqual(["run"]);
+  });
+
   it("review --finalize ends with one line when run.json links to an endless file", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "README.md"), "changed\n");

@@ -6,7 +6,7 @@
 //                      on every file, then the brief, with or without --agent.
 //                      There is never a scan-only report of the whole repo.
 import { createHash } from "node:crypto";
-import { closeSync, constants, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, openSync, readSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   MANIFEST_VERSION,
@@ -303,35 +303,40 @@ function readJsonFile(repoRoot: string, path: string, what: string): unknown {
   }
 }
 
-function isLink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
+// <yyyymmdd-hhmmss>-<shortid>, with "-2", "-3", ... for a second run in the same second.
+const RUN_DIR_NAME = /^\d{8}-\d{6}-[0-9a-f]{12}(?:-\d+)?$/;
 
 // The run folder must be a real folder directly under this repo's
 // .openqodex/reviews/, reached through no symbolic link, and the findings
-// file must not be a link either: finalize reads and writes only there.
-function checkRunDir(repoRoot: string, dir: string, findingsPath: string): void {
-  const state = join(repoRoot, STATE_DIR);
-  const reviews = join(state, "reviews");
+// file must not be a link either: finalize reads and writes only there. The
+// shape is checked from the path text first, so nothing is looked up through
+// a folder the path names before it is known to be the run folder. Returns
+// the folder and the findings file spelled from the repo root.
+function checkRunDir(repoRoot: string, dir: string, findingsPath: string): { dir: string; findingsPath: string } {
+  const reviews = join(repoRoot, STATE_DIR, "reviews");
   const outside = new OpenQodexError(
     `${findingsPath} is not in a report folder under ${reviews}; write the findings where the brief says`,
   );
-  if (isLink(state) || isLink(reviews) || isLink(dir) || isLink(findingsPath)) {
-    throw new OpenQodexError(`a symbolic link in ${findingsPath}; openqodex reads and writes only real files there`);
-  }
-  let parent: string;
-  let root: string;
-  try {
-    parent = realpathSync(dirname(dir));
-    root = realpathSync(reviews);
-  } catch {
+  const parent = dirname(dir);
+  const state = dirname(parent);
+  const root = dirname(state);
+  // The repo root may be spelled another way (/var and /private/var on macOS); only it is resolved.
+  const sameRoot = (): boolean => {
+    try {
+      return realpathSync(root) === realpathSync(repoRoot);
+    } catch {
+      return false;
+    }
+  };
+  if (!RUN_DIR_NAME.test(basename(dir)) || basename(parent) !== "reviews" || basename(state) !== STATE_DIR || (root !== repoRoot && !sameRoot())) {
     throw outside;
   }
-  if (parent !== root || !lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw outside;
+  const canonical = join(reviews, basename(dir));
+  const findings = join(canonical, basename(findingsPath));
+  // A link at .openqodex, reviews, the run folder or the findings file throws here.
+  if (!repoStat(repoRoot, canonical)?.isDirectory()) throw outside;
+  repoStat(repoRoot, findings);
+  return { dir: canonical, findingsPath: findings };
 }
 
 // The report folder this submission belongs to: the newest run when no path
@@ -345,20 +350,13 @@ function findRun(repoRoot: string, path: string | undefined, all: boolean): { di
     if (latest === null || typeof latest.dir !== "string") {
       throw new OpenQodexError(`no review brief found in this repository; ${RUN_AGAIN}`);
     }
-    dir = resolve(repoRoot, latest.dir);
-    findingsPath = join(dir, FINDINGS_FILE);
-    checkRunDir(repoRoot, dir, findingsPath);
+    ({ dir, findingsPath } = checkRunDir(repoRoot, resolve(repoRoot, latest.dir), join(resolve(repoRoot, latest.dir), FINDINGS_FILE)));
     if (readManifest(repoRoot, dir) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
     if (repoStat(repoRoot, findingsPath) === null) {
       throw new OpenQodexError(`no agent findings at ${findingsPath}; write them there as the brief says, then run this again`);
     }
   } else {
-    findingsPath = resolve(path);
-    dir = dirname(findingsPath);
-    checkRunDir(repoRoot, dir, findingsPath);
-    // The same folder spelled from the repo root, so every read below walks from there.
-    dir = join(repoRoot, STATE_DIR, "reviews", basename(dir));
-    findingsPath = join(dir, basename(findingsPath));
+    ({ dir, findingsPath } = checkRunDir(repoRoot, dirname(resolve(path)), resolve(path)));
   }
   const submission = readJsonFile(repoRoot, findingsPath, "agent findings");
   if (submission === null) throw new OpenQodexError(`agent findings not found at ${findingsPath}`);
@@ -408,6 +406,6 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   };
   if (whole) writeLatestAll(repoRoot, receipt);
   else writeLatest(repoRoot, receipt);
-  emitReport(report, flags);
+  emitReport(report, flags, repoRoot);
   return exitFor(report);
 }
