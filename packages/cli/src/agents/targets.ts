@@ -75,15 +75,22 @@ function skill(version: string, user: boolean, runner: string): string {
   return user ? text.replace(PINNED_NPX, () => runner) : text;
 }
 
-// The commands the skill tells the agent to run, allowed in Claude Code
-// without a prompt. A Bash rule matches the command text as written, so each
-// rule starts with the runner exactly as the skill writes it. Not `trust`
+// The exact command lines the skill tells the agent to run, allowed in
+// Claude Code without a prompt, in user scope only. A rule with no `*`
+// matches one exact command, and "a rule must match each subcommand
+// independently" (Claude Code permissions page, Compound commands), so
+// `review --agent && other` is not covered. No wildcard after `review`: one
+// would pass --output, --config and --cwd with any path unasked. `guide *` is
+// the one wildcard: guide only prints a page bundled in the package, chosen
+// by name from its docs folder. Not allowed: `scan`, `doctor`, `trust`
 // (approving a custom scanner stays the developer's decision), `update`,
-// `init` or `report`.
-const ALLOWED_COMMANDS = ["review", "scan", "doctor", "guide", "hook check"];
+// `init`, `report`; `hook check` runs from Claude Code's hook system, which
+// needs no Bash rule.
+const REVIEW_LINES = ["review --agent", "review --finalize", "review --agent --all", "review --finalize --all"];
+const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *"];
 
 export function allowRules(runner: string): string[] {
-  return ALLOWED_COMMANDS.map((c) => `Bash(${runner} ${c} *)`);
+  return ALLOWED_LINES.map((l) => `Bash(${runner} ${l})`);
 }
 
 function fileTarget(agent: AgentId, label: string, path: string, content: string, inRepo: boolean, usesLauncher = false): Target {
@@ -143,15 +150,19 @@ export function targetsFor(args: {
         inRepo: !user,
         usesLauncher: user,
       });
-      // After the hook: both change settings.json, and this one reads it at write time.
-      targets.push({
-        kind: "allow-rules",
-        agent,
-        label: "Claude Code permission rules",
-        path: at(".claude", "settings.json"),
-        rules: allowRules(runner),
-        inRepo: !user,
-      });
+      // User scope only: a committed settings file would grant these on
+      // every teammate's machine. After the hook: both change settings.json,
+      // and this one reads it at write time.
+      if (user) {
+        targets.push({
+          kind: "allow-rules",
+          agent,
+          label: "Claude Code permission rules",
+          path: at(".claude", "settings.json"),
+          rules: allowRules(runner),
+          inRepo: false,
+        });
+      }
       break;
     case "codex":
       targets.push(skillTarget("Codex skill", at(".agents", "skills", "openqodex", "SKILL.md")));

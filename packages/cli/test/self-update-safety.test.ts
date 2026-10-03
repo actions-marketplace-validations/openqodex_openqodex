@@ -21,9 +21,11 @@
 // 11. A queued daily worker checks again right after another one did.
 // 12. A tarball member that is a link, or that leaves the folder, is unpacked.
 // A.  Uninstall leaves update.json, update.lock or a config.yaml it created.
-// B.  The review commands the skill names still ask for permission in Claude
-//     Code; or `trust`, `update`, `init` or `report` are allowed; or a rule
-//     the developer had is removed.
+// B.  A review command line the skill names still asks for permission in
+//     Claude Code; a rule has a wildcard after `review` or `scan`, so flags
+//     such as --output <any path> pass unasked; `scan`, `doctor`, `trust`,
+//     `update`, `init` or `report` are allowed; `init --project` commits rules
+//     for the whole team; or a rule the developer had is removed.
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -379,17 +381,46 @@ describe("B. Claude Code permission rules", () => {
   }
   const allow = (settings: string): string[] => ((JSON.parse(readFileSync(settings, "utf8")) as { permissions?: { allow?: string[] } }).permissions?.allow ?? []);
 
-  it("allows the commands the skill names, written the same way, and nothing else of openqodex", () => {
+  // Claude Code's matching as its permissions page states it: a rule without
+  // `*` matches one exact command; a trailing " *" also matches the bare command.
+  const covers = (rules: string[], command: string): boolean =>
+    rules.some((r) => {
+      const body = r.slice("Bash(".length, -1);
+      return body.endsWith(" *") ? command === body.slice(0, -2) || command.startsWith(body.slice(0, -1)) : command === body;
+    });
+  const EXACT = ["review --agent", "review --finalize", "review --agent --all", "review --finalize --all"];
+  const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  it("allows exactly the review command lines and guide, with no wildcard after review", () => {
     const p = plain();
     const r = p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
     expect(r.status, String(r.stderr)).toBe(0);
     const launcher = join(p.oqHome, "bin/openqodex");
     const rules = allow(join(p.home, ".claude/settings.json"));
-    expect(rules).toEqual(["review", "scan", "doctor", "guide", "hook check"].map((c) => `Bash(${launcher} ${c} *)`));
-    expect(rules.join("\n")).not.toMatch(/trust|update|init|report/);
+    expect(rules).toEqual([...EXACT, ...EXACT.map((c) => `${c} --offline`), "guide", "guide *"].map((c) => `Bash(${launcher} ${c})`));
+    expect(rules.filter((x) => /(review|scan)[^)]*\*/.test(x))).toEqual([]);
+    for (const banned of ["scan", "doctor", "trust", "update", "init", "report", "hook"]) {
+      expect(rules.filter((x) => x.startsWith(`Bash(${launcher} ${banned}`)), banned).toEqual([]);
+    }
+    expect(String(r.stdout)).toContain(`Bash(${launcher} review --agent)`);
+  });
+
+  it("every command line the installed skill gives the agent is allowed, and trust, report and doctor are not", () => {
+    const p = plain();
+    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
+    const launcher = join(p.oqHome, "bin/openqodex");
+    const rules = allow(join(p.home, ".claude/settings.json"));
     const skill = readFileSync(join(p.home, ".claude/skills/openqodex/SKILL.md"), "utf8");
-    expect(skill).toContain(`${launcher} review --agent`);
-    expect(String(r.stdout)).toContain(`Bash(${launcher} review *)`);
+    const lines = [...skill.matchAll(new RegExp(`${escape(launcher)} [^\`\n]*`, "g"))].map((m) => m[0].trim());
+    const asked = lines.filter((l) => / (trust|report|doctor)\b/.test(l));
+    const agentRuns = lines.filter((l) => !asked.includes(l) && !l.includes("<topic>"));
+    expect(agentRuns).toContain(`${launcher} review --agent`);
+    expect(agentRuns).toContain(`${launcher} review --finalize`);
+    for (const l of agentRuns) expect(covers(rules, l), l).toBe(true);
+    expect(covers(rules, `${launcher} guide config`)).toBe(true);
+    for (const l of [`${launcher} trust`, `${launcher} report --send-last`, `${launcher} doctor --install`, `${launcher} review --agent --output /etc/x`, `${launcher} review --agent && rm -rf x`]) {
+      expect(covers(rules, l), l).toBe(false);
+    }
   });
 
   it("a second init adds no rule, and uninstall removes only the rules init added", () => {
@@ -397,19 +428,19 @@ describe("B. Claude Code permission rules", () => {
     const launcher = join(p.oqHome, "bin/openqodex");
     mkdirSync(join(p.home, ".claude"));
     // The developer already had one of the same rules, and one of their own.
-    writeFileSync(join(p.home, ".claude/settings.json"), JSON.stringify({ permissions: { allow: ["Bash(ls *)", `Bash(${launcher} scan *)`] } }));
+    writeFileSync(join(p.home, ".claude/settings.json"), JSON.stringify({ permissions: { allow: ["Bash(ls *)", `Bash(${launcher} guide)`] } }));
     expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
     const once = allow(join(p.home, ".claude/settings.json"));
     expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
     expect(allow(join(p.home, ".claude/settings.json"))).toEqual(once);
-    expect(once.filter((r) => r === `Bash(${launcher} scan *)`)).toHaveLength(1);
+    expect(once.filter((r) => r === `Bash(${launcher} guide)`)).toHaveLength(1);
     expect(p.run(["init", "--uninstall", "--yes"]).status).toBe(0);
-    expect(allow(join(p.home, ".claude/settings.json"))).toEqual(["Bash(ls *)", `Bash(${launcher} scan *)`]);
+    expect(allow(join(p.home, ".claude/settings.json"))).toEqual(["Bash(ls *)", `Bash(${launcher} guide)`]);
   });
 
-  it("--project allows the pinned npx form in the repo's settings", () => {
+  it("--project writes no permission rule into the repository", () => {
     const s = sandbox();
     expect(cli(s, ["init", "--yes", "--project", "--agent", "claude-code"]).status).toBe(0);
-    expect(allow(join(s.repo, ".claude/settings.json"))).toContain(`Bash(npx -y openqodex@${version} review *)`);
+    expect(allow(join(s.repo, ".claude/settings.json"))).toEqual([]);
   });
 });

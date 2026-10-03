@@ -82,11 +82,11 @@ In project scope, the hooks and the skill call `npx -y openqodex@<version>`, bec
 | Skill | `~/.claude/skills/openqodex/SKILL.md` | `.claude/skills/openqodex/SKILL.md` |
 | Push gate hook | merged into `~/.claude/settings.json` | merged into `.claude/settings.json` |
 | Instructions | a marked section in `~/.claude/CLAUDE.md` | a marked section in `CLAUDE.md` |
-| Permission rules | merged into `permissions.allow` of `~/.claude/settings.json` | merged into `permissions.allow` of `.claude/settings.json` |
+| Permission rules | merged into `permissions.allow` of `~/.claude/settings.json` | none |
 
 The hook is one `PreToolUse` entry. It matches the `Bash` tool and runs only for `git push` commands. It calls `openqodex hook check`.
 
-`init` allows these commands in Claude Code without a permission prompt, so the agent can review unattended: `review`, `scan`, `doctor`, `guide` and `hook check`, each written as the skill writes it (`Bash(<launcher> review *)` in user scope, `Bash(npx -y openqodex@<version> review *)` in project scope). It does not allow `trust`, `update`, `init` or `report`: those still ask you. A rule you already had is left alone, and `init --uninstall` removes only the rules `init` added. When your home path holds a space or another character the shell would read, the launcher is written in single quotes in the skill and in the rules alike.
+In user scope, `init` lets Claude Code run these exact command lines without a permission prompt, so the agent can review unattended: `<launcher> review --agent`, `review --finalize`, `review --agent --all` and `review --finalize --all`, each also with ` --offline` at the end, plus `guide` and `guide <topic>`. Each rule matches one exact line, so the same command with any other flag, such as `--output` or `--config`, or chained with `&&`, still asks you. `scan`, `doctor`, `trust`, `update`, `init` and `report` still ask you. The brief's own finalize command names the repository and the findings file, so Claude Code asks once for it unless the agent runs `review --finalize` from the repository as the skill says. Project scope writes no permission rule: a committed settings file would decide for every teammate. A rule you already had is left alone, and `init --uninstall` removes only the rules `init` added. When your home path holds a space or another character the shell would read, the launcher is written in single quotes in the skill and in the rules alike.
 
 The skill `init` writes never carries the sentence that tells an agent to prefer `~/.openqodex/bin/openqodex`: in user scope its commands already call the launcher, and in project scope it keeps the version the team committed.
 

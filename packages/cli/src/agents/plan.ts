@@ -100,11 +100,10 @@ function removeAllow(data: Settings, rules: string[]): void {
   if (Object.keys(data.permissions!).length === 0) delete data.permissions;
 }
 
-// The permission rules that are ours in this settings file: the recorded
-// ones, or in project scope on a machine with no record, the ones init writes.
-function ourRules(ctx: Ctx, path: string, fallback: string[]): string[] {
-  const recs = ctx.record.allowRules.filter((r) => r.path === path).map((r) => r.rule);
-  return recs.length > 0 ? recs : ctx.scope === "project" ? fallback : [];
+// The permission rules init added to this settings file. Only user scope
+// has them, so the record always knows them.
+function ourRules(ctx: Ctx, path: string): string[] {
+  return ctx.record.allowRules.filter((r) => r.path === path).map((r) => r.rule);
 }
 
 // Removes the file, then its folder when the folder is named openqodex and
@@ -358,7 +357,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
       const candidates = [...recs.map((r) => r.entry), ...(recs.length === 0 && scope === "project" ? [t.group] : [])];
       // Our permission rules in the same file go too, so the file can match
       // its copy from before install.
-      removeAllow(data, ourRules(ctx, t.path, []));
+      removeAllow(data, ourRules(ctx, t.path));
       if (removeGroups(data, candidates) === 0) {
         forget();
         return recs.length > 0 ? { ...base, verb: "keep", note: `${t.label} was edited after install; left in place` } : null;
@@ -406,7 +405,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
       };
     }
     case "allow-rules": {
-      const rules = ourRules(ctx, t.path, t.rules);
+      const rules = ourRules(ctx, t.path);
       const forget = (): void => {
         record.allowRules = record.allowRules.filter((r) => r.path !== t.path);
       };
@@ -420,7 +419,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         forget();
         return null;
       }
-      const created = record.hooks.some((h) => h.path === t.path && h.createdFile) || (scope === "project" && record.hooks.every((h) => h.path !== t.path));
+      const created = record.hooks.some((h) => h.path === t.path && h.createdFile);
       return {
         path: t.path,
         agent: t.agent,

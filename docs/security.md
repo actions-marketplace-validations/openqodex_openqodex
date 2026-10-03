@@ -25,7 +25,7 @@ npx openqodex trust
 
 The stored sha256 is checked against the project's checksum file when the project publishes one. Otherwise it is the hash of your first download. `custom-scanners` explains the difference.
 
-Agents that follow the OpenQodex skill are told never to run `openqodex trust` without asking you. `init` lets Claude Code run `review`, `scan`, `doctor`, `guide` and `hook check` without a prompt; `trust`, `update`, `init` and `report` still ask you.
+Agents that follow the OpenQodex skill are told never to run `openqodex trust` without asking you. In user scope, `init` lets Claude Code run exactly `review --agent`, `review --finalize`, `review --agent --all` and `review --finalize --all` (each also with ` --offline`), `guide` and `guide <topic>` through the launcher without a prompt. Any other flag, any other command (`scan`, `doctor`, `trust`, `update`, `init`, `report`) and `init --project` grant nothing.
 
 ## What is sent where
 
