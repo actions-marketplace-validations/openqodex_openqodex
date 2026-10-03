@@ -69,7 +69,7 @@ A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a cu
 - a finding cites a scanner rule or candidate that is not in this scan;
 - the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`.
 
-The brief's finalize command runs the same openqodex that wrote the brief: the runtime file the launcher ran, or `npx -y openqodex@<version>` when the launcher did not start it. When another version runs `--finalize` and the version that wrote the brief is installed by `init` or an update, it runs that version with the same arguments and exits with its code.
+The brief's finalize command calls the launcher when the launcher started the review, and `npx -y openqodex@<version>` otherwise. When the version that runs `--finalize` is not the one that wrote the brief, and that one is installed by `init` or an update, it hands the run to that version by its findings file and exits with its code. A version reached that way never hands off again.
 
 It never repairs a finding. Fix what it names, or run `review --agent` again.
 
@@ -104,7 +104,7 @@ Installs OpenQodex into your coding agents.
 - `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
 - `--hook <pre-push|none>`: answer the pre-push hook question without asking. Without it, `init` asks once per repository and records the answer.
-- `--no-repo`: do not add the team review section to the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` asks once per repository (default yes) and records the answer.
+- `--no-repo`: do not add the team review section to the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` asks once per repository (default yes) and records the answer. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.
 - `--yes`, `-y`: do not ask; add the pre-push hook and the team review section unless this repository answered no before. Without a terminal, `init` needs this flag.
 - `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
 - `--dry-run`: print the plan and write nothing.
@@ -205,8 +205,8 @@ Checks npm for a newer release and installs it now, in the foreground, the same 
 
 - No flag: install the newest release that is at least 24 hours old and whose build record verifies, then print what happened.
 - `--now`: also install a release younger than 24 hours. Verification is the same.
-- `--rollback`: point the launcher back at the version that was active before the last update, refresh the agent files to it, and turn updates off. It exits 2 and changes nothing when that version's copy is gone.
-- `--off`, `--on`: write `update: off` or `update: on` to `~/.openqodex/config.yaml`.
+- `--rollback`: turn updates off, then point the launcher back at the version that was active before the last update and refresh the agent files to it. It exits 2 and changes nothing when that version's copy is gone or when `update: off` cannot be written.
+- `--off`, `--on`: write `update: off` or `update: on` to `~/.openqodex/config.yaml`. `init --uninstall` removes that file when `update` created it and it is unchanged, and removes the update state.
 - `--status`: print the same update lines as `doctor`.
 
 Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update refreshes only the agent files `init` recorded and that are still as `init` wrote them; a file you edited is left alone and named. It never writes inside a repository.
