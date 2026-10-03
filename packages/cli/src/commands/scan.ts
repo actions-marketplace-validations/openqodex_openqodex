@@ -39,8 +39,8 @@ export async function runScan(args: {
 
   const report = scanReport({ change: p.change, scan: p.scan, config: p.config });
   const dir = openReportDir(p.repoRoot, p.change.shortId);
-  writeScan(dir, p.scan);
-  writeReportFiles(dir, reportFiles(report));
+  writeScan(p.repoRoot, dir, p.scan);
+  writeReportFiles(p.repoRoot, dir, reportFiles(report));
   // The scan receipt: the push gate reads only the review receipt, so a scan
   // never makes it forget a finalized review of the same change.
   writeLatestScan(p.repoRoot, {

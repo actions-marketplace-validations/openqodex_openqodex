@@ -8,10 +8,11 @@
 // the developer's machine. Hosted keys with no local meaning are read, warned
 // about once each and ignored, so one file can serve both.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { readFileBounded, readRepoFile } from "./repo-state.js";
 import { SEVERITIES } from "./severity.js";
 import type { BuiltinScanner, Config, CustomInstall, CustomScanner, JsonMap, LoadedConfig, Severity } from "./types.js";
 import { OpenQodexError } from "./types.js";
@@ -20,6 +21,8 @@ import { OpenQodexError } from "./types.js";
 // one is absent.
 export const CONFIG_FILE = ".openqodex/config.yaml";
 export const LEGACY_CONFIG_FILE = ".openqodex.yaml";
+// Far above any real config, low enough that no read runs away.
+export const CONFIG_MAX_BYTES = 1024 * 1024;
 
 export const DEFAULT_CONFIG: Config = {
   blockOnSeverity: null,
@@ -406,12 +409,15 @@ export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfi
   if (explicitPath !== undefined) {
     const path = isAbsolute(explicitPath) ? explicitPath : resolve(repoRoot, explicitPath);
     if (!existsSync(path)) throw new OpenQodexError(`config file not found: ${path}`);
-    return { ...parseConfig(readFileSync(path, "utf8"), explicitPath), path };
+    // The developer named this file, so a link is followed; it must still be a regular file within the cap.
+    return { ...parseConfig(readFileBounded(path, CONFIG_MAX_BYTES), explicitPath), path };
   }
-  const found = [CONFIG_FILE, LEGACY_CONFIG_FILE].filter((name) => existsSync(join(repoRoot, name)));
+  // The repo's own files: never through a link, never past the cap.
+  const texts = [CONFIG_FILE, LEGACY_CONFIG_FILE].map((name) => ({ name, text: readRepoFile(repoRoot, name, CONFIG_MAX_BYTES) }));
+  const found = texts.filter((t) => t.text !== null).map((t) => t.name);
   if (found.length === 0) return { config: structuredClone(DEFAULT_CONFIG), path: null, warnings: [] };
   const path = join(repoRoot, found[0]);
-  const text = readFileSync(path, "utf8");
+  const text = texts.find((t) => t.name === found[0])!.text!;
   const { config, warnings } = parseConfig(text, found[0]);
   // The threshold default went from info to minor after 0.1.0; a file from
   // then that never set it would lose findings without a word.

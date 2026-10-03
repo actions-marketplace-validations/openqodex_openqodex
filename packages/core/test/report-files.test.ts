@@ -63,7 +63,7 @@ describe("report files", () => {
     expect(readFileSync(join(r, ".openqodex", ".gitignore"), "utf8")).toBe(STATE_GITIGNORE);
     expect(basename(dir)).toMatch(/^\d{8}-\d{6}-0123456789ab$/);
     expect(dir).toBe(join(r, ".openqodex", "reviews", basename(dir)));
-    writeReportFiles(dir, { "report.md": "# r\n" });
+    writeReportFiles(r, dir, { "report.md": "# r\n" });
     writeLatest(r, { dir: "x", change_id: ID, kind: "scan", finalized: false, verdict: null });
     writeLatestScan(r, { dir: "x", change_id: ID, kind: "scan", finalized: false, verdict: null });
     const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: r, encoding: "utf8" });
@@ -121,13 +121,13 @@ describe("report files", () => {
     const scan: ScanResult = { candidates: [], scanners: [], fixturesDropped: 2, secretFingerprints: [] };
     const manifest: RunManifest = { version: 1, change_id: ID, config_hash: "h", created_at: "t", lenses: [] };
     const latest: Latest = { dir: "d", change_id: ID, kind: "review", finalized: true, verdict: "passed" };
-    writeScan(dir, scan);
-    writeManifest(dir, manifest);
-    writeReportFiles(dir, { "report.json": JSON.stringify({ version: 1 }), "brief.md": "b" });
+    writeScan(r, dir, scan);
+    writeManifest(r, dir, manifest);
+    writeReportFiles(r, dir, { "report.json": JSON.stringify({ version: 1 }), "brief.md": "b" });
     writeLatest(r, latest);
-    expect(readScan(dir)).toEqual(scan);
-    expect(readManifest(dir)).toEqual(manifest);
-    expect(readReport(dir)).toEqual({ version: 1 });
+    expect(readScan(r, dir)).toEqual(scan);
+    expect(readManifest(r, dir)).toEqual(manifest);
+    expect(readReport(r, dir)).toEqual({ version: 1 });
     expect(readLatest(r)).toEqual(latest);
     expect(readdirSync(dir).sort()).toEqual(["brief.md", "manifest.json", "report.json", "scan.json"]);
     expect(readdirSync(join(r, ".openqodex")).filter((n) => n.endsWith(".tmp"))).toEqual([]);
@@ -138,15 +138,15 @@ describe("report files", () => {
     expect(readLatest(r)).toBeNull();
     const dir = openReportDir(r, ID);
     writeFileSync(join(dir, "scan.json"), "{ half");
-    expect(readScan(dir)).toBeNull();
-    expect(readManifest(dir)).toBeNull();
-    expect(readReport(dir)).toBeNull();
+    expect(readScan(r, dir)).toBeNull();
+    expect(readManifest(r, dir)).toBeNull();
+    expect(readReport(r, dir)).toBeNull();
   });
 
   it("refuses a file name that is not a plain name", () => {
     const r = repo();
     const dir = openReportDir(r, ID);
-    expect(() => writeReportFiles(dir, { "../escape.md": "x" })).toThrow();
+    expect(() => writeReportFiles(r, dir, { "../escape.md": "x" })).toThrow();
     expect(existsSync(join(dir, "..", "escape.md"))).toBe(false);
   });
 
@@ -192,7 +192,7 @@ describe("report files", () => {
     const dir = openReportDir(r, ID);
     mkdirSync(join(dir, "report.md"));
     writeFileSync(join(dir, "report.md", "keep"), "x");
-    expect(() => writeReportFiles(dir, { "report.md": "# r\n" })).toThrow();
+    expect(() => writeReportFiles(r, dir, { "report.md": "# r\n" })).toThrow();
     expect(readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 

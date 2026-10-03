@@ -144,7 +144,7 @@ async function finalizedPassingReview(repo: string): Promise<void> {
     block_on_severity: loadConfig(repo).config.blockOnSeverity,
   };
   const dir = openReportDir(repo, change.shortId);
-  writeReportFiles(dir, { "report.json": JSON.stringify(report) });
+  writeReportFiles(repo, dir, { "report.json": JSON.stringify(report) });
   writeLatest(repo, { dir: relative(repo, dir), change_id: change.id, kind: "review", finalized: true, verdict: "passed" });
 }
 

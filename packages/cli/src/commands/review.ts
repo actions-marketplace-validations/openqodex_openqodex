@@ -6,8 +6,8 @@
 //                      on every file, then the brief, with or without --agent.
 //                      There is never a scan-only report of the whole repo.
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { closeSync, constants, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   MANIFEST_VERSION,
   OpenQodexError,
@@ -24,8 +24,10 @@ import {
   openReportDir,
   readLatest,
   readManifest,
+  readRepoFile,
   readScan,
   redactSecrets,
+  repoStat,
   STATE_DIR,
   selectLenses,
   selectLensesForDiff,
@@ -134,7 +136,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
 
   const lenses = selectLenses(p.change);
   const dir = openReportDir(p.repoRoot, p.change.shortId);
-  writeManifest(dir, {
+  writeManifest(p.repoRoot, dir, {
     version: MANIFEST_VERSION,
     change_id: p.change.id,
     config_hash: configHash(p.config),
@@ -142,7 +144,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
     instructions_hash: instructions.hash,
   });
-  writeScan(dir, p.scan);
+  writeScan(p.repoRoot, dir, p.scan);
   const impact = await buildImpact(p, flags, noGraph);
   const brief = buildBrief({
     change: p.change,
@@ -156,7 +158,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
     instructions: instructions.text,
   });
   const runFile: RunFile = { version: 1, scope };
-  writeReportFiles(dir, {
+  writeReportFiles(p.repoRoot, dir, {
     [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
     "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
     [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
@@ -210,7 +212,7 @@ function wholeRepoLenses(change: WholeRepo): SelectedLens[] {
 const LATEST_ALL_FILE = "latest-all.json";
 
 function writeLatestAll(repoRoot: string, latest: Latest): void {
-  writeReportFiles(join(repoRoot, STATE_DIR), { [LATEST_ALL_FILE]: `${JSON.stringify(latest, null, 2)}\n` });
+  writeReportFiles(repoRoot, join(repoRoot, STATE_DIR), { [LATEST_ALL_FILE]: `${JSON.stringify(latest, null, 2)}\n` });
 }
 
 async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
@@ -234,7 +236,7 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
   const instructions = ownersInstructions(repoRoot, p.secrets);
   const lenses = wholeRepoLenses(p.change);
   const dir = openReportDir(repoRoot, p.change.shortId);
-  writeManifest(dir, {
+  writeManifest(repoRoot, dir, {
     version: MANIFEST_VERSION,
     change_id: p.change.id,
     config_hash: configHash(config),
@@ -242,7 +244,7 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
     instructions_hash: instructions.hash,
   });
-  writeScan(dir, p.scan);
+  writeScan(repoRoot, dir, p.scan);
   const { impact, hot, note } = await buildHotSpots(p, flags, noGraph);
   const inventory = buildInventory(p.change, p.scan);
   const brief = buildWholeRepoBrief({
@@ -260,7 +262,7 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     instructions: instructions.text,
   });
   const runFile: RunFile = { version: 1, scope: "all" };
-  writeReportFiles(dir, {
+  writeReportFiles(repoRoot, dir, {
     [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
     "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
     [INVENTORY_FILE]: `${JSON.stringify(redactStored(inventory, p.secrets), null, 2)}\n`,
@@ -284,20 +286,16 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
 }
 
 // The graph's summary the brief was made with; null for a run from before the graph.
-function readImpact(dir: string): ImpactSummary | null {
-  const path = join(dir, IMPACT_FILE);
-  if (!existsSync(path)) return null;
-  const value = readJsonFile(path, "graph impact") as ImpactSummary | null;
+function readImpact(repoRoot: string, dir: string): ImpactSummary | null {
+  const value = readJsonFile(repoRoot, join(dir, IMPACT_FILE), "graph impact") as ImpactSummary | null;
   return value !== null && typeof value === "object" && value.version === 1 ? value : null;
 }
 
-function readJsonFile(path: string, what: string): unknown {
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    throw new OpenQodexError(`${what} not found at ${path}`);
-  }
+// A JSON file in the run folder, or null when it is missing. Read through
+// the repo state reader: a link or anything but a regular file stops finalize.
+function readJsonFile(repoRoot: string, path: string, what: string): unknown {
+  const text = readRepoFile(repoRoot, path);
+  if (text === null) return null;
   try {
     return JSON.parse(text) as unknown;
   } catch (error) {
@@ -350,24 +348,29 @@ function findRun(repoRoot: string, path: string | undefined, all: boolean): { di
     dir = resolve(repoRoot, latest.dir);
     findingsPath = join(dir, FINDINGS_FILE);
     checkRunDir(repoRoot, dir, findingsPath);
-    if (readManifest(dir) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
-    if (!existsSync(findingsPath)) {
+    if (readManifest(repoRoot, dir) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
+    if (repoStat(repoRoot, findingsPath) === null) {
       throw new OpenQodexError(`no agent findings at ${findingsPath}; write them there as the brief says, then run this again`);
     }
   } else {
     findingsPath = resolve(path);
     dir = dirname(findingsPath);
     checkRunDir(repoRoot, dir, findingsPath);
+    // The same folder spelled from the repo root, so every read below walks from there.
+    dir = join(repoRoot, STATE_DIR, "reviews", basename(dir));
+    findingsPath = join(dir, basename(findingsPath));
   }
-  return { dir, submission: readJsonFile(findingsPath, "agent findings") };
+  const submission = readJsonFile(repoRoot, findingsPath, "agent findings");
+  if (submission === null) throw new OpenQodexError(`agent findings not found at ${findingsPath}`);
+  return { dir, submission };
 }
 
 async function runFinalize(flags: GlobalFlags, path: string | undefined, all: boolean): Promise<number> {
   const { repoRoot, config } = await loadRepo(flags);
   const { dir, submission } = findRun(repoRoot, path, all);
-  const manifest = readManifest(dir);
-  const scan = readScan(dir);
-  const runFile = existsSync(join(dir, RUN_FILE)) ? (readJsonFile(join(dir, RUN_FILE), "run file") as RunFile) : null;
+  const manifest = readManifest(repoRoot, dir);
+  const scan = readScan(repoRoot, dir);
+  const runFile = readJsonFile(repoRoot, join(dir, RUN_FILE), "run file") as RunFile | null;
   if (manifest === null || scan === null || runFile === null) {
     throw new OpenQodexError(`the run in ${relative(repoRoot, dir)} has no review brief; ${RUN_AGAIN}`);
   }
@@ -392,10 +395,10 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   // A whole-repo run has no change to trace, so its report carries no blast radius.
   const report = {
     ...finalizeReview({ change, scan, manifest, config, submission, wholeRepo: whole ?? undefined }),
-    impact: whole ? null : readImpact(dir),
+    impact: whole ? null : readImpact(repoRoot, dir),
   };
 
-  writeReportFiles(dir, reportFiles(report));
+  writeReportFiles(repoRoot, dir, reportFiles(report));
   const receipt: Latest = {
     dir: relative(repoRoot, dir),
     change_id: change.id,
