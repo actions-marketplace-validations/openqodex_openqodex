@@ -186,7 +186,8 @@ describe("toolchain", () => {
     if (!r.ok) return;
     const env = { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", TMPDIR: tmpdir(), LANG: "en_US.UTF-8", ...r.tool.env };
     expect(execFileSync(r.tool.path, ["--version"], { encoding: "utf8", env })).toContain(table.tools.oxlint.version);
-  }, 90_000);
+    // A real npm install into a fresh home: under the full suite it has taken over 90 seconds.
+  }, 300_000);
 
   it("takes over a lock whose holder is dead", async () => {
     const home = freshHome();
