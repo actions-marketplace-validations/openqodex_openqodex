@@ -175,7 +175,8 @@ describe("feedback offer", () => {
     const hostile = [
       "it broke in /srv/app/x",
       "it broke on payroll.csv",
-      "my token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij leaked",
+      // Built at run time so no token-shaped literal sits in the repo.
+      `my token ${["ghp", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].join("_")} leaked`,
       "api_key=abcdefghijklmnopqrstuvwxyz was printed",
       "mail alice@example.com about it",
     ];
