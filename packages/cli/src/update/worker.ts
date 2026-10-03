@@ -133,7 +133,7 @@ export async function activateUnpacked(opts: { home: string; version: string; fr
       return { outcome: "activated", reason: `Updated to ${version} (was ${active}).` };
     });
   } catch (error) {
-    result = error instanceof BoundaryError && error.held ? { outcome: "busy", reason: "another openqodex init, uninstall or update is running" } : { outcome: "failed", reason: message(error) };
+    result = { outcome: error instanceof BoundaryError && error.held ? "busy" : "failed", reason: message(error) };
   }
   rmSync(tmp, { recursive: true, force: true });
   if (result.outcome === "gone") {
@@ -242,7 +242,10 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
     }
     // After an uninstall, nothing is written: the home folder is not ours.
     if (result.outcome === "gone") return { outcome: "none", lines: [...lines, "OpenQodex was uninstalled meanwhile; nothing was changed."] };
-    if (result.outcome === "busy") return { outcome: "busy", lines: [...lines, `Downloaded and verified ${c.version}; ${result.reason}, so it was not switched to now.`] };
+    if (result.outcome === "busy") {
+      updateState(home, { lastError: result.reason });
+      return { outcome: "busy", lines: [...lines, `Downloaded and verified ${c.version}, but did not switch to it: ${result.reason}`] };
+    }
     if (result.outcome !== "activated") {
       if (result.outcome === "failed") updateState(home, { lastError: result.reason });
       return { outcome: result.outcome === "failed" ? "failed" : "none", lines: [...lines, `Downloaded and verified ${c.version}, but did not switch to it: ${result.reason}`] };

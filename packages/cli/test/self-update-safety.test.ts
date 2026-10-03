@@ -15,7 +15,9 @@
 //  4. A worker killed while it holds the boundary leaves state that makes
 //     the next `init` wait or fail.
 //  5. Three processes contending for the boundary: two are inside at once.
-//  6. The boundary's listener keeps a process alive after its work is done.
+//  6. The boundary's listener keeps a process alive after its work is done;
+//     or, when another program holds the port, a foreground command gives up
+//     without naming the port and how to see the holder.
 //  7. An existing runtime folder that differs from the package is replaced
 //     by init, or reused by the worker; one with an extra symlink is
 //     accepted as identical.
@@ -212,6 +214,30 @@ describe("6. the boundary's listener", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(ms).toBeLessThan(5_000);
   });
+});
+
+describe("6b. a program that holds the boundary's port", () => {
+  it("makes a foreground command give up after its wait with one line naming the port and how to see the holder", async () => {
+    const s = installed();
+    const port = Number(spawnSync(process.execPath, ["--input-type=module", "-e", `const m = await import(${JSON.stringify(child)}); process.stdout.write(String(m.boundaryPort(process.env.H)));`], { env: { ...process.env, H: s.oqHome }, encoding: "utf8" }).stdout);
+    const { createServer } = await import("node:net");
+    const squatter = createServer((c) => c.destroy());
+    await new Promise<void>((r) => squatter.listen({ host: "127.0.0.1", port, exclusive: true }, () => r()));
+    try {
+      const r = await new Promise<{ code: number | null; err: string }>((done) => {
+        const p = spawn("sh", [join(s.oqHome, "bin/openqodex"), "update", "--off"], { env: laptop(s), cwd: s.repo });
+        let err = "";
+        p.stderr.on("data", (d: Buffer) => (err += d.toString()));
+        p.once("exit", (code) => done({ code, err }));
+      });
+      expect(r.code).toBe(2);
+      expect(r.err).toContain(`127.0.0.1:${port}`);
+      expect(r.err).toContain(`lsof -nP -iTCP:${port} -sTCP:LISTEN`);
+      expect(existsSync(join(s.oqHome, "config.yaml"))).toBe(false);
+    } finally {
+      await new Promise<void>((r) => squatter.close(() => r()));
+    }
+  }, 120_000);
 });
 
 describe("7. runtime folders are never replaced", () => {

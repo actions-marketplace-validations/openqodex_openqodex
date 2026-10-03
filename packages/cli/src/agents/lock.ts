@@ -55,6 +55,13 @@ function listen(port: number): Promise<Server | null> {
   });
 }
 
+// Any local program can hold the port: another openqodex run, or one that
+// squats on it. Nothing is installed or changed while it is held; the line
+// says how to see the holder.
+function heldMessage(port: number): string {
+  return `another openqodex run or another program holds 127.0.0.1:${port}, which openqodex uses as its lock; see it with: lsof -nP -iTCP:${port} -sTCP:LISTEN`;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 // Runs `fn` holding the boundary for `home`. Waits up to `wait` ms while
@@ -66,7 +73,7 @@ export async function withBoundary<T>(home: string, opts: { wait: number }, fn: 
   let server = await listen(port);
   while (server === null) {
     if (Date.now() >= deadline) {
-      throw new BoundaryError(`another openqodex init, uninstall or update is running for ${home} (port ${port} on 127.0.0.1 is taken); try again when it ends`, true);
+      throw new BoundaryError(heldMessage(port), true);
     }
     await sleep(POLL_MS);
     server = await listen(port);
