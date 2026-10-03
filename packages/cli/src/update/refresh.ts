@@ -19,8 +19,10 @@ import { launcherPath, launcherRunner, openqodexHomeDir } from "../launcher.js";
 function recorded(record: InstallRecord, t: Target): boolean {
   if (t.kind === "file") return record.files.some((f) => f.path === t.path);
   if (t.kind === "hook-json") return record.hooks.some((h) => h.path === t.path);
-  // Permission rules are added by init only; an update never widens them.
-  if (t.kind === "allow-rules") return false;
+  // Rules are refreshed only where init recorded some: the new version's set
+  // replaces the recorded one, and a developer's own rules stay.
+  // A settings file the developer removed is not created again.
+  if (t.kind === "allow-rules") return record.allowRules.some((r) => r.path === t.path) && readText(t.path) !== null;
   return record.sections.some((s) => s.path === t.path);
 }
 

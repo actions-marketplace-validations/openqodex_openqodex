@@ -438,6 +438,63 @@ describe("B. Claude Code permission rules", () => {
     expect(allow(join(p.home, ".claude/settings.json"))).toEqual(["Bash(ls *)", `Bash(${launcher} guide)`]);
   });
 
+  // An install whose record holds a rule this version no longer grants (the
+  // set changed between versions), beside a developer's own look-alike rule.
+  function withStaleRule(): { p: ReturnType<typeof plain>; settings: string; stale: string; mine: string } {
+    const p = plain();
+    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
+    const launcher = join(p.oqHome, "bin/openqodex");
+    const settings = join(p.home, ".claude/settings.json");
+    const stale = `Bash(${launcher} scan *)`;
+    const mine = `Bash(${launcher} doctor *)`;
+    const data = JSON.parse(readFileSync(settings, "utf8")) as { permissions: { allow: string[] } };
+    data.permissions.allow.push(stale, mine);
+    writeFileSync(settings, `${JSON.stringify(data, null, 2)}\n`);
+    const rec = JSON.parse(readFileSync(join(p.oqHome, "install.json"), "utf8")) as { allowRules: { path: string; rule: string }[] };
+    rec.allowRules.push({ path: settings, rule: stale });
+    writeFileSync(join(p.oqHome, "install.json"), JSON.stringify(rec, null, 2));
+    return { p, settings, stale, mine };
+  }
+  const recordedRules = (oqHome: string): string[] =>
+    (JSON.parse(readFileSync(join(oqHome, "install.json"), "utf8")) as { allowRules: { rule: string }[] }).allowRules.map((r) => r.rule);
+
+  it("a rule an earlier version granted is removed by the next init; the developer's own rule stays", () => {
+    const { p, settings, stale, mine } = withStaleRule();
+    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
+    expect(allow(settings)).not.toContain(stale);
+    expect(allow(settings)).toContain(mine);
+    expect(recordedRules(p.oqHome)).not.toContain(stale);
+  });
+
+  it("a rule an earlier version granted is removed by __refresh; the developer's own rule stays", () => {
+    const { p, settings, stale, mine } = withStaleRule();
+    const version0 = readFileSync(join(p.oqHome, "runtime/current"), "utf8").trim();
+    const r = spawnSync(process.execPath, [join(p.oqHome, "runtime", version0, "dist/bin.js"), "__refresh"], {
+      env: { ...process.env, HOME: p.home, OPENQODEX_HOME: p.oqHome },
+      encoding: "utf8",
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(allow(settings)).not.toContain(stale);
+    expect(allow(settings)).toContain(mine);
+    expect(recordedRules(p.oqHome)).not.toContain(stale);
+  });
+
+  it("a project-scope rule an earlier build recorded is removed on uninstall, and a settings file init did not create stays", () => {
+    const s = sandbox({ ".claude/settings.json": `${JSON.stringify({ model: "x" }, null, 2)}\n` });
+    expect(cli(s, ["init", "--yes", "--project", "--agent", "claude-code"]).status).toBe(0);
+    const settings = join(s.repo, ".claude/settings.json");
+    const old = `Bash(npx -y openqodex@${version} review *)`;
+    const data = JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>;
+    writeFileSync(settings, `${JSON.stringify({ ...data, permissions: { allow: [old] } }, null, 2)}\n`);
+    const rec = JSON.parse(readFileSync(join(s.oqHome, "install.json"), "utf8")) as { allowRules: { path: string; rule: string }[] };
+    rec.allowRules.push({ path: settings, rule: old });
+    writeFileSync(join(s.oqHome, "install.json"), JSON.stringify(rec, null, 2));
+    expect(cli(s, ["init", "--uninstall", "--yes", "--project"]).status).toBe(0);
+    expect(existsSync(settings)).toBe(true);
+    expect(allow(settings)).toEqual([]);
+    expect((JSON.parse(readFileSync(settings, "utf8")) as { model: string }).model).toBe("x");
+  });
+
   it("--project writes no permission rule into the repository", () => {
     const s = sandbox();
     expect(cli(s, ["init", "--yes", "--project", "--agent", "claude-code"]).status).toBe(0);

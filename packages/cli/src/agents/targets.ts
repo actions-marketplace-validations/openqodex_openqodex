@@ -150,19 +150,18 @@ export function targetsFor(args: {
         inRepo: !user,
         usesLauncher: user,
       });
-      // User scope only: a committed settings file would grant these on
-      // every teammate's machine. After the hook: both change settings.json,
-      // and this one reads it at write time.
-      if (user) {
-        targets.push({
-          kind: "allow-rules",
-          agent,
-          label: "Claude Code permission rules",
-          path: at(".claude", "settings.json"),
-          rules: allowRules(runner),
-          inRepo: false,
-        });
-      }
+      // Rules in user scope only: a committed settings file would grant them
+      // on every teammate's machine. Project scope gets the target with no
+      // rules, so rules an earlier build recorded there are still removed.
+      // After the hook: both change settings.json.
+      targets.push({
+        kind: "allow-rules",
+        agent,
+        label: "Claude Code permission rules",
+        path: at(".claude", "settings.json"),
+        rules: user ? allowRules(runner) : [],
+        inRepo: !user,
+      });
       break;
     case "codex":
       targets.push(skillTarget("Codex skill", at(".agents", "skills", "openqodex", "SKILL.md")));

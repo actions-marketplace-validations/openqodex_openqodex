@@ -106,6 +106,30 @@ function ourRules(ctx: Ctx, path: string): string[] {
   return ctx.record.allowRules.filter((r) => r.path === path).map((r) => r.rule);
 }
 
+// What this process wrote to each settings file. The hook and the permission
+// rules share settings.json: the rules' action, applied right after the hook's,
+// accepts the file as the plan saw it or as the hook's action left it, and
+// refuses anything else, as every other action's guard does.
+const writtenThisRun = new Map<string, string | null>();
+
+function writeSettings(path: string, text: string, mode?: number): void {
+  writeAtomic(path, text, mode);
+  writtenThisRun.set(path, text);
+}
+
+function removeSettings(path: string): void {
+  removeFile(path);
+  writtenThisRun.set(path, null);
+}
+
+function unchangedSincePlan(path: string, before: string | null): string | null {
+  const now = readText(path);
+  if (now !== before && !(writtenThisRun.has(path) && writtenThisRun.get(path) === now)) {
+    throw new Error(`changed while init was running, nothing written to ${path}`);
+  }
+  return now;
+}
+
 // Removes the file, then its folder when the folder is named openqodex and
 // is left empty (the skill folder).
 function removeFile(path: string): void {
@@ -184,7 +208,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           verb: "create",
           note: t.label,
           apply: () => {
-            writeAtomic(t.path, json({ hooks: { PreToolUse: [t.group] } }), t.inRepo ? 0o644 : 0o600);
+            writeSettings(t.path, json({ hooks: { PreToolUse: [t.group] } }), t.inRepo ? 0o644 : 0o600);
             record.hooks.push({ ...entry, createdFile: true });
           },
         };
@@ -209,7 +233,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           verb: "update",
           note: `${t.label}, replacing the one an earlier openqodex wrote`,
           apply: () => {
-            writeAtomic(t.path, json(data));
+            writeSettings(t.path, json(data));
             record.hooks = record.hooks.filter((r) => r !== old);
             record.hooks.push({ ...entry, createdFile: old.createdFile });
           },
@@ -228,7 +252,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
         note: `${t.label}, other settings kept${hasBackup ? "" : ` (the file as it was is saved beside it as ${basename(t.path)}.openqodex.bak)`}`,
         apply: () => {
           if (!hasBackup) record.backups.push({ path: writeBackup(t.path, before), of: t.path });
-          writeAtomic(t.path, json(data));
+          writeSettings(t.path, json(data));
           record.hooks.push({ ...entry, createdFile: false });
         },
       };
@@ -237,23 +261,40 @@ export function planInstall(t: Target, ctx: Ctx): Action {
       const data = before === null ? {} : parseSettings(before);
       if (typeof data === "string") return { ...base, verb: "refuse", failed: true, note: `${t.label}: the file ${data}; left untouched` };
       const have = (data.permissions?.allow ?? []) as unknown[];
+      // Rules an earlier version granted and this one does not: removed while
+      // still there as recorded. A rule the record does not name is never touched.
+      const recorded = ourRules(ctx, t.path);
+      const stale = recorded.filter((r) => !t.rules.includes(r));
+      const staleThere = stale.filter((r) => have.includes(r));
       const missing = t.rules.filter((r) => !have.includes(r));
-      if (missing.length === 0) return { ...base, verb: "skip", note: `${t.label} already present` };
-      // No guard: the hook target writes the same file just before, so this
-      // reads the file again when it writes.
+      const forgetStale = (): void => {
+        record.allowRules = record.allowRules.filter((r) => r.path !== t.path || !stale.includes(r.rule));
+      };
+      if (missing.length === 0 && staleThere.length === 0) {
+        forgetStale();
+        return { ...base, verb: "skip", note: t.rules.length > 0 ? `${t.label} already present` : `${t.label}: none in project scope` };
+      }
+      const parts = [
+        ...(missing.length > 0 ? [`Claude Code runs these review commands without asking: ${missing.join(", ")}`] : []),
+        ...(staleThere.length > 0 ? [`no longer allowed: ${staleThere.join(", ")}`] : []),
+      ];
+      // No guard field: the hook's action writes the same file just before.
+      // unchangedSincePlan does the guard's work at write time.
       return {
         path: t.path,
         agent: t.agent,
-        verb: "merge",
-        note: `${t.label}: Claude Code runs these without asking: ${missing.join(", ")}`,
+        verb: recorded.length > 0 ? "update" : "merge",
+        note: `${t.label}: ${parts.join("; ")}`,
         apply: () => {
-          const text = readText(t.path);
+          const text = unchangedSincePlan(t.path, before);
           const now = text === null ? {} : parseSettings(text);
           if (typeof now === "string") throw new Error(`the file ${now}`);
+          removeAllow(now, staleThere.filter((r) => ((now.permissions?.allow ?? []) as unknown[]).includes(r)));
           const allow = (now.permissions?.allow ?? []) as unknown[];
           const add = t.rules.filter((r) => !allow.includes(r));
-          now.permissions = { ...now.permissions, allow: [...allow, ...add] };
-          writeAtomic(t.path, json(now), t.inRepo ? 0o644 : 0o600);
+          if (add.length > 0) now.permissions = { ...now.permissions, allow: [...allow, ...add] };
+          writeSettings(t.path, json(now), t.inRepo ? 0o644 : 0o600);
+          forgetStale();
           for (const rule of add) record.allowRules.push({ path: t.path, rule });
         },
       };
@@ -374,7 +415,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
           verb: "restore",
           note: `${t.label} removed; the file is back as it was before install`,
           apply: () => {
-            writeAtomic(t.path, backupText);
+            writeSettings(t.path, backupText);
             rmSync(backup.path, { force: true });
             dropBackup();
             forget();
@@ -388,7 +429,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
           verb: "remove",
           note: `${t.label} (init created this file)`,
           apply: () => {
-            removeFile(t.path);
+            removeSettings(t.path);
             forget();
           },
         };
@@ -398,7 +439,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         verb: "update",
         note: `${t.label} removed, other settings kept${backup ? ` (the copy from before install stays at ${backup.path})` : ""}`,
         apply: () => {
-          writeAtomic(t.path, json(data));
+          writeSettings(t.path, json(data));
           dropBackup();
           forget();
         },
@@ -426,15 +467,15 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         verb: "update",
         note: `${t.label} removed: ${rules.join(", ")}`,
         apply: () => {
-          const text = readText(t.path);
+          const text = unchangedSincePlan(t.path, before);
           const now = text === null ? null : parseSettings(text);
           if (typeof now === "string") throw new Error(`the file ${now}`);
           // The hook's removal may already have taken the rules out, or put
           // the file back as it was: then there is nothing to write.
           if (now !== null && rules.some((r) => (now.permissions?.allow ?? []).includes(r))) {
             removeAllow(now, rules);
-            if (created && Object.keys(now).length === 0) removeFile(t.path);
-            else writeAtomic(t.path, json(now));
+            if (created && Object.keys(now).length === 0) removeSettings(t.path);
+            else writeSettings(t.path, json(now));
           }
           forget();
         },
