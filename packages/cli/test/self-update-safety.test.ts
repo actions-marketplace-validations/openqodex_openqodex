@@ -106,10 +106,14 @@ beforeAll(async () => {
   child = await bundleChildEntry();
 }, 60_000);
 
-// Runs `code` in a child node that has the bundled modules as `m`.
+// Runs `code` in a child node that has the bundled modules as `m`. CI is
+// left out, as on a developer's laptop: with it set (GitHub Actions sets
+// CI=true) updating is off and every worker case would test only that.
 function nodeChild(code: string, extra: NodeJS.ProcessEnv) {
+  const base: NodeJS.ProcessEnv = { ...process.env };
+  delete base.CI;
   return spawn(process.execPath, ["--input-type=module", "-e", `const m = await import(${JSON.stringify(child)});\n${code}`], {
-    env: { ...process.env, ...extra },
+    env: { ...base, ...extra },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }

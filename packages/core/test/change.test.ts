@@ -31,9 +31,12 @@
 // 22. Without an upstream, review.default_base is ignored in favour of the
 //     remote's default branch, a branch that exists only on origin is not
 //     found, or a name that exists nowhere silently falls back.
+// 23. A file rewritten at the same size in the same second the index was
+//     written is missed, because the temp copy of the index carries a later
+//     time and git then trusts the file's stat over its content.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -533,5 +536,24 @@ describe("getChange", () => {
     write(repo, "a.ts", lines(4));
     const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
     expect(c.coverage.get("a.ts")).toEqual(new Set([4]));
+  });
+
+  it("finds a same-size edit made in the second the index was written (failure 23)", async () => {
+    const repo = newRepo();
+    // ctime cannot be set, so git is told not to weigh it; the rest of the
+    // stat is made to match: same size, same inode, same mtime second.
+    git(repo, "config", "core.trustctime", "false");
+    const second = new Date("2026-01-02T03:04:05Z");
+    write(repo, "core.ts", "return 1;\n");
+    utimesSync(join(repo, "core.ts"), second, second);
+    commitAll(repo, "base");
+    utimesSync(join(repo, ".git/index"), second, second);
+    write(repo, "core.ts", "return 2;\n");
+    utimesSync(join(repo, "core.ts"), second, second);
+    expect(git(repo, "status", "--porcelain")).toContain("core.ts");
+    // git status may have refreshed the index; make it racy again.
+    utimesSync(join(repo, ".git/index"), second, second);
+    const change = await getChange({ repoRoot: repo, scope: { uncommitted: true }, exclude: [] });
+    expect(paths(change)).toEqual(["core.ts"]);
   });
 });

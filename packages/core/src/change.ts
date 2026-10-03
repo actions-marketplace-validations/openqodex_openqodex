@@ -8,7 +8,7 @@
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm, stat, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -386,7 +386,15 @@ export async function getChange(args: {
     const tmpIndex = join(tmp, "index");
     const tmpObjects = join(tmp, "objects");
     await mkdir(tmpObjects);
-    if (existsSync(indexPath)) await copyFile(indexPath, tmpIndex);
+    if (existsSync(indexPath)) {
+      await copyFile(indexPath, tmpIndex);
+      // Git trusts a file's stat over its content unless the entry is as new
+      // as the index itself (a "racy" entry). The copy would carry a later
+      // time and hide an edit made at the same size in the second the index
+      // was written; the original's time, rounded down, keeps that check.
+      const at = Math.floor((await stat(indexPath)).mtimeMs / 1000);
+      await utimes(tmpIndex, at, at);
+    }
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       GIT_INDEX_FILE: tmpIndex,
