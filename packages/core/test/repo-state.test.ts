@@ -9,6 +9,13 @@
 // 8. A path that names the state by another spelling (the /var alias of a
 //    /private/var root, or another letter case on a case-insensitive disk)
 //    is not seen as state, so a flag that names it skips these checks.
+// 9. A link inside the state that points back at the root stands in for the
+//    root, so a path spelled inside the state is not seen as state.
+// 10. A link elsewhere in the repo that points into the state lets a path
+//    outside the state by its spelling read or write the state.
+// 11. A name the file system reads as the state but the text does not (case
+//    at a deeper part, a zero-width character in a folder not made yet) is
+//    not seen as state.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -101,7 +108,48 @@ describe("repo state access", () => {
       ctx.skip();
     }
     mkdirSync(join(root, ".openqodex"));
-    expect(isRepoState(root, ".OpenQodex/config.yaml")).toBe(join(".OpenQodex", "config.yaml"));
+    // The folder exists, so its real name is handed on.
+    expect(isRepoState(root, ".OpenQodex/config.yaml")).toBe(join(".openqodex", "config.yaml"));
     expect(isRepoState(root, ".OpenQodex.YAML")).toBe(".OpenQodex.YAML");
+  });
+
+  it("a link inside the state back to the root never stands in for the root", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-loop-")));
+    mkdirSync(join(root, ".openqodex"));
+    symlinkSync("..", join(root, ".openqodex/r"));
+    expect(isRepoState(root, ".openqodex/r/x.json")).toBe(join(".openqodex", "r", "x.json"));
+    expect(() => readRepoFile(root, join(".openqodex", "r", "x.json"))).toThrow("is a symbolic link");
+  });
+
+  it("a path that reaches the state through a link elsewhere in the repo is refused", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-into-")));
+    mkdirSync(join(root, ".openqodex"));
+    mkdirSync(join(root, "docs"));
+    symlinkSync("../.openqodex", join(root, "docs/x"));
+    expect(() => isRepoState(root, "docs/x/config.yaml")).toThrow("reaches the repo's .openqodex files through a symbolic link");
+    expect(isRepoState(root, "docs/y/config.yaml")).toBeNull();
+  });
+
+  it("a case variant of a deeper part is still state and reaches the link checks", (ctx) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-deep-")));
+    writeFileSync(join(root, "probe"), "");
+    if (!existsSync(join(root, "PROBE"))) {
+      process.stdout.write("skipped: this disk tells letter case apart\n");
+      ctx.skip();
+    }
+    const away = mkdtempSync(join(tmpdir(), "oq-state-away-"));
+    mkdirSync(join(root, ".openqodex"));
+    symlinkSync(away, join(root, ".openqodex/reviews"));
+    const spelled = isRepoState(root, ".openqodex/Reviews/x.json");
+    expect(spelled).not.toBeNull();
+    expect(() => writeRepoFile(root, spelled!, "{}")).toThrow("is a symbolic link");
+    expect(existsSync(join(away, "x.json"))).toBe(false);
+  });
+
+  it("a folder not made yet whose name holds a zero-width character is still state", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-zw-")));
+    expect(isRepoState(root, ".open\u200Cqodex/config.yaml")).not.toBeNull();
+    expect(isRepoState(root, ".OPENQODEX.yaml.")).not.toBeNull();
+    expect(isRepoState(root, "src/.openqodex/config.yaml")).toBeNull();
   });
 });

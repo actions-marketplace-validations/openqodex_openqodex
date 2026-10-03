@@ -195,6 +195,52 @@ describe("flags that name a path in the repo state", () => {
     expect(r.stderr).toContain("is a symbolic link");
   });
 
+  const TRIVY = "scanners:\n  custom:\n    - source: https://github.com/aquasecurity/trivy\n      run: trivy config --format sarif --output {report} {target}\n";
+
+  it("--output under a link in .openqodex back to the repo root is refused and writes nothing at the root", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    mkdirSync(join(s.repo, ".openqodex"));
+    symlinkSync("..", join(s.repo, ".openqodex/r"));
+    const r = bounded(s, ["scan", "--uncommitted", "--no-install", "--output", ".openqodex/r/x.json"]);
+    expect(existsSync(join(s.repo, "x.json"))).toBe(false);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is a symbolic link");
+  });
+
+  it("--output through a link elsewhere into .openqodex is refused and leaves the config alone", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    mkdirSync(join(s.repo, ".openqodex"));
+    writeFileSync(join(s.repo, ".openqodex/config.yaml"), "review: {}\n");
+    mkdirSync(join(s.repo, "docs"));
+    symlinkSync("../.openqodex", join(s.repo, "docs/x"));
+    const r = bounded(s, ["scan", "--uncommitted", "--no-install", "--output", "docs/x/config.yaml"]);
+    expect(readFileSync(join(s.repo, ".openqodex/config.yaml"), "utf8")).toBe("review: {}\n");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("reaches the repo's .openqodex files through a symbolic link");
+  });
+
+  it("--config under a link in .openqodex back to the repo root is refused", () => {
+    const s = sandbox({ "README.md": "hello\n", "cfg.yaml": TRIVY });
+    mkdirSync(join(s.repo, ".openqodex"));
+    symlinkSync("..", join(s.repo, ".openqodex/r"));
+    const r = bounded(s, ["trust", "--list", "--config", ".openqodex/r/cfg.yaml"]);
+    expect(r.stdout).not.toContain("trivy");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is a symbolic link");
+  });
+
+  it("--config through a link elsewhere into .openqodex is refused", () => {
+    const s = sandbox({ "README.md": "hello\n", ".openqodex/config.yaml": TRIVY });
+    mkdirSync(join(s.repo, "docs"));
+    symlinkSync("../.openqodex", join(s.repo, "docs/x"));
+    const r = bounded(s, ["trust", "--list", "--config", "docs/x/config.yaml"]);
+    expect(r.stdout).not.toContain("trivy");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("reaches the repo's .openqodex files through a symbolic link");
+  });
+
   it("--output into .openqodex never writes through a linked folder there", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "README.md"), "changed\n");

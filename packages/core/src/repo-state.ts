@@ -20,7 +20,7 @@ import {
   writeFileSync,
   type Stats,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { OpenQodexError } from "./types.js";
 
 // The cap for run files (receipts, manifests, reports). Callers with their
@@ -39,34 +39,72 @@ function linkError(repoRoot: string, at: string): OpenQodexError {
   );
 }
 
-// When `path` names the repo state (`.openqodex` or anything under it, or the
-// root `.openqodex.yaml`), its spelling from the repo root; else null. A flag
-// that names such a path goes through this module like every other access to
-// it. A typed path may spell the root another way (/var for /private/var on
-// macOS) or the state in another letter case on a case-insensitive disk, so
-// the nearest folder above it that resolves to the root is found with
-// realpath, and nothing below the root is resolved: a link there must still
-// be seen by the checks that follow.
-export function isRepoState(repoRoot: string, path: string): string | null {
-  const real = (p: string): string | null => {
-    try {
-      return realpathSync.native(p);
-    } catch {
-      return null;
-    }
-  };
-  const root = real(repoRoot) ?? repoRoot;
-  const full = resolve(repoRoot, path);
-  let at = full;
-  while (real(at) !== root) {
-    const up = dirname(at);
-    if (up === at) return null;
-    at = up;
+// A name as a file system may see it: letter case, Unicode normalisation,
+// characters some file systems ignore (zero-width joiners and the like) and
+// trailing dots or spaces do not tell two names apart.
+function looseName(name: string): string {
+  return name.normalize("NFC").replace(/\p{Default_Ignorable_Code_Point}/gu, "").replace(/[. ]+$/, "").toLowerCase();
+}
+
+// True when the parts of a path from the repo root name the state.
+function namesState(parts: string[]): boolean {
+  const first = parts[0] === undefined ? "" : looseName(parts[0]);
+  return first === ".openqodex" || (parts.length === 1 && first === ".openqodex.yaml");
+}
+
+function realOrNull(p: string): string | null {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return null;
   }
-  const rel = relative(at, full);
-  const first = rel.split(sep)[0]?.toLowerCase();
-  if (first === ".openqodex" || (rel !== "" && !rel.includes(sep) && first === ".openqodex.yaml")) return rel;
-  return null;
+}
+
+// When `path` names the repo state (`.openqodex` or anything under it, or the
+// root `.openqodex.yaml`), its spelling from the repo root, to hand to the
+// state functions; else null. Fails closed:
+// - Spelling: from the shallowest folder above the path that resolves to the
+//   repo root, so a link deeper in the path never stands in for the root.
+// - Real location: where the path lands on disk (realpath of its deepest
+//   existing part plus the rest) is the authority, so case, Unicode and
+//   ignorable characters cannot hide the state. A path that lands in the
+//   state across a link throws; one whose spelling names the state is handed
+//   on, and the state functions refuse any link on the way.
+export function isRepoState(repoRoot: string, path: string): string | null {
+  const root = realOrNull(repoRoot) ?? repoRoot;
+  const full = resolve(repoRoot, path);
+  const chain: string[] = [];
+  for (let at = full; ; at = dirname(at)) {
+    chain.unshift(at);
+    if (dirname(at) === at) break;
+  }
+  const base = chain.find((at) => realOrNull(at) === root) ?? null;
+  const spelled = base === null ? null : relative(base, full);
+  const spelledParts = spelled === null || spelled === "" ? [] : spelled.split(sep);
+
+  let existing = full;
+  const tail: string[] = [];
+  while (realOrNull(existing) === null && dirname(existing) !== existing) {
+    tail.unshift(basename(existing));
+    existing = dirname(existing);
+  }
+  const landed = relative(root, join(realOrNull(existing) ?? existing, ...tail));
+  const inside = landed !== "" && !landed.startsWith("..") && !isAbsolute(landed);
+  const landedParts = inside ? landed.split(sep) : [];
+
+  if (inside && namesState(landedParts)) {
+    // Reached the state: only by the plain path, with no link on the way.
+    let at = base;
+    const crossed =
+      at === null ||
+      spelledParts.some((part) => {
+        at = join(at!, part);
+        return lstatSync(at, { throwIfNoEntry: false })?.isSymbolicLink() ?? false;
+      });
+    if (crossed) throw new OpenQodexError(`${path} reaches the repo's .openqodex files through a symbolic link; name the file directly`);
+    return landed;
+  }
+  return namesState(spelledParts) ? spelled : null;
 }
 
 // What is at `path` (absolute, or relative to the repo root), by lstat alone:
