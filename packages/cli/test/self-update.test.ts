@@ -212,6 +212,18 @@ describe("activation", () => {
   });
 });
 
+describe("one worker at a time", () => {
+  it("a second worker exits while a live one holds update.lock, before any network call (failure 8)", () => {
+    const s = installed();
+    // This test process is alive: its pid in the lock is a live holder.
+    writeFileSync(join(s.oqHome, "update.lock"), `${process.pid} sometoken\n`);
+    const r = launch(s, ["update", "--now"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Another update is running.");
+    expect(readState(s.oqHome).checkedAt).toBeNull();
+  });
+});
+
 describe("a half-finished update", () => {
   it("a runtime unpacked but not pointed at is not what the launcher runs (failure 7)", () => {
     const s = installed();
