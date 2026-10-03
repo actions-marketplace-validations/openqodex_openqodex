@@ -154,8 +154,9 @@ describe("the repository after each command", () => {
     it(`${name} leaves every file outside .openqodex, the index and git status (ignored files included) unchanged`, () => {
       expect(changedFiles(snaps[before].files, snaps[after].files)).toEqual([]);
       expect(snaps[after].index).toBe(snaps[before].index);
-      // The two run receipts come and go inside .openqodex: a scan writes only latest-scan.json.
-      const noReceipts = (text: string) => text.split("\n").filter((l) => !/^!! \.openqodex\/latest(-scan)?\.json$/.test(l)).join("\n");
+      // Run state comes and goes inside .openqodex, ignored by its .gitignore: a
+      // scan writes only latest-scan.json, a review also the graph cache.
+      const noReceipts = (text: string) => text.split("\n").filter((l) => !l.startsWith("!! .openqodex/")).join("\n");
       expect(noReceipts(snaps[after].ignored)).toBe(noReceipts(snaps[before].ignored));
     });
   }
