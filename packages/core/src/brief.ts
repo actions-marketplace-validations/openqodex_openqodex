@@ -133,6 +133,7 @@ function findingShapeBlock(change: Change, whole = false): string {
     version: 1,
     change_id: change.shortId,
     summary: "Adds a search endpoint and a deploy script.",
+    reviewer: "subagent",
     findings: [
       {
         severity: "critical",
@@ -166,6 +167,7 @@ function findingShapeBlock(change: Change, whole = false): string {
     whole
       ? "- `summary`: a few short lines on what you read and what you did not read, not a list of findings."
       : "- `summary`: a few short lines on what the change does, not a list of findings.",
+    "- `reviewer`: `\"subagent\"` when you are a separate agent whose only task is this review, `\"same-agent\"` when you also wrote the code. Required; the report's summary says which.",
     "- `severity` reflects impact on users or the system, not your confidence:",
     "  - `critical`: data loss, a security breach, a crash on a common path, broken auth.",
     "  - `major`: wrong behaviour under realistic conditions, a performance regression, a broken edge case someone would be paged for.",

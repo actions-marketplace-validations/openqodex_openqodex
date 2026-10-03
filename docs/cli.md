@@ -93,14 +93,15 @@ Runs the scanners on the change and prints the report. No model is involved. The
 ## init
 
 ```
-openqodex init [--agent <name>]... [--project] [--yes] [--uninstall] [--dry-run]
+openqodex init [--agent <name>]... [--project] [--hook <pre-push|none>] [--yes] [--uninstall] [--dry-run]
 ```
 
 Installs OpenQodex into your coding agents.
 
 - `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
-- `--yes`, `-y`: do not ask. Without a terminal, `init` needs this flag.
+- `--hook <pre-push|none>`: answer the pre-push hook question without asking. Without it, `init` asks once per repository and records the answer.
+- `--yes`, `-y`: do not ask, and add the pre-push hook unless this repository answered no before. Without a terminal, `init` needs this flag.
 - `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
 - `--dry-run`: print the plan and write nothing.
 
@@ -146,13 +147,13 @@ openqodex hook uninstall
 ```
 
 - `hook check`: the push gate. The Claude Code and Codex hooks call it before a shell command. It reads the hook's JSON on stdin. It always exits 0.
-- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `scan` before each push. It stops the push only when the scan exits 1. A scan that fails for its own reasons never stops the push.
+- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `hook pre-push`, which scans each commit the push sends against the remote's tip of its branch (`agents` has the details). It stops the push only when the scan exits 1. A scan that fails for its own reasons never stops the push.
 - `hook install` refuses to replace a hook it did not write. `--force` replaces it and keeps the old hook as `pre-push.openqodex.bak`.
 - `hook uninstall`: remove that hook and put back the one it replaced. A hook you edited after install is left in place.
 
-When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook.
+When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook: `npx -y openqodex@<version> hook pre-push`.
 
-`init` never installs the git hook. `agents` explains the push gate.
+`init` asks whether to install the git hook. `agents` explains the push gate.
 
 ## guide
 

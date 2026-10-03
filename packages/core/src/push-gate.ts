@@ -25,10 +25,17 @@ export function checkPush(args: {
 }): PushDecision {
   const { currentChangeId, latest, report, config } = args;
   const threshold = config.blockOnSeverity;
-  const reviewed =
+  const sameChange =
     latest !== null && latest.kind === "review" && latest.finalized && latest.change_id === currentChangeId;
+  // The config lives in .openqodex/, outside the change, so raising the
+  // threshold does not move the change id: a review judged under another
+  // threshold does not count once one is set.
+  const otherRule = sameChange && threshold !== null && report?.block_on_severity !== threshold;
+  const reviewed = sameChange && !otherRule;
   const earlier = latest !== null && latest.finalized && latest.change_id !== currentChangeId;
-  const notReviewed = `OpenQodex has not reviewed this change${earlier ? " (the last review was of an earlier version)" : ""}`;
+  const notReviewed = `OpenQodex has not reviewed this change${
+    otherRule ? " under the current block_on_severity" : earlier ? " (the last review was of an earlier version)" : ""
+  }`;
 
   if (!reviewed || !latest) {
     if (!threshold) return { decision: "abstain", message: `${notReviewed}. To review it before pushing, ${REVIEW_STEP}.` };

@@ -51,7 +51,25 @@ const submissionSchema = z.object({
   summary: z.string(),
   findings: z.array(findingSchema),
   dropped: z.array(z.object({ candidate: z.string().min(1), reason: z.string().min(1) })).optional(),
+  reviewer: z.enum(["subagent", "same-agent"]).optional(),
 });
+
+// The first line of the report's summary says who reviewed, so a review by
+// the agent that wrote the code is never silent.
+const REVIEWER_LINE = {
+  subagent: "Reviewed by a separate subagent.",
+  "same-agent": "Not an independent review: the agent that wrote the code reviewed it.",
+} as const;
+
+// The manifest version `review` writes now. From 2 on, a submission must say
+// who reviewed; a run briefed before that may leave it out.
+export const MANIFEST_VERSION = 2;
+
+const REVIEWER_UNRECORDED = "The reviewer was not recorded: this run was briefed before openqodex asked for it.";
+
+function summaryWithReviewer(sub: AgentSubmission): string {
+  return `${sub.reviewer === undefined ? REVIEWER_UNRECORDED : REVIEWER_LINE[sub.reviewer]}\n${sub.summary}`;
+}
 
 function formatPath(path: readonly PropertyKey[]): string {
   let out = "";
@@ -217,6 +235,9 @@ export function finalizeReview(args: {
 }): Report {
   const { change, scan, manifest, config } = args;
   const sub = parseSubmission(args.submission);
+  if (sub.reviewer === undefined && manifest.version >= 2) {
+    throw new OpenQodexError('agent findings are invalid at reviewer: say who reviewed, "subagent" or "same-agent"');
+  }
   if (!sameChange(sub.change_id, change) || !sameChange(manifest.change_id, change)) {
     throw new OpenQodexError(STALE);
   }
@@ -281,7 +302,7 @@ export function finalizeReview(args: {
     generated_at: new Date().toISOString(),
     verdict,
     block_on_severity: config.blockOnSeverity,
-    summary: sub.summary,
+    summary: summaryWithReviewer(sub),
     findings: kept,
     below_threshold: deduped.length - kept.length,
     outside_change: outside,

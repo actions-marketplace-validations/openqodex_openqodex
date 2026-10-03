@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
 import "./global-setup.js";
-import { changedFiles, demo, generatedSecret, git, inventory, readBrief, readJson, receipt, report, reportDir, root, run, skipNetwork, snapshot, submission } from "./support.js";
+import { changedFiles, demo, generatedSecret, git, inventory, readBrief, readJson, receipt, report, reportDir, root, run, skipNetwork, snapshot, submission, writeConfig } from "./support.js";
 import type { Brief, Result, Snapshot } from "./support.js";
 
 type Bug = { id: string; file: string; lines: [number, number]; detectors: { scanner: string; rule_id: string }[] | null };
@@ -54,7 +54,7 @@ beforeAll(() => {
   finalReport = report(dir);
   hookAfter = run("flow-hook-reviewed", dir, [hookCommand], { shell: true, home, input: pushInput(dir) });
 
-  writeFileSync(join(dir, ".openqodex.yaml"), "review:\n  block_on_severity: major\n");
+  writeConfig(dir, "review:\n  block_on_severity: major\n");
   hookBlocked = run("flow-hook-blocked", dir, [hookCommand], { shell: true, home, input: pushInput(dir) });
 }, 900_000);
 
@@ -154,7 +154,10 @@ describe("the repository after each command", () => {
     it(`${name} leaves every file outside .openqodex, the index and git status (ignored files included) unchanged`, () => {
       expect(changedFiles(snaps[before].files, snaps[after].files)).toEqual([]);
       expect(snaps[after].index).toBe(snaps[before].index);
-      expect(snaps[after].ignored).toBe(snaps[before].ignored);
+      // Run state comes and goes inside .openqodex, ignored by its .gitignore: a
+      // scan writes only latest-scan.json, a review also the graph cache.
+      const noReceipts = (text: string) => text.split("\n").filter((l) => !l.startsWith("!! .openqodex/")).join("\n");
+      expect(noReceipts(snaps[after].ignored)).toBe(noReceipts(snaps[before].ignored));
     });
   }
 });

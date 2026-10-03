@@ -46,6 +46,8 @@ export function sandbox(files: Record<string, string> = {}, rootName = "oq test 
 export function env(s: Sandbox, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const e: NodeJS.ProcessEnv = { ...process.env, HOME: s.home, OPENQODEX_HOME: s.oqHome };
   delete e.OPENQODEX_SKIP;
+  // Codex's home would otherwise point init at the real one.
+  delete e.CODEX_HOME;
   return { ...e, ...extra };
 }
 

@@ -179,6 +179,7 @@ async function resolveBase(repoRoot: string, scope: ChangeScope, defaultBase: st
   if (scope.base !== undefined) {
     const sha = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${scope.base}^{commit}`]);
     if (sha === null) throw new OpenQodexError(`base not found: ${scope.base}`);
+    if (scope.exact) return { ref: scope.base, sha };
     // The change is what this branch did since it left the base, so commits
     // that landed on the base afterwards are not shown as reverted.
     const mb = head === null ? null : await mergeBaseWithHead(repoRoot, sha);

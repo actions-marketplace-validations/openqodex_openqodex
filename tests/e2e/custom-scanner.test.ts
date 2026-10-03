@@ -1,9 +1,7 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
 import "./global-setup.js";
-import { demo, report, run, skipNetwork } from "./support.js";
+import { demo, report, run, skipNetwork, writeConfig } from "./support.js";
 
 // A custom scanner from GitHub releases, on the demo repo's workflow file. Trust
 // is per repository in the shared tools folder, so each fresh demo repo starts
@@ -16,7 +14,7 @@ const customFindings = (r: Report) => r.findings.filter((f) => f.source?.startsW
 describe.skipIf(skipNetwork("custom actionlint release"))("custom scanner", () => {
   let dir: string;
   const scan = (label: string) => { const r = run(label, dir, ["scan", "--only", "custom:actionlint", "--format", "json"]); if (r.status !== 0) throw new Error(`scan exited ${r.status}: ${r.stderr}`); return report(dir); };
-  beforeAll(() => { dir = demo("custom"); writeFileSync(join(dir, ".openqodex.yaml"), yaml(command)); }, 300_000);
+  beforeAll(() => { dir = demo("custom"); writeConfig(dir, yaml(command)); }, 300_000);
 
   it("never runs before the developer approves it", () => {
     const r = scan("custom-untrusted");
@@ -30,7 +28,7 @@ describe.skipIf(skipNetwork("custom actionlint release"))("custom scanner", () =
     expect(customFindings(r)).toContain("custom:actionlint:expression");
   });
   it("stops running when its run line changes after approval", () => {
-    writeFileSync(join(dir, ".openqodex.yaml"), yaml(`${command} -verbose`));
+    writeConfig(dir, yaml(`${command} -verbose`));
     const r = scan("custom-changed");
     expect(row(r)?.status).toBe("untrusted");
     expect(customFindings(r)).toEqual([]);

@@ -123,6 +123,10 @@ export type DiffCoverage = Map<string, Set<number>>;
 export type ChangeScope = {
   base?: string; // explicit ref
   uncommitted?: boolean; // diff against HEAD only
+  // Compare the tree to `base` itself, never its merge base with HEAD: the
+  // pre-push hook's remote tip, so a force push to an ancestor shows the
+  // code it removes.
+  exact?: boolean;
 };
 
 export type ChangedFile = {
@@ -290,6 +294,8 @@ export type AgentSubmission = {
   summary: string;
   findings: AgentFinding[];
   dropped?: { candidate: string; reason: string }[];
+  // Who reviewed: a separate subagent, or the agent that wrote the code.
+  reviewer?: "subagent" | "same-agent";
 };
 
 export type ReportFinding = {
@@ -347,11 +353,14 @@ export type Report = {
 // `review --finalize` so a review is bound to the change, the config and the
 // scan it was briefed on.
 export type RunManifest = {
-  version: 1;
+  version: 1 | 2; // 2: the submission must name its reviewer
   change_id: string;
   config_hash: string; // sha256 of the canonical JSON of the effective Config
   created_at: string;
   lenses: { name: string; confidenceFloor: number }[];
+  // sha256 of .openqodex/custom-instructions.md as the brief read it, null
+  // when there was none; absent in runs made before the field existed.
+  instructions_hash?: string | null;
 };
 
 // What the agent hook does. It never allows: allowing would skip the

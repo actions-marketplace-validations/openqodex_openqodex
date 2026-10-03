@@ -7,6 +7,8 @@
 // 4. With block_on_severity set it lets a blocked or missing review through
 //    without denying, or denies a passing review of this change.
 // 5. Its message does not say what to run.
+// 6. A review judged with no threshold, or another one, passes a push after
+//    block_on_severity is set (the config is outside the change id).
 import { describe, expect, it } from "vitest";
 import { finalizeReview } from "./finalize.js";
 import { checkPush } from "./push-gate.js";
@@ -84,7 +86,8 @@ describe("checkPush", () => {
     const d = checkPush({
       currentChangeId: change.id,
       latest: { ...latest, verdict: "passed" },
-      report,
+      // Judged under the same threshold the config sets now.
+      report: { ...report, block_on_severity: "critical" },
       config: makeConfig({ blockOnSeverity: "critical" }),
     });
     expect(d.decision).toBe("abstain");
@@ -98,5 +101,12 @@ describe("checkPush", () => {
         expect(["abstain", "deny"]).toContain(d.decision);
       }
     }
+  });
+
+  it("denies a passing review made before block_on_severity was set", () => {
+    const { latest, report } = reviewed(null);
+    const d = checkPush({ currentChangeId: change.id, latest, report, config: makeConfig({ blockOnSeverity: "critical" }) });
+    expect(d.decision).toBe("deny");
+    expect(d.message).toContain("under the current block_on_severity");
   });
 });

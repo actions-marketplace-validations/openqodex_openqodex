@@ -5,9 +5,11 @@
 //   --all              the whole repository instead of the change: the scanners
 //                      on every file, then the brief, with or without --agent.
 //                      There is never a scan-only report of the whole repo.
+import { createHash } from "node:crypto";
 import { closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
+  MANIFEST_VERSION,
   OpenQodexError,
   DIFF_CAP_BYTES,
   INVENTORY_FILE,
@@ -23,6 +25,7 @@ import {
   readLatest,
   readManifest,
   readScan,
+  redactSecrets,
   STATE_DIR,
   selectLenses,
   selectLensesForDiff,
@@ -33,6 +36,7 @@ import {
 } from "@openqodex/core";
 import type { ChangeScope, ImpactSummary, Latest, SelectedLens, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
+import { announceRepoFiles, instructionsTemplate } from "../agents/repo-folder.js";
 import { EXIT_OK } from "../exit-codes.js";
 import { readInstructions } from "../instructions.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
@@ -102,6 +106,19 @@ function finalizeCommand(repoRoot: string, config: string | undefined, findingsP
   return args.map(shellQuote).join(" ");
 }
 
+// sha256 of the instructions file, null when there is none. Finalize compares
+// it with the brief's, so a review always follows the instructions as they are.
+function instructionsHash(text: string): string | null {
+  return text === "" ? null : createHash("sha256").update(text).digest("hex");
+}
+
+// The owners' instructions as the brief takes them, and their hash. The
+// untouched template says nothing about this repo: no block for it.
+function ownersInstructions(repoRoot: string, secrets: string[]): { text: string; hash: string | null } {
+  const raw = readInstructions(repoRoot);
+  return { text: raw === "" || raw === instructionsTemplate() ? "" : redactSecrets(raw, secrets), hash: instructionsHash(raw) };
+}
+
 async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
   const p = await runPipeline({
     scope,
@@ -109,16 +126,21 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
     only: scannerList("--only", only),
     skip: scannerList("--skip", skip),
   });
+  announceRepoFiles(p.repoRoot);
   if (p.scan === null) return nothingToReview(p.change);
+  // Read after the template may have been created, so finalize hashes the
+  // same file. Over the size limit it is refused, never cut.
+  const instructions = ownersInstructions(p.repoRoot, p.secrets);
 
   const lenses = selectLenses(p.change);
   const dir = openReportDir(p.repoRoot, p.change.shortId);
   writeManifest(dir, {
-    version: 1,
+    version: MANIFEST_VERSION,
     change_id: p.change.id,
     config_hash: configHash(p.config),
     created_at: new Date().toISOString(),
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
+    instructions_hash: instructions.hash,
   });
   writeScan(dir, p.scan);
   const impact = await buildImpact(p, flags, noGraph);
@@ -131,6 +153,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
     findingsPath: join(dir, FINDINGS_FILE),
     finalizeCommand: finalizeCommand(p.repoRoot, flags.config, join(dir, FINDINGS_FILE)),
     impactBlock: renderImpactBlock(impact),
+    instructions: instructions.text,
   });
   const runFile: RunFile = { version: 1, scope };
   writeReportFiles(dir, {
@@ -192,6 +215,7 @@ function writeLatestAll(repoRoot: string, latest: Latest): void {
 
 async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
   const { repoRoot, config } = await loadRepo(flags);
+  announceRepoFiles(repoRoot);
   const whole = await getWholeRepo({ repoRoot, exclude: config.exclude });
   const p = await scanChange<WholeRepo>({
     repoRoot,
@@ -207,15 +231,16 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     return EXIT_OK;
   }
 
-  const instructions = readInstructions(repoRoot);
+  const instructions = ownersInstructions(repoRoot, p.secrets);
   const lenses = wholeRepoLenses(p.change);
   const dir = openReportDir(repoRoot, p.change.shortId);
   writeManifest(dir, {
-    version: 1,
+    version: MANIFEST_VERSION,
     change_id: p.change.id,
     config_hash: configHash(config),
     created_at: new Date().toISOString(),
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
+    instructions_hash: instructions.hash,
   });
   writeScan(dir, p.scan);
   const { impact, hot, note } = await buildHotSpots(p, flags, noGraph);
@@ -232,7 +257,7 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     inventoryPath: join(dir, INVENTORY_FILE),
     hot,
     graphNote: note,
-    instructions,
+    instructions: instructions.text,
   });
   const runFile: RunFile = { version: 1, scope: "all" };
   writeReportFiles(dir, {
@@ -349,6 +374,18 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   }
   if (manifest.config_hash !== configHash(config)) {
     throw new OpenQodexError("the config changed since the brief (.openqodex.yaml or --config); run openqodex review --agent again");
+  }
+  // A run from before the field existed has no hash to compare.
+  if (manifest.instructions_hash !== undefined) {
+    let current: string | null;
+    try {
+      current = instructionsHash(readInstructions(repoRoot));
+    } catch {
+      current = "unreadable";
+    }
+    if (current !== manifest.instructions_hash) {
+      throw new OpenQodexError("the instructions changed since the brief (.openqodex/custom-instructions.md); run review again (openqodex review --agent)");
+    }
   }
   const whole = runFile.scope === "all" ? await getWholeRepo({ repoRoot, exclude: config.exclude }) : null;
   const change =
