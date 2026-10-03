@@ -409,8 +409,9 @@ export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfi
   if (explicitPath !== undefined) {
     const path = isAbsolute(explicitPath) ? explicitPath : resolve(repoRoot, explicitPath);
     // A file in the repo state is read as repo state, never through a link.
-    if (isRepoState(repoRoot, path)) {
-      const text = readRepoFile(repoRoot, path, CONFIG_MAX_BYTES);
+    const state = isRepoState(repoRoot, path);
+    if (state !== null) {
+      const text = readRepoFile(repoRoot, state, CONFIG_MAX_BYTES);
       if (text === null) throw new OpenQodexError(`config file not found: ${path}`);
       return { ...parseConfig(text, explicitPath), path };
     }

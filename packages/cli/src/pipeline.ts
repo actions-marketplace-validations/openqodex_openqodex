@@ -216,8 +216,9 @@ export function emitReport(report: Report, flags: GlobalFlags, repoRoot: string)
     // link included, is replaced and never written through.
     const out = resolve(flags.output);
     // Into the repo state: through the repo state writer, never through a link.
-    if (isRepoState(repoRoot, out)) {
-      writeRepoFile(repoRoot, out, text);
+    const state = isRepoState(repoRoot, out);
+    if (state !== null) {
+      writeRepoFile(repoRoot, state, text);
       return;
     }
     const tmp = join(dirname(out), `.${basename(out)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);

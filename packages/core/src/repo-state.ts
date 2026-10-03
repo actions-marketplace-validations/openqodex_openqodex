@@ -12,6 +12,7 @@ import {
   openSync,
   readdirSync,
   readSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -19,7 +20,7 @@ import {
   writeFileSync,
   type Stats,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { OpenQodexError } from "./types.js";
 
 // The cap for run files (receipts, manifests, reports). Callers with their
@@ -38,12 +39,34 @@ function linkError(repoRoot: string, at: string): OpenQodexError {
   );
 }
 
-// True when `path` names the repo state: `.openqodex` or anything under it,
-// or the root `.openqodex.yaml`. A flag that names such a path goes through
-// this module like every other access to it.
-export function isRepoState(repoRoot: string, path: string): boolean {
-  const rel = relative(repoRoot, resolve(repoRoot, path)).split(sep);
-  return rel.length > 0 && (rel[0] === ".openqodex" || (rel.length === 1 && rel[0] === ".openqodex.yaml"));
+// When `path` names the repo state (`.openqodex` or anything under it, or the
+// root `.openqodex.yaml`), its spelling from the repo root; else null. A flag
+// that names such a path goes through this module like every other access to
+// it. A typed path may spell the root another way (/var for /private/var on
+// macOS) or the state in another letter case on a case-insensitive disk, so
+// the nearest folder above it that resolves to the root is found with
+// realpath, and nothing below the root is resolved: a link there must still
+// be seen by the checks that follow.
+export function isRepoState(repoRoot: string, path: string): string | null {
+  const real = (p: string): string | null => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return null;
+    }
+  };
+  const root = real(repoRoot) ?? repoRoot;
+  const full = resolve(repoRoot, path);
+  let at = full;
+  while (real(at) !== root) {
+    const up = dirname(at);
+    if (up === at) return null;
+    at = up;
+  }
+  const rel = relative(at, full);
+  const first = rel.split(sep)[0]?.toLowerCase();
+  if (first === ".openqodex" || (rel !== "" && !rel.includes(sep) && first === ".openqodex.yaml")) return rel;
+  return null;
 }
 
 // What is at `path` (absolute, or relative to the repo root), by lstat alone:

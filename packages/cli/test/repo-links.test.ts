@@ -162,6 +162,39 @@ describe("flags that name a path in the repo state", () => {
     expect(r.stderr).toContain("is a symbolic link");
   });
 
+  // A repo whose .openqodex/config.yaml links to an outside file naming a custom scanner.
+  function linkedConfig(): Sandbox {
+    const s = sandbox({ "README.md": "hello\n" });
+    const away = outside({ "config.yaml": "scanners:\n  custom:\n    - source: https://github.com/aquasecurity/trivy\n      run: trivy config --format sarif --output {report} {target}\n" });
+    mkdirSync(join(s.repo, ".openqodex"));
+    symlinkSync(join(away, "config.yaml"), join(s.repo, ".openqodex/config.yaml"));
+    return s;
+  }
+
+  it("--config naming the linked config by the /var spelling of the repo root is still refused", (ctx) => {
+    const s = linkedConfig();
+    if (!s.repo.startsWith("/private/var/")) {
+      process.stdout.write("skipped: the temp folder has no /var spelling here\n");
+      ctx.skip();
+    }
+    const r = bounded(s, ["trust", "--list", "--config", join(s.repo.slice("/private".length), ".openqodex/config.yaml")]);
+    expect(r.stdout).not.toContain("trivy");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is a symbolic link");
+  });
+
+  it("--config naming the linked config in another letter case is still refused on a case-insensitive disk", (ctx) => {
+    const s = linkedConfig();
+    if (!existsSync(join(s.repo, "README.MD"))) {
+      process.stdout.write("skipped: this disk tells letter case apart\n");
+      ctx.skip();
+    }
+    const r = bounded(s, ["trust", "--list", "--config", ".OpenQodex/config.yaml"]);
+    expect(r.stdout).not.toContain("trivy");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is a symbolic link");
+  });
+
   it("--output into .openqodex never writes through a linked folder there", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
