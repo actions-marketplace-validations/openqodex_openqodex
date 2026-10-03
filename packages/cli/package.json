@@ -1,7 +1,7 @@
 {
   "name": "openqodex",
   "version": "0.2.1",
-  "description": "AI code review inside Claude Code, Cursor, Codex and Cline, before you push: open source scanners on your changed lines, then a review on your agent's own model.",
+  "description": "Open source AI code review inside Claude Code, Cursor, Codex and Cline, before you push: scanners on your changed lines, then a review on your agent's own model.",
   "type": "module",
   "license": "Apache-2.0",
   "homepage": "https://github.com/openqodex/openqodex#readme",

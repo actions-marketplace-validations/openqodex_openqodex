@@ -1,6 +1,6 @@
 # OpenQodex for Claude Code
 
-OpenQodex is open source AI code review that runs inside Claude Code, before you push. It runs the scanners that fit your change on the lines you changed, then Claude reviews the change on its own model. A final step with no model checks every finding against the scan and the change.
+OpenQodex is open source AI code review that runs inside Claude Code, before you push. It runs the scanners that fit your change on the lines you changed, then Claude reviews the change on its own model. A final step with no model checks each finding's format, whether it sits on a changed line, and any scanner it cites.
 
 ## What the plugin installs
 

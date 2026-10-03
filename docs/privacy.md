@@ -24,6 +24,8 @@ OpenQodex and the built-in scanners send no code anywhere. They use the network 
 
 The plugins, the GitHub Action and the pre-commit hook fetch the `openqodex` package from npm to run it.
 
+The GitHub Action uploads its findings to code scanning in your own repository on GitHub: each finding's message, file path and line numbers, as a SARIF file. Set `upload-sarif: false` in the workflow to turn that off.
+
 ## Custom scanners
 
 A custom scanner named in `.openqodex.yaml` is a command that runs on your machine with your permissions. It never runs until you approve that exact entry with `openqodex trust`, and an edited entry needs a new approval. After approval, a custom scanner does whatever its own command does, including any network use. OpenQodex does not control it.
