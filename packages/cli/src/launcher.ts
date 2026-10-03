@@ -9,7 +9,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { openqodexHome } from "@openqodex/scanners";
 import { assetPath } from "./assets.js";
@@ -100,6 +100,10 @@ export function launcherScript(nodePath: string, home: string, version: string):
     '  [0-9]*) case "$current" in *[!0-9A-Za-z.+-]*) ;; *) [ -f "$runtimes/$current/dist/bin.js" ] && bin="$runtimes/$current/dist/bin.js" ;; esac ;;',
     "esac",
     '[ -x "$node" ] || node=$(command -v node 2>/dev/null) || node=""',
+    // The runtime knows it was started here, and from which file: only
+    // then does it check for updates (see launcherStarted).
+    'OPENQODEX_LAUNCHER="$bin"',
+    "export OPENQODEX_LAUNCHER",
     'if [ "$1" = hook ] && [ "$2" = check ]; then',
     `  if [ -z "$node" ] || [ ! -f "$bin" ]; then echo "openqodex: the push check could not start (no node or no runtime); ${repair}" >&2; exit 0; fi`,
     `  "$node" "$bin" "$@" || echo "openqodex: the push check failed to run; ${repair}" >&2`,
@@ -109,6 +113,27 @@ export function launcherScript(nodePath: string, home: string, version: string):
     'exec "$node" "$bin" "$@"',
     "",
   ].join("\n");
+}
+
+// True when this process was started by the launcher: the launcher exports
+// the runtime file it ran, and that is this process's own entry file. A child
+// that inherits the variable but runs another file (npx, a project-scope
+// pin) does not count.
+export function launcherStarted(env: NodeJS.ProcessEnv = process.env, entry: string | undefined = process.argv[1]): boolean {
+  const named = env.OPENQODEX_LAUNCHER;
+  return named !== undefined && named !== "" && entry !== undefined && resolve(named) === resolve(entry);
+}
+
+// The version baked into the launcher script, from its bin= line; null when
+// the launcher is missing or not ours.
+export function bakedVersion(home: string): string | null {
+  const text = readText(launcherPath(home));
+  if (text === null || !text.includes(LAUNCHER_MARKER)) return null;
+  const m = /^bin='(.*)'$/m.exec(text);
+  const parts = m ? m[1]!.split("/") : [];
+  // .../runtime/<version>/dist/bin.js
+  const v = parts[parts.length - 3];
+  return v !== undefined && VERSION_TEXT.test(v) ? v : null;
 }
 
 const SKIP = new Set(["node_modules"]);
@@ -142,7 +167,7 @@ function packageDir(): string {
   return assetPath();
 }
 
-async function checkRuns(binJs: string, version: string): Promise<void> {
+export async function checkRuns(binJs: string, version: string): Promise<void> {
   const { stdout } = await execFileAsync(process.execPath, [binJs, "--version"], { timeout: 30_000 });
   if (stdout.trim() !== version) throw new Error(`the runtime copy printed "${stdout.trim()}" for --version, expected ${version}`);
 }

@@ -17,6 +17,7 @@ const commands: Record<string, { summary: string; load: () => Promise<CommandMod
   guide: { summary: "Print the docs", load: () => import("./commands/guide.js") },
   demo: { summary: "Build the demo repo with planted bugs", load: () => import("./commands/demo.js") },
   report: { summary: "Report a problem with OpenQodex as a GitHub issue", load: () => import("./commands/report.js") },
+  update: { summary: "Update OpenQodex now, roll back, or turn updates off", load: () => import("./commands/update.js") },
 };
 
 // The hook check must stay silent, and report shows its own offer.
@@ -64,6 +65,10 @@ export async function main(argv: string[]): Promise<void> {
         // At most one offer per run, after the command's own output.
         const problem = takePending();
         if (problem !== null && !NO_OFFER.has(name)) await offer(problem, name, command.args, cwdOf(command.args));
+        // Last: the update notices on stderr and, after a review, scan or
+        // hook run through the launcher, the detached daily check.
+        const { afterCommand } = await import("./update/trigger.js");
+        afterCommand(name, command.args);
       });
   }
 
@@ -82,6 +87,25 @@ export async function main(argv: string[]): Promise<void> {
         return;
       }
       process.exitCode = (await runInstallWorker(tool)) === 0 ? 0 : EXIT_TOOL_FAILED;
+    });
+
+  // Hidden: the update worker, run as a detached process after a command.
+  // It ends by itself; the exit is explicit so no open socket keeps it.
+  program.command("__update", { hidden: true }).action(async () => {
+    const { runUpdateWorker } = await import("./update/worker.js");
+    const result = await runUpdateWorker({ anyAge: false });
+    process.exit(result.outcome === "failed" ? EXIT_TOOL_FAILED : 0);
+  });
+
+  // Hidden: refreshes the recorded agent files from this runtime's templates.
+  // The updater runs the new runtime's own copy inside install.lock.
+  program
+    .command("__refresh", { hidden: true })
+    .option("--probe")
+    .action(async (options: { probe?: boolean }) => {
+      if (options.probe) return;
+      const { runRefresh } = await import("./update/refresh.js");
+      process.stdout.write(`${JSON.stringify(await runRefresh(__OPENQODEX_VERSION__))}\n`);
     });
 
   try {
