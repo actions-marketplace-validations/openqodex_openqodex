@@ -3,8 +3,8 @@
 // by init and by the first scan or review in a repo; an existing file is
 // never touched. Init records what it created, and uninstall removes a file
 // only while it is unchanged and not committed.
-import { readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DEFAULT_CONFIG_YAML, FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, STATE_GITIGNORE, ensureRepoFiles, type RepoFiles } from "@openqodex/core";
 import { assetPath } from "../assets.js";
 import { assertNoSymlinkInRepo, readText, sha256, writeAtomic } from "./files.js";
@@ -39,6 +39,9 @@ export function repoFilesLines(files: RepoFiles): string[] {
 
 type RepoFile = { path: string; label: string; text: string };
 
+// What the folder's .gitignore held on Day 0: the whole folder ignored itself.
+const DAY0_GITIGNORE = "*\n";
+
 function repoFiles(repoRoot: string): { files: RepoFile[]; gitignore: RepoFile; rootConfig: boolean } {
   const dir = join(repoRoot, STATE_DIR);
   const rootConfig = readText(join(repoRoot, ".openqodex.yaml")) !== null;
@@ -48,8 +51,17 @@ function repoFiles(repoRoot: string): { files: RepoFile[]; gitignore: RepoFile; 
   return { files, gitignore: { path: join(dir, ".gitignore"), label: "keeps the review reports out of git", text: STATE_GITIGNORE }, rootConfig };
 }
 
-function remember(record: InstallRecord, f: RepoFile): void {
-  if (readText(f.path) !== f.text) return;
+// Creates the file only when nothing is there (an exclusive open, never a
+// replacing rename), and records it as ours only when that create succeeded:
+// a first scan running at the same moment keeps its own file.
+function createOwned(record: InstallRecord, f: RepoFile): void {
+  mkdirSync(dirname(f.path), { recursive: true });
+  try {
+    writeFileSync(f.path, f.text, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
+    throw error;
+  }
   record.files = record.files.filter((r) => r.path !== f.path);
   record.files.push({ path: f.path, sha256: sha256(f.text), usesLauncher: false });
 }
@@ -62,22 +74,27 @@ export function planRepoFiles(repoRoot: string, record: InstallRecord): { action
   for (const f of all) {
     assertNoSymlinkInRepo(repoRoot, f.path);
     const before = readText(f.path);
-    // The Day 0 folder ignored itself with "*": rewritten once.
-    const day0 = f === gitignore && before === "*\n";
-    if (before !== null && !day0) {
+    // The Day 0 folder ignored itself with "*": rewritten once, recorded as a
+    // migration with the original bytes, so uninstall puts them back.
+    if (f === gitignore && before === DAY0_GITIGNORE) {
+      actions.push({
+        verb: "update",
+        path: f.path,
+        note: `${f.label}, in place of the old "*"`,
+        guard: { path: f.path, before },
+        apply: () => {
+          writeAtomic(f.path, f.text);
+          record.migrations = record.migrations.filter((m) => m.path !== f.path);
+          record.migrations.push({ path: f.path, original: before, sha256: sha256(f.text) });
+        },
+      });
+      continue;
+    }
+    if (before !== null) {
       actions.push({ verb: "skip", path: f.path, note: f === gitignore ? "already there" : "already there; never changed by openqodex" });
       continue;
     }
-    actions.push({
-      verb: day0 ? "update" : "create",
-      path: f.path,
-      note: f.label,
-      guard: { path: f.path, before },
-      apply: () => {
-        writeAtomic(f.path, f.text);
-        remember(record, f);
-      },
-    });
+    actions.push({ verb: "create", path: f.path, note: f.label, guard: { path: f.path, before }, apply: () => createOwned(record, f) });
   }
   return { actions, rootConfig };
 }
@@ -120,6 +137,23 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
     });
   };
   for (const f of files) await consider(f);
+  // A migrated Day 0 .gitignore gets its original bytes back while it is
+  // still what init wrote.
+  const migration = record.migrations.find((m) => m.path === gitignore.path);
+  if (migration) {
+    record.migrations = record.migrations.filter((m) => m !== migration);
+    const now = readText(gitignore.path);
+    if (now !== null && sha256(now) === migration.sha256) {
+      actions.push({
+        verb: "restore",
+        path: gitignore.path,
+        note: "the .gitignore as it was before init",
+        guard: { path: gitignore.path, before: now },
+        apply: () => writeAtomic(gitignore.path, migration.original),
+      });
+    }
+    return actions;
+  }
   let others: string[] = [];
   try {
     others = readdirSync(dir).filter((n) => !removing.has(join(dir, n)) && join(dir, n) !== gitignore.path);

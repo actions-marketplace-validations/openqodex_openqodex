@@ -145,3 +145,46 @@ export function describeFailure(name: string, result: ExecResult, timeoutMs: num
 export function stderrTail(result: ExecResult): string {
   return result.stderr.trim().slice(-300);
 }
+
+// Bytes of file arguments one scanner process may get: well under the limit
+// on macOS and Linux, so a whole-repo review never fails with E2BIG.
+export const ARG_BUDGET_BYTES = 100 * 1024;
+
+// Splits a file list into chunks whose argument bytes stay within the budget,
+// keeping the order. A single name over the budget gets a chunk of its own.
+export function splitArgs(files: string[], budgetBytes: number): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let bytes = 0;
+  for (const file of files) {
+    const size = Buffer.byteLength(file, "utf8") + 1;
+    if (current.length > 0 && bytes + size > budgetBytes) {
+      chunks.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(file);
+    bytes += size;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+// Runs `step` once per chunk of `files`, one after another, under the
+// scanner's one timeout: each step gets the milliseconds still left. The
+// findings of every chunk are merged in order; a failed step fails the run.
+export async function runInChunks<T>(
+  name: string,
+  files: string[],
+  timeoutMs: number,
+  step: (chunk: string[], timeLeftMs: number) => Promise<T[]>,
+): Promise<T[]> {
+  const deadline = Date.now() + timeoutMs;
+  const out: T[] = [];
+  for (const chunk of splitArgs(files, ARG_BUDGET_BYTES)) {
+    const left = deadline - Date.now();
+    if (left <= 0) throw new Error(`${name} timed out after ${Math.round(timeoutMs / 1000)}s`);
+    for (const item of await step(chunk, left)) out.push(item);
+  }
+  return out;
+}

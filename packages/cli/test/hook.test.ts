@@ -24,6 +24,10 @@
 // 10. The pre-push hook scans the wrong range: a push of a branch the
 //     remote already has is measured from the default base instead of the
 //     remote's tip.
+// 11. The pre-push hook scans the checked-out work instead of the pushed
+//     commit, so a push of another branch is not seen.
+// 12. A force push back to an ancestor is measured from the merge base, so
+//     the code it removes from the remote is not part of the scan.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -298,7 +302,7 @@ describe("hook install and uninstall", () => {
 function reviewAndFinalize(s: Sandbox): void {
   expect(cli(s, ["review", "--agent", "--no-install"]).status).toBe(0);
   const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string; change_id: string };
-  const findings = { version: 1, change_id: latest.change_id, summary: "Checked.", findings: [] };
+  const findings = { version: 1, change_id: latest.change_id, summary: "Checked.", reviewer: "subagent", findings: [] };
   writeFileSync(join(s.repo, latest.dir, "agent-findings.json"), JSON.stringify(findings));
   const r = cli(s, ["review", "--finalize"]);
   expect(r.status, r.stderr).toBe(0);
@@ -340,5 +344,68 @@ describe("the pre-push hook on a real push", () => {
     const report = JSON.parse(readFileSync(join(s.repo, receipt.dir, "report.json"), "utf8")) as Report;
     expect(report.base).toEqual({ ref: remoteTip, sha: remoteTip });
     expect(report.stats.files).toBe(1);
+  }, 60_000);
+});
+
+// A live lock on every tool: a scan reports a scanner the change needs as
+// installing instead of downloading it, and one it does not need as having
+// nothing to check. That line shows which files the scan saw.
+function lockTools(s: Sandbox): void {
+  const tools = Object.keys((JSON.parse(readFileSync(join(BIN, "..", "..", "toolchain.json"), "utf8")) as { tools: Record<string, unknown> }).tools);
+  for (const tool of tools) {
+    mkdirSync(join(s.oqHome, "tools", tool), { recursive: true });
+    writeFileSync(join(s.oqHome, "tools", tool, ".lock"), `${process.pid} test\n`);
+  }
+}
+
+function withRemote(s: Sandbox): void {
+  git(s.root, "init", "-q", "--bare", join(s.root, "remote.git"));
+  git(s.repo, "remote", "add", "origin", join(s.root, "remote.git"));
+  git(s.repo, "push", "-q", "origin", "main");
+}
+
+function push(s: Sandbox, ...args: string[]) {
+  const r = spawnSync("git", ["push", ...args], { cwd: s.repo, env: env(s), encoding: "utf8" });
+  expect(r.status, r.stderr).toBe(0);
+  return `${r.stdout}${r.stderr}`;
+}
+
+describe("the pre-push hook scans what the push sends", () => {
+  it("scans a branch that is not checked out from its own commit, not the work in place", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    lockTools(s);
+    withRemote(s);
+    git(s.repo, "checkout", "-q", "-b", "feature");
+    writeFileSync(join(s.repo, "deploy.sh"), "#!/bin/sh\necho hi\n");
+    git(s.repo, "add", "-A");
+    git(s.repo, "commit", "-q", "-m", "a script");
+    git(s.repo, "checkout", "-q", "main");
+    expect(cli(s, ["hook", "install"]).status).toBe(0);
+    const out = push(s, "origin", "feature");
+    expect(out).not.toMatch(/shellcheck: nothing to check/);
+    expect(out).toMatch(/shellcheck: /);
+    // The temporary tree is gone.
+    expect(git(s.repo, "worktree", "list").trim().split("\n")).toHaveLength(1);
+  }, 60_000);
+
+  it("measures a force push back to an ancestor from the remote's tip, so the code it removes is scanned", () => {
+    const s = sandbox({ "run.sh": "#!/bin/sh\necho $1\n" });
+    withRemote(s);
+    const ancestor = git(s.repo, "rev-parse", "HEAD").trim();
+    writeFileSync(join(s.repo, "run.sh"), '#!/bin/sh\necho "$1"\n');
+    git(s.repo, "commit", "-q", "-am", "quote the argument");
+    git(s.repo, "push", "-q", "origin", "main");
+    const remoteTip = git(s.repo, "rev-parse", "HEAD").trim();
+    git(s.repo, "reset", "-q", "--hard", ancestor);
+    writeFileSync(join(s.repo, "notes.txt"), "one\n");
+    git(s.repo, "add", "-A");
+    git(s.repo, "commit", "-q", "-m", "notes");
+    lockTools(s);
+    expect(cli(s, ["hook", "install"]).status).toBe(0);
+    push(s, "--force", "origin", "main");
+    const receipt = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest-scan.json"), "utf8")) as { dir: string };
+    const report = JSON.parse(readFileSync(join(s.repo, receipt.dir, "report.json"), "utf8")) as Report;
+    expect(report.base.sha).toBe(remoteTip);
+    expect(report.stats.files).toBe(2);
   }, 60_000);
 });

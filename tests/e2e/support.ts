@@ -90,9 +90,9 @@ export function readBrief(dir: string): Brief {
 }
 type Finding = { severity: string; category: string; confidence: number; file_path: string; line_number: number; title: string; description: string; suggested_change: null; source: string | null; candidate: string | null };
 // An agent submission that raises the given candidates and drops the rest.
-export function submission(changeId: string, candidates: Candidate[], raised: Candidate[]): { version: 1; change_id: string; summary: string; findings: Finding[]; dropped: { candidate: string; reason: string }[] } {
+export function submission(changeId: string, candidates: Candidate[], raised: Candidate[]): { version: 1; change_id: string; summary: string; reviewer: "subagent"; findings: Finding[]; dropped: { candidate: string; reason: string }[] } {
   return {
-    version: 1, change_id: changeId, summary: "Reviewed the planted change",
+    version: 1, change_id: changeId, summary: "Reviewed the planted change", reviewer: "subagent",
     findings: raised.map((c) => ({ severity: c.reviewSeverity, category: "security", confidence: 1, file_path: c.filePath, line_number: c.lineStart, title: c.ruleId, description: c.message, suggested_change: null, source: c.token, candidate: c.id })),
     dropped: candidates.filter((c) => !raised.includes(c)).map((c) => ({ candidate: c.id, reason: "Not actionable here" })),
   };

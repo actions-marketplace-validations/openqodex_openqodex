@@ -61,8 +61,14 @@ const REVIEWER_LINE = {
   "same-agent": "Not an independent review: the agent that wrote the code reviewed it.",
 } as const;
 
+// The manifest version `review` writes now. From 2 on, a submission must say
+// who reviewed; a run briefed before that may leave it out.
+export const MANIFEST_VERSION = 2;
+
+const REVIEWER_UNRECORDED = "The reviewer was not recorded: this run was briefed before openqodex asked for it.";
+
 function summaryWithReviewer(sub: AgentSubmission): string {
-  return sub.reviewer === undefined ? sub.summary : `${REVIEWER_LINE[sub.reviewer]}\n${sub.summary}`;
+  return `${sub.reviewer === undefined ? REVIEWER_UNRECORDED : REVIEWER_LINE[sub.reviewer]}\n${sub.summary}`;
 }
 
 function formatPath(path: readonly PropertyKey[]): string {
@@ -162,6 +168,24 @@ function touchesChange(f: AgentFinding, change: Change): string | null {
   return `${where} not a line this change added or modified`;
 }
 
+// `review --all`: the whole repository is the change, so a finding is in
+// scope when its file is a text file in the inventory and its lines are
+// within the file's line count. Anything else is a wrong citation, rejected
+// like one, so nothing lands outside the change.
+function checkInRepo(sub: AgentSubmission, lines: Map<string, number>, clean: (text: string) => string): void {
+  sub.findings.forEach((f, i) => {
+    const at = `finding ${i} ("${clean(f.title)}")`;
+    const count = lines.get(f.file_path);
+    if (count === undefined) {
+      throw new OpenQodexError(`${at} names ${clean(f.file_path)}, which is not a text file in this review's inventory`);
+    }
+    const end = f.line_end ?? f.line_number;
+    if (end > count) {
+      throw new OpenQodexError(`${at} cites line ${end > f.line_number ? `${f.line_number} to ${end}` : f.line_number} of ${clean(f.file_path)}, which has ${count} lines`);
+    }
+  });
+}
+
 // Removes only true duplicates: same file, range and category, and the same
 // candidate, or the same source when no candidate is cited, or the same title
 // when neither is. Keeps the higher severity, then the first.
@@ -205,14 +229,21 @@ export function finalizeReview(args: {
   manifest: RunManifest;
   config: Config;
   submission: unknown;
+  // Set when the run reviewed the whole repository (`review --all`): the
+  // line count of every text file in its inventory.
+  wholeRepo?: { lines: Map<string, number> };
 }): Report {
   const { change, scan, manifest, config } = args;
   const sub = parseSubmission(args.submission);
+  if (sub.reviewer === undefined && manifest.version >= 2) {
+    throw new OpenQodexError('agent findings are invalid at reviewer: say who reviewed, "subagent" or "same-agent"');
+  }
   if (!sameChange(sub.change_id, change) || !sameChange(manifest.change_id, change)) {
     throw new OpenQodexError(STALE);
   }
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
   checkCitations(sub, scan, manifest, clean);
+  if (args.wholeRepo) checkInRepo(sub, args.wholeRepo.lines, clean);
   const floors = new Map(manifest.lenses.map((l) => [l.name, l.confidenceFloor]));
 
   const findings: ReportFinding[] = [];
@@ -229,7 +260,7 @@ export function finalizeReview(args: {
       lowConfidence.push({ title: f.title, file_path: f.file_path, confidence: f.confidence, floor });
       continue;
     }
-    const outsideReason = touchesChange(f, change);
+    const outsideReason = args.wholeRepo ? null : touchesChange(f, change);
     const entry: ReportFinding = {
       origin: "agent",
       severity: f.severity,

@@ -122,7 +122,7 @@ The git pre-push hook covers pushes from any tool, by an agent or by hand. `init
 npx openqodex hook install
 ```
 
-It runs `openqodex scan` before each push, through the launcher. For each branch the push sends, it scans from the remote's tip of that branch when the remote has one this clone knows, otherwise from the usual base. The scan covers the work checked out in the repository. It stops the push only when the config sets `review.block_on_severity` and the scan meets it. A scan that fails for its own reasons never stops the push. `cli` has the details.
+Before each push it runs `openqodex hook pre-push` through the launcher, which scans each commit the push sends. The scan compares that commit with exactly the remote's tip of its branch, so a force push shows the code it removes. A new branch is compared with the commit it grows from that the remote already has, otherwise with the usual base. A commit that is not checked out, or a checkout with uncommitted work, is scanned in a temporary copy of that commit, which is removed afterwards. The repository's config and custom instructions as they are in your checkout apply to every scan. It stops the push only when the config sets `review.block_on_severity` and the scan meets it. A scan that fails for its own reasons never stops the push. `cli` has the details.
 
 ## Other ways to install
 

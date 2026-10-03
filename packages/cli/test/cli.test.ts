@@ -159,7 +159,7 @@ function finding(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 function submit(dir: string, changeId: string, findings: unknown[], extra: Record<string, unknown> = {}): void {
-  const body = { version: 1, change_id: changeId, summary: "Checked.", findings, ...extra };
+  const body = { version: 1, change_id: changeId, summary: "Checked.", reviewer: "subagent", findings, ...extra };
   writeFileSync(join(dir, "agent-findings.json"), JSON.stringify(body));
 }
 
@@ -185,7 +185,7 @@ describe("frame", () => {
     expect(r.stderr).toContain("not a git repository");
   });
 
-  it("an empty change scans, writes state or exits non-zero", () => {
+  it("an empty change scans, writes run state or exits non-zero", () => {
     const repo = repoWithChange();
     git(repo, ["add", "-A"]);
     git(repo, ["commit", "--quiet", "-m", "all"]);
@@ -194,7 +194,8 @@ describe("frame", () => {
       expect(r.code).toBe(0);
       expect(r.stderr).toContain("Nothing to review: no changes against HEAD");
     }
-    expect(existsSync(join(repo, ".openqodex"))).toBe(false);
+    // Only the team files a first run creates; no report, no receipt.
+    expect(readdirSync(join(repo, ".openqodex")).sort()).toEqual([".gitignore", "config.yaml", "custom-instructions.md"]);
   });
 });
 

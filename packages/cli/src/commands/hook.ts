@@ -2,7 +2,9 @@
 // entries call before a shell command. `openqodex hook install|uninstall`:
 // the optional git pre-push hook, the gate that sees every real push.
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import type { ChangeScope } from "@openqodex/core";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { readText, sha256, writeAtomic, writeBackup } from "../agents/files.js";
@@ -19,6 +21,7 @@ const USAGE = [
   "usage: openqodex hook check [--agent <claude-code|codex>]   (called by the agent hook, reads its JSON on stdin)",
   "       openqodex hook install [--force]                      (adds a git pre-push hook to this repo)",
   "       openqodex hook uninstall",
+  "       openqodex hook pre-push                               (run by the git pre-push hook, reads git's lines on stdin)",
 ].join("\n");
 
 export const GIT_HOOK_MARKER = "# openqodex pre-push hook: openqodex hook uninstall removes it";
@@ -134,39 +137,139 @@ async function check(): Promise<number> {
   return EXIT_OK;
 }
 
+// ---------- hook pre-push ----------
+
+const ZERO_SHA = /^0+$/;
+
+async function gitOut(cwd: string, args: string[]): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd, maxBuffer: 16 << 20 });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+function readAll(): Promise<string> {
+  return new Promise((done) => {
+    const chunks: Buffer[] = [];
+    process.stdin.on("data", (c: Buffer) => chunks.push(c));
+    process.stdin.once("end", () => done(Buffer.concat(chunks).toString("utf8")));
+    process.stdin.once("error", () => done(Buffer.concat(chunks).toString("utf8")));
+  });
+}
+
+// One pushed commit and the remote tip it replaces (null: the remote has no
+// tip this clone knows and the push starts no new ref from one commit it
+// has, so the usual base is used). `local` null: the hook
+// ran by hand with no push lines, so the work in place is scanned.
+type PushedPair = { base: string | null; local: string | null };
+
+// For a ref the remote does not have yet: the one commit the pushed commit
+// grows from that the remote already has, or null when there is not exactly one.
+async function newRefBase(repoRoot: string, remoteName: string | undefined, local: string): Promise<string | null> {
+  const remotes = remoteName !== undefined && /^[A-Za-z0-9._-]+$/.test(remoteName) ? `--remotes=${remoteName}` : "--remotes";
+  const out = await gitOut(repoRoot, ["rev-list", "--boundary", local, "--not", remotes]);
+  const boundary = (out ?? "").split("\n").filter((l) => l.startsWith("-")).map((l) => l.slice(1));
+  return boundary.length === 1 ? boundary[0] : null;
+}
+
+async function pushedPairs(repoRoot: string, input: string, remoteName: string | undefined): Promise<PushedPair[]> {
+  const lines = input.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  if (lines.length === 0) return [{ base: null, local: null }];
+  const pairs: PushedPair[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const [, local, , remote] = line.split(/\s+/);
+    // An all-zero local sha deletes the remote ref: nothing is sent.
+    if (local === undefined || ZERO_SHA.test(local)) continue;
+    const known = remote !== undefined && !ZERO_SHA.test(remote) && (await gitOut(repoRoot, ["cat-file", "-e", `${remote}^{commit}`])) !== null;
+    const base = known ? remote : remote !== undefined && ZERO_SHA.test(remote) ? await newRefBase(repoRoot, remoteName, local) : null;
+    const key = `${base} ${local}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ base, local });
+  }
+  return pairs;
+}
+
+// The repo's config and instructions as they are in the work tree, so a scan
+// of a pushed commit in a temporary tree is judged by the same settings.
+const SETTINGS = [".openqodex.yaml", ".openqodex/config.yaml", ".openqodex/custom-instructions.md", ".openqodex/.gitignore"];
+
+async function scanIn(cwd: string, scope: ChangeScope): Promise<number> {
+  const [{ runScan }, { parseFlags }] = await Promise.all([import("./scan.js"), import("../flags.js")]);
+  try {
+    return (await runScan({ flags: parseFlags(["--cwd", cwd], {}).global, scope })).exitCode;
+  } catch (error) {
+    process.stderr.write(`openqodex hook pre-push: ${error instanceof Error ? error.message : String(error)}\n`);
+    return EXIT_TOOL_FAILED;
+  }
+}
+
+// Scans a pushed commit in a temporary detached work tree of it, removed
+// afterwards whatever happens.
+async function scanCommit(repoRoot: string, sha: string, scope: ChangeScope): Promise<number> {
+  const tmp = mkdtempSync(join(tmpdir(), "openqodex-push-"));
+  const tree = join(tmp, "tree");
+  try {
+    if ((await gitOut(repoRoot, ["worktree", "add", "--detach", "--quiet", tree, sha])) === null) {
+      process.stderr.write(`openqodex hook pre-push: could not check out ${sha} to scan it\n`);
+      return EXIT_TOOL_FAILED;
+    }
+    for (const rel of SETTINGS) {
+      const text = readText(join(repoRoot, rel));
+      if (text !== null) writeAtomic(join(tree, rel), text);
+      else rmSync(join(tree, rel), { force: true });
+    }
+    return await scanIn(tree, scope);
+  } finally {
+    await gitOut(repoRoot, ["worktree", "remove", "--force", tree]);
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// `openqodex hook pre-push`, run by the git pre-push hook with git's lines on
+// stdin: `<local ref> <local sha> <remote ref> <remote sha>`. Each distinct
+// (remote tip, pushed commit) pair is scanned against exactly that remote
+// tip, so a force push to an ancestor shows what it removes. The pushed
+// commit is scanned in place only when it is HEAD and the work tree is clean;
+// otherwise in a temporary work tree of that commit. Exit 1 when any scan
+// meets block_on_severity.
+async function prePush(args: string[]): Promise<number> {
+  // Git sets these for hooks; they would point the temporary tree's git at this one.
+  for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX"]) delete process.env[name];
+  const repoRoot = await repoRootOf(process.cwd());
+  if (repoRoot === null) return fail("openqodex hook pre-push: run it inside a git repository");
+  // The team files first, so a temporary tree gets the repo's own settings.
+  const { announceRepoFiles } = await import("../agents/repo-folder.js");
+  announceRepoFiles(repoRoot);
+  const pairs = await pushedPairs(repoRoot, await readAll(), args[0]);
+  const head = await gitOut(repoRoot, ["rev-parse", "HEAD"]);
+  const clean = (await gitOut(repoRoot, ["status", "--porcelain", "--", ".", ":(exclude).openqodex"])) === "";
+  let status = EXIT_OK;
+  for (const pair of pairs) {
+    const scope: ChangeScope = pair.base === null ? {} : { base: pair.base, exact: true };
+    const inPlace = pair.local === null || (pair.local === head && clean);
+    const code = inPlace ? await scanIn(repoRoot, scope) : await scanCommit(repoRoot, pair.local!, scope);
+    if (code === 1) status = 1;
+  }
+  return status;
+}
+
 // ---------- hook install / uninstall ----------
 
-// The pre-push hook. Git gives it one line per ref on stdin:
-// `<local ref> <local sha> <remote ref> <remote sha>`. For each ref that sends
-// commits, the scan runs from the remote's tip when the remote has one this
-// clone knows, else with the default scope; one scan per distinct base. The
-// scan covers the checked-out work. Only exit 1 (a finding at or above
-// block_on_severity) stops the push; a scan or a launcher that cannot run
-// exits 2 or 127, which never does.
+// The pre-push hook. It hands git's lines to `hook pre-push`. Only exit 1 (a
+// finding at or above block_on_severity) stops the push; a scan or a launcher
+// that cannot run exits 2 or 127, which never does.
 export function gitHookScript(launcher: string): string {
   return [
     "#!/bin/sh",
     GIT_HOOK_MARKER,
-    `launcher=${shQuote(launcher)}`,
-    "status=0",
-    "lines=0",
-    'seen=" "',
-    "scan() {",
-    '  "$launcher" scan "$@" </dev/null',
-    '  if [ "$?" -eq 1 ]; then status=1; fi',
-    "}",
-    "while read -r local_ref local_sha remote_ref remote_sha; do",
-    "  lines=1",
-    "  # An all-zero local sha deletes the remote ref: nothing is sent.",
-    '  case "$local_sha" in *[!0]*) ;; *) continue ;; esac',
-    '  base=""',
-    '  case "$remote_sha" in *[!0]*) git cat-file -e "$remote_sha^{commit}" 2>/dev/null && base=$remote_sha ;; esac',
-    '  case "$seen" in *" ${base:-default} "*) continue ;; esac',
-    '  seen="$seen${base:-default} "',
-    '  if [ -n "$base" ]; then scan --base "$base"; else scan; fi',
-    "done",
-    '[ "$lines" -eq 0 ] && scan',
-    'exit "$status"',
+    `${shQuote(launcher)} hook pre-push "$@"`,
+    "status=$?",
+    '[ "$status" -eq 1 ] && exit 1',
+    "exit 0",
     "",
   ].join("\n");
 }
@@ -230,7 +333,7 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
       path,
       manager,
       foreign: false,
-      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager}; add npx -y openqodex@${__OPENQODEX_VERSION__} scan there` },
+      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager}; add npx -y openqodex@${__OPENQODEX_VERSION__} hook pre-push there` },
     };
   }
   const script = gitHookScript(launcher);
@@ -249,7 +352,7 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
       path,
       manager,
       foreign: true,
-      action: { verb: "keep", path, note: `${label}: a hook openqodex did not write is there; add ${shQuote(launcher)} scan to it, or run openqodex hook install --force` },
+      action: { verb: "keep", path, note: `${label}: a hook openqodex did not write is there; add ${shQuote(launcher)} hook pre-push to it, or run openqodex hook install --force` },
     };
   }
   return {
@@ -320,7 +423,7 @@ async function install(args: string[]): Promise<number> {
   const manager = hookManager(target.repoRoot);
   if (manager !== null) {
     process.stdout.write(
-      `This repo manages its git hooks with ${manager}. Add this line to its pre-push hook:\n  npx -y openqodex@${__OPENQODEX_VERSION__} scan\nNothing was written.\n`,
+      `This repo manages its git hooks with ${manager}. Add this line to its pre-push hook:\n  npx -y openqodex@${__OPENQODEX_VERSION__} hook pre-push\nNothing was written.\n`,
     );
     return EXIT_OK;
   }
@@ -337,7 +440,7 @@ async function install(args: string[]): Promise<number> {
       const plan = await planGitHook(target.repoRoot, record, home, force);
       if (plan.foreign) {
         return fail(
-          `openqodex hook install: ${target.path} already exists and is not ours. Add this line to it:\n  ${shQuote(launcher)} scan\nor run openqodex hook install --force to replace it (the old hook is kept beside it).`,
+          `openqodex hook install: ${target.path} already exists and is not ours. Add this line to it:\n  ${shQuote(launcher)} hook pre-push\nor run openqodex hook install --force to replace it (the old hook is kept beside it).`,
         );
       }
       if (plan.action.verb === "skip") {
@@ -396,6 +499,7 @@ export async function run(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   try {
     if (sub === "check") return await check();
+    if (sub === "pre-push") return await prePush(rest);
     if (sub === "install") return await install(rest);
     if (sub === "uninstall") return await uninstall(rest);
   } catch (error) {

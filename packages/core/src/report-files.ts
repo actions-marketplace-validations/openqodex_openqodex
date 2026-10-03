@@ -23,13 +23,13 @@ export const STATE_DIR = ".openqodex";
 export const KEEP_REPORTS = 20;
 export const FOLDER_CONFIG = "config.yaml";
 export const INSTRUCTIONS_FILE = "custom-instructions.md";
-// Larger is refused, never cut: an instruction after a cut would vanish.
-export const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
 
 // What the folder's .gitignore keeps out of git: the run state, not the two
 // team files. The Day 0 file held only "*".
-export const STATE_GITIGNORE = ["reviews/", "latest.json", "latest-scan.json", "last-report.json", "graph/", ""].join("\n");
+export const STATE_GITIGNORE = ["reviews/", "latest.json", "latest-scan.json", "latest-all.json", "last-report.json", "graph/", ""].join("\n");
 const DAY0_GITIGNORE = "*\n";
+// The review receipts: the change review and the whole-repo review.
+const RECEIPTS = ["latest.json", "latest-all.json"];
 
 // <yyyymmdd-hhmmss>-<shortid>, with "-2", "-3", ... for a second run of the
 // same change in the same second.
@@ -140,7 +140,14 @@ export function openReportDir(repoRoot: string, shortId: string): string {
     }
   }
   const dir = join(reviewsDir(repoRoot), name);
-  for (const old of reportDirNames(repoRoot).filter((n) => n !== name).slice(KEEP_REPORTS - 1)) {
+  // The folders the review receipts name are kept whatever their age: the
+  // push gate and finalize read them.
+  const pinned = new Set(
+    RECEIPTS.map((r) => readJson<Latest>(join(repoRoot, STATE_DIR, r))?.dir)
+      .filter((d): d is string => typeof d === "string")
+      .map((d) => basename(d)),
+  );
+  for (const old of reportDirNames(repoRoot).filter((n) => n !== name && !pinned.has(n)).slice(KEEP_REPORTS - 1)) {
     rmSync(join(reviewsDir(repoRoot), old), { recursive: true, force: true });
   }
   return dir;
@@ -223,25 +230,4 @@ export function ensureRepoFiles(repoRoot: string, texts: { config: string; instr
   if (!rootConfig) create(FOLDER_CONFIG, texts.config);
   create(INSTRUCTIONS_FILE, texts.instructions);
   return { created, rootConfig };
-}
-
-// The text of .openqodex/custom-instructions.md, or null when there is none.
-// A file over the limit or a symbolic link is refused with the reason.
-export function readInstructions(repoRoot: string): string | null {
-  const path = join(repoRoot, STATE_DIR, INSTRUCTIONS_FILE);
-  let stat;
-  try {
-    stat = lstatSync(path);
-  } catch {
-    return null;
-  }
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw new OpenQodexError(`${STATE_DIR}/${INSTRUCTIONS_FILE} is not a regular file; openqodex reads only a real file there`);
-  }
-  if (stat.size > INSTRUCTIONS_MAX_BYTES) {
-    throw new OpenQodexError(
-      `${STATE_DIR}/${INSTRUCTIONS_FILE} is ${stat.size} bytes, over the ${INSTRUCTIONS_MAX_BYTES} byte limit; shorten it, nothing in it is cut`,
-    );
-  }
-  return readFileSync(path, "utf8");
 }

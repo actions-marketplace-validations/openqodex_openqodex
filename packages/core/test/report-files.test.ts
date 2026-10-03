@@ -14,6 +14,8 @@
 //    writes and pruning outside the repo.
 // 9. Two runs of the same change in the same second share a folder.
 // 10. A failed rename leaves its temp file behind.
+// 12. Pruning deletes the report a review receipt points at, so the push
+//     gate or finalize loses a finished review after twenty scans.
 // 11. The folder's .gitignore keeps the reports out of git but hides the
 //     team files, or a Day 0 "*" is never rewritten, or a .gitignore the
 //     team edited is rewritten.
@@ -192,5 +194,20 @@ describe("report files", () => {
     writeFileSync(join(dir, "report.md", "keep"), "x");
     expect(() => writeReportFiles(dir, { "report.md": "# r\n" })).toThrow();
     expect(readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("keeps the report folders the review receipts name, however old", () => {
+    const r = repo();
+    const reviews = join(r, ".openqodex", "reviews");
+    mkdirSync(reviews, { recursive: true });
+    const old = Array.from({ length: 25 }, (_, i) => `20200101-0000${String(i).padStart(2, "0")}-${ID}`);
+    for (const n of old) mkdirSync(join(reviews, n));
+    writeLatest(r, { dir: `.openqodex/reviews/${old[0]}`, change_id: ID, kind: "review", finalized: true, verdict: "passed" });
+    writeFileSync(join(r, ".openqodex", "latest-all.json"), JSON.stringify({ dir: `.openqodex/reviews/${old[1]}` }));
+    openReportDir(r, "ffffffffffff");
+    const left = readdirSync(reviews);
+    expect(left).toContain(old[0]);
+    expect(left).toContain(old[1]);
+    expect(left).not.toContain(old[2]);
   });
 });

@@ -34,8 +34,8 @@ export async function runScan(args: {
     only: scannerList("--only", args.only),
     skip: scannerList("--skip", args.skip),
   });
-  if (p.scan === null) return { exitCode: nothingToReview(p.change), report: null, dir: null };
   announceRepoFiles(p.repoRoot);
+  if (p.scan === null) return { exitCode: nothingToReview(p.change), report: null, dir: null };
 
   const report = scanReport({ change: p.change, scan: p.scan, config: p.config });
   const dir = openReportDir(p.repoRoot, p.change.shortId);
