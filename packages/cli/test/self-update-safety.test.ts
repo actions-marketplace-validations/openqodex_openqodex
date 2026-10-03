@@ -438,6 +438,31 @@ describe("B. Claude Code permission rules", () => {
     expect(allow(join(p.home, ".claude/settings.json"))).toEqual(["Bash(ls *)", `Bash(${launcher} guide)`]);
   });
 
+  it("every review or guide line the skill and a launcher-started brief print is allowed; trust, report and doctor lines are not", () => {
+    const p = plain();
+    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
+    const launcher = join(p.oqHome, "bin/openqodex");
+    const rules = allow(join(p.home, ".claude/settings.json"));
+    git(p.repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "start");
+    writeFileSync(join(p.repo, "app.py"), "print('hello')\n");
+    const e = { ...process.env, HOME: p.home, OPENQODEX_HOME: p.oqHome, OPENQODEX_AUTO_UPDATE: "0" };
+    delete e.CODEX_HOME;
+    const texts = [readFileSync(join(p.home, ".claude/skills/openqodex/SKILL.md"), "utf8")];
+    for (const args of [["review", "--agent"], ["review", "--agent", "--offline"], ["review", "--agent", "--all"], ["review", "--agent", "--all", "--offline"]]) {
+      const r = spawnSync("sh", [launcher, ...args, "--no-install"], { cwd: p.repo, env: e, encoding: "utf8" });
+      expect(r.status, `${args.join(" ")}: ${r.stderr}`).toBe(0);
+      expect(r.stdout, args.join(" ")).toContain(`${launcher} review --finalize${args.includes("--all") ? " --all" : ""}${args.includes("--offline") ? " --offline" : ""}\``);
+      texts.push(r.stdout);
+    }
+    const lines = texts.flatMap((x) => [...x.matchAll(new RegExp(`${escape(launcher)} [^\`\n]*`, "g"))].map((m) => m[0].trim()));
+    const agentRuns = lines.filter((l) => / (review|guide)\b/.test(l) && !l.includes("<topic>"));
+    expect(agentRuns.filter((l) => l.includes("review --finalize")).length).toBeGreaterThanOrEqual(5);
+    for (const l of agentRuns) expect(covers(rules, l), l).toBe(true);
+    const asked = lines.filter((l) => / (trust|report --send-last|doctor --install)\b/.test(l));
+    expect(asked.length).toBeGreaterThan(0);
+    for (const l of asked) expect(covers(rules, l), l).toBe(false);
+  }, 180_000);
+
   // An install whose record holds a rule this version no longer grants (the
   // set changed between versions), beside a developer's own look-alike rule.
   function withStaleRule(): { p: ReturnType<typeof plain>; settings: string; stale: string; mine: string } {

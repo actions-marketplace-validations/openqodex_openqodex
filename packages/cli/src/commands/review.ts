@@ -102,17 +102,22 @@ function shellQuote(arg: string): string {
   return /^[A-Za-z0-9_./:@=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
-// The exact command that finalizes this run, from any folder: the repo and an
-// explicit config are named so the config hash and the change match. Started
-// through the launcher, it calls the launcher, written as the skill and the
-// Claude Code permission rule write it; when an update moved the launcher on
-// in between, finalize hands the run to the version that wrote the brief.
-// Otherwise it names the pinned npx version.
-function finalizeCommand(repoRoot: string, config: string | undefined, findingsPath: string): string {
-  const launched = launcherStarted();
-  const runner = launched ? launcherRunner(launcherPath(openqodexHomeDir())) : ["npx", "-y", `openqodex@${__OPENQODEX_VERSION__}`].join(" ");
+// The command that finalizes this run. Started through the launcher, it is
+// the plain line the Claude Code permission rules cover, run from the
+// repository root: `<launcher> review --finalize`, with --all and --offline
+// as the brief was made, and finalize finds the run through latest.json or
+// latest-all.json. When an update moved the launcher on in between, finalize
+// hands the run to the version that wrote the brief by its findings file.
+// An explicit --config, or a run not started through the launcher, gets the
+// full line that works from any folder: the repo, the config and the
+// findings file named, with the pinned npx version.
+function finalizeCommand(repoRoot: string, flags: GlobalFlags, findingsPath: string, all: boolean): string {
+  if (launcherStarted() && flags.config === undefined) {
+    return [launcherRunner(launcherPath(openqodexHomeDir())), "review", "--finalize", ...(all ? ["--all"] : []), ...(flags.offline ? ["--offline"] : [])].join(" ");
+  }
+  const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : `npx -y openqodex@${__OPENQODEX_VERSION__}`;
   const args = ["review", "--finalize", "--cwd", repoRoot];
-  if (config !== undefined) args.push("--config", isAbsolute(config) ? config : resolve(repoRoot, config));
+  if (flags.config !== undefined) args.push("--config", isAbsolute(flags.config) ? flags.config : resolve(repoRoot, flags.config));
   args.push(findingsPath);
   return [runner, ...args.map(shellQuote)].join(" ");
 }
@@ -163,7 +168,7 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
     config: p.config,
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
-    finalizeCommand: finalizeCommand(p.repoRoot, flags.config, join(dir, FINDINGS_FILE)),
+    finalizeCommand: finalizeCommand(p.repoRoot, flags, join(dir, FINDINGS_FILE), false),
     impactBlock: renderImpactBlock(impact),
     instructions: instructions.text,
   });
@@ -265,7 +270,7 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     config,
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
-    finalizeCommand: finalizeCommand(repoRoot, flags.config, join(dir, FINDINGS_FILE)),
+    finalizeCommand: finalizeCommand(repoRoot, flags, join(dir, FINDINGS_FILE), true),
     inventory,
     inventoryPath: join(dir, INVENTORY_FILE),
     hot,

@@ -69,7 +69,7 @@ A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a cu
 - a finding cites a scanner rule or candidate that is not in this scan;
 - the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`.
 
-The brief's finalize command calls the launcher when the launcher started the review, and `npx -y openqodex@<version>` otherwise. When the version that runs `--finalize` is not the one that wrote the brief, and that one is installed by `init` or an update, it hands the run to that version by its findings file and exits with its code. A version reached that way never hands off again.
+When the launcher started the review, the brief's finalize command is the plain line `<launcher> review --finalize`, with `--all` and `--offline` as the review had them, run from the repository root; it finds the run through `.openqodex/latest.json` (`latest-all.json` for `--all`). With `--config`, or when npx started the review, the command names the repository, the config and the findings file, so it works from any folder. When the version that runs `--finalize` is not the one that wrote the brief, and that one is installed by `init` or an update, it hands the run to that version by its findings file and exits with its code. A version reached that way never hands off again.
 
 It never repairs a finding. Fix what it names, or run `review --agent` again.
 
