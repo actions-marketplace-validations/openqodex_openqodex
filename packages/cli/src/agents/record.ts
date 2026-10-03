@@ -25,10 +25,27 @@ export type InstallRecord = {
   // Files we rewrote in place (the Day 0 .gitignore holding "*"): the
   // original bytes, and the sha256 of what we wrote, so uninstall restores them.
   migrations: { path: string; original: string; sha256: string }[];
+  // The launcher's pointer files (<home>/runtime/current) we wrote. Added
+  // after version 1 shipped: a record without it reads as empty.
+  pointers: string[];
+  // The answer to init's team section question, per repo work tree.
+  teamChoices: { repo: string; write: boolean }[];
 };
 
 export function emptyRecord(): InstallRecord {
-  return { version: 1, files: [], hooks: [], sections: [], excludes: [], backups: [], runtimes: [], hookChoices: [], migrations: [] };
+  return {
+    version: 1,
+    files: [],
+    hooks: [],
+    sections: [],
+    excludes: [],
+    backups: [],
+    runtimes: [],
+    hookChoices: [],
+    migrations: [],
+    pointers: [],
+    teamChoices: [],
+  };
 }
 
 export function recordPath(home: string): string {
@@ -49,7 +66,16 @@ export function loadRecord(home: string): InstallRecord {
 
 export function isEmpty(record: InstallRecord): boolean {
   return (
-    record.files.length + record.hooks.length + record.sections.length + record.excludes.length + record.backups.length + record.runtimes.length + record.hookChoices.length + record.migrations.length ===
+    record.files.length +
+      record.hooks.length +
+      record.sections.length +
+      record.excludes.length +
+      record.backups.length +
+      record.runtimes.length +
+      record.hookChoices.length +
+      record.migrations.length +
+      record.pointers.length +
+      record.teamChoices.length ===
     0
   );
 }

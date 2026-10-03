@@ -5,6 +5,7 @@
 // teammate's) counts a thing as ours only when it equals the current output.
 import { readdirSync, rmdirSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
+import { removeRepoFile, writeRepoFile } from "@openqodex/core";
 import type { AgentId } from "./detect.js";
 import { assertNoSymlinkInRepo, readText, sha256, writeAtomic, writeBackup } from "./files.js";
 import { canonical, type InstallRecord } from "./record.js";
@@ -111,6 +112,19 @@ function checkRepoPath(t: Target, ctx: Ctx): void {
   if (t.inRepo && ctx.repoRoot !== null) assertNoSymlinkInRepo(ctx.repoRoot, t.path);
 }
 
+// A markdown file inside the repo is written and removed by the repo-state
+// helpers, which refuse a link at the moment of the write, not only when the
+// plan was made. Other files keep writeAtomic, which follows a dotfile link.
+function writeMarkdown(t: Target, ctx: Ctx, content: string): void {
+  if (t.inRepo && ctx.repoRoot !== null) writeRepoFile(ctx.repoRoot, t.path, content);
+  else writeAtomic(t.path, content);
+}
+
+function removeMarkdown(t: Target, ctx: Ctx): void {
+  if (t.inRepo && ctx.repoRoot !== null) removeRepoFile(ctx.repoRoot, t.path);
+  else removeFile(t.path);
+}
+
 export function planInstall(t: Target, ctx: Ctx): Action {
   const { record } = ctx;
   checkRepoPath(t, ctx);
@@ -120,7 +134,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
     case "file": {
       const write = (): void => {
         writeAtomic(t.path, t.content);
-        setFile(record, t.path, t.content);
+        setFile(record, t.path, t.content, t.usesLauncher);
       };
       if (before === null) return { ...base, verb: "create", note: t.label, apply: write };
       if (before === t.content) return { ...base, verb: "skip", note: `${t.label} already present` };
@@ -203,7 +217,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           verb: "create",
           note: t.label,
           apply: () => {
-            writeAtomic(t.path, `${section}\n`);
+            writeMarkdown(t, ctx, `${section}\n`);
             remember(true);
           },
         };
@@ -216,7 +230,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           verb: "append",
           note: `${t.label} section`,
           apply: () => {
-            writeAtomic(t.path, joined);
+            writeMarkdown(t, ctx, joined);
             remember(false);
           },
         };
@@ -226,15 +240,15 @@ export function planInstall(t: Target, ctx: Ctx): Action {
         if (!rec) remember(false);
         return { ...base, verb: "skip", note: `${t.label} section already present` };
       }
-      if (rec && existing === rec.text) {
+      if ((rec && existing === rec.text) || t.replaces?.includes(existing)) {
         const replaced = before.slice(0, at.start) + section + before.slice(at.end);
         return {
           ...base,
           verb: "replace",
           note: `${t.label} section`,
           apply: () => {
-            writeAtomic(t.path, replaced);
-            remember(rec.createdFile);
+            writeMarkdown(t, ctx, replaced);
+            remember(rec?.createdFile ?? false);
           },
         };
       }
@@ -361,7 +375,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
           verb: "remove",
           note: `${t.label} (only our section was in it)`,
           apply: () => {
-            removeFile(t.path);
+            removeMarkdown(t, ctx);
             forget();
           },
         };
@@ -371,7 +385,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         verb: "update",
         note: `${t.label} section removed`,
         apply: () => {
-          writeAtomic(t.path, rest);
+          writeMarkdown(t, ctx, rest);
           forget();
         },
       };

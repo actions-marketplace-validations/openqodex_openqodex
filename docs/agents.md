@@ -30,6 +30,24 @@ Inside a repository, `init` also asks: "Add the git pre-push hook, so every push
 
 The tables below name the file for each agent. Cursor has no instruction file in the home folder, so its rule in the repository carries the same section. In an existing file, the section is appended and your own text stays as it is. `--uninstall` removes exactly that section, and nothing around it.
 
+## The team section in the repository
+
+Inside a repository, `init` in user scope also asks: "Add a review section to this repo's CLAUDE.md and AGENTS.md, so teammates' agents review before they push too?" The default is yes, and `--yes` answers yes. `--no-repo` answers no. The answer is recorded for that repository.
+
+The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository, and `init` creates a file that is not there. It is meant for a teammate who has installed nothing, so it names only the pinned `npx` command:
+
+```
+<!-- openqodex:start -->
+## Review with OpenQodex before you push
+- Before any `git push`, run `npx -y openqodex@<version> review --agent` from the repository root and follow the brief it prints to the end, including the finalize command it names.
+- Run that review in a separate subagent when your agent has one: the agent that wrote the code does not judge its own work.
+- Do not push on a blocked verdict unless the developer says so after seeing the findings.
+- The report is in `.openqodex/reviews/`.
+<!-- openqodex:end -->
+```
+
+The two files show in `git status`, and `init` says to commit them. `init` writes neither file through a symbolic link. A section you edited is yours: a later `init` and `--uninstall` leave it as it is. `--uninstall` removes our untouched section, and deletes a file only when `init` created it and nothing else is in it. In project scope the same two files carry the instruction section instead, never both.
+
 ## The review runs in a separate subagent
 
 The skill hands the review to a subagent whose only task is the review, so the agent that wrote the code does not judge its own work. In Claude Code, that is a subagent started with the Agent tool. In Codex, Cursor and other hosts, the skill uses their sub-task or background agent feature when there is one. Where the host has none, the agent tells you the review is not independent, and the report's summary says so on its first line.
@@ -47,15 +65,15 @@ Both are meant to be committed, so the whole team shares them. A file that exist
 
 ## User scope and project scope
 
-The default is user scope. `init` writes into your home folder, so one install works in every repository. A rule file it must put inside a repository is added to `.git/info/exclude`, so it does not show in `git status`. The two repo folder files below are the exception: they are meant to be committed.
+The default is user scope. `init` writes into your home folder, so one install works in every repository. A rule file it must put inside a repository is added to `.git/info/exclude`, so it does not show in `git status`. The two repo folder files and the team section above are the exception: they are meant to be committed.
 
 `--project` writes the files into the repository instead, for a team to commit. Run it inside a git repository.
 
 ## The launcher
 
-In user scope, the push gate hooks call a launcher, not npx. `init` copies the package to `~/.openqodex/runtime/<version>/` and checks the copy runs. It then writes `~/.openqodex/bin/openqodex`, a small script that runs that copy with your Node. The hooks call that script by its full path, so they do not depend on npx or your `PATH`.
+In user scope, the push gate hooks and the skill call a launcher, not npx. Every user-scope install gets it, with or without a hook. `init` copies the package to `~/.openqodex/runtime/<version>/` and checks the copy runs. It writes the version to `~/.openqodex/runtime/current`, then writes `~/.openqodex/bin/openqodex`, a small script that runs the copy `current` names with your Node. When `current` is missing, is not a version, or names a copy that is gone, the script runs the version `init` installed. The hooks and the skill's commands call that script by its full path, so they do not depend on npx or your `PATH`.
 
-In project scope, the hooks call `npx -y openqodex@<version>`, because the launcher path would not exist on a teammate's machine.
+In project scope, the hooks and the skill call `npx -y openqodex@<version>`, because the launcher path would not exist on a teammate's machine.
 
 ## Claude Code
 

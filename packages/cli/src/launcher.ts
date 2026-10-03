@@ -1,10 +1,14 @@
-// The stable command every hook calls. `init` and `hook install` copy the
-// installed package to <home>/runtime/<version>/ and write <home>/bin/openqodex,
-// a POSIX sh script that runs that copy with the node binary they ran under.
-// Hooks then never depend on npx, the npm cache or PATH.
+// The stable command every hook and the user-scope skill call. `init` and
+// `hook install` copy the installed package to <home>/runtime/<version>/,
+// write <home>/runtime/current (the active version, one line) and write
+// <home>/bin/openqodex, a POSIX sh script that runs the runtime `current`
+// names with the node binary they ran under, or the version baked into it
+// when `current` is missing, malformed or names a runtime that is gone.
+// Hooks then never depend on npx, the npm cache or PATH, and switching
+// versions is one atomic write of `current`.
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { cpSync, existsSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { openqodexHome } from "@openqodex/scanners";
@@ -30,6 +34,45 @@ export function runtimeDir(version: string, home: string): string {
   return join(home, "runtime", version);
 }
 
+export function runtimeBin(home: string, version: string): string {
+  return join(runtimeDir(version, home), "dist", "bin.js");
+}
+
+export function currentPath(home: string): string {
+  return join(home, "runtime", "current");
+}
+
+// What the launcher accepts in `current`: a digit first (so never "." or
+// ".."), then only [0-9A-Za-z.+-]. launcherScript applies the same rule in sh.
+const VERSION_TEXT = /^[0-9][0-9A-Za-z.+-]*$/;
+
+// The version `current` names, or null when it is missing or not a version.
+export function readCurrent(home: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(currentPath(home), "utf8");
+  } catch {
+    return null;
+  }
+  const line = text.split("\n")[0] ?? "";
+  return VERSION_TEXT.test(line) ? line : null;
+}
+
+// Points the launcher at `version`: a temp file then a rename, so the
+// launcher never reads half a line.
+export function writeCurrent(home: string, version: string): void {
+  if (!VERSION_TEXT.test(version)) throw new Error(`not a version: ${version}`);
+  const path = currentPath(home);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    writeFileSync(tmp, `${version}\n`, { flag: "wx", mode: 0o644 });
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
 // Single quotes for a POSIX shell; an inner single quote becomes '\''.
 export function shQuote(value: string): string {
   return `'${value.replace(/'/g, () => `'\\''`)}'`;
@@ -39,13 +82,23 @@ export function shQuote(value: string): string {
 // script exits 0 whatever happens (no node, a broken runtime, an old node),
 // with one line on stderr saying how to repair it. Every other command gets
 // exit 2 when it cannot start, which the git hook does not treat as a finding.
-export function launcherScript(nodePath: string, binJs: string): string {
+//
+// `current` is read with the shell's own `read`, never run or expanded. A
+// line that breaks the version rule, or names a runtime with no
+// dist/bin.js, leaves the baked-in runtime in place.
+export function launcherScript(nodePath: string, home: string, version: string): string {
   const repair = "run npx openqodex init again to repair it";
   return [
     "#!/bin/sh",
     LAUNCHER_MARKER,
     `node=${shQuote(nodePath)}`,
-    `bin=${shQuote(binJs)}`,
+    `runtimes=${shQuote(join(home, "runtime"))}`,
+    `bin=${shQuote(runtimeBin(home, version))}`,
+    'current=""',
+    '[ -f "$runtimes/current" ] && IFS= read -r current < "$runtimes/current"',
+    'case "$current" in',
+    '  [0-9]*) case "$current" in *[!0-9A-Za-z.+-]*) ;; *) [ -f "$runtimes/$current/dist/bin.js" ] && bin="$runtimes/$current/dist/bin.js" ;; esac ;;',
+    "esac",
     '[ -x "$node" ] || node=$(command -v node 2>/dev/null) || node=""',
     'if [ "$1" = hook ] && [ "$2" = check ]; then',
     `  if [ -z "$node" ] || [ ! -f "$bin" ]; then echo "openqodex: the push check could not start (no node or no runtime); ${repair}" >&2; exit 0; fi`,
@@ -112,8 +165,9 @@ async function installRuntime(version: string, home: string): Promise<void> {
   }
 }
 
-// The runtime copy and the launcher, as plan actions. A runtime folder or a
-// launcher that is there and not recorded as ours is refused, never replaced.
+// The runtime copy, the pointer to it and the launcher, as plan actions. A
+// runtime folder or a launcher that is there and not recorded as ours is
+// refused, never replaced.
 export function planRuntime(record: InstallRecord, version: string, home: string): Action[] {
   const rt = runtimeDir(version, home);
   const launcher = launcherPath(home);
@@ -128,7 +182,7 @@ export function planRuntime(record: InstallRecord, version: string, home: string
     actions.push({
       verb: existsSync(rt) ? "update" : "create",
       path: rt,
-      note: "a copy of this openqodex that the hooks run",
+      note: "a copy of this openqodex that the hooks and the skill run",
       apply: async () => {
         await installRuntime(version, home);
         if (!record.runtimes.includes(rt)) record.runtimes.push(rt);
@@ -136,7 +190,22 @@ export function planRuntime(record: InstallRecord, version: string, home: string
     });
   }
 
-  const script = launcherScript(process.execPath, join(rt, "dist", "bin.js"));
+  const pointer = currentPath(home);
+  if (readCurrent(home) === version && record.pointers.includes(pointer)) {
+    actions.push({ verb: "skip", path: pointer, note: `the launcher already runs ${version}` });
+  } else {
+    actions.push({
+      verb: existsSync(pointer) ? "update" : "create",
+      path: pointer,
+      note: `points the launcher at ${version}`,
+      apply: () => {
+        writeCurrent(home, version);
+        if (!record.pointers.includes(pointer)) record.pointers.push(pointer);
+      },
+    });
+  }
+
+  const script = launcherScript(process.execPath, home, version);
   const before = readText(launcher);
   const remember = (): void => {
     record.files = record.files.filter((f) => f.path !== launcher);
@@ -151,7 +220,7 @@ export function planRuntime(record: InstallRecord, version: string, home: string
     if (!ownedFile(record, launcher, before)) remember();
     actions.push({ verb: "skip", path: launcher, note: "launcher already present" });
   } else if (before === null || ownedFile(record, launcher, before)) {
-    actions.push({ verb: before === null ? "create" : "update", path: launcher, note: "launcher the hooks call", guard: { path: launcher, before }, apply: write });
+    actions.push({ verb: before === null ? "create" : "update", path: launcher, note: "launcher the hooks and the skill call", guard: { path: launcher, before }, apply: write });
   } else {
     actions.push({ verb: "refuse", failed: true, path: launcher, note: "a launcher openqodex init did not write is in the way; move it aside" });
   }
@@ -188,6 +257,23 @@ export function planRuntimeRemoval(record: InstallRecord, home: string, willStay
           // other files are there; they are not ours
         }
         record.runtimes = record.runtimes.filter((r) => r !== rt);
+      },
+    });
+  }
+  for (const pointer of record.pointers) {
+    actions.push({
+      verb: "remove",
+      path: pointer,
+      note: "the launcher's pointer to the active runtime",
+      apply: () => {
+        if (launcherUsers(record).length > 0) throw new Error(`kept: still called by ${launcherUsers(record).join(", ")}`);
+        rmSync(pointer, { force: true });
+        try {
+          rmdirSync(dirname(pointer));
+        } catch {
+          // other files are there
+        }
+        record.pointers = record.pointers.filter((p) => p !== pointer);
       },
     });
   }
