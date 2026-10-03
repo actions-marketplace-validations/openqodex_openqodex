@@ -42,7 +42,7 @@ import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles, instructionsTemplate } from "../agents/repo-folder.js";
 import { loadRecord } from "../agents/record.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
-import { launcherStarted, openqodexHomeDir, runtimeBin, runtimeDir } from "../launcher.js";
+import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin, runtimeDir } from "../launcher.js";
 import { readInstructions } from "../instructions.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
@@ -103,17 +103,18 @@ function shellQuote(arg: string): string {
 }
 
 // The exact command that finalizes this run, from any folder: the repo and an
-// explicit config are named so the config hash and the change match. It runs
-// the same openqodex that wrote the brief: this runtime's own file when the
-// launcher started it (an update may move the launcher on in between), the
-// pinned npx version otherwise.
+// explicit config are named so the config hash and the change match. Started
+// through the launcher, it calls the launcher, written as the skill and the
+// Claude Code permission rule write it; when an update moved the launcher on
+// in between, finalize hands the run to the version that wrote the brief.
+// Otherwise it names the pinned npx version.
 function finalizeCommand(repoRoot: string, config: string | undefined, findingsPath: string): string {
-  const entry = process.argv[1];
-  const runner = launcherStarted() && entry !== undefined ? [process.execPath, resolve(entry)] : ["npx", "-y", `openqodex@${__OPENQODEX_VERSION__}`];
-  const args = [...runner, "review", "--finalize", "--cwd", repoRoot];
+  const launched = launcherStarted();
+  const runner = launched ? launcherRunner(launcherPath(openqodexHomeDir())) : ["npx", "-y", `openqodex@${__OPENQODEX_VERSION__}`].join(" ");
+  const args = ["review", "--finalize", "--cwd", repoRoot];
   if (config !== undefined) args.push("--config", isAbsolute(config) ? config : resolve(repoRoot, config));
   args.push(findingsPath);
-  return args.map(shellQuote).join(" ");
+  return [runner, ...args.map(shellQuote)].join(" ");
 }
 
 // sha256 of the instructions file, null when there is none. Finalize compares
@@ -352,7 +353,7 @@ function checkRunDir(repoRoot: string, dir: string, findingsPath: string): { dir
 // The report folder this submission belongs to: the newest run when no path
 // is given (the newest whole-repo run with --all), else the folder that
 // holds the findings file.
-function findRun(repoRoot: string, path: string | undefined, all: boolean): { dir: string; submission: unknown } {
+function findRun(repoRoot: string, path: string | undefined, all: boolean): { dir: string; findingsPath: string; submission: unknown } {
   let dir: string;
   let findingsPath: string;
   if (path === undefined) {
@@ -370,7 +371,7 @@ function findRun(repoRoot: string, path: string | undefined, all: boolean): { di
   }
   const submission = readJsonFile(repoRoot, findingsPath, "agent findings");
   if (submission === null) throw new OpenQodexError(`agent findings not found at ${findingsPath}`);
-  return { dir, submission };
+  return { dir, findingsPath, submission };
 }
 
 const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -379,7 +380,13 @@ const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 // rules and the finalize checks belong together. It runs only a runtime the
 // installation record names, at a path built from the home folder and the
 // version, never a path read from the manifest.
-function finalizeOnVersion(version: unknown, args: string[]): number {
+// The child gets the findings file this process selected, by path, so it
+// finalizes the same run even when latest.json moves on in between, and it
+// never hands off again.
+function finalizeOnVersion(version: unknown, args: string[], path: string | undefined, findingsPath: string): number {
+  if (process.env.OPENQODEX_FINALIZE_HANDOFF === "1") {
+    throw new OpenQodexError(`this finalize was handed here by another openqodex version, and the brief names ${String(version)}; run openqodex review --agent again`);
+  }
   if (typeof version !== "string" || !PLAIN_VERSION.test(version)) {
     throw new OpenQodexError("the brief names no valid openqodex version; run openqodex review --agent again");
   }
@@ -394,16 +401,20 @@ function finalizeOnVersion(version: unknown, args: string[]): number {
   if (!runtimes.includes(runtimeDir(version, home)) || !existsSync(bin)) {
     throw new OpenQodexError(`this brief was written by openqodex ${version}, which is not installed here; run openqodex review --agent again`);
   }
-  const child = spawnSync(process.execPath, [bin, "review", ...args], { stdio: "inherit", env: { ...process.env, OPENQODEX_REEXEC: "1" } });
+  const rest = path === undefined ? args : args.filter((a, i) => i !== args.indexOf(path));
+  const child = spawnSync(process.execPath, [bin, "review", ...rest, findingsPath], {
+    stdio: "inherit",
+    env: { ...process.env, OPENQODEX_REEXEC: "1", OPENQODEX_FINALIZE_HANDOFF: "1" },
+  });
   return child.status ?? EXIT_TOOL_FAILED;
 }
 
 async function runFinalize(flags: GlobalFlags, path: string | undefined, all: boolean, args: string[]): Promise<number> {
   const { repoRoot, config } = await loadRepo(flags);
-  const { dir, submission } = findRun(repoRoot, path, all);
+  const { dir, findingsPath, submission } = findRun(repoRoot, path, all);
   const manifest = readManifest(repoRoot, dir);
   if (manifest !== null && manifest.runtime_version !== undefined && manifest.runtime_version !== __OPENQODEX_VERSION__) {
-    return finalizeOnVersion(manifest.runtime_version, args);
+    return finalizeOnVersion(manifest.runtime_version, args, path, findingsPath);
   }
   const scan = readScan(repoRoot, dir);
   const runFile = readJsonFile(repoRoot, join(dir, RUN_FILE), "run file") as RunFile | null;

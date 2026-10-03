@@ -13,9 +13,11 @@ import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { openqodexHome } from "@openqodex/scanners";
 import { assetPath } from "./assets.js";
-import { readText, writeAtomic } from "./agents/files.js";
+import { readText, sha256, writeAtomic } from "./agents/files.js";
+import { takeLock } from "./agents/lock.js";
 import { ownedFile, type Action } from "./agents/plan.js";
 import type { InstallRecord } from "./agents/record.js";
+import { readState, userConfigPath } from "./update/state.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -76,6 +78,14 @@ export function writeCurrent(home: string, version: string): void {
 // Single quotes for a POSIX shell; an inner single quote becomes '\''.
 export function shQuote(value: string): string {
   return `'${value.replace(/'/g, () => `'\\''`)}'`;
+}
+
+// The launcher as the skill, the agent hooks and the Claude Code permission
+// rules write it: bare when the path needs no shell quoting, so a rule such
+// as `Bash(/home/me/.openqodex/bin/openqodex review *)` matches the command
+// text the agent runs character for character; quoted otherwise.
+export function launcherRunner(path: string): string {
+  return /^[A-Za-z0-9_./@+-]+$/.test(path) ? path : shQuote(path);
 }
 
 // `hook check` must never fail a push by accident, so for that command the
@@ -153,7 +163,7 @@ function treeHashes(root: string): Map<string, string> {
   return out;
 }
 
-function sameTree(a: string, b: string): boolean {
+export function sameTree(a: string, b: string): boolean {
   if (!existsSync(b)) return false;
   const ha = treeHashes(a);
   const hb = treeHashes(b);
@@ -322,6 +332,34 @@ export function planRuntimeRemoval(record: InstallRecord, home: string, willStay
     });
   } else if (record.files.some((f) => f.path === launcher)) {
     record.files = record.files.filter((f) => f.path !== launcher);
+  }
+  actions.push(...planUpdateFilesRemoval(home));
+  return actions;
+}
+
+// The update check's files go with the launcher: its state and locks, and
+// the user config.yaml only when `update` created it and it is unchanged.
+function planUpdateFilesRemoval(home: string): Action[] {
+  const actions: Action[] = [];
+  const config = userConfigPath(home);
+  const configText = readText(config);
+  const state = readState(home);
+  if (configText !== null && state.userConfig !== null && state.userConfig === sha256(configText)) {
+    actions.push({ verb: "remove", path: config, note: "the update switch openqodex update wrote", guard: { path: config, before: configText }, apply: () => rmSync(config, { force: true }) });
+  }
+  for (const name of ["update.json", "update.json.lock", "update.lock"]) {
+    const path = join(home, name);
+    if (!existsSync(path)) continue;
+    actions.push({
+      verb: "remove",
+      path,
+      note: name === "update.json" ? "the update check's state" : "a lock of the update check",
+      apply: () => {
+        // A live worker keeps its lock; it ends within ten minutes.
+        if (name !== "update.json" && takeLock(path) === null && existsSync(path)) return;
+        rmSync(path, { force: true });
+      },
+    });
   }
   return actions;
 }

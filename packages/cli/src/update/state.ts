@@ -4,7 +4,8 @@
 // that does not parse turns updating off.
 import { join } from "node:path";
 import { parseDocument } from "yaml";
-import { readText, writeAtomic } from "../agents/files.js";
+import { readText, sha256, writeAtomic } from "../agents/files.js";
+import { takeLock, waitLockSync } from "../agents/lock.js";
 
 export type UpdateState = {
   // When a worker last started a check (ISO time); the trigger waits 24 hours after it.
@@ -26,6 +27,12 @@ export type UpdateState = {
   // longer recognises the signer, and when that was last said.
   trustFailedAt: string | null;
   trustNoticeAt: string | null;
+  // Written just before an activation switches the pointer and cleared once
+  // its bookkeeping is saved; a later worker or rollback finishes or clears it.
+  activation: { from: string; to: string } | null;
+  // The sha256 of a config.yaml that `update` created, so uninstall removes
+  // it only while it is unchanged.
+  userConfig: string | null;
 };
 
 export function emptyState(): UpdateState {
@@ -41,6 +48,8 @@ export function emptyState(): UpdateState {
     kept: [],
     trustFailedAt: null,
     trustNoticeAt: null,
+    activation: null,
+    userConfig: null,
   };
 }
 
@@ -79,15 +88,49 @@ export function readState(home: string): UpdateState {
     kept: Array.isArray(parsed.kept) ? parsed.kept.filter((k): k is string => typeof k === "string") : [],
     trustFailedAt: str(parsed.trustFailedAt),
     trustNoticeAt: str(parsed.trustNoticeAt),
+    activation:
+      isObject(parsed.activation) && typeof parsed.activation.from === "string" && typeof parsed.activation.to === "string"
+        ? { from: parsed.activation.from, to: parsed.activation.to }
+        : null,
+    userConfig: str(parsed.userConfig),
   };
 }
 
-// Reads, changes and writes the state in one step: a temp file then a
-// rename, private to the user.
-export function updateState(home: string, change: Partial<UpdateState>): UpdateState {
-  const next = { ...readState(home), ...change };
+function write(home: string, change: Partial<UpdateState> | ((s: UpdateState) => Partial<UpdateState>)): UpdateState {
+  const before = readState(home);
+  const next = { ...before, ...(typeof change === "function" ? change(before) : change) };
   writeAtomic(statePath(home), `${JSON.stringify(next, null, 2)}\n`, 0o600);
   return next;
+}
+
+function stateLock(home: string): string {
+  return join(home, "update.json.lock");
+}
+
+// Reads, changes and writes the state in one step under update.json.lock, so
+// two processes never lose each other's writes: a temp file then a rename,
+// private to the user. `change` may be a function of the state as read
+// under the lock.
+export function updateState(home: string, change: Partial<UpdateState> | ((s: UpdateState) => Partial<UpdateState>)): UpdateState {
+  const held = waitLockSync(stateLock(home), 5_000, `${statePath(home)} is busy`);
+  try {
+    return write(home, change);
+  } finally {
+    held.release();
+  }
+}
+
+// The same, but only when the lock is free right now; null otherwise. For a
+// command's notice, which must never delay its exit.
+export function tryUpdateState(home: string, change: (s: UpdateState) => Partial<UpdateState> | null): UpdateState | null {
+  const held = takeLock(stateLock(home));
+  if (held === null) return null;
+  try {
+    const wanted = change(readState(home));
+    return wanted === null ? null : write(home, wanted);
+  } finally {
+    held.release();
+  }
 }
 
 // ---------- the user-level config, <home>/config.yaml ----------
@@ -130,15 +173,20 @@ export function updatesAllowed(home: string, env: NodeJS.ProcessEnv): { allowed:
 }
 
 // Sets `update:` in the user config, keeping every other key and comment.
-// Refuses a config that does not parse rather than overwrite it.
+// Refuses a config that does not parse rather than overwrite it. A file this
+// created, and changed only by this since, is remembered in update.json so
+// uninstall removes it; a file the developer wrote is never remembered.
 export function setUserUpdate(home: string, value: "on" | "off"): void {
   const config = readUserConfig(home);
   if (!config.ok) throw new Error(`${config.reason}; fix or remove it first`);
+  const ours = config.raw === null || readState(home).userConfig === sha256(config.raw);
   const doc = parseDocument(config.raw ?? "");
-  if (doc.contents === null) {
-    writeAtomic(userConfigPath(home), `update: ${value}\n`);
-    return;
+  let text: string;
+  if (doc.contents === null) text = `update: ${value}\n`;
+  else {
+    doc.set("update", value);
+    text = String(doc);
   }
-  doc.set("update", value);
-  writeAtomic(userConfigPath(home), String(doc));
+  writeAtomic(userConfigPath(home), text);
+  if (ours) updateState(home, { userConfig: sha256(text) });
 }

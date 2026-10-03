@@ -56,19 +56,24 @@ export async function main(argv: string[]): Promise<void> {
       .allowUnknownOption()
       .allowExcessArguments()
       .action(async (_options: unknown, command: Command) => {
+        let threw = false;
         try {
           const mod = await entry.load();
           process.exitCode = await mod.run(command.args);
         } catch (error) {
+          threw = true;
           process.exitCode = reportError(error, name, command.args);
         }
         // At most one offer per run, after the command's own output.
         const problem = takePending();
         if (problem !== null && !NO_OFFER.has(name)) await offer(problem, name, command.args, cwdOf(command.args));
         // Last: the update notices on stderr and, after a review, scan or
-        // hook run through the launcher, the detached daily check.
-        const { afterCommand } = await import("./update/trigger.js");
-        afterCommand(name, command.args);
+        // hook run through the launcher, the detached daily check. Not after
+        // a command that stopped on an error, such as a flag that did not parse.
+        if (!threw) {
+          const { afterCommand } = await import("./update/trigger.js");
+          afterCommand(name, command.args);
+        }
       });
   }
 
@@ -93,7 +98,7 @@ export async function main(argv: string[]): Promise<void> {
   // It ends by itself; the exit is explicit so no open socket keeps it.
   program.command("__update", { hidden: true }).action(async () => {
     const { runUpdateWorker } = await import("./update/worker.js");
-    const result = await runUpdateWorker({ anyAge: false });
+    const result = await runUpdateWorker({ anyAge: false, daily: true });
     process.exit(result.outcome === "failed" ? EXIT_TOOL_FAILED : 0);
   });
 

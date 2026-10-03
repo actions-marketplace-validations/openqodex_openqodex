@@ -1,9 +1,10 @@
 // The installation record, <openqodex home>/install.json: what `init` and
 // `hook install` wrote, so a later run changes or removes only what is still
 // exactly as we wrote it. A developer's edit makes a thing theirs.
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { errorCode, readText, writeAtomic } from "./files.js";
+import { readText, writeAtomic } from "./files.js";
+import { waitLock } from "./lock.js";
 
 export type InstallRecord = {
   version: 1;
@@ -30,6 +31,9 @@ export type InstallRecord = {
   pointers: string[];
   // The answer to init's team section question, per repo work tree.
   teamChoices: { repo: string; write: boolean }[];
+  // Claude Code permission rules we added to a settings file's
+  // permissions.allow; a rule that was there before is not listed.
+  allowRules: { path: string; rule: string }[];
 };
 
 export function emptyRecord(): InstallRecord {
@@ -45,6 +49,7 @@ export function emptyRecord(): InstallRecord {
     migrations: [],
     pointers: [],
     teamChoices: [],
+    allowRules: [],
   };
 }
 
@@ -75,7 +80,8 @@ export function isEmpty(record: InstallRecord): boolean {
       record.hookChoices.length +
       record.migrations.length +
       record.pointers.length +
-      record.teamChoices.length ===
+      record.teamChoices.length +
+      record.allowRules.length ===
     0
   );
 }
@@ -101,45 +107,15 @@ export function canonical(value: unknown): string {
   );
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return errorCode(error) === "EPERM";
-  }
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-// One `init` or `hook install` at a time per home folder. A lock left by a
-// process that is gone is taken over.
+// One `init`, `hook install`, update activation or rollback at a time per
+// home folder. A lock left by a process that is gone is taken over safely
+// (lock.ts).
 export async function withLock<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  mkdirSync(home, { recursive: true });
   const lock = join(home, "install.lock");
-  const deadline = Date.now() + 120_000;
-  for (;;) {
-    try {
-      const fd = openSync(lock, "wx", 0o600);
-      writeSync(fd, `${process.pid}\n`);
-      closeSync(fd);
-      break;
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-      let holder = 0;
-      try {
-        holder = Number(readFileSync(lock, "utf8").trim());
-      } catch {
-        // removed between the two calls
-      }
-      if (holder > 0 && !alive(holder)) rmSync(lock, { force: true });
-      else if (Date.now() > deadline) throw new Error(`another openqodex init is running (lock ${lock})`);
-      else await sleep(100);
-    }
-  }
+  const held = await waitLock(lock, 120_000, `another openqodex init is running (lock ${lock})`);
   try {
     return await fn();
   } finally {
-    rmSync(lock, { force: true });
+    held.release();
   }
 }

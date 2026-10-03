@@ -139,15 +139,18 @@ describe.skipIf(offline)("the self-update worker against the real registry", () 
     const fresh = box();
     const r = launch(fresh, "no-seam", ["update", "--now"], { OPENQODEX_UPDATE_AS: "0.1.0", OPENQODEX_UPDATE_MIN_AGE_MS: "0" });
     expect(r.status, r.stderr).toBe(0);
-    expect(state(fresh).skipped).toEqual([]);
-    expect(r.stdout).toContain(`No newer release than ${version}`);
+    // Only the seam makes 0.2.0 a candidate. A release newer than this build
+    // (0.2.1 since 2026-10-03) may be tried and skipped; that is not the seam.
+    expect(r.stdout).not.toContain("No newer release than 0.1.0");
+    expect(state(fresh).skipped.map((x) => x.version)).not.toContain("0.2.0");
   });
 
   it("e. with no release newer than the running one, nothing is installed and the latest is recorded", () => {
     const fresh = box();
-    const r = launch(fresh, "nothing-newer", ["update"]);
+    // Selected as if this were 999.0.0, so no published release is newer.
+    const r = launch(fresh, "nothing-newer", ["update"], { OPENQODEX_E2E: "1", OPENQODEX_UPDATE_AS: "999.0.0" });
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/no newer release/i);
+    expect(r.stdout).toContain("No newer release than 999.0.0");
     expect(state(fresh).latestSeen).toMatch(/^\d+\.\d+\.\d+$/);
     expect(readFileSync(join(fresh.oqHome, "runtime/current"), "utf8").trim()).toBe(version);
   });

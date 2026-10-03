@@ -22,7 +22,7 @@
 // 13. --rollback does not turn updating off.
 // 14. Finalize after an activation runs the new version on an old brief.
 // 15. Finalize executes a path taken from the manifest.
-// 16. The brief's finalize command names a runner other than the one that wrote it.
+// 16. The brief's finalize command names a runner other than the launcher or the pinned npx version.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -342,8 +342,9 @@ describe("finalize across versions", () => {
     expect(await activate({ home: s.oqHome, version: NEWER, from: version, env: laptop(s) })).toMatchObject({ ok: true });
   }, 180_000);
 
-  it("the brief names the runtime that wrote it, not npx, when started through the launcher (failure 16)", () => {
-    expect(brief).toContain(join(s.oqHome, "runtime", version, "dist", "bin.js"));
+  it("the brief names the launcher, as the skill and the permission rule write it, not npx (failure 16)", () => {
+    // The sandbox path has a space, so the launcher is quoted.
+    expect(brief).toContain(`'${join(s.oqHome, "bin", "openqodex")}' review --finalize`);
     expect(brief).not.toMatch(/npx -y openqodex@\S+ review --finalize/);
     expect(JSON.parse(readFileSync(manifestPath(), "utf8"))).toMatchObject({ version: 3, runtime_version: version });
   });

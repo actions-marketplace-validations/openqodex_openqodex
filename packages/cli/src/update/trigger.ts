@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { openqodexHome } from "@openqodex/scanners";
 import { launcherStarted } from "../launcher.js";
-import { readState, updateState, updatesAllowed, type UpdateState } from "./state.js";
+import { readState, tryUpdateState, updatesAllowed, type UpdateState } from "./state.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CHECK_EVERY_MS = DAY_MS;
@@ -57,17 +57,26 @@ export function maybeStartUpdate(home: string, state: UpdateState): void {
   child.unref();
 }
 
+// Each notice is printed and marked as seen under update.json's lock, taken
+// only when free: when another process holds it, the notice waits for the
+// next command rather than delay this one's exit.
 function notices(home: string, state: UpdateState): void {
   const now = Date.now();
   if (!state.notified && state.installed === __OPENQODEX_VERSION__ && state.previous !== null) {
-    process.stderr.write(`openqodex updated to ${state.installed} (was ${state.previous}). Roll back: openqodex update --rollback\n`);
-    updateState(home, { notified: true });
+    tryUpdateState(home, (s) => {
+      if (s.notified || s.installed !== __OPENQODEX_VERSION__ || s.previous === null) return null;
+      process.stderr.write(`openqodex updated to ${s.installed} (was ${s.previous}). Roll back: openqodex update --rollback\n`);
+      return { notified: true };
+    });
   }
   if (state.trustFailedAt !== null && ageMs(state.trustNoticeAt, now) >= TRUST_NOTICE_EVERY_MS) {
-    process.stderr.write(
-      `openqodex cannot verify new releases with its built-in trust data; it stays on ${__OPENQODEX_VERSION__}. To update by hand: npx openqodex@latest init\n`,
-    );
-    updateState(home, { trustNoticeAt: new Date(now).toISOString() });
+    tryUpdateState(home, (s) => {
+      if (s.trustFailedAt === null || ageMs(s.trustNoticeAt, now) < TRUST_NOTICE_EVERY_MS) return null;
+      process.stderr.write(
+        `openqodex cannot verify new releases with its built-in trust data; it stays on ${__OPENQODEX_VERSION__}. To update by hand: npx openqodex@latest init\n`,
+      );
+      return { trustNoticeAt: new Date(now).toISOString() };
+    });
   }
 }
 
@@ -86,6 +95,9 @@ export function afterCommand(name: string, args: string[]): void {
     // The agent hook's stderr is not shown on success, so a notice there
     // would be marked as seen without being seen.
     if (!(name === "hook" && sub === "check")) notices(home, state);
+    // --offline is read from the arguments too: it counts even where the
+    // command's own flag parsing never reached it.
+    if (args.includes("--offline")) return;
     if (name === "review" || name === "scan" || (name === "hook" && (sub === "check" || sub === "pre-push"))) maybeStartUpdate(home, state);
   } catch {
     // Updating is never a reason for a command to fail.

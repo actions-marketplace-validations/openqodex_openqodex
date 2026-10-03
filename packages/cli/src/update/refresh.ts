@@ -7,27 +7,33 @@
 // so it does not take the lock itself. `--probe` exits 0 and does nothing:
 // the updater uses it to learn whether a release has this command.
 // Prints {"updated": [...], "kept": [...]} on stdout.
+import { rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { AGENTS } from "../agents/detect.js";
-import { readText } from "../agents/files.js";
+import { readText, writeAtomic } from "../agents/files.js";
 import { planInstall, type Ctx } from "../agents/plan.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { targetsFor, type Target } from "../agents/targets.js";
-import { launcherPath, openqodexHomeDir, shQuote } from "../launcher.js";
+import { launcherPath, launcherRunner, openqodexHomeDir } from "../launcher.js";
 
 function recorded(record: InstallRecord, t: Target): boolean {
   if (t.kind === "file") return record.files.some((f) => f.path === t.path);
   if (t.kind === "hook-json") return record.hooks.some((h) => h.path === t.path);
+  // Permission rules are added by init only; an update never widens them.
+  if (t.kind === "allow-rules") return false;
   return record.sections.some((s) => s.path === t.path);
 }
 
+// All or nothing: when a write fails, every file this run already wrote is put
+// back as it was, unless someone changed it since (their edit wins), and the
+// record is left as it was. Then the failure is thrown.
 export async function runRefresh(version: string): Promise<{ updated: string[]; kept: string[] }> {
   const home = openqodexHomeDir();
   const record = loadRecord(home);
   const before = serialize(record);
   const ctx: Ctx = { record, scope: "user", repoRoot: null };
-  const runner = shQuote(launcherPath(home));
-  const updated: string[] = [];
+  const runner = launcherRunner(launcherPath(home));
+  const done: { path: string; was: string | null; wrote: string | null }[] = [];
   const kept: string[] = [];
   try {
     for (const agent of AGENTS) {
@@ -38,19 +44,26 @@ export async function runRefresh(version: string): Promise<{ updated: string[]; 
         // update and replace are the verbs for a recorded thing still as
         // written; create, merge and append would add one that is not there.
         if ((action.verb === "update" || action.verb === "replace") && action.apply) {
-          if (action.guard && readText(action.guard.path) !== action.guard.before) {
+          const was = readText(t.path);
+          if (action.guard && was !== action.guard.before) {
             kept.push(t.path);
             continue;
           }
           await action.apply();
-          updated.push(t.path);
+          done.push({ path: t.path, was, wrote: readText(t.path) });
         } else if (action.verb === "keep" || action.verb === "refuse") {
           kept.push(t.path);
         }
       }
     }
-  } finally {
-    saveRecord(home, record, before);
+  } catch (error) {
+    for (const d of done.reverse()) {
+      if (readText(d.path) !== d.wrote) continue;
+      if (d.was === null) rmSync(d.path, { force: true });
+      else writeAtomic(d.path, d.was);
+    }
+    throw error;
   }
-  return { updated, kept };
+  saveRecord(home, record, before);
+  return { updated: done.map((d) => d.path), kept };
 }

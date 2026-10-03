@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { withLock } from "../agents/record.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherStarted, openqodexHomeDir, runtimeBin, writeCurrent } from "../launcher.js";
-import { activeVersion, refreshWith } from "../update/activate.js";
+import { activeVersion, reconcileLocked, refreshWith } from "../update/activate.js";
 import { pinnedNote } from "../update/trigger.js";
 import { readState, setUserUpdate, updateState, updatesAllowed, userConfigPath } from "../update/state.js";
 
@@ -55,14 +55,22 @@ export function statusLines(home: string): string[] {
   return lines;
 }
 
+// Turns updating off first: when that cannot be written, nothing changes,
+// or the next daily check would install the release just rolled back.
 async function rollback(home: string): Promise<number> {
   return withLock(home, async () => {
+    reconcileLocked(home);
     const state = readState(home);
     const from = activeVersion(home);
     const to = state.previous;
     if (to === null || !PLAIN_VERSION.test(to)) return fail("there is no previous version to go back to");
     if (!existsSync(runtimeBin(home, to))) return fail(`the runtime for the previous version ${to} is gone; nothing was changed`);
     if (to === from) return fail(`${to} is already the active version`);
+    try {
+      setUserUpdate(home, "off");
+    } catch (error) {
+      return fail(`could not turn updates off (${message(error).split("\n")[0]}); nothing was changed`);
+    }
     let refreshNote = "";
     try {
       await refreshWith(home, to, process.env);
@@ -71,13 +79,7 @@ async function rollback(home: string): Promise<number> {
     }
     writeCurrent(home, to);
     updateState(home, { installed: to, previous: from, notified: true });
-    let offNote = "Updates are off; turn them back on with openqodex update --on.";
-    try {
-      setUserUpdate(home, "off");
-    } catch (error) {
-      offNote = `Updates stay off because ${message(error)}.`;
-    }
-    out(`Rolled back to ${to} (was ${from}). ${offNote}${refreshNote}`);
+    out(`Rolled back to ${to} (was ${from}). Updates are off; turn them back on with openqodex update --on.${refreshNote}`);
     return EXIT_OK;
   });
 }

@@ -4,15 +4,14 @@
 // Download and verification happen outside the installer's lock; only the
 // switch to the new runtime takes it (activate.ts).
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { extractArchive, openqodexHome, readLock, takeOverStaleLock } from "@openqodex/scanners";
-import { loadRecord } from "../agents/record.js";
-import { checkRuns, runtimeBin, runtimeDir } from "../launcher.js";
-import { activate, activeVersion } from "./activate.js";
-import { MIN_AGE_MS, selectCandidates, type UpdateCandidate } from "./candidate.js";
+import { extractArchive, openqodexHome } from "@openqodex/scanners";
+import { takeLock } from "../agents/lock.js";
+import { checkRuns, runtimeDir } from "../launcher.js";
+import { activate, activeVersion, reconcile } from "./activate.js";
+import { MIN_AGE_MS, selectCandidates } from "./candidate.js";
 import { fetchAttestations, fetchMetadata, fetchTarball } from "./fetch.js";
 import { readState, updateState, updatesAllowed } from "./state.js";
 import { verifyRelease } from "./verify.js";
@@ -23,6 +22,7 @@ const execFileAsync = promisify(execFile);
 const LIMIT_MS = 10 * 60_000;
 // A release skipped once is tried again after this long.
 const RETRY_SKIPPED_MS = 7 * 24 * 60 * 60 * 1000;
+const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
 const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 // Verification failures that mean the trust data embedded in this release no
@@ -51,52 +51,17 @@ function seam(env: NodeJS.ProcessEnv): { as: string | null; minAge: number | nul
   };
 }
 
-// <home>/update.lock holds "<pid> <token>", created whole through a hard
-// link, as the toolchain's install lock is. Null when a live worker holds it.
-function takeUpdateLock(home: string): { release: () => void } | null {
-  mkdirSync(home, { recursive: true });
-  const lock = join(home, "update.lock");
-  const token = randomBytes(8).toString("hex");
-  const mine = join(home, `.update.lock-${token}`);
-  writeFileSync(mine, `${process.pid} ${token}\n`, { mode: 0o600 });
-  try {
-    let taken = false;
-    try {
-      linkSync(mine, lock);
-      taken = true;
-    } catch {
-      const holder = readLock(lock);
-      const alive = holder !== null && isAlive(holder.pid);
-      taken = !alive && takeOverStaleLock(lock, holder, mine, token);
-    }
-    if (!taken) return null;
-    return { release: () => (readLock(lock)?.token === token ? rmSync(lock, { force: true }) : undefined) };
-  } finally {
-    rmSync(mine, { force: true });
-  }
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
 function latestOf(metadata: unknown): string | null {
   const latest = (metadata as { "dist-tags"?: { latest?: unknown } } | null)?.["dist-tags"]?.latest;
   return typeof latest === "string" && PLAIN_VERSION.test(latest) ? latest : null;
 }
 
-// Unpacks a verified tarball beside the runtimes, checks that it runs and
-// that it has __refresh, then moves it into <home>/runtime/<version>. A
-// runtime folder of that version that the record names is kept as it is;
-// one it does not name (left by a worker that was stopped) is replaced.
-async function install(home: string, c: UpdateCandidate, tarball: Buffer): Promise<void> {
-  const target = runtimeDir(c.version, home);
-  const tmp = `${target}.tmp-${process.pid}`;
+// Unpacks a verified tarball into <home>/runtime/<version>.tmp-<pid>/, checks
+// that it runs and that it has __refresh, and returns the package folder.
+// activate() moves it into place under install.lock; the caller removes the
+// temp folder afterwards.
+export async function unpackRelease(home: string, version: string, tarball: Buffer): Promise<string> {
+  const tmp = `${runtimeDir(version, home)}.tmp-${process.pid}`;
   rmSync(tmp, { recursive: true, force: true });
   mkdirSync(tmp, { recursive: true });
   try {
@@ -110,36 +75,39 @@ async function install(home: string, c: UpdateCandidate, tarball: Buffer): Promi
     const pkg = join(unpacked, "package");
     const bin = join(pkg, "dist", "bin.js");
     if (!existsSync(bin)) throw new Error("the release has no dist/bin.js");
-    await checkRuns(bin, c.version);
+    await checkRuns(bin, version);
     try {
       await execFileAsync(process.execPath, [bin, "__refresh", "--probe"], { timeout: 30_000 });
     } catch {
       throw new SkipError("it has no __refresh command, so it cannot refresh the agent files it would replace");
     }
-    if (loadRecord(home).runtimes.includes(target) && existsSync(runtimeBin(home, c.version))) return;
-    const old = `${target}.old-${process.pid}`;
-    if (existsSync(target)) renameSync(target, old);
-    renameSync(pkg, target);
-    rmSync(old, { recursive: true, force: true });
-    // The tarball's own times are from 1985; the age rule for keeping
-    // runtimes counts from now.
-    const now = new Date();
-    utimesSync(target, now, now);
-  } finally {
+    return pkg;
+  } catch (error) {
     rmSync(tmp, { recursive: true, force: true });
+    throw error;
   }
 }
 
 // A release that is verified but cannot be activated: recorded in `skipped`.
 class SkipError extends Error {}
 
-export async function runUpdateWorker(opts: { anyAge: boolean }): Promise<WorkerResult> {
+// `daily`: started by a normal command. It re-reads checkedAt under the lock,
+// so a worker queued behind another one does not check again the same day.
+export async function runUpdateWorker(opts: { anyAge: boolean; daily?: boolean }): Promise<WorkerResult> {
   const home = openqodexHome();
   const env = process.env;
   const allowed = updatesAllowed(home, env);
   if (!allowed.allowed) return { outcome: "off", lines: [`Updates are ${allowed.why}.`] };
-  const lock = takeUpdateLock(home);
+  const lock = takeLock(join(home, "update.lock"));
   if (lock === null) return { outcome: "busy", lines: ["Another update is running."] };
+  if (opts.daily) {
+    const at = Date.parse(readState(home).checkedAt ?? "");
+    const age = Date.now() - at;
+    if (Number.isFinite(at) && age >= 0 && age < CHECK_EVERY_MS) {
+      lock.release();
+      return { outcome: "none", lines: ["Checked less than a day ago."] };
+    }
+  }
   const limit = setTimeout(() => {
     lock.release();
     process.exit(2);
@@ -159,6 +127,7 @@ export async function runUpdateWorker(opts: { anyAge: boolean }): Promise<Worker
 async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean): Promise<WorkerResult> {
   const now = Date.now();
   updateState(home, { checkedAt: new Date(now).toISOString() });
+  await reconcile(home);
   const test = seam(env);
   const running = test.as ?? __OPENQODEX_VERSION__;
   const from = activeVersion(home);
@@ -212,13 +181,23 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean): Prom
       skip(c.version, verified.reason);
       continue;
     }
+    let unpacked: string;
     try {
-      await install(home, c, tarball);
+      unpacked = await unpackRelease(home, c.version, tarball);
     } catch (error) {
       skip(c.version, error instanceof SkipError ? error.message : `it did not install: ${message(error)}`);
       continue;
     }
-    const result = await activate({ home, version: c.version, from, env });
+    let result: Awaited<ReturnType<typeof activate>>;
+    try {
+      result = await activate({ home, version: c.version, from, env, unpacked });
+    } finally {
+      rmSync(`${runtimeDir(c.version, home)}.tmp-${process.pid}`, { recursive: true, force: true });
+    }
+    if (!result.ok && result.skip) {
+      skip(c.version, result.reason);
+      continue;
+    }
     if (!result.ok) {
       updateState(home, { lastError: result.reason });
       return { outcome: "failed", lines: [...lines, `Downloaded and verified ${c.version}, but did not switch to it: ${result.reason}`] };
