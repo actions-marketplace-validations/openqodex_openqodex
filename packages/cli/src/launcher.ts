@@ -9,7 +9,7 @@
 // never replaced; switching versions is one rename of the record.
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { openqodexHome } from "@openqodex/scanners";
@@ -181,7 +181,14 @@ function treeEntries(root: string, skipTop: string[] = []): Map<string, string> 
 // True when `runtime` holds exactly what `source` holds: the same entries,
 // the same types, the same bytes, and no link anywhere in either.
 export function identicalTree(source: string, runtime: string, skipInSource: string[] = []): boolean {
-  if (!existsSync(runtime)) return false;
+  // A root that is a link would let bytes outside the runtime folder run.
+  for (const root of [source, runtime]) {
+    try {
+      if (!lstatSync(root).isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
   const a = treeEntries(source, skipInSource);
   const b = treeEntries(runtime);
   if (a === null || b === null || a.size !== b.size) return false;
@@ -292,6 +299,39 @@ export function ourRuntimes(home: string): string[] {
   });
 }
 
+// The temp folders a worker or init unpacks into: <home>/runtime/<x>.tmp-<pid>.
+// With `all`, every one (uninstall); otherwise only those whose process is
+// gone and that are older than an hour, left by a crash or a kill.
+export function tempRuntimes(home: string, all: boolean, now = Date.now()): string[] {
+  const dir = join(home, "runtime");
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => {
+      const m = /\.tmp-(\d+)$/.exec(name);
+      if (m === null) return false;
+      if (all) return true;
+      const pid = Number(m[1]);
+      let alive = false;
+      try {
+        process.kill(pid, 0);
+        alive = true;
+      } catch (error) {
+        alive = (error as NodeJS.ErrnoException).code === "EPERM";
+      }
+      try {
+        return !alive && now - statSync(join(dir, name)).mtimeMs > 60 * 60 * 1000;
+      } catch {
+        return false;
+      }
+    })
+    .map((name) => join(dir, name));
+}
+
 // Runtimes younger than this are kept even when no rule below names them.
 export const KEEP_YOUNG_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -349,6 +389,9 @@ export function planRuntimeRemoval(record: InstallRecord, home: string, willStay
         rmSync(rt, { recursive: true, force: true });
       },
     });
+  }
+  for (const tmp of tempRuntimes(home, true)) {
+    actions.push({ verb: "remove", path: tmp, note: "an unfinished runtime copy", apply: () => rmSync(tmp, { recursive: true, force: true }) });
   }
   const pointer = currentPath(home);
   if (existsSync(pointer)) {

@@ -55,9 +55,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
-      - name: Tag v<version> and move v0
-        # Only after a publish. Tags only, never a branch: v0 is the one tag
-        # that moves, so `uses: openqodex/openqodex@v0` gets the new release.
+      - name: Tag v<version> and move v<major>
+        # Only after a publish. Tags only, never a branch: the major tag of the
+        # published version is the one that moves, so `uses: openqodex/openqodex@v0`
+        # gets each 0.x release and never a 1.0.0.
         if: steps.changesets.outputs.published == 'true'
         env:
           PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
@@ -72,5 +73,7 @@ jobs:
           done
           git rev-parse -q --verify "refs/tags/v$version" >/dev/null || git tag "v$version"
           git push origin "refs/tags/v$version"
-          git tag -f v0
-          git push --force origin refs/tags/v0
+          major=${version%%.*}
+          case "$major" in ''|*[!0-9]*) echo "cannot read the major version of $version; no major tag moved"; exit 1 ;; esac
+          git tag -f "v$major"
+          git push --force origin "refs/tags/v$major"

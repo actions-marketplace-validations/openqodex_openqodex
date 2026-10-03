@@ -20,7 +20,7 @@ const POLL_MS = 100;
 function realHome(home: string): string {
   const full = resolve(home);
   try {
-    return realpathSync(full);
+    return realpathSync.native(full);
   } catch {
     const parent = dirname(full);
     return parent === full ? full : join(realHome(parent), basename(full));

@@ -80,13 +80,12 @@ function knownHookChoice(s: Setup, record: InstallRecord): HookChoice | null {
   return s.flags.yes ? "pre-push" : null;
 }
 
-// The answer to the team section question: --no-repo, then the answer this
-// repo gave before, then --yes; null when it must be asked.
+// The answer to the team section question: --no-repo or --yes on this
+// command line, then the answer this repo gave before; null when it must be asked.
 function knownTeamChoice(s: Setup, record: InstallRecord): boolean | null {
   if (s.flags.noRepo) return false;
-  const before = record.teamChoices.find((c) => c.repo === s.repoRoot);
-  if (before) return before.write;
-  return s.flags.yes ? true : null;
+  if (s.flags.yes) return true;
+  return record.teamChoices.find((c) => c.repo === s.repoRoot)?.write ?? null;
 }
 
 function setTeamChoice(record: InstallRecord, repo: string, write: boolean): void {
@@ -310,9 +309,10 @@ async function runLocked(s: Setup): Promise<number> {
     let write = knownTeamChoice(s, record);
     if (write === null && !s.flags.dryRun && interactive()) write = await confirm(TEAM_QUESTION);
     if (write !== null && !s.flags.dryRun) setTeamChoice(record, s.repoRoot, write);
-    if (write === false) out("  note     team review section: not added (run init again without --no-repo to add it)");
+    if (write === false) out("  note     team review section: not added (run init --yes without --no-repo to add it)");
     else {
-      if (write === null) out(`  note     team review section: ${s.flags.dryRun ? "init will ask whether to add it" : "added by default without a terminal"}`);
+      // Without --yes and a terminal, init stops before writing anyway.
+      if (write === null && s.flags.dryRun) out("  note     team review section: init will ask whether to add it");
       teamActions.push(...planTeam(s, record));
       actions.push(...teamActions);
       printPlan(teamActions, []);

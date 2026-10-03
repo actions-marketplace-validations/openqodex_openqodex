@@ -401,8 +401,11 @@ function finalizeOnVersion(version: unknown, args: string[], path: string | unde
   if (!existsSync(bin)) {
     throw new OpenQodexError(`this brief was written by openqodex ${version}, which is not installed here; run openqodex review --agent again`);
   }
-  const rest = path === undefined ? args : args.filter((a, i) => i !== args.indexOf(path));
-  const child = spawnSync(process.execPath, [bin, "review", ...rest, findingsPath, HANDED_OFF], { stdio: "inherit" });
+  // The flags as given, without the path, then -- and the selected path, so a
+  // path after -- or one that starts with a dash reaches the child as a path.
+  const dash = args.indexOf("--");
+  const flags = dash !== -1 ? args.slice(0, dash) : path === undefined ? args : args.filter((a, i) => i !== args.indexOf(path));
+  const child = spawnSync(process.execPath, [bin, "review", HANDED_OFF, ...flags, "--", findingsPath], { stdio: "inherit" });
   return child.status ?? EXIT_TOOL_FAILED;
 }
 

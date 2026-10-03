@@ -96,8 +96,8 @@ Installs OpenQodex into your coding agents.
 - `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
 - `--hook <pre-push|none>`: answer the pre-push hook question without asking. Without it, `init` asks once per repository and records the answer.
-- `--no-repo`: do not add the team review section to the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` asks once per repository (default yes) and records the answer. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.
-- `--yes`, `-y`: do not ask; add the pre-push hook and the team review section unless this repository answered no before. Without a terminal, `init` needs this flag.
+- `--no-repo`: do not add the team review section to the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` asks once per repository (default yes) and records the answer; `--yes` or `--no-repo` on a later run replaces the recorded answer. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.
+- `--yes`, `-y`: do not ask. It adds the team review section, even where this repository answered no before (only `--no-repo` keeps it out), and adds the pre-push hook unless this repository answered no to it before or `--hook none` says so. Without a terminal, `init` needs this flag.
 - `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
 - `--dry-run`: print the plan and write nothing.
 

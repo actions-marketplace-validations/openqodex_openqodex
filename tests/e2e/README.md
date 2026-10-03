@@ -13,7 +13,7 @@ PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test:e2e
 
 Every subprocess also gets `OPENQODEX_AUTO_UPDATE=0`, so a command run through the launcher starts no update worker. The `self-update` cases remove it.
 
-Three variables are a test seam for the update worker, honoured only when `OPENQODEX_E2E=1` is also set: `OPENQODEX_UPDATE_AS=<x.y.z>` makes the worker choose releases as if it ran that version, and `OPENQODEX_UPDATE_MIN_AGE_MS=<ms>` replaces the 24 hour age rule. `OPENQODEX_UPDATE_PAUSE=<stage>` (`before-boundary`, `in-boundary`, `after-publish`) makes the worker write `update-paused` in its home folder at that stage and wait until a test removes it. Verification is never skipped. With them, a temp-home install really downloads and verifies a published release.
+Three variables are a test seam for the update worker, honoured only when `OPENQODEX_E2E=1` is also set: `OPENQODEX_UPDATE_AS=<x.y.z>` makes the worker choose releases as if it ran that version, and `OPENQODEX_UPDATE_MIN_AGE_MS=<ms>` replaces the 24 hour age rule. `OPENQODEX_UPDATE_PAUSE=<stage>` (`before-metadata`, `before-boundary`, `in-boundary`, `after-publish`) makes the worker write `update-paused` in its home folder at that stage and wait until a test removes it. Verification is never skipped. With them, a temp-home install really downloads and verifies a published release.
 
 Every case guards one failure, named in its title. The groups:
 

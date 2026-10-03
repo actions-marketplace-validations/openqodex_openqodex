@@ -32,7 +32,7 @@ The tables below name the file for each agent. Cursor has no instruction file in
 
 ## The team section in the repository
 
-Inside a repository, `init` in user scope also asks: "Add a review section to this repo's CLAUDE.md and AGENTS.md, so teammates' agents review before they push too?" The default is yes, and `--yes` answers yes. `--no-repo` answers no. The answer is recorded for that repository.
+Inside a repository, `init` in user scope also asks: "Add a review section to this repo's CLAUDE.md and AGENTS.md, so teammates' agents review before they push too?" The default is yes, and `--yes` answers yes. `--no-repo` answers no. The answer is recorded for that repository and asked no more; `--yes` or `--no-repo` on a later `init` replaces it.
 
 The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository, and `init` creates a file that is not there. It is meant for a teammate who has installed nothing, so it names only the pinned `npx` command:
 

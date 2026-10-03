@@ -12,7 +12,7 @@ Each file here is copied or merged by `openqodex init`. Three placeholders are f
 
 ## The team section
 
-`repo/team-section.md` is the marked section a user-scope `init` writes into the repository's own `CLAUDE.md` and `AGENTS.md` (creating a file that is not there), unless `--no-repo` or a recorded "no" for that repository says otherwise. It is for a teammate with nothing installed: it names only `npx -y openqodex@{{VERSION}} review --agent` and never the skill or the launcher. Unlike other repository files in user scope, it is not added to `.git/info/exclude`: the developer commits it. It replaces an instruction section found there exactly as written, is recorded with `createdFile`, and `--uninstall` removes exactly it. In project scope the same two files get the instruction section instead.
+`repo/team-section.md` is the marked section a user-scope `init` writes into the repository's own `CLAUDE.md` and `AGENTS.md` (creating a file that is not there), unless `--no-repo`, or a recorded "no" for that repository without `--yes`, says otherwise. It is for a teammate with nothing installed: it names only `npx -y openqodex@{{VERSION}} review --agent` and never the skill or the launcher. Unlike other repository files in user scope, it is not added to `.git/info/exclude`: the developer commits it. It replaces an instruction section found there exactly as written, is recorded with `createdFile`, and `--uninstall` removes exactly it. In project scope the same two files get the instruction section instead.
 
 ## The skill in user scope
 

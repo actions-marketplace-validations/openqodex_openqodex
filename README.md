@@ -128,7 +128,7 @@ An install made with `npx openqodex init` from 0.3.0 on keeps itself up to date.
 
 Turn it off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml` or `OPENQODEX_AUTO_UPDATE=0`. It is also off with `--offline` and when `CI` is set.
 
-These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add`, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made with 0.1.0 or 0.2.0 needs one `npx openqodex init` to start updating.
+These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add`, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made with any earlier version needs one `npx openqodex init` to start updating.
 
 ## Packages
 

@@ -42,9 +42,21 @@
 // 17. A team file the repo's git ignore rules hide is written and named as one to commit.
 // 18. A queued daily worker checks again right after another one did.
 // 19. A tarball member that is a link, or that leaves the folder, is unpacked.
+// 20. A runtime folder that is itself a link to an identical tree is used.
+// 21. Uninstall in one repo removes the launcher while a user-scope Cursor
+//     rule in another repo still calls it.
+// 22. A worker still talking to the registry when uninstall finishes writes
+//     update.json into the removed home.
+// 23. A failed cache write after the record switched reports "did not switch".
+// 24. A finalize handoff breaks `review --finalize -- <findings path>`.
+// 25. After `init --no-repo`, `init --yes` still does not write the team section.
+// 26. Two spellings of one home (a link, a trailing slash) get two locks.
+// 27. A child spawned inside the boundary keeps the port after its parent exits.
+// 28. A temp folder a killed worker left stays for good, and stops uninstall
+//     from removing runtime/.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -600,4 +612,132 @@ describe("19. a hostile release archive", () => {
     expect(r.out).toMatch(/escapes/);
     expect(existsSync(join(r.home, "runtime/escape"))).toBe(false);
   });
+});
+
+describe("20 to 27. the third review", () => {
+  it("a runtime folder that is a link to an identical tree is refused by the worker and by init (failure 20)", async () => {
+    const s = installed();
+    const outside = join(s.root, "outside");
+    copyRuntime(rt(s, version), outside, NEWER);
+    symlinkSync(outside, rt(s, NEWER));
+    const r = await activation(s, NEWER, version).done;
+    expect(r.out).toMatch(/"outcome":"skip"/);
+    expect(active(s)[0]).toBe(version);
+    const t2 = installed();
+    const elsewhere = join(t2.root, "elsewhere");
+    cpSync(rt(t2, version), elsewhere, { recursive: true });
+    rmSync(rt(t2, version), { recursive: true });
+    symlinkSync(elsewhere, rt(t2, version));
+    const i = cli(t2, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
+    expect(i.status).toBe(2);
+    expect(i.stdout + i.stderr).toContain(rt(t2, version));
+  }, 120_000);
+
+  it("uninstall in one repo keeps the launcher and runtime while another repo's Cursor rule calls them (failure 21)", () => {
+    const s = sandbox();
+    const other = join(s.root, "repo b");
+    mkdirSync(other);
+    git(other, "init", "-q");
+    expect(cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "cursor"]).status).toBe(0);
+    expect(cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "cursor"], { cwd: other }).status).toBe(0);
+    const r = cli(s, ["init", "--uninstall", "--yes", "--agent", "cursor"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(s.oqHome, "bin/openqodex"))).toBe(true);
+    const rule = readFileSync(join(other, ".cursor/rules/openqodex.mdc"), "utf8");
+    const command = /`('[^']+') review --agent`/.exec(rule)?.[1];
+    expect(command).toBe(`'${join(s.oqHome, "bin/openqodex")}'`);
+    expect(spawnSync("sh", ["-c", `${command} --version`], { encoding: "utf8", env: env(s) }).stdout.trim()).toBe(version);
+  }, 120_000);
+
+  it("a worker paused before the registry request writes no update.json after uninstall (failure 22)", async () => {
+    const s = installed();
+    const p = spawn("sh", [join(s.oqHome, "bin/openqodex"), "__update"], {
+      env: laptop(s, { OPENQODEX_E2E: "1", OPENQODEX_UPDATE_PAUSE: "before-metadata", OPENQODEX_UPDATE_AS: "999.0.0" }),
+      cwd: s.repo,
+      stdio: "ignore",
+    });
+    const done = new Promise((r) => p.once("exit", r));
+    await untilPaused(s);
+    const r = cli(s, ["init", "--uninstall", "--yes"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(s.oqHome, "update.json"))).toBe(false);
+    resume(s);
+    await done;
+    expect(existsSync(join(s.oqHome, "update.json"))).toBe(false);
+  }, 120_000);
+
+  it("a cache write that fails after the record switched still reports activated (failure 23)", async () => {
+    const s = installed();
+    mkdirSync(join(s.oqHome, "update.json"));
+    const r = await activation(s, NEWER, version).done;
+    expect(r.out).toMatch(/"outcome":"activated"/);
+    expect(active(s)).toEqual([NEWER, version]);
+  }, 120_000);
+
+  it("a handoff finalizes a findings path given after -- (failure 24)", async () => {
+    const s = installed();
+    writeFileSync(join(s.repo, "app.py"), "print('hello')\n");
+    git(s.repo, "add", "app.py");
+    expect(launch(s, ["review", "--agent", "--no-install"]).status).toBe(0);
+    const dir = join(s.repo, (JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string }).dir);
+    const scan = JSON.parse(readFileSync(join(dir, "scan.json"), "utf8")) as { candidates: { id: string }[] };
+    const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { change_id: string };
+    writeFileSync(
+      join(dir, "agent-findings.json"),
+      JSON.stringify({ version: 1, change_id: manifest.change_id, summary: "Looked", reviewer: "subagent", findings: [], dropped: scan.candidates.map((c) => ({ candidate: c.id, reason: "Not actionable here" })) }),
+    );
+    expect((await activation(s, NEWER, version).done).out).toMatch(/"outcome":"activated"/);
+    const r = launch(s, ["review", "--finalize", "--", join(dir, "agent-findings.json")]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(dir, "report.json"))).toBe(true);
+  }, 180_000);
+
+  it("init --yes writes the team section after an earlier --no-repo (failure 25)", () => {
+    const s = sandbox();
+    const first = cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
+    expect(first.stdout).toMatch(/run init --yes without --no-repo/);
+    expect(existsSync(join(s.repo, "CLAUDE.md"))).toBe(false);
+    const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(join(s.repo, "CLAUDE.md"), "utf8")).toContain("openqodex:start");
+  });
+
+  it("a linked spelling of the home and one with a trailing slash share the lock (failure 26)", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-spell-")));
+    const link = `${home}-link`;
+    symlinkSync(home, link);
+    const code = `const m = await import(${JSON.stringify(child)}); await m.withBoundary(process.env.A, { wait: 0 }, async () => { try { await m.withBoundary(process.env.B, { wait: 0 }, () => {}); process.stdout.write("both inside"); } catch (e) { process.stdout.write(e.held ? "held" : e.message); } });`;
+    for (const other of [link, `${home}/`, `${link}/`]) {
+      const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...process.env, A: home, B: other }, encoding: "utf8" });
+      expect(r.stdout, `${other}: ${r.stderr}`).toBe("held");
+    }
+  });
+
+  it("a child spawned inside the boundary does not keep the port once the holder exits (failure 27)", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-inherit-")));
+    const hold = `const m = await import(${JSON.stringify(child)}); const { spawn } = await import("node:child_process"); await m.withBoundary(process.env.H, { wait: 0 }, () => { spawn(process.execPath, ["-e", "setTimeout(() => {}, 8000)"], { detached: true, stdio: "ignore" }).unref(); });`;
+    expect(spawnSync(process.execPath, ["--input-type=module", "-e", hold], { env: { ...process.env, H: home }, encoding: "utf8" }).status).toBe(0);
+    const again = `const m = await import(${JSON.stringify(child)}); await m.withBoundary(process.env.H, { wait: 0 }, () => process.stdout.write("taken"));`;
+    const r = spawnSync(process.execPath, ["--input-type=module", "-e", again], { env: { ...process.env, H: home }, encoding: "utf8" });
+    expect(r.stdout, r.stderr).toBe("taken");
+  });
+
+  it("a temp folder a killed worker left is removed by the next worker and by uninstall; a live one stays (failure 28)", async () => {
+    const s = installed();
+    const dead = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }).stdout;
+    const stale = join(s.oqHome, "runtime", `9.9.9.tmp-${dead}`);
+    const live = join(s.oqHome, "runtime", `9.9.8.tmp-${process.pid}`);
+    for (const d of [stale, live]) {
+      mkdirSync(join(d, "unpacked"), { recursive: true });
+      const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      utimesSync(d, old, old);
+    }
+    const w = launch(s, ["__update"], { OPENQODEX_E2E: "1", OPENQODEX_UPDATE_AS: "999.0.0" });
+    expect(w.status, w.stderr).toBe(0);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(live)).toBe(true);
+    const r = cli(s, ["init", "--uninstall", "--yes"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(s.oqHome, "runtime"))).toBe(false);
+  }, 120_000);
 });

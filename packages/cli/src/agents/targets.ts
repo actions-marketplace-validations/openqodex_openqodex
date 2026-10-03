@@ -243,7 +243,8 @@ export function targetsFor(args: {
       const cursorRule = fill(template("cursor", "openqodex.mdc"), version);
       const rule = user ? userRule(cursorRule, runner) : cursorRule;
       if (repoRoot === null) skipped.push("Cursor rule: run openqodex init inside a git repository to add it there");
-      else targets.push(fileTarget(agent, "Cursor rule", join(repoRoot, ".cursor", "rules", "openqodex.mdc"), rule, true));
+      // A user-scope rule calls the launcher, so the launcher stays while it is installed.
+      else targets.push(fileTarget(agent, "Cursor rule", join(repoRoot, ".cursor", "rules", "openqodex.mdc"), rule, true, user));
       break;
     }
     case "cline":
@@ -255,6 +256,7 @@ export function targetsFor(args: {
           user ? at("Documents", "Cline", "Rules", "openqodex.md") : at(".clinerules", "openqodex.md"),
           user ? userRule(fill(template("cline", "openqodex.md"), version), runner) : fill(template("cline", "openqodex.md"), version),
           !user,
+          user,
         ),
       );
       break;
