@@ -6,11 +6,11 @@
 // scanner statuses and the platform.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { STATE_DIR, findRepoRoot } from "@openqodex/core";
+import { STATE_DIR, findRepoRoot, readRepoFile, repoStat, writeRepoFile } from "@openqodex/core";
 import type { ScanResult, ScannerRunSummary } from "@openqodex/core";
 import { writeAtomic } from "./agents/files.js";
 import { openqodexHomeDir } from "./launcher.js";
@@ -227,16 +227,18 @@ export function issueText(issue: Issue): string {
 }
 
 // .openqodex/last-report.json in the repo (ignored by the folder's own
-// .gitignore), or last-report.json in the OpenQodex home outside a repo.
-async function lastReportPath(cwd: string): Promise<string> {
+// .gitignore), or last-report.json in the OpenQodex home outside a repo. In a
+// repo it is repo state: read and written only through repo-state.ts.
+type LastPlace = { repoRoot: string | null; path: string };
+async function lastReportPlace(cwd: string): Promise<LastPlace> {
   if (run.repoRoot === null) {
     try {
       run.repoRoot = await findRepoRoot(cwd);
     } catch {
-      return join(openqodexHomeDir(), LAST_REPORT);
+      return { repoRoot: null, path: join(openqodexHomeDir(), LAST_REPORT) };
     }
   }
-  return join(run.repoRoot, STATE_DIR, LAST_REPORT);
+  return { repoRoot: run.repoRoot, path: join(run.repoRoot, STATE_DIR, LAST_REPORT) };
 }
 
 function sha256(text: string): string {
@@ -247,16 +249,22 @@ type Saved = { version: 1; title: string; body: string; created_at: string; sha2
 
 // Writes the shown issue, with the hash of the exact text shown. False when
 // it could not: a link in the way, or a folder that cannot be written.
-function saveLast(path: string, issue: Issue): boolean {
+function saveLast({ repoRoot, path }: LastPlace, issue: Issue): boolean {
   try {
+    const saved: Saved = { version: 1, ...issue, created_at: new Date().toISOString(), sha256: sha256(issueText(issue)) };
+    const text = `${JSON.stringify(saved, null, 2)}\n`;
+    if (repoRoot !== null) {
+      // A state folder made here ignores itself, as every run's folder does.
+      const ignore = join(STATE_DIR, ".gitignore");
+      if (repoStat(repoRoot, ignore) === null) writeRepoFile(repoRoot, ignore, "*\n", { exclusive: true });
+      writeRepoFile(repoRoot, path, text);
+      return true;
+    }
     const dir = dirname(path);
     if (lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) return false;
     if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) return false;
     mkdirSync(dir, { recursive: true });
-    // A state folder made here ignores itself, as every run's folder does.
-    if (basename(dir) === STATE_DIR && !existsSync(join(dir, ".gitignore"))) writeFileSync(join(dir, ".gitignore"), "*\n");
-    const saved: Saved = { version: 1, ...issue, created_at: new Date().toISOString(), sha256: sha256(issueText(issue)) };
-    writeAtomic(path, `${JSON.stringify(saved, null, 2)}\n`);
+    writeAtomic(path, text);
     return true;
   } catch {
     return false;
@@ -269,14 +277,24 @@ const BODY_LABELS = ["Command: ", "Component: ", "Diagnostic: ", "Scanners: ", "
 // The last issue shown here, only when the file is a real file in exactly
 // the saved shape and its text is the text that was shown. Else the reason.
 export async function readLast(cwd: string): Promise<Issue | string> {
-  const path = await lastReportPath(cwd);
-  const stat = lstatSync(path, { throwIfNoEntry: false });
-  if (stat === undefined) return "no problem report has been shown here, so there is nothing to send";
-  if (!stat.isFile()) return `${path} is not a regular file; nothing was sent`;
+  const { repoRoot, path } = await lastReportPlace(cwd);
+  let text: string | null;
+  if (repoRoot !== null) {
+    try {
+      text = readRepoFile(repoRoot, path);
+    } catch (error) {
+      return `${(error as Error).message}; nothing was sent`;
+    }
+  } else {
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (stat !== undefined && !stat.isFile()) return `${path} is not a regular file; nothing was sent`;
+    text = stat === undefined ? null : readFileSync(path, "utf8");
+  }
+  if (text === null) return "no problem report has been shown here, so there is nothing to send";
   const changed = `${path} changed after it was shown; nothing was sent`;
   let value: unknown;
   try {
-    value = JSON.parse(readFileSync(path, "utf8"));
+    value = JSON.parse(text);
   } catch {
     return changed;
   }
@@ -351,7 +369,7 @@ export async function sendIssue(issue: Issue): Promise<string> {
 // it says how to send it later, so an agent can ask the developer.
 export async function offer(problem: Problem, command: string, args: string[], cwd: string): Promise<void> {
   // Found first, so the repo's name is scrubbed from the issue too.
-  const lastPath = await lastReportPath(cwd);
+  const lastPath = await lastReportPlace(cwd);
   const issue = composeIssue(problem, command, args);
   process.stderr.write(issueText(issue));
   const saved = saveLast(lastPath, issue);

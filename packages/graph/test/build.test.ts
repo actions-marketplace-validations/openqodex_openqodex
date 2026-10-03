@@ -10,11 +10,14 @@
 // 5. A corrupt cache entry crashes the build or is never rewritten.
 // 6. Facts of a deleted file stay in the cache and the graph.
 // 8. A cache folder that cannot be written fails the build.
+// 9. A named pipe in place of a cache entry blocks the build forever.
 // 7. A function the change removes is not reported, or its surviving
 //    callers are lost because the old side is not parsed.
 import { afterAll, describe, expect, it } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, renderImpactBlock } from "../src/index.js";
 import { at, callSites, commitAll, makeRepo, symbol, writeFiles } from "./helpers.js";
@@ -139,6 +142,22 @@ describe("cache", () => {
     const after = await buildGraph({ repoRoot: root, cacheDir });
     expect(readdirSync(cacheDir).filter((f) => f.endsWith(".json"))).toHaveLength(2);
     expect(after.nodes.has("d.go")).toBe(false);
+  });
+
+  // A blocked open would freeze this process, so the build runs in a child
+  // with a 20 second limit, from the built package.
+  it("never blocks on a named pipe in place of a cache entry", async () => {
+    const root = repo(files);
+    const cacheDir = cacheOf(root);
+    await buildGraph({ repoRoot: root, cacheDir });
+    const entry = join(cacheDir, readdirSync(cacheDir).filter((f) => f.endsWith(".json"))[0] as string);
+    unlinkSync(entry);
+    execFileSync("mkfifo", [entry]);
+    const built = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "../dist/index.js")).href;
+    const script = `const { buildGraph } = await import(${JSON.stringify(built)}); const g = await buildGraph({ repoRoot: ${JSON.stringify(root)}, cacheDir: ${JSON.stringify(cacheDir)} }); process.stdout.write(String(g.status.parses));`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8", timeout: 20_000 });
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toBe("1");
   });
 });
 

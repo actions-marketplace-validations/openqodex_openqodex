@@ -70,6 +70,8 @@ In the repository, under `.openqodex/` only:
 - `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the agent's findings and the reports. OpenQodex keeps the newest 20.
 - `latest.json`: points at the newest review; the push gate reads only this. `latest-scan.json` points at the newest scan.
 
+OpenQodex never reads or writes `.openqodex/` or the root `.openqodex.yaml` through a symbolic link, at the file or at any folder above it inside the repository. A link there stops the command with one line naming it, or, for a run file such as `latest.json`, counts as no file. Only regular files are read there, each within a size limit, so a link or a device in their place cannot hang a run.
+
 The agent settings and skill files `init` writes are listed in `agents`.
 
 The change itself is worked out without writing inside `.git`. OpenQodex uses a temporary copy of the index and a temporary object folder.

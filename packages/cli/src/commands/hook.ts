@@ -2,7 +2,15 @@
 // entries call before a shell command. `openqodex hook install|uninstall`:
 // the optional git pre-push hook, the gate that sees every real push.
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import type { ChangeScope } from "@openqodex/core";
 import { join } from "node:path";
@@ -113,7 +121,7 @@ async function decide(input: HookInput): Promise<void> {
     const { config } = core.loadConfig(repoRoot);
     const change = await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase });
     const latest = core.readLatest(repoRoot);
-    const report = latest ? core.readReport(join(repoRoot, latest.dir)) : null;
+    const report = latest ? core.readReport(repoRoot, join(repoRoot, latest.dir)) : null;
     const decision = core.checkPush({ currentChangeId: change.id, latest, report, config });
     const message = decision.message === null ? null : roots.length > 1 ? `${repoRoot}: ${decision.message}` : decision.message;
     if (decision.decision === "deny") denials.push(message ?? `${repoRoot}: OpenQodex blocks this push`);
@@ -197,6 +205,22 @@ async function pushedPairs(repoRoot: string, input: string, remoteName: string |
 // of a pushed commit in a temporary tree is judged by the same settings.
 const SETTINGS = [".openqodex.yaml", ".openqodex/config.yaml", ".openqodex/custom-instructions.md", ".openqodex/.gitignore"];
 
+// Replaces the pushed commit's own `.openqodex` folder and root config in the
+// temporary checkout with the work tree's settings. What the commit holds there
+// never reaches the scan: links that point anywhere, or run state such as a
+// receipt. rmSync removes a link itself and never follows one inside a folder
+// it removes; the files are then created exclusively in a fresh real folder.
+function placeSettings(repoRoot: string, tree: string, readRepoFile: (root: string, path: string) => string | null): void {
+  rmSync(join(tree, ".openqodex"), { recursive: true, force: true });
+  rmSync(join(tree, ".openqodex.yaml"), { recursive: true, force: true });
+  mkdirSync(join(tree, ".openqodex"));
+  for (const rel of SETTINGS) {
+    // From the work tree through the repo state reader: a link there stops the push scan with one line.
+    const text = readRepoFile(repoRoot, rel);
+    if (text !== null) writeFileSync(join(tree, rel), text, { flag: "wx" });
+  }
+}
+
 async function scanIn(cwd: string, scope: ChangeScope): Promise<number> {
   const [{ runScan }, { parseFlags }] = await Promise.all([import("./scan.js"), import("../flags.js")]);
   try {
@@ -217,11 +241,7 @@ async function scanCommit(repoRoot: string, sha: string, scope: ChangeScope): Pr
       process.stderr.write(`openqodex hook pre-push: could not check out ${sha} to scan it\n`);
       return EXIT_TOOL_FAILED;
     }
-    for (const rel of SETTINGS) {
-      const text = readText(join(repoRoot, rel));
-      if (text !== null) writeAtomic(join(tree, rel), text);
-      else rmSync(join(tree, rel), { force: true });
-    }
+    placeSettings(repoRoot, tree, (await import("@openqodex/core")).readRepoFile);
     return await scanIn(tree, scope);
   } finally {
     await gitOut(repoRoot, ["worktree", "remove", "--force", tree]);
@@ -273,6 +293,16 @@ export function gitHookScript(launcher: string): string {
     "",
   ].join("\n");
 }
+
+// The line to add to a pre-push hook openqodex does not write (husky,
+// lefthook, a hook of the developer's own). The same exit mapping as the hook
+// it writes: only exit 1 (a finding at or above block_on_severity) stops the
+// push; a tool that fails (exit 2) or cannot start never does.
+export function hookLine(command: string): string {
+  return `${command} hook pre-push || [ $? -ne 1 ]`;
+}
+
+const MANAGED_LINE = (): string => hookLine(`npx -y openqodex@${__OPENQODEX_VERSION__}`);
 
 async function hookFile(): Promise<{ repoRoot: string; path: string } | null> {
   const repoRoot = await repoRootOf(process.cwd());
@@ -333,7 +363,7 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
       path,
       manager,
       foreign: false,
-      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager}; add npx -y openqodex@${__OPENQODEX_VERSION__} hook pre-push there` },
+      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager}; add ${MANAGED_LINE()} there` },
     };
   }
   const script = gitHookScript(launcher);
@@ -352,7 +382,7 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
       path,
       manager,
       foreign: true,
-      action: { verb: "keep", path, note: `${label}: a hook openqodex did not write is there; add ${shQuote(launcher)} hook pre-push to it, or run openqodex hook install --force` },
+      action: { verb: "keep", path, note: `${label}: a hook openqodex did not write is there; add ${hookLine(shQuote(launcher))} to it, or run openqodex hook install --force` },
     };
   }
   return {
@@ -423,7 +453,7 @@ async function install(args: string[]): Promise<number> {
   const manager = hookManager(target.repoRoot);
   if (manager !== null) {
     process.stdout.write(
-      `This repo manages its git hooks with ${manager}. Add this line to its pre-push hook:\n  npx -y openqodex@${__OPENQODEX_VERSION__} hook pre-push\nNothing was written.\n`,
+      `This repo manages its git hooks with ${manager}. Add this line to its pre-push hook:\n  ${MANAGED_LINE()}\nNothing was written.\n`,
     );
     return EXIT_OK;
   }
@@ -440,7 +470,7 @@ async function install(args: string[]): Promise<number> {
       const plan = await planGitHook(target.repoRoot, record, home, force);
       if (plan.foreign) {
         return fail(
-          `openqodex hook install: ${target.path} already exists and is not ours. Add this line to it:\n  ${shQuote(launcher)} hook pre-push\nor run openqodex hook install --force to replace it (the old hook is kept beside it).`,
+          `openqodex hook install: ${target.path} already exists and is not ours. Add this line to it:\n  ${hookLine(shQuote(launcher))}\nor run openqodex hook install --force to replace it (the old hook is kept beside it).`,
         );
       }
       if (plan.action.verb === "skip") {

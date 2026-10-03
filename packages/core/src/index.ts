@@ -12,3 +12,4 @@ export * from "./finalize.js";
 export * from "./push-gate.js";
 export * from "./render/index.js";
 export * from "./report-files.js";
+export * from "./repo-state.js";

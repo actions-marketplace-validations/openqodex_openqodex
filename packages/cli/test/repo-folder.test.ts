@@ -6,7 +6,8 @@
 //     custom-instructions.md, or rewrites one the team edited.
 //  2. A config.yaml is created beside a root .openqodex.yaml, so the team
 //     has two config files and no word about which one is read.
-//  3. The instructions reach the brief changed, cut, or not at all.
+//  3. The instructions reach the brief changed, cut, or not at all (they
+//     arrive quoted, one "> " per line).
 //  4. Finalize accepts a review whose instructions changed after the brief.
 //  5. An instructions file over the limit is cut instead of refused.
 //  6. A review by the agent that wrote the code is reported as independent,
@@ -77,7 +78,7 @@ describe("the repo folder's team files", () => {
 });
 
 describe("the owners' instructions in the review", () => {
-  it("reach the brief word for word, and finalize refuses a run whose instructions changed", () => {
+  it("reach the brief whole, every line quoted, and finalize refuses a run whose instructions changed", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
     const text = "Our handlers validate input in middleware: never flag a missing check in a handler.\nAlways check that every new endpoint has a rate limit.";
@@ -86,7 +87,7 @@ describe("the owners' instructions in the review", () => {
 
     const brief = cli(s, ["review", "--agent", "--no-install"]);
     expect(brief.status, brief.stderr).toBe(0);
-    expect(brief.stdout).toContain(text);
+    expect(brief.stdout).toContain(text.split("\n").map((line) => `> ${line}`).join("\n"));
     submit(s);
     writeFileSync(join(s.repo, INSTRUCTIONS), `${text}\nAnd one more rule.\n`);
     const r = cli(s, ["review", "--finalize"]);
