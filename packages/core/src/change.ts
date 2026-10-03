@@ -8,14 +8,15 @@
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readlink, rm } from "node:fs/promises";
-import { createReadStream, existsSync } from "node:fs";
+import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createCoverageParser, unquoteDiffPath } from "./diff.js";
 import { matchesGlob } from "./glob.js";
 import { STATE_DIR } from "./report-files.js";
-import type { Change, ChangedFile, ChangeScope, DiffCoverage } from "./types.js";
+import type { Change, ChangedFile, ChangeScope } from "./types.js";
 import { OpenQodexError } from "./types.js";
 
 // Text handed to the brief is capped; files past the cap are left out whole.
@@ -533,8 +534,10 @@ export async function getChange(args: {
 
 // ---------- the whole repo (`review --all`) ----------
 
-// The whole-repo scope, with each file's size on disk for the brief's inventory.
-export type WholeRepo = Change & { sizes: Map<string, number> };
+// The whole-repo scope. `coverage` is empty: every line of every file is in
+// scope, so no line set is built; `lines` holds each text file's line count
+// and `sizes` its bytes, for finalize and the brief's inventory.
+export type WholeRepo = Change & { lines: Map<string, number>; sizes: Map<string, number> };
 
 // git's own test for a binary file: a NUL byte in the first 8000 bytes.
 const BINARY_PROBE_BYTES = 8000;
@@ -551,21 +554,47 @@ function blobHash(buf: Buffer): string {
   return createHash("sha1").update(`blob ${buf.length}\0`).update(buf).digest("hex");
 }
 
-// The same hash for a file too large to hold in memory.
-function streamBlobHash(full: string, size: number): Promise<string> {
+// The same hash for a file too large to hold in memory, read from an open handle.
+function streamBlobHash(handle: FileHandle, size: number): Promise<string> {
   return new Promise((done, fail) => {
     const hash = createHash("sha1").update(`blob ${size}\0`);
-    createReadStream(full)
+    handle
+      .createReadStream({ autoClose: false })
       .on("data", (b) => hash.update(b))
       .on("error", fail)
       .on("end", () => done(hash.digest("hex")));
   });
 }
 
+// True when every folder on the way to `rel` is a real folder, never a link,
+// so a repo cannot point a path at files outside itself. Cached per folder.
+function realFolders(repoRoot: string): (rel: string) => Promise<boolean> {
+  const seen = new Map<string, Promise<boolean>>();
+  const folder = (rel: string): Promise<boolean> => {
+    if (rel === "") return Promise.resolve(true);
+    let ok = seen.get(rel);
+    if (ok === undefined) {
+      const cut = rel.lastIndexOf("/");
+      ok = folder(cut === -1 ? "" : rel.slice(0, cut)).then(async (parent) => {
+        if (!parent) return false;
+        const st = await lstat(join(repoRoot, rel)).catch(() => null);
+        return st !== null && st.isDirectory() && !st.isSymbolicLink();
+      });
+      seen.set(rel, ok);
+    }
+    return ok;
+  };
+  return (rel) => {
+    const cut = rel.lastIndexOf("/");
+    return folder(cut === -1 ? "" : rel.slice(0, cut));
+  };
+}
+
 // Every file in the repo as it sits on disk: tracked files plus untracked
 // files git does not ignore, minus `exclude` and `.openqodex/`. Each is an
 // added file whose every line is in scope. The id hashes path, mode and
-// content of every file, so an edit anywhere moves it. Submodules, nested
+// content of every file, so an edit anywhere moves it. Files are opened
+// without following a link, through real folders only. Submodules, nested
 // repositories, symbolic links, unreadable files and files over 5 MB are
 // listed as not reviewed and left out of the scope.
 export async function getWholeRepo(args: { repoRoot: string; exclude: string[] }): Promise<WholeRepo> {
@@ -581,49 +610,71 @@ export async function getWholeRepo(args: { repoRoot: string; exclude: string[] }
   }
   const untracked = splitNul(await gitOk(repoRoot, ["ls-files", "-z", "--others", "--exclude-standard"]));
   const paths = [...new Set([...modes.keys(), ...untracked])].filter((p) => !excluded(p, exclude)).sort();
+  const inRealFolders = realFolders(repoRoot);
 
   const files: ChangedFile[] = [];
-  const coverage: DiffCoverage = new Map();
+  const lines = new Map<string, number>();
   const sizes = new Map<string, number>();
   const notReviewed: string[] = [];
   const idLines: string[] = [];
-  let lines = 0;
+  let total = 0;
   for (const path of paths) {
-    const full = join(repoRoot, path);
-    let stat;
-    try {
-      stat = await lstat(full);
-    } catch {
-      continue; // deleted in the working tree: not part of the repo any more
+    const name = path.replace(/\/$/, "");
+    if (!(await inRealFolders(name))) {
+      // Reached through a link: not the repo's own file. A folder that is
+      // gone (a deleted tracked file) is simply not there.
+      if (await lstat(join(repoRoot, name)).then(() => true, () => false)) {
+        notReviewed.push(name);
+        idLines.push(`${name}\tlinked`);
+      }
+      continue;
     }
+    const full = join(repoRoot, name);
+    const stat = await lstat(full).catch(() => null);
+    if (stat === null) continue; // deleted in the working tree: not part of the repo any more
     // A submodule, a nested repository (git lists it as "dir/") or a link.
     if (modes.get(path) === "160000" || !stat.isFile()) {
-      notReviewed.push(path.replace(/\/$/, ""));
-      idLines.push(`${path}\t${modes.get(path) ?? (stat.isSymbolicLink() ? "120000" : "040000")}\t${stat.isSymbolicLink() ? await readlink(full).catch(() => "") : ""}`);
+      notReviewed.push(name);
+      const target = stat.isSymbolicLink() ? await readlink(full).catch(() => "") : "";
+      idLines.push(`${name}\t${modes.get(path) ?? (stat.isSymbolicLink() ? "120000" : "040000")}\t${target}`);
       continue;
     }
     const mode = stat.mode & 0o100 ? "100755" : "100644";
-    if (stat.size > DIFF_CAP_BYTES) {
-      notReviewed.push(path);
-      idLines.push(`${path}\t${mode}\t${await streamBlobHash(full, stat.size).catch(() => "unreadable")}`);
-      continue;
-    }
-    let buf: Buffer;
+    let handle: FileHandle;
     try {
-      buf = await readFile(full);
+      handle = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW);
     } catch {
-      notReviewed.push(path);
-      idLines.push(`${path}\t${mode}\tunreadable`);
+      notReviewed.push(name);
+      idLines.push(`${name}\t${mode}\tunreadable`);
       continue;
     }
-    idLines.push(`${path}\t${mode}\t${blobHash(buf)}`);
-    const binary = buf.subarray(0, BINARY_PROBE_BYTES).includes(0);
-    files.push({ path, status: "added", oldPath: null, binary });
-    sizes.set(path, buf.length);
-    if (binary) continue;
-    const n = lineCount(buf);
-    lines += n;
-    coverage.set(path, new Set(Array.from({ length: n }, (_, i) => i + 1)));
+    try {
+      const st = await handle.stat();
+      if (!st.isFile()) {
+        notReviewed.push(name);
+        idLines.push(`${name}\t${mode}\tnot a file`);
+        continue;
+      }
+      if (st.size > DIFF_CAP_BYTES) {
+        notReviewed.push(name);
+        idLines.push(`${name}\t${mode}\t${await streamBlobHash(handle, st.size).catch(() => "unreadable")}`);
+        continue;
+      }
+      const buf = await handle.readFile();
+      idLines.push(`${name}\t${mode}\t${blobHash(buf)}`);
+      const binary = buf.subarray(0, BINARY_PROBE_BYTES).includes(0);
+      files.push({ path: name, status: "added", oldPath: null, binary });
+      sizes.set(name, buf.length);
+      if (binary) continue;
+      const n = lineCount(buf);
+      lines.set(name, n);
+      total += n;
+    } catch {
+      notReviewed.push(name);
+      idLines.push(`${name}\t${mode}\tunreadable`);
+    } finally {
+      await handle.close();
+    }
   }
 
   const id = createHash("sha256").update(idLines.join("\n")).digest("hex");
@@ -635,10 +686,11 @@ export async function getWholeRepo(args: { repoRoot: string; exclude: string[] }
     shortId: id.slice(0, 12),
     files,
     changedPaths: files.map((f) => f.path),
-    coverage,
+    coverage: new Map(),
     diff: "",
     notReviewed,
-    stats: { files: files.length, additions: lines, deletions: 0 },
+    stats: { files: files.length, additions: total, deletions: 0 },
+    lines,
     sizes,
   };
 }

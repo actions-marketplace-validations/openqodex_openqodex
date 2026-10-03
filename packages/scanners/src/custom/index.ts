@@ -28,7 +28,7 @@ import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "no
 import { pipeline } from "node:stream/promises";
 import { OpenQodexError, customEntryHash, matchesGlob } from "@openqodex/core";
 import type { Config, CustomScanner, ScannerSource, StaticFinding } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { ARG_BUDGET_BYTES, describeFailure, execTool, splitArgs, stderrTail } from "../exec.js";
 import { parseJsonMap } from "../formats/json-map.js";
 import { parseSarif } from "../formats/sarif.js";
 import type { CustomAdapter } from "../run.js";
@@ -512,33 +512,42 @@ function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapte
       const tmp = mkdtempSync(join(tmpdir(), "openqodex-custom-"));
       try {
         const report = join(tmp, "report");
-        const targets = entry.target === "repo" ? [repoDir] : matching(changedPaths);
-        const args = expandArgs(tokens.slice(1), { report, repo: repoDir, targets });
         const timeoutMs = entry.timeoutSeconds * 1000;
-        // A binary from PATH is checked right before it runs, not only when the adapter was built.
-        if (entry.install.kind === "path" && !sameBytes(record)) return { findings: [], error: BINARY_CHANGED, version };
-        const result = await execTool(record.artifact.binary, args, { cwd: repoDir, timeoutMs, maxBytes: REPORT_MAX_BYTES });
-        const failed = describeFailure(entry.name, result, timeoutMs);
-        if (failed) return { findings: [], error: failed, version };
-        const exit = `exit ${result.exitCode}${stderrTail(result) ? `: ${stderrTail(result)}` : ""}`;
-        let text: string;
-        if (usesReport) {
-          const read = readReport(report);
-          if (read === null) return { findings: [], error: `${entry.name} wrote no report (${exit})`, version };
-          if ("error" in read) return { findings: [], error: `${entry.name}: ${read.error}`, version };
-          text = read.text;
-        } else {
-          text = result.stdout;
-        }
-        let findings: StaticFinding[];
-        try {
-          findings =
-            entry.format === "sarif"
-              ? parseSarif(text, { repoDir, source })
-              : parseJsonMap(text, entry.map!, { repoDir, source });
-        } catch (error) {
-          const why = (error as Error).message;
-          return { findings: [], error: result.exitCode === 0 ? `${entry.name}: ${why}` : `${entry.name}: ${why} (${exit})`, version };
+        // One process per chunk of targets, so a whole-repo file list stays
+        // under the argument limit, all under the entry's one timeout.
+        const chunks = entry.target === "repo" ? [[repoDir]] : splitArgs(matching(changedPaths), ARG_BUDGET_BYTES);
+        const deadline = Date.now() + timeoutMs;
+        const findings: StaticFinding[] = [];
+        for (const targets of chunks) {
+          const left = deadline - Date.now();
+          if (left <= 0) return { findings: [], error: `${entry.name} timed out after ${Math.round(timeoutMs / 1000)}s`, version };
+          rmSync(report, { force: true });
+          const args = expandArgs(tokens.slice(1), { report, repo: repoDir, targets });
+          // A binary from PATH is checked right before it runs, not only when the adapter was built.
+          if (entry.install.kind === "path" && !sameBytes(record)) return { findings: [], error: BINARY_CHANGED, version };
+          const result = await execTool(record.artifact.binary, args, { cwd: repoDir, timeoutMs: left, maxBytes: REPORT_MAX_BYTES });
+          const failed = describeFailure(entry.name, result, timeoutMs);
+          if (failed) return { findings: [], error: failed, version };
+          const exit = `exit ${result.exitCode}${stderrTail(result) ? `: ${stderrTail(result)}` : ""}`;
+          let text: string;
+          if (usesReport) {
+            const read = readReport(report);
+            if (read === null) return { findings: [], error: `${entry.name} wrote no report (${exit})`, version };
+            if ("error" in read) return { findings: [], error: `${entry.name}: ${read.error}`, version };
+            text = read.text;
+          } else {
+            text = result.stdout;
+          }
+          try {
+            const found =
+              entry.format === "sarif"
+                ? parseSarif(text, { repoDir, source })
+                : parseJsonMap(text, entry.map!, { repoDir, source });
+            for (const f of found) findings.push(f);
+          } catch (error) {
+            const why = (error as Error).message;
+            return { findings: [], error: result.exitCode === 0 ? `${entry.name}: ${why}` : `${entry.name}: ${why} (${exit})`, version };
+          }
         }
         // Many tools exit non-zero when they find something; a report that parses is a run.
         return { findings, error: null, version };

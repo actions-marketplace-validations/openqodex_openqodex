@@ -62,12 +62,13 @@ export async function runPipeline(args: {
   return scanChange({ ...args, repoRoot, config, change });
 }
 
-// The scanners on a change already worked out. The coverage is passed as
-// built: for the whole repository it holds every line, so nothing is filtered.
+// The scanners on a change already worked out. For the whole repository no
+// coverage is passed: every finding in a file of the inventory is kept.
 export async function scanChange<C extends Change>(args: {
   repoRoot: string;
   config: Config;
   change: C;
+  wholeRepo?: boolean;
   flags: GlobalFlags;
   only?: ScannerSource[];
   skip?: ScannerSource[];
@@ -79,7 +80,7 @@ export async function scanChange<C extends Change>(args: {
   const { scan, secrets } = await runScanners({
     repoDir: repoRoot,
     changedPaths: change.changedPaths,
-    coverage: change.coverage,
+    coverage: args.wholeRepo ? undefined : change.coverage,
     config,
     resolveTool: createToolResolver({
       allowInstall: !flags.noInstall,
@@ -111,7 +112,8 @@ export function redactStored<T>(value: T, secrets: string[]): T {
   return secrets.length === 0 ? value : (walk(value, null) as T);
 }
 
-// The graph for this run, or the summary saying why there is none. Never
+// The graph for this run, or the summary saying why there is none. For the
+// whole repo (no base) it reads only the inventory. Never
 // throws: a graph that cannot be built is reported as "failed" with one line
 // and the review goes on.
 async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean, withBase: boolean): Promise<Graph | ImpactSummary> {
@@ -124,6 +126,7 @@ async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean,
     return await buildGraph({
       repoRoot: p.repoRoot,
       files: withBase ? p.change.changedPaths : undefined,
+      only: withBase ? undefined : p.change.changedPaths,
       budgetMs: p.config.graph.budgetMs,
       maxFiles: p.config.graph.maxFiles,
       maxFileBytes: p.config.graph.maxFileBytes,

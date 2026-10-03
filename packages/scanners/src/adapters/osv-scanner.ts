@@ -30,7 +30,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool, isOffline } from "../exec.js";
+import { describeFailure, execTool, isOffline, runInChunks } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 import { readRepoFile } from "./read.js";
@@ -100,23 +100,6 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
   if (skipped) return { findings: [], error: null, skipped };
   if (!args.tool) return { findings: [], error: "not installed" };
 
-  const cliArgs = [
-    "--format",
-    "json",
-    ...lockfiles.flatMap((rel) => ["--lockfile", rel]),
-  ];
-
-  const run = await execTool(args.tool.path, cliArgs, {
-    cwd: args.repoDir,
-    timeoutMs: OSV_TIMEOUT_MS,
-    maxBytes: OSV_OUTPUT_MAX_BYTES,
-    env: args.tool.env,
-  });
-  // The only failures are the ones that leave no report to read: the
-  // binary did not start, the process was killed, or it overflowed.
-  const failed = describeFailure("osv-scanner", run, OSV_TIMEOUT_MS);
-  if (failed) return { findings: [], error: failed.slice(0, 300) };
-
   // Pre-read each lockfile so the parser can map advisories to lines
   // without doing IO per advisory. A read failure for one lockfile just
   // means its advisories anchor to line 1 (still inside the diff if the
@@ -131,33 +114,52 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
     }
   }
 
-  let findings: StaticFinding[];
+  // One process per chunk of lockfiles, so a whole-repo list stays under
+  // the argument limit; the findings of every chunk are merged.
+  const tool = args.tool;
   try {
-    findings = parseOsvScannerJson(run.stdout, lockfileLines, {
-      repoDir: args.repoDir,
-      coverage: args.coverage,
+    const findings = await runInChunks("osv-scanner", lockfiles, OSV_TIMEOUT_MS, async (chunk, left) => {
+      const cliArgs = ["--format", "json", ...chunk.flatMap((rel) => ["--lockfile", rel])];
+      const run = await execTool(tool.path, cliArgs, {
+        cwd: args.repoDir,
+        timeoutMs: left,
+        maxBytes: OSV_OUTPUT_MAX_BYTES,
+        env: tool.env,
+      });
+      // The only failures are the ones that leave no report to read: the
+      // binary did not start, the process was killed, or it overflowed.
+      const failed = describeFailure("osv-scanner", run, OSV_TIMEOUT_MS);
+      if (failed) throw new Error(failed);
+
+      let found: StaticFinding[];
+      try {
+        found = parseOsvScannerJson(run.stdout, lockfileLines, {
+          repoDir: args.repoDir,
+          coverage: args.coverage,
+        });
+      } catch (err) {
+        // THE JSON IS THE RESULT, AND ONLY AN UNREADABLE ONE IS A FAILURE.
+        // osv-scanner uses its exit code to describe what it found (1 is
+        // vulnerabilities found), so the report decides, not the code. When the
+        // report will not parse, the exit code is the best clue about why, so
+        // it goes in the message when there was a non-zero one.
+        const message = err instanceof Error ? err.message : String(err);
+        const where = run.exitCode ? `exit ${run.exitCode}, ` : "";
+        throw new Error(`parse: ${where}${message.slice(0, 200)}`);
+      }
+
+      // A completed scan that printed no report at all, under an exit code
+      // that is not one of the two "I ran" codes, did not run.
+      if (!run.stdout.trim() && run.exitCode !== null && run.exitCode > 1) {
+        throw new Error(`osv-scanner exit ${run.exitCode}: ${run.stderr.trim().slice(-300)}`);
+      }
+      return found;
     });
+    return { findings, error: null };
   } catch (err) {
-    // THE JSON IS THE RESULT, AND ONLY AN UNREADABLE ONE IS A FAILURE.
-    // osv-scanner uses its exit code to describe what it found (1 is
-    // vulnerabilities found), so the report decides, not the code. When the
-    // report will not parse, the exit code is the best clue about why, so
-    // it goes in the message when there was a non-zero one.
     const message = err instanceof Error ? err.message : String(err);
-    const where = run.exitCode ? `exit ${run.exitCode}, ` : "";
-    return { findings: [], error: `parse: ${where}${message.slice(0, 200)}` };
+    return { findings: [], error: message.slice(0, 300) };
   }
-
-  // A completed scan that printed no report at all, under an exit code
-  // that is not one of the two "I ran" codes, did not run.
-  if (!run.stdout.trim() && run.exitCode !== null && run.exitCode > 1) {
-    return {
-      findings: [],
-      error: `osv-scanner exit ${run.exitCode}: ${run.stderr.trim().slice(-300)}`,
-    };
-  }
-
-  return { findings, error: null };
 }
 
 export const osvScanner: Adapter = {

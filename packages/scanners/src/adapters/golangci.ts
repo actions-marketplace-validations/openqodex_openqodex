@@ -39,7 +39,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { ARG_BUDGET_BYTES, describeFailure, execTool, splitArgs, stderrTail } from "../exec.js";
 import { openqodexHome } from "../toolchain/table.js";
 import type { Adapter } from "./index.js";
 
@@ -181,7 +181,10 @@ export async function runGolangci(args: GolangciRunArgs): Promise<AdapterResult>
   // clock ceiling as one.
   const deadline = started + GOLANGCI_TIMEOUT_MS;
   const findings: StaticFinding[] = [];
-  for (const group of running) {
+  // A module with more packages than one process may take as arguments runs
+  // once per chunk of packages, under the same deadline.
+  const runs = running.flatMap((group) => splitArgs(group.packages, ARG_BUDGET_BYTES).map((packages) => ({ group, packages })));
+  for (const { group, packages } of runs) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       notes.push(`timed out before module ${group.moduleRoot}`);
@@ -205,7 +208,7 @@ export async function runGolangci(args: GolangciRunArgs): Promise<AdapterResult>
       "--output.json.path=stdout",
       "--show-stats=false",
       "--enable=gosec",
-      ...group.packages,
+      ...packages,
     ];
     const cwd =
       group.moduleRoot === "."

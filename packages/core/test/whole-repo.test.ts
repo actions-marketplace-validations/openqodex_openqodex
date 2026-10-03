@@ -1,9 +1,10 @@
 // Ways the whole-repo scope (`review --all`) could fail, each one a test below:
 // 1. An untracked file is missing, or a gitignored file, an excluded file or
 //    the tool's own .openqodex/ folder is included.
-// 2. A line of a text file is missing from coverage (the last line without a
-//    trailing newline, above all), so a finding on it would be rejected and a
-//    scanner hit on it filtered out; or a binary file gets line coverage.
+// 2. A line count is short (the last line without a trailing newline, above
+//    all), so a finding on that line would be rejected; or a binary file gets
+//    a line count; or a set of every line number is built per file, which
+//    exhausts memory on a large repo.
 // 3. The id does not move after an edit that is not staged, an edit to an
 //    untracked file or a mode change, so finalize accepts findings written
 //    for code that has since changed; or it moves between two runs on the
@@ -11,8 +12,11 @@
 // 4. A file over the 5 MB cap is read whole into the scope instead of being
 //    listed as not reviewed.
 // 5. A repo with no commits fails instead of reviewing what is on disk.
+// 6. A tracked folder replaced by a symbolic link to a folder outside the
+//    repo brings the outside files into the scope, so their lines are
+//    reviewed and finalize accepts findings on them.
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -71,13 +75,14 @@ describe("getWholeRepo", () => {
     expect(whole.diff).toBe("");
   });
 
-  it("gives every line of every text file as coverage, the last line too, and none to a binary file", async () => {
+  it("counts every line of every text file, the last line too, gives none to a binary file and builds no line sets", async () => {
     const dir = repo();
     const whole = await getWholeRepo({ repoRoot: dir, exclude: [] });
-    expect([...(whole.coverage.get("notes/todo.txt") ?? [])]).toEqual([1, 2, 3]);
-    expect([...(whole.coverage.get("src/app.py") ?? [])]).toEqual([1, 2]);
-    expect(whole.coverage.has("logo.bin")).toBe(false);
+    expect(whole.lines.get("notes/todo.txt")).toBe(3);
+    expect(whole.lines.get("src/app.py")).toBe(2);
+    expect(whole.lines.has("logo.bin")).toBe(false);
     expect(whole.files.find((f) => f.path === "logo.bin")?.binary).toBe(true);
+    expect(whole.coverage.size).toBe(0);
     // .gitignore, notes/todo.txt, src/app.py, vendor/lib.js
     expect(whole.stats.additions).toBe(1 + 3 + 2 + 1);
   });
@@ -103,6 +108,18 @@ describe("getWholeRepo", () => {
     const whole = await getWholeRepo({ repoRoot: dir, exclude: [] });
     expect(whole.notReviewed).toEqual(["dump.sql"]);
     expect(whole.files.some((f) => f.path === "dump.sql")).toBe(false);
+  });
+
+  it("never reads a file through a folder that is a symbolic link to outside the repo", async () => {
+    const dir = repo();
+    const outside = mkdtempSync(join(tmpdir(), "oq-whole-outside-"));
+    roots.push(outside);
+    writeFileSync(join(outside, "app.py"), "secret = 1\n");
+    rmSync(join(dir, "src"), { recursive: true });
+    symlinkSync(outside, join(dir, "src"));
+    const whole = await getWholeRepo({ repoRoot: dir, exclude: [] });
+    expect(whole.files.some((f) => f.path.startsWith("src"))).toBe(false);
+    expect(whole.lines.has("src/app.py")).toBe(false);
   });
 
   it("reviews what is on disk in a repository with no commits", async () => {

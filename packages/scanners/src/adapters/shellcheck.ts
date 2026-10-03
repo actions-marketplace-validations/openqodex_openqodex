@@ -19,7 +19,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 
@@ -46,28 +46,32 @@ export async function runShellcheck(args: {
   // -f json gives the array form (not json1's wrapped object);
   // --severity=style emits every level so our mapping decides what
   // matters, not shellcheck.
-  const cliArgs = ["-f", "json", "--severity=style", "--", ...scripts];
+  const cliArgs = (files: string[]): string[] => ["-f", "json", "--severity=style", "--", ...files];
 
-  let stdout: string;
+  // One process per chunk of files, so a whole-repo file list stays under
+  // the argument limit; the findings of every chunk are merged.
+  const tool = args.tool;
   try {
-    stdout = await execShellcheck(args.tool, cliArgs, args.repoDir);
+    const findings = await runInChunks("shellcheck", scripts, SHELLCHECK_TIMEOUT_MS, async (chunk, left) => {
+      const stdout = await execShellcheck(tool, cliArgs(chunk), args.repoDir, left);
+      try {
+        return parseShellcheckJson(stdout);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`parse: ${message.slice(0, 200)}`);
+      }
+    });
+    return { findings, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
   }
-
-  try {
-    return { findings: parseShellcheckJson(stdout), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
-  }
 }
 
-async function execShellcheck(tool: ResolvedTool, cliArgs: string[], cwd: string): Promise<string> {
+async function execShellcheck(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
-    timeoutMs: SHELLCHECK_TIMEOUT_MS,
+    timeoutMs,
     maxBytes: SHELLCHECK_OUTPUT_MAX_BYTES,
     env: tool.env,
   });
