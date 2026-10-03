@@ -2,12 +2,27 @@
 // entries call before a shell command. `openqodex hook install|uninstall`:
 // the optional git pre-push hook, the gate that sees every real push.
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import type { ChangeScope } from "@openqodex/core";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { readText, sha256, writeAtomic, writeBackup } from "../agents/files.js";
+import { errorCode, readText, sha256, writeAtomic, writeBackup } from "../agents/files.js";
 import { gitPath, repoRootOf } from "../agents/git.js";
 import { ownedFile, type Action } from "../agents/plan.js";
 import { pushFolders } from "../agents/push-command.js";
@@ -197,6 +212,65 @@ async function pushedPairs(repoRoot: string, input: string, remoteName: string |
 // of a pushed commit in a temporary tree is judged by the same settings.
 const SETTINGS = [".openqodex.yaml", ".openqodex/config.yaml", ".openqodex/custom-instructions.md", ".openqodex/.gitignore"];
 
+// A settings file from the work tree, or null when it is absent or anything on
+// its path is a link: a link could pull a file from outside the repo.
+function readSetting(repoRoot: string, rel: string): string | null {
+  const parts = rel.split("/");
+  let at = repoRoot;
+  for (const part of parts.slice(0, -1)) {
+    at = join(at, part);
+    try {
+      if (lstatSync(at).isSymbolicLink()) return null;
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return null;
+      throw error;
+    }
+  }
+  let fd: number;
+  try {
+    fd = openSync(join(repoRoot, rel), constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT" || errorCode(error) === "ELOOP") return null;
+    throw error;
+  }
+  try {
+    return fstatSync(fd).isFile() ? readFileSync(fd, "utf8") : null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Puts `text` at `rel` inside the temporary checkout, or removes what is there
+// when `text` is null, never through a link: the pushed commit decides what
+// the checkout holds, and a link in it could point anywhere. A link or a file
+// where a folder belongs is removed itself (never its target) and, when the
+// file is written, replaced by a real folder.
+function placeSetting(tree: string, rel: string, text: string | null): void {
+  const parts = rel.split("/");
+  let at = tree;
+  for (const part of parts.slice(0, -1)) {
+    at = join(at, part);
+    let found = true;
+    try {
+      if (!lstatSync(at).isDirectory()) {
+        unlinkSync(at);
+        found = false;
+      }
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") throw error;
+      found = false;
+    }
+    if (!found) {
+      if (text === null) return;
+      mkdirSync(at);
+    }
+  }
+  const path = join(tree, rel);
+  // rmSync removes a link itself and never follows one inside a folder it removes.
+  rmSync(path, { recursive: true, force: true });
+  if (text !== null) writeFileSync(path, text, { flag: "wx" });
+}
+
 async function scanIn(cwd: string, scope: ChangeScope): Promise<number> {
   const [{ runScan }, { parseFlags }] = await Promise.all([import("./scan.js"), import("../flags.js")]);
   try {
@@ -217,11 +291,7 @@ async function scanCommit(repoRoot: string, sha: string, scope: ChangeScope): Pr
       process.stderr.write(`openqodex hook pre-push: could not check out ${sha} to scan it\n`);
       return EXIT_TOOL_FAILED;
     }
-    for (const rel of SETTINGS) {
-      const text = readText(join(repoRoot, rel));
-      if (text !== null) writeAtomic(join(tree, rel), text);
-      else rmSync(join(tree, rel), { force: true });
-    }
+    for (const rel of SETTINGS) placeSetting(tree, rel, readSetting(repoRoot, rel));
     return await scanIn(tree, scope);
   } finally {
     await gitOut(repoRoot, ["worktree", "remove", "--force", tree]);

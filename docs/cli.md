@@ -78,7 +78,7 @@ There is no scan-only report of the whole repository. With or without `--agent`,
 
 `review --finalize` then works as for a change; with `--all` and no path it finalizes the newest whole-repo run. A finding must name a file in the inventory and a line that exists in it, or finalize exits 2. Any edit to any file after the brief moves the review id, and finalize says the change moved. A whole-repo run keeps its own receipt in `.openqodex/latest-all.json`, so it never replaces the review of the change you are about to push.
 
-The brief includes `.openqodex/custom-instructions.md` when the repo has one; a file over 32 KB is refused, never cut. A scanner given more files than one process can take runs once per batch of files, within its usual time limit.
+The brief includes `.openqodex/custom-instructions.md` when the repo has one; a file over 32 KB is refused, never cut. The brief shows it to the agent as quoted text from the repository, because anyone who can commit can change it. It can widen or narrow what the agent flags, and a candidate dropped because of it says so in the report; it cannot make the agent run a command, skip a step or change the finding shape or the finalize step. A scanner given more files than one process can take runs once per batch of files, within its usual time limit.
 
 `--all` cannot be combined with `--base` or `--uncommitted`. The git hook and the GitHub Action never run it.
 
