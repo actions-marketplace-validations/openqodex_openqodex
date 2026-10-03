@@ -59,3 +59,40 @@ describe("pre-push hook settings copy", () => {
     expect(readdirSync(outside).sort()).toEqual([".gitignore", "config.yaml", "custom-instructions.md"]);
   });
 });
+
+// Run state under .openqodex (the receipts, the folder's .gitignore) is read
+// by every scan; a link there to an endless file would hang the push.
+const BOUNDED = 20_000;
+
+describe("pre-push hook with links in the run state", () => {
+  it("does not hang reading a pushed commit's .openqodex/latest.json that links to an endless file", () => {
+    const { dir, sha } = repoWithPushedCommit((d) => {
+      mkdirSync(join(d, ".openqodex"));
+      symlinkSync("/dev/zero", join(d, ".openqodex/latest.json"));
+      writeFileSync(join(d, "app/added.py"), "def added():\n    return 1\n");
+    });
+    const push = run("hook-links-pushed-latest", dir, ["hook", "pre-push", "origin"], { input: `refs/heads/pushed ${sha} refs/heads/pushed ${ZERO}\n`, timeout: BOUNDED });
+    expect(push.status).toBe(0);
+  });
+
+  it("refuses a .openqodex/.gitignore in the checkout that links outside, in one line, and leaves its target alone", () => {
+    const outside = outsideFolder();
+    const before = inventory(outside, true);
+    const dir = baseline();
+    mkdirSync(join(dir, ".openqodex"));
+    symlinkSync(join(outside, ".gitignore"), join(dir, ".openqodex/.gitignore"));
+    const push = run("hook-links-checkout-gitignore", dir, ["hook", "pre-push"], { input: "", timeout: BOUNDED });
+    expect(push.status).toBe(2);
+    expect(push.stderr).toContain(".gitignore is a symbolic link");
+    expect(inventory(outside, true)).toEqual(before);
+  });
+
+  it("does not hang reading a .openqodex/latest.json in the checkout that links to an endless file", () => {
+    const dir = baseline();
+    mkdirSync(join(dir, ".openqodex"));
+    symlinkSync("/dev/zero", join(dir, ".openqodex/latest.json"));
+    writeFileSync(join(dir, "app/added.py"), "def added():\n    return 1\n");
+    const push = run("hook-links-checkout-latest", dir, ["hook", "pre-push"], { input: "", timeout: BOUNDED });
+    expect(push.status).toBe(0);
+  });
+});

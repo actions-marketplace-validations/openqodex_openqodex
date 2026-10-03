@@ -343,8 +343,7 @@ function findRun(repoRoot: string, path: string | undefined, all: boolean): { di
   let dir: string;
   let findingsPath: string;
   if (path === undefined) {
-    const latestAll = join(repoRoot, STATE_DIR, LATEST_ALL_FILE);
-    const latest = all ? (existsSync(latestAll) ? (readJsonFile(latestAll, "whole-repo receipt") as Latest) : null) : readLatest(repoRoot);
+    const latest = readLatest(repoRoot, all);
     if (latest === null || typeof latest.dir !== "string") {
       throw new OpenQodexError(`no review brief found in this repository; ${RUN_AGAIN}`);
     }

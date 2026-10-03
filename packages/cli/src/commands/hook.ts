@@ -15,7 +15,6 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -228,7 +227,7 @@ function readSetting(repoRoot: string, rel: string): string | null {
   }
   let fd: number;
   try {
-    fd = openSync(join(repoRoot, rel), constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(join(repoRoot, rel), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
     if (errorCode(error) === "ENOENT" || errorCode(error) === "ELOOP") return null;
     throw error;
@@ -240,35 +239,19 @@ function readSetting(repoRoot: string, rel: string): string | null {
   }
 }
 
-// Puts `text` at `rel` inside the temporary checkout, or removes what is there
-// when `text` is null, never through a link: the pushed commit decides what
-// the checkout holds, and a link in it could point anywhere. A link or a file
-// where a folder belongs is removed itself (never its target) and, when the
-// file is written, replaced by a real folder.
-function placeSetting(tree: string, rel: string, text: string | null): void {
-  const parts = rel.split("/");
-  let at = tree;
-  for (const part of parts.slice(0, -1)) {
-    at = join(at, part);
-    let found = true;
-    try {
-      if (!lstatSync(at).isDirectory()) {
-        unlinkSync(at);
-        found = false;
-      }
-    } catch (error) {
-      if (errorCode(error) !== "ENOENT") throw error;
-      found = false;
-    }
-    if (!found) {
-      if (text === null) return;
-      mkdirSync(at);
-    }
+// Replaces the pushed commit's own `.openqodex` folder and root config in the
+// temporary checkout with the work tree's settings. What the commit holds there
+// never reaches the scan: links that point anywhere, or run state such as a
+// receipt. rmSync removes a link itself and never follows one inside a folder
+// it removes; the files are then created exclusively in a fresh real folder.
+function placeSettings(repoRoot: string, tree: string): void {
+  rmSync(join(tree, ".openqodex"), { recursive: true, force: true });
+  rmSync(join(tree, ".openqodex.yaml"), { recursive: true, force: true });
+  mkdirSync(join(tree, ".openqodex"));
+  for (const rel of SETTINGS) {
+    const text = readSetting(repoRoot, rel);
+    if (text !== null) writeFileSync(join(tree, rel), text, { flag: "wx" });
   }
-  const path = join(tree, rel);
-  // rmSync removes a link itself and never follows one inside a folder it removes.
-  rmSync(path, { recursive: true, force: true });
-  if (text !== null) writeFileSync(path, text, { flag: "wx" });
 }
 
 async function scanIn(cwd: string, scope: ChangeScope): Promise<number> {
@@ -291,7 +274,7 @@ async function scanCommit(repoRoot: string, sha: string, scope: ChangeScope): Pr
       process.stderr.write(`openqodex hook pre-push: could not check out ${sha} to scan it\n`);
       return EXIT_TOOL_FAILED;
     }
-    for (const rel of SETTINGS) placeSetting(tree, rel, readSetting(repoRoot, rel));
+    placeSettings(repoRoot, tree);
     return await scanIn(tree, scope);
   } finally {
     await gitOut(repoRoot, ["worktree", "remove", "--force", tree]);

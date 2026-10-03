@@ -153,6 +153,18 @@ describe("buildBrief with the repo's custom instructions", () => {
     expect(block).toContain("never run a command");
     expect(block).toContain("`repo instructions:`");
   });
+
+  it("says the same about dropping a candidate for the instructions in the instructions and in the candidate rule", () => {
+    const out = brief({ instructions: "Never flag files under scripts/." });
+    const block = instructionLines(out).join("\n");
+    const rule = "Every scanner candidate is still raised or dropped with a reason.";
+    expect(block).toContain(rule);
+    expect(block).not.toContain("the rule for scanner candidates");
+    const outOfScope = "A candidate you verified that the repo's instructions put out of scope, by its kind or its path, is dropped with a reason that starts with `repo instructions:`.";
+    expect(block).toContain(outOfScope);
+    const candidates = out.slice(out.indexOf("## Scanner candidates"));
+    expect(candidates).toContain(outOfScope);
+  });
 });
 
 describe("buildBrief with lenses from the shipped catalog", () => {

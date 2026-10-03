@@ -14,7 +14,20 @@
 // Every write is a temp file in the same folder, then a rename, because an
 // agent may read a file while a second run writes it.
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import type { Latest, Report, RunManifest, ScanResult } from "./types.js";
 import { OpenQodexError } from "./types.js";
@@ -45,8 +58,9 @@ function writeAtomic(path: string, content: string): void {
   }
 }
 
-// A repo could ship .openqodex or .openqodex/reviews as a symlink and send
-// writes and pruning somewhere else; refuse before touching anything.
+// A repo could ship .openqodex, .openqodex/reviews or .openqodex/.gitignore as
+// a symlink and send reads, writes and pruning somewhere else; refuse before
+// touching anything.
 function refuseSymlink(path: string): void {
   let isLink = false;
   try {
@@ -54,12 +68,31 @@ function refuseSymlink(path: string): void {
   } catch {
     return; // not there yet
   }
-  if (isLink) throw new OpenQodexError(`${path} is a symbolic link; openqodex writes only to a real folder there`);
+  if (isLink) throw new OpenQodexError(`${path} is a symbolic link; openqodex writes only to a real file or folder there`);
+}
+
+// A file's text, or null when it is absent, a link or not a regular file. A
+// repo can commit any of these files as a link, and a link to an endless file
+// such as /dev/zero would hang the read.
+function readRegular(path: string): string | null {
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    return fstatSync(fd).isFile() ? readFileSync(fd, "utf8") : null;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function readJson<T>(path: string): T | null {
+  const text = readRegular(path);
+  if (text === null) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as T;
+    return JSON.parse(text) as T;
   } catch {
     return null;
   }
@@ -75,12 +108,8 @@ function ensureStateDir(repoRoot: string): string {
   refuseSymlink(join(dir, "reviews"));
   mkdirSync(dir, { recursive: true });
   const ignore = join(dir, ".gitignore");
-  let current: string | null = null;
-  try {
-    current = readFileSync(ignore, "utf8");
-  } catch {
-    // not there yet
-  }
+  refuseSymlink(ignore);
+  const current = readRegular(ignore);
   // Written when missing, and rewritten once from the Day 0 "*"; a file the
   // team edited is theirs.
   if (current === null || current === DAY0_GITIGNORE) writeAtomic(ignore, STATE_GITIGNORE);
@@ -200,8 +229,9 @@ export function writeLatestScan(repoRoot: string, latest: Latest): void {
   writeAtomic(join(ensureStateDir(repoRoot), "latest-scan.json"), json(latest));
 }
 
-export function readLatest(repoRoot: string): Latest | null {
-  return readJson<Latest>(join(repoRoot, STATE_DIR, "latest.json"));
+// The change review receipt, or with `all` the whole-repo one.
+export function readLatest(repoRoot: string, all = false): Latest | null {
+  return readJson<Latest>(join(repoRoot, STATE_DIR, all ? "latest-all.json" : "latest.json"));
 }
 
 export type RepoFiles = {
