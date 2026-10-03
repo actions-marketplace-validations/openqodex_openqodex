@@ -15,7 +15,9 @@ export type Target =
   // A section between the openqodex markers in a markdown file.
   // `replaces`: other sections we write that this one may replace when one
   // is found exactly as written, recorded or not.
-  | { kind: "md-section"; agent: AgentId; label: string; path: string; section: string; inRepo: boolean; replaces?: string[] };
+  | { kind: "md-section"; agent: AgentId; label: string; path: string; section: string; inRepo: boolean; replaces?: string[] }
+  // Rules merged into permissions.allow of a Claude Code settings file.
+  | { kind: "allow-rules"; agent: AgentId; label: string; path: string; rules: string[]; inRepo: boolean };
 
 export type HookHandler = { type: string; command: string; [key: string]: unknown };
 export type HookGroup = { matcher: string; hooks: HookHandler[]; [key: string]: unknown };
@@ -59,8 +61,9 @@ function hookGroup(file: string, runner: string): HookGroup {
 }
 
 // The skill's one paragraph for a copy installed by `npx skills add`, which
-// has no launcher of its own. A user-scope install drops it: its commands
-// already call the launcher.
+// has no launcher of its own. Both copies init writes drop it: a user-scope
+// skill's commands already call the launcher, and a project-scope skill keeps
+// the version the team committed.
 const LAUNCHER_PARAGRAPH = /^When the file `~\/\.openqodex\/bin\/openqodex` exists[^\n]*\n\n/m;
 const PINNED_NPX = /npx -y openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
 
@@ -68,8 +71,19 @@ const PINNED_NPX = /npx -y openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
 // becomes the quoted launcher, so the review runs whatever version the
 // launcher points at; project scope keeps the pin a team commits.
 function skill(version: string, user: boolean, runner: string): string {
-  const text = fill(readFileSync(assetPath("skills", "openqodex", "SKILL.md"), "utf8"), version);
-  return user ? text.replace(LAUNCHER_PARAGRAPH, "").replace(PINNED_NPX, () => runner) : text;
+  const text = fill(readFileSync(assetPath("skills", "openqodex", "SKILL.md"), "utf8"), version).replace(LAUNCHER_PARAGRAPH, "");
+  return user ? text.replace(PINNED_NPX, () => runner) : text;
+}
+
+// The commands the skill tells the agent to run, allowed in Claude Code
+// without a prompt. A Bash rule matches the command text as written, so each
+// rule starts with the runner exactly as the skill writes it. Not `trust`
+// (approving a custom scanner stays the developer's decision), `update`,
+// `init` or `report`.
+const ALLOWED_COMMANDS = ["review", "scan", "doctor", "guide", "hook check"];
+
+export function allowRules(runner: string): string[] {
+  return ALLOWED_COMMANDS.map((c) => `Bash(${runner} ${c} *)`);
 }
 
 function fileTarget(agent: AgentId, label: string, path: string, content: string, inRepo: boolean, usesLauncher = false): Target {
@@ -128,6 +142,15 @@ export function targetsFor(args: {
         group: hookGroup("claude-code/settings-hook.json", runner),
         inRepo: !user,
         usesLauncher: user,
+      });
+      // After the hook: both change settings.json, and this one reads it at write time.
+      targets.push({
+        kind: "allow-rules",
+        agent,
+        label: "Claude Code permission rules",
+        path: at(".claude", "settings.json"),
+        rules: allowRules(runner),
+        inRepo: !user,
       });
       break;
     case "codex":

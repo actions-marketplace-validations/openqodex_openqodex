@@ -3,6 +3,7 @@
 // agent files stay out of the repo's git status; `--project` writes them into
 // the repo for a team to commit. Inside a repo it also asks about the git
 // pre-push hook and creates the two team files in `.openqodex/`.
+import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, repoStat } from "@openqodex/core";
@@ -14,7 +15,7 @@ import { loadRecord, saveRecord, serialize, withLock, type InstallRecord } from 
 import { INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, ROOT_CONFIG_NOTE } from "../agents/repo-folder.js";
 import { instructionSection, targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
-import { launcherPath, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, shQuote } from "../launcher.js";
+import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
 
 type HookChoice = "pre-push" | "none";
@@ -95,11 +96,21 @@ function setTeamChoice(record: InstallRecord, repo: string, write: boolean): voi
 // The team section in the repo's CLAUDE.md and AGENTS.md, planned apart from
 // the agents: it is the team's, not one agent's. A link on the way refuses
 // both files with the reason.
+// True when the repo's git ignore rules hide this untracked path: a section
+// written there would never show in git status to be committed.
+function ignoredByGit(repoRoot: string, path: string): boolean {
+  return spawnSync("git", ["check-ignore", "-q", "--", path], { cwd: repoRoot }).status === 0;
+}
+
 function planTeam(s: Setup, record: InstallRecord): Action[] {
   const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot };
   try {
     const actions: Action[] = [];
     for (const t of teamTargets(s.repoRoot!, s.version)) {
+      if (!s.flags.uninstall && ignoredByGit(s.repoRoot!, t.path)) {
+        actions.push({ verb: "skip", path: t.path, note: `team review section not written: ${relative(s.repoRoot!, t.path)} is in this repo's git ignore rules, so it could not be committed` });
+        continue;
+      }
       const a = s.flags.uninstall ? planUninstall(t, ctx) : planInstall(t, ctx);
       if (a) actions.push({ ...a, agent: undefined });
     }
@@ -135,7 +146,7 @@ type Setup = {
 };
 
 function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
-  const runner = s.flags.project ? `npx -y openqodex@${s.version}` : shQuote(launcherPath(s.oqHome));
+  const runner = s.flags.project ? `npx -y openqodex@${s.version}` : launcherRunner(launcherPath(s.oqHome));
   const targets: Target[] = [];
   const notes: string[] = [];
   const seen = new Set<string>();
@@ -143,9 +154,11 @@ function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
     const r = targetsFor({ agent, scope: s.scope, home: s.home, repoRoot: s.repoRoot, version: s.version, runner });
     notes.push(...r.skipped);
     for (const t of r.targets) {
-      // Two agents can share a project skill path (.agents/skills).
-      if (seen.has(t.path)) continue;
-      seen.add(t.path);
+      // Two agents can share a project skill path (.agents/skills); the hook
+      // and the permission rules share settings.json.
+      const key = `${t.kind} ${t.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       targets.push(t);
     }
   }

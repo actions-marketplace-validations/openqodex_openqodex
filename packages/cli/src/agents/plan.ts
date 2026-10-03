@@ -29,7 +29,11 @@ export type Action = {
 
 export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null };
 
-type Settings = { hooks?: { PreToolUse?: unknown[]; [k: string]: unknown }; [k: string]: unknown };
+type Settings = {
+  hooks?: { PreToolUse?: unknown[]; [k: string]: unknown };
+  permissions?: { allow?: unknown[]; [k: string]: unknown };
+  [k: string]: unknown;
+};
 
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -49,6 +53,10 @@ function parseSettings(text: string): Settings | string {
     return "does not parse as JSON";
   }
   if (!isObject(data)) return "is not a JSON object";
+  if (data.permissions !== undefined) {
+    if (!isObject(data.permissions)) return '"permissions" is not an object';
+    if (data.permissions.allow !== undefined && !Array.isArray(data.permissions.allow)) return '"permissions.allow" is not a list';
+  }
   if (data.hooks !== undefined) {
     if (!isObject(data.hooks)) return '"hooks" is not an object';
     const pre = data.hooks.PreToolUse;
@@ -75,6 +83,28 @@ function removeGroups(data: Settings, entries: unknown[]): number {
   else delete data.hooks!.PreToolUse;
   if (Object.keys(data.hooks!).length === 0) delete data.hooks;
   return removed;
+}
+
+// Removes one entry of each rule from permissions.allow; drops the list and
+// the object when left empty.
+function removeAllow(data: Settings, rules: string[]): void {
+  const allow = data.permissions?.allow;
+  if (!allow) return;
+  const left = [...allow];
+  for (const rule of rules) {
+    const i = left.indexOf(rule);
+    if (i !== -1) left.splice(i, 1);
+  }
+  if (left.length > 0) data.permissions!.allow = left;
+  else delete data.permissions!.allow;
+  if (Object.keys(data.permissions!).length === 0) delete data.permissions;
+}
+
+// The permission rules that are ours in this settings file: the recorded
+// ones, or in project scope on a machine with no record, the ones init writes.
+function ourRules(ctx: Ctx, path: string, fallback: string[]): string[] {
+  const recs = ctx.record.allowRules.filter((r) => r.path === path).map((r) => r.rule);
+  return recs.length > 0 ? recs : ctx.scope === "project" ? fallback : [];
 }
 
 // Removes the file, then its folder when the folder is named openqodex and
@@ -204,6 +234,31 @@ export function planInstall(t: Target, ctx: Ctx): Action {
         },
       };
     }
+    case "allow-rules": {
+      const data = before === null ? {} : parseSettings(before);
+      if (typeof data === "string") return { ...base, verb: "refuse", failed: true, note: `${t.label}: the file ${data}; left untouched` };
+      const have = (data.permissions?.allow ?? []) as unknown[];
+      const missing = t.rules.filter((r) => !have.includes(r));
+      if (missing.length === 0) return { ...base, verb: "skip", note: `${t.label} already present` };
+      // No guard: the hook target writes the same file just before, so this
+      // reads the file again when it writes.
+      return {
+        path: t.path,
+        agent: t.agent,
+        verb: "merge",
+        note: `${t.label}: Claude Code runs these without asking: ${missing.join(", ")}`,
+        apply: () => {
+          const text = readText(t.path);
+          const now = text === null ? {} : parseSettings(text);
+          if (typeof now === "string") throw new Error(`the file ${now}`);
+          const allow = (now.permissions?.allow ?? []) as unknown[];
+          const add = t.rules.filter((r) => !allow.includes(r));
+          now.permissions = { ...now.permissions, allow: [...allow, ...add] };
+          writeAtomic(t.path, json(now), t.inRepo ? 0o644 : 0o600);
+          for (const rule of add) record.allowRules.push({ path: t.path, rule });
+        },
+      };
+    }
     case "md-section": {
       const rec = record.sections.find((s) => s.path === t.path);
       const section = t.section;
@@ -301,6 +356,9 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
           : null;
       }
       const candidates = [...recs.map((r) => r.entry), ...(recs.length === 0 && scope === "project" ? [t.group] : [])];
+      // Our permission rules in the same file go too, so the file can match
+      // its copy from before install.
+      removeAllow(data, ourRules(ctx, t.path, []));
       if (removeGroups(data, candidates) === 0) {
         forget();
         return recs.length > 0 ? { ...base, verb: "keep", note: `${t.label} was edited after install; left in place` } : null;
@@ -343,6 +401,42 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         apply: () => {
           writeAtomic(t.path, json(data));
           dropBackup();
+          forget();
+        },
+      };
+    }
+    case "allow-rules": {
+      const rules = ourRules(ctx, t.path, t.rules);
+      const forget = (): void => {
+        record.allowRules = record.allowRules.filter((r) => r.path !== t.path);
+      };
+      if (rules.length === 0 || before === null) {
+        forget();
+        return null;
+      }
+      const data = parseSettings(before);
+      if (typeof data === "string") return { ...base, verb: "refuse", failed: true, note: `${t.label}: the file ${data}; left untouched` };
+      if (!rules.some((r) => (data.permissions?.allow ?? []).includes(r))) {
+        forget();
+        return null;
+      }
+      const created = record.hooks.some((h) => h.path === t.path && h.createdFile) || (scope === "project" && record.hooks.every((h) => h.path !== t.path));
+      return {
+        path: t.path,
+        agent: t.agent,
+        verb: "update",
+        note: `${t.label} removed: ${rules.join(", ")}`,
+        apply: () => {
+          const text = readText(t.path);
+          const now = text === null ? null : parseSettings(text);
+          if (typeof now === "string") throw new Error(`the file ${now}`);
+          // The hook's removal may already have taken the rules out, or put
+          // the file back as it was: then there is nothing to write.
+          if (now !== null && rules.some((r) => (now.permissions?.allow ?? []).includes(r))) {
+            removeAllow(now, rules);
+            if (created && Object.keys(now).length === 0) removeFile(t.path);
+            else writeAtomic(t.path, json(now));
+          }
           forget();
         },
       };
