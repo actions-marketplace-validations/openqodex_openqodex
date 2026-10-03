@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import type { Report, ReportFinding } from "../types.js";
+import type { ImpactEdge, Report, ReportFinding } from "../types.js";
 import {
   SEVERITIES_DESC,
   candidateLocation,
@@ -21,10 +21,30 @@ function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>): 
   return lines;
 }
 
+// The code graph's one line under the verdict; null when the graph was off.
+// The markdown report prints the same line.
+export function impactLine(report: Report): string | null {
+  const impact = report.impact;
+  if (!impact || impact.status === "off") return null;
+  if (impact.status === "skipped" || impact.status === "failed") {
+    return `Blast radius: not traced, ${impact.status === "failed" ? "the code graph failed" : "skipped"} (${impact.reasons[0] ?? impact.status})`;
+  }
+  const last = (edges: ImpactEdge[]) => edges[edges.length - 1] as ImpactEdge;
+  const callers = new Set(impact.callers.map((p) => last(p.edges).from)).size;
+  const files = new Set(impact.callers.flatMap((p) => last(p.edges).sites.map((s) => s.file))).size;
+  const parts = [`${impact.touched.length} ${impact.touched.length === 1 ? "symbol" : "symbols"} touched`];
+  if (impact.removed.length > 0) parts.push(`${impact.removed.length} removed`);
+  parts.push(`${callers} ${callers === 1 ? "caller" : "callers"} in ${files} ${files === 1 ? "file" : "files"}`);
+  const partial = impact.status === "partial" ? ", partial graph" : "";
+  return `Blast radius: risk ${impact.risk ?? "none"} (${parts.join(", ")}${partial})`;
+}
+
 export function renderTerminal(report: Report, opts: { color: boolean }): string {
   const c = pc.createColors(opts.color);
   const verdict = verdictLine(report);
   const out: string[] = [report.verdict === "blocked" ? c.red(c.bold(verdict)) : c.green(c.bold(verdict))];
+  const risk = impactLine(report);
+  if (risk) out.push(display(risk));
 
   for (const severity of SEVERITIES_DESC) {
     const group = report.findings.filter((f) => f.severity === severity);

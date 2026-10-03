@@ -24,7 +24,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 import { withOwnedConfig } from "./owned-config.js";
@@ -54,15 +54,20 @@ export async function runOxlint(args: {
     // running on the developer's machine. Reproduced with oxlint 1.71.0.
     // --format=json: the stable machine shape. Changed files are passed
     // positionally so it lints only those.
+    // One process per chunk of files, so a whole-repo file list stays under
+    // the argument limit; the findings of every chunk are merged.
     return await withOwnedConfig("oxlintrc.json", "{}\n", async (configPath) => {
-      const cliArgs = ["-c", configPath, "--disable-nested-config", "--format=json", "--", ...jsFiles];
-      const stdout = await execOxlint(tool, cliArgs, args.repoDir);
-      try {
-        return { findings: parseOxlintJson(stdout), error: null };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { findings: [], error: `parse: ${message.slice(0, 200)}` };
-      }
+      const findings = await runInChunks("oxlint", jsFiles, OXLINT_TIMEOUT_MS, async (chunk, left) => {
+        const cliArgs = ["-c", configPath, "--disable-nested-config", "--format=json", "--", ...chunk];
+        const stdout = await execOxlint(tool, cliArgs, args.repoDir, left);
+        try {
+          return parseOxlintJson(stdout);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`parse: ${message.slice(0, 200)}`);
+        }
+      });
+      return { findings, error: null };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -70,10 +75,10 @@ export async function runOxlint(args: {
   }
 }
 
-async function execOxlint(tool: ResolvedTool, cliArgs: string[], cwd: string): Promise<string> {
+async function execOxlint(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
-    timeoutMs: OXLINT_TIMEOUT_MS,
+    timeoutMs,
     maxBytes: OXLINT_OUTPUT_MAX_BYTES,
     env: tool.env,
   });

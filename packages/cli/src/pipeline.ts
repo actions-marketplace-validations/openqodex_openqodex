@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  STATE_DIR,
   findRepoRoot,
   getChange,
   loadConfig,
@@ -13,9 +14,12 @@ import {
   renderSarif,
   renderTerminal,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, Report, ScanResult, ScannerSource } from "@openqodex/core";
+import type { Change, ChangeScope, Config, HotSpot, ImpactSummary, Report, ScanResult, ScannerSource } from "@openqodex/core";
+import { buildGraph, detectImpact, emptyImpact, hotSymbols, langOf } from "@openqodex/graph";
+import type { Graph } from "@openqodex/graph";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
 import { EXIT_FINDINGS, EXIT_OK } from "./exit-codes.js";
+import { noteScan } from "./feedback.js";
 import type { GlobalFlags } from "./flags.js";
 
 export const INSTALL_BUDGET_MS = 45_000;
@@ -53,16 +57,30 @@ export async function runPipeline(args: {
   only?: ScannerSource[];
   skip?: ScannerSource[];
 }): Promise<PipelineResult> {
-  const { flags } = args;
-  const { repoRoot, config } = await loadRepo(flags);
-  const change = await getChange({ repoRoot, scope: args.scope, exclude: config.exclude });
+  const { repoRoot, config } = await loadRepo(args.flags);
+  const change = await getChange({ repoRoot, scope: args.scope, exclude: config.exclude, defaultBase: config.defaultBase });
+  return scanChange({ ...args, repoRoot, config, change });
+}
+
+// The scanners on a change already worked out. For the whole repository no
+// coverage is passed: every finding in a file of the inventory is kept.
+export async function scanChange<C extends Change>(args: {
+  repoRoot: string;
+  config: Config;
+  change: C;
+  wholeRepo?: boolean;
+  flags: GlobalFlags;
+  only?: ScannerSource[];
+  skip?: ScannerSource[];
+}): Promise<PipelineResult & { change: C }> {
+  const { repoRoot, config, change, flags } = args;
   if (change.files.length === 0) return { repoRoot, config, change, scan: null, secrets: [] };
 
   const onProgress = progress(flags);
   const { scan, secrets } = await runScanners({
     repoDir: repoRoot,
     changedPaths: change.changedPaths,
-    coverage: change.coverage,
+    coverage: args.wholeRepo ? undefined : change.coverage,
     config,
     resolveTool: createToolResolver({
       allowInstall: !flags.noInstall,
@@ -74,6 +92,7 @@ export async function runPipeline(args: {
     skip: args.skip,
     onProgress,
   });
+  noteScan(repoRoot, scan);
   return { repoRoot, config, change, scan: redactStored(scan, secrets), secrets };
 }
 
@@ -91,6 +110,79 @@ export function redactStored<T>(value: T, secrets: string[]): T {
     return v;
   };
   return secrets.length === 0 ? value : (walk(value, null) as T);
+}
+
+// The graph for this run, or the summary saying why there is none. For the
+// whole repo (no base) it reads only the inventory. Never
+// throws: a graph that cannot be built is reported as "failed" with one line
+// and the review goes on.
+async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean, withBase: boolean): Promise<Graph | ImpactSummary> {
+  if (noGraph) return emptyImpact("off", "--no-graph was given");
+  if (!p.config.graph.enabled) return emptyImpact("off", "graph.enabled is false in the config");
+  if (!p.change.files.some((f) => langOf(f.path) !== null || (f.oldPath !== null && langOf(f.oldPath) !== null))) {
+    return emptyImpact("skipped", `no ${withBase ? "changed " : ""}file is TypeScript, JavaScript, Python, Go or Ruby`);
+  }
+  try {
+    return await buildGraph({
+      repoRoot: p.repoRoot,
+      files: withBase ? p.change.changedPaths : undefined,
+      only: withBase ? undefined : p.change.changedPaths,
+      budgetMs: p.config.graph.budgetMs,
+      maxFiles: p.config.graph.maxFiles,
+      maxFileBytes: p.config.graph.maxFileBytes,
+      cacheDir: join(p.repoRoot, STATE_DIR, "graph"),
+      onProgress: progress(flags),
+      base: withBase ? { sha: p.change.baseSha, files: p.change.files } : undefined,
+    });
+  } catch (error) {
+    const reason = ((error as Error).message ?? String(error)).split("\n")[0] ?? "unknown error";
+    warn(`openqodex: the code graph could not be built: ${reason}`);
+    return emptyImpact("failed", reason);
+  }
+}
+
+const isGraph = (g: Graph | ImpactSummary): g is Graph => "nodes" in g;
+
+// The code graph's view of the change.
+export async function buildImpact(p: PipelineResult, flags: GlobalFlags, noGraph: boolean): Promise<ImpactSummary> {
+  const graph = await graphFor(p, flags, noGraph, true);
+  return isGraph(graph) ? redactStored(detectImpact(graph, p.change), p.secrets) : graph;
+}
+
+const HOT_SYMBOLS = 20;
+const SITES_PER_HOT_SYMBOL = 3;
+
+// For the whole repository: every file is touched, so the impact of the
+// change would list everything. The graph is built once (which also warms
+// its cache for later change reviews), the impact is taken over an empty
+// change for its build counts, and the most-called symbols say where to start.
+export async function buildHotSpots(
+  p: PipelineResult,
+  flags: GlobalFlags,
+  noGraph: boolean,
+): Promise<{ impact: ImpactSummary; hot: HotSpot[]; note: string | null }> {
+  const graph = await graphFor(p, flags, noGraph, false);
+  if (!isGraph(graph)) {
+    const lead = graph.status === "off" ? "The code graph is off" : graph.status === "skipped" ? "The code graph was skipped" : "The code graph could not be built";
+    return { impact: graph, hot: [], note: `${lead}: ${graph.reasons.join("; ")}. Find the most-used code with your own tools.` };
+  }
+  const impact = redactStored(detectImpact(graph, { files: [], coverage: new Map() }), p.secrets);
+  const hot = hotSymbols(graph, HOT_SYMBOLS).map((h) => ({
+    name: h.symbol.name,
+    kind: h.symbol.kind,
+    file: h.symbol.file,
+    line: h.symbol.startLine,
+    callers: h.callers,
+    sites: (graph.in.get(h.symbol.id) ?? [])
+      .flatMap((e) => e.sites)
+      .slice(0, SITES_PER_HOT_SYMBOL)
+      .map((s) => `${s.file}:${s.line}`),
+  }));
+  const note =
+    impact.status === "partial"
+      ? `The graph is partial: ${impact.reasons.join("; ")}. Callers in the files left out are missing from the counts.`
+      : null;
+  return { impact, hot: redactStored(hot, p.secrets), note };
 }
 
 export function nothingToReview(change: Change): number {

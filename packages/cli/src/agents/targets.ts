@@ -26,7 +26,25 @@ function template(...segments: string[]): string {
 }
 
 function fill(text: string, version: string): string {
-  return text.replaceAll("{{VERSION}}", () => version);
+  return text.replaceAll("{{VERSION}}", () => version).replaceAll("{{INSTRUCTIONS}}", () => instructionSection());
+}
+
+// The marked section that tells an agent to review with openqodex when a
+// feature or fix is done. The same text goes into every agent's global
+// instruction file, the project CLAUDE.md and AGENTS.md, and the Cursor and
+// Cline rules.
+export function instructionSection(): string {
+  return template("instructions-section.md").trimEnd();
+}
+
+function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
+  return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo };
+}
+
+// Codex reads its home folder from CODEX_HOME, ~/.codex by default.
+function codexHome(home: string): string {
+  const fromEnv = process.env.CODEX_HOME;
+  return fromEnv !== undefined && fromEnv !== "" ? fromEnv : join(home, ".codex");
 }
 
 // The hook group from a JSON template, with the command put in after
@@ -68,6 +86,11 @@ export function targetsFor(args: {
   switch (agent) {
     case "claude-code":
       targets.push(fileTarget(agent, "Claude Code skill", at(".claude", "skills", "openqodex", "SKILL.md"), skillText, !user));
+      targets.push(
+        user
+          ? sectionTarget(agent, "Claude Code global instructions", at(".claude", "CLAUDE.md"), false)
+          : sectionTarget(agent, "Claude Code project instructions", at("CLAUDE.md"), true),
+      );
       targets.push({
         kind: "hook-json",
         agent,
@@ -80,16 +103,11 @@ export function targetsFor(args: {
       break;
     case "codex":
       targets.push(fileTarget(agent, "Codex skill", at(".agents", "skills", "openqodex", "SKILL.md"), skillText, !user));
-      if (!user) {
-        targets.push({
-          kind: "md-section",
-          agent,
-          label: "Codex instructions",
-          path: at("AGENTS.md"),
-          section: fill(template("codex", "AGENTS-section.md"), version).trimEnd(),
-          inRepo: true,
-        });
-      }
+      targets.push(
+        user
+          ? sectionTarget(agent, "Codex global instructions", join(codexHome(home), "AGENTS.md"), false)
+          : sectionTarget(agent, "Codex instructions", at("AGENTS.md"), true),
+      );
       targets.push({
         kind: "hook-json",
         agent,

@@ -36,6 +36,11 @@ export async function trackedFiles(repoRoot: string): Promise<string[]> {
   return stdout.split("\0").filter((p) => p !== "");
 }
 
+// Whether git tracks this file: a team file that was committed stays on uninstall.
+export async function isTracked(repoRoot: string, file: string): Promise<boolean> {
+  return (await gitLine(repoRoot, ["ls-files", "--", relative(repoRoot, file)])) !== null;
+}
+
 // The line in .git/info/exclude that hides one repo file from git status.
 export function excludeLine(repoRoot: string, file: string): string {
   return `/${relative(repoRoot, file).split("\\").join("/")}`;

@@ -23,7 +23,13 @@ Run this in your own terminal, not inside the agent:
 npx openqodex init
 ```
 
-`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints each file it will write, then asks once. `--yes` skips the question. `agents` lists every file for each agent.
+`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints each file it will write, then asks once. `--yes` skips the questions. `agents` lists every file for each agent.
+
+Inside a repository, `init` also:
+
+- asks whether to add the git pre-push hook, so every push from that repository gets a scan, from an agent or by hand. The default is yes.
+- adds a short section to each agent's instruction file, such as `~/.claude/CLAUDE.md` for Claude Code: when a feature or fix is done, review it with openqodex in a separate subagent, so the agent that wrote the code does not judge its own work. It prints the section before writing it.
+- creates `.openqodex/config.yaml` and `.openqodex/custom-instructions.md`. Commit both. Write in `custom-instructions.md` what a reviewer of your repository must know: conventions, what never to flag, what always to check. The review brief carries it word for word.
 
 `init` also starts the scanner downloads that your repo needs, in the background. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
 
@@ -37,13 +43,21 @@ Say to your agent:
 review my change with openqodex
 ```
 
-The agent runs `openqodex review --agent`. That command works out the change, runs the scanners and prints a brief. The agent verifies each scanner finding, reviews the change itself, and writes its findings to a file. Then it runs `openqodex review --finalize`, which checks those findings without a model and writes the report.
+The agent hands the review to a separate subagent where it can, and tells you when it cannot. The reviewer runs `openqodex review --agent`. That command works out the change, runs the scanners and prints a brief. The agent verifies each scanner finding, reviews the change itself, and writes its findings to a file. Then it runs `openqodex review --finalize`, which checks those findings without a model and writes the report.
+
+To review the whole repository instead of one change, say:
+
+```
+review my whole repo with openqodex
+```
+
+The agent runs `openqodex review --all --agent`. The scanners check every file, and the brief tells the agent where to start: the most-called functions and the files with the most scanner hits. See `docs/cli.md` for the details.
 
 ## 3. Read the report
 
-The agent tells you the verdict and the most serious findings. The full report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/` ignores itself in git, so `git status` does not change.
+The agent tells you the verdict and the most serious findings. The full report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.
 
-The verdict is `passed` unless `.openqodex.yaml` sets `review.block_on_severity` and a finding meets it. With no config, OpenQodex warns and never blocks.
+The verdict is `passed` unless `.openqodex/config.yaml` sets `review.block_on_severity` and a finding meets it. With no config, OpenQodex warns and never blocks.
 
 ## Try it on the demo repo
 

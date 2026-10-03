@@ -9,7 +9,7 @@
 // under ~/.semgrep, outside the repo, and writes nothing into the working tree.
 
 import type { AdapterResult, ResolvedTool, StaticFinding } from "@openqodex/core";
-import { describeFailure, execTool, isOffline, stderrTail } from "../exec.js";
+import { describeFailure, execTool, runInChunks, isOffline, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 
@@ -54,7 +54,7 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
   if (skipped) return { findings: [], error: null, skipped };
   if (!args.tool) return { findings: [], error: "not installed" };
 
-  const cliArgs = [
+  const cliArgs = (files: string[]): string[] => [
     "scan",
     ...RULE_PACKS.flatMap((p) => ["--config", p]),
     "--json",
@@ -68,29 +68,33 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
     "--max-target-bytes",
     String(SEMGREP_MAX_TARGET_BYTES),
     "--",
-    ...targets,
+    ...files,
   ];
 
-  let stdout: string;
+  // One process per chunk of files, so a whole-repo file list stays under
+  // the argument limit; the findings of every chunk are merged.
+  const tool = args.tool;
   try {
-    stdout = await execSemgrep(args.tool, cliArgs, args.repoDir);
+    const findings = await runInChunks("semgrep", targets, SEMGREP_TIMEOUT_MS, async (chunk, left) => {
+      const stdout = await execSemgrep(tool, cliArgs(chunk), args.repoDir, left);
+      try {
+        return parseSemgrepJson(stdout);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`parse: ${message.slice(0, 200)}`);
+      }
+    });
+    return { findings, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
   }
-
-  try {
-    return { findings: parseSemgrepJson(stdout), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
-  }
 }
 
-async function execSemgrep(tool: ResolvedTool, cliArgs: string[], cwd: string): Promise<string> {
+async function execSemgrep(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
-    timeoutMs: SEMGREP_TIMEOUT_MS,
+    timeoutMs,
     // Semgrep prints findings as a single JSON blob on stdout; on
     // a large change with many matches the buffer must accommodate it.
     maxBytes: SEMGREP_OUTPUT_MAX_BYTES,

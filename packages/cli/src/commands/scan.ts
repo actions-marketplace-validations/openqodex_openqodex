@@ -1,7 +1,8 @@
 // `openqodex scan`: the scanners only, on the current change. Used by the
 // git hook, the Action and pre-commit, and by `review` without --agent.
 import { relative } from "node:path";
-import { openReportDir, scanReport, writeLatest, writeReportFiles, writeScan } from "@openqodex/core";
+import { openReportDir, scanReport, writeLatestScan, writeReportFiles, writeScan } from "@openqodex/core";
+import { announceRepoFiles } from "../agents/repo-folder.js";
 import type { ChangeScope, Report } from "@openqodex/core";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
@@ -33,13 +34,16 @@ export async function runScan(args: {
     only: scannerList("--only", args.only),
     skip: scannerList("--skip", args.skip),
   });
+  announceRepoFiles(p.repoRoot);
   if (p.scan === null) return { exitCode: nothingToReview(p.change), report: null, dir: null };
 
   const report = scanReport({ change: p.change, scan: p.scan, config: p.config });
   const dir = openReportDir(p.repoRoot, p.change.shortId);
   writeScan(dir, p.scan);
   writeReportFiles(dir, reportFiles(report));
-  writeLatest(p.repoRoot, {
+  // The scan receipt: the push gate reads only the review receipt, so a scan
+  // never makes it forget a finalized review of the same change.
+  writeLatestScan(p.repoRoot, {
     dir: relative(p.repoRoot, dir),
     change_id: p.change.id,
     kind: "scan",

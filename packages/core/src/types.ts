@@ -123,6 +123,10 @@ export type DiffCoverage = Map<string, Set<number>>;
 export type ChangeScope = {
   base?: string; // explicit ref
   uncommitted?: boolean; // diff against HEAD only
+  // Compare the tree to `base` itself, never its merge base with HEAD: the
+  // pre-push hook's remote tip, so a force push to an ancestor shows the
+  // code it removes.
+  exact?: boolean;
 };
 
 export type ChangedFile = {
@@ -181,17 +185,83 @@ export type CustomScanner = {
 
 export type Config = {
   blockOnSeverity: Severity | null; // null: warn only
+  severityThreshold: Severity; // findings below this stay out of the report, unless at or above blockOnSeverity; default "minor", as in the hosted product
   exclude: string[];
   disabledRules: string[];
+  defaultBase: string | null; // the branch or ref the default scope diffs against when there is no upstream; null: the remote's default branch
   includeFixtures: boolean;
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
+  graph: { enabled: boolean; budgetMs: number; maxFiles: number; maxFileBytes: number }; // the code graph in the brief; enabled by default
 };
 
 export type LoadedConfig = {
   config: Config;
   path: string | null; // null: no config file, defaults in use
   warnings: string[];
+};
+
+// ---------- code graph, as the report and the brief see it ----------
+// Serializable. The graph package builds it; the brief and the report show it.
+// Ids reference `symbols`. Counts describe what was observed, never what was
+// not seen. "ok" means the extraction finished, not that every call resolved.
+
+export type ImpactKind = "file" | "function" | "method" | "class" | "module" | "type";
+
+export type ImpactSymbol = {
+  id: string; // file, lexical owner, name and declaration position; unique in the graph
+  file: string;
+  name: string;
+  kind: ImpactKind;
+  startLine: number;
+  endLine: number;
+  snapshot: "base" | "current"; // "base" for a symbol that the change removed
+};
+
+export type ImpactSite = {
+  file: string;
+  line: number;
+  column: number;
+  confidence: "high" | "low";
+  // What proved the edge: a lexical or import binding, a receiver whose type
+  // is known, or a Ruby constant found by autoload convention.
+  evidence: "binding" | "receiver-type" | "autoload";
+};
+
+export type ImpactEdge = {
+  from: string; // symbol id
+  to: string; // symbol id
+  kind: "calls" | "inherits" | "imports";
+  sites: ImpactSite[]; // every site, never only the first
+};
+
+// A caller reached in one or two hops, with the actual edges walked.
+export type ImpactPath = {
+  seed: string; // the touched symbol id
+  edges: [ImpactEdge] | [ImpactEdge, ImpactEdge];
+};
+
+export type ImpactSummary = {
+  version: 1;
+  status: "ok" | "partial" | "off" | "skipped" | "failed";
+  reasons: string[]; // one plain line each when status is not "ok"
+  risk: "none" | "low" | "medium" | "high" | null; // null when the graph did not run
+  build: {
+    durationMs: number;
+    cacheHits: number;
+    eligibleFiles: number;
+    parsedFiles: number;
+    omittedFiles: number; // over the size cap, past the budget or the file cap
+    unresolvedSites: number; // call sites no rule could bind
+  };
+  symbols: ImpactSymbol[];
+  touched: string[]; // symbol ids whose span overlaps a changed line
+  removed: string[]; // symbol ids present in the base version of a changed file and gone now
+  callers: ImpactPath[];
+  callees: ImpactPath[];
+  importers: ImpactEdge[]; // files that import a changed file
+  hubs: { symbol: string; callers: number; sites: number; files: number }[];
+  truncated: { walk: boolean; inline: boolean; omittedSites: number | null };
 };
 
 // ---------- review ----------
@@ -224,6 +294,8 @@ export type AgentSubmission = {
   summary: string;
   findings: AgentFinding[];
   dropped?: { candidate: string; reason: string }[];
+  // Who reviewed: a separate subagent, or the agent that wrote the code.
+  reviewer?: "subagent" | "same-agent";
 };
 
 export type ReportFinding = {
@@ -256,6 +328,9 @@ export type Report = {
   // Findings on lines the developer changed. Only these and `not_reviewed`
   // count toward the verdict.
   findings: ReportFinding[];
+  // How many findings on changed lines were left out of `findings` because
+  // they sit below review.severity_threshold (and below block_on_severity).
+  below_threshold: number;
   // Findings whose file is not in the change or whose line range touches no
   // changed line. Shown, never counted toward the verdict.
   outside_change: ReportFinding[];
@@ -267,6 +342,9 @@ export type Report = {
   // review only: candidates the agent dropped, with its reason
   dropped: { candidate: Candidate; reason: string }[];
   scanners: ScannerRunSummary[];
+  // The code graph's view of the change. Always present: status "off",
+  // "skipped" or "failed" says why there is nothing in it.
+  impact: ImpactSummary | null;
   not_reviewed_paths: string[]; // Change.notReviewed
   stats: { files: number; additions: number; deletions: number };
 };
@@ -275,11 +353,14 @@ export type Report = {
 // `review --finalize` so a review is bound to the change, the config and the
 // scan it was briefed on.
 export type RunManifest = {
-  version: 1;
+  version: 1 | 2; // 2: the submission must name its reviewer
   change_id: string;
   config_hash: string; // sha256 of the canonical JSON of the effective Config
   created_at: string;
   lenses: { name: string; confidenceFloor: number }[];
+  // sha256 of .openqodex/custom-instructions.md as the brief read it, null
+  // when there was none; absent in runs made before the field existed.
+  instructions_hash?: string | null;
 };
 
 // What the agent hook does. It never allows: allowing would skip the

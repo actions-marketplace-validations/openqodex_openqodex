@@ -54,6 +54,9 @@ export function makeChange(over: Partial<Change> = {}): Change {
 export function makeConfig(over: Partial<Config> = {}): Config {
   return {
     blockOnSeverity: null,
+    severityThreshold: "info",
+    defaultBase: null,
+    graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024 },
     exclude: [],
     disabledRules: [],
     includeFixtures: false,

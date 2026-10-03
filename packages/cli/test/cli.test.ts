@@ -103,6 +103,16 @@ function status(cwd: string): string {
   return git(cwd, ["status", "--porcelain", "--untracked-files=all"]);
 }
 
+// The repo folder's .gitignore and two team files, meant to be committed, are
+// the only change a first review or scan makes to git status.
+const TEAM_FILES = ["?? .openqodex/.gitignore", "?? .openqodex/config.yaml", "?? .openqodex/custom-instructions.md"];
+
+function statusBesideTeamFiles(cwd: string): string {
+  const lines = status(cwd).split("\n");
+  for (const f of TEAM_FILES) expect(lines).toContain(f);
+  return lines.filter((l) => !TEAM_FILES.includes(l)).join("\n");
+}
+
 // A repo with one commit and an uncommitted change to app.py (lines 2 and 3)
 // plus one untracked file.
 function repoWithChange(config?: string): string {
@@ -118,8 +128,9 @@ function repoWithChange(config?: string): string {
   return dir;
 }
 
-function latestDir(repo: string): string {
-  const latest = JSON.parse(readFileSync(join(repo, ".openqodex", "latest.json"), "utf8")) as { dir: string };
+// The newest review's folder, or with `receipt` "latest-scan.json" the newest scan's.
+function latestDir(repo: string, receipt = "latest.json"): string {
+  const latest = JSON.parse(readFileSync(join(repo, ".openqodex", receipt), "utf8")) as { dir: string };
   return join(repo, latest.dir);
 }
 
@@ -148,7 +159,7 @@ function finding(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 function submit(dir: string, changeId: string, findings: unknown[], extra: Record<string, unknown> = {}): void {
-  const body = { version: 1, change_id: changeId, summary: "Checked.", findings, ...extra };
+  const body = { version: 1, change_id: changeId, summary: "Checked.", reviewer: "subagent", findings, ...extra };
   writeFileSync(join(dir, "agent-findings.json"), JSON.stringify(body));
 }
 
@@ -174,7 +185,7 @@ describe("frame", () => {
     expect(r.stderr).toContain("not a git repository");
   });
 
-  it("an empty change scans, writes state or exits non-zero", () => {
+  it("an empty change scans, writes run state or exits non-zero", () => {
     const repo = repoWithChange();
     git(repo, ["add", "-A"]);
     git(repo, ["commit", "--quiet", "-m", "all"]);
@@ -183,12 +194,13 @@ describe("frame", () => {
       expect(r.code).toBe(0);
       expect(r.stderr).toContain("Nothing to review: no changes against HEAD");
     }
-    expect(existsSync(join(repo, ".openqodex"))).toBe(false);
+    // Only the team files a first run creates; no report, no receipt.
+    expect(readdirSync(join(repo, ".openqodex")).sort()).toEqual([".gitignore", "config.yaml", "custom-instructions.md"]);
   });
 });
 
 describe("review --agent and --finalize", () => {
-  it("review --agent misses a run file or changes git status", () => {
+  it("review --agent misses a run file or changes git status beyond the team files", () => {
     const repo = repoWithChange();
     const before = status(repo);
     const r = cli(["review", "--agent", "--no-install"], repo);
@@ -208,10 +220,10 @@ describe("review --agent and --finalize", () => {
     // change needs is reported as not installed, and none of them ran.
     expect(scan.scanners.some((s) => s.status === "not_installed")).toBe(true);
     expect(scan.scanners.filter((s) => s.status === "ran")).toEqual([]);
-    expect(status(repo)).toBe(before);
+    expect(statusBesideTeamFiles(repo)).toBe(before);
   });
 
-  it("a valid submission is refused, or an off-change finding counts, or git status changes", () => {
+  it("a valid submission is refused, or an off-change finding counts, or git status changes beyond the team files", () => {
     const repo = repoWithChange();
     const before = status(repo);
     const { dir, changeId } = brief(repo);
@@ -234,7 +246,7 @@ describe("review --agent and --finalize", () => {
       verdict: string;
     };
     expect(latest).toMatchObject({ finalized: true, verdict: "passed" });
-    expect(status(repo)).toBe(before);
+    expect(statusBesideTeamFiles(repo)).toBe(before);
   });
 
   it("finalize with a path picks a newer run of the same change instead of the path's own run", () => {
@@ -353,7 +365,8 @@ describe("review --agent and --finalize", () => {
   it("a config changed after the brief still finalizes", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
-    writeFileSync(join(repo, ".openqodex.yaml"), "version: 1\nreview:\n  block_on_severity: major\n");
+    // The first brief created .openqodex/config.yaml, the file now in use.
+    writeFileSync(join(repo, ".openqodex/config.yaml"), "version: 1\nreview:\n  block_on_severity: major\n");
     submit(dir, changeId, [finding()]);
     const r = cli(["review", "--finalize"], repo);
     expect(r.code).toBe(2);
@@ -385,23 +398,23 @@ describe("review --agent and --finalize", () => {
 });
 
 describe("scan", () => {
-  it("scan misses a report file or changes git status", () => {
+  it("scan misses a report file or changes git status beyond the team files", () => {
     const repo = repoWithChange();
     const before = status(repo);
     const r = cli(["scan", "--no-install", "--format", "json"], repo);
     expect(r.code).toBe(0);
     expect((JSON.parse(r.stdout) as { kind: string }).kind).toBe("scan");
-    const dir = latestDir(repo);
+    const dir = latestDir(repo, "latest-scan.json");
     for (const f of ["scan.json", "report.md", "report.json", "report.sarif"]) {
       expect(existsSync(join(dir, f)), f).toBe(true);
     }
-    expect(status(repo)).toBe(before);
+    expect(statusBesideTeamFiles(repo)).toBe(before);
   });
 
   it("scan leaves a copy of the diff in the report folder", () => {
     const repo = repoWithChange();
     expect(cli(["scan", "--no-install"], repo).code).toBe(0);
-    expect(existsSync(join(latestDir(repo), "change.diff"))).toBe(false);
+    expect(existsSync(join(latestDir(repo, "latest-scan.json"), "change.diff"))).toBe(false);
   });
 
   it("--output writes through a symbolic link and truncates its target", () => {

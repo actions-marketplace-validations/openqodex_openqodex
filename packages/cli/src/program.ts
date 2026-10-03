@@ -1,6 +1,8 @@
+import { resolve } from "node:path";
 import { Command, CommanderError } from "commander";
 import { OpenQodexError } from "@openqodex/core";
 import { EXIT_TOOL_FAILED } from "./exit-codes.js";
+import { noteInternalError, offer, takePending } from "./feedback.js";
 
 type CommandModule = { run: (args: string[]) => Promise<number> };
 
@@ -14,17 +16,28 @@ const commands: Record<string, { summary: string; load: () => Promise<CommandMod
   trust: { summary: "Approve a custom scanner from .openqodex.yaml", load: () => import("./commands/trust.js") },
   guide: { summary: "Print the docs", load: () => import("./commands/guide.js") },
   demo: { summary: "Build the demo repo with planted bugs", load: () => import("./commands/demo.js") },
+  report: { summary: "Report a problem with OpenQodex as a GitHub issue", load: () => import("./commands/report.js") },
 };
+
+// The hook check must stay silent, and report shows its own offer.
+const NO_OFFER = new Set(["hook", "report"]);
+
+function cwdOf(args: string[]): string {
+  const i = args.findIndex((a) => a === "--cwd" || a.startsWith("--cwd="));
+  const value = i === -1 ? undefined : args[i].startsWith("--cwd=") ? args[i].slice(6) : args[i + 1];
+  return resolve(value ?? process.cwd());
+}
 
 // An input or usage problem prints its one line. Anything else is a bug in
 // OpenQodex: one line, with the stack only under --verbose.
-function reportError(error: unknown, verbose: boolean): number {
+function reportError(error: unknown, command: string, args: string[]): number {
   if (error instanceof OpenQodexError) {
     process.stderr.write(`openqodex: ${error.message}\n`);
   } else {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`openqodex failed: ${message}\n`);
-    if (verbose && error instanceof Error && error.stack) process.stderr.write(`${error.stack}\n`);
+    if (args.includes("--verbose") && error instanceof Error && error.stack) process.stderr.write(`${error.stack}\n`);
+    noteInternalError(command, args, error);
   }
   return EXIT_TOOL_FAILED;
 }
@@ -42,12 +55,15 @@ export async function main(argv: string[]): Promise<void> {
       .allowUnknownOption()
       .allowExcessArguments()
       .action(async (_options: unknown, command: Command) => {
-        const mod = await entry.load();
         try {
+          const mod = await entry.load();
           process.exitCode = await mod.run(command.args);
         } catch (error) {
-          process.exitCode = reportError(error, command.args.includes("--verbose"));
+          process.exitCode = reportError(error, name, command.args);
         }
+        // At most one offer per run, after the command's own output.
+        const problem = takePending();
+        if (problem !== null && !NO_OFFER.has(name)) await offer(problem, name, command.args, cwdOf(command.args));
       });
   }
 

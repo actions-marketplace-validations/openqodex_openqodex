@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
-import { demo, readBrief, readJson, report, run, submission } from "./support.js";
+import { demo, readBrief, readJson, report, run, submission, writeConfig } from "./support.js";
 import type { Brief } from "./support.js";
 import type { Report } from "@openqodex/core";
 
@@ -61,7 +61,7 @@ describe("review --finalize", () => {
 
 it("exits 1 with verdict blocked when the agent raises a critical finding and block_on_severity is critical", () => {
   const dir = demo("finalize-blocked");
-  writeFileSync(join(dir, ".openqodex.yaml"), "review:\n  block_on_severity: critical\n");
+  writeConfig(dir, "review:\n  block_on_severity: critical\n");
   const b = brief("finalize-blocked-brief", dir);
   const body = submission(b.changeId, b.candidates, []);
   body.findings.push({ severity: "critical", category: "security", confidence: 1, file_path: "app/config.py", line_number: 2, title: "Exposed credential", description: "The credential must be removed", suggested_change: null, source: null, candidate: null });

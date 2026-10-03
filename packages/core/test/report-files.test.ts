@@ -14,6 +14,11 @@
 //    writes and pruning outside the repo.
 // 9. Two runs of the same change in the same second share a folder.
 // 10. A failed rename leaves its temp file behind.
+// 12. Pruning deletes the report a review receipt points at, so the push
+//     gate or finalize loses a finished review after twenty scans.
+// 11. The folder's .gitignore keeps the reports out of git but hides the
+//     team files, or a Day 0 "*" is never rewritten, or a .gitignore the
+//     team edited is rewritten.
 import { execFileSync } from "node:child_process";
 import { symlinkSync } from "node:fs";
 import { OpenQodexError } from "../src/types.js";
@@ -22,6 +27,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  STATE_GITIGNORE,
   findReportDir,
   openReportDir,
   readLatest,
@@ -29,6 +35,7 @@ import {
   readReport,
   readScan,
   writeLatest,
+  writeLatestScan,
   writeManifest,
   writeReportFiles,
   writeScan,
@@ -50,16 +57,29 @@ function repo(): string {
 const ID = "0123456789ab";
 
 describe("report files", () => {
-  it("creates a self-ignoring state folder and a dated report folder", () => {
+  it("creates a state folder whose .gitignore keeps the reports out of git, and a dated report folder", () => {
     const r = repo();
     const dir = openReportDir(r, ID);
-    expect(readFileSync(join(r, ".openqodex", ".gitignore"), "utf8")).toBe("*\n");
+    expect(readFileSync(join(r, ".openqodex", ".gitignore"), "utf8")).toBe(STATE_GITIGNORE);
     expect(basename(dir)).toMatch(/^\d{8}-\d{6}-0123456789ab$/);
     expect(dir).toBe(join(r, ".openqodex", "reviews", basename(dir)));
     writeReportFiles(dir, { "report.md": "# r\n" });
     writeLatest(r, { dir: "x", change_id: ID, kind: "scan", finalized: false, verdict: null });
+    writeLatestScan(r, { dir: "x", change_id: ID, kind: "scan", finalized: false, verdict: null });
     const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: r, encoding: "utf8" });
-    expect(status).toBe("");
+    expect(status).toBe("?? .openqodex/.gitignore\n");
+  });
+
+  it("rewrites a Day 0 .gitignore holding only * once, and never one the team edited", () => {
+    const r = repo();
+    mkdirSync(join(r, ".openqodex"));
+    writeFileSync(join(r, ".openqodex", ".gitignore"), "*\n");
+    openReportDir(r, ID);
+    expect(readFileSync(join(r, ".openqodex", ".gitignore"), "utf8")).toBe(STATE_GITIGNORE);
+    const edited = `${STATE_GITIGNORE}notes/\n`;
+    writeFileSync(join(r, ".openqodex", ".gitignore"), edited);
+    openReportDir(r, ID);
+    expect(readFileSync(join(r, ".openqodex", ".gitignore"), "utf8")).toBe(edited);
   });
 
   it("keeps the newest 20 report folders and touches nothing else", () => {
@@ -174,5 +194,20 @@ describe("report files", () => {
     writeFileSync(join(dir, "report.md", "keep"), "x");
     expect(() => writeReportFiles(dir, { "report.md": "# r\n" })).toThrow();
     expect(readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("keeps the report folders the review receipts name, however old", () => {
+    const r = repo();
+    const reviews = join(r, ".openqodex", "reviews");
+    mkdirSync(reviews, { recursive: true });
+    const old = Array.from({ length: 25 }, (_, i) => `20200101-0000${String(i).padStart(2, "0")}-${ID}`);
+    for (const n of old) mkdirSync(join(reviews, n));
+    writeLatest(r, { dir: `.openqodex/reviews/${old[0]}`, change_id: ID, kind: "review", finalized: true, verdict: "passed" });
+    writeFileSync(join(r, ".openqodex", "latest-all.json"), JSON.stringify({ dir: `.openqodex/reviews/${old[1]}` }));
+    openReportDir(r, "ffffffffffff");
+    const left = readdirSync(reviews);
+    expect(left).toContain(old[0]);
+    expect(left).toContain(old[1]);
+    expect(left).not.toContain(old[2]);
   });
 });

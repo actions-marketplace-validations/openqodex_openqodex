@@ -65,9 +65,10 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 
 In the repository, under `.openqodex/` only:
 
-- `.gitignore`, holding `*`, so the folder ignores itself and `git status` does not change.
+- `config.yaml` and `custom-instructions.md`: the team's config and instructions for the reviewer, created once and never touched after. They are meant to be committed.
+- `.gitignore`: keeps the run state below out of git, so after the first run `git status` shows only the two files above and the `.gitignore`.
 - `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the agent's findings and the reports. OpenQodex keeps the newest 20.
-- `latest.json`: points at the newest run.
+- `latest.json`: points at the newest review; the push gate reads only this. `latest-scan.json` points at the newest scan.
 
 The agent settings and skill files `init` writes are listed in `agents`.
 

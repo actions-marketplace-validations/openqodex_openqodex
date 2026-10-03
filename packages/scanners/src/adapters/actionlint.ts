@@ -19,7 +19,7 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
-import { describeFailure, execTool, stderrTail } from "../exec.js";
+import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
 
@@ -46,28 +46,32 @@ export async function runActionlint(args: {
   // -shellcheck= and -pyflakes= switch off the run: step checks that call
   // whatever shellcheck and pyflakes are on PATH, so two machines report
   // the same findings (flags checked against actionlint 1.7.7).
-  const cliArgs = ["-format", "{{json .}}", "-no-color", "-shellcheck=", "-pyflakes=", "--", ...workflows];
+  const cliArgs = (files: string[]): string[] => ["-format", "{{json .}}", "-no-color", "-shellcheck=", "-pyflakes=", "--", ...files];
 
-  let stdout: string;
+  // One process per chunk of files, so a whole-repo file list stays under
+  // the argument limit; the findings of every chunk are merged.
+  const tool = args.tool;
   try {
-    stdout = await execActionlint(args.tool, cliArgs, args.repoDir);
+    const findings = await runInChunks("actionlint", workflows, ACTIONLINT_TIMEOUT_MS, async (chunk, left) => {
+      const stdout = await execActionlint(tool, cliArgs(chunk), args.repoDir, left);
+      try {
+        return parseActionlintJson(stdout);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`parse: ${message.slice(0, 200)}`);
+      }
+    });
+    return { findings, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
   }
-
-  try {
-    return { findings: parseActionlintJson(stdout), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: `parse: ${message.slice(0, 200)}` };
-  }
 }
 
-async function execActionlint(tool: ResolvedTool, cliArgs: string[], cwd: string): Promise<string> {
+async function execActionlint(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
-    timeoutMs: ACTIONLINT_TIMEOUT_MS,
+    timeoutMs,
     maxBytes: ACTIONLINT_OUTPUT_MAX_BYTES,
     env: tool.env,
   });

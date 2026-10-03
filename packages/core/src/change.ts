@@ -8,8 +8,9 @@
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createCoverageParser, unquoteDiffPath } from "./diff.js";
@@ -172,12 +173,13 @@ async function mergeBaseWithHead(repoRoot: string, ref: string): Promise<string 
   return gitLine(repoRoot, ["merge-base", "HEAD", ref]);
 }
 
-async function resolveBase(repoRoot: string, scope: ChangeScope): Promise<Base> {
+async function resolveBase(repoRoot: string, scope: ChangeScope, defaultBase: string | null): Promise<Base> {
   const head = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
 
   if (scope.base !== undefined) {
     const sha = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${scope.base}^{commit}`]);
     if (sha === null) throw new OpenQodexError(`base not found: ${scope.base}`);
+    if (scope.exact) return { ref: scope.base, sha };
     // The change is what this branch did since it left the base, so commits
     // that landed on the base afterwards are not shown as reverted.
     const mb = head === null ? null : await mergeBaseWithHead(repoRoot, sha);
@@ -195,6 +197,19 @@ async function resolveBase(repoRoot: string, scope: ChangeScope): Promise<Base> 
   if (upstream !== null) {
     const mb = await mergeBaseWithHead(repoRoot, upstream);
     if (mb !== null) return { ref: upstream, sha: mb };
+  }
+
+  // review.default_base: the ref as written, else the same name on origin,
+  // so a branch that was never checked out here is still found.
+  if (defaultBase !== null) {
+    for (const ref of [defaultBase, `origin/${defaultBase}`]) {
+      const sha = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]);
+      const mb = sha === null ? null : await mergeBaseWithHead(repoRoot, sha);
+      if (mb !== null) return { ref, sha: mb };
+    }
+    throw new OpenQodexError(
+      `review.default_base: ${defaultBase} is not a ref here or a branch on origin, or shares no history with HEAD; fetch it or change the config`,
+    );
   }
 
   const remoteHead = await gitLine(repoRoot, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
@@ -352,9 +367,11 @@ export async function getChange(args: {
   repoRoot: string;
   scope: ChangeScope;
   exclude: string[];
+  // Config.defaultBase: what the default scope diffs against with no upstream.
+  defaultBase?: string | null;
 }): Promise<Change> {
   const { repoRoot, scope, exclude } = args;
-  const base = await resolveBase(repoRoot, scope);
+  const base = await resolveBase(repoRoot, scope, args.defaultBase ?? null);
 
   const absGitPath = async (name: string): Promise<string> => {
     const p = (await gitOk(repoRoot, ["rev-parse", "--git-path", name])).toString("utf8").trim();
@@ -514,4 +531,167 @@ export async function getChange(args: {
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+}
+
+// ---------- the whole repo (`review --all`) ----------
+
+// The whole-repo scope. `coverage` is empty: every line of every file is in
+// scope, so no line set is built; `lines` holds each text file's line count
+// and `sizes` its bytes, for finalize and the brief's inventory.
+export type WholeRepo = Change & { lines: Map<string, number>; sizes: Map<string, number> };
+
+// git's own test for a binary file: a NUL byte in the first 8000 bytes.
+const BINARY_PROBE_BYTES = 8000;
+
+function lineCount(buf: Buffer): number {
+  let n = 0;
+  for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) n++;
+  return buf.length > 0 && buf[buf.length - 1] !== 10 ? n + 1 : n;
+}
+
+// The blob hash git would give these bytes, so an untracked file and an
+// unstaged edit move the id exactly like a staged one.
+function blobHash(buf: Buffer): string {
+  return createHash("sha1").update(`blob ${buf.length}\0`).update(buf).digest("hex");
+}
+
+// The same hash for a file too large to hold in memory, read from an open handle.
+function streamBlobHash(handle: FileHandle, size: number): Promise<string> {
+  return new Promise((done, fail) => {
+    const hash = createHash("sha1").update(`blob ${size}\0`);
+    handle
+      .createReadStream({ autoClose: false })
+      .on("data", (b) => hash.update(b))
+      .on("error", fail)
+      .on("end", () => done(hash.digest("hex")));
+  });
+}
+
+// True when every folder on the way to `rel` is a real folder, never a link,
+// so a repo cannot point a path at files outside itself. Cached per folder.
+function realFolders(repoRoot: string): (rel: string) => Promise<boolean> {
+  const seen = new Map<string, Promise<boolean>>();
+  const folder = (rel: string): Promise<boolean> => {
+    if (rel === "") return Promise.resolve(true);
+    let ok = seen.get(rel);
+    if (ok === undefined) {
+      const cut = rel.lastIndexOf("/");
+      ok = folder(cut === -1 ? "" : rel.slice(0, cut)).then(async (parent) => {
+        if (!parent) return false;
+        const st = await lstat(join(repoRoot, rel)).catch(() => null);
+        return st !== null && st.isDirectory() && !st.isSymbolicLink();
+      });
+      seen.set(rel, ok);
+    }
+    return ok;
+  };
+  return (rel) => {
+    const cut = rel.lastIndexOf("/");
+    return folder(cut === -1 ? "" : rel.slice(0, cut));
+  };
+}
+
+// Every file in the repo as it sits on disk: tracked files plus untracked
+// files git does not ignore, minus `exclude` and `.openqodex/`. Each is an
+// added file whose every line is in scope. The id hashes path, mode and
+// content of every file, so an edit anywhere moves it. Files are opened
+// without following a link, through real folders only. Submodules, nested
+// repositories, symbolic links, unreadable files and files over 5 MB are
+// listed as not reviewed and left out of the scope.
+export async function getWholeRepo(args: { repoRoot: string; exclude: string[] }): Promise<WholeRepo> {
+  const { repoRoot, exclude } = args;
+  const head = await gitLine(repoRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+  const baseSha = head ?? (await gitOk(repoRoot, ["hash-object", "-t", "tree", "--stdin"])).toString("utf8").trim();
+
+  // `-s -z`: "<mode> <hash> <stage>\t<path>\0". A conflicted path appears once per stage.
+  const modes = new Map<string, string>();
+  for (const rec of splitNul(await gitOk(repoRoot, ["ls-files", "-s", "-z"]))) {
+    const tab = rec.indexOf("\t");
+    modes.set(rec.slice(tab + 1), rec.slice(0, rec.indexOf(" ")));
+  }
+  const untracked = splitNul(await gitOk(repoRoot, ["ls-files", "-z", "--others", "--exclude-standard"]));
+  const paths = [...new Set([...modes.keys(), ...untracked])].filter((p) => !excluded(p, exclude)).sort();
+  const inRealFolders = realFolders(repoRoot);
+
+  const files: ChangedFile[] = [];
+  const lines = new Map<string, number>();
+  const sizes = new Map<string, number>();
+  const notReviewed: string[] = [];
+  const idLines: string[] = [];
+  let total = 0;
+  for (const path of paths) {
+    const name = path.replace(/\/$/, "");
+    if (!(await inRealFolders(name))) {
+      // Reached through a link: not the repo's own file. A folder that is
+      // gone (a deleted tracked file) is simply not there.
+      if (await lstat(join(repoRoot, name)).then(() => true, () => false)) {
+        notReviewed.push(name);
+        idLines.push(`${name}\tlinked`);
+      }
+      continue;
+    }
+    const full = join(repoRoot, name);
+    const stat = await lstat(full).catch(() => null);
+    if (stat === null) continue; // deleted in the working tree: not part of the repo any more
+    // A submodule, a nested repository (git lists it as "dir/") or a link.
+    if (modes.get(path) === "160000" || !stat.isFile()) {
+      notReviewed.push(name);
+      const target = stat.isSymbolicLink() ? await readlink(full).catch(() => "") : "";
+      idLines.push(`${name}\t${modes.get(path) ?? (stat.isSymbolicLink() ? "120000" : "040000")}\t${target}`);
+      continue;
+    }
+    const mode = stat.mode & 0o100 ? "100755" : "100644";
+    let handle: FileHandle;
+    try {
+      handle = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW);
+    } catch {
+      notReviewed.push(name);
+      idLines.push(`${name}\t${mode}\tunreadable`);
+      continue;
+    }
+    try {
+      const st = await handle.stat();
+      if (!st.isFile()) {
+        notReviewed.push(name);
+        idLines.push(`${name}\t${mode}\tnot a file`);
+        continue;
+      }
+      if (st.size > DIFF_CAP_BYTES) {
+        notReviewed.push(name);
+        idLines.push(`${name}\t${mode}\t${await streamBlobHash(handle, st.size).catch(() => "unreadable")}`);
+        continue;
+      }
+      const buf = await handle.readFile();
+      idLines.push(`${name}\t${mode}\t${blobHash(buf)}`);
+      const binary = buf.subarray(0, BINARY_PROBE_BYTES).includes(0);
+      files.push({ path: name, status: "added", oldPath: null, binary });
+      sizes.set(name, buf.length);
+      if (binary) continue;
+      const n = lineCount(buf);
+      lines.set(name, n);
+      total += n;
+    } catch {
+      notReviewed.push(name);
+      idLines.push(`${name}\t${mode}\tunreadable`);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  const id = createHash("sha256").update(idLines.join("\n")).digest("hex");
+  return {
+    repoRoot,
+    baseRef: "all",
+    baseSha,
+    id,
+    shortId: id.slice(0, 12),
+    files,
+    changedPaths: files.map((f) => f.path),
+    coverage: new Map(),
+    diff: "",
+    notReviewed,
+    stats: { files: files.length, additions: total, deletions: 0 },
+    lines,
+    sizes,
+  };
 }
