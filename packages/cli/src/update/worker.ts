@@ -1,22 +1,20 @@
 // The update worker: `openqodex __update`, started detached by a normal
-// command, and `openqodex update` in the foreground. One worker at a time per
-// home folder (update.lock); a live holder means this one exits quietly.
-// Download and verification happen outside the installer's lock; only the
-// switch to the new runtime takes it (activate.ts).
-import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { promisify } from "node:util";
+// command, and `openqodex update` in the foreground. Everything slow happens
+// first, outside any lock: the registry metadata, the tarball, its
+// attestations, verification, unpacking and a test start. Then one short
+// step inside the commit boundary (agents/lock.ts) checks again that the
+// switch is still wanted and publishes it: the runtime folder by a rename,
+// then the active record by a rename. A crash between the two leaves the old
+// version active and the new folder ready for the next run.
+import { existsSync, mkdirSync, renameSync, rmdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { extractArchive, openqodexHome } from "@openqodex/scanners";
-import { takeLock } from "../agents/lock.js";
-import { checkRuns, runtimeDir } from "../launcher.js";
-import { activate, activeVersion, reconcile } from "./activate.js";
+import { BoundaryError, withBoundary } from "../agents/lock.js";
+import { activeVersion, checkRuns, identicalTree, launcherPath, runtimeDir, writeActive } from "../launcher.js";
 import { MIN_AGE_MS, selectCandidates } from "./candidate.js";
 import { fetchAttestations, fetchMetadata, fetchTarball } from "./fetch.js";
 import { readState, updateState, updatesAllowed } from "./state.js";
 import { verifyRelease } from "./verify.js";
-
-const execFileAsync = promisify(execFile);
 
 // The whole worker ends by this deadline, whatever it is doing.
 const LIMIT_MS = 10 * 60_000;
@@ -51,15 +49,32 @@ function seam(env: NodeJS.ProcessEnv): { as: string | null; minAge: number | nul
   };
 }
 
+// The second test seam, also only with OPENQODEX_E2E=1: at the named stage
+// the worker writes <home>/update-paused and waits until a test removes it
+// (or kills the process). Stages: before-boundary, in-boundary, after-publish.
+async function pauseAt(home: string, stage: string, env: NodeJS.ProcessEnv): Promise<void> {
+  if (env.OPENQODEX_E2E !== "1" || env.OPENQODEX_UPDATE_PAUSE !== stage) return;
+  const flag = join(home, "update-paused");
+  writeFileSync(flag, `${stage}\n`);
+  while (existsSync(flag)) await new Promise((r) => setTimeout(r, 50));
+}
+
 function latestOf(metadata: unknown): string | null {
   const latest = (metadata as { "dist-tags"?: { latest?: unknown } } | null)?.["dist-tags"]?.latest;
   return typeof latest === "string" && PLAIN_VERSION.test(latest) ? latest : null;
 }
 
-// Unpacks a verified tarball into <home>/runtime/<version>.tmp-<pid>/, checks
-// that it runs and that it has __refresh, and returns the package folder.
-// activate() moves it into place under install.lock; the caller removes the
-// temp folder afterwards.
+function newer(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
+  return false;
+}
+
+// Unpacks a verified tarball into <home>/runtime/<version>.tmp-<pid>/ and
+// checks that it starts and prints its version. Returns that temp folder;
+// the package is in its unpacked/package. activateUnpacked publishes it and
+// removes the temp folder.
 export async function unpackRelease(home: string, version: string, tarball: Buffer): Promise<string> {
   const tmp = `${runtimeDir(version, home)}.tmp-${process.pid}`;
   rmSync(tmp, { recursive: true, force: true });
@@ -72,66 +87,98 @@ export async function unpackRelease(home: string, version: string, tarball: Buff
     // Refuses a member that is a link or escapes the folder. Nothing in the
     // package runs at install: the CLI is one bundled file with its assets.
     await extractArchive(archive, "tar.gz", unpacked);
-    const pkg = join(unpacked, "package");
-    const bin = join(pkg, "dist", "bin.js");
+    const bin = join(unpacked, "package", "dist", "bin.js");
     if (!existsSync(bin)) throw new Error("the release has no dist/bin.js");
     await checkRuns(bin, version);
-    try {
-      await execFileAsync(process.execPath, [bin, "__refresh", "--probe"], { timeout: 30_000 });
-    } catch {
-      throw new SkipError("it has no __refresh command, so it cannot refresh the agent files it would replace");
-    }
-    return pkg;
+    return tmp;
   } catch (error) {
     rmSync(tmp, { recursive: true, force: true });
     throw error;
   }
 }
 
-// A release that is verified but cannot be activated: recorded in `skipped`.
-class SkipError extends Error {}
+// activated: the record names `version`. refused: the switch is no longer
+// wanted (updates off, another switch happened, nothing newer). skip: this
+// release cannot be used here. gone: OpenQodex was uninstalled meanwhile.
+// busy: another process holds the boundary. failed: the boundary or a write failed.
+export type ActivateResult = { outcome: "activated" | "refused" | "skip" | "gone" | "busy" | "failed"; reason: string };
 
-// `daily`: started by a normal command. It re-reads checkedAt under the lock,
-// so a worker queued behind another one does not check again the same day.
-export async function runUpdateWorker(opts: { anyAge: boolean; daily?: boolean }): Promise<WorkerResult> {
+// The commit step for a verified, unpacked release in `tmp` (unpackRelease),
+// started from the active version `from`. Always removes `tmp`.
+export async function activateUnpacked(opts: { home: string; version: string; from: string; tmp: string; env: NodeJS.ProcessEnv; wait: number }): Promise<ActivateResult> {
+  const { home, version, from, tmp, env } = opts;
+  let result: ActivateResult;
+  try {
+    await pauseAt(home, "before-boundary", env);
+    result = await withBoundary(home, { wait: opts.wait }, async (): Promise<ActivateResult> => {
+      await pauseAt(home, "in-boundary", env);
+      const allowed = updatesAllowed(home, env);
+      if (!allowed.allowed) return { outcome: "refused", reason: `updates were turned ${allowed.why}` };
+      if (!existsSync(launcherPath(home))) return { outcome: "gone", reason: "openqodex was uninstalled" };
+      const active = activeVersion(home);
+      if (active !== from) return { outcome: "refused", reason: `the active version is ${active ?? "unknown"}, not ${from}: another update, rollback or init ran` };
+      if (!newer(version, active)) return { outcome: "refused", reason: `${version} is not newer than the active ${active}` };
+      const target = runtimeDir(version, home);
+      if (existsSync(target)) {
+        if (!identicalTree(join(tmp, "unpacked", "package"), target)) return { outcome: "skip", reason: `${target} holds a different copy of ${version}; it was left as it is` };
+      } else {
+        renameSync(join(tmp, "unpacked", "package"), target);
+        // The tarball's own times are from 1985; the age rule counts from now.
+        const now = new Date();
+        utimesSync(target, now, now);
+      }
+      await pauseAt(home, "after-publish", env);
+      writeActive(home, { current: version, previous: active });
+      updateState(home, { lastError: null, notice: { version, text: `openqodex updated to ${version} (was ${active}). Roll back: openqodex update --rollback` } });
+      return { outcome: "activated", reason: `Updated to ${version} (was ${active}).` };
+    });
+  } catch (error) {
+    result = error instanceof BoundaryError && error.held ? { outcome: "busy", reason: "another openqodex init, uninstall or update is running" } : { outcome: "failed", reason: message(error) };
+  }
+  rmSync(tmp, { recursive: true, force: true });
+  if (result.outcome === "gone") {
+    // Uninstall removed the runtime folder's contents; leave no empty folder behind.
+    try {
+      rmdirSync(dirname(tmp));
+    } catch {
+      // not empty: not ours to remove
+    }
+  }
+  return result;
+}
+
+// `daily`: started by a normal command; it checks only when no other worker
+// checked in the last 24 hours. `wait`: how long the commit step waits for
+// the boundary (0 for the daily worker, which tries again tomorrow).
+export async function runUpdateWorker(opts: { anyAge: boolean; daily?: boolean; wait: number }): Promise<WorkerResult> {
   const home = openqodexHome();
   const env = process.env;
   const allowed = updatesAllowed(home, env);
   if (!allowed.allowed) return { outcome: "off", lines: [`Updates are ${allowed.why}.`] };
-  const lock = takeLock(join(home, "update.lock"));
-  if (lock === null) return { outcome: "busy", lines: ["Another update is running."] };
   if (opts.daily) {
     const at = Date.parse(readState(home).checkedAt ?? "");
     const age = Date.now() - at;
-    if (Number.isFinite(at) && age >= 0 && age < CHECK_EVERY_MS) {
-      lock.release();
-      return { outcome: "none", lines: ["Checked less than a day ago."] };
-    }
+    if (Number.isFinite(at) && age >= 0 && age < CHECK_EVERY_MS) return { outcome: "none", lines: ["Checked less than a day ago."] };
   }
-  const limit = setTimeout(() => {
-    lock.release();
-    process.exit(2);
-  }, LIMIT_MS);
+  const limit = setTimeout(() => process.exit(2), LIMIT_MS);
   limit.unref();
   try {
-    return await work(home, env, opts.anyAge);
+    return await work(home, env, opts.anyAge, opts.wait);
   } catch (error) {
     updateState(home, { lastError: message(error) });
     return { outcome: "failed", lines: [`The update failed: ${message(error)}`] };
   } finally {
     clearTimeout(limit);
-    lock.release();
   }
 }
 
-async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean): Promise<WorkerResult> {
+async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait: number): Promise<WorkerResult> {
   const now = Date.now();
-  updateState(home, { checkedAt: new Date(now).toISOString() });
-  await reconcile(home);
   const test = seam(env);
   const running = test.as ?? __OPENQODEX_VERSION__;
   const from = activeVersion(home);
-  if (from === null) return { outcome: "failed", lines: ["No launcher install here; run npx openqodex init."] };
+  if (from === null || !existsSync(launcherPath(home))) return { outcome: "failed", lines: ["No launcher install here; run npx openqodex init."] };
+  updateState(home, { checkedAt: new Date(now).toISOString() });
 
   let metadata: unknown;
   try {
@@ -140,14 +187,14 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean): Prom
     updateState(home, { lastError: message(error) });
     return { outcome: "failed", lines: [`Could not read the registry: ${message(error)}`] };
   }
-  updateState(home, { latestSeen: latestOf(metadata), latestSeenAt: new Date(now).toISOString() });
+  updateState(home, { latestSeen: latestOf(metadata) });
 
   // selectCandidates applies the 24 hour rule itself; a shorter rule is
   // the same as asking it later.
   const minAge = anyAge ? 0 : (test.minAge ?? MIN_AGE_MS);
   const candidates = selectCandidates(metadata, { current: running, now: now + (MIN_AGE_MS - minAge), nodeVersion: process.versions.node });
   if (candidates.length === 0) {
-    updateState(home, { lastError: null, trustFailedAt: null });
+    updateState(home, { lastError: null });
     return { outcome: "none", lines: [`No newer release than ${running} to install.`] };
   }
 
@@ -181,35 +228,35 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean): Prom
       skip(c.version, verified.reason);
       continue;
     }
-    let unpacked: string;
+    let tmp: string;
     try {
-      unpacked = await unpackRelease(home, c.version, tarball);
+      tmp = await unpackRelease(home, c.version, tarball);
     } catch (error) {
-      skip(c.version, error instanceof SkipError ? error.message : `it did not install: ${message(error)}`);
+      skip(c.version, `it did not install: ${message(error)}`);
       continue;
     }
-    let result: Awaited<ReturnType<typeof activate>>;
-    try {
-      result = await activate({ home, version: c.version, from, env, unpacked });
-    } finally {
-      rmSync(`${runtimeDir(c.version, home)}.tmp-${process.pid}`, { recursive: true, force: true });
-    }
-    if (!result.ok && result.skip) {
+    const result = await activateUnpacked({ home, version: c.version, from, tmp, env, wait });
+    if (result.outcome === "skip") {
       skip(c.version, result.reason);
       continue;
     }
-    if (!result.ok) {
-      updateState(home, { lastError: result.reason });
-      return { outcome: "failed", lines: [...lines, `Downloaded and verified ${c.version}, but did not switch to it: ${result.reason}`] };
+    // After an uninstall, nothing is written: the home folder is not ours.
+    if (result.outcome === "gone") return { outcome: "none", lines: [...lines, "OpenQodex was uninstalled meanwhile; nothing was changed."] };
+    if (result.outcome === "busy") return { outcome: "busy", lines: [...lines, `Downloaded and verified ${c.version}; ${result.reason}, so it was not switched to now.`] };
+    if (result.outcome !== "activated") {
+      if (result.outcome === "failed") updateState(home, { lastError: result.reason });
+      return { outcome: result.outcome === "failed" ? "failed" : "none", lines: [...lines, `Downloaded and verified ${c.version}, but did not switch to it: ${result.reason}`] };
     }
-    updateState(home, { trustFailedAt: null });
-    const kept = result.kept.length > 0 ? ` Left as you edited them: ${result.kept.join(", ")}.` : "";
-    return { outcome: "updated", lines: [...lines, `Updated to ${c.version} (was ${from}).${kept}`] };
+    return { outcome: "updated", lines: [...lines, result.reason] };
   }
 
   // Every candidate failed. When each failed because the built-in trust
-  // data is out of date, the notice says how to update by hand.
+  // data is out of date, one notice says how to update by hand, once.
   const trustStale = reasons.length > 0 && reasons.every((r) => TRUST_DATA.test(r));
-  updateState(home, { lastError: null, trustFailedAt: trustStale ? new Date(now).toISOString() : null });
+  if (trustStale) {
+    const text = `openqodex cannot verify new releases with its built-in trust data; it stays on ${from}. To update by hand: npx openqodex@latest init`;
+    const state = readState(home);
+    updateState(home, { lastError: text, ...(state.lastError === text ? {} : { notice: { version: from, text } }) });
+  } else updateState(home, { lastError: null });
   return { outcome: "none", lines: [...lines, `Stayed on ${from}: no newer release could be installed.`] };
 }

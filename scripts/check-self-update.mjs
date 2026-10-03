@@ -49,7 +49,9 @@ function fail(line) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const launcher = join(oqHome, "bin/openqodex");
-const current = () => (existsSync(join(oqHome, "runtime/current")) ? readFileSync(join(oqHome, "runtime/current"), "utf8").trim() : null);
+// Line 1 of the active record is the version the launcher runs; line 2, when
+// there, is the one to roll back to.
+const current = () => (existsSync(join(oqHome, "runtime/current")) ? readFileSync(join(oqHome, "runtime/current"), "utf8").split("\n")[0] : null);
 
 step("git init", "git", ["init", "-q"]);
 const init = step(`install ${from}`, "npx", ["-y", `openqodex@${from}`, "init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo"]);
@@ -66,10 +68,17 @@ if (now) {
   const r = step("hook check through the launcher", "sh", [launcher, "hook", "check"], "{}");
   process.stdout.write(`the command returned in ${Date.now() - started} ms\n`);
   if (r.status !== 0) fail("hook check failed");
-  // The worker holds update.lock while it works; wait for it to finish.
-  for (let i = 0; i < 20 && !existsSync(join(oqHome, "update.json")); i++) await sleep(250);
+  // The detached worker ends within ten minutes: wait for the switch, or
+  // for the error it records.
+  const lastError = () => {
+    try {
+      return JSON.parse(readFileSync(join(oqHome, "update.json"), "utf8")).lastError ?? null;
+    } catch {
+      return null;
+    }
+  };
   const deadline = Date.now() + 10 * 60_000;
-  while (existsSync(join(oqHome, "update.lock")) && Date.now() < deadline) await sleep(1000);
+  while (current() === from && lastError() === null && Date.now() < deadline) await sleep(1000);
 }
 
 const state = existsSync(join(oqHome, "update.json")) ? readFileSync(join(oqHome, "update.json"), "utf8") : "(none)";

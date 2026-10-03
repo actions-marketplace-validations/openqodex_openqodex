@@ -4,7 +4,6 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { readText, writeAtomic } from "./files.js";
-import { waitLock } from "./lock.js";
 
 export type InstallRecord = {
   version: 1;
@@ -18,7 +17,8 @@ export type InstallRecord = {
   excludes: { file: string; line: string; repo: string }[];
   // Copies of files as they were before we changed them.
   backups: { path: string; of: string }[];
-  // Runtime folders we created.
+  // Runtime folders, as versions before 0.3 recorded them. Nothing reads
+  // them now; uninstall clears them.
   runtimes: string[];
   // The answer to init's pre-push hook question, per repo work tree, so a
   // second init does not ask again.
@@ -26,8 +26,8 @@ export type InstallRecord = {
   // Files we rewrote in place (the Day 0 .gitignore holding "*"): the
   // original bytes, and the sha256 of what we wrote, so uninstall restores them.
   migrations: { path: string; original: string; sha256: string }[];
-  // The launcher's pointer files (<home>/runtime/current) we wrote. Added
-  // after version 1 shipped: a record without it reads as empty.
+  // The launcher's record files, as versions before 0.3 recorded them.
+  // Nothing reads them now; uninstall clears them.
   pointers: string[];
   // The answer to init's team section question, per repo work tree.
   teamChoices: { repo: string; write: boolean }[];
@@ -105,17 +105,4 @@ export function canonical(value: unknown): string {
       ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
       : v,
   );
-}
-
-// One `init`, `hook install`, update activation or rollback at a time per
-// home folder. A lock left by a process that is gone is taken over safely
-// (lock.ts).
-export async function withLock<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const lock = join(home, "install.lock");
-  const held = await waitLock(lock, 120_000, `another openqodex init is running (lock ${lock})`);
-  try {
-    return await fn();
-  } finally {
-    held.release();
-  }
 }

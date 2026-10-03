@@ -5,16 +5,16 @@
 //   --off/--on  turn the daily check off or on (~/.openqodex/config.yaml)
 //   --status    print the update state
 import { existsSync } from "node:fs";
-import { withLock } from "../agents/record.js";
+import { withBoundary } from "../agents/lock.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
-import { launcherStarted, openqodexHomeDir, runtimeBin, writeCurrent } from "../launcher.js";
-import { activeVersion, reconcileLocked, refreshWith } from "../update/activate.js";
+import { activeVersion, launcherStarted, openqodexHomeDir, pruneRuntimes, readActive, runtimeBin, writeActive } from "../launcher.js";
 import { pinnedNote } from "../update/trigger.js";
-import { readState, setUserUpdate, updateState, updatesAllowed, userConfigPath } from "../update/state.js";
+import { readState, setUserUpdate, updatesAllowed, userConfigPath } from "../update/state.js";
 
 const USAGE = "usage: openqodex update [--now | --rollback | --off | --on | --status]";
 const FLAGS = ["--now", "--rollback", "--off", "--on", "--status"];
-const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+// How long a foreground command waits for another init, uninstall or update.
+const WAIT_MS = 60_000;
 
 function out(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -43,7 +43,7 @@ export function statusLines(home: string): string[] {
   const allowed = updatesAllowed(home, process.env);
   const lines = [
     `running      ${__OPENQODEX_VERSION__}${launched ? " (through the launcher)" : " (pinned: not started through the launcher, never updates)"}`,
-    `latest seen  ${state.latestSeen === null ? "not checked yet" : `${state.latestSeen}, ${ago(state.latestSeenAt)}`}`,
+    `latest seen  ${state.latestSeen ?? "not checked yet"}`,
     `last check   ${ago(state.checkedAt)}`,
     `updates      ${allowed.why}`,
     `last error   ${state.lastError ?? "none"}`,
@@ -55,31 +55,23 @@ export function statusLines(home: string): string[] {
   return lines;
 }
 
-// Turns updating off first: when that cannot be written, nothing changes,
-// or the next daily check would install the release just rolled back.
+// Inside the commit boundary, so no worker switches versions meanwhile.
+// Updating is turned off first: when that cannot be written, nothing
+// changes, or the next daily check would install the release just rolled back.
 async function rollback(home: string): Promise<number> {
-  return withLock(home, async () => {
-    reconcileLocked(home);
-    const state = readState(home);
+  return withBoundary(home, { wait: WAIT_MS }, () => {
     const from = activeVersion(home);
-    const to = state.previous;
-    if (to === null || !PLAIN_VERSION.test(to)) return fail("there is no previous version to go back to");
+    const to = readActive(home).previous;
+    if (to === null) return fail("there is no previous version to go back to");
     if (!existsSync(runtimeBin(home, to))) return fail(`the runtime for the previous version ${to} is gone; nothing was changed`);
-    if (to === from) return fail(`${to} is already the active version`);
+    if (to === from || from === null) return fail(`${to} is already the active version`);
     try {
       setUserUpdate(home, "off");
     } catch (error) {
       return fail(`could not turn updates off (${message(error).split("\n")[0]}); nothing was changed`);
     }
-    let refreshNote = "";
-    try {
-      await refreshWith(home, to, process.env);
-    } catch (error) {
-      refreshNote = ` The agent files were not refreshed: ${message(error).split("\n")[0]}`;
-    }
-    writeCurrent(home, to);
-    updateState(home, { installed: to, previous: from, notified: true });
-    out(`Rolled back to ${to} (was ${from}). Updates are off; turn them back on with openqodex update --on.${refreshNote}`);
+    writeActive(home, { current: to, previous: from });
+    out(`Rolled back to ${to} (was ${from}). Updates are off; turn them back on with openqodex update --on.`);
     return EXIT_OK;
   });
 }
@@ -98,7 +90,7 @@ export async function run(args: string[]): Promise<number> {
   if (args.includes("--off") || args.includes("--on")) {
     const value = args.includes("--off") ? "off" : "on";
     try {
-      setUserUpdate(home, value);
+      await withBoundary(home, { wait: WAIT_MS }, () => setUserUpdate(home, value));
     } catch (error) {
       return fail(message(error));
     }
@@ -109,10 +101,15 @@ export async function run(args: string[]): Promise<number> {
   if (!launcherStarted()) {
     return fail("this openqodex was not started through the launcher in ~/.openqodex/bin, so it is pinned and does not update. Run npx openqodex init to install the launcher.");
   }
-  if (args.includes("--rollback")) return rollback(home);
-
-  const { runUpdateWorker } = await import("../update/worker.js");
-  const result = await runUpdateWorker({ anyAge: args.includes("--now") });
-  for (const line of result.lines) out(line);
-  return result.outcome === "failed" ? EXIT_TOOL_FAILED : EXIT_OK;
+  try {
+    if (args.includes("--rollback")) return await rollback(home);
+    const { runUpdateWorker } = await import("../update/worker.js");
+    const result = await runUpdateWorker({ anyAge: args.includes("--now"), wait: WAIT_MS });
+    for (const line of result.lines) out(line);
+    // Old runtimes go here and in init, never in the background worker.
+    await withBoundary(home, { wait: WAIT_MS }, () => pruneRuntimes(home));
+    return result.outcome === "failed" || result.outcome === "busy" ? EXIT_TOOL_FAILED : EXIT_OK;
+  } catch (error) {
+    return fail(message(error));
+  }
 }

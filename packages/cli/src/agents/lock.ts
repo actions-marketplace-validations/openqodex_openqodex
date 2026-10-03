@@ -1,124 +1,80 @@
-// One lock file helper for install.lock, update.lock and update.json's lock.
-// A lock file holds "<pid> <token>" and is created whole, through a hard link
-// of a finished temp file, so it never reads half written. Release removes it
-// only while it still holds the releaser's token.
-//
-// A lock whose pid is gone is stale. Only the holder of the guard file
-// (<lock>.takeover, taken the same way) may remove a stale lock, and only
-// after reading it again under the guard and finding the same dead holder.
-// After that every taker races one exclusive link, so exactly one wins: two
-// processes can never both take over one stale lock. A guard left by a
-// process that died inside that few-line window is removed once its pid is
-// gone and it is older than GUARD_STALE_MS.
-import { closeSync, linkSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
-import { randomBytes } from "node:crypto";
-import { dirname } from "node:path";
+// The commit boundary: one process at a time per home folder may install,
+// uninstall, switch the active runtime or change the update switch. The lock
+// is a TCP listener on 127.0.0.1 at a port derived from the home folder,
+// bound exclusively. The operating system releases it when the process
+// ends, however it ends, so there is no stale lock and no takeover. The
+// listener accepts nothing: a connection is closed at once, unread.
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { createServer, type Server } from "node:net";
+import { basename, dirname, join, resolve } from "node:path";
 import { errorCode } from "./files.js";
 
-const GUARD_STALE_MS = 10_000;
+const LOW = 20_000;
+const HIGH = 32_000;
+const POLL_MS = 100;
 
-type Holder = { pid: number; token: string };
-
-function readHolder(path: string): Holder | null {
+// The home folder with every link resolved, so two spellings of one folder
+// get one port. A folder that does not exist yet resolves through its
+// nearest existing parent.
+function realHome(home: string): string {
+  const full = resolve(home);
   try {
-    const [pid = "", token = ""] = readFileSync(path, "utf8").trim().split(/\s+/);
-    return Number.isInteger(Number(pid)) && Number(pid) > 0 ? { pid: Number(pid), token } : null;
+    return realpathSync(full);
   } catch {
-    return null;
+    const parent = dirname(full);
+    return parent === full ? full : join(realHome(parent), basename(full));
   }
 }
 
-export function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return errorCode(error) === "EPERM";
+// A port in 20000 to 32000, below the ephemeral ranges of macOS and Linux.
+export function boundaryPort(home: string): number {
+  const digest = createHash("sha256").update(realHome(home)).digest();
+  return LOW + (digest.readUInt32BE(0) % (HIGH - LOW + 1));
+}
+
+// `held`: another process holds the boundary. Otherwise the listener could
+// not be opened at all (a sandbox, a firewall), and `message` says why.
+export class BoundaryError extends Error {
+  constructor(
+    message: string,
+    readonly held: boolean,
+  ) {
+    super(message);
   }
 }
 
-function linkExclusive(from: string, to: string): boolean {
-  try {
-    linkSync(from, to);
-    return true;
-  } catch (error) {
-    if (errorCode(error) === "EEXIST") return false;
-    throw error;
-  }
-}
-
-function releaseIfMine(path: string, token: string): void {
-  if (readHolder(path)?.token === token) rmSync(path, { force: true });
-}
-
-// Removes `lock` when it still holds the dead holder `seen`, under the guard.
-function clearStale(lock: string, seen: Holder | null, mine: string, token: string): void {
-  const guard = `${lock}.takeover`;
-  if (!linkExclusive(mine, guard)) {
-    const g = readHolder(guard);
-    let age = 0;
-    try {
-      age = Date.now() - statSync(guard).mtimeMs;
-    } catch {
-      return;
-    }
-    if (g !== null && !isAlive(g.pid) && age > GUARD_STALE_MS) rmSync(guard, { force: true });
-    return;
-  }
-  try {
-    const now = readHolder(lock);
-    const same = now === null ? seen === null : seen !== null && now.pid === seen.pid && now.token === seen.token;
-    if (same && (now === null || !isAlive(now.pid))) rmSync(lock, { force: true });
-  } finally {
-    releaseIfMine(guard, token);
-  }
-}
-
-// One attempt: the lock, or null when a live process holds it.
-export function takeLock(lock: string): { token: string; release: () => void } | null {
-  mkdirSync(dirname(lock), { recursive: true });
-  const token = randomBytes(8).toString("hex");
-  const mine = `${lock}.${token}.tmp`;
-  const fd = openSync(mine, "wx", 0o600);
-  try {
-    writeSync(fd, `${process.pid} ${token}\n`);
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (linkExclusive(mine, lock)) return { token, release: () => releaseIfMine(lock, token) };
-      const holder = readHolder(lock);
-      if (holder !== null && isAlive(holder.pid)) return null;
-      clearStale(lock, holder, mine, token);
-    }
-    return null;
-  } finally {
-    rmSync(mine, { force: true });
-  }
+function listen(port: number): Promise<Server | null> {
+  return new Promise((ok, fail) => {
+    const server = createServer((socket) => socket.destroy());
+    server.once("error", (error) => {
+      if (errorCode(error) === "EADDRINUSE") ok(null);
+      else fail(new BoundaryError(`the lock could not be taken (a listener on 127.0.0.1:${port}): ${errorCode(error) ?? (error as Error).message}`, false));
+    });
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => ok(server));
+  });
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-// Waits up to `waitMs` for the lock; throws `busy` when it stays taken.
-export async function waitLock(lock: string, waitMs: number, busy: string): Promise<{ token: string; release: () => void }> {
-  const deadline = Date.now() + waitMs;
-  for (;;) {
-    const held = takeLock(lock);
-    if (held !== null) return held;
-    if (Date.now() > deadline) throw new Error(busy);
-    await sleep(50);
+// Runs `fn` holding the boundary for `home`. Waits up to `wait` ms while
+// another process holds it, then throws a BoundaryError with held = true.
+// The listener is closed when `fn` ends, so it never keeps the process alive.
+export async function withBoundary<T>(home: string, opts: { wait: number }, fn: () => T | Promise<T>): Promise<T> {
+  const port = boundaryPort(home);
+  const deadline = Date.now() + opts.wait;
+  let server = await listen(port);
+  while (server === null) {
+    if (Date.now() >= deadline) {
+      throw new BoundaryError(`another openqodex init, uninstall or update is running for ${home} (port ${port} on 127.0.0.1 is taken); try again when it ends`, true);
+    }
+    await sleep(POLL_MS);
+    server = await listen(port);
   }
-}
-
-// The same, without awaiting: for a short read-change-write such as update.json.
-export function waitLockSync(lock: string, waitMs: number, busy: string): { token: string; release: () => void } {
-  const deadline = Date.now() + waitMs;
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  for (;;) {
-    const held = takeLock(lock);
-    if (held !== null) return held;
-    if (Date.now() > deadline) throw new Error(busy);
-    Atomics.wait(pause, 0, 0, 10);
+  const held = server;
+  try {
+    return await fn();
+  } finally {
+    await new Promise<void>((r) => held.close(() => r()));
   }
 }

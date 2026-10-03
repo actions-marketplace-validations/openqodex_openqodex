@@ -11,11 +11,12 @@ import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detec
 import { readText } from "../agents/files.js";
 import { excludeLine, gitPath, planExclude, planUnexclude, repoRootOf, trackedFiles } from "../agents/git.js";
 import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
-import { loadRecord, saveRecord, serialize, withLock, type InstallRecord } from "../agents/record.js";
+import { withBoundary } from "../agents/lock.js";
+import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, ROOT_CONFIG_NOTE } from "../agents/repo-folder.js";
 import { instructionSection, targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
-import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval } from "../launcher.js";
+import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
 
 type HookChoice = "pre-push" | "none";
@@ -434,8 +435,15 @@ export async function run(args: string[]): Promise<number> {
     version: __OPENQODEX_VERSION__,
   };
   try {
-    // A dry run writes nothing, not even the lock.
-    return flags.dryRun ? await runLocked(setup) : await withLock(setup.oqHome, () => runLocked(setup));
+    // A dry run writes nothing and takes no lock. Otherwise everything runs
+    // inside the commit boundary, so no update switches versions meanwhile.
+    if (flags.dryRun) return await runLocked(setup);
+    return await withBoundary(setup.oqHome, { wait: 60_000 }, async () => {
+      removeOldLocks(setup.oqHome);
+      const code = await runLocked(setup);
+      if (!flags.uninstall) pruneRuntimes(setup.oqHome);
+      return code;
+    });
   } catch (error) {
     process.stderr.write(`openqodex init: ${message(error)}\n`);
     return EXIT_TOOL_FAILED;

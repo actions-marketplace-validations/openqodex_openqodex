@@ -101,20 +101,11 @@ export async function main(argv: string[]): Promise<void> {
   // It ends by itself; the exit is explicit so no open socket keeps it.
   program.command("__update", { hidden: true }).action(async () => {
     const { runUpdateWorker } = await import("./update/worker.js");
-    const result = await runUpdateWorker({ anyAge: false, daily: true });
+    // It never waits for the commit boundary: when another process holds
+    // it, this worker gives up and the next daily check tries again.
+    const result = await runUpdateWorker({ anyAge: false, daily: true, wait: 0 });
     process.exit(result.outcome === "failed" ? EXIT_TOOL_FAILED : 0);
   });
-
-  // Hidden: refreshes the recorded agent files from this runtime's templates.
-  // The updater runs the new runtime's own copy inside install.lock.
-  program
-    .command("__refresh", { hidden: true })
-    .option("--probe")
-    .action(async (options: { probe?: boolean }) => {
-      if (options.probe) return;
-      const { runRefresh } = await import("./update/refresh.js");
-      process.stdout.write(`${JSON.stringify(await runRefresh(__OPENQODEX_VERSION__))}\n`);
-    });
 
   try {
     await program.parseAsync(argv);
