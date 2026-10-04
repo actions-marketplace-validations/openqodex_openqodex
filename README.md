@@ -9,7 +9,7 @@
 [![licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
 [![CI](https://github.com/openqodex/openqodex/actions/workflows/ci.yml/badge.svg)](https://github.com/openqodex/openqodex/actions/workflows/ci.yml)
 
-OpenQodex is open source AI code review for Claude Code, Cursor, Codex and Cline. It runs inside your coding agent, before you push. It works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. Your agent then reviews the change on its own model and writes its findings in a fixed shape. OpenQodex checks those findings without a model and writes the report. It needs no key, no account and no server.
+OpenQodex is open source AI code review for Claude Code and Codex. It runs before you push, from your coding agent or your terminal. One command, `openqodex review`, works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. Then it starts its own reviewer, a separate Claude Code or Codex process that reads a frozen copy of the change. The reviewer checks every scanner finding and is given every changed line. OpenQodex checks its answer with scripts and prints one report. It needs Claude Code or Codex installed and logged in, and no other key, account or server.
 
 ## Install
 
@@ -19,7 +19,7 @@ For humans, in your terminal:
 npx openqodex init
 ```
 
-`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints every file it will write and asks once. Then say to your agent: "review my change with openqodex".
+`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints every file it will write and asks once. Then it reviews your change, or asks what to review when there is none. After that, say to your agent "review my change with openqodex", or run `openqodex review` yourself.
 
 For agents:
 
@@ -40,18 +40,29 @@ OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows
 
 ## What it does today
 
-- `openqodex review --agent` writes a review brief for your agent: the scanner findings to verify, review patterns that fit the change, and the diff.
-- `openqodex review --finalize` checks the agent's findings without a model and writes `report.md`, `report.json` and `report.sarif`.
-- `openqodex scan` runs the scanners only, for git hooks, pre-commit and CI.
+Four commands: `init`, `review`, `update` and `trust`. The commands hooks and agents call are listed in [docs/plumbing.md](docs/plumbing.md).
+
+- `openqodex review` runs the whole review in one command: a frozen copy of the change, the scanners, the code graph, a reviewer process OpenQodex starts, script checks of its answer, and one report in the terminal and in `report.md`, `report.json` and `report.sarif`.
+- `openqodex review --all` reviews the whole repository. `openqodex review <branch>` and `openqodex review '#42'` review a branch or a pull request that is not your current work. OpenQodex fetches it, checks it out in a temporary folder and reviews what it added since it left its base.
+- The reviewer is Claude Code (`claude -p`) or Codex (`codex exec`). `auto` picks the agent you run the command from, then Claude Code, then Codex; `--reviewer` or `reviewer:` in `~/.openqodex/config.yaml` picks one.
+- Claude Code starts with read, search and list tools only, inside the copy of the change, with none of your settings, hooks, plugins, memory or instruction files. Its event stream shows every read, so the report lists the files it read.
+- Codex starts in a read-only sandbox that confines reads to the copy of the change and the system folders, with no network for its commands and none of your config, plugins, hooks or the repository's instruction files. It still loads your global `~/.codex/AGENTS.md`, and its event stream does not show every command, so the report says its reads were not recorded. [docs/internal-reviewer-drivers.md](docs/internal-reviewer-drivers.md) gives the tests.
+- A review is complete only when every stage ran, every scanner finding was raised or dropped with a reason, and every changed line was in front of the reviewer: in the brief, in a later message from OpenQodex, or, for Claude Code, in a file it read. Anything else prints "Review incomplete" with what is missing, and exits 2.
+- A change that only deletes code, such as a removed check, can still carry a finding: the lines next to a deletion count as changed.
 - Thirteen built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
-- A push gate for Claude Code and Codex. It warns by default. It blocks only when `.openqodex.yaml` sets `review.block_on_severity`.
-- A GitHub Action and a pre-commit hook that run `openqodex scan`.
-- `openqodex demo` builds a small repo with planted bugs and scans it.
+- A push gate for Claude Code and Codex, and an optional git pre-push hook. Both look for a review of exactly what is pushed; neither scans or reviews by itself. They warn by default and block only when `.openqodex.yaml` sets `review.block_on_severity`.
+- A GitHub Action and a pre-commit hook that run the scanners only (`openqodex scan`). They are not a review.
+- `npx openqodex demo` builds a small repo with planted bugs and scans it.
 
 ## What it does not do yet
 
-- No review on your own API key. The review runs on your agent's model only.
+- The separate reviewer process needs Claude Code or Codex. Without either, `review` prints "Full review unavailable", says what is missing, saves the unchecked scanner findings to a file it names, and names the command with which the agent you are in reviews the change itself (`review --agent`). That report says which agent reviewed.
+- No Cursor reviewer. `cursor-agent` has no way to limit its tools to reading or to skip your rules and settings.
+- Codex cannot be the reviewer when `openqodex review` runs inside Codex's own sandbox: a second Codex does not start there. `review` then prints "Full review unavailable" and the `review --agent` command.
+- A review takes one to three minutes and uses your own Claude Code or Codex plan.
+- No review finds everything. The promise is that every stage runs, every scanner finding is checked, every changed line is put in front of the reviewer, and anything skipped is named.
+- No review on your own API key without Claude Code or Codex.
 - No tool server for agents (MCP).
 - No Homebrew formula, no install script and no Docker image. Install through npm.
 - No Windows support outside WSL.
@@ -115,12 +126,24 @@ npx openqodex trust
 - Scanner downloads on first use: GitHub release files checked against pinned sha256 sums, and pinned packages from PyPI, npm and RubyGems.
 - Semgrep rule packs (`p/default`, `p/security-audit`, `p/secrets`), fetched from the Semgrep registry on each run.
 - When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code.
+- The reviewer: Claude Code sends the review brief and the files it reads from the copy of the change to the model your Claude Code login uses. It can also open web pages (WebSearch and WebFetch); `reviewer_web: off` in `~/.openqodex/config.yaml` removes the web tools.
+- The reviewer, when it is Codex: Codex sends the conversation, which holds the brief, your global `~/.codex/AGENTS.md` and the output of the commands it runs in the copy of the change, to the model your Codex login uses. It can also use Codex's cached web search unless `reviewer_web: off` is set; its commands get no network either way.
 
 - `openqodex trust` reads the custom scanner's release from the GitHub API and downloads it.
+- `openqodex review <branch>` or `review '#<number>'` fetches that branch or pull request from your remote with git, and asks `gh` for the pull request's base when `gh` is installed.
+- For an install made with `init`, a version check at most once a day: the openqodex release list from registry.npmjs.org, and for a newer release its tarball and signed build record. It sends no code and nothing about you.
 
-`--offline` skips osv-scanner and semgrep and turns scanner downloads off.
+`--offline` skips osv-scanner and semgrep and turns scanner downloads, the version check, and the fetch and `gh` call of a branch or pull request review off.
 
-The built-in scanners send no code anywhere. Your agent's model sees what your agent reads, as always. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
+The built-in scanners send no code anywhere. The reviewer's model sees the brief and what the reviewer reads, as with any Claude Code or Codex session. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
+
+## Updates
+
+An install made with `npx openqodex init` from 0.3.0 on keeps itself up to date. At most once a day, after a review, a scan or a push check, a background process looks for a new release. The command never waits for it. A release is installed only when it is at least 24 hours old and its signed build record (npm provenance) shows it was built by this repository's release workflow. It goes into a folder of its own beside the version you run, and the switch is one rename of a small file, so a failed or interrupted update leaves the working version in place. An update never rewrites your agent files: in user scope they call the launcher, and the skill asks it for the procedure of whatever version is active. The next command says once which version it moved to. `openqodex update --rollback` goes back.
+
+Turn it off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml` or `OPENQODEX_AUTO_UPDATE=0`. It is also off with `--offline` and when `CI` is set.
+
+These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add`, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made with any earlier version needs one `npx openqodex init` to start updating.
 
 ## Packages
 
@@ -136,6 +159,7 @@ The docs ship inside the package. `npx openqodex guide <topic>` prints a page of
 
 - [Quickstart](docs/quickstart.md)
 - [Commands](docs/cli.md)
+- [Plumbing commands](docs/plumbing.md)
 - [Configuration](docs/config.md)
 - [Scanners](docs/scanners.md)
 - [Custom scanners](docs/custom-scanners.md)

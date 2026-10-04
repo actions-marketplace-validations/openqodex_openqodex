@@ -35,6 +35,12 @@ The report lists every selected scanner with one status. A scanner left out with
 
 A scanner problem never changes the exit code.
 
+## Changed scanner settings
+
+Several scanners read settings or an ignore list from the repository, as OpenQodex runs them. At the repository root only: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`; semgrep `.semgrepignore`; hadolint `.hadolint.yaml` and `.hadolint.yml`; actionlint `.github/actionlint.yaml` and `.github/actionlint.yml`. In any folder: ruff `ruff.toml` and `.ruff.toml`, and `pyproject.toml` when the change touches its `[tool.ruff` table; shellcheck `.shellcheckrc` and `shellcheckrc`; osv-scanner `osv-scanner.toml`. A change to one of them can hide that scanner's findings.
+
+In a review, each such changed file is a major candidate of that scanner, rule `settings-file`, on its first changed line; the reviewer verifies it and raises it or drops it with a reason. In a scan (`scan`, plain `review`, the git hook, the Action) nobody can clear it, so the report lists it under "This change edits a scanner settings file" and it never counts toward the verdict. `--only`, `--skip` and `scanners.disable` leave it out with its scanner.
+
 ## semgrep
 
 - Version: 1.94.0.

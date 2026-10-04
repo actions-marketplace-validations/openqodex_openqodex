@@ -8,10 +8,12 @@
 // 6. SARIF does not parse, is not 2.1.0, or mixes sources in one run.
 // 7. Markdown breaks its table on a pipe in a title, or names the hosted
 //    product more than once or in a scan report.
+// 8. An incomplete review renders as an ordinary SARIF run with no results,
+//    which a code scanning view reads as clean.
 import { describe, expect, it } from "vitest";
 import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
-import type { Config, Report } from "../types.js";
+import type { CompletionRecord, Config, Report } from "../types.js";
 import { renderJson, renderMarkdown, renderSarif, renderTerminal } from "./index.js";
 
 function review(submission = makeSubmission(), config: Partial<Config> = {}): Report {
@@ -101,6 +103,18 @@ describe("renderMarkdown", () => {
 });
 
 describe("renderSarif", () => {
+  it("8. marks an incomplete review as a failed run that names what is missing and carries the completion record", () => {
+    const completion: CompletionRecord = { version: 1, contract: "openqodex-review-2", status: "incomplete", missing: ["the reviewer timed out and was stopped"], reviewer: null, snapshot: { change_id: "x", tree: null, before: "b", after: "b" }, candidates: { total: 1, disposed: 0 }, coverage: { hunks: 1, covered: 0, unread: [], files_read: [], files_not_read: [] }, outside_reads: [], trace_complete: true };
+    const report: Report = { ...review(), findings: [], verdict: "incomplete", completion };
+    const run = JSON.parse(renderSarif(report)).runs[0];
+    expect(run.tool.driver.name).toBe("openqodex");
+    expect(run.invocations[0].executionSuccessful).toBe(false);
+    expect(run.invocations[0].toolExecutionNotifications[0].message.text).toContain("the reviewer timed out and was stopped");
+    expect(run.properties.completion.status).toBe("incomplete");
+    const complete = JSON.parse(renderSarif({ ...review(), completion: { ...completion, status: "complete", missing: [] } })).runs[0];
+    expect(complete.invocations[0].executionSuccessful).toBe(true);
+  });
+
   it("parses as SARIF 2.1.0 with one run per source", () => {
     const sarif = JSON.parse(renderSarif(fullReview()));
     expect(sarif.version).toBe("2.1.0");

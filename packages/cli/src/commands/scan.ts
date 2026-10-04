@@ -1,12 +1,13 @@
 // `openqodex scan`: the scanners only, on the current change. Used by the
-// git hook, the Action and pre-commit, and by `review` without --agent.
+// Action and pre-commit; not a review.
 import { relative } from "node:path";
-import { openReportDir, scanReport, writeLatestScan, writeReportFiles, writeScan } from "@openqodex/core";
+import { OpenQodexError, SEVERITIES, openReportDir, scanReport, writeLatestScan, writeReportFiles, writeScan } from "@openqodex/core";
 import { announceRepoFiles } from "../agents/repo-folder.js";
-import type { ChangeScope, Report } from "@openqodex/core";
+import type { ChangeScope, Report, Severity } from "@openqodex/core";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
 import { emitReport, exitFor, nothingToReview, reportFiles, runPipeline } from "../pipeline.js";
+import type { PipelineResult } from "../pipeline.js";
 
 export const SCOPE_BOOLS = ["--uncommitted"];
 export const SCOPE_VALUES = ["--base"];
@@ -26,15 +27,28 @@ export async function runScan(args: {
   scope: ChangeScope;
   only?: string;
   skip?: string;
+  // --block-on-severity: wins over the config's review.block_on_severity, so
+  // a workflow can set a gate the change's own config cannot weaken.
+  blockOn?: string;
 }): Promise<ScanOutcome> {
   const { flags } = args;
+  if (args.blockOn !== undefined && !(SEVERITIES as readonly string[]).includes(args.blockOn)) {
+    throw new OpenQodexError(`--block-on-severity must be one of ${SEVERITIES.join(", ")}, not ${args.blockOn}`);
+  }
   const p = await runPipeline({
     scope: args.scope,
     flags,
     only: scannerList("--only", args.only),
     skip: scannerList("--skip", args.skip),
   });
+  if (args.blockOn !== undefined) p.config = { ...p.config, blockOnSeverity: args.blockOn as Severity };
   announceRepoFiles(p.repoRoot);
+  return reportScan(p, flags);
+}
+
+// The scan report of a pipeline run, written to a run folder of the
+// developer's repository and printed.
+export function reportScan(p: PipelineResult, flags: GlobalFlags): ScanOutcome {
   if (p.scan === null) return { exitCode: nothingToReview(p.change), report: null, dir: null };
 
   const report = scanReport({ change: p.change, scan: p.scan, config: p.config });
@@ -57,13 +71,14 @@ export async function runScan(args: {
 export async function run(args: string[]): Promise<number> {
   const { global, bools, values } = parseFlags(args, {
     bools: SCOPE_BOOLS,
-    values: [...SCOPE_VALUES, "--only", "--skip"],
+    values: [...SCOPE_VALUES, "--only", "--skip", "--block-on-severity"],
   });
   const outcome = await runScan({
     flags: global,
     scope: scopeFrom(bools, values),
     only: values.get("--only"),
     skip: values.get("--skip"),
+    blockOn: values.get("--block-on-severity"),
   });
   return outcome.exitCode;
 }

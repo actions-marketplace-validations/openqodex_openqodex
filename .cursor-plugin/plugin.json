@@ -1,7 +1,7 @@
 {
   "name": "openqodex",
-  "version": "0.2.1",
-  "description": "Code review before you push, in Cursor. Scanners (Semgrep, Gitleaks, OSV-Scanner and more) check the lines you changed for security issues, secrets, vulnerable dependencies and lint errors, then the agent reviews the change on the model Cursor already runs. No API key, no account.",
+  "version": "0.5.0",
+  "description": "Code review before you push, from Cursor. One command runs scanners (Semgrep, Gitleaks, OSV-Scanner and more) on the lines you changed for security issues, secrets, vulnerable dependencies and lint errors, then starts a separate Claude Code or Codex reviewer that checks every scanner finding. Cursor is not the reviewer: without Claude Code or Codex installed, Cursor's agent reviews the change itself from the brief OpenQodex prints. No other key, no account.",
   "author": {
     "name": "Qodex",
     "url": "https://qodex.ai"

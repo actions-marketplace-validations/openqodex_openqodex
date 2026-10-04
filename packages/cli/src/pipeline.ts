@@ -1,26 +1,33 @@
 // The scan pipeline every command shares: find the repo, load the config,
 // work out the change, run the scanners on it. Progress goes to stderr.
-import { randomBytes } from "node:crypto";
-import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { closeSync, constants, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  DIFF_CAP_BYTES,
   STATE_DIR,
   findRepoRoot,
   getChange,
   isRepoState,
   loadConfig,
+  loadLensCatalog,
   redactSecrets,
   renderJson,
   renderMarkdown,
+  renderReview,
   renderSarif,
   renderTerminal,
+  safeGit,
+  selectLensesForDiff,
   writeRepoFile,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, HotSpot, ImpactSummary, Report, ScanResult, ScannerSource } from "@openqodex/core";
+import type { Change, ChangeScope, Config, HotSpot, ImpactSummary, Report, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
 import { buildGraph, detectImpact, emptyImpact, hotSymbols, langOf } from "@openqodex/graph";
 import type { Graph } from "@openqodex/graph";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
-import { EXIT_FINDINGS, EXIT_OK } from "./exit-codes.js";
+import { instructionsTemplate } from "./agents/repo-folder.js";
+import { EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
+import { readInstructions } from "./instructions.js";
 import { noteScan } from "./feedback.js";
 import type { GlobalFlags } from "./flags.js";
 
@@ -37,7 +44,11 @@ export function warn(line: string): void {
 }
 
 export type PipelineResult = {
+  // The developer's repository: its config, its run folders, its approvals.
   repoRoot: string;
+  // Where the changed files are read and the scanners run: repoRoot, or the
+  // temporary checkout of a branch or a pull request under review.
+  workDir: string;
   config: Config;
   change: Change;
   // null when the change is empty and nothing was scanned.
@@ -68,6 +79,7 @@ export async function runPipeline(args: {
 // coverage is passed: every finding in a file of the inventory is kept.
 export async function scanChange<C extends Change>(args: {
   repoRoot: string;
+  workDir?: string;
   config: Config;
   change: C;
   wholeRepo?: boolean;
@@ -76,26 +88,34 @@ export async function scanChange<C extends Change>(args: {
   skip?: ScannerSource[];
 }): Promise<PipelineResult & { change: C }> {
   const { repoRoot, config, change, flags } = args;
-  if (change.files.length === 0) return { repoRoot, config, change, scan: null, secrets: [] };
+  const workDir = args.workDir ?? repoRoot;
+  if (change.files.length === 0) return { repoRoot, workDir, config, change, scan: null, secrets: [] };
 
   const onProgress = progress(flags);
   const { scan, secrets } = await runScanners({
-    repoDir: repoRoot,
+    repoDir: workDir,
     changedPaths: change.changedPaths,
     coverage: args.wholeRepo ? undefined : change.coverage,
+    deletionPoints: change.deletionPoints,
+    baseText: async (path) => {
+      const r = await safeGit(repoRoot, ["show", "--no-textconv", `${change.baseSha}:${path}`]);
+      return r.code === 0 ? r.stdout.toString("utf8") : null;
+    },
     config,
     resolveTool: createToolResolver({
       allowInstall: !flags.noInstall,
       installBudgetMs: INSTALL_BUDGET_MS,
       onProgress,
     }),
+    // Approvals and the scanner list belong to the developer's repository and
+    // its config; an approved scanner runs in workDir, where the files are.
     custom: config.custom.length > 0 ? customAdapters(repoRoot, config) : [],
     only: args.only,
     skip: args.skip,
     onProgress,
   });
   noteScan(repoRoot, scan);
-  return { repoRoot, config, change, scan: redactStored(scan, secrets), secrets };
+  return { repoRoot, workDir, config, change, scan: redactStored(scan, secrets), secrets };
 }
 
 // Every string in the scan passes through the secret redaction before it is
@@ -126,13 +146,13 @@ async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean,
   }
   try {
     return await buildGraph({
-      repoRoot: p.repoRoot,
+      repoRoot: p.workDir,
       files: withBase ? p.change.changedPaths : undefined,
       only: withBase ? undefined : p.change.changedPaths,
       budgetMs: p.config.graph.budgetMs,
       maxFiles: p.config.graph.maxFiles,
       maxFileBytes: p.config.graph.maxFileBytes,
-      cacheDir: join(p.repoRoot, STATE_DIR, "graph"),
+      cacheDir: join(p.workDir, STATE_DIR, "graph"),
       onProgress: progress(flags),
       base: withBase ? { sha: p.change.baseSha, files: p.change.files } : undefined,
     });
@@ -192,10 +212,12 @@ export function nothingToReview(change: Change): number {
   return EXIT_OK;
 }
 
-// The four report files every finished run writes.
+// The four report files every finished run writes. A review `review` ran
+// with its own reviewer has the standard report; a scan and a legacy review
+// keep theirs.
 export function reportFiles(report: Report): Record<string, string> {
   return {
-    "report.md": renderMarkdown(report),
+    "report.md": report.completion ? renderReview(report, { format: "markdown" }) : renderMarkdown(report),
     "report.json": renderJson(report),
     "report.sarif": renderSarif(report),
   };
@@ -203,14 +225,19 @@ export function reportFiles(report: Report): Record<string, string> {
 
 // The chosen format to stdout, or to --output.
 export function emitReport(report: Report, flags: GlobalFlags, repoRoot: string): void {
+  const color = flags.color && flags.output === undefined;
   const text =
     flags.format === "markdown"
-      ? renderMarkdown(report)
+      ? report.completion
+        ? renderReview(report, { format: "markdown" })
+        : renderMarkdown(report)
       : flags.format === "json"
         ? renderJson(report)
         : flags.format === "sarif"
           ? renderSarif(report)
-          : renderTerminal(report, { color: flags.color && flags.output === undefined });
+          : report.completion
+            ? renderReview(report, { format: "terminal", color })
+            : renderTerminal(report, { color });
   if (flags.output !== undefined) {
     // A temp file beside it, then a rename: an existing entry, a symbolic
     // link included, is replaced and never written through.
@@ -234,5 +261,50 @@ export function emitReport(report: Report, flags: GlobalFlags, repoRoot: string)
 }
 
 export function exitFor(report: Report): number {
+  if (report.verdict === "incomplete") return EXIT_TOOL_FAILED;
   return report.verdict === "blocked" ? EXIT_FINDINGS : EXIT_OK;
+}
+
+// sha256 of the instructions file, null when there is none. Finalize compares
+// it with the brief's, so a review always follows the instructions as they are.
+export function instructionsHash(text: string): string | null {
+  return text === "" ? null : createHash("sha256").update(text).digest("hex");
+}
+
+// The owners' instructions as the brief takes them, and their hash. The
+// untouched template says nothing about this repo: no block for it.
+export function ownersInstructions(repoRoot: string, secrets: string[]): { text: string; hash: string | null } {
+  const raw = readInstructions(repoRoot);
+  return { text: raw === "" || raw === instructionsTemplate() ? "" : redactSecrets(raw, secrets), hash: instructionsHash(raw) };
+}
+
+// The lens triggers over the whole repo: every line counts as changed. Each
+// text file contributes its first bytes, an equal share of the 5 MB the
+// brief's diff may carry, so a late file is sampled as fully as an early
+// one; the matches are then ranked and capped as for a change.
+const LENS_SAMPLE_MIN_BYTES = 1024;
+
+export function wholeRepoLenses(change: WholeRepo): SelectedLens[] {
+  const text = [...change.lines.keys()];
+  const share = Math.max(LENS_SAMPLE_MIN_BYTES, Math.floor(DIFF_CAP_BYTES / Math.max(1, text.length)));
+  const buf = Buffer.alloc(share);
+  let diff = "";
+  for (const path of text) {
+    let fd: number;
+    try {
+      fd = openSync(join(change.repoRoot, path), constants.O_RDONLY | constants.O_NOFOLLOW);
+    } catch {
+      continue;
+    }
+    let read = 0;
+    try {
+      read = readSync(fd, buf, 0, share, 0);
+    } catch {
+      // unreadable now: it contributes nothing
+    } finally {
+      closeSync(fd);
+    }
+    for (const line of buf.subarray(0, read).toString("utf8").split("\n")) diff += `+${line}\n`;
+  }
+  return selectLensesForDiff({ diff, files: change.changedPaths, catalog: loadLensCatalog() });
 }

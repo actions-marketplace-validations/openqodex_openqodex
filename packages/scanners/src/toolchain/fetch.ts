@@ -4,6 +4,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, createWriteStream, lstatSync, readdirSync, rmSync } from "node:fs";
+import type { WriteStream } from "node:fs";
 import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -76,6 +77,7 @@ export async function downloadVerified(
   const deadline = setTimeout(() => stop(`not finished after ${Math.round(deadlineMs / 1000)} seconds`), deadlineMs);
   const hash = createHash("sha256");
   let bytes = 0;
+  let out: WriteStream | null = null;
   try {
     const response = await fetch(url, { redirect: "follow", signal: controller.signal });
     if (!response.ok || !response.body) throw new InstallError("failed", `download failed: HTTP ${response.status}`);
@@ -94,10 +96,14 @@ export async function downloadVerified(
           yield chunk;
         }
       },
-      createWriteStream(dest, { mode: 0o644 }),
+      (out = createWriteStream(dest, { mode: 0o644 })),
       { signal: controller.signal },
     );
   } catch (error) {
+    // The file is opened in the background: wait until the stream has closed,
+    // or a late open would put the file back after it was removed.
+    const stream = out as WriteStream | null;
+    if (stream !== null && !stream.closed) await new Promise<void>((done) => stream.once("close", () => done()));
     rmSync(dest, { force: true });
     if (error instanceof InstallError) throw error;
     throw new InstallError("failed", `download failed: ${stopped ?? shortCause(error)}`);

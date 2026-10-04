@@ -44,15 +44,21 @@ export function sandbox(files: Record<string, string> = {}, rootName = "oq test 
 }
 
 export function env(s: Sandbox, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const e: NodeJS.ProcessEnv = { ...process.env, HOME: s.home, OPENQODEX_HOME: s.oqHome };
+  // No update worker from a test run through the launcher: it would reach
+  // the registry and leave update.json behind. self-update.test.ts turns it on.
+  const e: NodeJS.ProcessEnv = { ...process.env, HOME: s.home, OPENQODEX_HOME: s.oqHome, OPENQODEX_AUTO_UPDATE: "0" };
   delete e.OPENQODEX_SKIP;
   // Codex's home would otherwise point init at the real one.
   delete e.CODEX_HOME;
   return { ...e, ...extra };
 }
 
-export function cli(s: Sandbox, args: string[], opts: { cwd?: string; input?: string; env?: Record<string, string> } = {}): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [BIN, ...args], {
+// `init` gets --no-review unless `review` is set: the tests of what init
+// installs compare files before and after, and the review it ends with
+// writes a report folder. init-review.test.ts tests that review.
+export function cli(s: Sandbox, args: string[], opts: { cwd?: string; input?: string; env?: Record<string, string>; review?: boolean } = {}): SpawnSyncReturns<string> {
+  const argv = args[0] === "init" && !opts.review ? [...args, "--no-review"] : args;
+  return spawnSync(process.execPath, [BIN, ...argv], {
     cwd: opts.cwd ?? s.repo,
     env: env(s, opts.env),
     input: opts.input ?? "",

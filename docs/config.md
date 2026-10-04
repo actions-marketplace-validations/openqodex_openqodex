@@ -216,3 +216,14 @@ The code graph lists the callers and importers of the code a change touches, for
 - `graph.budget_ms`: the time the graph may take, in milliseconds. The default is `10000`.
 - `graph.max_files`: the most files the graph reads. The default is `4000`.
 - `graph.max_file_bytes`: a file larger than this, in bytes, is left out of the graph. The default is `524288`.
+
+## The user config, ~/.openqodex/config.yaml
+
+One file in your home folder holds what is yours, not the team's. `OPENQODEX_HOME` moves it with the rest of `~/.openqodex/`.
+
+- `update`: `on` or `off`. The default is `on`. `off` stops the daily version check. `openqodex update --off` and `--on` write it.
+- `reviewer`: `auto`, `claude`, `codex` or `cursor`. The default is `auto`. The agent `review` starts as its reviewer; `--reviewer` on the command line wins. `claude` and `codex` are enabled; `cursor` makes `review` say why and exit 2. `auto` picks the agent running the command, then Claude Code, then Codex.
+- `reviewer_web`: `on` or `off`. The default is `on`: the reviewer gets Claude Code's WebSearch and WebFetch, or Codex's cached web search. `off` removes them. A reviewer that reads private code and untrusted text and can open web addresses can be talked into sending the code out, so set `off` if you do not accept that (`security`).
+
+A file that does not parse, or an `update` value that is neither `on` nor `off`, turns updates off until it is fixed. `openqodex doctor` says why updates are off. A file that does not parse, or a `reviewer` or `reviewer_web` value not listed above, stops `review` with one line naming the file.
+

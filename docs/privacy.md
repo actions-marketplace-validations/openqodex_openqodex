@@ -8,9 +8,11 @@ Nothing. OpenQodex collects no usage data, no crash reports and no identifiers. 
 
 ## Who reviews your code
 
-The review runs on the coding agent you already use, such as Claude Code, Cursor, Codex or Cline, on the model that agent already uses. That model sees what your agent reads, as it does without OpenQodex. OpenQodex adds no other model and needs no API key.
+The review runs in a reviewer process OpenQodex starts on your machine: Claude Code or Codex, on your own login. That process sends the brief and what the reviewer reads to the model your login uses. OpenQodex adds no other model and needs no other key. By default the reviewer can also search the web, and Claude Code can open web pages; `reviewer_web: off` in `~/.openqodex/config.yaml` removes that.
 
-## Every network call OpenQodex makes
+When neither Claude Code nor Codex can be the reviewer, the coding agent you are in reviews the change itself, on the model that agent already uses.
+
+## Every network use
 
 OpenQodex and the built-in scanners send no code anywhere. They use the network for these things only:
 
@@ -18,9 +20,11 @@ OpenQodex and the built-in scanners send no code anywhere. They use the network 
 - Semgrep rule packs. semgrep fetches `p/default`, `p/security-audit` and `p/secrets` from the Semgrep registry on each run.
 - The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code.
 - Custom scanners. `openqodex trust` reads the scanner's release from the GitHub API and downloads the asset.
-- A problem report, only when you choose it. When OpenQodex fails, it shows the GitHub issue it would create and asks. Only your choice 1, or `openqodex report --send-last`, creates that issue on GitHub. The issue holds the command, a short diagnostic, scanner statuses, the operating system, the CPU type and the Node version, never code, diffs, findings, config or logs. `cli` gives the details.
+- The problem report, only when you choose it. When OpenQodex fails, a scanner breaks, or you run `openqodex report`, it prints the GitHub issue it would create and two choices. Nothing is sent unless you press 1 or run `openqodex report --send-last`. The issue holds the OpenQodex version, the command and its arguments with paths and secrets taken out, the part that failed, a scrubbed error line, the scanner statuses and your platform. It never holds code, file names, paths, repository names, config or secrets.
+- The daily version check, for an install made with `init`. It sends GET requests to `registry.npmjs.org` only, with nothing about you, your code or your repository. `security` describes what it checks before it installs a release.
+- A review of a branch or a pull request. git fetches it from your own remote with git's own credentials, and the GitHub CLI, when it is installed and signed in, is asked for the pull request's base. OpenQodex reads no token.
 
-`--offline` skips osv-scanner and semgrep and turns scanner downloads off.
+`--offline` skips osv-scanner and semgrep and turns scanner downloads and the version check off.
 
 The plugins, the GitHub Action and the pre-commit hook fetch the `openqodex` package from npm to run it.
 

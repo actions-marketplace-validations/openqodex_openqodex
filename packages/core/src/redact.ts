@@ -19,7 +19,7 @@ function usable(secrets: string[]): string[] {
 // Replaces every span, merging spans that overlap or touch. All matches are
 // found on the original text first, so one secret overlapping another is
 // removed whole instead of leaving its tail behind.
-function replaceSpans(text: string, spans: Span[]): string {
+function replaceSpans(text: string, spans: Span[], mark: (secret: string) => string = () => REDACTED): string {
   if (spans.length === 0) return text;
   spans.sort((a, b) => a[0] - b[0]);
   let out = "";
@@ -30,22 +30,38 @@ function replaceSpans(text: string, spans: Span[]): string {
       end = Math.max(end, e);
       continue;
     }
-    out += text.slice(cursor, start) + REDACTED;
+    out += text.slice(cursor, start) + mark(text.slice(start, end));
     cursor = end;
     [start, end] = [s, e];
   }
-  return out + text.slice(cursor, start) + REDACTED + text.slice(end);
+  return out + text.slice(cursor, start) + mark(text.slice(start, end)) + text.slice(end);
 }
 
-// Replace every occurrence of each secret.
-export function redactSecrets(text: string, secrets: string[]): string {
+function spansOf(text: string, secrets: string[]): Span[] {
   const spans: Span[] = [];
   for (const secret of usable(secrets)) {
     for (let at = text.indexOf(secret); at !== -1; at = text.indexOf(secret, at + 1)) {
       spans.push([at, at + secret.length]);
     }
   }
-  return replaceSpans(text, spans);
+  return spans;
+}
+
+// Replace every occurrence of each secret.
+export function redactSecrets(text: string, secrets: string[]): string {
+  return replaceSpans(text, spansOf(text, secrets));
+}
+
+// The same, line by line: each line of a multi-line secret (a private key)
+// becomes its own marker and every line break stays, so the lines below keep
+// the numbers the scanners and the diff gave them.
+export function redactSecretsKeepingLines(text: string, secrets: string[]): string {
+  return replaceSpans(text, spansOf(text, secrets), (secret) =>
+    secret
+      .split("\n")
+      .map((line) => (line === "" || line === "\r" ? line : line.endsWith("\r") ? `${REDACTED}\r` : REDACTED))
+      .join("\n"),
+  );
 }
 
 export function fingerprintSecrets(secrets: string[]): SecretFingerprint[] {

@@ -1,62 +1,76 @@
 // `openqodex review`:
-//   --agent            scan, then write the brief for the host agent and print it
-//   --finalize [path]  check the agent's findings without a model and write the report
-//   neither            the same as `scan`, plus how to get the AI review
-//   --all              the whole repository instead of the change: the scanners
-//                      on every file, then the brief, with or without --agent.
-//                      There is never a scan-only report of the whole repo.
+//   neither            the whole review in one run, with a reviewer process
+//                      the tool starts (review-run.ts)
+//   --all              the whole repository instead of the change
+//   <target>           a branch or a pull request instead of the current work
+//   --agent            hidden, the two-step protocol of older skills: scan,
+//                      then write the brief for the host agent and print it
+//   --finalize [path]  hidden, its second step: check the agent's findings
+//                      without a model and write the report (a legacy review)
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, constants, openSync, readSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   MANIFEST_VERSION,
   OpenQodexError,
-  DIFF_CAP_BYTES,
   INVENTORY_FILE,
   buildBrief,
   buildInventory,
   buildWholeRepoBrief,
   configHash,
   finalizeReview,
+  gateReceipt,
+  findRepoRoot,
   getChange,
+  getTreeChange,
   getWholeRepo,
-  loadLensCatalog,
+  safeGit,
   openReportDir,
   readLatest,
-  readManifest,
   readRepoFile,
-  readScan,
-  redactSecrets,
   repoStat,
   STATE_DIR,
   selectLenses,
-  selectLensesForDiff,
   writeLatest,
   writeManifest,
   writeReportFiles,
   writeScan,
 } from "@openqodex/core";
-import type { ChangeScope, ImpactSummary, Latest, SelectedLens, WholeRepo } from "@openqodex/core";
+import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
-import { announceRepoFiles, instructionsTemplate } from "../agents/repo-folder.js";
-import { EXIT_OK } from "../exit-codes.js";
+import { announceRepoFiles } from "../agents/repo-folder.js";
+import { addTargetCheckout, checkoutOwner, checkoutsDir, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
+import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
+import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
+import { HANDED_OFF } from "../update/trigger.js";
 import { readInstructions } from "../instructions.js";
+import { readHomeRun, writeHomeReceipt, writeHomeRun } from "../receipts.js";
+import type { RunRecord } from "../receipts.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
+import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
 import type { GlobalFlags } from "../flags.js";
 import {
   buildHotSpots,
   buildImpact,
   emitReport,
   exitFor,
+  instructionsHash,
   loadRepo,
   nothingToReview,
+  ownersInstructions,
   redactStored,
   reportFiles,
+  progress,
   runPipeline,
   scanChange,
   warn,
+  wholeRepoLenses,
 } from "../pipeline.js";
-import { SCOPE_BOOLS, SCOPE_VALUES, runScan, scopeFrom } from "./scan.js";
+import type { PipelineResult } from "../pipeline.js";
+import { dropTempRef, resolveTarget, sweepTempRefs } from "../target.js";
+import type { Resolved } from "../target.js";
+import { SCOPE_BOOLS, SCOPE_VALUES, scopeFrom } from "./scan.js";
 
 const FINDINGS_FILE = "agent-findings.json";
 const IMPACT_FILE = "impact.json";
@@ -64,34 +78,68 @@ const RUN_FILE = "run.json";
 const RUN_AGAIN = "run openqodex review --agent first";
 
 // run.json beside the manifest: the scope the brief was made with, so
-// finalize recomputes the same change ("all" for the whole repository).
-type RunFile = { version: 1; scope: ChangeScope | "all" };
+// finalize recomputes the same change ("all" for the whole repository,
+// "target" for a branch or a pull request, whose commits are in the manifest).
+type RunFile = { version: 1; scope: ChangeScope | "all" | "target" };
 
 export async function run(args: string[]): Promise<number> {
   const { global, bools, values, positionals } = parseFlags(args, {
-    bools: [...SCOPE_BOOLS, "--agent", "--finalize", ALL, NO_GRAPH],
-    values: [...SCOPE_VALUES, "--only", "--skip"],
+    bools: [...SCOPE_BOOLS, "--agent", "--finalize", ALL, NO_GRAPH, HANDED_OFF],
+    values: [...SCOPE_VALUES, "--only", "--skip", "--run", "--reviewer", "--timeout"],
     positionals: 1,
   });
   const agent = bools.has("--agent");
   const finalize = bools.has("--finalize");
   const noGraph = bools.has(NO_GRAPH);
   if (agent && finalize) throw new OpenQodexError("--agent and --finalize cannot be used together");
-  if (positionals.length > 0 && !finalize) throw new OpenQodexError(`unexpected argument: ${positionals[0]}`);
+  if (values.has("--run") && !finalize) throw new OpenQodexError("--run names the run to finalize and needs --finalize");
+  if ((values.has("--reviewer") || values.has("--timeout")) && (agent || finalize)) {
+    throw new OpenQodexError("--reviewer and --timeout are for the review openqodex runs itself, not --agent or --finalize");
+  }
+  const target = finalize ? undefined : positionals[0];
+  if (target !== undefined && bools.has(ALL)) {
+    throw new OpenQodexError("--all reviews the whole repository and takes no branch or pull request");
+  }
+  if (target !== undefined && bools.has("--uncommitted")) {
+    throw new OpenQodexError("--uncommitted is about your own work and cannot be used with a branch or pull request");
+  }
   if (bools.has(ALL) && (values.has("--base") || bools.has("--uncommitted"))) {
     throw new OpenQodexError("--all reviews the whole repository and cannot be used with --base or --uncommitted");
   }
 
   // Finalize reads the scope from the run; --all only picks the newest
   // whole-repo run when no findings path is given.
-  if (finalize) return runFinalize(global, positionals[0], bools.has(ALL));
-  if (bools.has(ALL)) return runAll(global, agent, values.get("--only"), values.get("--skip"), noGraph);
+  if (finalize) return runFinalize(global, positionals[0], bools.has(ALL), args, bools.has(HANDED_OFF), values.get("--run"));
+  // Checkouts that a review of a branch or a pull request left behind.
+  const root = await findRepoRoot(global.cwd).catch(() => null);
+  if (root !== null) await Promise.all([sweepCheckouts(root), sweepTempRefs(root)]);
   const scope = scopeFrom(bools, values);
-  if (agent) return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
+  if (!agent) {
+    return runReview({
+      flags: global,
+      scope,
+      target,
+      base: values.get("--base"),
+      all: bools.has(ALL),
+      only: values.get("--only"),
+      skip: values.get("--skip"),
+      noGraph,
+      reviewer: values.get("--reviewer"),
+      timeoutMs: timeoutSeconds(values.get("--timeout")) * 1000,
+    });
+  }
+  if (target !== undefined) {
+    return runTarget(global, target, { base: values.get("--base"), only: values.get("--only"), skip: values.get("--skip"), noGraph });
+  }
+  if (bools.has(ALL)) return runAll(global, values.get("--only"), values.get("--skip"), noGraph);
+  return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
+}
 
-  const outcome = await runScan({ flags: global, scope, only: values.get("--only"), skip: values.get("--skip") });
-  if (outcome.report !== null) warn("For the AI review, ask your coding agent: review my change with openqodex");
-  return outcome.exitCode;
+function timeoutSeconds(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_TIMEOUT_SECONDS;
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || n < 1) throw new OpenQodexError(`--timeout takes a whole number of seconds, not ${value}`);
+  return n;
 }
 
 // Quoted for a POSIX shell: the agent pastes this line as it is.
@@ -99,26 +147,28 @@ function shellQuote(arg: string): string {
   return /^[A-Za-z0-9_./:@=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
-// The exact command that finalizes this run, from any folder: the repo and an
-// explicit config are named so the config hash and the change match.
-function finalizeCommand(repoRoot: string, config: string | undefined, findingsPath: string): string {
-  const args = ["npx", "-y", `openqodex@${__OPENQODEX_VERSION__}`, "review", "--finalize", "--cwd", repoRoot];
-  if (config !== undefined) args.push("--config", isAbsolute(config) ? config : resolve(repoRoot, config));
-  args.push(findingsPath);
-  return args.map(shellQuote).join(" ");
-}
-
-// sha256 of the instructions file, null when there is none. Finalize compares
-// it with the brief's, so a review always follows the instructions as they are.
-function instructionsHash(text: string): string | null {
-  return text === "" ? null : createHash("sha256").update(text).digest("hex");
-}
-
-// The owners' instructions as the brief takes them, and their hash. The
-// untouched template says nothing about this repo: no block for it.
-function ownersInstructions(repoRoot: string, secrets: string[]): { text: string; hash: string | null } {
-  const raw = readInstructions(repoRoot);
-  return { text: raw === "" || raw === instructionsTemplate() ? "" : redactSecrets(raw, secrets), hash: instructionsHash(raw) };
+// The command that finalizes this run. Started through the launcher, it is
+// the plain line the Claude Code permission rules cover, run from the
+// repository root: `<launcher> review --finalize`, with --all and --offline
+// as the brief was made, and finalize finds the run through latest.json or
+// latest-all.json. When an update moved the launcher on in between, finalize
+// hands the run to the version that wrote the brief by its findings file.
+// An explicit --config, or a run not started through the launcher, gets the
+// full line that works from any folder: the repo, the config and the
+// findings file named, with the pinned npx version (or, for a local build,
+// its own node and entry file: see directRunner).
+// A review of a branch or a pull request writes no receipt, so its line names
+// the run (`--run <id>`) in place of the findings file.
+function finalizeCommand(repoRoot: string, flags: GlobalFlags, findingsPath: string, all: boolean, runId?: string): string {
+  const run = runId === undefined ? [] : ["--run", runId];
+  if (launcherStarted() && flags.config === undefined) {
+    return [launcherRunner(launcherPath(openqodexHomeDir())), "review", "--finalize", ...(all ? ["--all"] : []), ...run, ...(flags.offline ? ["--offline"] : [])].join(" ");
+  }
+  const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : directRunner();
+  const args = ["review", "--finalize", "--cwd", repoRoot];
+  if (flags.config !== undefined) args.push("--config", isAbsolute(flags.config) ? flags.config : resolve(repoRoot, flags.config));
+  args.push(...(runId === undefined ? [findingsPath] : run));
+  return [runner, ...args.map(shellQuote)].join(" ");
 }
 
 async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
@@ -130,21 +180,32 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
   });
   announceRepoFiles(p.repoRoot);
   if (p.scan === null) return nothingToReview(p.change);
+  await writeBrief(p, flags, noGraph, scope);
+  return EXIT_OK;
+}
+
+// The run folder, the manifest and the brief of a change review, printed.
+// A target review records the target and writes no receipt: latest.json is
+// the push gate's view of the developer's own change.
+async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolean, scope: ChangeScope | null, target?: RunTarget): Promise<void> {
+  if (p.scan === null) return;
   // Read after the template may have been created, so finalize hashes the
   // same file. Over the size limit it is refused, never cut.
   const instructions = ownersInstructions(p.repoRoot, p.secrets);
 
   const lenses = selectLenses(p.change);
   const dir = openReportDir(p.repoRoot, p.change.shortId);
-  writeManifest(p.repoRoot, dir, {
+  const runId = target ? basename(dir) : undefined;
+  const manifest: RunManifest = {
     version: MANIFEST_VERSION,
     change_id: p.change.id,
     config_hash: configHash(p.config),
     created_at: new Date().toISOString(),
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
     instructions_hash: instructions.hash,
-  });
-  writeScan(p.repoRoot, dir, p.scan);
+    runtime_version: __OPENQODEX_VERSION__,
+    ...(target ? { target, run_id: runId } : {}),
+  };
   const impact = await buildImpact(p, flags, noGraph);
   const brief = buildBrief({
     change: p.change,
@@ -153,57 +214,121 @@ async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | u
     config: p.config,
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
-    finalizeCommand: finalizeCommand(p.repoRoot, flags.config, join(dir, FINDINGS_FILE)),
+    finalizeCommand: finalizeCommand(p.repoRoot, flags, join(dir, FINDINGS_FILE), false, runId),
     impactBlock: renderImpactBlock(impact),
     instructions: instructions.text,
+    target,
   });
-  const runFile: RunFile = { version: 1, scope };
-  writeReportFiles(p.repoRoot, dir, {
-    [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
+  const runFile: RunFile = { version: 1, scope: scope ?? "target" };
+  // Every file finalize reads, as text, so the run record hashes exactly what
+  // was written and never what the folder holds a moment later.
+  const bound = {
+    "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
+    "scan.json": `${JSON.stringify(p.scan, null, 2)}\n`,
     "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
+    [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
+  };
+  writeReportFiles(p.repoRoot, dir, {
+    ...bound,
     [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
     "brief.md": brief,
   });
-  writeLatest(p.repoRoot, {
-    dir: relative(p.repoRoot, dir),
-    change_id: p.change.id,
-    kind: "review",
-    finalized: false,
-    verdict: null,
-  });
+  // The run record in the developer's home: finalize issues a push receipt
+  // only for a run this machine scanned, with these files unchanged.
+  if (!target) recordRun(p.repoRoot, dir, manifest, bound);
+  if (!target) {
+    writeLatest(p.repoRoot, {
+      dir: relative(p.repoRoot, dir),
+      change_id: p.change.id,
+      kind: "review",
+      finalized: false,
+      verdict: null,
+    });
+  }
   process.stdout.write(brief);
-  return EXIT_OK;
 }
 
-// The lens triggers over the whole repo: every line counts as changed. Each
-// text file contributes its first bytes, an equal share of the 5 MB the
-// brief's diff may carry, so a late file is sampled as fully as an early
-// one; the matches are then ranked and capped as for a change.
-const LENS_SAMPLE_MIN_BYTES = 1024;
+// The worktree is clean apart from our own state folder.
+function cleanWorkTree(repoRoot: string): boolean {
+  const r = spawnSync("git", ["status", "--porcelain", "--", ".", ":(exclude).openqodex"], { cwd: repoRoot, encoding: "utf8" });
+  return r.status === 0 && r.stdout === "";
+}
 
-function wholeRepoLenses(change: WholeRepo): SelectedLens[] {
-  const text = [...change.lines.keys()];
-  const share = Math.max(LENS_SAMPLE_MIN_BYTES, Math.floor(DIFF_CAP_BYTES / Math.max(1, text.length)));
-  const buf = Buffer.alloc(share);
-  let diff = "";
-  for (const path of text) {
-    let fd: number;
-    try {
-      fd = openSync(join(change.repoRoot, path), constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch {
-      continue;
-    }
-    let read = 0;
-    try {
-      read = readSync(fd, buf, 0, share, 0);
-    } catch {
-      // unreadable now: it contributes nothing
-    } finally {
-      closeSync(fd);
-    }
-    for (const line of buf.subarray(0, read).toString("utf8").split("\n")) diff += `+${line}\n`;
+// `review [--agent] <target>`: a branch or a pull request. The change is the
+// target's head against its merge base with the base, from the two commits'
+// trees. Its files are read in place when the head is HEAD and the work tree
+// is clean, else in a temporary checkout made without running anything from
+// the repo's config, with the developer's own settings, never the target's.
+// The checkout outlives an agent review until finalize; a scan removes it.
+async function runTarget(
+  flags: GlobalFlags,
+  spec: string,
+  opts: { base: string | undefined; only: string | undefined; skip: string | undefined; noGraph: boolean },
+): Promise<number> {
+  const { repoRoot, config } = await loadRepo(flags);
+  announceRepoFiles(repoRoot);
+  const t = await resolveTarget({ repoRoot, spec, offline: flags.offline, base: opts.base, defaultBase: config.defaultBase });
+  try {
+    return await reviewResolved(flags, spec, opts, repoRoot, config, t);
+  } finally {
+    // The run's own ref for a fetched pull request head; the checkout or HEAD now holds the commit.
+    if (t.tmpRef !== null) await dropTempRef(repoRoot, t.tmpRef);
   }
-  return selectLensesForDiff({ diff, files: change.changedPaths, catalog: loadLensCatalog() });
+}
+
+async function reviewResolved(
+  flags: GlobalFlags,
+  spec: string,
+  opts: { base: string | undefined; only: string | undefined; skip: string | undefined; noGraph: boolean },
+  repoRoot: string,
+  config: Config,
+  t: Resolved,
+): Promise<number> {
+  for (const note of t.notes) warn(note);
+  progress(flags)(
+    `Reviewing ${spec} at ${t.headSha.slice(0, 12)}: base ${t.baseRef} (from ${t.baseSource}), merge base ${t.mergeBase.slice(0, 12)}`,
+  );
+  const change = await getTreeChange({ repoRoot, baseRef: t.baseRef, baseSha: t.mergeBase, headSha: t.headSha, exclude: config.exclude });
+  if (change.files.length === 0) return nothingToReview(change);
+
+  const head = spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).stdout.trim();
+  let tree: string | null = null;
+  if (t.headSha !== head || !cleanWorkTree(repoRoot)) {
+    if (t.headSha === head) warn(`Uncommitted work is not part of a target review: reviewing the committed ${spec} at ${t.headSha.slice(0, 12)}`);
+    tree = (await addTargetCheckout(repoRoot, t.headSha, `${change.shortId}-`)).tree;
+  }
+  const target: RunTarget = {
+    spec,
+    base_ref: t.baseRef,
+    base_source: t.baseSource,
+    base_sha: t.baseSha,
+    merge_base: t.mergeBase,
+    head_sha: t.headSha,
+    repo_root: repoRoot,
+    checkout: tree,
+  };
+  let keep = false;
+  try {
+    if (tree !== null) {
+      placeSettings(repoRoot, tree, false);
+      const lfs = await lfsPaths(tree, change.changedPaths);
+      if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
+    }
+    const p = await scanChange({
+      repoRoot,
+      workDir: tree ?? repoRoot,
+      config,
+      change,
+      flags,
+      only: scannerList("--only", opts.only),
+      skip: scannerList("--skip", opts.skip),
+    });
+    await writeBrief(p, flags, opts.noGraph, null, target);
+    keep = true;
+    return EXIT_OK;
+  } finally {
+    if (tree !== null && !keep) await removeTargetCheckout(repoRoot, tree);
+  }
 }
 
 // The receipt of the newest whole-repo run, beside latest.json, which only
@@ -215,7 +340,7 @@ function writeLatestAll(repoRoot: string, latest: Latest): void {
   writeReportFiles(repoRoot, join(repoRoot, STATE_DIR), { [LATEST_ALL_FILE]: `${JSON.stringify(latest, null, 2)}\n` });
 }
 
-async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
+async function runAll(flags: GlobalFlags, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
   const { repoRoot, config } = await loadRepo(flags);
   announceRepoFiles(repoRoot);
   const whole = await getWholeRepo({ repoRoot, exclude: config.exclude });
@@ -243,6 +368,7 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     created_at: new Date().toISOString(),
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
     instructions_hash: instructions.hash,
+    runtime_version: __OPENQODEX_VERSION__,
   });
   writeScan(repoRoot, dir, p.scan);
   const { impact, hot, note } = await buildHotSpots(p, flags, noGraph);
@@ -254,7 +380,7 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     config,
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
-    finalizeCommand: finalizeCommand(repoRoot, flags.config, join(dir, FINDINGS_FILE)),
+    finalizeCommand: finalizeCommand(repoRoot, flags, join(dir, FINDINGS_FILE), true),
     inventory,
     inventoryPath: join(dir, INVENTORY_FILE),
     hot,
@@ -277,11 +403,6 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     verdict: null,
   });
   process.stdout.write(brief);
-  if (!agent) {
-    process.stdout.write(
-      "\nThis is the brief, not the review: the review is done when your coding agent writes its findings and runs the finalize command above. Ask it: review my whole repo with openqodex\n",
-    );
-  }
   return EXIT_OK;
 }
 
@@ -342,7 +463,7 @@ function checkRunDir(repoRoot: string, dir: string, findingsPath: string): { dir
 // The report folder this submission belongs to: the newest run when no path
 // is given (the newest whole-repo run with --all), else the folder that
 // holds the findings file.
-function findRun(repoRoot: string, path: string | undefined, all: boolean): { dir: string; submission: unknown } {
+function findRun(repoRoot: string, path: string | undefined, all: boolean): { dir: string; findingsPath: string; submission: unknown } {
   let dir: string;
   let findingsPath: string;
   if (path === undefined) {
@@ -351,7 +472,7 @@ function findRun(repoRoot: string, path: string | undefined, all: boolean): { di
       throw new OpenQodexError(`no review brief found in this repository; ${RUN_AGAIN}`);
     }
     ({ dir, findingsPath } = checkRunDir(repoRoot, resolve(repoRoot, latest.dir), join(resolve(repoRoot, latest.dir), FINDINGS_FILE)));
-    if (readManifest(repoRoot, dir) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
+    if (repoStat(repoRoot, join(dir, "manifest.json")) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
     if (repoStat(repoRoot, findingsPath) === null) {
       throw new OpenQodexError(`no agent findings at ${findingsPath}; write them there as the brief says, then run this again`);
     }
@@ -360,18 +481,219 @@ function findRun(repoRoot: string, path: string | undefined, all: boolean): { di
   }
   const submission = readJsonFile(repoRoot, findingsPath, "agent findings");
   if (submission === null) throw new OpenQodexError(`agent findings not found at ${findingsPath}`);
-  return { dir, submission };
+  return { dir, findingsPath, submission };
 }
 
-async function runFinalize(flags: GlobalFlags, path: string | undefined, all: boolean): Promise<number> {
+const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+// A brief written by another version is finalized by that version: the brief's
+// rules and the finalize checks belong together. It runs only
+// <home>/runtime/<x.y.z>/dist/bin.js, built from the developer's home folder
+// and a plain version, never a path read from the manifest; a repository
+// cannot write into the home folder.
+// The child gets the findings file this process selected, by path, so it
+// finalizes the same run even when latest.json moves on in between, and the
+// hidden --handed-off argument, so it never hands off again. An environment
+// variable would be inherited from whatever started this process.
+function finalizeOnVersion(version: unknown, args: string[], path: string | undefined, findingsPath: string, handedOff: boolean): number {
+  if (handedOff) {
+    throw new OpenQodexError(`this finalize was handed here by another openqodex version, and the brief names ${String(version)}; run openqodex review --agent again`);
+  }
+  if (typeof version !== "string" || !PLAIN_VERSION.test(version)) {
+    throw new OpenQodexError("the brief names no valid openqodex version; run openqodex review --agent again");
+  }
+  const bin = runtimeBin(openqodexHomeDir(), version);
+  if (!existsSync(bin)) {
+    throw new OpenQodexError(`this brief was written by openqodex ${version}, which is not installed here; run openqodex review --agent again`);
+  }
+  // The flags as given, without the path, then -- and the selected path, so a
+  // path after -- or one that starts with a dash reaches the child as a path.
+  const dash = args.indexOf("--");
+  const given = dash !== -1 ? args.slice(0, dash) : path === undefined ? args : args.filter((a, i) => i !== args.indexOf(path));
+  // --run chose the run here; the child gets that run's findings path instead,
+  // and a version from before --run would not know the flag.
+  const flags = given.filter((a, i) => a !== "--run" && given[i - 1] !== "--run" && !a.startsWith("--run="));
+  const child = spawnSync(process.execPath, [bin, "review", HANDED_OFF, ...flags, "--", findingsPath], { stdio: "inherit" });
+  return child.status ?? EXIT_TOOL_FAILED;
+}
+
+// The run a `--run <id>` names, in this repository's report folders.
+function findRunById(repoRoot: string, id: string): { dir: string; findingsPath: string; submission: unknown } {
+  if (!RUN_DIR_NAME.test(id)) throw new OpenQodexError(`--run ${id} is not a run name; copy it from the brief's finalize line`);
+  const { dir, findingsPath } = checkRunDir(repoRoot, join(repoRoot, STATE_DIR, "reviews", id), join(repoRoot, STATE_DIR, "reviews", id, FINDINGS_FILE));
+  if (repoStat(repoRoot, join(dir, "manifest.json")) === null) throw new OpenQodexError(`the run ${id} has no review brief; ${RUN_AGAIN}`);
+  const submission = readJsonFile(repoRoot, findingsPath, "agent findings");
+  if (submission === null) throw new OpenQodexError(`no agent findings at ${findingsPath}; write them there as the brief says, then run this again`);
+  return { dir, findingsPath, submission };
+}
+
+// The checkout a target review was briefed on, still at the head it recorded.
+async function checkTargetCheckout(target: RunTarget): Promise<void> {
+  if (target.checkout === null) return;
+  // Only a checkout this tool made is read, or later removed.
+  if (!inCheckouts(target.checkout)) {
+    throw new OpenQodexError(`the run names a checkout outside ${checkoutsDir()}, which openqodex never makes; run the review again`);
+  }
+  if (!existsSync(target.checkout)) throw new OpenQodexError(`the temporary checkout of ${target.spec} is gone; run the review again`);
+  const head = (await safeGit(target.checkout, ["rev-parse", "--verify", "--quiet", "HEAD"])).stdout.toString("utf8").trim();
+  if (head !== target.head_sha) {
+    throw new OpenQodexError(
+      `the temporary checkout of ${target.spec} moved from ${target.head_sha.slice(0, 12)} to ${head.slice(0, 12) || "nothing"} since the brief; run the review again`,
+    );
+  }
+}
+
+async function runFinalize(flags: GlobalFlags, path: string | undefined, all: boolean, args: string[], handedOff: boolean, runId: string | undefined): Promise<number> {
+  // Refused before any config is read: a checkout's root config is the target's.
+  const owner = checkoutOwner(await findRepoRoot(flags.cwd));
+  if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run finalize from ${owner}`);
   const { repoRoot, config } = await loadRepo(flags);
-  const { dir, submission } = findRun(repoRoot, path, all);
-  const manifest = readManifest(repoRoot, dir);
-  const scan = readScan(repoRoot, dir);
-  const runFile = readJsonFile(repoRoot, join(dir, RUN_FILE), "run file") as RunFile | null;
+  if (runId !== undefined && (path !== undefined || all)) throw new OpenQodexError("--run names the run; give no findings path and no --all with it");
+  const { dir, findingsPath, submission } = runId !== undefined ? findRunById(repoRoot, runId) : findRun(repoRoot, path, all);
+  // Each run file is read once, here; everything below, the run record check
+  // included, uses these texts and what was parsed from them, never the files
+  // again, so a file swapped after this read changes nothing.
+  const texts = readRunTexts(repoRoot, dir);
+  const manifest = parseRunFile<RunManifest>(texts["manifest.json"]);
+  const target = manifest?.target;
+  // A review of a branch or a pull request is bound to its run by name.
+  if (target !== undefined && runId === undefined) {
+    throw new OpenQodexError(`this run reviewed ${target.spec}; finalize it with review --finalize --run ${basename(dir)}`);
+  }
+  if (manifest !== null && manifest.runtime_version !== undefined && manifest.runtime_version !== __OPENQODEX_VERSION__) {
+    if (target !== undefined) {
+      throw new OpenQodexError(`this brief was written by openqodex ${manifest.runtime_version}; run the review of ${target.spec} again`);
+    }
+    return finalizeOnVersion(manifest.runtime_version, args, path, findingsPath, handedOff);
+  }
+  const scan = parseRunFile<ScanResult>(texts["scan.json"]);
+  const runFile = parseRunFile<RunFile>(texts[RUN_FILE]);
   if (manifest === null || scan === null || runFile === null) {
     throw new OpenQodexError(`the run in ${relative(repoRoot, dir)} has no review brief; ${RUN_AGAIN}`);
   }
+  // A failure here cannot be fixed in the findings file: a target review's
+  // checkout goes with it. A wrong field found later keeps it for the retry.
+  const discard = async (): Promise<void> => {
+    if (target?.checkout) await removeTargetCheckout(repoRoot, target.checkout);
+  };
+  try {
+    checkBinding(repoRoot, config, manifest);
+    if (target !== undefined) await checkTargetCheckout(target);
+  } catch (error) {
+    await discard();
+    throw error;
+  }
+  const whole = runFile.scope === "all" ? await getWholeRepo({ repoRoot, exclude: config.exclude }) : null;
+  const change = target
+    ? await getTreeChange({ repoRoot, baseRef: target.base_ref, baseSha: target.merge_base, headSha: target.head_sha, exclude: config.exclude })
+    : (whole ?? (await getChange({ repoRoot, scope: runFile.scope as ChangeScope, exclude: config.exclude, defaultBase: config.defaultBase })));
+  // A whole-repo run has no change to trace, so its report carries no blast radius.
+  const report = {
+    ...finalizeReview({ change, scan, manifest, config, submission, wholeRepo: whole ?? undefined }),
+    impact: whole ? null : readImpact(repoRoot, dir),
+  };
+
+  writeReportFiles(repoRoot, dir, reportFiles(report));
+  const receipt: Latest = {
+    dir: relative(repoRoot, dir),
+    change_id: change.id,
+    kind: "review",
+    finalized: true,
+    verdict: report.verdict,
+  };
+  // A target review is not the developer's change: no receipt.
+  if (whole) writeLatestAll(repoRoot, receipt);
+  else if (!target) {
+    writeLatest(repoRoot, receipt);
+    // A legacy record in the developer's home, so the push hooks accept this
+    // review as before; only for a run this machine scanned (recordRun).
+    try {
+      if (runMatches(readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)), { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts })) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir)));
+      else warn("openqodex: this review is not recorded for the push hooks: its scan was not run by review --agent on this machine, or its files changed since; run openqodex review");
+    } catch (error) {
+      warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
+    }
+  }
+  await discard();
+  emitReport(report, flags, repoRoot);
+  return exitFor(report);
+}
+
+const sha256Of = (text: string | null): string | null => (text === null ? null : createHash("sha256").update(text, "utf8").digest("hex"));
+
+// Writes the home run record of a change run: its change id, the config and
+// instructions hashes it was made with, and the sha256 of each file finalize
+// reads, from the text this process wrote (never read back from the folder,
+// which the repository and the agent can write too). A failure is one
+// warning line: the run then finalizes with no push receipt.
+function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: Record<"manifest.json" | "scan.json" | "candidates.json" | "run.json", string>): void {
+  try {
+    writeHomeRun(openqodexHomeDir(), repoRoot, basename(dir), {
+      version: 1,
+      change_id: manifest.change_id,
+      config_hash: manifest.config_hash,
+      instructions_hash: manifest.instructions_hash ?? null,
+      manifest_sha256: sha256Of(files["manifest.json"])!,
+      scan_sha256: sha256Of(files["scan.json"])!,
+      candidates_sha256: sha256Of(files["candidates.json"])!,
+      run_sha256: sha256Of(files["run.json"])!,
+      written_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    warn(`openqodex: could not record this run for the push hooks: ${(error as Error).message.split("\n")[0]}`);
+  }
+}
+
+type RunFileName = "manifest.json" | "scan.json" | "candidates.json" | "run.json";
+const RUN_FILES: RunFileName[] = ["manifest.json", "scan.json", "candidates.json", "run.json"];
+
+// The run files as text, each read once through the repo state reader (no
+// link, nothing but a regular file); null for a file that is not there.
+function readRunTexts(repoRoot: string, dir: string): Record<RunFileName, string | null> {
+  return Object.fromEntries(RUN_FILES.map((name) => [name, readRepoFile(repoRoot, join(dir, name))])) as Record<RunFileName, string | null>;
+}
+
+function parseRunFile<T>(text: string | null): T | null {
+  if (text === null) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
+function currentInstructionsHash(repoRoot: string): string | null {
+  try {
+    return instructionsHash(readInstructions(repoRoot));
+  } catch {
+    return "unreadable";
+  }
+}
+
+// Whether a home run record (looked up by the run folder's name, whose shape
+// checkRunDir and readHomeRun both check) matches this run now: the change
+// computed now from the working state, the config and instructions now, and
+// the exact run file texts finalize goes on to use. It takes text, never a
+// path, so what it checks is what finalize uses.
+export function runMatches(
+  run: RunRecord | null,
+  now: { changeId: string; configHash: string; instructionsHash: string | null; texts: Record<RunFileName, string | null> },
+): boolean {
+  if (run === null) return false;
+  const t = now.texts;
+  return (
+    run.change_id === now.changeId &&
+    run.config_hash === now.configHash &&
+    run.instructions_hash === now.instructionsHash &&
+    run.manifest_sha256 === sha256Of(t["manifest.json"]) &&
+    run.scan_sha256 === sha256Of(t["scan.json"]) &&
+    run.candidates_sha256 === sha256Of(t["candidates.json"]) &&
+    run.run_sha256 === sha256Of(t["run.json"])
+  );
+}
+
+// The config and the instructions are the ones the brief was made with.
+function checkBinding(repoRoot: string, config: Config, manifest: RunManifest): void {
   if (manifest.config_hash !== configHash(config)) {
     throw new OpenQodexError("the config changed since the brief (.openqodex.yaml or --config); run openqodex review --agent again");
   }
@@ -387,25 +709,4 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
       throw new OpenQodexError("the instructions changed since the brief (.openqodex/custom-instructions.md); run review again (openqodex review --agent)");
     }
   }
-  const whole = runFile.scope === "all" ? await getWholeRepo({ repoRoot, exclude: config.exclude }) : null;
-  const change =
-    whole ?? (await getChange({ repoRoot, scope: runFile.scope as ChangeScope, exclude: config.exclude, defaultBase: config.defaultBase }));
-  // A whole-repo run has no change to trace, so its report carries no blast radius.
-  const report = {
-    ...finalizeReview({ change, scan, manifest, config, submission, wholeRepo: whole ?? undefined }),
-    impact: whole ? null : readImpact(repoRoot, dir),
-  };
-
-  writeReportFiles(repoRoot, dir, reportFiles(report));
-  const receipt: Latest = {
-    dir: relative(repoRoot, dir),
-    change_id: change.id,
-    kind: "review",
-    finalized: true,
-    verdict: report.verdict,
-  };
-  if (whole) writeLatestAll(repoRoot, receipt);
-  else writeLatest(repoRoot, receipt);
-  emitReport(report, flags, repoRoot);
-  return exitFor(report);
 }

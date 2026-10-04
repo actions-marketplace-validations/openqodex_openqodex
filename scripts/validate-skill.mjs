@@ -34,6 +34,8 @@ if (present(skill)) {
     if (name !== "openqodex") errors.push(`${skill}: frontmatter name must be openqodex`);
     if (!description) errors.push(`${skill}: frontmatter description is empty`);
   }
+  // The procedure is one command: the agent writes no findings file and runs no finalize step.
+  if (/agent-findings\.json|--finalize|review --agent/.test(text)) errors.push(`${skill}: still describes the two-step protocol (a findings file, --agent or --finalize)`);
   if (!errors.length) console.log(`ok: ${skill}`);
 }
 

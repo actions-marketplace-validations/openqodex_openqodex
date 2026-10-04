@@ -1,6 +1,6 @@
 # Commands
 
-Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed.
+Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the four commands below: `init`, `review`, `update` and `trust`. The commands that hooks, the skill and the Action call (`scan`, `doctor`, `hook`, `guide`, `demo`, `report`) still work; `plumbing` describes them.
 
 ## Exit codes
 
@@ -22,11 +22,11 @@ By default the change is the commits not yet pushed plus everything uncommitted,
 4. The point where the branch left the remote's default branch (`origin/HEAD`).
 5. The last commit, `HEAD`.
 
-A repository with no commits checks every file. OpenQodex never fetches from a remote.
+A repository with no commits checks every file with `scan`; `review` needs a first commit to make its snapshot. A review of your own change never fetches from a remote; a review of a branch or a pull request does (see "Reviewing a branch or a pull request").
 
 ## Shared flags
 
-`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init` and `hook` accept none of them.
+`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init`, `hook` and `update` accept none of them.
 
 - `--cwd <dir>`: find the repository from `<dir>`. A relative `--output` path still resolves from the folder you ran the command in.
 - `--config <path>`: read this config file instead of `.openqodex.yaml` at the repo root.
@@ -36,7 +36,7 @@ A repository with no commits checks every file. OpenQodex never fetches from a r
 - `--quiet`: no progress lines on stderr.
 - `--verbose`: print the stack when OpenQodex itself fails.
 - `--no-install`: do not download missing scanners. The report lists them as not installed.
-- `--offline`: no built-in scanner goes online. osv-scanner and semgrep are skipped and listed as disabled. Scanner downloads are off.
+- `--offline`: no built-in scanner goes online. osv-scanner and semgrep are skipped and listed as disabled. Scanner downloads are off. The daily version check does not start after this run.
 
 `doctor --install` together with `--offline` or `--no-install` exits 2.
 
@@ -47,12 +47,14 @@ Progress goes to stderr. The report goes to stdout.
 ## review
 
 ```
-openqodex review [--agent | --finalize [path]] [--all | --base <ref> | --uncommitted] [--no-graph] [--only <list>] [--skip <list>]
+openqodex review [--all | --base <ref> | --uncommitted] [--reviewer auto|claude|codex|cursor] [--timeout <seconds>] [--no-graph] [--only <list>] [--skip <list>]
+openqodex review <branch | #number | pull request link> [--base <ref>] [--reviewer auto|claude|codex|cursor] [--timeout <seconds>] [--no-graph] [--only <list>] [--skip <list>]
 ```
 
-- `--agent`: run the scanners, write the brief and print it. Your agent runs this.
-- `--finalize [path]`: check the agent's findings and write the report. Without a path it reads `agent-findings.json` in the newest report folder. With a path it finds the run by the `change_id` in that file.
-- Neither flag: the same as `scan`, plus one line on how to get the AI review from your agent.
+- The whole review in one run. OpenQodex copies the change into a temporary snapshot in `~/.openqodex/checkouts/`, runs the scanners and the code graph on it, and starts a reviewer as a separate process with no window: Claude Code (`claude`), which can only read, search and list files in the snapshot, or Codex (`codex exec`), whose commands can read the snapshot and cannot write or reach the network. A script checks the reviewer's answer and sends problems back at most twice, with any changed lines the reviewer was not yet given. The report goes to stdout; progress goes to stderr: one line per stage (for the scanners, for example "Scanners: 6 ran, 5 had nothing to check, 14 candidates to check"), and a line every 15 seconds while the reviewer works. The snapshot is deleted at the end. A review is complete only when every scanner candidate was raised or dropped and every changed range was given to the reviewer; otherwise it says what is missing and exits 2. With no reviewer installed and logged in, it prints "Full review unavailable", what is missing, the path of a file with the unchecked scanner candidates, and a fallback: the `review --agent` command for the agent you are in to review the change itself, and exits 2. `docs/internal-reviewer-drivers.md` records how the reviewer is started and isolated.
+- `--reviewer auto|claude|codex|cursor`: the reviewer to start. Without it, `reviewer:` in `~/.openqodex/config.yaml` decides, else `auto`. `auto` picks the agent running the command when it can tell (Claude Code or Codex) and its reviewer can start, else Claude Code, else Codex. `cursor` is not enabled: it says why and exits 2 ("Full review unavailable"). `codex` exits the same way when the command runs inside Codex's own sandbox, where a second Codex cannot start. The report names the reviewer and its version. With Codex it prints "not recorded by Codex" for file reads, because Codex's event stream does not show every command. The reviewer gets its agent's web tools by default (Claude Code's WebSearch and WebFetch, or Codex's cached web search); `reviewer_web: off` in the same file removes them (`security` says why you might).
+- `--timeout <seconds>`: stop the reviewer after this long. The default is 600.
+- `<branch>`, `#<number>` or a pull request link: review that branch or pull request instead of your own change. See "Reviewing a branch or a pull request".
 - `--base`, `--uncommitted`: see "Which change is checked".
 - `--all`: review the whole repository instead of the change. See "Reviewing the whole repository".
 - `--no-graph`: do not build the code graph for this run.
@@ -61,68 +63,66 @@ openqodex review [--agent | --finalize [path]] [--all | --base <ref> | --uncommi
 
 A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a custom scanner.
 
-`--finalize` exits 2 when:
+`review --agent` and `review --finalize`, the two-step protocol of earlier versions, still work for skills installed before this one and are the fallback `review` names when no reviewer can start: `plumbing` describes them. A review finished that way is recorded as a legacy review, which the push hooks accept, with a line naming who reviewed.
 
-- the findings file breaks the shape, naming the first wrong field;
-- the change moved since the brief;
-- the config changed since the brief;
-- a finding cites a scanner rule or candidate that is not in this scan.
+### Deleted lines
 
-It never repairs a finding. Fix what it names, or run `review --agent` again.
+A finding counts toward the verdict only on a line the change added or modified. A change that only deletes lines, such as a removed check, has no such line, so the lines next to each deletion count too: the line just above and the line just below it in the new file. The brief lists each deletion point ("2 lines deleted after line 14 of app/auth.py") and tells the reviewer to cite one of those lines and say what was removed. Any other line the change did not touch stays under "Outside the changed lines".
+
+### Reviewing a branch or a pull request
+
+`review <branch>` reviews a branch that is not your current work, and `review '#42'` or `review https://github.com/<owner>/<repo>/pull/42` a pull request. Quote `#42` in a shell, where `#` starts a comment. A bare number is a branch name. The branch may be local, `origin/<name>`, or a branch on the remote that is fetched on demand.
+
+```
+openqodex review feature/login
+openqodex review '#42'
+```
+
+The change is what the target added since it left its base: from the merge base of the two to the target's head, read from the commits, never from a work tree. Commits that landed on the base after the split are not part of it. The base is, in this order:
+
+1. `--base <ref>`.
+2. The pull request's base, which `gh` names when it is installed and signed in. For a branch, only when it has exactly one open pull request.
+3. `review.default_base`.
+4. The remote's default branch (`origin/HEAD`), read without the network.
+
+Without `gh`, a branch review uses the next source, and a review of `#<number>` says in one line that the pull request's base is not known. The first line of the output and the brief say which base was used and where it came from.
+
+The head is fetched first: a branch from its remote, so a stale `origin/<name>` is brought up to date, and a pull request from `pull/<number>/head`, the ref GitHub keeps for every pull request. That ref is the one host convention OpenQodex uses. A base named as `<remote>/<branch>` is fetched too, even when this clone has never seen it. Fetches use git and its own credentials; OpenQodex reads no token. A fetch writes only `refs/remotes/<remote>/<branch>` for a branch, or a ref of its own under `refs/openqodex/tmp/` for a pull request, removed when the review ends: no configured fetch mapping, no tags, no pruning, so your branches and tags never change. A pull request link must name a remote of this repository whose host is exactly `github.com`. In a partial clone, a file that is not downloaded is never fetched for the checkout and the review stops with one line; this needs git 2.44 or newer. An older git fetches such a file itself, so with `--offline` a target review in a partial clone refuses to start on it. For `#<number>`, when `gh` names the repository the pull request was opened against and one of your remotes points at it, the head and the base are fetched from that remote, and a line says which. A local branch is read as it is. `--offline` fetches nothing and calls no `gh`, and says in one line when the target is not available locally.
+
+The files are read in a temporary checkout of the head in `~/.openqodex/checkouts/`, a folder only you can open. Making it, and every later git call in it (the code graph included), runs nothing from the repository: no git hook, no file system monitor, no clean, smudge or process filter (including one an include adds only for linked work trees), no submodule. Files stored in Git LFS hold their pointers, and one line says so. Your settings apply, never the target's: the config and `custom-instructions.md` are read from your repository. Checking the target out runs nothing from it, and a link in it becomes a small plain file holding the link's target. The scanners you approved for this repository do run on the target's files, with this repository's settings; one named only in the target's config never runs. If you review pull requests from people you do not trust, approve only custom scanners that do not execute the code they scan. With `--agent`, when the target is your current commit and your work tree is clean, the files are read in place; with uncommitted work, the committed head is reviewed in a checkout, and one line says your uncommitted work is not part of it.
+
+The review runs in a fresh checkout, and the checkout is removed at the end. With the older `--agent` protocol, the brief names the checkout, tells the agent to read the code there and never to run its tests or scripts, and prints the finalize line with `--run <id>`, run from your repository. The run folder stays in your repository. Finalize checks that the checkout is still at the reviewed commit. It removes the checkout when it succeeds or when the review must be run again, and keeps it after an error the agent can fix in its findings file. A target review writes no receipt, so it never replaces the review of the change you are about to push. A later `review` removes a checkout left for more than 24 hours.
+
+`review --all` and `--uncommitted` cannot be combined with a target.
 
 ### Reviewing the whole repository
 
 `review --all` treats every file in the repository as the change: every tracked file and every untracked file git does not ignore, as they are on disk, minus `exclude` and `.openqodex/`. Every line of every text file is in scope, so the scanners report on the whole repository with no changed-line filter. Submodules, symbolic links, unreadable files and files over 5 MB are listed in the brief as left out.
 
-There is no scan-only report of the whole repository. With or without `--agent`, the command runs the scanners and prints a brief for your agent: the most-called functions from the code graph and the files with the most scanner hits, as places to start; the 50 most severe scanner candidates, with all of them in `candidates.json`; the matching patterns; and the file inventory in `inventory.json`. Without `--agent` it adds one line saying the review is done when your agent finalizes it. Ask your agent: review my whole repo with openqodex.
+The command runs the scanners and gives the reviewer a brief: the most-called functions from the code graph and the files with the most scanner hits, as places to start; the 50 most severe scanner candidates, with all of them in `candidates.json`; the matching patterns; and the file inventory in `inventory.json`. A finding must name a file in the inventory and a line that exists in it. Every scanner candidate must be raised or dropped; coverage of the files is reported, not required, since no reviewer reads a whole repository line by line. A whole-repo run keeps its own receipt in `.openqodex/latest-all.json`, so it never replaces the review of the change you are about to push.
 
-`review --finalize` then works as for a change; with `--all` and no path it finalizes the newest whole-repo run. A finding must name a file in the inventory and a line that exists in it, or finalize exits 2. Any edit to any file after the brief moves the review id, and finalize says the change moved. A whole-repo run keeps its own receipt in `.openqodex/latest-all.json`, so it never replaces the review of the change you are about to push.
-
-The brief includes `.openqodex/custom-instructions.md` when the repo has one; a file over 32 KB is refused, never cut. The brief shows it to the agent as quoted text from the repository, because anyone who can commit can change it. It can widen or narrow what the agent flags, and a candidate dropped because of it says so in the report; it cannot make the agent run a command, skip a step or change the finding shape or the finalize step. A scanner given more files than one process can take runs once per batch of files, within its usual time limit.
+The brief includes `.openqodex/custom-instructions.md` when the repo has one; a file over 32 KB is refused, never cut. The brief shows it to the reviewer as quoted text from the repository, because anyone who can commit can change it. It can widen or narrow what the reviewer flags, and a candidate dropped because of it says so in the report; it cannot give the reviewer a tool, skip a check or change the finding shape. A scanner given more files than one process can take runs once per batch of files, within its usual time limit.
 
 `--all` cannot be combined with `--base` or `--uncommitted`. The git hook and the GitHub Action never run it.
-
-## scan
-
-```
-openqodex scan [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>]
-```
-
-Runs the scanners on the change and prints the report. No model is involved. The git hook, the pre-commit hook and the GitHub Action run this command.
 
 ## init
 
 ```
-openqodex init [--agent <name>]... [--project] [--hook <pre-push|none>] [--yes] [--uninstall] [--dry-run]
+openqodex init [--agent <name>]... [--project] [--hook <pre-push|none>] [--no-repo] [--no-review] [--yes] [--uninstall] [--dry-run]
 ```
 
-Installs OpenQodex into your coding agents.
+Installs OpenQodex into your coding agents, then reviews. After the install, inside a repository: when there is a change, it runs `review` and prints the report; when there is none, it asks what to review (the whole repository, a pull request, a branch, or not now). With `--yes` or without a terminal it prints the three commands instead of asking. This review uses the scanners already installed, starts no download, and never changes the exit code of `init`, which is about the install.
 
 - `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
 - `--hook <pre-push|none>`: answer the pre-push hook question without asking. Without it, `init` asks once per repository and records the answer.
-- `--yes`, `-y`: do not ask, and add the pre-push hook unless this repository answered no before. Without a terminal, `init` needs this flag.
+- `--no-repo`: do not add the team review section to the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` asks once per repository (default yes) and records the answer; `--yes` or `--no-repo` on a later run replaces the recorded answer. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.
+- `--yes`, `-y`: do not ask. It adds the team review section, even where this repository answered no before (only `--no-repo` keeps it out), and adds the pre-push hook unless this repository answered no to it before or `--hook none` says so. Without a terminal, `init` needs this flag.
+- `--no-review`: end after the install, with no review and no question.
 - `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
 - `--dry-run`: print the plan and write nothing.
 
 `init` does not take the flags listed under "Flags every command below accepts". `agents` lists each file it writes.
-
-## doctor
-
-```
-openqodex doctor [--install] [--json]
-```
-
-Prints the Node and git versions, the repository, the config, the OpenQodex home folder and the state of each scanner. It lists custom scanners with their approval state.
-
-- `--install`: download every scanner that fits this machine, and wait for all of them.
-- `--json`: print the same facts as JSON.
-
-`doctor` always prints its table. It then exits 2 in three cases:
-
-- git is missing;
-- the config does not load;
-- the `--cwd` folder does not exist.
 
 ## trust
 
@@ -138,59 +138,27 @@ Approves the custom scanners in `.openqodex.yaml`. For each new or changed entry
 
 Without a terminal and without `--yes`, `trust` exits 2. `custom-scanners` explains the whole step.
 
-## hook
+## update
 
 ```
-openqodex hook check
-openqodex hook install [--force]
-openqodex hook uninstall
+openqodex update [--now | --rollback | --off | --on | --status]
 ```
 
-- `hook check`: the push gate. The Claude Code and Codex hooks call it before a shell command. It reads the hook's JSON on stdin. It always exits 0.
-- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `hook pre-push`, which scans each commit the push sends against the remote's tip of its branch (`agents` has the details). It stops the push only when the scan exits 1. A scan that fails for its own reasons never stops the push.
-- `hook install` refuses to replace a hook it did not write. `--force` replaces it and keeps the old hook as `pre-push.openqodex.bak`.
-- `hook uninstall`: remove that hook and put back the one it replaced. A hook you edited after install is left in place.
+Checks npm for a newer release and installs it now, in the foreground, the same way the daily check does. It works only for an install made with `npx openqodex init`: run through `~/.openqodex/bin/openqodex`, which hooks and the installed skill call. Run any other way (npx, a project-scope file), it exits 2 and says to run `npx openqodex init`.
 
-When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook: `npx -y openqodex@<version> hook pre-push || [ $? -ne 1 ]`. The part after `||` makes the line stop the push only on exit 1, as the hook `hook install` writes does: a scan that fails for its own reasons (exit 2) never stops the push.
+- No flag: install the newest release that is at least 24 hours old and whose build record verifies, then print what happened.
+- `--now`: also install a release younger than 24 hours. Verification is the same.
+- `--rollback`: turn updates off, then point the launcher back at the version that was active before the last update. It exits 2 and changes nothing when that version's copy is gone or when `update: off` cannot be written.
+- `--off`, `--on`: write `update: off` or `update: on` to `~/.openqodex/config.yaml`. `init --uninstall` removes that file when `update` created it and it is unchanged, and removes the update state.
+- `--status`: print the same update lines as `doctor`.
 
-`init` asks whether to install the git hook. `agents` explains the push gate.
+Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update writes no agent file and never writes inside a repository: the user-scope skill asks the launcher for the procedure with `guide skill`, so it always matches the active version. A foreground `update`, `--rollback`, `--off` and `--on` wait up to 60 seconds while another `init`, uninstall or update runs, then exit 2 with one line. `update` also removes runtime copies older than 7 days, except the one `init` installed, the current one and the previous one.
 
-## guide
-
-```
-openqodex guide [topic]
-```
-
-Prints the skill without a topic. With a topic, it prints that page of these docs. An unknown topic lists the topics and exits 2.
-
-## demo
-
-```
-openqodex demo [dir]
-```
-
-Builds the demo repository in `<dir>`, or in a new temporary folder. A relative `<dir>` resolves from the folder you run the command in. The folder must be empty or new. The demo commits a clean baseline, then adds a change with planted bugs and leaves it uncommitted. It scans that change and prints the report. When some scanners are still installing, it says so and asks you to run `scan` again. The secret in the demo is generated each time and works nowhere.
-
-## report
-
-```
-openqodex report "<what went wrong>"
-openqodex report --send-last
-```
-
-- `report "<what went wrong>"`: report a problem with OpenQodex. It prints the issue it would create and the two choices, the same as after a failure. It exits 0. Words that hold a path, a file name, a key or token, or an email address are refused with exit 2: remove them and run it again. Your user name and the repository's name are replaced with `<name>`.
-- `report --send-last`: print the last issue shown in this repository again, then create it exactly as it was shown. Outside a repository it uses the last one shown outside a repository. It refuses a saved issue that is a link, is not in the saved shape, or changed after it was shown.
-
-The issue holds only the command and its flags, a short diagnostic, the status of each scanner, the operating system, the CPU type and the Node version. For a scanner the diagnostic is its failure class only, such as `exited with code 2` or `timed out after 60 s`, never its output. For an internal error it is the error's class and first line, cut to 120 characters. Every path, file name, key or token, email address, user name and repository name is removed first, and a custom scanner is shown as `custom scanner`. It never holds code, diffs, findings, config or logs.
-
-When the issue could not be saved, OpenQodex says so and does not offer `--send-last`.
-
-In a terminal, press 1 or 2. Any other key, Enter, Ctrl-C or the end of input counts as 2. Without a terminal (an agent, a git hook, CI), OpenQodex prints the issue and how to create it later with `openqodex report --send-last`; doing nothing ignores it.
-
-Choice 1 creates the issue with the GitHub CLI when `gh auth status` says you are signed in. Otherwise it opens the new issue page on GitHub with the title and body filled in, and prints the link. OpenQodex never signs you in. Choice 2 sends nothing. Nothing leaves your machine without choice 1. The last issue shown is kept in `.openqodex/last-report.json`, which git ignores.
+After an update the next command prints one line on stderr: `openqodex updated to X (was Y). Roll back: openqodex update --rollback`. The agent push hook does not print it.
 
 ## Environment variables
 
 - `OPENQODEX_HOME`: where OpenQodex keeps scanners, the launcher and approvals. The default is `~/.openqodex`.
 - `OPENQODEX_SKIP=1`: the push gate lets the push through and says so. It is your switch, not your agent's.
+- `OPENQODEX_AUTO_UPDATE=0`: no daily version check. `OPENQODEX_OFFLINE=1` and a set `CI` variable do the same.
 - `NO_COLOR`: no colour in the terminal report.

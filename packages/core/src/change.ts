@@ -8,7 +8,7 @@
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm, stat, utimes, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { createCoverageParser, unquoteDiffPath } from "./diff.js";
 import { matchesGlob } from "./glob.js";
 import { STATE_DIR } from "./report-files.js";
-import type { Change, ChangedFile, ChangeScope } from "./types.js";
+import type { Change, ChangedFile, ChangeScope, DeletionPoint } from "./types.js";
 import { OpenQodexError } from "./types.js";
 
 // Text handed to the brief is capped; files past the cap are left out whole.
@@ -24,7 +24,8 @@ export const DIFF_CAP_BYTES = 5 * 1024 * 1024;
 
 // Changed-line coverage is held as one number per added line, so it is capped
 // too. A file that would take the total past this gets no coverage and is
-// left out of the brief; it is listed as not reviewed.
+// left out of the brief; it is listed as not reviewed and as uncovered, so
+// a review counts it as read only when the reviewer read all of it.
 export const COVERAGE_MAX_LINES = 500_000;
 
 // Coverage needs only the first character of a patch line and the headers.
@@ -44,7 +45,6 @@ const GIT_CONFIG = [
 ];
 
 const DIFF_FLAGS = [
-  "--cached",
   "--no-color",
   "--no-ext-diff",
   "--no-textconv",
@@ -332,7 +332,7 @@ function excluded(path: string, exclude: string[]): boolean {
 
 // git separates alternate object folders with ":", so a path is C-quoted to
 // survive a colon (or a leading quote) in it.
-function quoteAlternate(path: string): string {
+export function quoteAlternate(path: string): string {
   return `"${path.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
@@ -369,6 +369,15 @@ export async function getChange(args: {
   exclude: string[];
   // Config.defaultBase: what the default scope diffs against with no upstream.
   defaultBase?: string | null;
+  // Called with the git tree of the working state the change is taken from,
+  // while its objects still exist: `objects` holds the new ones and
+  // `alternates` the repo's own. The review copies its snapshot from it, so
+  // the snapshot and the change are the same state by construction.
+  onTree?: (tree: { sha: string; objects: string; alternates: string }) => Promise<void>;
+  // Files to take as they were, not as they are on disk: the path relative
+  // to the repo and its earlier text, or null for a file that did not exist.
+  // `init` passes the files it wrote, so the change is the developer's own.
+  overlay?: { path: string; content: string | null }[];
 }): Promise<Change> {
   const { repoRoot, scope, exclude } = args;
   const base = await resolveBase(repoRoot, scope, args.defaultBase ?? null);
@@ -386,7 +395,15 @@ export async function getChange(args: {
     const tmpIndex = join(tmp, "index");
     const tmpObjects = join(tmp, "objects");
     await mkdir(tmpObjects);
-    if (existsSync(indexPath)) await copyFile(indexPath, tmpIndex);
+    if (existsSync(indexPath)) {
+      await copyFile(indexPath, tmpIndex);
+      // Git trusts a file's stat over its content unless the entry is as new
+      // as the index itself (a "racy" entry). The copy would carry a later
+      // time and hide an edit made at the same size in the second the index
+      // was written; the original's time, rounded down, keeps that check.
+      const at = Math.floor((await stat(indexPath)).mtimeMs / 1000);
+      await utimes(tmpIndex, at, at);
+    }
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       GIT_INDEX_FILE: tmpIndex,
@@ -398,139 +415,270 @@ export async function getChange(args: {
     // repo's own .gitignore ignores. The report folder is left out by the
     // pathspec on every diff below instead.
     await gitOk(repoRoot, ["add", "-A", "--", "."], { env, config: noFilters });
-
-    const diffArgs = (extra: string[], skip: string[] = []): string[] => [
-      "diff",
-      ...DIFF_FLAGS,
-      ...extra,
-      base.sha,
-      "--",
-      STATE_PATHSPEC,
-      ...skip,
-    ];
-    const [nameStatus, numstatBuf, raw] = await Promise.all([
-      gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }),
-      gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env }),
-      gitOk(repoRoot, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
-    ]);
-
-    const id = createHash("sha256").update(`${base.sha}\n`).update(raw).digest("hex");
-    const numstat = parseNumstat(numstatBuf);
-
-    // Decide from the counts alone, before any patch is read, which files get
-    // coverage and which may go into the brief.
-    const files: ChangedFile[] = [];
-    const skipped: string[] = []; // excluded by the developer
-    const covered = new Set<string>();
-    const briefable = new Set<string>();
-    const tooLarge = new Set<string>();
-    let additions = 0;
-    let deletions = 0;
-    let coveredLines = 0;
-    let briefLowerBound = 0;
-    for (const pair of parseNameStatus(nameStatus)) {
-      if (excluded(pair.path, exclude)) {
-        skipped.push(pair.path);
+    for (const [i, o] of (args.overlay ?? []).entries()) {
+      if (o.content === null) {
+        await gitOk(repoRoot, ["update-index", "--force-remove", "--", o.path], { env });
         continue;
       }
-      const stat = numstat.get(pair.path) ?? { additions: 0, deletions: 0, binary: false };
-      files.push({ ...pair, binary: stat.binary });
-      additions += stat.additions;
-      deletions += stat.deletions;
-      if (pair.status !== "deleted") {
-        if (coveredLines + stat.additions > COVERAGE_MAX_LINES) {
-          tooLarge.add(pair.path);
-          continue;
-        }
-        coveredLines += stat.additions;
-        covered.add(pair.path);
-      }
-      // Each added or removed line costs at least two bytes of patch.
-      const minimum = 2 * (stat.additions + stat.deletions);
-      if (briefLowerBound + minimum > DIFF_CAP_BYTES) {
-        tooLarge.add(pair.path);
-        continue;
-      }
-      briefLowerBound += minimum;
-      briefable.add(pair.path);
+      const file = join(tmp, `overlay-${i}`);
+      await writeFile(file, o.content);
+      const blob = (await gitOk(repoRoot, ["hash-object", "-w", "--no-filters", "--", file], { env })).toString("utf8").trim();
+      await gitOk(repoRoot, ["update-index", "--add", "--cacheinfo", `100644,${blob},${o.path}`], { env });
+    }
+    if (args.onTree) {
+      // Written into the temp object folder, like the blobs `add` wrote.
+      const sha = (await gitOk(repoRoot, ["write-tree"], { env })).toString("utf8").trim();
+      await args.onTree({ sha, objects: tmpObjects, alternates: objectsPath });
     }
 
-    const textArgs = ["--src-prefix=a/", "--dst-prefix=b/"];
-    const opts = { env };
-
-    const parser = createCoverageParser();
-    await streamPatch(
-      (onLine) =>
-        gitLines(
-          repoRoot,
-          diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
-          opts,
-          COVERAGE_MAX_LINE_BYTES,
-          onLine,
-        ),
-      (path, line) => {
-        if (path !== null && covered.has(path)) parser.push(line);
-        else if (line.startsWith("diff --git ")) parser.push(line);
-      },
-    );
-    const coverage = parser.result();
-    for (const path of coverage.keys()) if (!covered.has(path)) coverage.delete(path);
-
-    // The brief's diff, kept per path within the cap; a file that does not
-    // fit is dropped whole as soon as it overflows.
-    const text = new Map<string, string[]>();
-    const size = new Map<string, number>();
-    let total = 0;
-    await streamPatch(
-      (onLine) =>
-        gitLines(
-          repoRoot,
-          diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
-          opts,
-          DIFF_CAP_BYTES + 1,
-          onLine,
-        ),
-      (path, line, cut) => {
-        if (path === null || !briefable.has(path) || tooLarge.has(path)) return;
-        const bytes = Buffer.byteLength(line, "utf8") + 1;
-        if (cut || total + bytes > DIFF_CAP_BYTES) {
-          total -= size.get(path) ?? 0;
-          text.delete(path);
-          size.delete(path);
-          tooLarge.add(path);
-          return;
-        }
-        const lines = text.get(path) ?? [];
-        lines.push(line);
-        text.set(path, lines);
-        size.set(path, (size.get(path) ?? 0) + bytes);
-        total += bytes;
-      },
-    );
-
-    const notReviewed = files.filter((f) => tooLarge.has(f.path)).map((f) => f.path);
-    const diff = files
-      .filter((f) => text.has(f.path))
-      .map((f) => `${text.get(f.path)!.join("\n")}\n`)
-      .join("");
-    const changedPaths = files.filter((f) => f.status !== "deleted").map((f) => f.path);
-
-    return {
-      repoRoot,
-      baseRef: base.ref,
-      baseSha: base.sha,
-      id,
-      shortId: id.slice(0, 12),
-      files,
-      changedPaths,
-      coverage,
-      diff,
-      notReviewed,
-      stats: { files: files.length, additions, deletions },
-    };
+    return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], newSide: ":", env, exclude });
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+}
+
+// A change between two commits, read from their trees alone: the files on
+// disk and the index play no part, so nothing placed in a checkout of the
+// head can show in it or hide part of it. `baseSha` is the merge base, so
+// what landed on the base after the split is not shown as reverted.
+export async function getTreeChange(args: {
+  repoRoot: string;
+  baseRef: string;
+  baseSha: string;
+  headSha: string;
+  exclude: string[];
+}): Promise<Change> {
+  return diffChange({ ...args, range: [args.baseSha, args.headSha], newSide: `${args.headSha}:`, env: process.env });
+}
+
+// The line count of each named blob ("<rev>:<path>" or ":<path>"), from one
+// `git cat-file --batch` for all of them. Counted as the output streams, so
+// no blob is held whole.
+function lineCounts(repoRoot: string, specs: string[], env: NodeJS.ProcessEnv): Promise<number[]> {
+  if (specs.length === 0) return Promise.resolve([]);
+  return new Promise((done, fail) => {
+    const argv: string[] = [];
+    for (const c of GIT_CONFIG) argv.push("-c", c);
+    const child = spawn("git", [...argv, "cat-file", "--batch"], { cwd: repoRoot, env: childEnv(env), stdio: ["pipe", "pipe", "pipe"] });
+    const counts: number[] = [];
+    let header = Buffer.alloc(0); // bytes of a header line not yet ended
+    let left = -1; // content bytes still to read for the current blob, -1 between blobs
+    let lines = 0;
+    let last = 10; // the last content byte seen
+    let size = 0;
+    const err: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => {
+      let i = 0;
+      while (i < chunk.length) {
+        if (left === -1) {
+          const nl = chunk.indexOf(10, i);
+          if (nl === -1) {
+            header = Buffer.concat([header, chunk.subarray(i)]);
+            return;
+          }
+          const line = Buffer.concat([header, chunk.subarray(i, nl)]).toString("utf8");
+          header = Buffer.alloc(0);
+          i = nl + 1;
+          const m = / (\S+) (\d+)$/.exec(line);
+          if (!m || line.endsWith(" missing")) {
+            counts.push(0);
+            continue;
+          }
+          size = Number(m[2]);
+          left = size;
+          lines = 0;
+          last = 10;
+        } else if (left > 0) {
+          const part = chunk.subarray(i, i + left);
+          for (let j = part.indexOf(10); j !== -1; j = part.indexOf(10, j + 1)) lines++;
+          last = part[part.length - 1] as number;
+          left -= part.length;
+          i += part.length;
+        } else {
+          // The newline git writes after each blob's content.
+          counts.push(size > 0 && last !== 10 ? lines + 1 : lines);
+          left = -1;
+          i += 1;
+        }
+      }
+    });
+    child.stderr.on("data", (b: Buffer) => err.push(b));
+    child.on("error", (e) => fail(new OpenQodexError(`could not run git: ${e.message}`)));
+    child.on("close", (code) => {
+      if (code !== 0 || counts.length !== specs.length) fail(failure(["cat-file"], code ?? 1, Buffer.concat(err).toString("utf8")));
+      else done(counts);
+    });
+    child.stdin.end(`${specs.join("\n")}\n`);
+  });
+}
+
+// Everything after the two sides are known: the file list, the id, the
+// changed lines and the brief's diff, from `git diff <range>`.
+async function diffChange(args: {
+  repoRoot: string;
+  baseRef: string;
+  baseSha: string;
+  range: string[];
+  // How git names a file on the new side: ":" (the index) or "<sha>:".
+  newSide: string;
+  env: NodeJS.ProcessEnv;
+  exclude: string[];
+}): Promise<Change> {
+  const { repoRoot, exclude, env } = args;
+  const diffArgs = (extra: string[], skip: string[] = []): string[] => [
+    "diff",
+    ...DIFF_FLAGS,
+    ...extra,
+    ...args.range,
+    "--",
+    STATE_PATHSPEC,
+    ...skip,
+  ];
+  const [nameStatus, numstatBuf, raw] = await Promise.all([
+    gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }),
+    gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env }),
+    gitOk(repoRoot, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
+  ]);
+
+  const id = createHash("sha256").update(`${args.baseSha}\n`).update(raw).digest("hex");
+  const numstat = parseNumstat(numstatBuf);
+
+  // Decide from the counts alone, before any patch is read, which files get
+  // coverage and which may go into the brief.
+  const files: ChangedFile[] = [];
+  const skipped: string[] = []; // excluded by the developer
+  const covered = new Set<string>();
+  const briefable = new Set<string>();
+  const tooLarge = new Set<string>();
+  // Past the coverage cap: no line of these is mapped.
+  const uncoverable = new Set<string>();
+  let additions = 0;
+  let deletions = 0;
+  let coveredLines = 0;
+  let briefLowerBound = 0;
+  for (const pair of parseNameStatus(nameStatus)) {
+    if (excluded(pair.path, exclude)) {
+      skipped.push(pair.path);
+      continue;
+    }
+    const stat = numstat.get(pair.path) ?? { additions: 0, deletions: 0, binary: false };
+    files.push({ ...pair, binary: stat.binary });
+    additions += stat.additions;
+    deletions += stat.deletions;
+    if (pair.status !== "deleted") {
+      if (coveredLines + stat.additions > COVERAGE_MAX_LINES) {
+        tooLarge.add(pair.path);
+        uncoverable.add(pair.path);
+        continue;
+      }
+      coveredLines += stat.additions;
+      covered.add(pair.path);
+    }
+    // Each added or removed line costs at least two bytes of patch.
+    const minimum = 2 * (stat.additions + stat.deletions);
+    if (briefLowerBound + minimum > DIFF_CAP_BYTES) {
+      tooLarge.add(pair.path);
+      continue;
+    }
+    briefLowerBound += minimum;
+    briefable.add(pair.path);
+  }
+
+  const textArgs = ["--src-prefix=a/", "--dst-prefix=b/"];
+  const opts = { env };
+
+  const parser = createCoverageParser();
+  await streamPatch(
+    (onLine) =>
+      gitLines(
+        repoRoot,
+        // A file left out of the brief keeps its coverage: its changed lines
+        // must then be read through the tools, or they count as unread.
+        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...uncoverable])),
+        opts,
+        COVERAGE_MAX_LINE_BYTES,
+        onLine,
+      ),
+    (path, line) => {
+      if (path !== null && covered.has(path)) parser.push(line);
+      else if (line.startsWith("diff --git ")) parser.push(line);
+    },
+  );
+  const coverage = parser.result();
+  for (const path of coverage.keys()) if (!covered.has(path)) coverage.delete(path);
+  // Each deletion's anchors are the new file's lines on either side of it
+  // that exist: one past the end is none, and an emptied file has line 1.
+  // A deleted file keeps line 1 of its path as its one anchor.
+  const deletionPoints = new Map<string, DeletionPoint[]>();
+  const withPoints = [...parser.deletionPoints()].filter(([path]) => covered.has(path));
+  const counts = await lineCounts(repoRoot, withPoints.map(([path]) => `${args.newSide}${path}`), env);
+  for (const [i, [path, points]] of withPoints.entries()) {
+    const count = counts[i] as number;
+    deletionPoints.set(
+      path,
+      points.map((p) => ({
+        ...p,
+        anchors: count === 0 ? [1] : [p.after, p.after + 1].filter((n) => n >= 1 && n <= count),
+      })),
+    );
+  }
+  for (const f of files) {
+    if (f.status === "deleted") deletionPoints.set(f.path, [{ after: 0, lines: numstat.get(f.path)?.deletions ?? 0, anchors: [1] }]);
+  }
+
+  // The brief's diff, kept per path within the cap; a file that does not
+  // fit is dropped whole as soon as it overflows.
+  const text = new Map<string, string[]>();
+  const size = new Map<string, number>();
+  let total = 0;
+  await streamPatch(
+    (onLine) =>
+      gitLines(
+        repoRoot,
+        diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+        opts,
+        DIFF_CAP_BYTES + 1,
+        onLine,
+      ),
+    (path, line, cut) => {
+      if (path === null || !briefable.has(path) || tooLarge.has(path)) return;
+      const bytes = Buffer.byteLength(line, "utf8") + 1;
+      if (cut || total + bytes > DIFF_CAP_BYTES) {
+        total -= size.get(path) ?? 0;
+        text.delete(path);
+        size.delete(path);
+        tooLarge.add(path);
+        return;
+      }
+      const lines = text.get(path) ?? [];
+      lines.push(line);
+      text.set(path, lines);
+      size.set(path, (size.get(path) ?? 0) + bytes);
+      total += bytes;
+    },
+  );
+
+  const notReviewed = files.filter((f) => tooLarge.has(f.path)).map((f) => f.path);
+  const diffs = files.filter((f) => text.has(f.path)).map((f) => ({ path: f.path, text: `${text.get(f.path)!.join("\n")}\n` }));
+  const diff = diffs.map((d) => d.text).join("");
+  const changedPaths = files.filter((f) => f.status !== "deleted").map((f) => f.path);
+
+  return {
+    repoRoot,
+    baseRef: args.baseRef,
+    baseSha: args.baseSha,
+    id,
+    shortId: id.slice(0, 12),
+    files,
+    changedPaths,
+    coverage,
+    deletionPoints,
+    diff,
+    diffs,
+    notReviewed,
+    uncovered: files.filter((f) => uncoverable.has(f.path) && !f.binary).map((f) => f.path),
+    stats: { files: files.length, additions, deletions },
+  };
 }
 
 // ---------- the whole repo (`review --all`) ----------
@@ -688,6 +836,7 @@ export async function getWholeRepo(args: { repoRoot: string; exclude: string[] }
     files,
     changedPaths: files.map((f) => f.path),
     coverage: new Map(),
+    deletionPoints: new Map(),
     diff: "",
     notReviewed,
     stats: { files: files.length, additions: total, deletions: 0 },

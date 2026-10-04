@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Candidate, Report } from "@openqodex/core";
 
@@ -19,10 +19,11 @@ mkdirSync(receipt, { recursive: true });
 export type Result = { status: number | null; stdout: string; stderr: string; ms: number };
 // Runs the built CLI (or, with shell, one command line through `sh -c`) with a
 // temporary HOME and saves the command, exit code, time and output to the receipt.
-export function run(label: string, cwd: string, args: string[], options: { home?: string; tools?: string; input?: string; timeout?: number; shell?: boolean } = {}): Result {
+export function run(label: string, cwd: string, args: string[], options: { home?: string; tools?: string; input?: string; timeout?: number; shell?: boolean; env?: NodeJS.ProcessEnv } = {}): Result {
   const home = options.home ?? mkdtempSync(join(tmpdir(), "oq-e2e-user-"));
   mkdirSync(home, { recursive: true });
-  const env = { ...process.env, HOME: home, OPENQODEX_HOME: options.tools ?? toolsHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
+  // OPENQODEX_AUTO_UPDATE=0: a command run through the launcher starts no update worker here.
+  const env = { ...process.env, HOME: home, OPENQODEX_HOME: options.tools ?? toolsHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", OPENQODEX_AUTO_UPDATE: "0", ...options.env };
   const command = options.shell ? "sh" : process.execPath;
   const argv = options.shell ? ["-c", args[0]!] : [bin, ...args];
   const started = Date.now();
@@ -135,6 +136,37 @@ export function snapshot(dir: string): Snapshot {
 }
 export function changedFiles(before: Record<string, string>, after: Record<string, string>): string[] {
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((p) => before[p] !== after[p]).sort();
+}
+// PATH with every folder that holds a `claude` or `codex` program left out:
+// `review` then finds no reviewer, whatever is installed on this machine.
+export function noReviewerEnv(): NodeJS.ProcessEnv {
+  const path = (process.env.PATH ?? "").split(delimiter).filter((d) => d !== "" && !existsSync(join(d, "claude")) && !existsSync(join(d, "codex"))).join(delimiter);
+  return { PATH: path };
+}
+// The reason a case that needs the real Codex reviewer cannot run here, or
+// null when it can: installed, logged in, not offline and not in CI (CI has
+// no Codex login).
+export function codexMissing(): string | null {
+  if (offline()) return "OPENQODEX_E2E_OFFLINE=1";
+  if (process.env.CI) return "CI is set";
+  if (process.env.CODEX_SANDBOX) return "inside a Codex sandbox";
+  const status = spawnSync("codex", ["login", "status"], { encoding: "utf8", timeout: 30_000 });
+  if (status.error) return "codex is not installed";
+  if (status.status !== 0) return "codex is not logged in";
+  return null;
+}
+// The reason a case that needs the real Claude Code reviewer cannot run here,
+// or null when it can: installed, logged in and not offline.
+export function reviewerMissing(): string | null {
+  if (offline()) return "OPENQODEX_E2E_OFFLINE=1";
+  const status = spawnSync("claude", ["auth", "status"], { encoding: "utf8", timeout: 30_000 });
+  if (status.error) return "claude is not installed";
+  try {
+    if ((JSON.parse(status.stdout) as { loggedIn?: boolean }).loggedIn !== true) return "claude is not logged in";
+  } catch {
+    return "claude auth status printed no status";
+  }
+  return null;
 }
 export function offline(): boolean { return process.env.OPENQODEX_E2E_OFFLINE === "1"; }
 export function skipNetwork(name: string): boolean {

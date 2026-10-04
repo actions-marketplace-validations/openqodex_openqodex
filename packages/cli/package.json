@@ -1,7 +1,7 @@
 {
   "name": "openqodex",
-  "version": "0.2.1",
-  "description": "Open source AI code review inside Claude Code, Cursor, Codex and Cline, before you push: scanners on your changed lines, then a review on your agent's own model.",
+  "version": "0.5.0",
+  "description": "Open source AI code review for Claude Code and Codex, before you push: scanners on your changed lines, then a separate reviewer that checks every scanner finding and is given every changed line.",
   "type": "module",
   "license": "Apache-2.0",
   "homepage": "https://github.com/openqodex/openqodex#readme",
@@ -61,12 +61,14 @@
     "build": "tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {},
   "devDependencies": {
     "@clack/prompts": "^1.8.1",
     "@openqodex/core": "workspace:*",
     "@openqodex/graph": "workspace:*",
     "@openqodex/scanners": "workspace:*",
+    "@sigstore/bundle": "5.0.0",
+    "@sigstore/protobuf-specs": "0.5.2",
+    "@sigstore/verify": "4.1.2",
     "commander": "^14.0.3",
     "picocolors": "^1.1.1",
     "yaml": "^2.9.1",

@@ -3,11 +3,10 @@
 // budget (checked between files) or the file cap; the graph is then
 // "partial" and says what it left out. No timer is set, so nothing keeps the
 // process alive after the build.
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, rmSync } from "node:fs";
 import { extname, join, posix } from "node:path";
-import { promisify } from "node:util";
+import { safeGit } from "@openqodex/core";
 import type { Parser } from "web-tree-sitter";
 import { EXTRACTOR_VERSION, extract } from "./extract.js";
 import { grammarVersion, parserFor } from "./parser.js";
@@ -15,8 +14,6 @@ import type { FileInput, TsPaths } from "./resolve.js";
 import { resolveGraph, symbolId } from "./resolve.js";
 import { RepoReader, isFileFacts, readNoFollow, safeCacheDir, writeExclusive } from "./safe-fs.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode, Lang } from "./types.js";
-
-const run = promisify(execFile);
 
 export const DEFAULT_BUDGET_MS = 10_000;
 export const DEFAULT_MAX_FILES = 4000;
@@ -79,12 +76,12 @@ export type BuildArgs = {
   base?: { sha: string; files: { path: string; oldPath: string | null; status: "added" | "modified" | "deleted" | "renamed" }[] };
 };
 
+// Every git call here goes through safeGit: the folder may be the temporary
+// checkout of a branch or a pull request, whose files must start no program.
 async function gitFiles(repoRoot: string): Promise<string[]> {
-  const { stdout } = await run("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
-    cwd: repoRoot,
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  return [...new Set(stdout.split("\0").filter(Boolean))];
+  const r = await safeGit(repoRoot, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
+  if (r.code !== 0) throw new Error(`git ls-files failed: ${r.stderr.trim()}`);
+  return [...new Set(r.stdout.toString("utf8").split("\0").filter(Boolean))];
 }
 
 function stripJsonComments(text: string): string {
@@ -250,21 +247,14 @@ class FactCache {
 async function usableCacheDir(repoRoot: string, dir: string): Promise<string | null> {
   const safe = safeCacheDir(repoRoot, dir);
   if (safe === null) return null;
-  try {
-    const { stdout } = await run("git", ["ls-files", "-z", "--", safe], { cwd: repoRoot, maxBuffer: 16 * 1024 * 1024 });
-    return stdout.length > 0 ? null : safe;
-  } catch {
-    return safe; // outside the repo: nothing there is tracked
-  }
+  const r = await safeGit(repoRoot, ["ls-files", "-z", "--", safe]);
+  // A failure means outside the repo: nothing there is tracked.
+  return r.code === 0 && r.stdout.length > 0 ? null : safe;
 }
 
 async function gitShow(repoRoot: string, sha: string, path: string): Promise<string | null> {
-  try {
-    const { stdout } = await run("git", ["show", `${sha}:${path}`], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 });
-    return stdout;
-  } catch {
-    return null;
-  }
+  const r = await safeGit(repoRoot, ["show", "--no-textconv", "--no-ext-diff", `${sha}:${path}`]);
+  return r.code === 0 ? r.stdout.toString("utf8") : null;
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -393,7 +383,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     if (tooBig > 0) reasons.push(`${plural(tooBig, "file")} over ${Math.round(maxFileBytes / 1024)} KB not parsed`);
     const durationMs = Math.round(performance.now() - started);
     args.onProgress?.(
-      `openqodex: code graph of ${plural(inputs.length, "file")} in ${(durationMs / 1000).toFixed(1)} s (${cache.parses} parsed, ${cache.hits} from cache)`,
+      `Code graph: ${plural(inputs.length, "file")} in ${(durationMs / 1000).toFixed(1)} s (${cache.parses} parsed, ${cache.hits} from cache)`,
     );
     return {
       repoRoot: args.repoRoot,

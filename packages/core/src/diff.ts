@@ -5,8 +5,9 @@
 //
 // Only the new side is tracked: deleted lines exist only on the old side and
 // cannot carry a finding. Context lines (" ") are counted too, which matters
-// only if a diff with context is passed in.
-import type { DiffCoverage } from "./types.js";
+// only if a diff with context is passed in. A hunk that only deletes is kept
+// apart as a deletion point, so a finding can cite the lines around it.
+import type { DeletionPoint, DiffCoverage } from "./types.js";
 
 const C_ESCAPES: Record<string, number> = {
   a: 7,
@@ -63,8 +64,13 @@ export function parseDiffCoverage(diff: string): DiffCoverage {
 
 // The same parser fed one line at a time, so a streamed diff is never held
 // whole in memory.
-export function createCoverageParser(): { push(rawLine: string): void; result(): DiffCoverage } {
+export function createCoverageParser(): {
+  push(rawLine: string): void;
+  result(): DiffCoverage;
+  deletionPoints(): Map<string, Omit<DeletionPoint, "anchors">[]>;
+} {
   const out: DiffCoverage = new Map();
+  const deleted = new Map<string, Omit<DeletionPoint, "anchors">[]>();
   let currentFile: string | null = null;
   let rightLine = 0;
 
@@ -105,8 +111,16 @@ export function createCoverageParser(): { push(rawLine: string): void; result():
     if (rawLine.startsWith("@@")) {
       inHunk = true;
       // Hunk header: @@ -<oldStart>,<oldLen> +<newStart>,<newLen> @@ <ctx>
-      const m = /\+(\d+)(?:,\d+)?/.exec(rawLine);
-      if (m) rightLine = parseInt(m[1], 10);
+      const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(rawLine);
+      if (m) {
+        rightLine = parseInt(m[2], 10);
+        // An empty new side: git names the line before the deletion.
+        if (m[3] === "0" && currentFile) {
+          const points = deleted.get(currentFile) ?? [];
+          points.push({ after: rightLine, lines: m[1] === undefined ? 1 : parseInt(m[1], 10) });
+          deleted.set(currentFile, points);
+        }
+      }
       return;
     }
     if (!currentFile) return;
@@ -123,5 +137,5 @@ export function createCoverageParser(): { push(rawLine: string): void; result():
     // markers (the "\ No newline at end of file" sentinel, blank lines
     // outside any hunk) are ignored without changing line state.
   };
-  return { push, result: () => out };
+  return { push, result: () => out, deletionPoints: () => deleted };
 }

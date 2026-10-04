@@ -7,6 +7,8 @@
 - [FAQ](faq.md)
 - [GitHub Action](github-action.md)
 - [OpenQodex docs](index.md)
+- [Reviewer drivers](internal-reviewer-drivers.md)
+- [Plumbing commands](plumbing.md)
 - [Privacy](privacy.md)
 - [Quickstart](quickstart.md)
 - [Scanners](scanners.md)

@@ -60,6 +60,7 @@ export function renderMarkdown(report: Report): string {
     "",
     `**${verdictLine(report)}**`,
     "",
+    ...(report.reviewed_by ? [cell(report.reviewed_by), ""] : []),
     ...(impactLine(report) ? [cell(impactLine(report) as string), ""] : []),
     `Change ${code(report.change_id.slice(0, 12))} against ${code(report.base.ref)} (${code(report.base.sha.slice(0, 12))}), ${files} ${files === 1 ? "file" : "files"}, +${additions} -${deletions}.`,
   ];
@@ -69,6 +70,10 @@ export function renderMarkdown(report: Report): string {
   if (report.findings.length === 0) out.push("No findings on the changed lines.");
   else out.push(...findingTable(report.findings));
 
+  if ((report.settings_changes ?? []).length > 0) {
+    out.push("", "## Scanner settings changed", "", "This change edits a file a scanner reads as its settings or ignore list, which can hide that scanner's findings. Shown for information; these never count toward the verdict.", "");
+    out.push(...findingTable(report.settings_changes ?? []));
+  }
   if (report.outside_change.length > 0) {
     out.push("", "## Outside the changed lines", "", "Shown for information; these never count toward the verdict.", "");
     out.push(...findingTable(report.outside_change));

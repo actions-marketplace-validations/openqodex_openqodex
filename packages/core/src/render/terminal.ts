@@ -17,7 +17,8 @@ function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>): 
   const lines = [`  ${c.bold(display(location(f)))}  ${display(f.title)}`];
   const desc = display(firstLine(f.description));
   if (desc) lines.push(`    ${desc}`);
-  lines.push(`    ${c.dim(display(sourceLabel(f)))}`);
+  // A finding from the agent's own reading has no source to name.
+  if (f.source !== null || f.origin !== "agent") lines.push(`    ${c.dim(display(sourceLabel(f)))}`);
   return lines;
 }
 
@@ -43,6 +44,7 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
   const c = pc.createColors(opts.color);
   const verdict = verdictLine(report);
   const out: string[] = [report.verdict === "blocked" ? c.red(c.bold(verdict)) : c.green(c.bold(verdict))];
+  if (report.reviewed_by) out.push(display(report.reviewed_by));
   const risk = impactLine(report);
   if (risk) out.push(display(risk));
 
@@ -54,6 +56,10 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
     for (const f of group) out.push(...findingLines(f, c));
   }
 
+  if ((report.settings_changes ?? []).length > 0) {
+    out.push("", "This change edits a scanner settings file (not counted; check that it hides nothing)");
+    for (const f of report.settings_changes ?? []) out.push(...findingLines(f, c));
+  }
   if (report.outside_change.length > 0) {
     out.push("", "Outside the changed lines (not counted)");
     for (const f of report.outside_change) out.push(...findingLines(f, c));
