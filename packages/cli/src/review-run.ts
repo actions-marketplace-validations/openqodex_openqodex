@@ -14,6 +14,7 @@
 //
 // The developer's files are never written. A tool failure, an incomplete
 // review and a missing reviewer all exit 2.
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -419,10 +420,16 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
   let snapshot: Checkout | null = null;
   let session: ReviewerSession | null = null;
-  // Ctrl-C or a kill: the reviewer's process group and the snapshot go too.
+  // Ctrl-C or a kill: the reviewer's process group and the snapshot go too,
+  // synchronously, since the process exits right after. The reviewer runs in
+  // a group of its own, so nothing else would stop it. Git then forgets the
+  // snapshot's work tree.
   const onSignal = (signal: NodeJS.Signals): void => {
-    void session?.close();
-    if (snapshot !== null) rmSync(snapshot.folder, { recursive: true, force: true });
+    session?.kill?.();
+    if (snapshot !== null) {
+      rmSync((snapshot as Checkout).folder, { recursive: true, force: true });
+      spawnSync("git", ["worktree", "prune"], { cwd: repoRoot, stdio: "ignore", timeout: 5_000 });
+    }
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
   process.once("SIGINT", onSignal);

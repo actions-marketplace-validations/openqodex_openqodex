@@ -37,6 +37,9 @@ export interface ReviewerSession {
   send(text: string): Promise<Turn>;
   // Ends the process and every child it started.
   close(): Promise<void>;
+  // The same at once and synchronously, for a signal handler that exits
+  // right after it: the whole process group is killed.
+  kill?(): void;
 }
 
 export interface ReviewerDriver {

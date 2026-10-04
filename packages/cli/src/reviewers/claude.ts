@@ -245,6 +245,10 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
         child.stdin?.write(`${JSON.stringify({ type: "user", message: { role: "user", content: text } })}\n`);
       });
     },
+    kill(): void {
+      clearTimeout(timer);
+      killGroup(child);
+    },
     async close(): Promise<void> {
       clearTimeout(timer);
       if (!exited) {
