@@ -123,8 +123,8 @@ npx openqodex trust
 - Scanner downloads on first use: GitHub release files checked against pinned sha256 sums, and pinned packages from PyPI, npm and RubyGems.
 - Semgrep rule packs (`p/default`, `p/security-audit`, `p/secrets`), fetched from the Semgrep registry on each run.
 - When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code.
-- The reviewer: Claude Code sends the review brief and the files it reads from the copy of the change to the model your Claude Code login uses. It has no web tool unless you set `reviewer_web: on` in `~/.openqodex/config.yaml`.
-- The reviewer, when it is Codex: Codex sends the conversation, which holds the brief, your global `~/.codex/AGENTS.md` and the output of the commands it runs in the copy of the change, to the model your Codex login uses. With `reviewer_web: on` it can also use Codex's cached web search; its commands get no network either way.
+- The reviewer: Claude Code sends the review brief and the files it reads from the copy of the change to the model your Claude Code login uses. It can also open web pages (WebSearch and WebFetch); `reviewer_web: off` in `~/.openqodex/config.yaml` removes the web tools.
+- The reviewer, when it is Codex: Codex sends the conversation, which holds the brief, your global `~/.codex/AGENTS.md` and the output of the commands it runs in the copy of the change, to the model your Codex login uses. It can also use Codex's cached web search unless `reviewer_web: off` is set; its commands get no network either way.
 
 - `openqodex trust` reads the custom scanner's release from the GitHub API and downloads it.
 - `openqodex review <branch>` or `review '#<number>'` fetches that branch or pull request from your remote with git, and asks `gh` for the pull request's base when `gh` is installed.

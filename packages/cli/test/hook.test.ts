@@ -36,6 +36,8 @@
 // 17. A branch reviewed with no upstream (measured from the merge base with
 //     the default branch) and pushed over its remote tip counts as unreviewed
 //     forever; or a review of another head covers the push.
+// 18. A later review of other work, saved as the newest record, hides an
+//     earlier complete review that contains the push.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -475,6 +477,17 @@ describe("the pre-push hook looks up the review of what the push sends", () => {
   it("17. a review of a branch with no upstream covers a push of that branch over its remote tip", async () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     await reviewedFeature(s);
+    const r = push(s, "origin", "feature");
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).not.toContain(UNREVIEWED);
+  }, 60_000);
+
+  it("18. a later incomplete review of other work does not hide the complete review that contains the push", async () => {
+    const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
+    await reviewedFeature(s);
+    writeFileSync(join(s.repo, "other.txt"), "other work\n");
+    await finalizedPassingReview(s.oqHome, s.repo, "incomplete");
+    expect(readHomeReceipt(s.oqHome, s.repo, "latest")?.kind).toBe("incomplete");
     const r = push(s, "origin", "feature");
     expect(r.status, r.out).toBe(0);
     expect(r.out).not.toContain(UNREVIEWED);

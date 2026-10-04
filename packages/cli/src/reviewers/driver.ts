@@ -59,7 +59,7 @@ export interface ReviewerDriver {
   // reviewer must not start (Codex's per-run sandbox probe). Null to go on.
   check?(opts: { snapshotDir: string; bin: string }): Promise<string | null>;
   // `deadline`: epoch milliseconds after which the process group is killed.
-  // `web`: the user config allows the agent's web tools (reviewer_web: on).
+  // `web`: the agent gets its web tools (on unless reviewer_web: off).
   start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession;
 }
 
