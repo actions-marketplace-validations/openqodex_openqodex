@@ -50,6 +50,7 @@ import { cli, sandbox, type Sandbox } from "./init-helpers.js";
 // An empty, valid submission after reading the changed file.
 const driver: ReviewerDriver = {
   name: "claude",
+  traced: true,
   detect: async () => ({ ok: true, version: "9.9.9", bin: "/fake/claude" }),
   start(): ReviewerSession {
     return {

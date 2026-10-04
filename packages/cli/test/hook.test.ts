@@ -36,6 +36,13 @@
 // 17. A branch reviewed with no upstream (measured from the merge base with
 //     the default branch) and pushed over its remote tip counts as unreviewed
 //     forever; or a review of another head covers the push.
+// 18. A later review of other work, saved as the newest record, hides an
+//     earlier complete review that contains the push.
+// 19. The line printed for husky drops git's hook arguments, so a push to a
+//     remote other than origin is looked up against origin.
+// 20. The line printed for lefthook puts git's hook arguments into a shell
+//     line: lefthook inserts {1} and {2} raw, so a remote URL holding
+//     '$(id)' closes the quotes and runs.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -480,6 +487,17 @@ describe("the pre-push hook looks up the review of what the push sends", () => {
     expect(r.out).not.toContain(UNREVIEWED);
   }, 60_000);
 
+  it("18. a later incomplete review of other work does not hide the complete review that contains the push", async () => {
+    const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
+    await reviewedFeature(s);
+    writeFileSync(join(s.repo, "other.txt"), "other work\n");
+    await finalizedPassingReview(s.oqHome, s.repo, "incomplete");
+    expect(readHomeReceipt(s.oqHome, s.repo, "latest")?.kind).toBe("incomplete");
+    const r = push(s, "origin", "feature");
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).not.toContain(UNREVIEWED);
+  }, 60_000);
+
   it("17. that review does not cover a push of a different head", async () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     await reviewedFeature(s);
@@ -506,5 +524,53 @@ describe("the pre-push hook looks up the review of what the push sends", () => {
     const r = push(s, "origin", "feature");
     expect(r.status).not.toBe(0);
     expect(r.out).toContain(UNREVIEWED);
+  }, 60_000);
+});
+
+// 19. The line printed for a hook manager drops git's arguments, so a push
+// to a remote other than origin is looked up against origin.
+describe("the line printed for a hook manager", () => {
+  // A repo whose only remote is "upstream", with a branch the remote has and
+  // a new commit on it that no review covers.
+  function upstreamFeature(managerFile: string): Sandbox {
+    const s = sandbox({ "README.md": "hello\n", [managerFile]: "pre-push:\n  commands: {}\n" });
+    git(s.root, "init", "-q", "--bare", join(s.root, "remote.git"));
+    git(s.repo, "remote", "add", "upstream", join(s.root, "remote.git"));
+    git(s.repo, "push", "-q", "upstream", "main");
+    git(s.repo, "checkout", "-q", "-b", "feature");
+    writeFileSync(join(s.repo, "one.txt"), "one\n");
+    commitAll(s.repo);
+    git(s.repo, "push", "-q", "upstream", "feature");
+    writeFileSync(join(s.repo, "two.txt"), "two\n");
+    commitAll(s.repo);
+    return s;
+  }
+
+  // The printed line, with the built CLI in place of the published one,
+  // written as the repo's pre-push hook the way husky runs it (sh -e).
+  function installLine(s: Sandbox, toHook: (line: string) => string): void {
+    const r = cli(s, ["hook", "install"]);
+    expect(r.status).toBe(0);
+    const line = r.stdout.split("\n").map((l) => l.trim()).find((l) => l.startsWith("npx -y openqodex@"));
+    expect(line).toBeDefined();
+    const local = line!.replace(/^npx -y openqodex@\S+/, `${JSON.stringify(process.execPath)} ${JSON.stringify(BIN)}`);
+    writeFileSync(join(s.repo, ".git/hooks/pre-push"), `#!/bin/sh\nset -e\n${toHook(local)}\n`, { mode: 0o755 });
+  }
+
+  it("19. the husky line passes the remote, so the hint names upstream", () => {
+    const s = upstreamFeature(".husky/pre-commit");
+    installLine(s, (line) => line);
+    const r = push(s, "upstream", "feature");
+    expect(r.out).toContain("git branch --set-upstream-to 'upstream/feature' 'feature'");
+  }, 60_000);
+
+  it("20. the lefthook line carries no git argument, so no remote name or URL reaches a shell line", () => {
+    const s = upstreamFeature("lefthook.yml");
+    const r = cli(s, ["hook", "install"]);
+    expect(r.status).toBe(0);
+    const line = r.stdout.split("\n").map((l) => l.trim()).find((l) => l.startsWith("npx -y openqodex@"));
+    expect(line).toMatch(/hook pre-push \|\| \[ \$\? -ne 1 \]$/);
+    expect(line).not.toContain("{");
+    expect(line).not.toContain("$@");
   }, 60_000);
 });

@@ -6,7 +6,7 @@
 [![licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
 [![CI](https://github.com/openqodex/openqodex/actions/workflows/ci.yml/badge.svg)](https://github.com/openqodex/openqodex/actions/workflows/ci.yml)
 
-OpenQodex is open source code review that runs before you push, from your coding agent or your terminal. One command, `openqodex review`, works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. Then it starts its own reviewer, a separate Claude Code process that reads a frozen copy of the change and nothing else. The reviewer checks every scanner finding and reads every changed line. OpenQodex checks its answer with scripts and prints one report. It needs Claude Code installed and logged in, and no other key, account or server.
+OpenQodex is open source code review that runs before you push, from your coding agent or your terminal. One command, `openqodex review`, works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. Then it starts its own reviewer, a separate Claude Code or Codex process that reads a frozen copy of the change. The reviewer checks every scanner finding and is given every changed line. OpenQodex checks its answer with scripts and prints one report. It needs Claude Code or Codex installed and logged in, and no other key, account or server.
 
 ## Install
 
@@ -41,8 +41,10 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 
 - `openqodex review` runs the whole review in one command: a frozen copy of the change, the scanners, the code graph, a reviewer process OpenQodex starts, script checks of its answer, and one report in the terminal and in `report.md`, `report.json` and `report.sarif`.
 - `openqodex review --all` reviews the whole repository. `openqodex review <branch>` and `openqodex review '#42'` review a branch or a pull request that is not your current work. OpenQodex fetches it, checks it out in a temporary folder and reviews what it added since it left its base.
-- The reviewer is Claude Code (`claude -p`), started with read, search and list tools only, inside the copy of the change, with none of your settings, hooks, plugins, memory or instruction files. Codex and Cursor cannot be held to that yet, so they are not used as reviewers: [docs/internal-reviewer-drivers.md](docs/internal-reviewer-drivers.md) says why.
-- A review is complete only when every stage ran, every scanner finding was raised or dropped with a reason, and every changed line was read. Anything else prints "Review incomplete" with what is missing, and exits 2.
+- The reviewer is Claude Code (`claude -p`) or Codex (`codex exec`). `auto` picks the agent you run the command from, then Claude Code, then Codex; `--reviewer` or `reviewer:` in `~/.openqodex/config.yaml` picks one.
+- Claude Code starts with read, search and list tools only, inside the copy of the change, with none of your settings, hooks, plugins, memory or instruction files. Its event stream shows every read, so the report lists the files it read.
+- Codex starts in a read-only sandbox that confines reads to the copy of the change and the system folders, with no network for its commands and none of your config, plugins, hooks or the repository's instruction files. It still loads your global `~/.codex/AGENTS.md`, and its event stream does not show every command, so the report says its reads were not recorded. [docs/internal-reviewer-drivers.md](docs/internal-reviewer-drivers.md) gives the tests.
+- A review is complete only when every stage ran, every scanner finding was raised or dropped with a reason, and every changed line was in front of the reviewer: in the brief, in a later message from OpenQodex, or, for Claude Code, in a file it read. Anything else prints "Review incomplete" with what is missing, and exits 2.
 - A change that only deletes code, such as a removed check, can still carry a finding: the lines next to a deletion count as changed.
 - Thirteen built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
@@ -52,11 +54,12 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 
 ## What it does not do yet
 
-- The separate reviewer process needs Claude Code today. Without it, `review` prints "Full review unavailable", says what is missing, saves the unchecked scanner findings to a file it names, and names the command with which the agent you are in reviews the change itself (`review --agent`). That report says which agent reviewed.
-- No Codex or Cursor reviewer. Codex always loads your own `~/.codex/AGENTS.md` and does not show every command it runs in its event stream. `cursor-agent` has no way to limit its tools to reading or to skip your rules and settings.
-- A review takes one to three minutes and uses your own Claude Code plan.
-- No review finds everything. The promise is that every stage runs, every scanner finding is checked, every changed line is read, and anything skipped is named.
-- No review on your own API key without Claude Code.
+- The separate reviewer process needs Claude Code or Codex. Without either, `review` prints "Full review unavailable", says what is missing, saves the unchecked scanner findings to a file it names, and names the command with which the agent you are in reviews the change itself (`review --agent`). That report says which agent reviewed.
+- No Cursor reviewer. `cursor-agent` has no way to limit its tools to reading or to skip your rules and settings.
+- Codex cannot be the reviewer when `openqodex review` runs inside Codex's own sandbox: a second Codex does not start there. `review` then prints "Full review unavailable" and the `review --agent` command.
+- A review takes one to three minutes and uses your own Claude Code or Codex plan.
+- No review finds everything. The promise is that every stage runs, every scanner finding is checked, every changed line is put in front of the reviewer, and anything skipped is named.
+- No review on your own API key without Claude Code or Codex.
 - No tool server for agents (MCP).
 - No Homebrew formula, no install script and no Docker image. Install through npm.
 - No Windows support outside WSL.
@@ -120,7 +123,8 @@ npx openqodex trust
 - Scanner downloads on first use: GitHub release files checked against pinned sha256 sums, and pinned packages from PyPI, npm and RubyGems.
 - Semgrep rule packs (`p/default`, `p/security-audit`, `p/secrets`), fetched from the Semgrep registry on each run.
 - When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code.
-- The reviewer: Claude Code sends the review brief and the files it reads from the copy of the change to the model your Claude Code login uses. It has no web tool unless you set `reviewer_web: on` in `~/.openqodex/config.yaml`.
+- The reviewer: Claude Code sends the review brief and the files it reads from the copy of the change to the model your Claude Code login uses. It can also open web pages (WebSearch and WebFetch); `reviewer_web: off` in `~/.openqodex/config.yaml` removes the web tools.
+- The reviewer, when it is Codex: Codex sends the conversation, which holds the brief, your global `~/.codex/AGENTS.md` and the output of the commands it runs in the copy of the change, to the model your Codex login uses. It can also use Codex's cached web search unless `reviewer_web: off` is set; its commands get no network either way.
 
 - `openqodex trust` reads the custom scanner's release from the GitHub API and downloads it.
 - `openqodex review <branch>` or `review '#<number>'` fetches that branch or pull request from your remote with git, and asks `gh` for the pull request's base when `gh` is installed.
@@ -128,7 +132,7 @@ npx openqodex trust
 
 `--offline` skips osv-scanner and semgrep and turns scanner downloads, the version check, and the fetch and `gh` call of a branch or pull request review off.
 
-The built-in scanners send no code anywhere. The reviewer's model sees the brief and what the reviewer reads, as with any Claude Code session. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
+The built-in scanners send no code anywhere. The reviewer's model sees the brief and what the reviewer reads, as with any Claude Code or Codex session. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
 
 ## Updates
 

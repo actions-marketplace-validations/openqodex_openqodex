@@ -9,8 +9,8 @@
 // never replaced; switching versions is one rename of the record.
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { openqodexHome } from "@openqodex/scanners";
 import { assetPath } from "./assets.js";
@@ -142,6 +142,28 @@ export function launcherScript(nodePath: string, home: string, version: string):
 export function launcherStarted(env: NodeJS.ProcessEnv = process.env, entry: string | undefined = process.argv[1]): boolean {
   const named = env.OPENQODEX_LAUNCHER;
   return named !== undefined && named !== "" && entry !== undefined && resolve(named) === resolve(entry);
+}
+
+// The command that runs this same openqodex again, for a process the
+// launcher did not start. A local build (this package's own dist/bin.js, run
+// from a folder outside any node_modules) is named by its node and entry
+// file, since the published version may not read what it wrote. The package
+// installed in a node_modules folder (npx, a global or project install) and
+// any other entry, such as a test runner, get the pinned npx line, which the
+// skill and the Claude Code permission rules write the same way.
+export function directRunner(entry: string | undefined = process.argv[1]): string {
+  const npx = `npx -y openqodex@${__OPENQODEX_VERSION__}`;
+  if (entry === undefined) return npx;
+  let file: string;
+  let own: string;
+  try {
+    file = realpathSync(entry);
+    own = realpathSync(assetPath("dist", "bin.js"));
+  } catch {
+    return npx;
+  }
+  if (file !== own || file.split(sep).includes("node_modules")) return npx;
+  return `${launcherRunner(process.execPath)} ${launcherRunner(file)}`;
 }
 
 // The version baked into the launcher script, from its bin= line; null when

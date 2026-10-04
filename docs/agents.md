@@ -1,6 +1,6 @@
 # Agents
 
-OpenQodex runs from Claude Code, Cursor, Codex CLI and Cline. `openqodex init` installs it into each one it finds. Whichever agent asks for the review, the review itself runs in a reviewer process OpenQodex starts: Claude Code, on your Claude Code login, with no other key. Codex and Cursor are not used as reviewers yet (`security` says why); in Cursor, Codex and Cline the review works when Claude Code is installed too. Without it, `review` names the command with which the agent you are in reviews the change itself (see "Who reviews, by what is installed").
+OpenQodex runs from Claude Code, Cursor, Codex CLI and Cline. `openqodex init` installs it into each one it finds. Whichever agent asks for the review, the review itself runs in a reviewer process OpenQodex starts: Claude Code or Codex, on your own login, with no other key. Cursor is not used as a reviewer (`security` says why); in Cursor and Cline the review works when Claude Code or Codex is installed too. Without either, `review` names the command with which the agent you are in reviews the change itself (see "Who reviews, by what is installed").
 
 ## Run init
 
@@ -46,22 +46,24 @@ The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository,
 <!-- openqodex:end -->
 ```
 
-The two files show in `git status`, and `init` says to commit them. `init` writes neither file through a symbolic link. A section you edited is yours: a later `init` and `--uninstall` leave it as it is. `--uninstall` removes our untouched section, and deletes a file only when `init` created it and nothing else is in it. In project scope the same two files carry the instruction section instead, never both.
+The two files show in `git status`, and `init` says to commit them. When git ignores one of them in this repository, `init` says so instead, since your team does not get it. `init` writes neither file through a symbolic link. A section you edited is yours: a later `init` and `--uninstall` leave it as it is. `--uninstall` removes our untouched section, and deletes a file only when `init` created it and nothing else is in it. In project scope the same two files carry the instruction section instead, never both.
 
 ## The review runs in its own reviewer process
 
-The skill tells the agent to run one command, `review`, wait for it, and show you the report exactly as printed. The agent does not review the change itself and starts no subagent. `review` starts a fresh Claude Code process with no memory of the agent's session, none of your settings or instruction files, and read, search and list tools only, inside a frozen copy of the change. The report says which reviewer ran; the tool writes that line, never the model.
+The skill tells the agent to run one command, `review`, wait for it, and show you the report exactly as printed. The agent does not review the change itself and starts no subagent. `review` starts a fresh reviewer process with no memory of the agent's session, inside a frozen copy of the change. Claude Code starts with none of your settings or instruction files and read, search and list tools only. Codex starts in a read-only sandbox with none of your config or the repository's instruction files; it still loads your global `~/.codex/AGENTS.md`. The report says which reviewer ran; the tool writes that line, never the model.
 
 A review takes one to three minutes. Agents often stop a command after two minutes, so the skill tells the agent to allow up to ten minutes or run it in the background; `review` prints a line every 15 seconds while the reviewer works.
 
-The reviewer runs nothing: no tests, no scripts, no shell.
+The reviewer edits nothing and runs none of the repository's code. Claude Code has no shell. Codex has a shell whose commands can read the copy of the change and the system folders, and cannot write or reach the network.
 
 ## Who reviews, by what is installed
 
 | Installed | What `review` gives you |
 |---|---|
 | Claude Code, logged in | A fresh Claude Code process that OpenQodex starts reviews the change. |
-| Only Codex or only Cursor (or Claude Code logged out) | "Full review unavailable", exit 2, and a fallback: run `review --agent` and the agent you are in follows the brief it prints, then `review --finalize`. That report says on its first line after the verdict "Reviewed by the coding agent you are using." |
+| Codex, logged in, and no Claude Code (or Claude Code logged out) | A fresh Codex process that OpenQodex starts reviews the change. |
+| Both, logged in | The agent you run `review` from reviews: Codex from Codex, Claude Code from Claude Code. From anywhere else, Claude Code. `--reviewer codex` or `reviewer: codex` in `~/.openqodex/config.yaml` picks Codex. |
+| Only Cursor (or both logged out), or Codex inside Codex's own sandbox | "Full review unavailable", exit 2, and a fallback: run `review --agent` and the agent you are in follows the brief it prints, then `review --finalize`. That report says on its first line after the verdict "Reviewed by the coding agent you are using." |
 | None of them | "Full review unavailable", exit 2, and the scanner findings saved to a file as unchecked candidates, never as a review. The fallback line prints too, but no agent is there to follow it. |
 
 The skill tells the agent to follow the fallback when `review` prints it. The push hooks count a fallback review as reviewed, with one line naming who reviewed.
@@ -125,7 +127,7 @@ Codex runs a new hook only after you trust it. Open Codex, run `/hooks`, and tru
 | Skill | `~/.cursor/skills/openqodex/SKILL.md` | `.agents/skills/openqodex/SKILL.md` |
 | Rule | `.cursor/rules/openqodex.mdc` in the repository, excluded from git | `.cursor/rules/openqodex.mdc` |
 
-Cursor has no rule file in the home folder, so the rule always goes in the repository. In user scope, run `init` inside each repository where you want the rule. The rule applies to every chat, carries the instruction section, and tells Cursor to run `review` before any `git push`. The review itself needs Claude Code installed: `cursor-agent` cannot be held to reading only, so it is not a reviewer.
+Cursor has no rule file in the home folder, so the rule always goes in the repository. In user scope, run `init` inside each repository where you want the rule. The rule applies to every chat, carries the instruction section, and tells Cursor to run `review` before any `git push`. The review itself needs Claude Code or Codex installed: `cursor-agent` cannot be held to reading only, so it is not a reviewer.
 
 OpenQodex writes no Cursor hook. The rule asks Cursor to review, but nothing stops a push from Cursor.
 
@@ -169,7 +171,7 @@ Before each push it runs `openqodex hook pre-push` through the launcher. For eac
 
 ## Inside a sandbox
 
-Some agents run commands in a sandbox that cannot reach the network or write outside the project. There, the first review cannot download scanners, and the reviewer may not reach its model or write in `~/.openqodex/`. Each scanner reports why it was left out. Run this once in your own terminal for the scanners, and run `review` there when the reviewer cannot start inside the sandbox:
+Some agents run commands in a sandbox that cannot reach the network or write outside the project. There, the first review cannot download scanners, and the reviewer may not reach its model or write in `~/.openqodex/`. Inside Codex's sandbox a second Codex does not start at all: with Codex as the reviewer, `review` prints "Full review unavailable" and the fallback. Each scanner reports why it was left out. Run this once in your own terminal for the scanners, and run `review` there when the reviewer cannot start inside the sandbox:
 
 ```
 npx openqodex doctor --install

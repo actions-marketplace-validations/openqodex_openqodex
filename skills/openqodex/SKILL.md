@@ -1,11 +1,11 @@
 ---
 name: openqodex
-description: Review the current code change before it is pushed. One command runs the security and lint scanners that fit the changed files, a separate reviewer that checks every scanner finding and reads every changed line, and prints the report. Use before every git push, when asked to review changes, and when a push was blocked or warned by OpenQodex.
+description: Review the current code change before it is pushed. One command runs the security and lint scanners that fit the changed files, a separate reviewer that checks every scanner finding and is given every changed line, and prints the report. Use before every git push, when asked to review changes, and when a push was blocked or warned by OpenQodex.
 ---
 
 # OpenQodex: review the change before it is pushed
 
-OpenQodex reviews a change in one command. It takes a frozen copy of the change, runs the deterministic scanners that fit the changed files (gitleaks, semgrep, bandit, hadolint, shellcheck, actionlint, osv-scanner and others), keeps what they report on changed lines, and starts its own reviewer: a separate Claude Code process that reads only that copy. The reviewer checks every scanner finding, reads every changed line and answers in a fixed shape; OpenQodex checks the answer with scripts and prints one report. No key and no account are needed beyond the developer's Claude Code login. The code goes only to the model that login uses. One scanner goes online: when the change touches a dependency file, osv-scanner asks osv.dev about the names and versions of the dependencies; `--offline` skips that lookup.
+OpenQodex reviews a change in one command. It takes a frozen copy of the change, runs the deterministic scanners that fit the changed files (gitleaks, semgrep, bandit, hadolint, shellcheck, actionlint, osv-scanner and others), keeps what they report on changed lines, and starts its own reviewer: a separate Claude Code or Codex process that reads only that copy. The reviewer checks every scanner finding, is given every changed line and answers in a fixed shape; OpenQodex checks the answer with scripts and prints one report. No key and no account are needed beyond the developer's Claude Code or Codex login. The code goes to the model that login uses. The reviewer can also search the web and open web pages unless `reviewer_web: off` is set in `~/.openqodex/config.yaml`. Two scanners go online, and neither sends code: semgrep downloads its rule packs from the Semgrep registry on each run, and when the change touches a dependency file, osv-scanner sends the names and versions of the dependencies to osv.dev. `--offline` skips both scanners.
 
 ## When to run
 
@@ -16,7 +16,7 @@ OpenQodex reviews a change in one command. It takes a frozen copy of the change,
 
 ## Who reviews
 
-OpenQodex starts its own reviewer process for every review, with no memory of this session and none of your instructions. You do not start a subagent for it and you do not review the change yourself: run the command and show what it prints.
+OpenQodex starts its own reviewer process for every review, with no memory of this session. You do not start a subagent for it and you do not review the change yourself: run the command and show what it prints.
 
 If `review` says "Full review unavailable" and prints a way to review with the agent you are in, follow it: run the command it names and do what the brief it prints says.
 
@@ -68,7 +68,7 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 
 - The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest review. The reports never show in `git status`: `.openqodex/.gitignore` keeps them out. The two other files in that folder, `config.yaml` and `custom-instructions.md`, are the team's and are meant to be committed.
 - The verdict is `passed` (with or without warnings) or `blocked`. It is `blocked` only when the repository's config (`.openqodex/config.yaml`, or `.openqodex.yaml` at the root) sets `block_on_severity` and a finding is at or above it. With no config, OpenQodex warns and never blocks.
-- A complete review means every stage ran, every scanner finding was checked and every changed line was read; anything not covered is named in the report. It does not mean nothing was missed: no review finds everything.
+- A complete review means every stage ran, every scanner finding was checked and every changed line was put in front of the reviewer; anything not covered is named in the report. It does not mean nothing was missed: no review finds everything.
 - The coverage list says, for each scanner, whether it ran. A scanner that did not run has a one-line reason:
   - `no matching files`: nothing in the change is the kind of file it reads.
   - `installing`: it is being downloaded for the first time; it is included from the next run. Say so to the developer rather than waiting.

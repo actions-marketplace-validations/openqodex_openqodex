@@ -18,7 +18,9 @@
 // 13. --rollback does not turn updating off.
 // 14. Finalize after an activation runs the new version on an old brief.
 // 15. Finalize executes a path taken from the manifest.
-// 16. The brief's finalize command names a runner other than the launcher or the pinned npx version.
+// 16. The brief's finalize command names a runner other than the launcher,
+//     the pinned npx version for an installed package, or the node and entry
+//     file of a local build (whose brief the published version may not read).
 // 17. A finalize handed to another version hands off again.
 // 18. An inherited OPENQODEX_FINALIZE_HANDOFF stops a legitimate handoff.
 // 19. finalize --run hands the older runtime both --run and a findings path.
@@ -325,8 +327,24 @@ describe("finalize across versions", () => {
     writeFileSync(manifestPath(), JSON.stringify(manifest));
   });
 
-  it("a run not started through the launcher writes today's npx finalize command (failure 16)", () => {
+  it("a local build not started through the launcher names its own node and entry file, not the published version (failure 16)", () => {
     const r = direct(s, ["review", "--agent", "--no-install"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).not.toMatch(/npx -y openqodex@\S+ review --finalize/);
+    const node = /^[A-Za-z0-9_./@+-]+$/.test(process.execPath) ? process.execPath : `'${process.execPath}'`;
+    expect(r.stdout).toContain(`${node} ${/^[A-Za-z0-9_./@+-]+$/.test(BIN) ? BIN : `'${BIN}'`} review --finalize`);
+  });
+
+  it("the package run from a node_modules folder, as npx installs it, writes the pinned npx finalize command (failure 16)", () => {
+    // The built package laid out the way npx installs the published one.
+    const pkg = join(s.root, "npx cache", "node_modules", "openqodex");
+    cpSync(join(BIN, "..", ".."), pkg, { recursive: true, filter: (src) => basename(src) !== "node_modules" });
+    const r = spawnSync(process.execPath, [join(pkg, "dist", "bin.js"), "review", "--agent", "--no-install"], {
+      encoding: "utf8",
+      env: laptop(s),
+      cwd: s.repo,
+      timeout: 120_000,
+    });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain(`npx -y openqodex@${version} review --finalize`);
   });

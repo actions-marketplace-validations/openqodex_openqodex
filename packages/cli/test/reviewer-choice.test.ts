@@ -5,14 +5,23 @@
 // driver object that answers with a recorded submission.
 //
 // Ways it could fail, written before the code:
-//  1. `auto` picks a driver that is not enabled (Codex, Cursor).
-//  2. `--reviewer codex` on a machine where Codex is not enabled starts
-//     something, or does not say why it is off.
+//  1. `auto` picks a driver that is not enabled (Cursor).
+//  2. `--reviewer codex` run from inside Codex's own sandbox, where a nested
+//     Codex cannot start, crashes or hangs instead of saying "Full review
+//     unavailable" with the reason and the fallback command.
+//  8. `auto` inside Claude Code does not pick Claude Code, though Codex is
+//     installed too.
+//  9. `auto` with only Codex available does not pick Codex.
+// 10. `auto` inside a Codex session does not pick Codex first.
+// 11. A driver whose per-run boundary check fails (Codex's sandbox probe)
+//     still starts the reviewer, or ends as "Review incomplete" instead of
+//     "Full review unavailable" with the reason and the fallback.
 //  3. The config's `reviewer:` key is ignored.
 //  4. The flag does not win over the config.
-//  5. The reviewer gets web tools with the default config.
-//  6. `reviewer_web: on` does not give Claude Code its web tools, or the
-//     trace check then fails the run for using them.
+//  5. The reviewer lacks its web tools with no config file, or keeps them
+//     with `reviewer_web: off`.
+//  6. A run that uses the web tools while they are on is failed by the
+//     trace check.
 //  7. A config value that is neither a known reviewer nor on or off is
 //     silently ignored.
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -51,13 +60,16 @@ function repo(): string {
 type Fake = ReviewerDriver & { starts: { web: boolean }[] };
 
 // The model provider stand-in: reads the changed file, then answers with an
-// empty, valid submission. `calls` adds tool calls to the answer.
-function fake(calls: Turn["calls"] = []): Fake {
+// empty, valid submission. `calls` adds tool calls to the answer. `name`
+// and `available` make it stand in for another agent, or for one that is
+// not installed.
+function fake(calls: Turn["calls"] = [], name = "claude", available = true): Fake {
   const driver: Fake = {
-    name: "claude",
+    name,
+    traced: name === "claude",
     starts: [],
     async detect() {
-      return { ok: true as const, version: "9.9.9", bin: "/fake/claude" };
+      return available ? { ok: true as const, version: "9.9.9", bin: `/fake/${name}` } : { ok: false as const, missing: `${name} is not installed`, fix: `install ${name}` };
     },
     start(opts): ReviewerSession {
       driver.starts.push({ web: opts.web });
@@ -85,6 +97,10 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "oq-choice-home-"));
   vi.stubEnv("OPENQODEX_HOME", home);
   vi.stubEnv(DEPTH_ENV, "");
+  // The agent running the tests must not decide `auto`.
+  vi.stubEnv("CLAUDECODE", "");
+  vi.stubEnv("CODEX_THREAD_ID", "");
+  vi.stubEnv("CODEX_SANDBOX", "");
   vi.spyOn(process.stdout, "write").mockImplementation((s) => ((out += String(s)), true));
   vi.spyOn(process.stderr, "write").mockImplementation((s) => ((err += String(s)), true));
 });
@@ -104,19 +120,48 @@ function review(drivers: ReviewerDriver[], reviewer?: string): Promise<number> {
 }
 
 describe("choosing the reviewer", () => {
-  it("1. auto passes by Codex and Cursor, which are not enabled, and starts Claude Code", async () => {
+  it("1. auto passes by Cursor, which is not enabled, and starts Claude Code", async () => {
     const claude = fake();
-    expect(await review([codexDriver, cursorDriver, claude])).toBe(0);
+    expect(await review([cursorDriver, claude])).toBe(0);
     expect(claude.starts).toHaveLength(1);
     expect((JSON.parse(out) as Report).completion?.reviewer?.driver).toBe("claude");
   });
 
-  it("2. --reviewer codex exits 2 with Full review unavailable and the reason Codex is off", async () => {
+  it("2. --reviewer codex inside Codex's own sandbox exits 2 with Full review unavailable, the reason and the fallback command", async () => {
+    vi.stubEnv("CODEX_SANDBOX", "seatbelt");
     const claude = fake();
     expect(await review([codexDriver, cursorDriver, claude], "codex")).toBe(2);
     expect(claude.starts).toHaveLength(0);
     expect(err).toContain("Full review unavailable");
-    expect(err).toMatch(/codex: not enabled: .*AGENTS\.md/);
+    expect(err).toMatch(/codex: Codex cannot start a second Codex inside its own sandbox/);
+    expect(err).toMatch(/review --agent/);
+  });
+
+  it("8. auto inside Claude Code picks Claude Code, with Codex available too", async () => {
+    vi.stubEnv("CLAUDECODE", "1");
+    const codex = fake([], "codex");
+    const claude = fake();
+    expect(await review([codex, claude])).toBe(0);
+    expect(claude.starts).toHaveLength(1);
+    expect(codex.starts).toHaveLength(0);
+  });
+
+  it("9. auto with only Codex available picks Codex, and the report names it", async () => {
+    const codex = fake([], "codex");
+    expect(await review([fake([], "claude", false), codex])).toBe(0);
+    expect(codex.starts).toHaveLength(1);
+    const completion = (JSON.parse(out) as Report).completion;
+    expect(completion?.reviewer?.driver).toBe("codex");
+    expect(completion?.trace_complete).toBe(false);
+  });
+
+  it("10. auto inside a Codex session picks Codex before Claude Code", async () => {
+    vi.stubEnv("CODEX_THREAD_ID", "00000000-0000-0000-0000-000000000001");
+    const codex = fake([], "codex");
+    const claude = fake();
+    expect(await review([claude, codex])).toBe(0);
+    expect(codex.starts).toHaveLength(1);
+    expect(claude.starts).toHaveLength(0);
   });
 
   it("3. the config's reviewer: key picks the driver", async () => {
@@ -142,27 +187,55 @@ describe("choosing the reviewer", () => {
   });
 });
 
+describe("the per-run boundary check", () => {
+  it("11. a failed check never starts the reviewer and ends as Full review unavailable with the reason and the fallback", async () => {
+    const codex = Object.assign(fake([], "codex"), { check: async () => "Codex's sandbox did not confine reads to the review copy; the review did not start (a file outside it could be read)" });
+    expect(await review([codex], "codex")).toBe(2);
+    expect(codex.starts).toHaveLength(0);
+    expect(out).toBe("");
+    expect(err).toContain("Full review unavailable");
+    expect(err).toContain("codex: Codex's sandbox did not confine reads to the review copy; the review did not start");
+    expect(err).toMatch(/review --agent/);
+  });
+
+  it("11. a passed check starts the reviewer", async () => {
+    const codex = Object.assign(fake([], "codex"), { check: async () => null });
+    expect(await review([codex], "codex")).toBe(0);
+    expect(codex.starts).toHaveLength(1);
+  });
+});
+
 describe("web tools", () => {
-  it("5. the default is off, and with it the reviewer has no web tool", async () => {
-    expect(DEFAULT_REVIEWER_WEB).toBe("off");
+  it("5. with no config file the reviewer is started with web on and the Claude Code command line carries WebSearch and WebFetch", async () => {
+    expect(DEFAULT_REVIEWER_WEB).toBe("on");
+    const claude = fake();
+    expect(await review([claude])).toBe(0);
+    expect(claude.starts).toEqual([{ web: true }]);
+    const args = claudeArgs(true);
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,WebSearch,WebFetch");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe("WebSearch,WebFetch");
+  });
+
+  it("5. reviewer_web: off starts the reviewer without web tools, and the Claude Code command line names none", async () => {
+    userConfig("reviewer_web: off\n");
     const claude = fake();
     expect(await review([claude])).toBe(0);
     expect(claude.starts).toEqual([{ web: false }]);
-    const tools = claudeArgs(false)[claudeArgs(false).indexOf("--tools") + 1];
-    expect(tools).toBe("Read,Grep,Glob");
+    const args = claudeArgs(false);
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob");
+    expect(args.join(" ")).not.toMatch(/WebSearch|WebFetch/);
   });
 
-  it("6. reviewer_web: on gives Claude Code WebSearch and WebFetch, and a run that uses them completes", async () => {
-    userConfig("reviewer_web: on\n");
+  it("6. with web on, a run that uses WebSearch completes", async () => {
     const web = [{ tool: "WebSearch", input: { query: "flask pagination" }, ok: true, read: null }];
     const claude = fake(web);
     expect(await review([claude])).toBe(0);
     expect(claude.starts).toEqual([{ web: true }]);
     expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
-    expect(claudeArgs(true)[claudeArgs(true).indexOf("--tools") + 1]).toBe("Read,Grep,Glob,WebSearch,WebFetch");
   });
 
-  it("5. with web off, a web tool call makes the run incomplete", async () => {
+  it("5. with reviewer_web: off, a web tool call makes the run incomplete", async () => {
+    userConfig("reviewer_web: off\n");
     const web = [{ tool: "WebFetch", input: { url: "https://example.com", prompt: "read" }, ok: true, read: null }];
     expect(await review([fake(web)])).toBe(2);
     expect((JSON.parse(out) as Report).completion?.missing.join("\n")).toContain("WebFetch");

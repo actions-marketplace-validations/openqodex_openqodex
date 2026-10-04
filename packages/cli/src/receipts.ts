@@ -131,6 +131,37 @@ export function readHomeReceipt(home: string, repoRoot: string, changeId: string
   return ok ? (value as GateReceipt) : null;
 }
 
+// The newest `limit` receipts of this repository, newest first by the time
+// each file was written. `latest.json` is left out, since it repeats one of
+// them. A folder that is a link, or a file that is not a receipt, reads as
+// none.
+export function readHomeReceipts(home: string, repoRoot: string, limit: number): GateReceipt[] {
+  const dir = join(receiptsDir(home), repoId(repoRoot));
+  const named: { id: string; mtime: number }[] = [];
+  try {
+    const st = lstatSync(dir);
+    if (!st.isDirectory() || st.isSymbolicLink()) return [];
+    for (const name of readdirSync(dir)) {
+      const id = name.endsWith(".json") ? name.slice(0, -".json".length) : "";
+      if (id === "latest" || !ID.test(id)) continue;
+      try {
+        named.push({ id, mtime: lstatSync(join(dir, name)).mtimeMs });
+      } catch {
+        // removed meanwhile
+      }
+    }
+  } catch {
+    return [];
+  }
+  named.sort((a, b) => b.mtime - a.mtime);
+  const out: GateReceipt[] = [];
+  for (const { id } of named.slice(0, limit)) {
+    const receipt = readHomeReceipt(home, repoRoot, id);
+    if (receipt !== null) out.push(receipt);
+  }
+  return out;
+}
+
 // Removes receipts and run records not written for 30 days, and repo
 // folders left empty. Run by init and the foreground update, never by a hook.
 export function pruneHomeReceipts(home: string, now = Date.now()): void {

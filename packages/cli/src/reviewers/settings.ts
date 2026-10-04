@@ -12,10 +12,12 @@ import { openqodexHomeDir } from "../launcher.js";
 import { userConfigPath } from "../update/state.js";
 import { REVIEWER_NAMES } from "./driver.js";
 
-// The one place the default lives. Off: a reviewer that reads private code
-// and untrusted text and can open web addresses can be talked into sending
-// the code out (docs/security.md).
-export const DEFAULT_REVIEWER_WEB: "on" | "off" = "off";
+// The one place the default lives. On (owner's decision, 2026-10-04): the
+// reviewer can look up a library or an advisory while it reviews. A reviewer
+// that reads private code and untrusted text and can open web addresses can
+// be talked into sending the code out, so `reviewer_web: off` removes the web
+// tools (docs/security.md).
+export const DEFAULT_REVIEWER_WEB: "on" | "off" = "on";
 
 export type ReviewerSettings = { reviewer: string; web: boolean };
 

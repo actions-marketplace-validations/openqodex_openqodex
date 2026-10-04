@@ -14,8 +14,8 @@ import type { ToolCall } from "./trace.js";
 
 const execFileAsync = promisify(execFile);
 
-// `web`: WebSearch and WebFetch are added only when the user config sets
-// `reviewer_web: on`.
+// `web`: WebSearch and WebFetch are added unless the user config sets
+// `reviewer_web: off`.
 export function claudeArgs(web: boolean): string[] {
   const tools = web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS;
   return [
@@ -269,4 +269,4 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
   };
 }
 
-export const claudeDriver: ReviewerDriver = { name: "claude", detect, start };
+export const claudeDriver: ReviewerDriver = { name: "claude", traced: true, detect, start };

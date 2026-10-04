@@ -17,11 +17,15 @@
 //  8. A file init wrote inside the git folder (the pre-push hook, the
 //     exclude file) is handed to the change source, git refuses to stage it,
 //     and the review after init never runs.
-import { appendFileSync, chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+//  9. A work tree nested inside its bare repository (/x/repo.git/main) lies
+//     under the shared git folder, so no file in it counts as a work tree
+//     file and the files init writes enter the review after init.
+import { appendFileSync, chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { gitDirs, gitPath, inWorkTree, repoRootOf } from "../src/agents/git.js";
 import { reviewAfterInit } from "../src/commands/init-review.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
@@ -48,6 +52,7 @@ function repo(change: boolean): string {
 function fake(): ReviewerDriver & { started: number } {
   const driver = {
     name: "claude",
+    traced: true,
     started: 0,
     async detect() {
       return { ok: true as const, version: "9.9.9", bin: "/fake/claude" };
@@ -118,7 +123,7 @@ describe("the review init ends with", () => {
   });
 
   it("2. a review that cannot start is reported and never throws", async () => {
-    const none: ReviewerDriver = { name: "claude", detect: async () => ({ ok: false, missing: "claude is not installed", fix: "install it" }), start: () => { throw new Error("no"); } };
+    const none: ReviewerDriver = { name: "claude", traced: true, detect: async () => ({ ok: false, missing: "claude is not installed", fix: "install it" }), start: () => { throw new Error("no"); } };
     await expect(reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [none] })).resolves.toBeUndefined();
     expect(err).toContain("Full review unavailable");
   });
@@ -245,5 +250,32 @@ describe("7. what init wrote is not part of the first review", () => {
     await reviewAfterInit({ repoRoot: dir, runner: "openqodex", interactive: false, drivers: [driver], initFiles: new Map([[join(dir, "AGENTS.md"), null]]) });
     expect(driver.seen).toEqual([]);
     expect(out).toContain("No change to review here");
+  });
+});
+
+describe("which files init writes count as work tree files", () => {
+  it("9. a work tree nested inside its bare repository still counts its own files, and the git folders stay out", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-nested-bare-")));
+    const seed = join(root, "seed");
+    git(root, "init", "-q", "-b", "main", seed);
+    writeFileSync(join(seed, "README.md"), "hello\n");
+    git(seed, "add", "-A");
+    git(seed, "commit", "-qm", "Base");
+    const bare = join(root, "repo.git");
+    git(root, "clone", "-q", "--bare", seed, bare);
+    git(bare, "worktree", "add", "-q", join(bare, "main"), "main");
+    const repoRoot = (await repoRootOf(join(bare, "main")))!;
+    const folders = await gitDirs(repoRoot);
+    expect(folders.some((dir) => repoRoot.startsWith(`${dir}/`))).toBe(true);
+    expect(inWorkTree(repoRoot, folders, join(repoRoot, "CLAUDE.md"))).toBe(true);
+    expect(inWorkTree(repoRoot, folders, join(bare, "hooks", "pre-push"))).toBe(false);
+    expect(inWorkTree(repoRoot, folders, await gitPath(repoRoot, "hooks/pre-push"))).toBe(false);
+  });
+
+  it("9. in a plain repository the files in .git do not count", async () => {
+    const dir = realpathSync(repo(false));
+    const folders = await gitDirs(dir);
+    expect(inWorkTree(dir, folders, join(dir, "CLAUDE.md"))).toBe(true);
+    expect(inWorkTree(dir, folders, join(dir, ".git", "info", "exclude"))).toBe(false);
   });
 });

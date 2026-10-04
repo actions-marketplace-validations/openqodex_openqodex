@@ -42,14 +42,17 @@ export async function gitDirs(repoRoot: string): Promise<string[]> {
   return out;
 }
 
-// True when `file` lies in the work tree and outside every git folder: a
-// path git could stage.
+// True when `file` lies in the work tree and outside every git folder that
+// lies inside the work tree: a path git could stage. A git folder that holds
+// the work tree (a work tree at /x/repo.git/main) excludes nothing, or no
+// file in that work tree would count.
 export function inWorkTree(repoRoot: string, gitFolders: string[], file: string): boolean {
-  const inside = (dir: string) => {
-    const rel = relative(dir, file);
+  const within = (dir: string, path: string) => {
+    const rel = relative(dir, path);
     return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
   };
-  return inside(repoRoot) && !gitFolders.some(inside);
+  const excluding = gitFolders.filter((dir) => within(repoRoot, dir) && relative(repoRoot, dir) !== "");
+  return within(repoRoot, file) && !excluding.some((dir) => within(dir, file));
 }
 
 export async function trackedFiles(repoRoot: string): Promise<string[]> {

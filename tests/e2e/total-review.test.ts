@@ -1,7 +1,8 @@
 // `openqodex review` as one run: the built CLI, the real scanners and, when
-// it is installed and logged in, the real Claude Code as the reviewer. The
-// cases with the real reviewer cost real usage, so there are three; each one
-// skips with a printed reason when the reviewer cannot run here.
+// they are installed and logged in, the real Claude Code and the real Codex
+// as the reviewer. The cases with a real reviewer cost real usage, so there
+// are four; each one skips with a printed reason when the reviewer cannot
+// run here.
 //
 // Ways it could fail, written before the code:
 //  1. Scanner text reaches the printed report raw, or the report is not complete.
@@ -11,14 +12,17 @@
 //  4. With no reviewer it prints findings, or exits anything but 2.
 //  5. A review started inside a reviewer starts another one.
 //  6. The snapshot stays on disk after the run.
-//  7. Asked for Codex, which is not enabled, it starts something or does
-//     not say why.
+//  7. Asked for Codex from inside Codex's own sandbox, where a nested Codex
+//     cannot start, it crashes or hangs instead of offering the fallback.
+//  8. With Codex as the reviewer, the planted change gives no report, a
+//     report that does not name Codex, or one that claims reads it never
+//     measured.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Candidate, Report } from "@openqodex/core";
 import "./global-setup.js";
-import { baseline, demo, generatedSecret, readJson, reportDir, reviewerMissing, root, run, noReviewerEnv, toolsHome } from "./support.js";
+import { baseline, codexMissing, demo, generatedSecret, readJson, reportDir, reviewerMissing, root, run, noReviewerEnv, toolsHome } from "./support.js";
 
 type Bug = { id: string; file: string; lines: [number, number] };
 const expected = readJson<{ bugs: Bug[] }>(join(root, "examples/demo-repo/expected.json"));
@@ -36,13 +40,14 @@ describe("without a reviewer", () => {
     expect(out.stderr).not.toContain(generatedSecret(dir));
     expect(ours()).toEqual(before);
   });
-  it("7. --reviewer codex exits 2 with Full review unavailable and the reason Codex is not enabled", () => {
-    const dir = demo("total-codex");
-    const out = run("total-codex", dir, ["review", "--reviewer", "codex", "--format", "json"]);
+  it("7. --reviewer codex inside Codex's own sandbox exits 2 with Full review unavailable, the reason and the fallback", () => {
+    const dir = demo("total-codex-sandbox");
+    const out = run("total-codex-sandbox", dir, ["review", "--reviewer", "codex", "--format", "json"], { env: { CODEX_SANDBOX: "seatbelt" } });
     expect(out.status).toBe(2);
     expect(out.stdout).toBe("");
     expect(out.stderr).toContain("Full review unavailable");
-    expect(out.stderr).toMatch(/codex: not enabled: .*AGENTS\.md/);
+    expect(out.stderr).toMatch(/codex: Codex cannot start a second Codex inside its own sandbox/);
+    expect(out.stderr).toMatch(/review --agent/);
   });
   it("5. refuses inside a reviewer with one line", () => {
     const out = run("total-nested", baseline(), ["review"], { env: { OPENQODEX_REVIEW_DEPTH: "1" } });
@@ -97,4 +102,21 @@ describe("with Claude Code as the reviewer", () => {
     expect(r.completion?.status).toBe("complete");
     expect(r.findings).toEqual([]);
   });
+});
+
+describe("with Codex as the reviewer", () => {
+  const missing = codexMissing();
+  it("8. the planted change gives a complete report that names Codex and says reads were not recorded", () => {
+    if (missing !== null) return void process.stdout.write(`total review with codex: skipped, ${missing}\n`);
+    const dir = demo("total-codex");
+    const out = run("total-codex", dir, ["review", "--reviewer", "codex", "--no-color"], { home: process.env.HOME, timeout: 900_000 });
+    const report = readJson<Report>(join(reportDir(dir), "report.json"));
+    expect(report.completion?.reviewer?.driver).toBe("codex");
+    expect(report.completion?.trace_complete).toBe(false);
+    expect(out.stdout).toMatch(/Reviewer: codex \d+\.\d+\.\d+/);
+    expect(out.stdout).toContain("Files read: not recorded by Codex");
+    expect(out.stdout).not.toContain("Files not read");
+    expect(report.completion?.status, out.stderr).toBe("complete");
+    expect(out.stdout).not.toContain(generatedSecret(dir));
+  }, 1_000_000);
 });

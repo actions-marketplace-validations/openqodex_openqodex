@@ -16,7 +16,7 @@ import { pushFolders } from "../agents/push-command.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
-import { readHomeReceipt } from "../receipts.js";
+import { readHomeReceipt, readHomeReceipts } from "../receipts.js";
 import type { GateReceipt } from "@openqodex/core";
 import { launcherPath, openqodexHomeDir, planRuntime, shQuote } from "../launcher.js";
 
@@ -127,8 +127,14 @@ async function rangeChangeId(core: Core, repoRoot: string, config: Config, remot
   return { id: change.id, base };
 }
 
-// The newest complete review when its range contains the pushed one: its
-// base is the push's base or an ancestor of it, the push's base is an
+// How many saved reviews a push looks through for one that contains it, so a
+// push stays fast however many reviews are saved.
+const CONTAINING_LIMIT = 20;
+
+// The newest complete review whose range contains the pushed one, among the
+// newest saved reviews (CONTAINING_LIMIT), so a later review of other work
+// does not hide it. A review contains the push when its base is the push's
+// base or an ancestor of it, the push's base is an
 // ancestor of the pushed commit (so a force push over a commit the review
 // never saw is not contained), and the change from its base to the pushed
 // commit is the very change it reviewed (the change id hashes the base and
@@ -136,19 +142,30 @@ async function rangeChangeId(core: Core, repoRoot: string, config: Config, remot
 // reviewed with no upstream is measured from the merge base with the default
 // branch, while its push is measured from the remote branch's tip; this
 // lets that review count. Returned under the pushed range's id; else null.
-async function containingReceipt(core: Core, repoRoot: string, config: Config, newest: GateReceipt | null, pushBase: string, localSha: string, pushedId: string): Promise<GateReceipt | null> {
-  if (newest === null || newest.kind !== "complete") return null;
-  const base = await commitOf(repoRoot, newest.base.sha);
-  if (base === null) return null;
-  try {
-    for (const [older, newer] of [[base, pushBase], [pushBase, localSha]]) {
-      await execFileAsync("git", ["merge-base", "--is-ancestor", older, newer], { cwd: repoRoot, timeout: 10_000 });
+async function containingReceipt(core: Core, repoRoot: string, config: Config, saved: GateReceipt[], pushBase: string, localSha: string, pushedId: string): Promise<GateReceipt | null> {
+  if (!(await isAncestor(repoRoot, pushBase, localSha))) return null;
+  // The change from one base to the pushed commit, worked out once per base.
+  const fromBase = new Map<string, string | null>();
+  for (const receipt of saved) {
+    if (receipt.kind !== "complete") continue;
+    let id = fromBase.get(receipt.base.sha);
+    if (id === undefined) {
+      const base = await commitOf(repoRoot, receipt.base.sha);
+      id = base !== null && (await isAncestor(repoRoot, base, pushBase)) ? (await core.getTreeChange({ repoRoot, baseRef: base, baseSha: base, headSha: localSha, exclude: config.exclude })).id : null;
+      fromBase.set(receipt.base.sha, id);
     }
-  } catch {
-    return null;
+    if (id === receipt.change_id) return { ...receipt, change_id: pushedId };
   }
-  const change = await core.getTreeChange({ repoRoot, baseRef: base, baseSha: base, headSha: localSha, exclude: config.exclude });
-  return change.id === newest.change_id ? { ...newest, change_id: pushedId } : null;
+  return null;
+}
+
+async function isAncestor(repoRoot: string, older: string, newer: string): Promise<boolean> {
+  try {
+    await execFileAsync("git", ["merge-base", "--is-ancestor", older, newer], { cwd: repoRoot, timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // The one command shape the agent hook recognises, after trimming: `git
@@ -288,8 +305,9 @@ async function prePush(args: string[]): Promise<number> {
   const { config } = core.loadConfig(repoRoot);
   const home = openqodexHomeDir();
   const remote = args[0] ?? "origin";
-  // Only the record in the developer's own home counts (see hook check).
+  // Only the records in the developer's own home count (see hook check).
   const newest = readHomeReceipt(home, repoRoot, "latest");
+  const saved = readHomeReceipts(home, repoRoot, CONTAINING_LIMIT);
   const messages = new Set<string>();
   let denied = false;
   for (const range of pushedRanges(await readAll())) {
@@ -298,7 +316,7 @@ async function prePush(args: string[]): Promise<number> {
     if ("id" in found) changeId = found.id;
     else messages.add(`OpenQodex could not tell what this push sends (${found.unknown}); run openqodex review, then push again.`);
     const exact = changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId);
-    const receipt = exact ?? ("id" in found ? await containingReceipt(core, repoRoot, config, newest, found.base, range.local, changeId) : null) ?? newest;
+    const receipt = exact ?? ("id" in found ? await containingReceipt(core, repoRoot, config, saved, found.base, range.local, changeId) : null) ?? newest;
     const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
     if (decision.decision === "deny") denied = true;
     if (decision.message === null) continue;
@@ -336,12 +354,13 @@ export function gitHookScript(launcher: string): string {
 // The line to add to a pre-push hook openqodex does not write (husky,
 // lefthook, a hook of the developer's own). The same exit mapping as the hook
 // it writes: only exit 1 stops the push; a tool that fails (exit 2) or
-// cannot start never does.
-export function hookLine(command: string): string {
-  return `${command} hook pre-push || [ $? -ne 1 ]`;
+// cannot start never does. `args` hands on git's hook arguments (the remote
+// name and URL): "$@" in a shell hook; empty for lefthook (see hookManager).
+export function hookLine(command: string, args = '"$@"'): string {
+  return `${command} hook pre-push ${args === "" ? "" : `${args} `}|| [ $? -ne 1 ]`;
 }
 
-const MANAGED_LINE = (): string => hookLine(`npx -y openqodex@${__OPENQODEX_VERSION__}`);
+const MANAGED_LINE = (manager: HookManager): string => hookLine(`npx -y openqodex@${__OPENQODEX_VERSION__}`, manager.args);
 
 async function hookFile(): Promise<{ repoRoot: string; path: string } | null> {
   const repoRoot = await repoRootOf(process.cwd());
@@ -353,10 +372,17 @@ export async function gitHookPath(repoRoot: string): Promise<string> {
   return join(await gitPath(repoRoot, "hooks"), "pre-push");
 }
 
-function hookManager(repoRoot: string): string | null {
-  if (existsSync(join(repoRoot, ".husky"))) return "husky (.husky/pre-push)";
+// A hook manager the repo uses, and how its pre-push command gets git's
+// arguments. Husky runs .husky/pre-push as a shell script with git's
+// arguments. Lefthook inserts them raw in place of {1} and {2} in its `run`
+// line, so a remote URL holding a quote and `$(...)` would run as shell code:
+// the lefthook line passes none, and the push is looked up against origin.
+type HookManager = { label: string; args: string };
+
+function hookManager(repoRoot: string): HookManager | null {
+  if (existsSync(join(repoRoot, ".husky"))) return { label: "husky (.husky/pre-push)", args: '"$@"' };
   for (const name of ["lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml"]) {
-    if (existsSync(join(repoRoot, name))) return `lefthook (${name}, under pre-push commands)`;
+    if (existsSync(join(repoRoot, name))) return { label: `lefthook (${name}, under pre-push commands)`, args: "" };
   }
   return null;
 }
@@ -400,9 +426,9 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
   if (manager !== null) {
     return {
       path,
-      manager,
+      manager: manager.label,
       foreign: false,
-      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager}; add ${MANAGED_LINE()} there` },
+      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager.label}; add ${MANAGED_LINE(manager)} there` },
     };
   }
   const script = gitHookScript(launcher);
@@ -492,7 +518,7 @@ async function install(args: string[]): Promise<number> {
   const manager = hookManager(target.repoRoot);
   if (manager !== null) {
     process.stdout.write(
-      `This repo manages its git hooks with ${manager}. Add this line to its pre-push hook:\n  ${MANAGED_LINE()}\nNothing was written.\n`,
+      `This repo manages its git hooks with ${manager.label}. Add this line to its pre-push hook:\n  ${MANAGED_LINE(manager)}\nNothing was written.\n`,
     );
     return EXIT_OK;
   }

@@ -29,7 +29,7 @@ Agents that follow the OpenQodex skill are told never to run `openqodex trust` w
 
 ## What is sent where
 
-OpenQodex and the built-in scanners send no code anywhere. The review runs on the model your Claude Code login uses: the reviewer process sends it the brief and what the reviewer reads (see "The reviewer process"). A custom scanner you approved does whatever its own command does.
+OpenQodex and the built-in scanners send no code anywhere. The review runs on the model your Claude Code or Codex login uses: the reviewer process sends it the brief and what the reviewer reads (see "The reviewer process"). By default the reviewer can also search the web, and Claude Code can open web pages; `reviewer_web: off` in `~/.openqodex/config.yaml` removes that. A custom scanner you approved does whatever its own command does.
 
 OpenQodex and the built-in scanners use the network for these things only:
 
@@ -37,6 +37,7 @@ OpenQodex and the built-in scanners use the network for these things only:
 - Semgrep rule packs. semgrep fetches `p/default`, `p/security-audit` and `p/secrets` from the Semgrep registry on each run. Its metrics are off. The rules are never bundled in the package.
 - The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code.
 - Custom scanners. `openqodex trust` reads the release from the GitHub API and downloads the asset. After approval, a custom scanner does whatever its own command does.
+- The problem report, only when you choose it. When OpenQodex fails, a scanner breaks, or you run `openqodex report`, it prints the GitHub issue it would create and two choices. Nothing is sent unless you press 1 or run `openqodex report --send-last`. Then, when the GitHub CLI `gh` is installed and signed in, `gh` creates the issue in `openqodex/openqodex` with your GitHub account. Otherwise OpenQodex opens GitHub's new-issue page in your browser, or prints its link, with the title and body filled in, and you submit it there. The issue holds the OpenQodex version, the command and its arguments with paths and secrets taken out, the part of OpenQodex that failed, a scrubbed error line, the scanner statuses and your platform (OS, CPU type, Node major version). It never holds code, file names, paths, repository names, config or secrets.
 - The daily version check, for an install made with `init`. See "Updates" below.
 - A review of a branch or a pull request (`review <branch>`, `review '#<number>'`). git fetches the branch or `pull/<number>/head` from your remote with its own credentials, and `gh`, when it is installed and signed in, is asked for the pull request's base. OpenQodex reads no token. The target is checked out in `~/.openqodex/checkouts/`, a folder only you can open, with every git hook and filter switched off, so checking it out runs nothing from it, and a link in it becomes a small plain file. The scanners you approved for this repository do run on the target's files, with this repository's settings; one named only in the target's config never runs. If you review pull requests from people you do not trust, approve only custom scanners that do not execute the code they scan.
 
@@ -71,16 +72,35 @@ OpenQodex sends no telemetry. See `telemetry`.
 
 ## The reviewer process
 
-`openqodex review` starts Claude Code (`claude -p`) as its reviewer. Codex and Cursor are not used as reviewers: with the versions tested, one loads your global instructions and does not report every command it runs, and the other cannot be limited to reading. `docs/internal-reviewer-drivers.md` in the repository records the tests. It sends the review brief and the files the reviewer reads to the model your Claude Code login uses, as any Claude Code session does. The reviewer:
+`openqodex review` starts Claude Code (`claude -p`) or Codex (`codex exec`) as its reviewer. Cursor is not used as a reviewer: with the version tested, it cannot be limited to reading. `docs/internal-reviewer-drivers.md` in the repository records the tests.
+
+### Claude Code
+
+Claude Code sends the review brief and the files the reviewer reads to the model your Claude Code login uses, as any Claude Code session does. The reviewer:
 
 - reads a snapshot of the change in `~/.openqodex/checkouts/`, never your folder. Secrets the scanners found are redacted in every file of the snapshot first, and a file too large to check is left out of it.
-- has the read, search and list tools only: no shell, no edits, no web, no MCP server, no subagent. The one exception is the web: `reviewer_web: on` in `~/.openqodex/config.yaml` adds Claude Code's WebSearch and WebFetch. It is off by default. A reviewer that reads private code and untrusted text from the change and can open web addresses can be talked into putting that code into a web address. Turn it on only when you accept that risk. Claude Code's own permission rules refuse a read outside the snapshot; that is the boundary. OpenQodex also checks every tool call in the agent's event stream and marks the review incomplete when one names a path outside the snapshot, an unknown tool or an input it cannot read; that is the alarm.
+- has the read, search and list tools, plus Claude Code's WebSearch and WebFetch: no shell, no edits, no MCP server, no subagent. So the reviewer reads your code and can open web pages. A reviewer that reads private code and untrusted text from the change and can open web addresses can be talked into putting that code into a web address. `reviewer_web: off` in `~/.openqodex/config.yaml` removes the web tools; set it when you do not accept that risk. Claude Code's own permission rules refuse a read outside the snapshot; that is the boundary. OpenQodex also checks every tool call in the agent's event stream and marks the review incomplete when one names a path outside the snapshot, an unknown tool or an input it cannot read; that is the alarm.
 - loads none of your Claude Code settings, hooks, plugins, memory or `CLAUDE.md` files, and none of the repository's.
 - gets an environment built from a short allowlist: the variables Claude Code needs to run and find its login (`PATH`, `HOME`, `USER`, `CLAUDE_CONFIG_DIR`, proxy settings, `ANTHROPIC_*` keys, and cloud provider variables only when Claude Code is set to that provider). Other tokens in your shell, such as `GITHUB_TOKEN` or `NPM_TOKEN`, never reach it.
 
 The reviewer runs with session saving off (`--no-session-persistence`). After real runs with Claude Code 2.1.289, no transcript, history line or project entry for a snapshot was found in the Claude Code configuration folder. Claude Code's own logs and telemetry follow its own settings.
 
-The run folder of a review holds the brief, the scan, the reviewer's answer and the list of its tool calls (paths and line ranges, never file contents). Each file is created readable by you only, and secrets are redacted in all of them.
+### Codex
+
+Codex sends the conversation to the model your Codex login uses, as any Codex session does. The conversation holds the review brief, your global `~/.codex/AGENTS.md` and the output of each command the reviewer runs. Each correction round is a new Codex run that carries the whole conversation so far. The reviewer:
+
+- reads the same redacted snapshot in `~/.openqodex/checkouts/`, never your folder.
+- runs under a Codex permission profile: its commands can read the snapshot and the system folders Codex's `:minimal` set names (such as `/usr` and `/etc`), and nothing else. `/tmp`, your home folder, `~/.ssh` and `~/.codex` are refused. Writes and network are refused. That sandbox is the boundary. Before each review, OpenQodex proves it with a command run under the same profile without a model: a read of a file outside the snapshot and a write inside it must both be refused, or the review does not start.
+- loads your global `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`). No Codex setting leaves it out. If you keep instructions there, the reviewer sees them, including the section `init` adds for Codex.
+- loads none of your `config.toml`, rules, MCP servers, plugins, hooks, memories or skills, and none of the repository's `AGENTS.md` or skills.
+- has Codex's web search by default, as the cached search, which answers from OpenAI's search index and opens no address the model names. `reviewer_web: off` removes it.
+- gets an environment built from a short allowlist: `PATH`, `HOME`, `USER`, `CODEX_HOME`, proxy and certificate settings. Other tokens in your shell, including `OPENAI_API_KEY` and `GITHUB_TOKEN`, never reach it. Its commands see a smaller set still (Codex's `core` environment).
+
+There is no alarm for Codex. Its event stream does not show every command it runs, so OpenQodex cannot check from it which files were read. The commands it does show are kept in the run folder as a list for you to read; they never pass or fail a review. Coverage counts only the changed lines in the brief and those OpenQodex sent in a correction round, and the report says file reads were not recorded by Codex.
+
+Codex runs with `--ephemeral`: after real runs with codex-cli 0.160.0, no session file was written for the snapshot folder. Codex's own logs follow its own settings.
+
+The run folder of a review holds the brief, the scan, the reviewer's answer and the list of its tool calls: paths and line ranges for Claude Code, and the command lines Codex showed for Codex, never their output. Each file is created readable by you only, and secrets are redacted in all of them.
 
 ## Secrets
 
@@ -100,7 +120,7 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 - `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`. Updates add copies beside it; a copy is never changed after it is written. `init` and `openqodex update` remove copies older than 7 days, except the one `init` installed, the current one and the previous one.
 - `runtime/current`: the version the launcher runs, and on a second line the version a rollback goes back to.
 - `update.json`: the state of the version check, private to you.
-- `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews) and `reviewer_web` (the reviewer's web tools, off by default).
+- `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews) and `reviewer_web` (the reviewer's web tools, on by default; `off` removes them).
 - `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
 - `receipts/<repo id>/`: one small record per reviewed change, readable by you only, written by `review` at the end of a run (and by `review --finalize` for the older two-step protocol, only for a run whose scan this machine ran). The push hooks decide from these records only. The files under the repository's `.openqodex/` are the readable report, never the proof: a branch can carry those files, so a record found only there counts as no review. The check inside your agent is a reminder about your current work: it does not know what a push sends. For a plain `git push` it asks whether your current work has a passing review; any other push command it cannot tell, and says so (a deny when `block_on_severity` is set). The git pre-push hook that `init` offers is the check that sees the exact commits a push sends, and `git push --no-verify` skips it. `init` and `openqodex update` remove records older than 30 days.
 - `runs/<repo id>/`: one record per `review --agent` run, readable by you only: the change and the hashes of the run files it wrote, so `review --finalize` can tell a run this machine scanned from one a branch carries. Removed with the receipts.

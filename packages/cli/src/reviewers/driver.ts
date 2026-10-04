@@ -5,10 +5,10 @@
 // of every tool call the agent reported. Nothing a driver returns is trusted
 // as a claim: the run checks the trace and the answer with scripts.
 //
-// Claude Code (claude.ts) is the one enabled driver. Codex and Cursor
-// (codex.ts, cursor.ts) failed checks with their real binaries and say so
-// from detect(); docs/internal-reviewer-drivers.md records the runs. A driver
-// is enabled once its isolation was shown with the real binary.
+// Claude Code (claude.ts) and Codex (codex.ts) are enabled. Cursor
+// (cursor.ts) failed checks with its real binary and says so from detect();
+// docs/internal-reviewer-drivers.md records the runs. A driver is enabled
+// once its isolation was shown with the real binary.
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
@@ -44,12 +44,24 @@ export interface ReviewerSession {
 
 export interface ReviewerDriver {
   readonly name: string;
+  // True when the agent's event stream shows every tool call, so the run can
+  // count reads and check each path from it (Claude Code). False when it
+  // does not (Codex): the reported calls are a diagnostic list only, the
+  // agent's own sandbox is the boundary, and coverage counts only what the
+  // brief and the correction rounds put in front of the reviewer.
+  readonly traced: boolean;
   // `repoRoot`: a program that resolves inside it, or inside the review
   // snapshots, is never run (findOnPath), so a repository cannot put its own
   // program in the reviewer's place.
   detect(repoRoot: string): Promise<Detected>;
+  // Run once the snapshot exists and before `start`: a reason in one line
+  // when the agent's boundary could not be shown for this run, so the
+  // reviewer must not start (Codex's per-run sandbox probe). Null to go on.
+  // `register` receives a synchronous cleanup while the check runs (and null
+  // after), which the run's signal handler calls before it exits.
+  check?(opts: { snapshotDir: string; bin: string; register: (cleanup: (() => void) | null) => void }): Promise<string | null>;
   // `deadline`: epoch milliseconds after which the process group is killed.
-  // `web`: the user config allows the agent's web tools (reviewer_web: on).
+  // `web`: the agent gets its web tools (on unless reviewer_web: off).
   start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession;
 }
 
@@ -124,8 +136,11 @@ export function findOnPath(name: string, forbidden: string[], path = process.env
 // The reviewers `--reviewer` accepts, besides `auto`.
 export const REVIEWER_NAMES = ["claude", "codex", "cursor"] as const;
 
-// The agent running this command, when its environment says so.
+// The agent running this command, when its environment says so. Claude Code
+// sets CLAUDECODE=1 for its commands; Codex sets CODEX_THREAD_ID (seen with
+// codex-cli 0.160.0).
 export function hostAgent(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.CLAUDECODE === "1") return "claude";
+  if (env.CODEX_THREAD_ID) return "codex";
   return null;
 }

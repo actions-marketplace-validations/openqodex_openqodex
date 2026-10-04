@@ -42,7 +42,7 @@ import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles } from "../agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, checkoutsDir, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
-import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
+import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
 import { HANDED_OFF } from "../update/trigger.js";
 import { readInstructions } from "../instructions.js";
 import { readHomeRun, writeHomeReceipt, writeHomeRun } from "../receipts.js";
@@ -155,7 +155,8 @@ function shellQuote(arg: string): string {
 // hands the run to the version that wrote the brief by its findings file.
 // An explicit --config, or a run not started through the launcher, gets the
 // full line that works from any folder: the repo, the config and the
-// findings file named, with the pinned npx version.
+// findings file named, with the pinned npx version (or, for a local build,
+// its own node and entry file: see directRunner).
 // A review of a branch or a pull request writes no receipt, so its line names
 // the run (`--run <id>`) in place of the findings file.
 function finalizeCommand(repoRoot: string, flags: GlobalFlags, findingsPath: string, all: boolean, runId?: string): string {
@@ -163,7 +164,7 @@ function finalizeCommand(repoRoot: string, flags: GlobalFlags, findingsPath: str
   if (launcherStarted() && flags.config === undefined) {
     return [launcherRunner(launcherPath(openqodexHomeDir())), "review", "--finalize", ...(all ? ["--all"] : []), ...run, ...(flags.offline ? ["--offline"] : [])].join(" ");
   }
-  const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : `npx -y openqodex@${__OPENQODEX_VERSION__}`;
+  const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : directRunner();
   const args = ["review", "--finalize", "--cwd", repoRoot];
   if (flags.config !== undefined) args.push("--config", isAbsolute(flags.config) ? flags.config : resolve(repoRoot, flags.config));
   args.push(...(runId === undefined ? [findingsPath] : run));
