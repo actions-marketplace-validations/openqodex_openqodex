@@ -23,6 +23,9 @@
 // 15. A run file that may quote the code is readable by other users.
 // 16. A binary file with a secret in it reaches the reviewer unredacted.
 // 17. Stderr echoes the reviewer's raw answer.
+// 18. A Glob alternative list, a `..` inside a pattern, or a wildcard on the
+//     snapshot folder's own name reaches outside and the run completes; or a
+//     Grep search expression is taken for a path and fails a clean run.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -253,6 +256,9 @@ describe("13. the trace check fails closed", () => {
     ["an unknown tool", { tool: "Bash", input: { command: "ls" }, ok: true, read: null }],
     ["an input that cannot be read", { tool: "Read", input: "not an object", ok: true, read: null }],
     ["a path that is not text", { tool: "Grep", input: { pattern: "x", path: 7 }, ok: true, read: null }],
+    ["a Glob alternative list that climbs out", { tool: "Glob", input: { pattern: "{../outside/*.txt,*.ts}" }, ok: true, read: null }],
+    ["a Glob pattern with .. in the middle", { tool: "Glob", input: { pattern: "src/**/../../../*" }, ok: true, read: null }],
+    ["a Grep file glob that climbs out", { tool: "Grep", input: { pattern: "key", glob: "../*.env" }, ok: true, read: null }],
   ];
   for (const [name, call] of cases) {
     it(`${name} makes the run incomplete`, async () => {
@@ -272,6 +278,14 @@ describe("13. the trace check fails closed", () => {
     });
     expect(await review(repo(), fake([answer]))).toBe(0);
     expect((JSON.parse(out) as Report).completion?.coverage.files_read).toEqual(["db/x.sql"]);
+  });
+  it("an absolute Glob pattern whose wildcard reaches a sibling of the snapshot makes the run incomplete", async () => {
+    const answer: Answer = (text, snapshotDir) => ({ finalText: submission(text), calls: [{ tool: "Glob", input: { pattern: `${snapshotDir}*/**/*` }, ok: true, read: null }] });
+    expect(await review(repo(), fake([answer]))).toBe(2);
+  });
+  it("a Grep search expression that looks like a path is not a path and keeps the run complete", async () => {
+    const answer: Answer = (text) => ({ finalText: submission(text), calls: [{ tool: "Grep", input: { pattern: "/api/../v1", path: "db" }, ok: true, read: null }] });
+    expect(await review(repo(), fake([answer]))).toBe(0);
   });
 });
 

@@ -14,10 +14,12 @@ import type { TraceEntry } from "@openqodex/core";
 // it, whether it succeeded, and for a read what was delivered.
 export type ToolCall = { tool: string; input: unknown; ok: boolean; read: { path: string; start: number; lines: number } | null };
 
-// Input fields that name a path, and those that hold a pattern whose start
-// may name one.
+// Input fields that name a path, and those that hold a file pattern. Grep's
+// `pattern` is the expression it searches for, not a path, so for Grep only
+// `glob` is a file pattern.
 const PATH_FIELDS = ["file_path", "path", "notebook_path", "cwd", "directory"];
 const PATTERN_FIELDS = ["pattern", "glob"];
+const GREP_PATTERN_FIELDS = ["glob"];
 
 const FOLD_CASE = process.platform === "darwin" || process.platform === "win32";
 
@@ -48,11 +50,20 @@ function within(root: string, path: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel) && !rel.split(sep).includes(".."));
 }
 
-// The start of a pattern that names a place: absolute, home or parent relative.
+// A file pattern that may reach outside, or the folder an absolute one is
+// rooted in. `..` anywhere, a home pattern, and an alternative list that
+// holds a path (`{../a/*,*.ts}`) are outside whatever else they say. An
+// absolute pattern is rooted at the last folder before its first wildcard:
+// `/a/snap*/x` is rooted at `/a/`, since `snap*` also matches `snapshot-2`.
+// Null for a relative pattern with none of these: it stays below its folder.
 function patternRoot(pattern: string): string | null {
-  if (!(pattern.startsWith("/") || pattern.startsWith("~") || pattern.startsWith("..") || pattern.includes("/../") || /^[A-Za-z]:[\\/]/.test(pattern))) return null;
+  const outside = "/";
+  if (pattern.includes("..") || pattern.startsWith("~") || (pattern.includes("{") && /[\\/]/.test(pattern))) return outside;
+  if (!(pattern.startsWith("/") || /^[A-Za-z]:[\\/]/.test(pattern))) return null;
   const cut = pattern.search(/[*?[{]/);
-  return cut === -1 ? pattern : pattern.slice(0, cut) || "/";
+  if (cut === -1) return pattern;
+  const slash = Math.max(pattern.lastIndexOf("/", cut), pattern.lastIndexOf("\\", cut));
+  return pattern.slice(0, slash + 1) || outside;
 }
 
 // Each raw path placed: its real form, or null when it cannot be placed.
@@ -82,7 +93,7 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
     if (typeof fields[k] !== "string") return { tool: call.tool, path: `(a ${k} that is not text)`, inside: false, range: null, ok: true };
     raws.push(fields[k] as string);
   }
-  for (const k of PATTERN_FIELDS) {
+  for (const k of call.tool === "Grep" ? GREP_PATTERN_FIELDS : PATTERN_FIELDS) {
     if (fields[k] === undefined || fields[k] === null) continue;
     if (typeof fields[k] !== "string") return { tool: call.tool, path: `(a ${k} that is not text)`, inside: false, range: null, ok: true };
     const root = patternRoot(fields[k] as string);
