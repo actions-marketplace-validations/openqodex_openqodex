@@ -307,7 +307,8 @@ async function prePush(args: string[]): Promise<number> {
     const unreviewed = decision.message.startsWith("OpenQodex has not reviewed");
     const branch = range.remoteRef.replace(/^refs\/heads\//, "");
     const upstream = range.localRef.startsWith("refs/heads/") ? await git(repoRoot, ["for-each-ref", "--format=%(upstream)", range.localRef]) : null;
-    const fix = unreviewed && range.remoteSha !== null && upstream === null ? ` If you reviewed it already, set the branch's upstream (git branch --set-upstream-to ${remote}/${branch}), run openqodex review, then push.` : "";
+    const local = range.localRef.replace(/^refs\/heads\//, "");
+    const fix = unreviewed && range.remoteSha !== null && upstream === null ? ` If you reviewed it already, set the branch's upstream (git branch --set-upstream-to ${shQuote(`${remote}/${branch}`)} ${shQuote(local)}), run openqodex review on that branch, then push.` : "";
     messages.add(`${decision.message}${fix}`);
   }
   for (const m of messages) process.stderr.write(`${m}\n`);

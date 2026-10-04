@@ -572,14 +572,21 @@ describe("the reviewer process", () => {
   });
 });
 
-const FALLBACK = "To review with the agent you are in instead, run `npx -y openqodex@0.0.0-test review --agent` and follow the brief it prints.";
+const fallback = (dir: string, rest = "") => `To review with the agent you are in instead, run \`npx -y openqodex@0.0.0-test review --agent --cwd '${dir}'${rest}\` and follow the brief it prints.`;
 const SAME_AGENT = "Reviewed by the coding agent you are using.";
 
 describe("26. the fallback when no reviewer can start", () => {
   it("with no driver available the message names the fallback command", async () => {
-    expect(await review(repo(), fake([good], false))).toBe(2);
+    const dir = repo();
+    expect(await review(dir, fake([good], false))).toBe(2);
     expect(err).toContain("Full review unavailable");
-    expect(err).toContain(FALLBACK);
+    expect(err).toContain(fallback(dir));
+  });
+
+  it("the fallback command keeps the folder and the network limits of the run it replaces", async () => {
+    const dir = repo();
+    expect(await review(dir, fake([good], false), ["--offline", "--no-install"])).toBe(2);
+    expect(err).toContain(fallback(dir, " --offline --no-install"));
   });
 
   it("with a driver available the fallback text never appears", async () => {

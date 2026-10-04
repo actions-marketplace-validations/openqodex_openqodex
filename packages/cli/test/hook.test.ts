@@ -488,7 +488,8 @@ describe("the pre-push hook looks up the review of what the push sends", () => {
     const r = push(s, "origin", "feature");
     expect(r.status).not.toBe(0);
     expect(r.out).toContain(UNREVIEWED);
-    expect(r.out).toContain("set the branch's upstream");
+    // The hint names the pushed branch, quoted, not the branch checked out.
+    expect(r.out).toContain("git branch --set-upstream-to 'origin/feature' 'feature'");
   }, 60_000);
 
   it("11. a branch that is not checked out is looked up by its own commit, not the reviewed work in place", () => {

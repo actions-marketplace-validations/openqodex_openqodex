@@ -520,14 +520,22 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
 }
 
 // The two-step review through the agent the developer works in, for when no
-// reviewer can start: the same scope, the launcher or the pinned npx form.
+// reviewer can start: the same scope, folder, config and network limits,
+// through the launcher or the pinned npx form.
 function fallbackCommand(o: ReviewOptions): string {
   const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : `npx -y openqodex@${__OPENQODEX_VERSION__}`;
   const base = o.base ?? o.scope.base;
   const scope = o.all
     ? ["--all"]
     : [...(o.target !== undefined ? [shQuote(o.target)] : []), ...(base !== undefined ? ["--base", shQuote(base)] : []), ...(o.scope.uncommitted ? ["--uncommitted"] : [])];
-  return [runner, "review", "--agent", ...scope].join(" ");
+  const f = o.flags;
+  const kept = [
+    ...(f.cwd !== process.cwd() ? ["--cwd", shQuote(f.cwd)] : []),
+    ...(f.config !== undefined ? ["--config", shQuote(resolve(f.config))] : []),
+    ...(f.offline ? ["--offline"] : []),
+    ...(f.noInstall ? ["--no-install"] : []),
+  ];
+  return [runner, "review", "--agent", ...scope, ...kept].join(" ");
 }
 
 export async function runReview(o: ReviewOptions): Promise<number> {
