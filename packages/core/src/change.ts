@@ -24,7 +24,8 @@ export const DIFF_CAP_BYTES = 5 * 1024 * 1024;
 
 // Changed-line coverage is held as one number per added line, so it is capped
 // too. A file that would take the total past this gets no coverage and is
-// left out of the brief; it is listed as not reviewed.
+// left out of the brief; it is listed as not reviewed and as uncovered, so
+// a review counts it as read only when the reviewer read all of it.
 export const COVERAGE_MAX_LINES = 500_000;
 
 // Coverage needs only the first character of a patch line and the headers.
@@ -535,6 +536,8 @@ async function diffChange(args: {
   const covered = new Set<string>();
   const briefable = new Set<string>();
   const tooLarge = new Set<string>();
+  // Past the coverage cap: no line of these is mapped.
+  const uncoverable = new Set<string>();
   let additions = 0;
   let deletions = 0;
   let coveredLines = 0;
@@ -551,6 +554,7 @@ async function diffChange(args: {
     if (pair.status !== "deleted") {
       if (coveredLines + stat.additions > COVERAGE_MAX_LINES) {
         tooLarge.add(pair.path);
+        uncoverable.add(pair.path);
         continue;
       }
       coveredLines += stat.additions;
@@ -574,7 +578,9 @@ async function diffChange(args: {
     (onLine) =>
       gitLines(
         repoRoot,
-        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+        // A file left out of the brief keeps its coverage: its changed lines
+        // must then be read through the tools, or they count as unread.
+        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...uncoverable])),
         opts,
         COVERAGE_MAX_LINE_BYTES,
         onLine,
@@ -656,6 +662,7 @@ async function diffChange(args: {
     diff,
     diffs,
     notReviewed,
+    uncovered: files.filter((f) => uncoverable.has(f.path) && !f.binary).map((f) => f.path),
     stats: { files: files.length, additions, deletions },
   };
 }

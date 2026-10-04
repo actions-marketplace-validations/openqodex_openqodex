@@ -157,6 +157,10 @@ export type Change = {
   // The same diff split per file, in the same order; absent where a caller built a Change by hand.
   diffs?: { path: string; text: string }[];
   notReviewed: string[]; // paths left out because the change was too large
+  // Changed text files past the coverage cap, whose changed lines are not
+  // known: a review counts one as read only when the reviewer read all of it.
+  // Absent where a caller built a Change by hand.
+  uncovered?: string[];
   stats: { files: number; additions: number; deletions: number };
 };
 

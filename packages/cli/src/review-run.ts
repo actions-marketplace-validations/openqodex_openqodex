@@ -503,11 +503,12 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       check: (submission, trace) => {
         const r = checkSubmission({ change, scan, manifest, config, submission, lineCount, wholeRepo: prep.whole ? { lines: prep.whole.lines } : undefined });
         // A changed range the reviewer was not given is sent back once it can
-        // be read; a deletion the brief could not carry cannot, and stays missing.
+        // be read; a deletion the brief could not carry, or a file too large
+        // to count, cannot, and stays missing.
         const unread = prep.whole
           ? []
-          : readCoverage({ change, briefFiles: brief.diffFiles, trace })
-              .unread.filter((h) => !h.deletion)
+          : readCoverage({ change, briefFiles: brief.diffFiles, trace, lineCount })
+              .unread.filter((h) => !h.deletion && h.end >= h.start)
               .map((h) => `you have not read ${h.path} lines ${h.start} to ${h.end}, a changed range; read them with your read tool and check your answer`);
         return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
       },
@@ -527,7 +528,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       rounds: talk.rounds,
       usage: talk.usage,
     };
-    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: talk.trace });
+    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: talk.trace, lineCount });
     const completion = completionRecord({
       change,
       reviewer,

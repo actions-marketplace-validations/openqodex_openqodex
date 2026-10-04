@@ -45,19 +45,33 @@ export function changedHunks(change: Change): Hunk[] {
   return hunks;
 }
 
-export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<string>; trace: TraceEntry[] }): Coverage {
+// Whether the reads cover every line from `start` to `end`.
+function covers(ranges: [number, number][], start: number, end: number): boolean {
+  let next = start;
+  for (const [a, b] of [...ranges].sort((x, y) => x[0] - y[0])) {
+    if (a > next) break;
+    next = Math.max(next, b + 1);
+    if (next > end) return true;
+  }
+  return next > end;
+}
+
+// `lineCount`: a file's line count in the snapshot, or null when it cannot be
+// told. A file the change could not map (Change.uncovered) is one range from
+// its first line to its last, read only when reads cover all of it; with no
+// line count it can never be shown read.
+export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<string>; trace: TraceEntry[]; lineCount?: (path: string) => number | null }): Coverage {
   const reads = new Map<string, [number, number][]>();
   for (const t of args.trace) {
     if (t.tool !== "Read" || !t.ok || !t.inside || t.path === null || t.range === null) continue;
     reads.set(t.path, [...(reads.get(t.path) ?? []), t.range]);
   }
-  const read = (path: string, n: number) => (reads.get(path) ?? []).some(([a, b]) => a <= n && n <= b);
-  const hunks = changedHunks(args.change);
+  const whole = (args.change.uncovered ?? []).map((path) => ({ path, start: 1, end: args.lineCount?.(path) ?? 0, deletion: false }));
+  const hunks = [...changedHunks(args.change), ...whole];
   const unread = hunks.filter((h) => {
     if (args.briefFiles.has(h.path)) return false;
-    if (h.deletion) return true;
-    for (let n = h.start; n <= h.end; n++) if (!read(h.path, n)) return true;
-    return false;
+    if (h.deletion || h.end < h.start) return true;
+    return !covers(reads.get(h.path) ?? [], h.start, h.end);
   });
   const readable = args.change.files.filter((f) => f.status !== "deleted" && !f.binary).map((f) => f.path);
   return {

@@ -28,7 +28,15 @@
 // 13. A finding range that only overlaps a changed line is accepted: one that
 //     starts on an unchanged line, ends past the end of the file, or spans
 //     far beyond its start (`line_number: 1, line_end: 999999`).
+// 14. A changed file the change could not map (past the coverage line cap)
+//     or could not put in the brief (past the diff budget) counts as read
+//     when the reviewer never read it: the run completes by omission.
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { COVERAGE_MAX_LINES, DIFF_CAP_BYTES, getChange } from "./change.js";
 import { changedHunks, completionRecord, readCoverage } from "./completion.js";
 import type { TraceEntry } from "./completion.js";
 import { checkSubmission } from "./finalize.js";
@@ -189,6 +197,46 @@ describe("coverage from the trace", () => {
     const c = readCoverage({ change, briefFiles: new Set(["app/settings.py"]), trace: [{ ...read("app/search.py", 1, 40), ok: false }] });
     expect(c.unread).toHaveLength(1);
   });
+});
+
+describe("14. files the change could not map or brief", () => {
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } });
+    if (r.status !== 0) throw new Error(r.stderr);
+  };
+  const repo = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "oq-cover-"));
+    git(dir, "init", "-q", "-b", "main");
+    for (const [path, text] of Object.entries(files)) writeFileSync(join(dir, path), text);
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "Base");
+    return dir;
+  };
+
+  it("a file past the coverage line cap stays unread until a read covers all of it", async () => {
+    const dir = repo({ "README.md": "hello\n" });
+    const lines = COVERAGE_MAX_LINES + 1;
+    writeFileSync(join(dir, "big.txt"), "x\n".repeat(lines));
+    writeFileSync(join(dir, "small.py"), "x = 1\n");
+    const change = await getChange({ repoRoot: dir, scope: { uncommitted: true }, exclude: [] });
+    expect(change.notReviewed).toEqual(["big.txt"]);
+    const lineCount = (path: string) => (path === "big.txt" ? lines : 1);
+    const none = readCoverage({ change, briefFiles: new Set(["small.py"]), trace: [], lineCount });
+    expect(none.unread.map((h) => h.path)).toEqual(["big.txt"]);
+    const read: TraceEntry = { tool: "Read", path: "big.txt", inside: true, range: [1, lines], ok: true };
+    expect(readCoverage({ change, briefFiles: new Set(["small.py"]), trace: [read], lineCount }).unread).toEqual([]);
+  }, 60_000);
+
+  it("a file past the diff budget still has its changed lines mapped, so a deletion no brief carried stays unread", async () => {
+    const lines = Math.ceil(DIFF_CAP_BYTES / 2) + 1;
+    const dir = repo({ "gone.txt": "x\n".repeat(lines), "keep.py": "a = 1\n" });
+    writeFileSync(join(dir, "gone.txt"), "");
+    writeFileSync(join(dir, "keep.py"), "a = 2\n");
+    const change = await getChange({ repoRoot: dir, scope: { uncommitted: true }, exclude: [] });
+    expect(change.notReviewed).toEqual(["gone.txt"]);
+    const c = readCoverage({ change, briefFiles: new Set(["keep.py"]), trace: [], lineCount: () => 1 });
+    expect(c.unread.map((h) => h.path)).toEqual(["gone.txt"]);
+  }, 120_000);
 });
 
 describe("the completion record", () => {
