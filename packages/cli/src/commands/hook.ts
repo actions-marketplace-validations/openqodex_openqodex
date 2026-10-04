@@ -124,52 +124,89 @@ async function rangeChangeId(core: Core, repoRoot: string, config: Config, remot
 }
 
 // What one push sends, as the lookup sees it: a pushed range (local commit,
-// remote commit or null for a new branch), or "checkout" for the current
-// branch to its upstream, which also covers work a commit in the same command
-// line is about to add. `assumed` says why the checkout was used when the
-// command could not be read.
-type Pushed = { kind: "range"; local: string; remoteSha: string | null } | { kind: "checkout"; assumed: string | null };
+// remote commit or null for a new branch); "checkout", the current branch to
+// its upstream, which also covers work a commit earlier on the same command
+// line is about to add; or "unresolved" when the hook cannot tell what the
+// push sends. Unresolved counts as no review, never as reviewed.
+type Pushed = { kind: "range"; local: string; remoteSha: string | null } | { kind: "checkout" } | { kind: "unresolved"; why: string };
 
-// Options of git push that take the next word as their value, and those that
-// send more than the refspecs name.
-const PUSH_VALUE_OPTIONS = new Set(["-o", "--push-option", "--repo", "--receive-pack", "--exec"]);
-const PUSH_WIDE_OPTIONS = new Set(["--all", "--branches", "--mirror", "--tags", "--delete", "-d", "--prune"]);
+// Options of git push that take the next word as their value; options that
+// change what is sent in a way the hook does not follow; and options that
+// only delete.
+const PUSH_VALUE_OPTIONS = new Set(["-o", "--push-option", "--receive-pack", "--exec"]);
+const PUSH_UNRESOLVED_OPTIONS = new Set(["--mirror", "--tags", "--repo"]);
+const PUSH_DELETE_OPTIONS = new Set(["--delete", "-d"]);
 
+// `args`: the words after `push`. Never contacts the remote: the remote
+// commit of a branch is its remote-tracking ref, as last fetched.
 async function pushedBy(repoRoot: string, args: string[]): Promise<{ remote: string; pushes: Pushed[] }> {
   const positionals: string[] = [];
-  let wide: string | null = null;
+  let unresolved: string | null = null;
+  let all = false;
+  let deleting = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--") {
       positionals.push(...args.slice(i + 1));
       break;
     }
-    if (PUSH_WIDE_OPTIONS.has(a)) wide = a;
+    const name = a.startsWith("--") ? a.split("=")[0]! : a;
+    if (PUSH_UNRESOLVED_OPTIONS.has(name)) unresolved = `${name} is not followed`;
+    else if (name === "--all" || name === "--branches") all = true;
+    else if (PUSH_DELETE_OPTIONS.has(name)) deleting = true;
     else if (PUSH_VALUE_OPTIONS.has(a)) i++;
     else if (!a.startsWith("-")) positionals.push(a);
   }
   const [remote = "origin", ...specs] = positionals;
-  const upstream = await git(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
-  if (wide !== null) return { remote, pushes: [{ kind: "checkout", assumed: `${wide} pushes more than one branch` }] };
-  if (specs.length === 0) return { remote, pushes: [{ kind: "checkout", assumed: upstream === null ? "the branch has no upstream" : null }] };
+  if (deleting) return { remote, pushes: [] };
+  if (unresolved !== null) return { remote, pushes: [{ kind: "unresolved", why: unresolved }] };
+  // A remote given as a URL or a path has no remote-tracking refs to measure
+  // from. A plain name that is not configured makes git refuse the push.
+  if (/[:/.@\\]/.test(remote) && (await git(repoRoot, ["config", "--get", `remote.${remote}.url`])) === null) {
+    return { remote, pushes: [{ kind: "unresolved", why: `${remote} is a URL or a path, not a configured remote` }] };
+  }
   const branch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  const upstream = await git(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
+  let refspecs = specs;
+  if (all) {
+    // --all and --branches push every local branch to the same name.
+    const names = (await git(repoRoot, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]))?.split("\n") ?? [];
+    refspecs = names.map((b) => `${b}:${b}`);
+  } else if (specs.length === 0) {
+    // The current branch to its upstream (push.default simple), or to the
+    // same name on the remote when it has none yet.
+    if (branch === null) return { remote, pushes: [{ kind: "unresolved", why: "HEAD is not on a branch and the push names none" }] };
+    return { remote, pushes: [{ kind: "checkout" }] };
+  }
   const pushes: Pushed[] = [];
-  for (const spec of specs) {
-    const [rawSrc = "", rawDst] = spec.replace(/^\+/, "").split(":");
-    if (rawSrc === "") continue; // `:branch` deletes it and sends nothing
-    const dst = (rawDst ?? (rawSrc === "HEAD" ? (branch ?? "") : rawSrc)).replace(/^refs\/heads\//, "");
-    const local = await commitOf(repoRoot, rawSrc);
-    if (local === null) {
-      pushes.push({ kind: "checkout", assumed: `${rawSrc} is not a commit here` });
+  for (const spec of refspecs) {
+    const [rawSrc = "", rawDst, extra] = spec.replace(/^\+/, "").split(":");
+    if (extra !== undefined || /[*?[]/.test(spec)) {
+      pushes.push({ kind: "unresolved", why: `the refspec ${spec} is not followed` });
       continue;
     }
-    const remoteSha = dst === "" ? null : await commitOf(repoRoot, `refs/remotes/${remote}/${dst}`);
-    const current = rawSrc === "HEAD" || rawSrc === branch || rawSrc === `refs/heads/${branch}`;
-    const toUpstream = upstream !== null ? upstream === `${remote}/${dst}` : remoteSha === null;
-    pushes.push(current && toUpstream ? { kind: "checkout", assumed: null } : { kind: "range", local, remoteSha });
+    if (rawSrc === "") continue; // `:branch` deletes it and sends nothing
+    const srcIsBranch = rawSrc === "HEAD" || (await commitOf(repoRoot, `refs/heads/${rawSrc.replace(/^refs\/heads\//, "")}`)) !== null;
+    if (rawDst === undefined && !srcIsBranch) {
+      pushes.push({ kind: "unresolved", why: `${rawSrc} names no branch to push to` });
+      continue;
+    }
+    const dst = (rawDst ?? (rawSrc === "HEAD" ? (branch ?? "") : rawSrc)).replace(/^refs\/heads\//, "");
+    const local = await commitOf(repoRoot, rawSrc);
+    if (local === null || dst === "" || dst.startsWith("refs/")) {
+      pushes.push({ kind: "unresolved", why: `${spec} does not name a commit here and a branch there` });
+      continue;
+    }
+    const remoteSha = await commitOf(repoRoot, `refs/remotes/${remote}/${dst}`);
+    if (remoteSha === local) continue; // the remote has it already: nothing is sent
+    const current = branch !== null && (rawSrc === "HEAD" || rawSrc === branch || rawSrc === `refs/heads/${branch}`);
+    const toUpstream = upstream !== null ? upstream === `${remote}/${dst}` : remoteSha === null && dst === branch;
+    pushes.push(current && toUpstream ? { kind: "checkout" } : { kind: "range", local, remoteSha });
   }
   return { remote, pushes };
 }
+
+const UNRESOLVED = "OpenQodex could not tell what this push sends; run openqodex review, or push with an explicit branch";
 
 async function decide(input: HookInput): Promise<void> {
   if (typeof input.tool_name === "string" && input.tool_name !== "Bash") return;
@@ -186,10 +223,10 @@ async function decide(input: HookInput): Promise<void> {
 
   // Loaded only for a push, so every other shell command stays fast.
   const core = await import("@openqodex/core");
-  const pushes: { repoRoot: string; args: string[] }[] = [];
+  const pushes: { repoRoot: string; args: string[]; opaque?: string }[] = [];
   for (const c of commands) {
     try {
-      pushes.push({ repoRoot: await core.findRepoRoot(c.folder), args: c.args });
+      pushes.push({ repoRoot: await core.findRepoRoot(c.folder), args: c.args, opaque: c.opaque });
     } catch {
       // not a repository: git itself will say so
     }
@@ -198,16 +235,20 @@ async function decide(input: HookInput): Promise<void> {
   const denials = new Set<string>();
   const notes = new Set<string>();
   const home = openqodexHomeDir();
-  for (const { repoRoot, args } of pushes) {
+  for (const { repoRoot, args, opaque } of pushes) {
     const { config } = core.loadConfig(repoRoot);
     const where = (m: string) => (roots.length > 1 ? `${repoRoot}: ${m}` : m);
-    const { remote, pushes: sent } = await pushedBy(repoRoot, args);
+    const { remote, pushes: sent } = opaque !== undefined ? { remote: "origin", pushes: [{ kind: "unresolved", why: opaque } as Pushed] } : await pushedBy(repoRoot, args);
     for (const p of sent) {
+      if (p.kind === "unresolved") {
+        // No record, never reviewed: it denies under a threshold.
+        const line = where(`${UNRESOLVED} (${p.why}).`);
+        if (config.blockOnSeverity !== null) denials.add(line);
+        else notes.add(line);
+        continue;
+      }
       let changeId = "";
-      // Said only beside another message: a passing review stays silent.
-      let assumed: string | null = null;
       if (p.kind === "checkout") {
-        if (p.assumed !== null) assumed = where(`OpenQodex checked the current branch and its uncommitted work, since it could not tell what this push sends (${p.assumed}).`);
         changeId = (await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase })).id;
       } else {
         const range = await rangeChangeId(core, repoRoot, config, remote, p.local, p.remoteSha);
@@ -218,7 +259,6 @@ async function decide(input: HookInput): Promise<void> {
       // the repository's .openqodex/, which a branch can carry.
       const receipt = (changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId)) ?? readHomeReceipt(home, repoRoot, "latest");
       const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
-      if (assumed !== null && (decision.decision === "deny" || decision.message !== null)) notes.add(assumed);
       if (decision.decision === "deny") denials.add(where(decision.message ?? "OpenQodex blocks this push"));
       else if (decision.message) notes.add(where(decision.message));
     }
@@ -267,6 +307,7 @@ function pushedRanges(input: string): ({ local: string; remoteSha: string | null
     const [, local, , remote] = l.split(/\s+/);
     if (local === undefined || ZERO_SHA.test(local)) continue;
     const remoteSha = remote === undefined || ZERO_SHA.test(remote) ? null : remote;
+    if (remoteSha === local) continue; // the remote has it already: nothing is sent
     out.set(`${local} ${remoteSha}`, { local, remoteSha });
   }
   return [...out.values()];

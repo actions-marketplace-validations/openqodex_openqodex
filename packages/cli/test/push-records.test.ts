@@ -20,6 +20,9 @@
 //  8. Finalize checks the run files against the home record, then reads them
 //     again to use them, so a file swapped between the check and the use is
 //     trusted.
+//  9. A push form the agent hook does not resolve counts as reviewed, one
+//     refspec among several escapes the check, or a deletion is blocked.
+// 10. The git hook passes a push where one range among several is unreviewed.
 //  7. The agent hook checks the checkout, not what the push command names:
 //     `git push origin unreviewed:main` passes on the checkout's review.
 import { createHash } from "node:crypto";
@@ -255,5 +258,107 @@ describe("the pushed range", () => {
     expect(named, named).toContain('"permissionDecision":"deny"');
     expect(named).toContain("has not reviewed this change");
     expect(check("git push origin +unreviewed:refs/heads/main")).toContain('"permissionDecision":"deny"');
+  });
+});
+
+describe("9, 10. every form of push", () => {
+  const g = (...a: string[]) => {
+    const r = spawnSync("git", a, { cwd: s.repo, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  // main on a bare remote and reviewed with its uncommitted edit; a branch
+  // `unreviewed` with a commit no review saw.
+  async function setUp(threshold: boolean): Promise<string> {
+    const remote = mkdtempSync(join(tmpdir(), "oq-remote-"));
+    spawnSync("git", ["init", "-q", "--bare", remote]);
+    g("remote", "add", "origin", remote);
+    g("push", "-q", "-u", "origin", "main");
+    g("checkout", "-q", "-b", "unreviewed");
+    writeFileSync(join(s.repo, "other.txt"), "never reviewed\n");
+    g("add", "-A");
+    g("commit", "-q", "-m", "unreviewed");
+    const sha = g("rev-parse", "HEAD");
+    g("checkout", "-q", "main");
+    mkdirSync(join(s.repo, ".openqodex"), { recursive: true });
+    writeFileSync(join(s.repo, ".openqodex/config.yaml"), threshold ? "review:\n  block_on_severity: critical\n" : "");
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    expect(await review()).toBe(0);
+    return sha;
+  }
+  const DENY = '"permissionDecision":"deny"';
+  const COULD_NOT = "could not tell what this push sends";
+
+  it("9. passes what the review covers, and a deletion, silently", async () => {
+    await setUp(true);
+    for (const command of [
+      "git push",
+      "git push origin main",
+      "git push --force-with-lease origin main",
+      "git push --follow-tags",
+      "git push -o ci.skip origin main",
+      "git -c push.default=current push",
+      "git push && git push origin main",
+      "git push origin :old",
+      "git push --delete origin old",
+      `git -C '${s.repo}' push origin main`,
+    ]) {
+      expect(check(command), command).toBe("");
+    }
+  });
+
+  it("9. denies under a threshold any push that sends a range no review covers, whatever its form", async () => {
+    const sha = await setUp(true);
+    for (const command of [
+      "git push origin unreviewed:main",
+      "git push origin main unreviewed:other",
+      `git push origin ${sha}:main`,
+      "git push --force origin +unreviewed:main",
+      "git push --all origin",
+      "git push --branches origin",
+      `git -C '${s.repo}' push origin unreviewed:main`,
+      `cd '${s.repo}' && git push origin unreviewed:main`,
+      "git push; git push origin unreviewed:main",
+    ]) {
+      expect(check(command), command).toContain(DENY);
+    }
+  });
+
+  it("9. treats the forms it cannot follow as no record: a deny with the one-line ask under a threshold", async () => {
+    await setUp(true);
+    for (const command of [
+      "git push --mirror origin",
+      "git push --tags origin",
+      "git push --repo=origin",
+      "git push https://example.invalid/x.git main",
+      "git push origin 'refs/heads/*:refs/heads/*'",
+      `git push origin ${"HEAD"}~5:main`,
+      "git -c 'alias.ship=!git push origin unreviewed:main' ship",
+    ]) {
+      const out = check(command);
+      expect(out, command).toContain(DENY);
+      expect(out, command).toContain(COULD_NOT);
+    }
+  });
+
+  it("9. without a threshold, a form it cannot follow prints the ask and allows", async () => {
+    await setUp(false);
+    const out = check("git push --mirror origin");
+    expect(out).toContain(COULD_NOT);
+    expect(out).not.toContain(DENY);
+  });
+
+  it("10. the git hook refuses a push where one range of several is unreviewed, and skips a deletion", async () => {
+    const sha = await setUp(true);
+    g("add", "-A");
+    g("commit", "-q", "-m", "readme");
+    const head = g("rev-parse", "HEAD");
+    const base = g("rev-parse", "origin/main");
+    const zero = "0".repeat(40);
+    // The reviewed edit, now committed, is the same change: its range passes.
+    expect(cli(s, ["hook", "pre-push", "origin"], { input: `refs/heads/main ${head} refs/heads/main ${base}\n` }).status).toBe(0);
+    expect(cli(s, ["hook", "pre-push", "origin"], { input: `(delete) ${zero} refs/heads/old ${base}\n` }).status).toBe(0);
+    const both = cli(s, ["hook", "pre-push", "origin"], { input: `refs/heads/main ${head} refs/heads/main ${base}\nrefs/heads/unreviewed ${sha} refs/heads/main ${base}\n` });
+    expect(both.status).toBe(1);
   });
 });

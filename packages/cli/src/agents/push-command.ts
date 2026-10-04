@@ -195,7 +195,9 @@ export type AliasLookup = (folder: string, name: string) => Promise<string | nul
 
 // One `git push` on the line: the folder it runs in and the words after
 // `push` (for an alias, the words its expansion adds, then the rest).
-export type PushCommand = { folder: string; args: string[] };
+// `opaque`: set for a push the line hides (an alias that runs a shell
+// command which pushes), saying why its arguments cannot be read.
+export type PushCommand = { folder: string; args: string[]; opaque?: string };
 
 // The folder of every `git push` on the line, in order, without repeats.
 export async function pushFolders(line: string, cwd: string, lookupAlias: AliasLookup): Promise<string[]> {
@@ -263,6 +265,10 @@ export async function pushCommands(line: string, cwd: string, lookupAlias: Alias
     if (!push && aliases[sub] !== undefined) expansion = aliases[sub];
     else if (!push && !GIT_BUILTINS.has(sub) && !sub.startsWith("-")) expansion = await lookupAlias(folder, sub);
     if (!push && expansion !== null) push = isPushAlias(expansion);
+    if (!push && expansion !== null && /^\s*!/.test(expansion) && /\bpush\b/.test(expansion)) {
+      found.push({ folder, args: [], opaque: `the alias ${sub} runs a shell command that pushes` });
+      return;
+    }
     const added = expansion === null ? [] : expansion.trim().split(/\s+/).slice(1);
     if (push) found.push({ folder, args: [...added, ...ws.slice(j + 1)] });
   };
