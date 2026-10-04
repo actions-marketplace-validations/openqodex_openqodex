@@ -42,6 +42,8 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 - `openqodex review --agent` writes a review brief for your agent: the scanner findings to verify, review patterns that fit the change, and the diff.
 - `openqodex review --finalize` checks the agent's findings without a model and writes `report.md`, `report.json` and `report.sarif`.
 - `openqodex review` with neither flag runs the scanners only and prints their report. Git hooks, pre-commit and CI run the same check as `openqodex scan`.
+- `openqodex review <branch>` and `openqodex review '#42'` review a branch or a pull request that is not your current work. OpenQodex fetches it, checks it out in a temporary folder and reviews what it added since it left its base.
+- A change that only deletes code, such as a removed check, can still carry a finding: the lines next to a deletion count as changed.
 - Thirteen built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
 - A push gate for Claude Code and Codex. It warns by default. It blocks only when `.openqodex.yaml` sets `review.block_on_severity`.
@@ -116,9 +118,10 @@ npx openqodex trust
 - When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. It never sends code.
 
 - `openqodex trust` reads the custom scanner's release from the GitHub API and downloads it.
+- `openqodex review <branch>` or `review '#<number>'` fetches that branch or pull request from your remote with git, and asks `gh` for the pull request's base when `gh` is installed.
 - For an install made with `init`, a version check at most once a day: the openqodex release list from registry.npmjs.org, and for a newer release its tarball and signed build record. It sends no code and nothing about you.
 
-`--offline` skips osv-scanner and semgrep and turns scanner downloads and the version check off.
+`--offline` skips osv-scanner and semgrep and turns scanner downloads, the version check, and the fetch and `gh` call of a branch or pull request review off.
 
 The built-in scanners send no code anywhere. Your agent's model sees what your agent reads, as always. A custom scanner you approved does whatever its own command does. [docs/security.md](docs/security.md) gives the full list.
 

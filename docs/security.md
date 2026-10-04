@@ -38,10 +38,11 @@ OpenQodex and the built-in scanners use the network for these things only:
 - The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code.
 - Custom scanners. `openqodex trust` reads the release from the GitHub API and downloads the asset. After approval, a custom scanner does whatever its own command does.
 - The daily version check, for an install made with `init`. See "Updates" below.
+- A review of a branch or a pull request (`review <branch>`, `review '#<number>'`). git fetches the branch or `pull/<number>/head` from your remote with its own credentials, and `gh`, when it is installed and signed in, is asked for the pull request's base. OpenQodex reads no token. The target is checked out in a temporary folder with every git hook and filter switched off, so nothing in it runs.
 
 golangci-lint runs with the Go module proxy off, so it downloads no modules.
 
-`--offline` skips osv-scanner and semgrep, which the report lists as disabled. It also turns scanner downloads off and the version check.
+`--offline` skips osv-scanner and semgrep, which the report lists as disabled. It also turns scanner downloads off and the version check. A review of a branch or a pull request with `--offline` fetches nothing and calls no `gh`.
 
 ## Updates
 
