@@ -54,6 +54,10 @@ export interface ReviewerDriver {
   // snapshots, is never run (findOnPath), so a repository cannot put its own
   // program in the reviewer's place.
   detect(repoRoot: string): Promise<Detected>;
+  // Run once the snapshot exists and before `start`: a reason in one line
+  // when the agent's boundary could not be shown for this run, so the
+  // reviewer must not start (Codex's per-run sandbox probe). Null to go on.
+  check?(opts: { snapshotDir: string; bin: string }): Promise<string | null>;
   // `deadline`: epoch milliseconds after which the process group is killed.
   // `web`: the user config allows the agent's web tools (reviewer_web: on).
   start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession;

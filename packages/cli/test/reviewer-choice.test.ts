@@ -13,6 +13,9 @@
 //     installed too.
 //  9. `auto` with only Codex available does not pick Codex.
 // 10. `auto` inside a Codex session does not pick Codex first.
+// 11. A driver whose per-run boundary check fails (Codex's sandbox probe)
+//     still starts the reviewer, or ends as "Review incomplete" instead of
+//     "Full review unavailable" with the reason and the fallback.
 //  3. The config's `reviewer:` key is ignored.
 //  4. The flag does not win over the config.
 //  5. The reviewer gets web tools with the default config.
@@ -180,6 +183,24 @@ describe("choosing the reviewer", () => {
     await expect(review([fake()])).rejects.toThrow(/config\.yaml.*reviewer/);
     userConfig("reviewer_web: sometimes\n");
     await expect(review([fake()])).rejects.toThrow(/config\.yaml.*reviewer_web/);
+  });
+});
+
+describe("the per-run boundary check", () => {
+  it("11. a failed check never starts the reviewer and ends as Full review unavailable with the reason and the fallback", async () => {
+    const codex = Object.assign(fake([], "codex"), { check: async () => "Codex's sandbox did not confine reads to the review copy; the review did not start (a file outside it could be read)" });
+    expect(await review([codex], "codex")).toBe(2);
+    expect(codex.starts).toHaveLength(0);
+    expect(out).toBe("");
+    expect(err).toContain("Full review unavailable");
+    expect(err).toContain("codex: Codex's sandbox did not confine reads to the review copy; the review did not start");
+    expect(err).toMatch(/review --agent/);
+  });
+
+  it("11. a passed check starts the reviewer", async () => {
+    const codex = Object.assign(fake([], "codex"), { check: async () => null });
+    expect(await review([codex], "codex")).toBe(0);
+    expect(codex.starts).toHaveLength(1);
   });
 });
 

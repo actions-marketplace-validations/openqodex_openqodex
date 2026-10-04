@@ -80,7 +80,7 @@ With `--no-session-persistence` and auto memory off, real runs with Claude Code 
 
 ## Codex
 
-Enabled since 0.6.0, with two stated limits. Tested with codex-cli 0.160.0 (`/opt/homebrew/bin/codex --version`) on macOS, 2026-10-03 and 2026-10-04, logged in with a ChatGPT account, on throwaway folders under `~/.openqodex/` with canaries. The driver is `packages/cli/src/reviewers/codex.ts`. It refuses a Codex older than 0.160.0.
+Enabled since 0.6.0, with two stated limits. Tested with codex-cli 0.160.0 (`/opt/homebrew/bin/codex --version`) on macOS, 2026-10-03 and 2026-10-04, logged in with a ChatGPT account, on throwaway folders under `~/.openqodex/` with canaries. The driver is `packages/cli/src/reviewers/codex.ts`. It refuses a Codex older than 0.160.0, and a Codex whose `--version` prints no version number.
 
 ### The command line
 
@@ -119,6 +119,24 @@ codex exec --json --color never --ephemeral --skip-git-repo-check
 | `project_doc_max_bytes=0` | A canary `AGENTS.md` in the folder did not appear in the prompt input or the answer. |
 | `skills.include_instructions=false` | Without it, a canary skill in the folder's `.agents/skills/` was listed to the model, which then followed it. With it, the skills block is gone from the prompt input. |
 | `--ignore-user-config` | The developer's `config.toml` (MCP servers, plugins, model, trusted projects) is not read. A canary `developer_instructions` in the folder's `.codex/config.toml` did not appear either way: the folder is not a trusted project. |
+
+### The per-run probe of the boundary
+
+The read confinement rests on two `-c` keys (`default_permissions` and `permissions.openqodex_review.filesystem`). A newer Codex could rename or ignore them, and the event stream would not show it. So every review proves the boundary before the first model run (`probeSandbox`). It runs one command, with no model, under `codex sandbox` with the same two keys, in the snapshot folder:
+
+- it reads a canary file that openqodex writes in its home folder (`~/.openqodex/.openqodex-probe-<random>`, mode 0600, random content), outside the snapshot;
+- it reads a file with random content that openqodex writes inside the snapshot;
+- it tries to create a file inside the snapshot.
+
+The review starts only when the inside read worked, the canary's content did not come back and no file was created. Any other result, a probe that cannot start, or one that runs past 30 seconds ends the run as "Full review unavailable" with "Codex's sandbox did not confine reads to the review copy; the review did not start" and the `review --agent` fallback. The canary and both probe files are removed whatever happened, before the snapshot is hashed.
+
+Observed with codex-cli 0.160.0 (2026-10-04):
+
+- With the review profile, `cat` of the canary printed "Operation not permitted", `cat` of the inside file printed its content, and the write printed "Operation not permitted".
+- With a profile that adds `"/"="read"`, the canary's content came back, so the probe refuses it. `packages/cli/test/codex-stream.test.ts` runs both against the real binary when Codex is installed (skipped in CI).
+- `codex sandbox -c default_permissions="nope"` stops with "default_permissions refers to undefined profile `nope`". With the key misspelled it stops with "config defines `[permissions]` profiles but does not set `default_permissions`". Both print no canary content, so the probe refuses them.
+- `codex sandbox` takes the same `-c` keys but has no `--ignore-user-config`: the probe reads the developer's `config.toml`, while `codex exec` does not. The `-c` keys override the same keys in that file. The probe proves that this Codex binary applies these keys to a sandboxed command; it runs through `codex sandbox`, not through `codex exec` itself, which cannot run a command without a model.
+- Each probe took well under a second.
 
 ### The two limits
 

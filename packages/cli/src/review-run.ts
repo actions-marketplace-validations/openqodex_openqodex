@@ -585,17 +585,20 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const change = p.change;
     const dir = openReportDir(repoRoot, change.shortId);
 
-    if ("unavailable" in chosen) {
+    // No reviewer can start: the scanner candidates are saved as unchecked,
+    // never as a review, and the fallback through the agent the developer is in is named.
+    const unavailable = (reasons: string[]): number => {
       const path = join(dir, "unchecked-candidates.json");
       writeReportFiles(repoRoot, dir, {
         "unchecked-candidates.json": `${JSON.stringify({ label: "unchecked scanner candidates, not a review: no reviewer checked them", change_id: change.id, candidates: scan.candidates }, null, 2)}\n`,
       }, PRIVATE);
       warn("Full review unavailable: openqodex could not start a reviewer.");
-      for (const line of chosen.unavailable) warn(`- ${line}`);
+      for (const line of reasons) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
       warn(`To review with the agent you are in instead, run \`${fallbackCommand(o)}\` and follow the brief it prints.`);
       return EXIT_TOOL_FAILED;
-    }
+    };
+    if ("unavailable" in chosen) return unavailable(chosen.unavailable);
 
     const redaction = redactSnapshot(prep.snapshot.tree, p.secrets);
     if (redaction.redacted > 0) say(`Redacted secrets in ${redaction.redacted} ${redaction.redacted === 1 ? "file" : "files"} of the snapshot`);
@@ -639,6 +642,10 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     // A reviewer whose trace is not complete (Codex) has no read counted:
     // coverage is the brief and the correction rounds only.
     const traced = chosen.driver.traced;
+    // The driver's per-run proof of its boundary (Codex's sandbox probe),
+    // on the redacted snapshot, before its hash is taken.
+    const unsafe = (await chosen.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: chosen.bin })) ?? null;
+    if (unsafe !== null) return unavailable([`${chosen.driver.name}: ${unsafe}`]);
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
     // A secret in a path would reach the reviewer through any listing: the

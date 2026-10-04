@@ -23,13 +23,25 @@
 // 10. Inside Codex's own sandbox, detection reports Codex as ready, so the
 //     run starts a reviewer that dies at once instead of offering the fallback.
 // 11. A Codex older than the tested version is started with flags it may not know.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+// 12. A version string that is not numbers (a dev build, a changed format)
+//     is accepted, so the tested-version check never applies.
+// 13. The sandbox did not confine the reviewer (a renamed or ignored
+//     permission key in a newer Codex) and the review starts anyway: the
+//     per-run probe read a file outside the snapshot, or wrote inside it.
+// 14. A broken sandbox that refuses everything, or a probe that errors or
+//     times out, is taken as a confined one.
+// 15. The probe, run against the real binary, does not tell the review
+//     profile (confined) from a profile that reads everywhere (not confined),
+//     or leaves its canary or its files behind.
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CODEX_TESTED, codexArgs, codexDriver, codexEnv, detectCodex, olderThanTested } from "../src/reviewers/codex.js";
-import { DEPTH_ENV } from "../src/reviewers/driver.js";
+import { CODEX_TESTED, PROBE_REFUSED, codexArgs, codexDriver, codexEnv, codexVersion, detectCodex, olderThanTested, probeSandbox, probeVerdict } from "../src/reviewers/codex.js";
+import { DEPTH_ENV, findOnPath } from "../src/reviewers/driver.js";
+import { openqodexHomeDir } from "../src/launcher.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RECORDED = readFileSync(join(here, "fixtures/codex-stream.jsonl"), "utf8");
@@ -191,4 +203,43 @@ describe("the Codex command line and environment", () => {
     expect(olderThanTested("0.161.0")).toBe(false);
     expect(olderThanTested("1.0.0")).toBe(false);
   });
+});
+
+describe("the version check", () => {
+  it("12. a version that is not numbers is refused", () => {
+    expect(codexVersion("codex-cli 0.160.0\n")).toBe("0.160.0");
+    expect(codexVersion("codex-cli dev")).toBeNull();
+    expect(codexVersion("")).toBeNull();
+    expect(codexVersion("codex-cli 0.160")).toBeNull();
+  });
+});
+
+describe("the per-run sandbox probe", () => {
+  const confined = { insideRead: true, outsideRead: false, wrote: false, error: null };
+
+  it("13. a read outside the snapshot or a write inside it refuses the review", () => {
+    expect(probeVerdict(confined)).toBeNull();
+    expect(probeVerdict({ ...confined, outsideRead: true })).toMatch(PROBE_REFUSED);
+    expect(probeVerdict({ ...confined, wrote: true })).toMatch(PROBE_REFUSED);
+  });
+
+  it("14. a sandbox that refuses the inside read, or a probe error or timeout, refuses the review", () => {
+    expect(probeVerdict({ ...confined, insideRead: false })).toMatch(PROBE_REFUSED);
+    expect(probeVerdict({ ...confined, error: "the probe timed out" })).toMatch(PROBE_REFUSED);
+  });
+
+  // The real binary, opt in: skipped without codex, in CI and inside a Codex sandbox.
+  const bin = process.env.CI || process.env.CODEX_SANDBOX ? null : findOnPath("codex", []);
+  it.skipIf(bin === null)("15. with the real codex, the review profile passes, a profile that reads everywhere fails, and nothing is left behind", async () => {
+    const home = openqodexHomeDir();
+    const snapshotDir = join(home, "checkouts", `probe-test-${process.pid}`);
+    mkdirSync(snapshotDir, { recursive: true });
+    writeFileSync(join(snapshotDir, "a.txt"), "inside\n");
+    expect(await probeSandbox(bin!, snapshotDir)).toBeNull();
+    const open = '{":minimal"="read",":project_roots"="read","/"="read"}';
+    expect(await probeSandbox(bin!, snapshotDir, open)).toMatch(PROBE_REFUSED);
+    expect(readdirSync(home).filter((n) => n.startsWith(".openqodex-probe"))).toEqual([]);
+    expect(readdirSync(snapshotDir)).toEqual(["a.txt"]);
+    spawnSync("mv", [snapshotDir, join(process.env.HOME ?? "", ".Trash", `probe-test-${process.pid}-${Date.now()}`)]);
+  }, 60_000);
 });

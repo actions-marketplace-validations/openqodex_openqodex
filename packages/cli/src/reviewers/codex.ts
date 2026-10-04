@@ -12,9 +12,13 @@
 // profile, which kept reads inside the snapshot in every test.
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ReviewerUsage } from "@openqodex/core";
 import { checkoutsDir } from "../checkout.js";
+import { openqodexHomeDir } from "../launcher.js";
 import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
 import type { ToolCall } from "./trace.js";
@@ -28,6 +32,15 @@ export const CODEX_TESTED = "0.160.0";
 // The flags that turn Codex features off: plugins, apps, hooks, subagents,
 // memories, browser and computer use, images, skill search and the rest.
 const DISABLED = ["plugins", "apps", "hooks", "multi_agent", "memories", "browser_use", "computer_use", "image_generation", "skill_search", "tool_suggest", "goals", "in_app_browser", "view_image"];
+
+// The permission profile: reads confined to the snapshot (the project root)
+// and the system folders a command needs to start; no write entry and no
+// network entry, so both are refused; /tmp denied. The same strings go to
+// `codex exec` and to the per-run probe, so the probe tests what the run uses.
+export const PROFILE_FILESYSTEM = '{":minimal"="read",":project_roots"="read","/tmp"="deny"}';
+function profileConfig(filesystem: string): string[] {
+  return ["-c", 'default_permissions="openqodex_review"', "-c", `permissions.openqodex_review.filesystem=${filesystem}`];
+}
 
 // `web`: Codex's web search tool is on only when the user config sets
 // `reviewer_web: on`. Shell commands get no network either way: the
@@ -51,12 +64,7 @@ export function codexArgs(snapshotDir: string, web: boolean): string[] {
     snapshotDir,
     "-c",
     'approval_policy="never"',
-    // Reads confined to the snapshot and the system folders a command needs
-    // to start; writes and network refused; /tmp denied.
-    "-c",
-    'default_permissions="openqodex_review"',
-    "-c",
-    'permissions.openqodex_review.filesystem={":minimal"="read",":project_roots"="read","/tmp"="deny"}',
+    ...profileConfig(PROFILE_FILESYSTEM),
     "-c",
     // "cached" answers from OpenAI's search index and opens no address the
     // model names.
@@ -94,6 +102,12 @@ export function codexEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   return out;
 }
 
+// The version `codex --version` printed, as three numbers, or null when it
+// printed none: such a version is refused, never assumed new enough.
+export function codexVersion(stdout: string): string | null {
+  return /\b(\d+\.\d+\.\d+)\b/.exec(stdout)?.[1] ?? null;
+}
+
 // True when `version` is older than CODEX_TESTED.
 export function olderThanTested(version: string): boolean {
   const a = version.split(".").map((n) => Number.parseInt(n, 10));
@@ -118,13 +132,14 @@ async function detect(repoRoot: string, env: NodeJS.ProcessEnv = process.env): P
   const bin = findOnPath("codex", [repoRoot, checkoutsDir()], env.PATH ?? "");
   if (bin === null) return { ok: false, missing: "Codex (codex) is not on PATH", fix: "install Codex and log in, then review again" };
   const childEnv = codexEnv(env);
-  let version: string;
+  let version: string | null;
   try {
     const { stdout } = await execFileAsync(bin, ["--version"], { env: childEnv, timeout: DETECT_TIMEOUT_MS });
-    version = /\d+\.\d+\.\d+/.exec(stdout)?.[0] ?? stdout.trim();
+    version = codexVersion(stdout);
   } catch (error) {
     return { ok: false, missing: `codex --version failed: ${String((error as Error).message).split("\n")[0]}`, fix: "reinstall Codex" };
   }
+  if (version === null) return { ok: false, missing: "codex --version printed no version number, so openqodex cannot tell whether it was tested", fix: "install a released Codex, then review again" };
   if (olderThanTested(version)) return { ok: false, missing: `Codex ${version} is older than ${CODEX_TESTED}, the oldest version tested as a reviewer`, fix: "update Codex, then review again" };
   // Exit 0 and "Logged in using ChatGPT" (or an API key) when logged in;
   // exit 1 and "Not logged in" when not.
@@ -134,6 +149,83 @@ async function detect(repoRoot: string, env: NodeJS.ProcessEnv = process.env): P
     return { ok: false, missing: `Codex ${version} is not logged in`, fix: "run codex login, then review again" };
   }
   return { ok: true, version, bin };
+}
+
+// The per-run proof of the boundary. The permission keys are Codex
+// configuration that a newer version could rename or ignore, and the event
+// stream would not show it, so before the first model run the same keys run
+// one command under `codex sandbox` (no model): it reads a canary file
+// outside the snapshot, reads a file inside it, and tries to write inside it.
+export const PROBE_REFUSED = "Codex's sandbox did not confine reads to the review copy; the review did not start";
+const PROBE_TIMEOUT_MS = 30_000;
+
+export type ProbeResult = { insideRead: boolean; outsideRead: boolean; wrote: boolean; error: string | null };
+
+// Null when the review may start: the inside read worked (the sandbox runs
+// commands at all), the outside read and the write were refused, and the
+// probe itself ran. Anything else refuses, in one line.
+export function probeVerdict(r: ProbeResult): string | null {
+  if (r.error !== null) return `${PROBE_REFUSED} (${r.error})`;
+  if (r.outsideRead) return `${PROBE_REFUSED} (a file outside it could be read)`;
+  if (r.wrote) return `${PROBE_REFUSED} (a file inside it could be written)`;
+  if (!r.insideRead) return `${PROBE_REFUSED} (a file inside it could not be read either, so the sandbox was not working)`;
+  return null;
+}
+
+// Runs the probe and removes everything it wrote, whatever happened.
+// `filesystem` is the profile's filesystem entry; tests pass a wider one to
+// show the probe fails it.
+export async function probeSandbox(bin: string, snapshotDir: string, filesystem: string = PROFILE_FILESYSTEM): Promise<string | null> {
+  const tag = randomBytes(12).toString("hex");
+  const insideToken = randomBytes(16).toString("hex");
+  const outsideToken = randomBytes(16).toString("hex");
+  const inside = join(snapshotDir, `.openqodex-probe-${tag}`);
+  const written = join(snapshotDir, `.openqodex-probe-write-${tag}`);
+  const canary = join(openqodexHomeDir(), `.openqodex-probe-${tag}`);
+  const result: ProbeResult = { insideRead: false, outsideRead: false, wrote: false, error: null };
+  try {
+    writeFileSync(canary, `${outsideToken}\n`, { mode: 0o600 });
+    writeFileSync(inside, `${insideToken}\n`, { mode: 0o600 });
+    // The paths go in as arguments, never into the script text.
+    const script = 'cat "$1"; cat "$2"; : > "$3"';
+    const args = ["sandbox", ...profileConfig(filesystem), "--", "/bin/sh", "-c", script, "sh", inside, canary, written];
+    const out = await new Promise<{ stdout: string; error: string | null }>((done) => {
+      const proc = spawnGroup(bin, args, { cwd: snapshotDir, env: codexEnv() });
+      let stdout = "";
+      let error: string | null = null;
+      const timer = setTimeout(() => {
+        error = "the probe timed out";
+        killGroup(proc);
+      }, PROBE_TIMEOUT_MS);
+      timer.unref();
+      proc.stdout?.setEncoding("utf8");
+      proc.stdout?.on("data", (c: string) => {
+        if (stdout.length < 64 * 1024) stdout += c;
+      });
+      proc.stderr?.resume();
+      proc.stdin?.on("error", () => {
+        // gone; close reports
+      });
+      proc.stdin?.end();
+      proc.on("error", (e) => {
+        error = `the probe could not start: ${e.message}`;
+      });
+      proc.on("close", () => {
+        clearTimeout(timer);
+        killGroup(proc);
+        done({ stdout, error });
+      });
+    });
+    result.error = out.error;
+    result.insideRead = out.stdout.includes(insideToken);
+    result.outsideRead = out.stdout.includes(outsideToken);
+  } catch (error) {
+    result.error = `the probe could not run: ${(error as Error).message.split("\n")[0]}`;
+  } finally {
+    result.wrote = existsSync(written);
+    for (const f of [canary, inside, written]) rmSync(f, { force: true });
+  }
+  return probeVerdict(result);
 }
 
 // Bounds on what the stream reader holds, checked as the bytes arrive: one
@@ -315,5 +407,5 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
   };
 }
 
-export const codexDriver: ReviewerDriver = { name: "codex", traced: false, detect: (repoRoot) => detect(repoRoot), start };
+export const codexDriver: ReviewerDriver = { name: "codex", traced: false, detect: (repoRoot) => detect(repoRoot), check: ({ snapshotDir, bin }) => probeSandbox(bin, snapshotDir), start };
 export { detect as detectCodex };
