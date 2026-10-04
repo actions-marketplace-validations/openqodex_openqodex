@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { readText, sha256, writeAtomic, writeBackup } from "../agents/files.js";
 import { gitPath, repoRootOf } from "../agents/git.js";
 import { ownedFile, type Action } from "../agents/plan.js";
-import { pushFolders } from "../agents/push-command.js";
+import { pushCommands } from "../agents/push-command.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
@@ -84,13 +84,100 @@ async function aliasOf(folder: string, name: string): Promise<string | null> {
   }
 }
 
+type Core = typeof import("@openqodex/core");
+type Config = ReturnType<Core["loadConfig"]>["config"];
+
+const git = async (repoRoot: string, args: string[]): Promise<string | null> => {
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd: repoRoot, timeout: 10_000 });
+    return stdout.trim() === "" ? null : stdout.trim();
+  } catch {
+    return null;
+  }
+};
+const commitOf = (repoRoot: string, rev: string) => git(repoRoot, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${rev}^{commit}`]);
+
+// The change id of one pushed range, the id a review of it records. The
+// range runs from what the remote branch holds (`remoteSha`), or for a new
+// branch from the merge base with the base a review uses (review.default_base,
+// else the remote's default branch), to the pushed commit. Two ranges count
+// as the same when they start at the same commit and end in the same tree:
+// the change id hashes the base commit and the diff between them. So a
+// review of base B to H does not cover a push of H over a remote commit R
+// that is not B, such as a force push over work the review never saw.
+async function rangeChangeId(core: Core, repoRoot: string, config: Config, remote: string, localSha: string, remoteSha: string | null): Promise<{ id: string } | { unknown: string }> {
+  let base: string | null = null;
+  if (remoteSha !== null) {
+    base = await commitOf(repoRoot, remoteSha);
+    if (base === null) return { unknown: `the remote's commit ${remoteSha.slice(0, 12)} is not in this repository, so the push cannot be matched to a review; fetch, then push again` };
+  } else {
+    const named = config.defaultBase !== null ? [config.defaultBase, `${remote}/${config.defaultBase}`] : [`refs/remotes/${remote}/HEAD`];
+    for (const ref of named) {
+      const sha = await commitOf(repoRoot, ref);
+      base = sha === null ? null : await git(repoRoot, ["merge-base", sha, localSha]);
+      if (base !== null) break;
+    }
+    if (base === null) return { unknown: "this push starts a new branch and no base to measure it from was found (review.default_base, or the remote's default branch)" };
+  }
+  const change = await core.getTreeChange({ repoRoot, baseRef: base, baseSha: base, headSha: localSha, exclude: config.exclude });
+  return { id: change.id };
+}
+
+// What one push sends, as the lookup sees it: a pushed range (local commit,
+// remote commit or null for a new branch), or "checkout" for the current
+// branch to its upstream, which also covers work a commit in the same command
+// line is about to add. `assumed` says why the checkout was used when the
+// command could not be read.
+type Pushed = { kind: "range"; local: string; remoteSha: string | null } | { kind: "checkout"; assumed: string | null };
+
+// Options of git push that take the next word as their value, and those that
+// send more than the refspecs name.
+const PUSH_VALUE_OPTIONS = new Set(["-o", "--push-option", "--repo", "--receive-pack", "--exec"]);
+const PUSH_WIDE_OPTIONS = new Set(["--all", "--branches", "--mirror", "--tags", "--delete", "-d", "--prune"]);
+
+async function pushedBy(repoRoot: string, args: string[]): Promise<{ remote: string; pushes: Pushed[] }> {
+  const positionals: string[] = [];
+  let wide: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--") {
+      positionals.push(...args.slice(i + 1));
+      break;
+    }
+    if (PUSH_WIDE_OPTIONS.has(a)) wide = a;
+    else if (PUSH_VALUE_OPTIONS.has(a)) i++;
+    else if (!a.startsWith("-")) positionals.push(a);
+  }
+  const [remote = "origin", ...specs] = positionals;
+  const upstream = await git(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
+  if (wide !== null) return { remote, pushes: [{ kind: "checkout", assumed: `${wide} pushes more than one branch` }] };
+  if (specs.length === 0) return { remote, pushes: [{ kind: "checkout", assumed: upstream === null ? "the branch has no upstream" : null }] };
+  const branch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  const pushes: Pushed[] = [];
+  for (const spec of specs) {
+    const [rawSrc = "", rawDst] = spec.replace(/^\+/, "").split(":");
+    if (rawSrc === "") continue; // `:branch` deletes it and sends nothing
+    const dst = (rawDst ?? (rawSrc === "HEAD" ? (branch ?? "") : rawSrc)).replace(/^refs\/heads\//, "");
+    const local = await commitOf(repoRoot, rawSrc);
+    if (local === null) {
+      pushes.push({ kind: "checkout", assumed: `${rawSrc} is not a commit here` });
+      continue;
+    }
+    const remoteSha = dst === "" ? null : await commitOf(repoRoot, `refs/remotes/${remote}/${dst}`);
+    const current = rawSrc === "HEAD" || rawSrc === branch || rawSrc === `refs/heads/${branch}`;
+    const toUpstream = upstream !== null ? upstream === `${remote}/${dst}` : remoteSha === null;
+    pushes.push(current && toUpstream ? { kind: "checkout", assumed: null } : { kind: "range", local, remoteSha });
+  }
+  return { remote, pushes };
+}
+
 async function decide(input: HookInput): Promise<void> {
   if (typeof input.tool_name === "string" && input.tool_name !== "Bash") return;
   const command = input.tool_input?.command;
   if (typeof command !== "string") return;
   const cwd = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : process.cwd();
-  const folders = await pushFolders(command, cwd, aliasOf);
-  if (folders.length === 0) return;
+  const commands = await pushCommands(command, cwd, aliasOf);
+  if (commands.length === 0) return;
 
   if (process.env.OPENQODEX_SKIP === "1") {
     abstainWith("OpenQodex check skipped (OPENQODEX_SKIP is set)");
@@ -99,31 +186,45 @@ async function decide(input: HookInput): Promise<void> {
 
   // Loaded only for a push, so every other shell command stays fast.
   const core = await import("@openqodex/core");
-  const roots: string[] = [];
-  for (const folder of folders) {
+  const pushes: { repoRoot: string; args: string[] }[] = [];
+  for (const c of commands) {
     try {
-      const root = await core.findRepoRoot(folder);
-      if (!roots.includes(root)) roots.push(root);
+      pushes.push({ repoRoot: await core.findRepoRoot(c.folder), args: c.args });
     } catch {
       // not a repository: git itself will say so
     }
   }
-  const denials: string[] = [];
-  const notes: string[] = [];
+  const roots = [...new Set(pushes.map((p) => p.repoRoot))];
+  const denials = new Set<string>();
+  const notes = new Set<string>();
   const home = openqodexHomeDir();
-  for (const repoRoot of roots) {
+  for (const { repoRoot, args } of pushes) {
     const { config } = core.loadConfig(repoRoot);
-    const change = await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase });
-    // Only the record in the developer's own home counts, never one under
-    // the repository's .openqodex/, which a branch can carry.
-    const receipt = readHomeReceipt(home, repoRoot, change.id) ?? readHomeReceipt(home, repoRoot, "latest");
-    const decision = core.checkPush({ currentChangeId: change.id, receipt, config });
-    const message = decision.message === null ? null : roots.length > 1 ? `${repoRoot}: ${decision.message}` : decision.message;
-    if (decision.decision === "deny") denials.push(message ?? `${repoRoot}: OpenQodex blocks this push`);
-    else if (message) notes.push(message);
+    const where = (m: string) => (roots.length > 1 ? `${repoRoot}: ${m}` : m);
+    const { remote, pushes: sent } = await pushedBy(repoRoot, args);
+    for (const p of sent) {
+      let changeId = "";
+      // Said only beside another message: a passing review stays silent.
+      let assumed: string | null = null;
+      if (p.kind === "checkout") {
+        if (p.assumed !== null) assumed = where(`OpenQodex checked the current branch and its uncommitted work, since it could not tell what this push sends (${p.assumed}).`);
+        changeId = (await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase })).id;
+      } else {
+        const range = await rangeChangeId(core, repoRoot, config, remote, p.local, p.remoteSha);
+        if ("id" in range) changeId = range.id;
+        else notes.add(where(`OpenQodex: ${range.unknown}.`));
+      }
+      // Only the record in the developer's own home counts, never one under
+      // the repository's .openqodex/, which a branch can carry.
+      const receipt = (changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId)) ?? readHomeReceipt(home, repoRoot, "latest");
+      const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
+      if (assumed !== null && (decision.decision === "deny" || decision.message !== null)) notes.add(assumed);
+      if (decision.decision === "deny") denials.add(where(decision.message ?? "OpenQodex blocks this push"));
+      else if (decision.message) notes.add(where(decision.message));
+    }
   }
-  if (denials.length > 0) deny([...denials, ...notes].join("\n"));
-  else if (notes.length > 0) abstainWith(notes.join("\n"));
+  if (denials.size > 0) deny([...denials, ...notes].join("\n"));
+  else if (notes.size > 0) abstainWith([...notes].join("\n"));
 }
 
 async function check(): Promise<number> {
@@ -153,24 +254,31 @@ function readAll(): Promise<string> {
   });
 }
 
-// The commits a push sends, from git's lines on stdin: `<local ref> <local
+// The ranges a push sends, from git's lines on stdin: `<local ref> <local
 // sha> <remote ref> <remote sha>`. An all-zero local sha deletes the remote
-// ref and sends nothing. Null for the hook run by hand with no push lines:
-// the work in place is looked up.
-function pushedCommits(input: string): (string | null)[] {
+// ref and sends nothing; an all-zero remote sha starts a new branch (null).
+// Null for the hook run by hand with no push lines: the work in place is
+// looked up.
+function pushedRanges(input: string): ({ local: string; remoteSha: string | null } | null)[] {
   const lines = input.split("\n").map((l) => l.trim()).filter((l) => l !== "");
   if (lines.length === 0) return [null];
-  const shas = lines.map((l) => l.split(/\s+/)[1]).filter((sha): sha is string => sha !== undefined && !ZERO_SHA.test(sha));
-  return [...new Set(shas)];
+  const out = new Map<string, { local: string; remoteSha: string | null }>();
+  for (const l of lines) {
+    const [, local, , remote] = l.split(/\s+/);
+    if (local === undefined || ZERO_SHA.test(local)) continue;
+    const remoteSha = remote === undefined || ZERO_SHA.test(remote) ? null : remote;
+    out.set(`${local} ${remoteSha}`, { local, remoteSha });
+  }
+  return [...out.values()];
 }
 
-// `openqodex hook pre-push`, run by the git pre-push hook. The same lookup
-// as the agent hook (core checkPush), for exactly what is pushed: each pushed
-// commit's change, measured from the base of the newest review recorded in
-// the developer's home, must be a change a review there covered. It prints no scanner output and never starts a
+// `openqodex hook pre-push <remote>`, run by the git pre-push hook. The same
+// lookup as the agent hook (core checkPush), for exactly what is pushed: each
+// pushed range (rangeChangeId) must be a change a review recorded in the
+// developer's home covered. It prints no scanner output and never starts a
 // review. Exit 1 only when the lookup denies (block_on_severity is set and
 // the review is missing or blocked); an incomplete review never blocks.
-async function prePush(): Promise<number> {
+async function prePush(args: string[]): Promise<number> {
   // Git sets these for hooks; they would point git at another index or tree.
   for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX"]) delete process.env[name];
   const repoRoot = await repoRootOf(process.cwd());
@@ -178,18 +286,20 @@ async function prePush(): Promise<number> {
   const core = await import("@openqodex/core");
   const { config } = core.loadConfig(repoRoot);
   const home = openqodexHomeDir();
+  const remote = args[0] ?? "origin";
   // Only the record in the developer's own home counts (see hook check).
   const newest = readHomeReceipt(home, repoRoot, "latest");
   const messages = new Set<string>();
   let denied = false;
-  for (const sha of pushedCommits(await readAll())) {
-    let changeId: string;
-    if (sha === null) {
+  for (const range of pushedRanges(await readAll())) {
+    let changeId = "";
+    if (range === null) {
       changeId = (await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase })).id;
-    } else if (newest !== null) {
-      const tree = await core.getTreeChange({ repoRoot, baseRef: newest.base.ref, baseSha: newest.base.sha, headSha: sha, exclude: config.exclude });
-      changeId = tree.id;
-    } else changeId = "";
+    } else {
+      const found = await rangeChangeId(core, repoRoot, config, remote, range.local, range.remoteSha);
+      if ("id" in found) changeId = found.id;
+      else messages.add(`OpenQodex: ${found.unknown}.`);
+    }
     const receipt = (changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId)) ?? newest;
     const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
     if (decision.decision === "deny") denied = true;
@@ -452,7 +562,7 @@ export async function run(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   try {
     if (sub === "check") return await check();
-    if (sub === "pre-push") return await prePush();
+    if (sub === "pre-push") return await prePush(rest);
     if (sub === "install") return await install(rest);
     if (sub === "uninstall") return await uninstall(rest);
   } catch (error) {

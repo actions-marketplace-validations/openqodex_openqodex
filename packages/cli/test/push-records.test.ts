@@ -14,8 +14,14 @@
 //     findings files in the repository folder, which a branch can carry, and
 //     writes a home record for a run whose scan never ran on this machine, or
 //     whose scan.json was edited after `review --agent` wrote it.
+//  6. The git pre-push hook measures the pushed commit from the newest
+//     review's base and ignores the remote commit git names, so a force push
+//     over a remote commit that held more than the reviewed base passes.
+//  7. The agent hook checks the checkout, not what the push command names:
+//     `git push origin unreviewed:main` passes on the checkout's review.
 import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getChange } from "@openqodex/core";
@@ -63,8 +69,8 @@ function review(target?: string): Promise<number> {
   return runReview({ flags: global, scope: {}, target, base: target ? "main" : undefined, noGraph: true, timeoutMs: 60_000, drivers: [driver] });
 }
 
-function check(): string {
-  const input = JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push" }, cwd: s.repo });
+function check(command = "git push"): string {
+  const input = JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: s.repo });
   const r = cli(s, ["hook", "check"], { input });
   expect(r.status).toBe(0);
   return r.stdout;
@@ -147,5 +153,67 @@ describe("5. the legacy two-step protocol", () => {
     const r = cli(s, ["review", "--finalize"]);
     expect(readHomeReceipt(s.oqHome, s.repo, changeId)).toBeNull();
     expect(r.stderr).toMatch(/not recorded for the push hooks/);
+  });
+});
+
+describe("the pushed range", () => {
+  const g = (...a: string[]) => {
+    const r = spawnSync("git", a, { cwd: s.repo, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  // A bare remote holding main.
+  function withRemote(): void {
+    const remote = mkdtempSync(join(tmpdir(), "oq-remote-"));
+    spawnSync("git", ["init", "-q", "--bare", remote]);
+    g("remote", "add", "origin", remote);
+    g("push", "-q", "-u", "origin", "main");
+  }
+  // Written after the branches are made, so no commit carries it.
+  function config(text: string): void {
+    mkdirSync(join(s.repo, ".openqodex"), { recursive: true });
+    writeFileSync(join(s.repo, ".openqodex/config.yaml"), text);
+  }
+  const prePush = (line: string) => cli(s, ["hook", "pre-push", "origin"], { input: `${line}\n` });
+
+  it("6. the git hook refuses a force push over a remote commit the review never measured from", async () => {
+    withRemote();
+    const base = g("rev-parse", "HEAD");
+    g("checkout", "-q", "-b", "remote-side");
+    writeFileSync(join(s.repo, "guard.txt"), "a guard the remote holds\n");
+    g("add", "-A");
+    g("commit", "-q", "-m", "guard");
+    g("push", "-q", "origin", "remote-side:feature");
+    const remoteSha = g("rev-parse", "HEAD");
+    g("checkout", "-q", "-b", "feature-local", base);
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    g("add", "-A");
+    g("commit", "-q", "-m", "readme");
+    const head = g("rev-parse", "HEAD");
+    config("review:\n  block_on_severity: critical\n  default_base: main\n");
+    expect(await review()).toBe(0);
+    expect(prePush(`refs/heads/feature-local ${head} refs/heads/feature-new ${"0".repeat(40)}`).status).toBe(0);
+    const forced = prePush(`refs/heads/feature-local ${head} refs/heads/feature ${remoteSha}`);
+    expect(forced.status, forced.stderr).toBe(1);
+    expect(forced.stderr).toContain("has not reviewed this change");
+  });
+
+  it("7. the agent hook checks the commit the push names, not the checkout", async () => {
+    withRemote();
+    g("branch", "unreviewed");
+    g("checkout", "-q", "unreviewed");
+    writeFileSync(join(s.repo, "other.txt"), "never reviewed\n");
+    g("add", "-A");
+    g("commit", "-q", "-m", "unreviewed");
+    g("checkout", "-q", "main");
+    config("review:\n  block_on_severity: critical\n");
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    expect(await review()).toBe(0);
+    expect(check("git push")).toBe("");
+    expect(check("git add -A && git commit -qm readme && git push")).toBe("");
+    const named = check("git push origin unreviewed:main");
+    expect(named, named).toContain('"permissionDecision":"deny"');
+    expect(named).toContain("has not reviewed this change");
+    expect(check("git push origin +unreviewed:refs/heads/main")).toContain('"permissionDecision":"deny"');
   });
 });

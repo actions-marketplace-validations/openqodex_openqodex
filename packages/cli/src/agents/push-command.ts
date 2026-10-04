@@ -193,9 +193,18 @@ const isPushAlias = (expansion: string): boolean => /^push(\s|$)/.test(expansion
 // Looks up `git config --get alias.<name>` in a folder; null when unset.
 export type AliasLookup = (folder: string, name: string) => Promise<string | null>;
 
+// One `git push` on the line: the folder it runs in and the words after
+// `push` (for an alias, the words its expansion adds, then the rest).
+export type PushCommand = { folder: string; args: string[] };
+
 // The folder of every `git push` on the line, in order, without repeats.
 export async function pushFolders(line: string, cwd: string, lookupAlias: AliasLookup): Promise<string[]> {
-  const found: string[] = [];
+  return [...new Set((await pushCommands(line, cwd, lookupAlias)).map((p) => p.folder))];
+}
+
+// Every `git push` on the line, in order.
+export async function pushCommands(line: string, cwd: string, lookupAlias: AliasLookup): Promise<PushCommand[]> {
+  const found: PushCommand[] = [];
   const dirs: string[] = [cwd];
   let words: string[] = [];
 
@@ -250,12 +259,12 @@ export async function pushFolders(line: string, cwd: string, lookupAlias: AliasL
     const sub = ws[j];
     if (sub === undefined) return;
     let push = sub === "push";
-    if (!push && aliases[sub] !== undefined) push = isPushAlias(aliases[sub]);
-    else if (!push && !GIT_BUILTINS.has(sub) && !sub.startsWith("-")) {
-      const expansion = await lookupAlias(folder, sub);
-      push = expansion !== null && isPushAlias(expansion);
-    }
-    if (push && !found.includes(folder)) found.push(folder);
+    let expansion: string | null = null;
+    if (!push && aliases[sub] !== undefined) expansion = aliases[sub];
+    else if (!push && !GIT_BUILTINS.has(sub) && !sub.startsWith("-")) expansion = await lookupAlias(folder, sub);
+    if (!push && expansion !== null) push = isPushAlias(expansion);
+    const added = expansion === null ? [] : expansion.trim().split(/\s+/).slice(1);
+    if (push) found.push({ folder, args: [...added, ...ws.slice(j + 1)] });
   };
 
   for (const t of tokenize(line)) {
