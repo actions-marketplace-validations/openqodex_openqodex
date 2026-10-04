@@ -2,9 +2,9 @@
 "openqodex": minor
 ---
 
-- The GitHub Action reads a pull request's OpenQodex config from its base commit, so the pull request cannot hide findings through its own config. The new input `config-from: head` reads the pull request's config instead.
+- The GitHub Action reads a pull request's OpenQodex config from its base branch, so the pull request cannot hide findings through its own config; when the base cannot be read it uses the built-in defaults, never the pull request's file. The new input `config-from: head` reads the pull request's config instead. A wrong `config-from` or `block-on-severity` value now fails the step.
 - The GitHub Action handles a failed scanner install like a failed scan: a warning and `status: tool-failed`, and a failed job only with `fail-on-tool-error: true`. An incomplete review in SARIF is now a failed run that names what is missing.
-- The push hooks check each range a push sends against the commit the remote holds, so a force push over work the review never saw is not covered by it. The agent hook reads the branches the push command names; a push it cannot follow (such as `--mirror` or a URL remote) counts as unreviewed.
+- The push hooks check each range a push sends against the commit the remote holds, so a force push over work the review never saw is not covered by it. The agent hook follows only a plain `git push` with branch names and counts any other push command as unreviewed (a deny when `block_on_severity` is set); the git pre-push hook stays the check that holds.
 - A review stops before the reviewer starts when a file name holds a secret the scanners found, and the reviewer's trace is redacted like the report.
 - A review counts a changed file that was too large to map or brief as unread until the reviewer reads it.
 - A finding must start on a changed line and end within the file and 200 lines.

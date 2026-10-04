@@ -15,9 +15,13 @@
 //     empty input, or the tool's text writes a workflow command of its own (a
 //     line break, `::`, `%` or a control character).
 //  9. In a pull request the head's config hides findings (disabled_rules,
-//     scanners.disable, severity_threshold): the config must come from the base.
+//     scanners.disable, severity_threshold): the config must come from the
+//     base branch, and a failed fetch, a missing file or an odd branch name
+//     falls back to the built-in defaults, never to the head's file.
+// 10. A wrong config-from or block-on-severity input is taken silently.
+// 11. A pull request adds a custom scanner that then runs in CI.
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +32,8 @@ type Step = { name?: string; id?: string; if?: string; run?: string; env?: Recor
 const here = dirname(fileURLToPath(import.meta.url));
 const action = parse(readFileSync(join(here, "..", "..", "..", "action.yml"), "utf8")) as { inputs: Record<string, { default?: string }>; outputs?: Record<string, { value: string }>; runs: { steps: Step[] } };
 const step = (name: string) => action.runs.steps.find((s) => s.name === name);
+const SCRIPT_PATH = join(here, "..", "..", "..", "scripts", "action-scan.sh");
+const SCRIPT = readFileSync(SCRIPT_PATH, "utf8");
 
 describe("the GitHub Action", () => {
   it("1, 3, 5. fails the job on exit 1, and on exit 2 only when fail-on-tool-error is true", () => {
@@ -38,7 +44,8 @@ describe("the GitHub Action", () => {
   });
 
   it("4. on exit 2 it writes a warning annotation, a job summary line and status tool-failed", () => {
-    const run = step("Scan the change")?.run ?? "";
+    expect(step("Scan the change")?.run).toBe('bash "${GITHUB_ACTION_PATH}/scripts/action-scan.sh"');
+    const run = SCRIPT;
     expect(run).toContain("::warning title=OpenQodex did not run::");
     expect(run).toContain("GITHUB_STEP_SUMMARY");
     for (const status of ["passed", "blocked", "tool-failed"]) expect(run).toContain(`status=${status}`);
@@ -48,7 +55,7 @@ describe("the GitHub Action", () => {
   it("6. passes the block-on-severity input to the scan, and the flag wins over the repository's config", () => {
     const scan = step("Scan the change");
     expect(scan?.env?.BLOCK_ON_SEVERITY).toBe("${{ inputs.block-on-severity }}");
-    expect(scan?.run).toContain("--block-on-severity");
+    expect(SCRIPT).toContain("--block-on-severity");
     // The flag against the built CLI: the file says nothing blocks below critical, the flag says minor.
     const dir = mkdtempSync(join(tmpdir(), "oq-action-"));
     const git = (...a: string[]) => spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: dir, encoding: "utf8" });
@@ -66,8 +73,7 @@ describe("the GitHub Action", () => {
   });
 
   it("2. says first that it runs the scanners only and is not a review", () => {
-    const scan = step("Scan the change");
-    const first = scan?.run?.split("\n").find((l) => l.trim() !== "");
+    const first = SCRIPT.split("\n").find((l) => l.trim() !== "" && !l.startsWith("#") && !l.startsWith("set "));
     expect(first).toMatch(/^echo "OpenQodex scanners only: .*not a review/);
   });
 });
@@ -75,7 +81,8 @@ describe("the GitHub Action", () => {
 // The scan step run as GitHub runs a composite bash step (bash -eo pipefail),
 // in a real repository, with `npx` standing in for the package download: it
 // runs this build of the CLI. To keep the test offline and fast it leaves
-// out doctor's --install and gives scan --no-install and --only sqllint.
+// out doctor's --install and gives scan --no-install and, unless the test
+// sets OQ_ALL_SCANNERS, --only sqllint.
 function runStep(dir: string, env: Record<string, string>): { status: number | null; stdout: string; outputs: string } {
   const bin = join(here, "..", "dist", "bin.js");
   const shim = mkdtempSync(join(tmpdir(), "oq-npx-"));
@@ -85,7 +92,8 @@ function runStep(dir: string, env: Record<string, string>): { status: number | n
       "#!/bin/sh",
       'shift; shift',
       'if [ "$1" = "doctor" ]; then shift; set -- doctor $(for a in "$@"; do [ "$a" = "--install" ] || printf "%s\\n" "$a"; done); fi',
-      'if [ "$1" = "scan" ]; then shift; set -- scan --no-install --only sqllint "$@"; fi',
+      'if [ "$1" = "scan" ] && [ -z "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install --only sqllint "$@"; fi',
+      'if [ "$1" = "scan" ] && [ -n "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install "$@"; fi',
       `exec "${process.execPath}" "${bin}" "$@"`,
       "",
     ].join("\n"),
@@ -94,10 +102,10 @@ function runStep(dir: string, env: Record<string, string>): { status: number | n
   const temp = mkdtempSync(join(tmpdir(), "oq-runner-"));
   const outputs = join(temp, "output");
   writeFileSync(outputs, "");
-  const r = spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", step("Scan the change")!.run!], {
+  const r = spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", SCRIPT_PATH], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${shim}:${process.env.PATH}`, RUNNER_TEMP: temp, GITHUB_OUTPUT: outputs, GITHUB_STEP_SUMMARY: join(temp, "summary"), OPENQODEX_HOME: mkdtempSync(join(tmpdir(), "oq-action-home-")), OPENQODEX_VERSION: "0.0.0", BASE_SHA: "", BLOCK_ON_SEVERITY: "", CONFIG_FROM: "base", EVENT_NAME: "push", ...env },
+    env: { ...process.env, PATH: `${shim}:${process.env.PATH}`, RUNNER_TEMP: temp, GITHUB_OUTPUT: outputs, GITHUB_STEP_SUMMARY: join(temp, "summary"), OPENQODEX_HOME: mkdtempSync(join(tmpdir(), "oq-action-home-")), OPENQODEX_VERSION: "0.0.0", BASE_SHA: "", BASE_REF: "", BLOCK_ON_SEVERITY: "", CONFIG_FROM: "base", EVENT_NAME: "push", ...env },
   });
   return { status: r.status, stdout: r.stdout, outputs: readFileSync(outputs, "utf8") };
 }
@@ -116,7 +124,7 @@ const SQL = "CREATE OR REPLACE FUNCTION public.admin_get_hygiene()\nRETURNS json
 
 describe("the scan step, run", () => {
   it("7. every step that runs openqodex sits under the tool-failure policy: an unreadable config warns and passes", () => {
-    const runs = action.runs.steps.filter((s) => s.run?.includes("openqodex@"));
+    const runs = action.runs.steps.filter((s) => s.run?.includes("openqodex@") || s.run?.includes("action-scan.sh"));
     expect(runs.map((s) => s.name)).toEqual(["Scan the change"]);
     const { dir } = gitRepo();
     writeFileSync(join(dir, ".openqodex.yaml"), "review: [\n");
@@ -127,8 +135,8 @@ describe("the scan step, run", () => {
   });
 
   it("8. the reason line survives empty input and carries no workflow command of its own", () => {
-    const script = step("Scan the change")!.run!;
-    const fn = /last_line\(\) \{[\s\S]*?\n\s*\}/.exec(script)?.[0];
+    const script = SCRIPT;
+    const fn = /last_line\(\) \{[\s\S]*?\n\}/.exec(script)?.[0];
     expect(fn).toBeDefined();
     const file = join(mkdtempSync(join(tmpdir(), "oq-reason-")), "err");
     const reason = (text: string) => {
@@ -145,18 +153,71 @@ describe("the scan step, run", () => {
     expect(hostile.stdout).toContain("%250A");
   });
 
-  it("9. in a pull request the base branch's config decides, unless config-from is head", () => {
-    const { dir, git } = gitRepo();
+  // A clone whose origin holds the base branch `main`, and a pull request
+  // commit on top whose own config hides every finding.
+  function pullRequest(baseConfig: string | null, headConfig: string): { dir: string; base: string } {
+    const { dir: origin, git: og } = gitRepo();
+    if (baseConfig !== null) {
+      mkdirSync(join(origin, ".openqodex"));
+      writeFileSync(join(origin, ".openqodex/config.yaml"), baseConfig);
+      og("add", "-A");
+      og("commit", "-qm", "Team config");
+    }
+    const dir = mkdtempSync(join(tmpdir(), "oq-action-clone-"));
+    spawnSync("git", ["clone", "-q", origin, dir]);
+    const git = (...a: string[]) => spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: dir, encoding: "utf8" }).stdout.trim();
     const base = git("rev-parse", "HEAD");
-    writeFileSync(join(dir, ".openqodex.yaml"), "review:\n  disabled_rules: ['*']\nscanners:\n  disable: [sqllint]\n");
+    writeFileSync(join(dir, ".openqodex.yaml"), headConfig);
+    rmSync(join(dir, ".openqodex"), { recursive: true, force: true });
     mkdirSync(join(dir, "db"));
     writeFileSync(join(dir, "db/x.sql"), SQL);
     git("add", "-A");
     git("commit", "-qm", "Hide everything");
-    const pr = { EVENT_NAME: "pull_request", BASE_SHA: base, BLOCK_ON_SEVERITY: "info" };
+    git("update-ref", "-d", "refs/remotes/origin/main");
+    return { dir, base };
+  }
+  const HIDE = "review:\n  disabled_rules: ['*']\nscanners:\n  disable: [sqllint]\n";
+
+  it("9. in a pull request the base branch's config decides, unless config-from is head", () => {
+    const { dir, base } = pullRequest("review:\n  severity_threshold: info\n", HIDE);
+    const pr = { EVENT_NAME: "pull_request", BASE_SHA: base, BASE_REF: "main", BLOCK_ON_SEVERITY: "info" };
     const fromBase = runStep(dir, pr);
     expect(fromBase.status).toBe(0);
     expect(fromBase.outputs).toContain("status=blocked");
     expect(runStep(dir, { ...pr, CONFIG_FROM: "head" }).outputs).toContain("status=passed");
+  });
+
+  it("9. a base with no config, a failed fetch or an odd branch name gives the built-in defaults, never the head's file", () => {
+    const { dir, base } = pullRequest(null, HIDE);
+    const pr = { EVENT_NAME: "pull_request", BASE_SHA: base, BASE_REF: "main", BLOCK_ON_SEVERITY: "info" };
+    expect(runStep(dir, pr).outputs).toContain("status=blocked");
+    const missing = runStep(dir, { ...pr, BASE_REF: "no-such-branch" });
+    expect(missing.outputs).toContain("status=blocked");
+    expect(missing.stdout).toContain("::warning title=OpenQodex config::could not fetch the base branch");
+    for (const odd of ["-x", "main;rm", "a b", "$(id)"]) {
+      const r = runStep(dir, { ...pr, BASE_REF: odd });
+      expect(r.outputs, odd).toContain("status=blocked");
+      expect(r.stdout, odd).toContain("not a plain branch name");
+    }
+  });
+
+  it("10. a wrong config-from or block-on-severity fails the step with one line", () => {
+    const { dir } = gitRepo();
+    for (const env of [{ CONFIG_FROM: "both" }, { BLOCK_ON_SEVERITY: "high" }]) {
+      const r = runStep(dir, env);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toMatch(/::error title=OpenQodex input::/);
+    }
+  });
+
+  it("11. a custom scanner the pull request adds never runs in CI, whichever config is used", () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "oq-custom-")), "ran");
+    const custom = `scanners:\n  custom:\n    - source: https://github.com/example/planted\n      run: touch ${marker} {report} {target}\n`;
+    const { dir, base } = pullRequest(null, custom);
+    for (const from of ["base", "head"]) {
+      const r = runStep(dir, { EVENT_NAME: "pull_request", BASE_SHA: base, BASE_REF: "main", CONFIG_FROM: from, OQ_ALL_SCANNERS: "1" });
+      expect(r.outputs, from).toMatch(/status=(passed|blocked)/);
+      expect(existsSync(marker), from).toBe(false);
+    }
   });
 });
