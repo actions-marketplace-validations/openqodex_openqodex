@@ -44,7 +44,6 @@ const GIT_CONFIG = [
 ];
 
 const DIFF_FLAGS = [
-  "--cached",
   "--no-color",
   "--no-ext-diff",
   "--no-textconv",
@@ -407,138 +406,169 @@ export async function getChange(args: {
     // pathspec on every diff below instead.
     await gitOk(repoRoot, ["add", "-A", "--", "."], { env, config: noFilters });
 
-    const diffArgs = (extra: string[], skip: string[] = []): string[] => [
-      "diff",
-      ...DIFF_FLAGS,
-      ...extra,
-      base.sha,
-      "--",
-      STATE_PATHSPEC,
-      ...skip,
-    ];
-    const [nameStatus, numstatBuf, raw] = await Promise.all([
-      gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }),
-      gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env }),
-      gitOk(repoRoot, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
-    ]);
-
-    const id = createHash("sha256").update(`${base.sha}\n`).update(raw).digest("hex");
-    const numstat = parseNumstat(numstatBuf);
-
-    // Decide from the counts alone, before any patch is read, which files get
-    // coverage and which may go into the brief.
-    const files: ChangedFile[] = [];
-    const skipped: string[] = []; // excluded by the developer
-    const covered = new Set<string>();
-    const briefable = new Set<string>();
-    const tooLarge = new Set<string>();
-    let additions = 0;
-    let deletions = 0;
-    let coveredLines = 0;
-    let briefLowerBound = 0;
-    for (const pair of parseNameStatus(nameStatus)) {
-      if (excluded(pair.path, exclude)) {
-        skipped.push(pair.path);
-        continue;
-      }
-      const stat = numstat.get(pair.path) ?? { additions: 0, deletions: 0, binary: false };
-      files.push({ ...pair, binary: stat.binary });
-      additions += stat.additions;
-      deletions += stat.deletions;
-      if (pair.status !== "deleted") {
-        if (coveredLines + stat.additions > COVERAGE_MAX_LINES) {
-          tooLarge.add(pair.path);
-          continue;
-        }
-        coveredLines += stat.additions;
-        covered.add(pair.path);
-      }
-      // Each added or removed line costs at least two bytes of patch.
-      const minimum = 2 * (stat.additions + stat.deletions);
-      if (briefLowerBound + minimum > DIFF_CAP_BYTES) {
-        tooLarge.add(pair.path);
-        continue;
-      }
-      briefLowerBound += minimum;
-      briefable.add(pair.path);
-    }
-
-    const textArgs = ["--src-prefix=a/", "--dst-prefix=b/"];
-    const opts = { env };
-
-    const parser = createCoverageParser();
-    await streamPatch(
-      (onLine) =>
-        gitLines(
-          repoRoot,
-          diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
-          opts,
-          COVERAGE_MAX_LINE_BYTES,
-          onLine,
-        ),
-      (path, line) => {
-        if (path !== null && covered.has(path)) parser.push(line);
-        else if (line.startsWith("diff --git ")) parser.push(line);
-      },
-    );
-    const coverage = parser.result();
-    for (const path of coverage.keys()) if (!covered.has(path)) coverage.delete(path);
-
-    // The brief's diff, kept per path within the cap; a file that does not
-    // fit is dropped whole as soon as it overflows.
-    const text = new Map<string, string[]>();
-    const size = new Map<string, number>();
-    let total = 0;
-    await streamPatch(
-      (onLine) =>
-        gitLines(
-          repoRoot,
-          diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
-          opts,
-          DIFF_CAP_BYTES + 1,
-          onLine,
-        ),
-      (path, line, cut) => {
-        if (path === null || !briefable.has(path) || tooLarge.has(path)) return;
-        const bytes = Buffer.byteLength(line, "utf8") + 1;
-        if (cut || total + bytes > DIFF_CAP_BYTES) {
-          total -= size.get(path) ?? 0;
-          text.delete(path);
-          size.delete(path);
-          tooLarge.add(path);
-          return;
-        }
-        const lines = text.get(path) ?? [];
-        lines.push(line);
-        text.set(path, lines);
-        size.set(path, (size.get(path) ?? 0) + bytes);
-        total += bytes;
-      },
-    );
-
-    const notReviewed = files.filter((f) => tooLarge.has(f.path)).map((f) => f.path);
-    const diff = files
-      .filter((f) => text.has(f.path))
-      .map((f) => `${text.get(f.path)!.join("\n")}\n`)
-      .join("");
-    const changedPaths = files.filter((f) => f.status !== "deleted").map((f) => f.path);
-
-    return {
-      repoRoot,
-      baseRef: base.ref,
-      baseSha: base.sha,
-      id,
-      shortId: id.slice(0, 12),
-      files,
-      changedPaths,
-      coverage,
-      diff,
-      notReviewed,
-      stats: { files: files.length, additions, deletions },
-    };
+    return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], env, exclude });
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+}
+
+// A change between two commits, read from their trees alone: the files on
+// disk and the index play no part, so nothing placed in a checkout of the
+// head can show in it or hide part of it. `baseSha` is the merge base, so
+// what landed on the base after the split is not shown as reverted.
+export async function getTreeChange(args: {
+  repoRoot: string;
+  baseRef: string;
+  baseSha: string;
+  headSha: string;
+  exclude: string[];
+}): Promise<Change> {
+  return diffChange({ ...args, range: [args.baseSha, args.headSha], env: process.env });
+}
+
+// Everything after the two sides are known: the file list, the id, the
+// changed lines and the brief's diff, from `git diff <range>`.
+async function diffChange(args: {
+  repoRoot: string;
+  baseRef: string;
+  baseSha: string;
+  range: string[];
+  env: NodeJS.ProcessEnv;
+  exclude: string[];
+}): Promise<Change> {
+  const { repoRoot, exclude, env } = args;
+  const diffArgs = (extra: string[], skip: string[] = []): string[] => [
+    "diff",
+    ...DIFF_FLAGS,
+    ...extra,
+    ...args.range,
+    "--",
+    STATE_PATHSPEC,
+    ...skip,
+  ];
+  const [nameStatus, numstatBuf, raw] = await Promise.all([
+    gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }),
+    gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env }),
+    gitOk(repoRoot, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
+  ]);
+
+  const id = createHash("sha256").update(`${args.baseSha}\n`).update(raw).digest("hex");
+  const numstat = parseNumstat(numstatBuf);
+
+  // Decide from the counts alone, before any patch is read, which files get
+  // coverage and which may go into the brief.
+  const files: ChangedFile[] = [];
+  const skipped: string[] = []; // excluded by the developer
+  const covered = new Set<string>();
+  const briefable = new Set<string>();
+  const tooLarge = new Set<string>();
+  let additions = 0;
+  let deletions = 0;
+  let coveredLines = 0;
+  let briefLowerBound = 0;
+  for (const pair of parseNameStatus(nameStatus)) {
+    if (excluded(pair.path, exclude)) {
+      skipped.push(pair.path);
+      continue;
+    }
+    const stat = numstat.get(pair.path) ?? { additions: 0, deletions: 0, binary: false };
+    files.push({ ...pair, binary: stat.binary });
+    additions += stat.additions;
+    deletions += stat.deletions;
+    if (pair.status !== "deleted") {
+      if (coveredLines + stat.additions > COVERAGE_MAX_LINES) {
+        tooLarge.add(pair.path);
+        continue;
+      }
+      coveredLines += stat.additions;
+      covered.add(pair.path);
+    }
+    // Each added or removed line costs at least two bytes of patch.
+    const minimum = 2 * (stat.additions + stat.deletions);
+    if (briefLowerBound + minimum > DIFF_CAP_BYTES) {
+      tooLarge.add(pair.path);
+      continue;
+    }
+    briefLowerBound += minimum;
+    briefable.add(pair.path);
+  }
+
+  const textArgs = ["--src-prefix=a/", "--dst-prefix=b/"];
+  const opts = { env };
+
+  const parser = createCoverageParser();
+  await streamPatch(
+    (onLine) =>
+      gitLines(
+        repoRoot,
+        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+        opts,
+        COVERAGE_MAX_LINE_BYTES,
+        onLine,
+      ),
+    (path, line) => {
+      if (path !== null && covered.has(path)) parser.push(line);
+      else if (line.startsWith("diff --git ")) parser.push(line);
+    },
+  );
+  const coverage = parser.result();
+  for (const path of coverage.keys()) if (!covered.has(path)) coverage.delete(path);
+  const deletionPoints = parser.deletionPoints();
+  for (const path of deletionPoints.keys()) if (!covered.has(path)) deletionPoints.delete(path);
+
+  // The brief's diff, kept per path within the cap; a file that does not
+  // fit is dropped whole as soon as it overflows.
+  const text = new Map<string, string[]>();
+  const size = new Map<string, number>();
+  let total = 0;
+  await streamPatch(
+    (onLine) =>
+      gitLines(
+        repoRoot,
+        diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+        opts,
+        DIFF_CAP_BYTES + 1,
+        onLine,
+      ),
+    (path, line, cut) => {
+      if (path === null || !briefable.has(path) || tooLarge.has(path)) return;
+      const bytes = Buffer.byteLength(line, "utf8") + 1;
+      if (cut || total + bytes > DIFF_CAP_BYTES) {
+        total -= size.get(path) ?? 0;
+        text.delete(path);
+        size.delete(path);
+        tooLarge.add(path);
+        return;
+      }
+      const lines = text.get(path) ?? [];
+      lines.push(line);
+      text.set(path, lines);
+      size.set(path, (size.get(path) ?? 0) + bytes);
+      total += bytes;
+    },
+  );
+
+  const notReviewed = files.filter((f) => tooLarge.has(f.path)).map((f) => f.path);
+  const diff = files
+    .filter((f) => text.has(f.path))
+    .map((f) => `${text.get(f.path)!.join("\n")}\n`)
+    .join("");
+  const changedPaths = files.filter((f) => f.status !== "deleted").map((f) => f.path);
+
+  return {
+    repoRoot,
+    baseRef: args.baseRef,
+    baseSha: args.baseSha,
+    id,
+    shortId: id.slice(0, 12),
+    files,
+    changedPaths,
+    coverage,
+    deletionPoints,
+    diff,
+    notReviewed,
+    stats: { files: files.length, additions, deletions },
+  };
 }
 
 // ---------- the whole repo (`review --all`) ----------
@@ -696,6 +726,7 @@ export async function getWholeRepo(args: { repoRoot: string; exclude: string[] }
     files,
     changedPaths: files.map((f) => f.path),
     coverage: new Map(),
+    deletionPoints: new Map(),
     diff: "",
     notReviewed,
     stats: { files: files.length, additions: total, deletions: 0 },
