@@ -174,6 +174,24 @@ function touchesChange(f: AgentFinding, change: Change): string | null {
   return `${where} not a line this change added or modified`;
 }
 
+// The longest range a version 2 finding may cite, first line to last.
+const MAX_FINDING_SPAN = 200;
+
+// A version 2 finding's range: it starts on a changed line or a deletion
+// anchor, and ends within the file and within MAX_FINDING_SPAN lines of its
+// start. Overlapping a changed line is not enough: `1` to `999999` overlaps
+// every change. Null when the range is sound.
+function citesChange(path: string, start: number, end: number, change: Change, lineCount: (path: string) => number | null): string | null {
+  if (!change.files.some((file) => file.path === path)) return "the file is not in this change; cite a changed line, or a line next to a deletion";
+  const changed = change.coverage.get(path)?.has(start) || (change.deletionPoints.get(path) ?? []).some((p) => p.anchors.includes(start));
+  if (!changed) return `line ${start} of ${path} is not a line this change added or modified; start the range on a changed line, or a line next to a deletion`;
+  const count = lineCount(path);
+  if (count !== null && end > count) return `line ${end} of ${path} does not exist; it has ${count} lines`;
+  const span = end - start + 1;
+  if (span > MAX_FINDING_SPAN) return `the range spans ${span} lines; the limit is ${MAX_FINDING_SPAN}, so cite the lines that show the problem`;
+  return null;
+}
+
 // `review --all`: the whole repository is the change, so a finding is in
 // scope when its file is a text file in the inventory and its lines are
 // within the file's line count. Anything else is a wrong citation, rejected
@@ -462,15 +480,14 @@ export function checkSubmission(args: {
         if (c.token !== src) errors.push(`${at}.source: it raises ${c.id}, so source must be "${c.token}"`);
       }
     }
-    const asFinding: AgentFinding = { ...f, description: "", suggested_change: f.suggested_change ?? null, source: src };
     if (args.wholeRepo) {
       const count = args.wholeRepo.lines.get(f.file_path);
       const end = f.line_end ?? f.line_number;
       if (count === undefined) errors.push(`${at}.file_path: ${f.file_path} is not a text file in this review`);
       else if (end > count) errors.push(`${at}.line_number: line ${end} of ${f.file_path} does not exist; it has ${count} lines`);
     } else {
-      const outside = touchesChange(asFinding, change);
-      if (outside !== null) errors.push(`${at}: ${outside}; cite a changed line, or a line next to a deletion`);
+      const wrong = citesChange(f.file_path, f.line_number, f.line_end ?? f.line_number, change, args.lineCount);
+      if (wrong !== null) errors.push(`${at}: ${wrong}`);
     }
   });
 

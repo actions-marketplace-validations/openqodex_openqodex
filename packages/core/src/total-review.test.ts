@@ -25,6 +25,9 @@
 //     an image (fetched when the report is viewed), a link, a heading, raw
 //     HTML, a table cell, a fence, or a line that imitates a fixed label; or
 //     a control character reaches the terminal.
+// 13. A finding range that only overlaps a changed line is accepted: one that
+//     starts on an unchanged line, ends past the end of the file, or spans
+//     far beyond its start (`line_number: 1, line_end: 999999`).
 import { describe, expect, it } from "vitest";
 import { changedHunks, completionRecord, readCoverage } from "./completion.js";
 import type { TraceEntry } from "./completion.js";
@@ -119,6 +122,21 @@ describe("submission version 2", () => {
     expect(errorsOf(withFinding({ line_number: 3, file_path: "app/search.py" })).join("\n")).toMatch(/not a line this change added or modified/);
     const dropped = [{ candidate: "c2", reason: "A sample key.", file_path: "app/settings.py", line_number: 99 }, (v2().dropped as unknown[])[1]];
     expect(errorsOf(v2({ dropped })).join("\n")).toMatch(/line 99 of app\/settings.py, which has 3 lines/);
+  });
+  it("13. rejects a range that starts on an unchanged line, ends past the file or spans too far, though it overlaps a changed line", () => {
+    expect(errorsOf(withFinding({ line_number: 1, line_end: 999_999 })).join("\n")).toMatch(/line 1 of app\/search.py is not a line this change added or modified/);
+    expect(errorsOf(withFinding({ line_number: 14, line_end: 41 })).join("\n")).toMatch(/line 41 of app\/search.py does not exist; it has 40 lines/);
+    const long = check(withFinding({ line_number: 14, line_end: 40 }));
+    expect(long.ok).toBe(true);
+    const lines = (path: string) => (path === "app/search.py" ? 1000 : lineCount(path));
+    const change = makeChange();
+    const wide = checkSubmission({ change, scan: makeScan(), manifest: makeManifest(change), config: makeConfig(), submission: withFinding({ line_number: 14, line_end: 300 }), lineCount: lines });
+    expect(wide.ok ? [] : wide.errors.join("\n")).toMatch(/spans 287 lines; the limit is 200/);
+  });
+  it("13. accepts a range that starts on a deletion anchor", () => {
+    const change = makeChange({ deletionPoints: new Map([["app/search.py", [{ after: 20, lines: 2, anchors: [20, 21] }]]]) });
+    const r = checkSubmission({ change, scan: makeScan(), manifest: makeManifest(change), config: makeConfig(), submission: withFinding({ line_number: 21, line_end: 25 }), lineCount });
+    expect(r.ok).toBe(true);
   });
   it("5. rejects a finding with no consequence", () => {
     const base = { ...(v2().findings as Record<string, unknown>[])[0]! };
