@@ -95,8 +95,8 @@ export async function scanChange<C extends Change>(args: {
       installBudgetMs: INSTALL_BUDGET_MS,
       onProgress,
     }),
-    // Approvals belong to the developer's repository; an approved scanner
-    // runs in workDir, where the files are.
+    // Approvals and the scanner list belong to the developer's repository and
+    // its config; an approved scanner runs in workDir, where the files are.
     custom: config.custom.length > 0 ? customAdapters(repoRoot, config) : [],
     only: args.only,
     skip: args.skip,

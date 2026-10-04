@@ -3,13 +3,13 @@
 // `refs/pull/<n>/head` ref on that remote, read by `git fetch` exactly as on
 // GitHub. Every case guards one failure, named in its title.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Report, RunManifest } from "@openqodex/core";
 import "./global-setup.js";
-import { git, readJson, run, writeConfig } from "./support.js";
+import { git, readJson, run, toolsHome, writeConfig } from "./support.js";
 import type { Result } from "./support.js";
 
 // No scanner fits a text file: the cases test the target, not the scanners.
@@ -228,7 +228,10 @@ describe("review <target>: settings and what runs", () => {
     const tree = checkoutOf(a)!;
     expect(readFileSync(join(tree, ".openqodex.yaml"), "utf8")).toContain("critical");
     expect(readFileSync(join(tree, ".openqodex/custom-instructions.md"), "utf8")).toContain("Developer says");
+    // Named only in the target's config: never run, not even listed as untrusted.
     expect(existsSync(probe)).toBe(false);
+    expect(readJson<{ scanners: { scanner: string }[] }>(join(a.dir, "scan.json")).scanners.map((s) => s.scanner)).not.toContain("custom:evil");
+    expect(a.brief).not.toContain("evil");
   });
 
   it("runs a custom scanner the developer approved, in the temporary checkout", () => {
@@ -244,9 +247,11 @@ describe("review <target>: settings and what runs", () => {
     expect(out.status).toBe(0);
     const report = JSON.parse(out.stdout) as Report;
     expect(report.scanners.find((s) => s.scanner === "custom:probe")?.status).toBe("ran");
+    // The checkout is gone by now, so the path is compared as written.
     const cwd = readFileSync(where, "utf8").trim();
     expect(cwd).not.toBe(r.dev);
-    expect(cwd).toContain("openqodex-target-");
+    expect(cwd.endsWith("/tree")).toBe(true);
+    expect(cwd).toContain(`${realpathSync(toolsHome).replace(/^\/private/, "")}/checkouts/`);
   });
 
   it("runs no hook and no filter from the repo's config while checking out the target", () => {
@@ -327,6 +332,48 @@ describe("review <target>: the agent flow and the temporary checkout", () => {
     expect(run("target-sweep", r.dev, ["review", "second", "--base", "origin/main", ...FAST]).status).toBe(0);
     expect(existsSync(dirname(checkoutOf(c)!))).toBe(false);
     expect(git(r.dev, "worktree", "list")).not.toContain(checkoutOf(c)!);
+  });
+});
+
+describe("review <target>: checkouts live only in the developer's openqodex home", () => {
+  let r: Repos; let home: string;
+  const old = new Date(Date.now() - 25 * 3600_000);
+  // A folder that looks like an abandoned checkout of this repo: a marker a day old and a file.
+  const decoy = (folder: string) => {
+    write(folder, MARKER, JSON.stringify({ repo: r.dev, sha: "0".repeat(40), created: old.toISOString() }));
+    write(folder, "keep.txt", "not openqodex's to delete\n");
+    utimesSync(join(folder, MARKER), old, old);
+  };
+  const review = (label: string) => run(label, r.dev, ["review", "feature", "--base", "origin/main", ...FAST], { env: { OPENQODEX_HOME: home } });
+  beforeAll(() => { r = repos(); home = mkdtempSync(join(tmpdir(), "oq-target-home-")); }, 120_000);
+
+  it("ignores a folder with a forged marker in the OS temp folder", () => {
+    const planted = mkdtempSync(join(tmpdir(), "openqodex-target-"));
+    decoy(planted);
+    expect(review("target-forged-tmp").status).toBe(0);
+    expect(existsSync(join(planted, "keep.txt"))).toBe(true);
+  });
+  it("never follows a link inside the checkouts folder when it cleans up", () => {
+    const victim = mkdtempSync(join(tmpdir(), "oq-victim-"));
+    decoy(victim);
+    mkdirSync(join(home, "checkouts"), { recursive: true });
+    symlinkSync(victim, join(home, "checkouts", "linked"));
+    expect(review("target-linked-checkout").status).toBe(0);
+    expect(existsSync(join(victim, "keep.txt"))).toBe(true);
+    expect(lstatSync(join(home, "checkouts", "linked")).isSymbolicLink()).toBe(true);
+  });
+  it("refuses to finalize a run whose checkout is outside the checkouts folder", () => {
+    const a = agentReview("target-outside", r.dev, ["feature", "--base", "origin/main"], { OPENQODEX_HOME: home });
+    const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+    decoy(outside);
+    mkdirSync(join(outside, "tree"));
+    writeFileSync(join(a.dir, "manifest.json"), JSON.stringify({ ...a.manifest, target: { ...a.manifest.target, checkout: join(outside, "tree") } }));
+    findings(a, []);
+    const out = run("target-outside-finalize", r.dev, ["review", "--finalize", "--run", a.id], { env: { OPENQODEX_HOME: home } });
+    expect(out.status).toBe(2);
+    expect(out.stderr).toContain("outside");
+    expect(existsSync(join(outside, "keep.txt"))).toBe(true);
+    expect(existsSync(join(a.dir, "report.json"))).toBe(false);
   });
 });
 

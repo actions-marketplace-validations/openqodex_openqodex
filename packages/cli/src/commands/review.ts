@@ -44,7 +44,7 @@ import {
 import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, SelectedLens, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles, instructionsTemplate } from "../agents/repo-folder.js";
-import { TARGET_PREFIX, addCheckout, checkoutOwner, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
+import { addTargetCheckout, checkoutOwner, checkoutsDir, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
 import { HANDED_OFF } from "../update/trigger.js";
@@ -259,7 +259,7 @@ async function runTarget(
   let tree: string | null = null;
   if (t.headSha !== head || !cleanWorkTree(repoRoot)) {
     if (t.headSha === head) warn(`Uncommitted work is not part of a target review: reviewing the committed ${spec} at ${t.headSha.slice(0, 12)}`);
-    const checkout = await addCheckout(repoRoot, t.headSha, TARGET_PREFIX, true);
+    const checkout = await addTargetCheckout(repoRoot, t.headSha, `${change.shortId}-`);
     if (checkout === null) throw new OpenQodexError(`could not check out ${t.headSha.slice(0, 12)} to review ${spec}`);
     tree = checkout.tree;
   }
@@ -534,6 +534,10 @@ function findRunById(repoRoot: string, id: string): { dir: string; findingsPath:
 // The checkout a target review was briefed on, still at the head it recorded.
 function checkTargetCheckout(target: RunTarget): void {
   if (target.checkout === null) return;
+  // Only a checkout this tool made is read, or later removed.
+  if (!inCheckouts(target.checkout)) {
+    throw new OpenQodexError(`the run names a checkout outside ${checkoutsDir()}, which openqodex never makes; run the review again`);
+  }
   if (!existsSync(target.checkout)) throw new OpenQodexError(`the temporary checkout of ${target.spec} is gone; run the review again`);
   const head = spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: target.checkout, encoding: "utf8" }).stdout.trim();
   if (head !== target.head_sha) {
