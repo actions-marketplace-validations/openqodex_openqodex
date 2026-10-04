@@ -16,6 +16,8 @@
 //  5. An answer over the limit, or a trace that keeps growing, is held in
 //     memory before any check runs.
 //  6. The process group is left running after the driver gives up on it.
+//  7. A hook runs inside the reviewer session (a wrapper around the agent
+//     or a managed setting adds one) and the review still counts as isolated.
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,6 +28,9 @@ import { classify } from "../src/reviewers/trace.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RECORDED = readFileSync(join(here, "fixtures/claude-stream.jsonl"), "utf8");
+// The two events a real run printed when a terminal wrapper added a
+// SessionStart hook to the reviewer (recorded before hooks were switched off).
+const RECORDED_HOOK = readFileSync(join(here, "fixtures/claude-stream-hook.jsonl"), "utf8");
 
 // A stand-in `claude` that waits for the first message on stdin, then prints
 // `body` (a JavaScript expression of the lines, evaluated in the stand-in),
@@ -89,6 +94,14 @@ describe("the Claude Code stream reader, on a recorded run", () => {
     expect(classify(snapshotDir, turn.calls[1]!)).toMatchObject({ path: "/etc/hosts", inside: false, ok: false });
     expect(turn.usage).toEqual({ turns: 3, input_tokens: 4 + 8379 + 938, output_tokens: 127, cost_usd: 0.011735800000000001 });
     expect(turn.sessionId).toBe("36382685-600b-4b4a-963e-5930debfca89");
+    expect(pids.filter(alive)).toEqual([]);
+  });
+
+  it("7. a hook event in the stream ends the turn as a failure: the reviewer was not isolated", async () => {
+    const bin = standIn(`${JSON.stringify(RECORDED_HOOK + RECORDED)}.split('__SNAPSHOT__').join(snapshot)`);
+    const { turn, pids } = await runOnce(bin);
+    expect(turn.failure).toMatch(/a hook ran in the reviewer session/);
+    expect(turn.finalText).toBe("");
     expect(pids.filter(alive)).toEqual([]);
   });
 

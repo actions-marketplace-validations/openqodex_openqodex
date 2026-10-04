@@ -17,7 +17,7 @@ claude -p --output-format stream-json --verbose --input-format stream-json
   --tools Read,Grep,Glob
   --permission-mode dontAsk
   --setting-sources ""
-  --settings {"autoMemoryEnabled":false,"hooks":{}}
+  --settings {"autoMemoryEnabled":false,"hooks":{},"disableAllHooks":true}
   --strict-mcp-config --mcp-config {"mcpServers":{}}
   --disable-slash-commands
   --no-session-persistence
@@ -35,7 +35,7 @@ The child gets an environment built from an allowlist (`reviewerEnv` in `package
 | `--permission-mode dontAsk` | Reads inside the working directory succeed. A Read of an absolute path outside it (`/tmp/.../outside/secret.txt`, `/etc/hosts`, a decoy ssh config), a relative path that leaves it (`../outside/secret.txt`), a Read through a link inside the folder that points outside, and a Grep or Glob rooted outside (`/tmp/...`, `/`) were each refused with a `permission_denied` event and an error result. A recursive Grep and a `**/*` Glob in the folder did not follow the link out. |
 | `--tools Read,Grep,Glob,WebSearch,WebFetch --allowedTools WebSearch,WebFetch` (only with `reviewer_web: on`) | The `init` event lists the five tools. Without `--allowedTools`, `dontAsk` refused both web tools ("Permission to use WebFetch has been denied because Claude Code is running in don't ask mode"); with it, a WebFetch of example.com and a WebSearch both returned results (2026-10-03). |
 | `--setting-sources ""` | No user, project or local settings file is read. In the same folder, a run without this flag loaded the project `CLAUDE.md` canary (the answer ended with the canary word) and the user's global instructions (the answer quoted them, about 155,000 input tokens); with it, the input was about 4,500 tokens and neither canary nor any sentence of the global file appeared anywhere in the event stream. With `--include-hook-events`, a run reading user settings showed 11 hook events; this run showed none. |
-| `--settings {"autoMemoryEnabled":false,"hooks":{}}` | The `init` event has no `memory_paths`: auto memory is off. |
+| `--settings {"autoMemoryEnabled":false,"hooks":{},"disableAllHooks":true}` | The `init` event has no `memory_paths`: auto memory is off. With `disableAllHooks`, a SessionStart hook that a terminal wrapper (cmux) added to every `claude` it starts no longer ran: 2 hook events without it, 0 with it (2026-10-04, Claude Code 2.1.289). The driver also stops the run if any hook event appears in the stream. A repository `AGENTS.md` with a canary instruction was not followed. |
 | `--strict-mcp-config --mcp-config {"mcpServers":{}}` | The `init` event lists no MCP server. |
 | `--disable-slash-commands` | The `init` event lists no skill and no slash command. |
 | `--no-session-persistence` | Nothing is saved for a later `--resume`; the correction rounds use the open process instead. |

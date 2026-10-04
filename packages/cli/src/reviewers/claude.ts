@@ -40,7 +40,8 @@ export function claudeArgs(web: boolean): string[] {
     "--setting-sources",
     "",
     "--settings",
-    JSON.stringify({ autoMemoryEnabled: false, hooks: {} }),
+    // disableAllHooks also stops a hook that a wrapper around the agent adds.
+    JSON.stringify({ autoMemoryEnabled: false, hooks: {}, disableAllHooks: true }),
     "--strict-mcp-config",
     "--mcp-config",
     JSON.stringify({ mcpServers: {} }),
@@ -151,6 +152,10 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
   timer.unref();
 
   const onEvent = (e: Event): void => {
+    // A hook can put text into the session: one that runs means the reviewer is not isolated.
+    if (e.type === "system" && typeof e.subtype === "string" && e.subtype.startsWith("hook")) {
+      return fail(`a hook ran in the reviewer session (${str(e.hook_name) ?? "unnamed"}); the reviewer is not isolated`);
+    }
     if (e.type === "system" && e.subtype === "init") {
       sessionId = str(e.session_id);
       const tools = Array.isArray(e.tools) ? (e.tools as unknown[]).map(String) : [];
