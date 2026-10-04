@@ -140,7 +140,8 @@ describe("the scan step, run", () => {
     expect(empty.stdout).toBe("");
     const hostile = reason(`first\nbad %0A::error file=x::boom :::: x\u0007\r\n\n`);
     expect(hostile.status).toBe(0);
-    expect(hostile.stdout).not.toMatch(/::|%0A|[\u0000-\u001f\u007f]/);
+    expect(hostile.stdout).not.toMatch(/::|%0A/);
+    expect([...hostile.stdout].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)).toBe(false);
     expect(hostile.stdout).toContain("%250A");
   });
 

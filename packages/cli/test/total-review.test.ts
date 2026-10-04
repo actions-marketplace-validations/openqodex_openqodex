@@ -365,7 +365,7 @@ describe("21. secrets outside file contents", () => {
     if (gitleaks === null) return void process.stdout.write("trace secret: skipped, gitleaks is not installed\n");
     const key = secret();
     const dir = withSecret(key, false);
-    const leak: Answer = (text) => ({ finalText: "not json", calls: [{ tool: "Read", input: { file_path: `/outside/${key}` }, ok: false, read: null }] });
+    const leak: Answer = () => ({ finalText: "not json", calls: [{ tool: "Read", input: { file_path: `/outside/${key}` }, ok: false, read: null }] });
     expect(await reviewWithGitleaks(dir, fake([leak]))).toBe(2);
     expect(out + err + runFiles(dir)).not.toContain(key);
   });
