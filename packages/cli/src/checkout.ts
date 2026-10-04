@@ -1,9 +1,8 @@
-// Temporary detached checkouts of one commit. The push hook scans a pushed
-// commit in one under the OS temp folder: made with mkdtemp and removed by
-// the same process, never looked up later, so nothing another user plants
-// there is ever trusted. `review <target>` reads a branch or a pull request
-// in one under the developer's own `<openqodex home>/checkouts/`, created
-// 0700, which outlives the process until finalize and is swept by age.
+// Temporary detached checkouts of one commit. `review` reads its snapshot,
+// and `review <target>` a branch or a pull request, in one under the
+// developer's own `<openqodex home>/checkouts/`, created 0700, which is
+// removed at the end of the run (or, for `--agent`, outlives the process
+// until finalize) and is swept by age.
 //
 // A target checkout is made from someone else's code, so making it runs
 // nothing: no hook, no clean, smudge or process filter (large file storage
@@ -12,7 +11,6 @@
 // own from anything else.
 import { execFile } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { OpenQodexError, quoteAlternate, readRepoFile, safeGit } from "@openqodex/core";
@@ -20,7 +18,6 @@ import { openqodexHomeDir } from "./launcher.js";
 
 const execFileAsync = promisify(execFile);
 
-export const PUSH_PREFIX = "openqodex-push-";
 export const CHECKOUT_MARKER = "openqodex-checkout.json";
 
 // A checkout older than this with no finalize is abandoned.
@@ -55,19 +52,6 @@ function sameDir(a: string, b: string): boolean {
 // True when `tree` is <home>/checkouts/<one folder>/tree.
 export function inCheckouts(tree: string): boolean {
   return sameDir(dirname(dirname(tree)), checkoutsDir());
-}
-
-// The push hook's checkout, under the OS temp folder: a detached work tree of
-// the developer's own pushed commit, made with mkdtemp and removed by the
-// same process. Null when git refuses; the folder is then gone.
-export async function addCheckout(repoRoot: string, sha: string, prefix: string): Promise<Checkout | null> {
-  const folder = mkdtempSync(join(tmpdir(), prefix));
-  const tree = join(folder, "tree");
-  if ((await gitOut(repoRoot, ["worktree", "add", "--detach", "--quiet", tree, sha])) === null) {
-    await removeCheckout(repoRoot, folder);
-    return null;
-  }
-  return { folder, tree };
 }
 
 // A target review's checkout, in a new 0700 folder under <home>/checkouts/,

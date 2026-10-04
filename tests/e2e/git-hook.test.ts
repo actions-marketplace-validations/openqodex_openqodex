@@ -5,7 +5,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { demo, git, run, writeConfig } from "./support.js";
 
-// `hook install` and a real `git push` to a local bare remote.
+// `hook install` and a real `git push` to a local bare remote. The hook looks
+// up the review of what is pushed; it never scans or reviews by itself.
 describe("git pre-push hook", () => {
   let dir: string; let home: string; let remote: string;
   const remoteHead = () => git(remote, "rev-parse", "main").trim();
@@ -19,13 +20,14 @@ describe("git pre-push hook", () => {
     git(dir, "add", "-A"); git(dir, "commit", "-qm", "Planted change");
   }, 300_000);
 
-  it("prints the scan and lets the push through when nothing blocks", () => {
+  it("prints one line asking for a review, no raw scanner finding, and lets the push through when nothing blocks", () => {
     const push = run("git-hook-warn-push", dir, ["git push origin HEAD:main"], { shell: true, home });
-    expect(push.stdout + push.stderr).toContain("hadolint:DL3007");
+    expect(push.stdout + push.stderr).toContain("OpenQodex has not reviewed this change");
+    expect(push.stdout + push.stderr).not.toContain("hadolint");
     expect(push.status).toBe(0);
     expect(remoteHead()).toBe(git(dir, "rev-parse", "HEAD").trim());
   });
-  it("refuses the push when block_on_severity: major is met", () => {
+  it("refuses an unreviewed push when block_on_severity is set", () => {
     writeConfig(dir, "review:\n  block_on_severity: major\n");
     const config = join(dir, "app/config.py");
     writeFileSync(config, readFileSync(config, "utf8").replace(/sk_live_([A-Za-z0-9])/, (_, c: string) => `sk_live_${c === "A" ? "B" : "A"}`));

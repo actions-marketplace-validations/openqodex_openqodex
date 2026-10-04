@@ -4,8 +4,7 @@
 import { countedSeverities, severityBreakdown } from "./render/common.js";
 import type { Config, Latest, PushDecision, Report } from "./types.js";
 
-const REVIEW_STEP =
-  'ask the agent to "review my change with openqodex" (the openqodex skill runs the review)';
+const REVIEW_STEP = "run openqodex review";
 
 function reportPath(latest: Latest): string {
   return `${latest.dir}/report.md`;
@@ -29,6 +28,12 @@ export function receiptKind(latest: Latest | null, report: Report | null): Recei
   return latest.completion === "complete" && report?.completion?.status === "complete" ? "complete" : "incomplete";
 }
 
+// The lookup both push hooks make: the receipt of exactly the change being
+// pushed. A complete passing review is silent; a complete blocked one denies
+// when block_on_severity is set; none asks for `openqodex review` (and denies
+// when a threshold is set, so the agent reviews and retries); an incomplete
+// record never blocks. A legacy receipt counts as reviewed, with one line
+// saying it was not an independent review.
 export function checkPush(args: {
   currentChangeId: string;
   latest: Latest | null;
@@ -37,8 +42,18 @@ export function checkPush(args: {
 }): PushDecision {
   const { currentChangeId, latest, report, config } = args;
   const threshold = config.blockOnSeverity;
-  const sameChange =
-    latest !== null && latest.kind === "review" && latest.finalized && latest.change_id === currentChangeId;
+  const kind = receiptKind(latest, report);
+  const sameId = latest !== null && latest.change_id === currentChangeId;
+
+  if (sameId && kind === "incomplete" && latest) {
+    const why = report?.completion?.missing[0];
+    return {
+      decision: "abstain",
+      message: `OpenQodex: the last review of this change was incomplete${why ? ` (${why})` : ""}, so it does not block. To finish it, ${REVIEW_STEP}. Report: ${reportPath(latest)}`,
+    };
+  }
+
+  const sameChange = sameId && latest !== null && latest.finalized && (kind === "complete" || kind === "legacy");
   // The config lives in .openqodex/, outside the change, so raising the
   // threshold does not move the change id: a review judged under another
   // threshold does not count once one is set.
@@ -50,22 +65,23 @@ export function checkPush(args: {
   }`;
 
   if (!reviewed || !latest) {
-    if (!threshold) return { decision: "abstain", message: `${notReviewed}. To review it before pushing, ${REVIEW_STEP}.` };
+    if (!threshold) return { decision: "abstain", message: `${notReviewed}. Run openqodex review before pushing.` };
     return {
       decision: "deny",
-      message: `${notReviewed}, and this repo blocks a push without a passing review (block_on_severity: ${threshold}). To review it, ${REVIEW_STEP}, then push again.`,
+      message: `${notReviewed}, and this repo blocks a push without a passing review (block_on_severity: ${threshold}). Run openqodex review, then push again.`,
     };
   }
 
+  const legacy = kind === "legacy" ? " This was not an independent review: it came from the older two-step protocol." : "";
   const found = counts(report);
   if (threshold && latest.verdict !== "passed") {
     return {
       decision: "deny",
-      message: `OpenQodex blocks this push: the review of this change found ${found ?? "findings"}, at or above ${threshold} (see ${reportPath(latest)}). Fix them, review again (${REVIEW_STEP}), then push.`,
+      message: `OpenQodex blocks this push: the review of this change found ${found ?? "findings"}, at or above ${threshold} (see ${reportPath(latest)}). Fix them, ${REVIEW_STEP} again, then push.${legacy}`,
     };
   }
-  return {
-    decision: "abstain",
-    message: found ? `OpenQodex review of this change: ${found}. Report: ${reportPath(latest)}` : null,
-  };
+  if (kind === "legacy") {
+    return { decision: "abstain", message: `OpenQodex review of this change: ${found ?? "no findings"}. Report: ${reportPath(latest)}.${legacy}` };
+  }
+  return { decision: "abstain", message: null };
 }

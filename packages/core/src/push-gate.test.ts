@@ -9,11 +9,15 @@
 // 5. Its message does not say what to run.
 // 6. A review judged with no threshold, or another one, passes a push after
 //    block_on_severity is set (the config is outside the change id).
+// 7. An incomplete record blocks a push, even with block_on_severity set.
+// 8. A legacy receipt (the old two-step protocol) counts as a complete,
+//    independent review, or suddenly blocks a push the old version let through.
+// 9. A complete passing review of this change is not silent.
 import { describe, expect, it } from "vitest";
 import { finalizeReview } from "./finalize.js";
 import { checkPush } from "./push-gate.js";
 import { makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "./test-fixtures.js";
-import type { Latest, Report } from "./types.js";
+import type { CompletionRecord, Latest, Report } from "./types.js";
 
 const change = makeChange();
 
@@ -31,37 +35,40 @@ function reviewed(blockOn: "critical" | null): { latest: Latest; report: Report 
   };
 }
 
+// The same review as a complete record: what `review` writes when its own
+// reviewer process answered and every check passed.
+function complete(blockOn: "critical" | null): { latest: Latest; report: Report } {
+  const { latest, report } = reviewed(blockOn);
+  const completion = { status: "complete", missing: [] } as unknown as CompletionRecord;
+  return { latest: { ...latest, completion: "complete" }, report: { ...report, completion } };
+}
+
+function incomplete(): { latest: Latest; report: Report } {
+  const { latest, report } = reviewed(null);
+  const completion = { status: "incomplete", missing: ["the reviewer timed out and was stopped"] } as unknown as CompletionRecord;
+  return { latest: { ...latest, finalized: false, verdict: null, completion: "incomplete" }, report: { ...report, verdict: "incomplete", findings: [], completion } };
+}
+
 describe("checkPush", () => {
-  it("abstains with the counts and report path for a reviewed change in warn mode", () => {
-    const { latest, report } = reviewed(null);
-    const d = checkPush({ currentChangeId: change.id, latest, report, config: makeConfig() });
-    expect(d.decision).toBe("abstain");
-    expect(d.message).toBe("OpenQodex review of this change: 1 critical, 1 nitpick. Report: .openqodex/reviews/x/report.md");
+  it("9. is silent for a complete passing review of this change", () => {
+    const { latest, report } = complete(null);
+    expect(checkPush({ currentChangeId: change.id, latest, report, config: makeConfig() })).toEqual({ decision: "abstain", message: null });
   });
 
-  it("abstains with no message for a reviewed change with nothing found", () => {
-    const { latest, report } = reviewed(null);
-    const empty = { ...report, findings: [], not_reviewed: [] };
-    expect(checkPush({ currentChangeId: change.id, latest, report: empty, config: makeConfig() })).toEqual({
-      decision: "abstain",
-      message: null,
-    });
-  });
-
-  it("abstains and gives the one step when the change was not reviewed", () => {
+  it("2, 5. abstains with one line asking for openqodex review when the change was not reviewed", () => {
     const d = checkPush({ currentChangeId: change.id, latest: null, report: null, config: makeConfig() });
     expect(d.decision).toBe("abstain");
     expect(d.message).toContain("has not reviewed this change");
-    expect(d.message).toContain("review my change with openqodex");
-    expect(d.message).toContain("review my change with openqodex");
+    expect(d.message).toContain("openqodex review");
+    expect(d.message?.split("\n")).toHaveLength(1);
   });
 
-  it("does not count a review of an earlier version, a scan, or an unfinalized review", () => {
-    const { latest, report } = reviewed(null);
+  it("3. does not count a review of an earlier version, a scan, or an unfinalized review", () => {
+    const { latest, report } = complete(null);
     const cases: Latest[] = [
       { ...latest, change_id: "0".repeat(64) },
       { ...latest, kind: "scan" },
-      { ...latest, finalized: false },
+      { ...latest, finalized: false, completion: undefined },
     ];
     for (const l of cases) {
       const d = checkPush({ currentChangeId: change.id, latest: l, report, config: makeConfig({ blockOnSeverity: "critical" }) });
@@ -72,39 +79,60 @@ describe("checkPush", () => {
     expect(moved.message).toContain("the last review was of an earlier version");
   });
 
-  it("denies a blocked review when block_on_severity is set, and says what to run", () => {
-    const { latest, report } = reviewed("critical");
+  it("4, 5. denies a complete blocked review when block_on_severity is set, and says what to run", () => {
+    const { latest, report } = complete("critical");
     expect(report.verdict).toBe("blocked");
     const d = checkPush({ currentChangeId: change.id, latest, report, config: makeConfig({ blockOnSeverity: "critical" }) });
     expect(d.decision).toBe("deny");
     expect(d.message).toContain("at or above critical");
-    expect(d.message).toContain("review my change with openqodex");
+    expect(d.message).toContain("openqodex review");
   });
 
-  it("abstains on a passing review of this change when block_on_severity is set", () => {
-    const { latest, report } = reviewed(null);
+  it("4. abstains on a complete passing review of this change when block_on_severity is set", () => {
+    const { latest, report } = complete(null);
     const d = checkPush({
       currentChangeId: change.id,
       latest: { ...latest, verdict: "passed" },
-      // Judged under the same threshold the config sets now.
       report: { ...report, block_on_severity: "critical" },
       config: makeConfig({ blockOnSeverity: "critical" }),
     });
-    expect(d.decision).toBe("abstain");
+    expect(d).toEqual({ decision: "abstain", message: null });
   });
 
-  it("never allows", () => {
-    const { latest, report } = reviewed(null);
+  it("7. an incomplete record of this change never blocks, and says the review did not finish", () => {
+    const { latest, report } = incomplete();
     for (const blockOn of [null, "critical"] as const) {
-      for (const l of [null, latest, { ...latest, verdict: "blocked" as const }]) {
-        const d = checkPush({ currentChangeId: change.id, latest: l, report, config: makeConfig({ blockOnSeverity: blockOn }) });
-        expect(["abstain", "deny"]).toContain(d.decision);
+      const d = checkPush({ currentChangeId: change.id, latest, report, config: makeConfig({ blockOnSeverity: blockOn }) });
+      expect(d.decision).toBe("abstain");
+      expect(d.message).toContain("incomplete");
+      expect(d.message).toContain("openqodex review");
+    }
+  });
+
+  it("8. a legacy receipt counts as reviewed, says it was not an independent review, and blocks only a blocked verdict", () => {
+    const passing = reviewed(null);
+    const d = checkPush({ currentChangeId: change.id, latest: { ...passing.latest, verdict: "passed" }, report: { ...passing.report, block_on_severity: "critical" }, config: makeConfig({ blockOnSeverity: "critical" }) });
+    expect(d.decision).toBe("abstain");
+    expect(d.message).toContain("not an independent review");
+    const blocked = reviewed("critical");
+    const b = checkPush({ currentChangeId: change.id, latest: blocked.latest, report: blocked.report, config: makeConfig({ blockOnSeverity: "critical" }) });
+    expect(b.decision).toBe("deny");
+    expect(b.message).toContain("not an independent review");
+  });
+
+  it("1. never allows", () => {
+    for (const r of [reviewed(null), complete(null), incomplete()]) {
+      for (const blockOn of [null, "critical"] as const) {
+        for (const l of [null, r.latest, { ...r.latest, verdict: "blocked" as const }]) {
+          const d = checkPush({ currentChangeId: change.id, latest: l, report: r.report, config: makeConfig({ blockOnSeverity: blockOn }) });
+          expect(["abstain", "deny"]).toContain(d.decision);
+        }
       }
     }
   });
 
-  it("denies a passing review made before block_on_severity was set", () => {
-    const { latest, report } = reviewed(null);
+  it("6. denies a passing review made before block_on_severity was set", () => {
+    const { latest, report } = complete(null);
     const d = checkPush({ currentChangeId: change.id, latest, report, config: makeConfig({ blockOnSeverity: "critical" }) });
     expect(d.decision).toBe("deny");
     expect(d.message).toContain("under the current block_on_severity");
