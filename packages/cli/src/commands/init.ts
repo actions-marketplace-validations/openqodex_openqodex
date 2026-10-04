@@ -10,7 +10,7 @@ import { join, relative } from "node:path";
 import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, repoStat } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
 import { readText } from "../agents/files.js";
-import { excludeLine, gitPath, planExclude, planUnexclude, repoRootOf, trackedFiles } from "../agents/git.js";
+import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoRootOf, trackedFiles } from "../agents/git.js";
 import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
@@ -357,6 +357,9 @@ async function runLocked(s: Setup): Promise<number> {
   }
 
   const failedPaths = new Set<string>();
+  // Only a file git could stage is part of the change: never one in the git
+  // folder (the pre-push hook, the exclude file), wherever that folder is.
+  const gitFolders = s.repoRoot !== null ? await gitDirs(s.repoRoot) : [];
   try {
     const brokenAgents = new Set<AgentId>();
     for (const a of work) {
@@ -367,7 +370,7 @@ async function runLocked(s: Setup): Promise<number> {
         }
         // The text before init's first write, so the review after init
         // takes the developer's own edits and not init's.
-        if (s.repoRoot !== null && !s.before.has(a.path) && !relative(s.repoRoot, a.path).startsWith("..")) {
+        if (s.repoRoot !== null && !s.before.has(a.path) && inWorkTree(s.repoRoot, gitFolders, a.path)) {
           try {
             s.before.set(a.path, readText(a.path));
           } catch {

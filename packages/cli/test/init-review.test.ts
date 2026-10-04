@@ -14,7 +14,10 @@
 //  6. A dry run or an uninstall reviews.
 //  7. A developer's own earlier edit to a file init then wrote to (CLAUDE.md)
 //     is left out of the review, or init's own addition is reviewed with it.
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+//  8. A file init wrote inside the git folder (the pre-push hook, the
+//     exclude file) is handed to the change source, git refuses to stage it,
+//     and the review after init never runs.
+import { appendFileSync, chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -124,6 +127,40 @@ describe("the review init ends with", () => {
 // PATH with every folder that holds a `claude` program left out.
 const noClaude = (process.env.PATH ?? "").split(delimiter).filter((d) => d !== "" && !existsSync(join(d, "claude"))).join(delimiter);
 
+// The model provider stand-in for a subprocess run: a `claude` on PATH that
+// answers detection as Claude Code does, then answers every message with an
+// empty, valid submission for the change id the brief names.
+function standIn(): string {
+  const dir = mkdtempSync(join(tmpdir(), "oq-init-review-bin-"));
+  writeFileSync(
+    join(dir, "claude"),
+    [
+      `#!${process.execPath}`,
+      "const args = process.argv.slice(2);",
+      "if (args[0] === '--version') { console.log('9.9.9 (Claude Code)'); process.exit(0); }",
+      "if (args[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }",
+      "let id = 'missing';",
+      "const say = (e) => process.stdout.write(JSON.stringify(e) + '\\n');",
+      "say({ type: 'system', subtype: 'init', session_id: 'fake', tools: ['Glob', 'Grep', 'Read'], mcp_servers: [] });",
+      "let buf = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => {",
+      "  buf += chunk;",
+      "  for (let nl = buf.indexOf('\\n'); nl !== -1; nl = buf.indexOf('\\n')) {",
+      "    const text = JSON.parse(buf.slice(0, nl)).message.content;",
+      "    buf = buf.slice(nl + 1);",
+      "    id = /`change_id`: `([0-9a-f]{12})`/.exec(text)?.[1] ?? id;",
+      "    const result = JSON.stringify({ version: 2, change_id: id, summary: 'Adds a notes file.', findings: [], dropped: [] });",
+      "    say({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result });",
+      "  }",
+      "});",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(join(dir, "claude"), 0o755);
+  return dir;
+}
+
 describe("init as a subprocess", () => {
   it("2, 4. with a change and no reviewer: exit 0, says the review is unavailable, prints the plan once", () => {
     const s = sandbox({ "README.md": "hello\n" });
@@ -133,6 +170,17 @@ describe("init as a subprocess", () => {
     expect(r.stderr).toContain("Full review unavailable");
     expect(r.stdout.match(/install plan/g)).toHaveLength(1);
     expect(r.stderr + r.stdout).not.toMatch(/Installing the scanners .* first use|downloading/i);
+  });
+
+  it("8. with the git pre-push hook and an exclude line written, the review after init still runs", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "notes.txt"), "one line\n");
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--agent", "cursor", "--hook", "pre-push", "--no-repo"], { env: { PATH: `${standIn()}${delimiter}${noClaude}` }, review: true });
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(true);
+    expect(readFileSync(join(s.repo, ".git/info/exclude"), "utf8")).toContain(".cursor");
+    expect(r.stderr).not.toContain("did not run");
+    expect(r.stdout).toContain("Reviewer: claude 9.9.9");
   });
 
   it("3. --yes with no change prints the three commands and exits without waiting", () => {
