@@ -46,7 +46,7 @@ The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository,
 <!-- openqodex:end -->
 ```
 
-The two files show in `git status`, and `init` says to commit them. `init` writes neither file through a symbolic link. A section you edited is yours: a later `init` and `--uninstall` leave it as it is. `--uninstall` removes our untouched section, and deletes a file only when `init` created it and nothing else is in it. In project scope the same two files carry the instruction section instead, never both.
+The two files show in `git status`, and `init` says to commit them. When git ignores one of them in this repository, `init` says so instead, since your team does not get it. `init` writes neither file through a symbolic link. A section you edited is yours: a later `init` and `--uninstall` leave it as it is. `--uninstall` removes our untouched section, and deletes a file only when `init` created it and nothing else is in it. In project scope the same two files carry the instruction section instead, never both.
 
 ## The review runs in its own reviewer process
 

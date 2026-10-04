@@ -14,7 +14,7 @@ import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, 
 import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
-import { INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, ROOT_CONFIG_NOTE } from "../agents/repo-folder.js";
+import { commitLines, INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, ROOT_CONFIG_NOTE } from "../agents/repo-folder.js";
 import { instructionSection, targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks } from "../launcher.js";
@@ -407,7 +407,7 @@ async function runLocked(s: Setup): Promise<number> {
   const teamChanged = teamActions.filter((a) => a.apply && !failedPaths.has(a.path)).map((a) => relative(s.repoRoot!, a.path));
   if (teamChanged.length > 0) {
     out(`Changed ${teamChanged.join(" and ")}: a review section your teammates' agents follow before they push.`);
-    out(`Commit ${teamChanged.join(" and ")} so your team shares ${teamChanged.length > 1 ? "them" : "it"}.`);
+    for (const line of commitLines(s.repoRoot!, teamChanged)) out(line);
   }
   if (s.repoRoot !== null && hookChoice === "pre-push") out("Every push from this repo is now checked for a review through the git pre-push hook.");
   out(`To undo: npx openqodex init --uninstall${s.flags.project ? " --project" : ""}`);
@@ -419,7 +419,7 @@ function closingRepoLines(s: Setup, rootConfig: boolean): void {
   if (s.repoRoot === null) return;
   const repoRoot = s.repoRoot;
   const files = [`${STATE_DIR}/${FOLDER_CONFIG}`, `${STATE_DIR}/${INSTRUCTIONS_FILE}`].filter((f) => repoStat(repoRoot, f) !== null);
-  if (files.length > 0) out(`Commit ${files.join(" and ")} so your team shares ${files.length > 1 ? "them" : "it"}.`);
+  for (const line of commitLines(repoRoot, files)) out(line);
   if (files.includes(`${STATE_DIR}/${INSTRUCTIONS_FILE}`)) out(INSTRUCTIONS_LINE);
   if (rootConfig) out(ROOT_CONFIG_NOTE);
 }

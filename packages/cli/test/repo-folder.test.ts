@@ -15,6 +15,8 @@
 //  7. Init replaces a team file another first run created after init made
 //     its plan, and records it as its own.
 //  8. Uninstall deletes a Day 0 .gitignore that init only migrated.
+//  9. Init or the first scan tells the developer to commit a team file the
+//     repo's own .gitignore ignores.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -64,7 +66,7 @@ describe("the repo folder's team files", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(existsSync(join(s.repo, CONFIG))).toBe(true);
     expect(existsSync(join(s.repo, INSTRUCTIONS))).toBe(true);
-    expect(r.stderr).toContain("Commit them");
+    expect(r.stderr).toContain(`Commit ${CONFIG} and ${INSTRUCTIONS} so your team shares them.`);
   });
 
   it("creates no config.yaml while a root .openqodex.yaml exists, and says the root file is still read", () => {
@@ -74,6 +76,29 @@ describe("the repo folder's team files", () => {
     expect(existsSync(join(s.repo, CONFIG))).toBe(false);
     expect(existsSync(join(s.repo, INSTRUCTIONS))).toBe(true);
     expect(r.stdout).toContain(".openqodex.yaml at its root; it is still read");
+  });
+
+  // 9. A repo whose own .gitignore ignores the folder: committing the files
+  // takes `git add -f`, so the advice to commit them is wrong.
+  const IGNORED = "is ignored by git in this repo (a .gitignore or exclude rule), so it is not shared with your team";
+
+  it("9. the first scan does not tell you to commit team files the repo's .gitignore ignores", () => {
+    const s = sandbox({ "README.md": "hello\n", ".gitignore": ".openqodex/\n" });
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    const r = cli(s, ["scan", "--no-install"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain("Commit");
+    expect(r.stderr).toContain(`${CONFIG} ${IGNORED}`);
+    expect(r.stderr).toContain(`${INSTRUCTIONS} ${IGNORED}`);
+  });
+
+  it("9. init does not tell you to commit team files the repo's .gitignore ignores, and still names the ones it can", () => {
+    const s = sandbox({ "README.md": "hello\n", ".gitignore": ".openqodex/custom-instructions.md\n" });
+    const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`Commit ${CONFIG} so your team shares it.`);
+    expect(r.stdout).not.toMatch(/Commit [^\n]*custom-instructions/);
+    expect(r.stdout).toContain(`${INSTRUCTIONS} ${IGNORED}`);
   });
 });
 
