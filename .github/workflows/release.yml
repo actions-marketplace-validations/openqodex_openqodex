@@ -66,9 +66,10 @@ jobs:
           version=$(node -e 'const p = JSON.parse(process.env.PUBLISHED).find((x) => x.name === "openqodex"); if (p) process.stdout.write(p.version)')
           if [ -z "$version" ]; then echo "openqodex was not published in this run"; exit 0; fi
           # The registry can take a moment to show a new version.
-          for attempt in 1 2 3 4 5 6; do
+          # Up to ten minutes: on 0.3.0 two minutes was not enough.
+          for attempt in $(seq 1 30); do
             if [ "$(npm view "openqodex@$version" version 2>/dev/null)" = "$version" ]; then break; fi
-            if [ "$attempt" = 6 ]; then echo "openqodex@$version is not on the registry; no tag moved"; exit 1; fi
+            if [ "$attempt" = 30 ]; then echo "openqodex@$version is not on the registry; no tag moved"; exit 1; fi
             sleep 20
           done
           git rev-parse -q --verify "refs/tags/v$version" >/dev/null || git tag "v$version"
