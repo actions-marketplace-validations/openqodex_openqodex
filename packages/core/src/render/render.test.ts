@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
-import type { Config, Report } from "../types.js";
+import type { CompletionRecord, Config, Report } from "../types.js";
 import { renderJson, renderMarkdown, renderSarif, renderTerminal } from "./index.js";
 
 function review(submission = makeSubmission(), config: Partial<Config> = {}): Report {
@@ -104,14 +104,14 @@ describe("renderMarkdown", () => {
 
 describe("renderSarif", () => {
   it("8. marks an incomplete review as a failed run that names what is missing and carries the completion record", () => {
-    const completion = { version: 1, contract: "openqodex-review-2", status: "incomplete", missing: ["the reviewer timed out and was stopped"], reviewer: null, snapshot: { change_id: "x", tree: null, before: "b", after: "b" }, candidates: { total: 1, disposed: 0 }, coverage: { hunks: 1, covered: 0, unread: [], files_read: [], files_not_read: [] }, outside_reads: [] } as const;
-    const report: Report = { ...review(), findings: [], verdict: "incomplete", completion: structuredClone(completion) as Report["completion"] };
+    const completion: CompletionRecord = { version: 1, contract: "openqodex-review-2", status: "incomplete", missing: ["the reviewer timed out and was stopped"], reviewer: null, snapshot: { change_id: "x", tree: null, before: "b", after: "b" }, candidates: { total: 1, disposed: 0 }, coverage: { hunks: 1, covered: 0, unread: [], files_read: [], files_not_read: [] }, outside_reads: [] };
+    const report: Report = { ...review(), findings: [], verdict: "incomplete", completion };
     const run = JSON.parse(renderSarif(report)).runs[0];
     expect(run.tool.driver.name).toBe("openqodex");
     expect(run.invocations[0].executionSuccessful).toBe(false);
     expect(run.invocations[0].toolExecutionNotifications[0].message.text).toContain("the reviewer timed out and was stopped");
     expect(run.properties.completion.status).toBe("incomplete");
-    const complete = JSON.parse(renderSarif({ ...review(), completion: { ...(structuredClone(completion) as NonNullable<Report["completion"]>), status: "complete", missing: [] } })).runs[0];
+    const complete = JSON.parse(renderSarif({ ...review(), completion: { ...completion, status: "complete", missing: [] } })).runs[0];
     expect(complete.invocations[0].executionSuccessful).toBe(true);
   });
 
