@@ -30,10 +30,13 @@
 //     folder reached through a link into the repo, one in a folder whose
 //     name starts with two dots (`<repo>/..tools`), or one that is a link
 //     into the repo from a folder outside it.
+// 21. A secret the scanners found that also sits in a file name reaches the
+//     reviewer through a listing, or a secret in a tool call's input lands
+//     raw in trace.json or the completion record.
 // 19. Redacting a multi-line secret (a private key) joins its lines, so every
 //     line below it moves while scanner locations and citations do not.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -316,6 +319,58 @@ describe("what leaves the process", () => {
   });
 });
 
+// The installed gitleaks of the end-to-end home or the developer's home, for
+// the cases that need a secret found by the real scanner; null when neither has it.
+function installedGitleaks(): string | null {
+  for (const h of [process.env.OPENQODEX_E2E_HOME ?? join(tmpdir(), "openqodex-e2e-home"), join(homedir(), ".openqodex")]) {
+    if (existsSync(join(h, "tools/gitleaks"))) return join(h, "tools/gitleaks");
+  }
+  return null;
+}
+
+describe("21. secrets outside file contents", () => {
+  const gitleaks = installedGitleaks();
+  const secret = () => `sk_live_${Array.from({ length: 24 }, () => "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 57)]).join("")}`;
+  const withSecret = (key: string, inName: boolean): string => {
+    const dir = repo();
+    mkdirSync(join(dir, "app"));
+    writeFileSync(join(dir, "app/config.py"), `STRIPE_KEY = "${key}"\n`);
+    if (inName) writeFileSync(join(dir, `app/${key}.txt`), "notes\n");
+    return dir;
+  };
+  const reviewWithGitleaks = (dir: string, driver: ReviewerDriver) => {
+    cpSync(gitleaks!, join(home, "tools/gitleaks"), { recursive: true });
+    const { global } = parseFlags(["--cwd", dir, "--no-color", "--format", "json", "--no-install"], {});
+    return runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint,gitleaks", reviewer: "auto", timeoutMs: 60_000, drivers: [driver] });
+  };
+  const runFiles = (dir: string) => {
+    const run = join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
+    return readdirSync(run).map((n) => readFileSync(join(run, n), "utf8")).join("\n");
+  };
+
+  it("a secret in a file name stops the review before the reviewer starts, and is printed nowhere", async () => {
+    if (gitleaks === null) return void process.stdout.write("filename secret: skipped, gitleaks is not installed\n");
+    const key = secret();
+    const dir = withSecret(key, true);
+    const driver = fake([good]);
+    expect(await reviewWithGitleaks(dir, driver)).toBe(2);
+    expect(driver.snapshots).toEqual([]);
+    const report = JSON.parse(out) as Report;
+    expect(report.completion?.status).toBe("incomplete");
+    expect(report.completion?.missing.join("\n")).toMatch(/file name/);
+    expect(out + err + runFiles(dir)).not.toContain(key);
+  });
+
+  it("a secret in a tool call's input is redacted in trace.json and the completion record", async () => {
+    if (gitleaks === null) return void process.stdout.write("trace secret: skipped, gitleaks is not installed\n");
+    const key = secret();
+    const dir = withSecret(key, false);
+    const leak: Answer = (text) => ({ finalText: "not json", calls: [{ tool: "Read", input: { file_path: `/outside/${key}` }, ok: false, read: null }] });
+    expect(await reviewWithGitleaks(dir, fake([leak]))).toBe(2);
+    expect(out + err + runFiles(dir)).not.toContain(key);
+  });
+});
+
 describe("the snapshot", () => {
   it("10. redacts every copy of a secret the scanners found and leaves the developer's files alone", () => {
     const dir = mkdtempSync(join(tmpdir(), "oq-redact-"));
@@ -324,7 +379,7 @@ describe("the snapshot", () => {
     writeFileSync(join(dir, "app/config.py"), `KEY = "${secret}"\n`);
     writeFileSync(join(dir, "app/other.py"), `# copied: ${secret}\nx = 1\n`);
     writeFileSync(join(dir, ".git"), "gitdir: /somewhere\n");
-    expect(redactSnapshot(dir, [secret])).toEqual({ redacted: 2, removed: [] });
+    expect(redactSnapshot(dir, [secret])).toEqual({ redacted: 2, removed: [], named: 0 });
     expect(readFileSync(join(dir, "app/config.py"), "utf8")).not.toContain(secret);
     expect(readFileSync(join(dir, "app/other.py"), "utf8")).toBe("# copied: [redacted]\nx = 1\n");
   });

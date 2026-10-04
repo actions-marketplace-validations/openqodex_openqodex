@@ -146,11 +146,15 @@ function snapshotFiles(dir: string): string[] {
 // each secret's bytes overwritten in place. A file too large to check is removed from the snapshot, so the
 // reviewer cannot read it. A file that still holds a secret afterwards, or
 // cannot be read or written, stops the run: nothing unredacted is shown.
-export function redactSnapshot(dir: string, secrets: string[]): { redacted: number; removed: string[] } {
+// `named`: how many snapshot paths hold a secret in a file or folder name.
+// Names are not rewritten (the paths must match the change); the run refuses
+// to start the reviewer instead, since a listing would show the secret.
+export function redactSnapshot(dir: string, secrets: string[]): { redacted: number; removed: string[]; named: number } {
   const usable = [...new Set(secrets)].filter((s) => s.length >= MIN_SECRET_LENGTH).map((s) => Buffer.from(s, "utf8"));
-  const out = { redacted: 0, removed: [] as string[] };
+  const out = { redacted: 0, removed: [] as string[], named: 0 };
   if (usable.length === 0) return out;
   for (const path of snapshotFiles(dir)) {
+    if (usable.some((s) => Buffer.from(path, "utf8").includes(s))) out.named++;
     const full = join(dir, path);
     try {
       if (lstatSync(full).size > MAX_REDACT_BYTES) {
@@ -497,11 +501,15 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
-    session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: settings.web });
-    const pid = session.pid;
-    say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
+    // A secret in a path would reach the reviewer through any listing: the
+    // reviewer is not started and the review is incomplete.
+    const refused = redaction.named > 0 ? "a file name in the change holds a secret the scanners found, so the reviewer was not started; rename the file" : null;
+    if (refused === null) session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: settings.web });
+    const pid = session?.pid ?? null;
+    if (session !== null) say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
     const startedIso = new Date().toISOString();
-    const talk = await converse({
+    const now = Date.now();
+    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, startedAt: now, endedAt: now } : await converse({
       session,
       snapshotDir: prep.snapshot.tree,
       brief: brief.text,
@@ -525,7 +533,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     if (talk.failure !== null) warn(`openqodex: ${talk.failure}`);
     const after = hashSnapshot(prep.snapshot.tree);
 
-    const reviewer: ReviewerRecord = {
+    const reviewer: ReviewerRecord | null = session === null ? null : {
       driver: chosen.driver.name,
       version: chosen.version,
       pid,
@@ -536,7 +544,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       usage: talk.usage,
     };
     const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: talk.trace, lineCount });
-    const completion = completionRecord({
+    // Redacted like the report: a path or a tool input may hold a secret.
+    const completion = redactStored(completionRecord({
       change,
       reviewer,
       snapshot: { tree: prep.tree, before, after },
@@ -547,7 +556,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       wholeRepo: prep.whole !== undefined,
       failure: talk.failure,
       tools: settings.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS,
-    });
+    }), p.secrets);
     const report: Report = {
       ...(completion.status === "complete" && talk.report ? talk.report : incompleteReport(change, scan, config)),
       impact: prep.whole ? null : impact,
@@ -558,7 +567,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     writeReportFiles(repoRoot, dir, {
       ...reportFiles(report),
       "submission.json": `${JSON.stringify(redactStored(talk.submission, p.secrets), null, 2)}\n`,
-      "trace.json": `${JSON.stringify(talk.trace, null, 2)}\n`,
+      "trace.json": `${JSON.stringify(redactStored(talk.trace, p.secrets), null, 2)}\n`,
     }, PRIVATE);
     const receipt: Latest = {
       dir: relative(repoRoot, dir),
