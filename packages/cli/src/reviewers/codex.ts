@@ -206,8 +206,10 @@ export async function probeSandbox(bin: string, snapshotDir: string, filesystem:
     // The paths and the marker go in as arguments, never into the script
     // text. Every program by absolute path with a fixed PATH, so nothing in
     // the snapshot runs in place of it. Each expected refusal is handled, so
-    // the marker prints only when every step ran.
-    const script = 'PATH=/usr/bin:/bin; export PATH; /bin/cat "$1" || :; /bin/cat "$2" 2>/dev/null || :; { : > "$3"; } 2>/dev/null || :; printf "%s\\n" "$4"';
+    // the marker prints only when every step ran. The outside read must end
+    // as a read or a plain refusal (status 0 or 1): a cat that was killed or
+    // could not start proves nothing, so the probe stops without the marker.
+    const script = 'PATH=/usr/bin:/bin; export PATH; /bin/cat "$1" || :; /bin/cat "$2" 2>/dev/null; s=$?; [ "$s" -le 1 ] || exit 90; { : > "$3"; } 2>/dev/null || :; printf "%s\\n" "$4"';
     const args = ["sandbox", ...profileConfig(filesystem), "--", "/bin/sh", "-c", script, "sh", inside, canary, written, marker];
     const out = await new Promise<{ stdout: string; error: string | null; code: number | null; signal: string | null }>((done) => {
       const child = spawnGroup(bin, args, { cwd: snapshotDir, env: codexEnv() });
