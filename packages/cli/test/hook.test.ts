@@ -103,10 +103,10 @@ describe("hook check: which commands are pushes", () => {
     "git -c alias.publish=status publish",
   ];
 
-  // None of these is a plain push the agent hook can read, and the plain one
-  // has no upstream here: each is a push it cannot resolve.
+  // A plain `git push` asks for a review of the current work; every other
+  // line is one the agent hook cannot tell.
   it.each(pushes)("treats %j as a push", (command) => {
-    expect(check(s, command).stdout).toContain(COULD_NOT);
+    expect(check(s, command).stdout).toContain(command === "git push" ? UNREVIEWED : COULD_NOT);
   });
 
   it.each(notPushes)("treats %j as not a push and prints nothing", (command) => {

@@ -2,10 +2,9 @@
 // entries call before a shell command. `openqodex hook install|uninstall`:
 // the optional git pre-push hook, the gate that sees every real push. Both
 // look up the review of what is pushed; neither scans nor starts a review.
-// The agent hook is a nudge, not the boundary: it reads a command before the
-// shell runs it, so it resolves only a plain `git push` and treats anything
-// else as unresolved; the git pre-push hook, which git hands the exact
-// ranges, is the authoritative check.
+// The agent hook is a reminder about the developer's current work, not the
+// boundary: it does not know what a push sends. The git pre-push hook, which
+// git hands the exact ranges, is the authoritative check.
 import { execFile } from "node:child_process";
 import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -127,85 +126,28 @@ async function rangeChangeId(core: Core, repoRoot: string, config: Config, remot
   return { id: change.id };
 }
 
-// What one whitelisted push sends: ranges (local commit, remote commit or
-// null for a new branch), with `noVerify` when --no-verify skips the git hook.
-// Null when the command is not a plain push the hook can read.
-type Plain = { remote: string | null; specs: string[]; noVerify: boolean };
+// The one command shape the agent hook recognises, after trimming: `git
+// push`, then plain words separated by single spaces: any of these options,
+// an optional remote name, and at most one refspec that is `HEAD` or the
+// current branch's name. Anything else (`src:dst`, `+`, `--no-verify`, a
+// second refspec, any other option, quotes, `$`, `;`, `&&`, a newline, `-C`,
+// a wrapper) is not recognised. The hook never works out what a push sends:
+// for a recognised line it asks whether the developer's current work has a
+// review.
+const PLAIN_OPTIONS = new Set(["-u", "--set-upstream", "-f", "--force", "--force-with-lease"]);
+const REMOTE = /^[A-Za-z0-9._][A-Za-z0-9._-]*$/;
+const BRANCH = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
 
-const NAME = /^[A-Za-z0-9._/-]+$/;
-const REFSPEC = /^\+?[A-Za-z0-9._/-]+(:[A-Za-z0-9._/-]+)?$/;
-const PLAIN_OPTIONS = new Set(["-u", "--set-upstream", "--force", "-f", "--force-with-lease", "--no-verify"]);
-
-// The one command shape the agent hook resolves: after trimming, exactly
-// `git push`, then plain words separated by spaces: these options, an
-// optional remote name, and refspecs `name` or `src:dst` (an optional
-// leading `+`). Any other character or construct (quotes, `$`, backticks,
-// `;`, `&&`, `|`, `>`, a newline, `cd`, `-C`, `-c`, `--repo`, a URL, `--all`,
-// `--mirror`, `--tags`, a wildcard, an assignment, a wrapper) gives null.
-export function plainPush(command: string): Plain | null {
+// The refspec the line names, "" for none; null when the line is not recognised.
+export function plainPush(command: string): string | null {
   const words = command.trim().split(" ");
   if (words[0] !== "git" || words[1] !== "push") return null;
-  let remote: string | null = null;
-  const specs: string[] = [];
-  let noVerify = false;
-  for (const w of words.slice(2)) {
-    if (PLAIN_OPTIONS.has(w)) noVerify ||= w === "--no-verify";
-    else if (w.startsWith("-") || w.startsWith(".")) return null;
-    else if (remote === null && NAME.test(w)) remote = w;
-    else if (remote !== null && REFSPEC.test(w)) specs.push(w);
-    else return null;
-  }
-  return { remote, specs, noVerify };
+  const rest = words.slice(2).filter((w) => !PLAIN_OPTIONS.has(w));
+  if (rest.length > 2 || (rest[0] !== undefined && !REMOTE.test(rest[0])) || (rest[1] !== undefined && !BRANCH.test(rest[1]))) return null;
+  return rest[1] ?? "";
 }
 
-type Resolved = { ranges: { local: string; remoteSha: string | null }[]; remote: string } | { unresolved: string };
-
-// The ranges a plain push sends, from local state only (never the network):
-// the remote commit of a branch is its remote-tracking ref as last fetched.
-// A missing upstream, an unknown remote or a name that is not a branch here
-// is unresolved, never an empty range.
-async function resolvePlain(repoRoot: string, p: Plain): Promise<Resolved> {
-  const branch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  let remote = p.remote;
-  let specs = p.specs;
-  if (specs.length === 0) {
-    // The current branch to its upstream, as git's default push
-    // (push.default simple) does. Any setting that makes git choose
-    // otherwise is not followed.
-    if (branch === null) return { unresolved: "HEAD is not on a branch" };
-    const mode = await git(repoRoot, ["config", "--get", "push.default"]);
-    if (mode !== null && mode !== "simple") return { unresolved: `push.default is ${mode}` };
-    for (const key of [`branch.${branch}.pushRemote`, "remote.pushDefault"]) {
-      if ((await git(repoRoot, ["config", "--get", key])) !== null) return { unresolved: `${key} is set` };
-    }
-    const upRemote = await git(repoRoot, ["config", "--get", `branch.${branch}.remote`]);
-    const upMerge = await git(repoRoot, ["config", "--get", `branch.${branch}.merge`]);
-    if (upRemote === null || upMerge === null || !upMerge.startsWith("refs/heads/")) return { unresolved: `${branch} has no upstream` };
-    if (remote !== null && remote !== upRemote) return { unresolved: `${branch} tracks ${upRemote}, not ${remote}` };
-    if ((await git(repoRoot, ["config", "--get-all", `remote.${upRemote}.push`])) !== null) return { unresolved: `remote.${upRemote}.push is set` };
-    // simple pushes only to a branch of the same name; git refuses the rest.
-    if (upMerge.slice("refs/heads/".length) !== branch) return { unresolved: `${branch} tracks a branch of another name` };
-    remote = upRemote;
-    specs = [`${branch}:${upMerge.slice("refs/heads/".length)}`];
-  }
-  remote ??= "origin";
-  if (!NAME.test(remote) || (await git(repoRoot, ["config", "--get", `remote.${remote}.url`])) === null) return { unresolved: `${remote} is not a configured remote` };
-  const ranges: { local: string; remoteSha: string | null }[] = [];
-  for (const spec of specs) {
-    const [src = "", rawDst = src] = spec.replace(/^\+/, "").split(":");
-    // refs/heads/<name> is the branch <name>; any other namespace is not followed.
-    const dst = rawDst.startsWith("refs/heads/") ? rawDst.slice("refs/heads/".length) : rawDst;
-    if (dst.startsWith("refs/") || dst === "") return { unresolved: `${rawDst} is not a branch` };
-    const local = await commitOf(repoRoot, `refs/heads/${src}`);
-    if (local === null) return { unresolved: `${src} is not a branch here` };
-    const remoteSha = await commitOf(repoRoot, `refs/remotes/${remote}/${dst}`);
-    if (remoteSha === local) continue; // the remote has it already: nothing is sent
-    ranges.push({ local, remoteSha });
-  }
-  return { ranges, remote };
-}
-
-const UNRESOLVED = "OpenQodex could not tell what this push sends; run openqodex review, or push with an explicit branch";
+const CANNOT_TELL = "OpenQodex could not tell what this push sends; run openqodex review and push with plain git push";
 
 async function decide(input: HookInput): Promise<void> {
   if (typeof input.tool_name === "string" && input.tool_name !== "Bash") return;
@@ -222,11 +164,11 @@ async function decide(input: HookInput): Promise<void> {
 
   // Loaded only for a push, so every other shell command stays fast.
   const core = await import("@openqodex/core");
-  const plain = plainPush(command);
-  // A plain push runs in `cwd`; any other command is checked in the folders
-  // it pushes from, as unresolved.
+  const spec = plainPush(command);
+  // A recognised line runs in `cwd`; any other is checked in the folders it
+  // pushes from, as one the hook cannot tell.
   const roots: string[] = [];
-  for (const folder of plain !== null ? [cwd] : folders) {
+  for (const folder of spec !== null ? [cwd] : folders) {
     try {
       const root = await core.findRepoRoot(folder);
       if (!roots.includes(root)) roots.push(root);
@@ -240,33 +182,21 @@ async function decide(input: HookInput): Promise<void> {
   for (const repoRoot of roots) {
     const { config } = core.loadConfig(repoRoot);
     const where = (m: string) => (roots.length > 1 ? `${repoRoot}: ${m}` : m);
-    // No record, never reviewed: it denies under a threshold.
-    const unresolved = (why: string): void => {
-      const line = where(`${UNRESOLVED} (${why}).`);
-      if (config.blockOnSeverity !== null) denials.add(line);
-      else notes.add(line);
-    };
-    const resolved: Resolved = plain === null ? { unresolved: "the command is not a plain git push" } : await resolvePlain(repoRoot, plain);
-    if ("unresolved" in resolved) {
-      unresolved(resolved.unresolved);
+    const branch = spec === null || spec === "" || spec === "HEAD" ? null : await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if (spec === null || (spec !== "" && spec !== "HEAD" && spec !== branch)) {
+      // Not recognised: no record, never reviewed. It denies under a threshold.
+      if (config.blockOnSeverity !== null) denials.add(where(CANNOT_TELL));
+      else notes.add(where(CANNOT_TELL));
       continue;
     }
-    for (const range of resolved.ranges) {
-      const found = await rangeChangeId(core, repoRoot, config, resolved.remote, range.local, range.remoteSha);
-      if (!("id" in found)) {
-        unresolved(found.unknown);
-        continue;
-      }
-      // Only the record in the developer's own home counts, never one under
-      // the repository's .openqodex/, which a branch can carry.
-      const receipt = readHomeReceipt(home, repoRoot, found.id) ?? readHomeReceipt(home, repoRoot, "latest");
-      const decision = core.checkPush({ currentChangeId: found.id, receipt, config });
-      // --no-verify skips the git hook, so this check is the only one: a
-      // range without a passing review is unresolved, never let through.
-      if (plain!.noVerify && (decision.decision === "deny" || decision.message !== null)) unresolved("--no-verify skips the git hook, and this range has no passing review");
-      else if (decision.decision === "deny") denials.add(where(decision.message ?? "OpenQodex blocks this push"));
-      else if (decision.message) notes.add(where(decision.message));
-    }
+    // The developer's current work, as the default review takes it.
+    const change = await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase });
+    // Only the record in the developer's own home counts, never one under
+    // the repository's .openqodex/, which a branch can carry.
+    const receipt = readHomeReceipt(home, repoRoot, change.id) ?? readHomeReceipt(home, repoRoot, "latest");
+    const decision = core.checkPush({ currentChangeId: change.id, receipt, config });
+    if (decision.decision === "deny") denials.add(where(decision.message ?? "OpenQodex blocks this push"));
+    else if (decision.message) notes.add(where(decision.message));
   }
   if (denials.size > 0) deny([...denials, ...notes].join("\n"));
   else if (notes.size > 0) abstainWith([...notes].join("\n"));
@@ -339,7 +269,7 @@ async function prePush(args: string[]): Promise<number> {
     let changeId = "";
     const found = await rangeChangeId(core, repoRoot, config, remote, range.local, range.remoteSha);
     if ("id" in found) changeId = found.id;
-    else messages.add(`${UNRESOLVED} (${found.unknown}).`);
+    else messages.add(`OpenQodex could not tell what this push sends (${found.unknown}); run openqodex review, then push again.`);
     const receipt = (changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId)) ?? newest;
     const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
     if (decision.decision === "deny") denied = true;

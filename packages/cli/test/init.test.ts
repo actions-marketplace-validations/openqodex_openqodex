@@ -104,8 +104,7 @@ describe("init, user scope, all agents", () => {
       const input = JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push" }, cwd: s.repo });
       const r = spawnSync("sh", ["-c", command], { input, encoding: "utf8", env: env(s), cwd: s.repo });
       expect(r.status, r.stderr).toBe(0);
-      // The repo has no upstream, so the hook ran and says it cannot tell what the push sends.
-      expect(r.stdout).toContain("OpenQodex could not tell what this push sends");
+      expect(r.stdout).toContain("OpenQodex has not reviewed this change");
     }
   });
 
