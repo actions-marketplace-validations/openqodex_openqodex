@@ -383,7 +383,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     if (tooBig > 0) reasons.push(`${plural(tooBig, "file")} over ${Math.round(maxFileBytes / 1024)} KB not parsed`);
     const durationMs = Math.round(performance.now() - started);
     args.onProgress?.(
-      `openqodex: code graph of ${plural(inputs.length, "file")} in ${(durationMs / 1000).toFixed(1)} s (${cache.parses} parsed, ${cache.hits} from cache)`,
+      `Code graph: ${plural(inputs.length, "file")} in ${(durationMs / 1000).toFixed(1)} s (${cache.parses} parsed, ${cache.hits} from cache)`,
     );
     return {
       repoRoot: args.repoRoot,

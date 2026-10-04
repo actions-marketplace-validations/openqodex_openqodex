@@ -88,17 +88,12 @@ export async function runScanners(args: {
   const selected = (source: ScannerSource): boolean =>
     (!args.only || args.only.includes(source)) && !(args.skip ?? []).includes(source);
 
-  const report = (outcome: Outcome): Outcome => {
-    args.onProgress?.(progressLine(outcome.summary));
-    return outcome;
-  };
-
   const builtins = ADAPTERS.filter((a) => selected(a.source)).map((adapter) =>
-    guard(adapter.source, () => runBuiltin(adapter, args)).then(report),
+    guard(adapter.source, () => runBuiltin(adapter, args)),
   );
   const customs = (args.custom ?? [])
     .filter((c) => selected(c.source))
-    .map((custom) => guard(custom.source, () => runCustom(custom, args)).then(report));
+    .map((custom) => guard(custom.source, () => runCustom(custom, args)));
   const outcomes = await Promise.all([...builtins, ...customs]);
 
   const secrets = outcomes.flatMap((o) => o.secrets);
@@ -162,6 +157,7 @@ export async function runScanners(args: {
     keptCount: kept.get(o.summary.scanner) ?? 0,
     reason: o.summary.reason === null ? null : oneLine(redactCut(o.summary.reason, secrets)),
   }));
+  args.onProgress?.(stageLine(scanners, candidates.length));
 
   return {
     scan: {
@@ -371,18 +367,18 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
-// Name, status and counts only: a reason can quote tool output, and secrets
-// are not all known until every scanner has finished.
-function progressLine(s: ScannerRunSummary): string {
-  const seconds = `${(s.durationMs / 1000).toFixed(1)}s`;
-  switch (s.status) {
-    case "ran":
-      return `${s.scanner}: ran, ${s.rawCount} raw finding(s) in ${seconds}`;
-    case "no_matching_files":
-      return `${s.scanner}: nothing to check in this change`;
-    default:
-      return `${s.scanner}: ${s.status.replace(/_/g, " ")}`;
+// The scanner stage in one line: how many scanners ran, how many had
+// nothing to check, the other states by name, and the candidates the review
+// checks. Counts only: a reason can quote tool output.
+export function stageLine(scanners: ScannerRunSummary[], candidates: number): string {
+  const count = (status: ScannerRunSummary["status"]) => scanners.filter((s) => s.status === status).length;
+  const parts = [`${count("ran")} ran`, `${count("no_matching_files")} had nothing to check`];
+  for (const status of ["not_installed", "installing", "failed", "disabled", "untrusted"] as const) {
+    const n = count(status);
+    if (n > 0) parts.push(`${n} ${status.replace(/_/g, " ")}`);
   }
+  parts.push(`${candidates} ${candidates === 1 ? "candidate" : "candidates"} to check`);
+  return `Scanners: ${parts.join(", ")}`;
 }
 
 // The shortest piece of a secret treated as a leak at the edge of cut text.

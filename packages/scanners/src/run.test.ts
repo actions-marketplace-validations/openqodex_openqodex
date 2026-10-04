@@ -394,7 +394,7 @@ describe("runScanners", () => {
     expect(scan.scanners.at(-1)?.scanner).toBe("custom:demo");
   });
 
-  it("reports one progress line per scanner (14)", async () => {
+  it("reports one stage line for all scanners, with no raw finding count (14)", async () => {
     const dir = repo({ "db/migrate.sql": SQL });
     const progress: string[] = [];
     await runScanners({
@@ -405,9 +405,9 @@ describe("runScanners", () => {
       resolveTool: notInstalled(),
       onProgress: (line) => progress.push(line),
     });
-    expect(progress).toHaveLength(13);
-    expect(progress.find((l) => l.startsWith("sqllint:"))).toMatch(/^sqllint: ran, 3 raw finding\(s\) in /);
-    expect(progress.find((l) => l.startsWith("semgrep:"))).toBe("semgrep: not installed");
+    expect(progress).toHaveLength(1);
+    expect(progress[0]).toMatch(/^Scanners: 1 ran, 10 had nothing to check, 2 not installed, \d+ candidates? to check$/);
+    expect(progress.join("\n")).not.toContain("raw finding");
   });
 });
 
