@@ -12,7 +12,9 @@
 //  4. A review started by init re-enters init or starts an install step.
 //  5. `--no-review` still reviews.
 //  6. A dry run or an uninstall reviews.
-import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+//  7. A developer's own earlier edit to a file init then wrote to (CLAUDE.md)
+//     is left out of the review, or init's own addition is reviewed with it.
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -159,5 +161,41 @@ describe("init as a subprocess", () => {
       expect(r.stdout).not.toContain("Reviewing your change now");
       expect(r.stdout).not.toContain("No change to review here");
     }
+  });
+});
+
+describe("7. what init wrote is not part of the first review", () => {
+  // A stand-in that keeps what the snapshot held when it started.
+  function seeing(path: string): ReviewerDriver & { seen: (string | null)[] } {
+    const d = fake() as ReviewerDriver & { seen: (string | null)[]; started: number };
+    d.seen = [];
+    const start = d.start.bind(d);
+    d.start = (opts) => {
+      d.seen.push(existsSync(join(opts.snapshotDir, path)) ? readFileSync(join(opts.snapshotDir, path), "utf8") : null);
+      return start(opts);
+    };
+    return d;
+  }
+
+  it("reviews the developer's own edit to CLAUDE.md without the section init appended", async () => {
+    const dir = repo(false);
+    writeFileSync(join(dir, "CLAUDE.md"), "# Team\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "Claude file");
+    const mine = "# Team\n\nUse tabs.\n";
+    writeFileSync(join(dir, "CLAUDE.md"), mine);
+    appendFileSync(join(dir, "CLAUDE.md"), "\n<!-- openqodex -->\nReview before you push.\n");
+    const driver = seeing("CLAUDE.md");
+    await reviewAfterInit({ repoRoot: dir, runner: "openqodex", interactive: false, drivers: [driver], initFiles: new Map([[join(dir, "CLAUDE.md"), mine]]) });
+    expect(driver.seen).toEqual([mine]);
+  });
+
+  it("a file init created is the whole change: nothing is reviewed", async () => {
+    const dir = repo(false);
+    writeFileSync(join(dir, "AGENTS.md"), "<!-- openqodex -->\nReview before you push.\n");
+    const driver = seeing("AGENTS.md");
+    await reviewAfterInit({ repoRoot: dir, runner: "openqodex", interactive: false, drivers: [driver], initFiles: new Map([[join(dir, "AGENTS.md"), null]]) });
+    expect(driver.seen).toEqual([]);
+    expect(out).toContain("No change to review here");
   });
 });

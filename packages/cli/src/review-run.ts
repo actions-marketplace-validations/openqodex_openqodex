@@ -94,6 +94,8 @@ export type ReviewOptions = {
   timeoutMs: number;
   // The drivers to choose from; tests pass a model provider stand-in.
   drivers?: ReviewerDriver[];
+  // Files to review as they were before `init` wrote them (getChange overlay).
+  overlay?: { path: string; content: string | null }[];
 };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -387,6 +389,7 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
     scope: o.all ? { uncommitted: true } : o.scope,
     exclude: config.exclude,
     defaultBase: config.defaultBase,
+    overlay: o.overlay,
     onTree: async (tree) => {
       treeSha = tree.sha;
       snapshot = await addTargetCheckout(repoRoot, head, "work-", tree);

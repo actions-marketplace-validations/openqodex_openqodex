@@ -4,7 +4,7 @@
 // three commands instead of the question. It runs in this process with
 // scanner downloads off, so it never starts another install step, and it
 // never throws: init's exit code is about the install.
-import { relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { getChange, loadConfig } from "@openqodex/core";
 import { parseFlags } from "../flags.js";
 import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
@@ -42,10 +42,11 @@ export async function reviewAfterInit(o: {
   runner: string;
   // A terminal to ask in, and no --yes.
   interactive: boolean;
-  // Absolute paths of the files init wrote in this run: a change made of
-  // these alone (the team section in CLAUDE.md, project-scope agent files)
-  // is init's, not the developer's, and is not reviewed now.
-  initFiles?: string[];
+  // The files init wrote in this run, by absolute path, each with its text
+  // from before init wrote it (null when init created it). The review takes
+  // them as they were, so a developer's own earlier edit to CLAUDE.md is
+  // reviewed and the section init added to it is not.
+  initFiles?: Map<string, string | null>;
   // Tests pass a model provider stand-in.
   drivers?: ReviewerDriver[];
   ask?: () => Promise<Choice>;
@@ -55,12 +56,14 @@ export async function reviewAfterInit(o: {
     const review = (extra: Partial<ReviewOptions>) =>
       runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000, drivers: o.drivers, ...extra });
     const { config } = loadConfig(o.repoRoot);
-    const change = await getChange({ repoRoot: o.repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase });
-    const mine = new Set((o.initFiles ?? []).map((p) => relative(resolve(o.repoRoot), resolve(p))));
-    if (change.files.some((f) => !mine.has(f.path))) {
+    const overlay = [...(o.initFiles ?? new Map<string, string | null>())]
+      .map(([path, content]) => ({ path: relative(resolve(o.repoRoot), resolve(path)), content }))
+      .filter((f) => f.path !== "" && !f.path.startsWith("..") && !isAbsolute(f.path));
+    const change = await getChange({ repoRoot: o.repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase, overlay });
+    if (change.files.length > 0) {
       out();
       out("Reviewing your change now. This takes one to three minutes.");
-      await review({});
+      await review({ overlay });
       return;
     }
     if (!o.interactive) {

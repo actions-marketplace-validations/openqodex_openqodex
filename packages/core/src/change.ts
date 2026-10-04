@@ -8,7 +8,7 @@
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm, stat, utimes } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm, stat, utimes, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -374,6 +374,10 @@ export async function getChange(args: {
   // `alternates` the repo's own. The review copies its snapshot from it, so
   // the snapshot and the change are the same state by construction.
   onTree?: (tree: { sha: string; objects: string; alternates: string }) => Promise<void>;
+  // Files to take as they were, not as they are on disk: the path relative
+  // to the repo and its earlier text, or null for a file that did not exist.
+  // `init` passes the files it wrote, so the change is the developer's own.
+  overlay?: { path: string; content: string | null }[];
 }): Promise<Change> {
   const { repoRoot, scope, exclude } = args;
   const base = await resolveBase(repoRoot, scope, args.defaultBase ?? null);
@@ -411,6 +415,16 @@ export async function getChange(args: {
     // repo's own .gitignore ignores. The report folder is left out by the
     // pathspec on every diff below instead.
     await gitOk(repoRoot, ["add", "-A", "--", "."], { env, config: noFilters });
+    for (const [i, o] of (args.overlay ?? []).entries()) {
+      if (o.content === null) {
+        await gitOk(repoRoot, ["update-index", "--force-remove", "--", o.path], { env });
+        continue;
+      }
+      const file = join(tmp, `overlay-${i}`);
+      await writeFile(file, o.content);
+      const blob = (await gitOk(repoRoot, ["hash-object", "-w", "--no-filters", "--", file], { env })).toString("utf8").trim();
+      await gitOk(repoRoot, ["update-index", "--add", "--cacheinfo", `100644,${blob},${o.path}`], { env });
+    }
     if (args.onTree) {
       // Written into the temp object folder, like the blobs `add` wrote.
       const sha = (await gitOk(repoRoot, ["write-tree"], { env })).toString("utf8").trim();

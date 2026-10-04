@@ -150,6 +150,8 @@ type Setup = {
   // Files this run wrote, so the closing review does not take init's own
   // files for the developer's change.
   written: string[];
+  // Each written path's text before init wrote it, null when it was not there.
+  before: Map<string, string | null>;
 };
 
 function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
@@ -363,6 +365,15 @@ async function runLocked(s: Setup): Promise<number> {
         if (a.guard && readText(a.guard.path) !== a.guard.before) {
           throw new Error(`changed while init was running, nothing written to ${a.guard.path}`);
         }
+        // The text before init's first write, so the review after init
+        // takes the developer's own edits and not init's.
+        if (s.repoRoot !== null && !s.before.has(a.path) && !relative(s.repoRoot, a.path).startsWith("..")) {
+          try {
+            s.before.set(a.path, readText(a.path));
+          } catch {
+            // not a text file: the review takes it as it is on disk
+          }
+        }
         await a.apply!();
         s.written.push(a.path);
       } catch (error) {
@@ -442,6 +453,7 @@ export async function run(args: string[]): Promise<number> {
     repoRoot,
     version: __OPENQODEX_VERSION__,
     written: [],
+    before: new Map(),
   };
   try {
     // A dry run writes nothing and takes no lock. Otherwise everything runs
@@ -457,7 +469,7 @@ export async function run(args: string[]): Promise<number> {
     // After the boundary is released, so the review holds no install lock.
     if (code === EXIT_OK && !flags.uninstall && !flags.noReview && repoRoot !== null) {
       const runner = flags.project ? `npx -y openqodex@${setup.version}` : launcherRunner(launcherPath(setup.oqHome));
-      await reviewAfterInit({ repoRoot, runner, interactive: interactive() && !flags.yes, initFiles: setup.written });
+      await reviewAfterInit({ repoRoot, runner, interactive: interactive() && !flags.yes, initFiles: setup.before });
     }
     return code;
   } catch (error) {
