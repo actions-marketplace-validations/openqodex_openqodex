@@ -14,7 +14,7 @@ const REVIEW_STEP = "run openqodex review";
 
 // "complete" or "incomplete" for a review `review` ran with its own reviewer
 // (its completion record decides); "legacy" for one finished with the older
-// two-step protocol, which counts as reviewed but never as independent.
+// two-step protocol, which counts as reviewed and names the agent as the reviewer.
 export type ReceiptKind = "complete" | "incomplete" | "legacy";
 
 export type GateReceipt = {
@@ -57,7 +57,7 @@ export function gateReceipt(report: Report, kind: ReceiptKind, dir: string): Gat
 // block_on_severity is set; none asks for `openqodex review` (and denies when
 // a threshold is set, so the agent reviews and retries); an incomplete record
 // never blocks. A legacy receipt counts as reviewed, with one line saying it
-// was not an independent review. `receipt`: the record of this change, else
+// was done by the coding agent in use. `receipt`: the record of this change, else
 // the newest record of the repository, else null.
 export function checkPush(args: { currentChangeId: string; receipt: GateReceipt | null; config: Config }): PushDecision {
   const { currentChangeId, receipt, config } = args;
@@ -90,7 +90,7 @@ export function checkPush(args: { currentChangeId: string; receipt: GateReceipt 
     };
   }
 
-  const legacy = receipt.kind === "legacy" ? " This was not an independent review: it came from the older two-step protocol." : "";
+  const legacy = receipt.kind === "legacy" ? " It was reviewed by the coding agent you are using." : "";
   if (threshold && receipt.verdict !== "passed") {
     return {
       decision: "deny",

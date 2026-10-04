@@ -10,8 +10,8 @@
 // 6. A review judged with no threshold, or another one, passes a push after
 //    block_on_severity is set (the config is outside the change id).
 // 7. An incomplete record blocks a push, even with block_on_severity set.
-// 8. A legacy receipt (the old two-step protocol) counts as a complete,
-//    independent review, or suddenly blocks a push the old version let through.
+// 8. A legacy receipt (the old two-step protocol) counts as a complete
+//    record, or suddenly blocks a push the old version let through.
 // 9. A complete passing review of this change is not silent.
 import { describe, expect, it } from "vitest";
 import { finalizeReview } from "./finalize.js";
@@ -88,14 +88,14 @@ describe("checkPush", () => {
     }
   });
 
-  it("8. a legacy receipt counts as reviewed, says it was not an independent review, and blocks only a blocked verdict", () => {
+  it("8. a legacy receipt counts as reviewed, names the reviewing agent, and blocks only a blocked verdict", () => {
     const passing = { ...legacy(null), verdict: "passed" as const, block_on_severity: "critical" as const };
     const d = checkPush({ currentChangeId: change.id, receipt: passing, config: makeConfig({ blockOnSeverity: "critical" }) });
     expect(d.decision).toBe("abstain");
-    expect(d.message).toContain("not an independent review");
+    expect(d.message).toContain("reviewed by the coding agent you are using");
     const b = checkPush({ currentChangeId: change.id, receipt: legacy("critical"), config: makeConfig({ blockOnSeverity: "critical" }) });
     expect(b.decision).toBe("deny");
-    expect(b.message).toContain("not an independent review");
+    expect(b.message).toContain("reviewed by the coding agent you are using");
   });
 
   it("1. never allows", () => {

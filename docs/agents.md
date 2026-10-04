@@ -1,6 +1,6 @@
 # Agents
 
-OpenQodex runs from Claude Code, Cursor, Codex CLI and Cline. `openqodex init` installs it into each one it finds. Whichever agent asks for the review, the review itself runs in a reviewer process OpenQodex starts: Claude Code, on your Claude Code login, with no other key. Codex and Cursor are not used as reviewers yet (`security` says why); in Cursor, Codex and Cline the review works when Claude Code is installed too. Without it, `review` names a fallback review by the agent you are in, labelled as not independent (see "Who reviews, by what is installed").
+OpenQodex runs from Claude Code, Cursor, Codex CLI and Cline. `openqodex init` installs it into each one it finds. Whichever agent asks for the review, the review itself runs in a reviewer process OpenQodex starts: Claude Code, on your Claude Code login, with no other key. Codex and Cursor are not used as reviewers yet (`security` says why); in Cursor, Codex and Cline the review works when Claude Code is installed too. Without it, `review` names the command with which the agent you are in reviews the change itself (see "Who reviews, by what is installed").
 
 ## Run init
 
@@ -60,11 +60,11 @@ The reviewer runs nothing: no tests, no scripts, no shell.
 
 | Installed | What `review` gives you |
 |---|---|
-| Claude Code, logged in | An independent review: a fresh Claude Code process OpenQodex starts reviews the change. |
-| Only Codex or only Cursor (or Claude Code logged out) | "Full review unavailable", exit 2, and a fallback: run `review --agent` and the agent you are in follows the brief it prints, then `review --finalize`. That report says on its first line after the verdict "Reviewed by the same agent that may have written the code: not an independent review." |
+| Claude Code, logged in | A fresh Claude Code process that OpenQodex starts reviews the change. |
+| Only Codex or only Cursor (or Claude Code logged out) | "Full review unavailable", exit 2, and a fallback: run `review --agent` and the agent you are in follows the brief it prints, then `review --finalize`. That report says on its first line after the verdict "Reviewed by the coding agent you are using." |
 | None of them | "Full review unavailable", exit 2, and the scanner findings saved to a file as unchecked candidates, never as a review. The fallback line prints too, but no agent is there to follow it. |
 
-The skill tells the agent to follow the fallback when `review` prints it, and to tell you the review was not independent. The push hooks count a fallback review as reviewed, with one line saying it was not independent.
+The skill tells the agent to follow the fallback when `review` prints it. The push hooks count a fallback review as reviewed, with one line naming who reviewed.
 
 ## The repo folder
 
@@ -146,7 +146,7 @@ The gate runs in Claude Code and Codex, through the hooks above, and in the git 
 - A complete review of this change that is blocked: the gate denies the push when `review.block_on_severity` is set, with the counts and the report path.
 - No review of this change: one line asking you to run `openqodex review`. With `review.block_on_severity` set, the gate denies the push, so an agent runs the review and tries again.
 - An incomplete review of this change: one line saying so. It never blocks.
-- A review from the older two-step protocol (`review --agent`, then `--finalize`): it counts as reviewed, with one line saying it was not an independent review.
+- A review from the older two-step protocol (`review --agent`, then `--finalize`): it counts as reviewed, with one line naming who reviewed.
 
 `OPENQODEX_SKIP=1` in the environment lets the push through and says so. It is your switch, not your agent's.
 

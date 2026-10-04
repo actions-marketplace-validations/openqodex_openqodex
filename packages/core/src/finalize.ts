@@ -58,7 +58,7 @@ const submissionSchema = z.object({
 // the agent that wrote the code is never silent.
 const REVIEWER_LINE = {
   subagent: "Reviewed by a separate subagent.",
-  "same-agent": "Not an independent review: the agent that wrote the code reviewed it.",
+  "same-agent": "Reviewed by the coding agent you are using.",
 } as const;
 
 // The manifest version `review` writes now. From 2 on, a submission must say
@@ -248,8 +248,8 @@ function verdictFor(threshold: Severity | null, severities: Severity[]): Verdict
 }
 
 // The line every output of a legacy review carries: the agent the developer
-// works in reviewed the change, and it may have written it.
-export const NOT_INDEPENDENT = "Reviewed by the same agent that may have written the code: not an independent review.";
+// works in reviewed the change.
+export const SAME_AGENT_REVIEW = "Reviewed by the coding agent you are using.";
 
 export function finalizeReview(args: {
   change: Change;
@@ -324,7 +324,7 @@ export function finalizeReview(args: {
   const report: Report = {
     version: 1,
     kind: "review",
-    independence: NOT_INDEPENDENT,
+    reviewed_by: SAME_AGENT_REVIEW,
     impact: null,
     change_id: change.id,
     base: { ref: change.baseRef, sha: change.baseSha },

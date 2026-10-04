@@ -576,7 +576,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       warn("Full review unavailable: openqodex could not start a reviewer.");
       for (const line of chosen.unavailable) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
-      warn(`To review with the agent you are in instead (not an independent review), run \`${fallbackCommand(o)}\` and follow the brief it prints.`);
+      warn(`To review with the agent you are in instead, run \`${fallbackCommand(o)}\` and follow the brief it prints.`);
       return EXIT_TOOL_FAILED;
     }
 

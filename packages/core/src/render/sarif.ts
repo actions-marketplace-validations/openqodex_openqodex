@@ -123,8 +123,8 @@ export function renderSarif(report: Report): string {
 
   const versions = new Map(report.scanners.map((s) => [s.scanner as string, s.version]));
   const completion = completionOf(report);
-  const independence = report.independence ? { properties: { ...(completion.properties as Record<string, unknown> | undefined), independence: report.independence } } : {};
-  const runs: Record<string, unknown>[] = [{ ...run("openqodex", null, agent), ...completion, ...independence }];
+  const reviewed_by = report.reviewed_by ? { properties: { ...(completion.properties as Record<string, unknown> | undefined), reviewed_by: report.reviewed_by } } : {};
+  const runs: Record<string, unknown>[] = [{ ...run("openqodex", null, agent), ...completion, ...reviewed_by }];
   for (const [source, results] of byScanner) runs.push(run(source, versions.get(source) ?? null, results));
 
   const sarif = {

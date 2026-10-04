@@ -52,7 +52,7 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 
 ## What it does not do yet
 
-- No independent review without Claude Code. With no usable reviewer, `review` prints "Full review unavailable", says what is missing, and saves the unchecked scanner findings to a file it names. It never presents them as a review. It also names a fallback: the agent you are in reviews the change through `review --agent`, and that report says it was not an independent review.
+- The separate reviewer process needs Claude Code today. Without it, `review` prints "Full review unavailable", says what is missing, saves the unchecked scanner findings to a file it names, and names the command with which the agent you are in reviews the change itself (`review --agent`). That report says which agent reviewed.
 - No Codex or Cursor reviewer. Codex always loads your own `~/.codex/AGENTS.md` and does not show every command it runs in its event stream. `cursor-agent` has no way to limit its tools to reading or to skip your rules and settings.
 - A review takes one to three minutes and uses your own Claude Code plan.
 - No review finds everything. The promise is that every stage runs, every scanner finding is checked, every changed line is read, and anything skipped is named.

@@ -365,7 +365,7 @@ function reviewAndFinalize(s: Sandbox): void {
   expect(r.status, r.stderr).toBe(0);
 }
 
-const LEGACY = "not an independent review";
+const LEGACY = "reviewed by the coding agent you are using";
 
 describe("the record the hooks trust", () => {
   it("15. a complete passing record the repository carries counts as no review", async () => {

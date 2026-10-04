@@ -572,8 +572,8 @@ describe("the reviewer process", () => {
   });
 });
 
-const FALLBACK = "To review with the agent you are in instead (not an independent review), run `npx -y openqodex@0.0.0-test review --agent` and follow the brief it prints.";
-const SAME_AGENT = "Reviewed by the same agent that may have written the code: not an independent review.";
+const FALLBACK = "To review with the agent you are in instead, run `npx -y openqodex@0.0.0-test review --agent` and follow the brief it prints.";
+const SAME_AGENT = "Reviewed by the coding agent you are using.";
 
 describe("26. the fallback when no reviewer can start", () => {
   it("with no driver available the message names the fallback command", async () => {
@@ -585,12 +585,12 @@ describe("26. the fallback when no reviewer can start", () => {
   it("with a driver available the fallback text never appears", async () => {
     expect(await review(repo(), fake([good]))).toBe(0);
     expect(out + err).not.toContain("review --agent");
-    expect(out + err).not.toContain("not an independent review");
+    expect(out + err).not.toContain("To review with the agent you are in");
   });
 });
 
 describe("27. a fallback review", () => {
-  it("ends with a legacy record and says it was not independent in every output format", () => {
+  it("ends with a legacy record and names the reviewing agent in every output format", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
     const brief = cli(s, ["review", "--agent", "--no-install"]);
@@ -608,9 +608,9 @@ describe("27. a fallback review", () => {
     const dir = join(s.repo, latest.dir);
     const md = readFileSync(join(dir, "report.md"), "utf8").split("\n").filter((l) => l !== "");
     expect(md[md.findIndex((l) => l.startsWith("**")) + 1]).toBe(SAME_AGENT);
-    expect((JSON.parse(readFileSync(join(dir, "report.json"), "utf8")) as { independence?: string }).independence).toBe(SAME_AGENT);
-    const sarif = JSON.parse(readFileSync(join(dir, "report.sarif"), "utf8")) as { runs: { properties?: { independence?: string } }[] };
-    expect(sarif.runs[0]?.properties?.independence).toBe(SAME_AGENT);
+    expect((JSON.parse(readFileSync(join(dir, "report.json"), "utf8")) as { reviewed_by?: string }).reviewed_by).toBe(SAME_AGENT);
+    const sarif = JSON.parse(readFileSync(join(dir, "report.sarif"), "utf8")) as { runs: { properties?: { reviewed_by?: string } }[] };
+    expect(sarif.runs[0]?.properties?.reviewed_by).toBe(SAME_AGENT);
     expect(readHomeReceipt(s.oqHome, s.repo, "latest")?.kind).toBe("legacy");
   });
 });

@@ -447,9 +447,9 @@ export type Report = {
   // A review run by `review` itself: its completion record. Absent in a scan
   // and in a review from the two-step protocol (a legacy review).
   completion?: CompletionRecord;
-  // A legacy review only: the line saying the agent that may have written
-  // the code reviewed it (NOT_INDEPENDENT). Every renderer prints it.
-  independence?: string;
+  // A legacy review only: the line naming the coding agent as the
+  // reviewer (SAME_AGENT_REVIEW). Every renderer prints it.
+  reviewed_by?: string;
 };
 
 // manifest.json in the report folder, written by `review --agent`, read by

@@ -12,7 +12,7 @@ The agent installs the skill, runs the review and tells you the result. The step
 ## Before you start
 
 - Node 22 or newer, and git.
-- Claude Code, installed and logged in. It is the reviewer OpenQodex starts. Without it, `review` runs the scanners, says "Full review unavailable" and gives no independent review; it names a fallback in which the agent you are in reviews the change, and that report says it was not independent.
+- Claude Code, installed and logged in. It is the reviewer OpenQodex starts. Without it, `review` runs the scanners, says "Full review unavailable", and names the command with which the agent you are in reviews the change itself.
 - macOS or Linux. On Windows, use WSL.
 - A git repository with a change in it.
 
