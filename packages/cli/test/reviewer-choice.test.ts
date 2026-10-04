@@ -10,9 +10,10 @@
 //     something, or does not say why it is off.
 //  3. The config's `reviewer:` key is ignored.
 //  4. The flag does not win over the config.
-//  5. The reviewer gets web tools with the default config.
-//  6. `reviewer_web: on` does not give Claude Code its web tools, or the
-//     trace check then fails the run for using them.
+//  5. The reviewer lacks its web tools with no config file, or keeps them
+//     with `reviewer_web: off`.
+//  6. A run that uses the web tools while they are on is failed by the
+//     trace check.
 //  7. A config value that is neither a known reviewer nor on or off is
 //     silently ignored.
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -143,26 +144,36 @@ describe("choosing the reviewer", () => {
 });
 
 describe("web tools", () => {
-  it("5. the default is off, and with it the reviewer has no web tool", async () => {
-    expect(DEFAULT_REVIEWER_WEB).toBe("off");
+  it("5. with no config file the reviewer is started with web on and the Claude Code command line carries WebSearch and WebFetch", async () => {
+    expect(DEFAULT_REVIEWER_WEB).toBe("on");
+    const claude = fake();
+    expect(await review([claude])).toBe(0);
+    expect(claude.starts).toEqual([{ web: true }]);
+    const args = claudeArgs(true);
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,WebSearch,WebFetch");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe("WebSearch,WebFetch");
+  });
+
+  it("5. reviewer_web: off starts the reviewer without web tools, and the Claude Code command line names none", async () => {
+    userConfig("reviewer_web: off\n");
     const claude = fake();
     expect(await review([claude])).toBe(0);
     expect(claude.starts).toEqual([{ web: false }]);
-    const tools = claudeArgs(false)[claudeArgs(false).indexOf("--tools") + 1];
-    expect(tools).toBe("Read,Grep,Glob");
+    const args = claudeArgs(false);
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob");
+    expect(args.join(" ")).not.toMatch(/WebSearch|WebFetch/);
   });
 
-  it("6. reviewer_web: on gives Claude Code WebSearch and WebFetch, and a run that uses them completes", async () => {
-    userConfig("reviewer_web: on\n");
+  it("6. with web on, a run that uses WebSearch completes", async () => {
     const web = [{ tool: "WebSearch", input: { query: "flask pagination" }, ok: true, read: null }];
     const claude = fake(web);
     expect(await review([claude])).toBe(0);
     expect(claude.starts).toEqual([{ web: true }]);
     expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
-    expect(claudeArgs(true)[claudeArgs(true).indexOf("--tools") + 1]).toBe("Read,Grep,Glob,WebSearch,WebFetch");
   });
 
-  it("5. with web off, a web tool call makes the run incomplete", async () => {
+  it("5. with reviewer_web: off, a web tool call makes the run incomplete", async () => {
+    userConfig("reviewer_web: off\n");
     const web = [{ tool: "WebFetch", input: { url: "https://example.com", prompt: "read" }, ok: true, read: null }];
     expect(await review([fake(web)])).toBe(2);
     expect((JSON.parse(out) as Report).completion?.missing.join("\n")).toContain("WebFetch");

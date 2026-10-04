@@ -14,8 +14,8 @@ import type { ToolCall } from "./trace.js";
 
 const execFileAsync = promisify(execFile);
 
-// `web`: WebSearch and WebFetch are added only when the user config sets
-// `reviewer_web: on`.
+// `web`: WebSearch and WebFetch are added unless the user config sets
+// `reviewer_web: off`.
 export function claudeArgs(web: boolean): string[] {
   const tools = web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS;
   return [

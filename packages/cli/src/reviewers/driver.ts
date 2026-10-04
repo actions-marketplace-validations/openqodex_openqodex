@@ -49,7 +49,7 @@ export interface ReviewerDriver {
   // program in the reviewer's place.
   detect(repoRoot: string): Promise<Detected>;
   // `deadline`: epoch milliseconds after which the process group is killed.
-  // `web`: the user config allows the agent's web tools (reviewer_web: on).
+  // `web`: the agent gets its web tools (on unless reviewer_web: off).
   start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession;
 }
 
