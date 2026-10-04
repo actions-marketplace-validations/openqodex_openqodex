@@ -52,7 +52,7 @@ import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
 import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
-import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
+import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
 import { writeHomeReceipt } from "./receipts.js";
 import { claudeDriver } from "./reviewers/claude.js";
 import { codexDriver } from "./reviewers/codex.js";
@@ -521,9 +521,10 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
 
 // The two-step review through the agent the developer works in, for when no
 // reviewer can start: the same scope, folder, config and network limits,
-// through the launcher or the pinned npx form.
+// through the launcher, the pinned npx form, or a local build's own node and
+// entry file (directRunner).
 function fallbackCommand(o: ReviewOptions): string {
-  const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : `npx -y openqodex@${__OPENQODEX_VERSION__}`;
+  const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : directRunner();
   const base = o.base ?? o.scope.base;
   const scope = o.all
     ? ["--all"]
