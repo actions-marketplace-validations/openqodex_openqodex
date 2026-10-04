@@ -316,14 +316,15 @@ describe("review --agent and --finalize", () => {
     writeFileSync(cfg, "version: 1\nreview:\n  block_on_severity: critical\n");
     const r = cli(["review", "--agent", "--no-install", "--config", cfg], repo);
     expect(r.code).toBe(0);
-    const command = /`(npx -y openqodex@\S+ review --finalize [^`]+)`/.exec(r.stdout)?.[1];
+    // A local build names its own node and entry file.
+    const command = /`([^`]* review --finalize [^`]+)`/.exec(r.stdout)?.[1];
     expect(command).toBeDefined();
     const dir = latestDir(repo);
     const changeId = (JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { change_id: string }).change_id;
     submit(dir, changeId, [finding({ severity: "critical" })]);
     // Run it the way an agent would, through a shell, from another folder,
-    // with the built CLI in place of npx.
-    const line = (command as string).replace(/^npx -y openqodex@\S+/, `"${process.execPath}" "${BIN}"`);
+    // as the brief printed it.
+    const line = command as string;
     const run = spawnSync("sh", ["-c", line], { cwd: temp("other"), encoding: "utf8", env: cliEnv({}) });
     expect(run.stderr).toBe("");
     expect(run.status).toBe(1);

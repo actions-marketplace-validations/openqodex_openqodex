@@ -38,6 +38,8 @@
 //     forever; or a review of another head covers the push.
 // 18. A later review of other work, saved as the newest record, hides an
 //     earlier complete review that contains the push.
+// 19. The line printed for husky or lefthook drops git's hook arguments, so
+//     a push to a remote other than origin is looked up against origin.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -519,5 +521,52 @@ describe("the pre-push hook looks up the review of what the push sends", () => {
     const r = push(s, "origin", "feature");
     expect(r.status).not.toBe(0);
     expect(r.out).toContain(UNREVIEWED);
+  }, 60_000);
+});
+
+// 19. The line printed for a hook manager drops git's arguments, so a push
+// to a remote other than origin is looked up against origin.
+describe("the line printed for a hook manager", () => {
+  // A repo whose only remote is "upstream", with a branch the remote has and
+  // a new commit on it that no review covers.
+  function upstreamFeature(managerFile: string): Sandbox {
+    const s = sandbox({ "README.md": "hello\n", [managerFile]: "pre-push:\n  commands: {}\n" });
+    git(s.root, "init", "-q", "--bare", join(s.root, "remote.git"));
+    git(s.repo, "remote", "add", "upstream", join(s.root, "remote.git"));
+    git(s.repo, "push", "-q", "upstream", "main");
+    git(s.repo, "checkout", "-q", "-b", "feature");
+    writeFileSync(join(s.repo, "one.txt"), "one\n");
+    commitAll(s.repo);
+    git(s.repo, "push", "-q", "upstream", "feature");
+    writeFileSync(join(s.repo, "two.txt"), "two\n");
+    commitAll(s.repo);
+    return s;
+  }
+
+  // The printed line, with the built CLI in place of the published one,
+  // written as the repo's pre-push hook the way husky runs it (sh -e).
+  function installLine(s: Sandbox, toHook: (line: string) => string): void {
+    const r = cli(s, ["hook", "install"]);
+    expect(r.status).toBe(0);
+    const line = r.stdout.split("\n").map((l) => l.trim()).find((l) => l.startsWith("npx -y openqodex@"));
+    expect(line).toBeDefined();
+    const local = line!.replace(/^npx -y openqodex@\S+/, `${JSON.stringify(process.execPath)} ${JSON.stringify(BIN)}`);
+    writeFileSync(join(s.repo, ".git/hooks/pre-push"), `#!/bin/sh\nset -e\n${toHook(local)}\n`, { mode: 0o755 });
+  }
+
+  it("19. the husky line passes the remote, so the hint names upstream", () => {
+    const s = upstreamFeature(".husky/pre-commit");
+    installLine(s, (line) => line);
+    const r = push(s, "upstream", "feature");
+    expect(r.out).toContain("git branch --set-upstream-to 'upstream/feature' 'feature'");
+  }, 60_000);
+
+  it("19. the lefthook line passes the remote, so the hint names upstream", () => {
+    const s = upstreamFeature("lefthook.yml");
+    // Lefthook puts git's first and second hook arguments in place of {1}
+    // and {2} before it runs the command (AddGitArgs in its replacer).
+    installLine(s, (line) => line.replaceAll("{1}", "upstream").replaceAll("{2}", join(s.root, "remote.git")));
+    const r = push(s, "upstream", "feature");
+    expect(r.out).toContain("git branch --set-upstream-to 'upstream/feature' 'feature'");
   }, 60_000);
 });

@@ -17,7 +17,8 @@ function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>): 
   const lines = [`  ${c.bold(display(location(f)))}  ${display(f.title)}`];
   const desc = display(firstLine(f.description));
   if (desc) lines.push(`    ${desc}`);
-  lines.push(`    ${c.dim(display(sourceLabel(f)))}`);
+  // A finding from the agent's own reading has no source to name.
+  if (f.source !== null || f.origin !== "agent") lines.push(`    ${c.dim(display(sourceLabel(f)))}`);
   return lines;
 }
 

@@ -354,12 +354,14 @@ export function gitHookScript(launcher: string): string {
 // The line to add to a pre-push hook openqodex does not write (husky,
 // lefthook, a hook of the developer's own). The same exit mapping as the hook
 // it writes: only exit 1 stops the push; a tool that fails (exit 2) or
-// cannot start never does.
-export function hookLine(command: string): string {
-  return `${command} hook pre-push || [ $? -ne 1 ]`;
+// cannot start never does. `args` hands on git's hook arguments (the remote
+// name and URL): "$@" in a shell hook; lefthook puts them in place of {1} and
+// {2} instead.
+export function hookLine(command: string, args = '"$@"'): string {
+  return `${command} hook pre-push ${args} || [ $? -ne 1 ]`;
 }
 
-const MANAGED_LINE = (): string => hookLine(`npx -y openqodex@${__OPENQODEX_VERSION__}`);
+const MANAGED_LINE = (manager: HookManager): string => hookLine(`npx -y openqodex@${__OPENQODEX_VERSION__}`, manager.args);
 
 async function hookFile(): Promise<{ repoRoot: string; path: string } | null> {
   const repoRoot = await repoRootOf(process.cwd());
@@ -371,10 +373,15 @@ export async function gitHookPath(repoRoot: string): Promise<string> {
   return join(await gitPath(repoRoot, "hooks"), "pre-push");
 }
 
-function hookManager(repoRoot: string): string | null {
-  if (existsSync(join(repoRoot, ".husky"))) return "husky (.husky/pre-push)";
+// A hook manager the repo uses, and how its pre-push command gets git's
+// arguments. Husky runs .husky/pre-push as a shell script with git's
+// arguments; lefthook puts them in place of {1} and {2} in its `run` line.
+type HookManager = { label: string; args: string };
+
+function hookManager(repoRoot: string): HookManager | null {
+  if (existsSync(join(repoRoot, ".husky"))) return { label: "husky (.husky/pre-push)", args: '"$@"' };
   for (const name of ["lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml"]) {
-    if (existsSync(join(repoRoot, name))) return `lefthook (${name}, under pre-push commands)`;
+    if (existsSync(join(repoRoot, name))) return { label: `lefthook (${name}, under pre-push commands)`, args: "'{1}' '{2}'" };
   }
   return null;
 }
@@ -418,9 +425,9 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
   if (manager !== null) {
     return {
       path,
-      manager,
+      manager: manager.label,
       foreign: false,
-      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager}; add ${MANAGED_LINE()} there` },
+      action: { verb: "keep", path, note: `${label}: this repo manages its hooks with ${manager.label}; add ${MANAGED_LINE(manager)} there` },
     };
   }
   const script = gitHookScript(launcher);
@@ -510,7 +517,7 @@ async function install(args: string[]): Promise<number> {
   const manager = hookManager(target.repoRoot);
   if (manager !== null) {
     process.stdout.write(
-      `This repo manages its git hooks with ${manager}. Add this line to its pre-push hook:\n  ${MANAGED_LINE()}\nNothing was written.\n`,
+      `This repo manages its git hooks with ${manager.label}. Add this line to its pre-push hook:\n  ${MANAGED_LINE(manager)}\nNothing was written.\n`,
     );
     return EXIT_OK;
   }

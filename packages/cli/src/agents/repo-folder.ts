@@ -3,6 +3,7 @@
 // by init and by the first scan or review in a repo; an existing file is
 // never touched. Init records what it created, and uninstall removes a file
 // only while it is unchanged and not committed.
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -16,6 +17,7 @@ import {
   readRepoFile,
   removeRepoFile,
   repoStat,
+  safeGitEnv,
   writeRepoFile,
   type RepoFiles,
 } from "@openqodex/core";
@@ -39,12 +41,35 @@ export const INSTRUCTIONS_LINE =
 export const ROOT_CONFIG_NOTE =
   "This repo has .openqodex.yaml at its root; it is still read. To move it into the folder: git mv .openqodex.yaml .openqodex/config.yaml";
 
+// Whether git ignores this repo-relative path: true, false, or null when git
+// could not answer. `git check-ignore` exits 0 for an ignored path, 1 for one
+// it does not ignore (a tracked file included), anything else on an error.
+function ignoredByGit(repoRoot: string, path: string): boolean | null {
+  const r = spawnSync("git", ["check-ignore", "-q", "--", path], { cwd: repoRoot, env: safeGitEnv(), stdio: "ignore", timeout: 15_000 });
+  return r.status === 0 ? true : r.status === 1 ? false : null;
+}
+
+// The advice for files the developer may share: commit the ones git can
+// stage, say so for the ones the repo ignores, and nothing for a path git
+// could not answer about.
+export function commitLines(repoRoot: string, paths: string[]): string[] {
+  const commit: string[] = [];
+  const lines: string[] = [];
+  for (const p of paths) {
+    const ignored = ignoredByGit(repoRoot, p);
+    if (ignored === false) commit.push(p);
+    else if (ignored === true) lines.push(`${p} is ignored by git in this repo (a .gitignore or exclude rule), so it is not shared with your team.`);
+  }
+  const them = commit.length > 1 ? "them" : "it";
+  return [...(commit.length > 0 ? [`Commit ${commit.join(" and ")} so your team shares ${them}.`] : []), ...lines];
+}
+
 // What a scan or review tells the developer about files it just created.
-export function repoFilesLines(files: RepoFiles): string[] {
+export function repoFilesLines(repoRoot: string, files: RepoFiles): string[] {
   if (files.created.length === 0) return [];
-  const them = files.created.length > 1 ? "them" : "it";
   return [
-    `Created ${files.created.join(" and ")}. Commit ${them} so your team shares ${them}.`,
+    `Created ${files.created.join(" and ")}.`,
+    ...commitLines(repoRoot, files.created),
     ...(files.created.some((p) => p.endsWith(INSTRUCTIONS_FILE)) ? [INSTRUCTIONS_LINE] : []),
     ...(files.rootConfig ? [ROOT_CONFIG_NOTE] : []),
   ];
@@ -186,5 +211,5 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
 // The first scan or review in a repo creates the two team files and says so
 // on stderr, one line each.
 export function announceRepoFiles(repoRoot: string): void {
-  for (const line of repoFilesLines(createRepoFiles(repoRoot))) process.stderr.write(`openqodex: ${line}\n`);
+  for (const line of repoFilesLines(repoRoot, createRepoFiles(repoRoot))) process.stderr.write(`openqodex: ${line}\n`);
 }
