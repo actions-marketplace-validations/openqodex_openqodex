@@ -128,9 +128,11 @@ async function rangeChangeId(core: Core, repoRoot: string, config: Config, remot
 }
 
 // The newest complete review when its range contains the pushed one: its
-// base is the push's base or an ancestor of it, and the change from its base
-// to the pushed commit is the very change it reviewed (the change id hashes
-// the base and the diff, so any other content gives another id). A branch
+// base is the push's base or an ancestor of it, the push's base is an
+// ancestor of the pushed commit (so a force push over a commit the review
+// never saw is not contained), and the change from its base to the pushed
+// commit is the very change it reviewed (the change id hashes the base and
+// the diff, so any other content gives another id). A branch
 // reviewed with no upstream is measured from the merge base with the default
 // branch, while its push is measured from the remote branch's tip; this
 // lets that review count. Returned under the pushed range's id; else null.
@@ -139,7 +141,9 @@ async function containingReceipt(core: Core, repoRoot: string, config: Config, n
   const base = await commitOf(repoRoot, newest.base.sha);
   if (base === null) return null;
   try {
-    await execFileAsync("git", ["merge-base", "--is-ancestor", base, pushBase], { cwd: repoRoot, timeout: 10_000 });
+    for (const [older, newer] of [[base, pushBase], [pushBase, localSha]]) {
+      await execFileAsync("git", ["merge-base", "--is-ancestor", older, newer], { cwd: repoRoot, timeout: 10_000 });
+    }
   } catch {
     return null;
   }
