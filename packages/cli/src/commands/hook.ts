@@ -169,12 +169,22 @@ async function resolvePlain(repoRoot: string, p: Plain): Promise<Resolved> {
   let remote = p.remote;
   let specs = p.specs;
   if (specs.length === 0) {
-    // The current branch to its upstream, as git's default push does.
+    // The current branch to its upstream, as git's default push
+    // (push.default simple) does. Any setting that makes git choose
+    // otherwise is not followed.
     if (branch === null) return { unresolved: "HEAD is not on a branch" };
+    const mode = await git(repoRoot, ["config", "--get", "push.default"]);
+    if (mode !== null && mode !== "simple") return { unresolved: `push.default is ${mode}` };
+    for (const key of [`branch.${branch}.pushRemote`, "remote.pushDefault"]) {
+      if ((await git(repoRoot, ["config", "--get", key])) !== null) return { unresolved: `${key} is set` };
+    }
     const upRemote = await git(repoRoot, ["config", "--get", `branch.${branch}.remote`]);
     const upMerge = await git(repoRoot, ["config", "--get", `branch.${branch}.merge`]);
     if (upRemote === null || upMerge === null || !upMerge.startsWith("refs/heads/")) return { unresolved: `${branch} has no upstream` };
     if (remote !== null && remote !== upRemote) return { unresolved: `${branch} tracks ${upRemote}, not ${remote}` };
+    if ((await git(repoRoot, ["config", "--get-all", `remote.${upRemote}.push`])) !== null) return { unresolved: `remote.${upRemote}.push is set` };
+    // simple pushes only to a branch of the same name; git refuses the rest.
+    if (upMerge.slice("refs/heads/".length) !== branch) return { unresolved: `${branch} tracks a branch of another name` };
     remote = upRemote;
     specs = [`${branch}:${upMerge.slice("refs/heads/".length)}`];
   }
@@ -182,7 +192,10 @@ async function resolvePlain(repoRoot: string, p: Plain): Promise<Resolved> {
   if (!NAME.test(remote) || (await git(repoRoot, ["config", "--get", `remote.${remote}.url`])) === null) return { unresolved: `${remote} is not a configured remote` };
   const ranges: { local: string; remoteSha: string | null }[] = [];
   for (const spec of specs) {
-    const [src = "", dst = src] = spec.replace(/^\+/, "").split(":");
+    const [src = "", rawDst = src] = spec.replace(/^\+/, "").split(":");
+    // refs/heads/<name> is the branch <name>; any other namespace is not followed.
+    const dst = rawDst.startsWith("refs/heads/") ? rawDst.slice("refs/heads/".length) : rawDst;
+    if (dst.startsWith("refs/") || dst === "") return { unresolved: `${rawDst} is not a branch` };
     const local = await commitOf(repoRoot, `refs/heads/${src}`);
     if (local === null) return { unresolved: `${src} is not a branch here` };
     const remoteSha = await commitOf(repoRoot, `refs/remotes/${remote}/${dst}`);
@@ -289,11 +302,9 @@ function readAll(): Promise<string> {
 // The ranges a push sends, from git's lines on stdin: `<local ref> <local
 // sha> <remote ref> <remote sha>`. An all-zero local sha deletes the remote
 // ref and sends nothing; an all-zero remote sha starts a new branch (null).
-// Null for the hook run by hand with no push lines: the work in place is
-// looked up.
-function pushedRanges(input: string): ({ local: string; remoteSha: string | null } | null)[] {
+// No lines (a push that sends nothing) is no range: nothing to check.
+function pushedRanges(input: string): { local: string; remoteSha: string | null }[] {
   const lines = input.split("\n").map((l) => l.trim()).filter((l) => l !== "");
-  if (lines.length === 0) return [null];
   const out = new Map<string, { local: string; remoteSha: string | null }>();
   for (const l of lines) {
     const [, local, , remote] = l.split(/\s+/);
@@ -326,13 +337,9 @@ async function prePush(args: string[]): Promise<number> {
   let denied = false;
   for (const range of pushedRanges(await readAll())) {
     let changeId = "";
-    if (range === null) {
-      changeId = (await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase })).id;
-    } else {
-      const found = await rangeChangeId(core, repoRoot, config, remote, range.local, range.remoteSha);
-      if ("id" in found) changeId = found.id;
-      else messages.add(`${UNRESOLVED} (${found.unknown}).`);
-    }
+    const found = await rangeChangeId(core, repoRoot, config, remote, range.local, range.remoteSha);
+    if ("id" in found) changeId = found.id;
+    else messages.add(`${UNRESOLVED} (${found.unknown}).`);
     const receipt = (changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId)) ?? newest;
     const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
     if (decision.decision === "deny") denied = true;

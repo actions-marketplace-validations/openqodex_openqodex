@@ -29,6 +29,12 @@
 //     branch for a new branch; an unreadable config blocks instead of
 //     taking the tool-error path (allow, one line).
 // 10. The git hook passes a push where one range among several is unreviewed.
+// 12. A destination spelled refs/heads/<name> is taken for a new branch, or
+//     another namespace (refs/tags/, refs/for/) is taken for a branch.
+// 13. A push with no refspec is taken to send the current branch while
+//     push.default, remote.<name>.push or a push remote choose otherwise.
+// 14. The git hook blocks a push that sends nothing (empty stdin) on the
+//     state of the work tree.
 //  7. The agent hook checks the checkout, not what the push command names:
 //     `git push origin unreviewed:main` passes on the checkout's review.
 import { createHash } from "node:crypto";
@@ -421,5 +427,37 @@ describe("9, 10. every form of push", () => {
     expect(cli(s, ["hook", "pre-push", "origin"], { input: `(delete) ${zero} refs/heads/old ${base}\n` }).status).toBe(0);
     const both = cli(s, ["hook", "pre-push", "origin"], { input: `refs/heads/main ${head} refs/heads/main ${base}\nrefs/heads/unreviewed ${sha} refs/heads/main ${base}\n` });
     expect(both.status).toBe(1);
+  });
+
+  it("12. a destination named refs/heads/<name> is that branch; any other namespace is unresolved", async () => {
+    await setUp(true);
+    expect(check("git push origin main:refs/heads/main")).toBe("");
+    const other = check("git push --force origin unreviewed:refs/heads/main");
+    expect(other).toContain(DENY);
+    expect(other).toContain("has not reviewed this change");
+    for (const command of ["git push origin main:refs/tags/v1", "git push origin main:refs/for/main"]) {
+      expect(check(command), command).toContain(COULD_NOT);
+    }
+  });
+
+  it("13. a push with no refspec is unresolved when git's settings choose what it sends", async () => {
+    await setUp(true);
+    for (const [key, value] of [["push.default", "matching"], ["push.default", "current"], ["remote.origin.push", "refs/heads/*:refs/heads/*"], ["branch.main.pushRemote", "origin"], ["remote.pushDefault", "origin"]] as const) {
+      g("config", key, value);
+      const out = check("git push --no-verify");
+      expect(out, key).toContain(DENY);
+      expect(out, key).toContain(COULD_NOT);
+      g("config", "--unset", key);
+    }
+    g("config", "push.default", "simple");
+    expect(check("git push")).toBe("");
+  });
+
+  it("14. the git hook passes a push that sends nothing, whatever the work tree holds", async () => {
+    await setUp(true);
+    writeFileSync(join(s.repo, "README.md"), "unreviewed edit\n");
+    const r = cli(s, ["hook", "pre-push", "origin"], { input: "" });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe("");
   });
 });
