@@ -65,3 +65,32 @@ export const ADAPTERS: readonly Adapter[] = [
   // Go lint and gosec.
   golangci,
 ];
+
+// The settings and ignore files each scanner really reads from the scanned
+// tree, as the adapter runs it. A change to one can hide that scanner's
+// findings, so the runner notes it. `path` with no folder and `anyFolder`
+// false: only the copy at the repository root (the scanner's working folder
+// or the adapter's own lookup). `anyFolder`: that name in any folder, which
+// the tool finds by walking up from the scanned file. `ruffTable`: only when
+// a changed line of the file is inside a `[tool.ruff` table.
+// Not listed: oxlint, rubocop, brakeman and golangci run on settings of
+// their own; bandit reads `.bandit` only with -r, which the adapter never
+// passes (it names the files).
+export type SettingsFile = { path: string; anyFolder?: true; ruffTable?: true };
+
+export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFile[]>> = {
+  // gitleaks.ts: the root config and the root ignore list only.
+  gitleaks: [{ path: ".gitleaks.toml" }, { path: "gitleaks.toml" }, { path: ".gitleaksignore" }],
+  // semgrep, run from the repository root.
+  semgrep: [{ path: ".semgrepignore" }],
+  // ruff finds its config from each file's folder upwards.
+  ruff: [{ path: "ruff.toml", anyFolder: true }, { path: ".ruff.toml", anyFolder: true }, { path: "pyproject.toml", anyFolder: true, ruffTable: true }],
+  // hadolint, run from the repository root.
+  hadolint: [{ path: ".hadolint.yaml" }, { path: ".hadolint.yml" }],
+  // shellcheck looks from each script's folder upwards.
+  shellcheck: [{ path: ".shellcheckrc", anyFolder: true }, { path: "shellcheckrc", anyFolder: true }],
+  // osv-scanner reads the one beside each lockfile.
+  "osv-scanner": [{ path: "osv-scanner.toml", anyFolder: true }],
+  // actionlint finds .github from the repository root.
+  actionlint: [{ path: ".github/actionlint.yaml" }, { path: ".github/actionlint.yml" }],
+};

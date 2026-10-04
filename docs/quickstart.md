@@ -53,6 +53,15 @@ review my whole repo with openqodex
 
 The agent runs `openqodex review --all --agent`. The scanners check every file, and the brief tells the agent where to start: the most-called functions and the files with the most scanner hits. See `docs/cli.md` for the details.
 
+To review a teammate's branch or a pull request before it merges, without leaving your own work, say:
+
+```
+review the branch feature/login with openqodex
+review pull request #42 with openqodex
+```
+
+The agent runs `openqodex review --agent feature/login` or `openqodex review --agent '#42'`. OpenQodex fetches the branch or the pull request, checks it out in a temporary folder and reviews what it added since it left its base. Your working folder is not touched. See "Reviewing a branch or a pull request" in `docs/cli.md`.
+
 ## 3. Read the report
 
 The agent tells you the verdict and the most serious findings. The full report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.

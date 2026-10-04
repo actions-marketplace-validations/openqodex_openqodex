@@ -54,6 +54,10 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
     for (const f of group) out.push(...findingLines(f, c));
   }
 
+  if ((report.settings_changes ?? []).length > 0) {
+    out.push("", "This change edits a scanner settings file (not counted; check that it hides nothing)");
+    for (const f of report.settings_changes ?? []) out.push(...findingLines(f, c));
+  }
   if (report.outside_change.length > 0) {
     out.push("", "Outside the changed lines (not counted)");
     for (const f of report.outside_change) out.push(...findingLines(f, c));

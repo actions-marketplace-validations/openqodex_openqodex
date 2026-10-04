@@ -44,6 +44,7 @@ const change: Change = {
   files: [{ path: file, status: "added", oldPath: null, binary: false }],
   changedPaths: [file],
   coverage: new Map([[file, new Set([1])]]),
+  deletionPoints: new Map(),
   diff: "",
   notReviewed: [],
   stats: { files: 1, additions: 1, deletions: 0 },

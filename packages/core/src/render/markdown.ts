@@ -69,6 +69,10 @@ export function renderMarkdown(report: Report): string {
   if (report.findings.length === 0) out.push("No findings on the changed lines.");
   else out.push(...findingTable(report.findings));
 
+  if ((report.settings_changes ?? []).length > 0) {
+    out.push("", "## Scanner settings changed", "", "This change edits a file a scanner reads as its settings or ignore list, which can hide that scanner's findings. Shown for information; these never count toward the verdict.", "");
+    out.push(...findingTable(report.settings_changes ?? []));
+  }
   if (report.outside_change.length > 0) {
     out.push("", "## Outside the changed lines", "", "Shown for information; these never count toward the verdict.", "");
     out.push(...findingTable(report.outside_change));

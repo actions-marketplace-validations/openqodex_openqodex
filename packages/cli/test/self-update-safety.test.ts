@@ -489,7 +489,12 @@ describe("14. Claude Code permission rules", () => {
       texts.push(r.stdout);
     }
     const lines = texts.flatMap((x) => [...x.matchAll(new RegExp(`${escape(launcher)} [^\`\n]*`, "g"))].map((m) => m[0].trim()));
-    const agentRuns = lines.filter((l) => / (review|guide)\b/.test(l) && !l.includes("<topic>"));
+    // A review of a branch or a pull request names its target, which no exact rule can cover: the developer is asked.
+    const isTarget = (l: string) => / review --agent [^-]/.test(l);
+    const targetRuns = lines.filter(isTarget);
+    expect(targetRuns.length).toBeGreaterThan(0);
+    for (const l of targetRuns) expect(covers(rules, l), l).toBe(false);
+    const agentRuns = lines.filter((l) => / (review|guide)\b/.test(l) && !l.includes("<topic>") && !isTarget(l));
     expect(agentRuns).toContain(`${launcher} guide skill`);
     expect(agentRuns).toContain(`${launcher} review --agent`);
     expect(agentRuns.filter((l) => l.includes("review --finalize")).length).toBeGreaterThanOrEqual(5);

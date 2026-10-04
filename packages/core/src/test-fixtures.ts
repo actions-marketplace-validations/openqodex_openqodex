@@ -44,6 +44,7 @@ export function makeChange(over: Partial<Change> = {}): Change {
       ["app/search.py", new Set([14, 15])],
       ["app/settings.py", new Set([1, 2, 3])],
     ]),
+    deletionPoints: new Map(),
     diff: DIFF,
     notReviewed: [],
     stats: { files: 2, additions: 5, deletions: 1 },

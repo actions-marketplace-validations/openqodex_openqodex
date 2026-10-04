@@ -13,3 +13,4 @@ export * from "./push-gate.js";
 export * from "./render/index.js";
 export * from "./report-files.js";
 export * from "./repo-state.js";
+export * from "./safe-git.js";

@@ -15,6 +15,11 @@
 // 9. The repo's custom instructions, which anyone who can commit may write,
 //    start a heading or a fence of their own and so pass as part of the
 //    brief, or reach the agent framed as commands to follow.
+// 10. The brief and the skill disagree on what goes in `source`, so an agent
+//     following one is rejected by the other.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildBrief } from "./brief.js";
 import { selectLenses } from "./lenses.js";
@@ -176,5 +181,14 @@ describe("buildBrief with lenses from the shipped catalog", () => {
     expect(out).toContain("### sql-string-concatenation");
     expect(out).toContain("- c1 [");
     expect(out).not.toContain(SECRET);
+  });
+});
+
+describe("the source field", () => {
+  it("is described in the brief exactly as the skill describes it (failure 10)", () => {
+    const skill = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../skills/openqodex/SKILL.md"), "utf8");
+    const line = skill.split("\n").find((l) => l.startsWith("- `source`:"));
+    expect(line).toBeDefined();
+    expect(brief()).toContain(line);
   });
 });

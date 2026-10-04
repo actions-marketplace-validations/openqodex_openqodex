@@ -22,7 +22,7 @@ By default the change is the commits not yet pushed plus everything uncommitted,
 4. The point where the branch left the remote's default branch (`origin/HEAD`).
 5. The last commit, `HEAD`.
 
-A repository with no commits checks every file. OpenQodex never fetches from a remote.
+A repository with no commits checks every file. A review of your own change never fetches from a remote; a review of a branch or a pull request does (see "Reviewing a branch or a pull request").
 
 ## Shared flags
 
@@ -47,11 +47,14 @@ Progress goes to stderr. The report goes to stdout.
 ## review
 
 ```
-openqodex review [--agent | --finalize [path]] [--all | --base <ref> | --uncommitted] [--no-graph] [--only <list>] [--skip <list>]
+openqodex review [--agent] [--all | --base <ref> | --uncommitted] [--no-graph] [--only <list>] [--skip <list>]
+openqodex review [--agent] <branch | #number | pull request link> [--base <ref>] [--no-graph] [--only <list>] [--skip <list>]
+openqodex review --finalize [--run <id> | path]
 ```
 
 - `--agent`: run the scanners, write the brief and print it. Your agent runs this.
-- `--finalize [path]`: check the agent's findings and write the report. Without a path it reads `agent-findings.json` in the newest report folder. With a path it finds the run by the `change_id` in that file.
+- `--finalize [path]`: check the agent's findings and write the report. Without a path it reads `agent-findings.json` in the newest report folder. With a path it finds the run by the `change_id` in that file. `--run <id>` names the run folder instead; a review of a branch or a pull request is finalized only that way.
+- `<branch>`, `#<number>` or a pull request link: review that branch or pull request instead of your own change. See "Reviewing a branch or a pull request".
 - Neither flag: run the scanners on the change and print their report, with the formats, flags and exit codes above. Then one line on stderr says how to get the full review from your agent, so `--format json` stays one JSON document. `scan` (see `plumbing`) does the same without that line.
 - `--base`, `--uncommitted`: see "Which change is checked".
 - `--all`: review the whole repository instead of the change. See "Reviewing the whole repository".
@@ -67,11 +70,42 @@ A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a cu
 - the change moved since the brief;
 - the config changed since the brief;
 - a finding cites a scanner rule or candidate that is not in this scan;
-- the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`.
+- the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`;
+- for a branch or a pull request, the temporary checkout moved from the reviewed commit or is gone.
 
 When the launcher started the review, the brief's finalize command is the plain line `<launcher> review --finalize`, with `--all` and `--offline` as the review had them, run from the repository root; it finds the run through `.openqodex/latest.json` (`latest-all.json` for `--all`). With `--config`, or when npx started the review, the command names the repository, the config and the findings file, so it works from any folder. When the version that runs `--finalize` is not the one that wrote the brief, and that one is installed by `init` or an update, it hands the run to that version by its findings file and exits with its code. A version reached that way never hands off again.
 
 It never repairs a finding. Fix what it names, or run `review --agent` again.
+
+### Deleted lines
+
+A finding counts toward the verdict only on a line the change added or modified. A change that only deletes lines, such as a removed check, has no such line, so the lines next to each deletion count too: the line just above and the line just below it in the new file. The brief lists each deletion point ("2 lines deleted after line 14 of app/auth.py") and tells the agent to cite one of those lines and say what was removed. Any other line the change did not touch stays under "Outside the changed lines".
+
+### Reviewing a branch or a pull request
+
+`review <branch>` reviews a branch that is not your current work, and `review '#42'` or `review https://github.com/<owner>/<repo>/pull/42` a pull request. Quote `#42` in a shell, where `#` starts a comment. A bare number is a branch name. The branch may be local, `origin/<name>`, or a branch on the remote that is fetched on demand.
+
+```
+openqodex review --agent feature/login
+openqodex review --agent '#42'
+```
+
+The change is what the target added since it left its base: from the merge base of the two to the target's head, read from the commits, never from a work tree. Commits that landed on the base after the split are not part of it. The base is, in this order:
+
+1. `--base <ref>`.
+2. The pull request's base, which `gh` names when it is installed and signed in. For a branch, only when it has exactly one open pull request.
+3. `review.default_base`.
+4. The remote's default branch (`origin/HEAD`), read without the network.
+
+Without `gh`, a branch review uses the next source, and a review of `#<number>` says in one line that the pull request's base is not known. The first line of the output and the brief say which base was used and where it came from.
+
+The head is fetched first: a branch from its remote, so a stale `origin/<name>` is brought up to date, and a pull request from `pull/<number>/head`, the ref GitHub keeps for every pull request. That ref is the one host convention OpenQodex uses. A base named as `<remote>/<branch>` is fetched too, even when this clone has never seen it. Fetches use git and its own credentials; OpenQodex reads no token. A fetch writes only `refs/remotes/<remote>/<branch>` for a branch, or a ref of its own under `refs/openqodex/tmp/` for a pull request, removed when the review ends: no configured fetch mapping, no tags, no pruning, so your branches and tags never change. A pull request link must name a remote of this repository whose host is exactly `github.com`. In a partial clone, a file that is not downloaded is never fetched for the checkout and the review stops with one line; this needs git 2.44 or newer. An older git fetches such a file itself, so with `--offline` a target review in a partial clone refuses to start on it. For `#<number>`, when `gh` names the repository the pull request was opened against and one of your remotes points at it, the head and the base are fetched from that remote, and a line says which. A local branch is read as it is. `--offline` fetches nothing and calls no `gh`, and says in one line when the target is not available locally.
+
+The files are read in a temporary checkout of the head in `~/.openqodex/checkouts/`, a folder only you can open. Making it, and every later git call in it (the code graph included), runs nothing from the repository: no git hook, no file system monitor, no clean, smudge or process filter (including one an include adds only for linked work trees), no submodule. Files stored in Git LFS hold their pointers, and one line says so. Your settings apply, never the target's: the config and `custom-instructions.md` are read from your repository. Checking the target out runs nothing from it, and a link in it becomes a small plain file holding the link's target. The scanners you approved for this repository do run on the target's files, with this repository's settings; one named only in the target's config never runs. If you review pull requests from people you do not trust, approve only custom scanners that do not execute the code they scan. When the target is your current commit and your work tree is clean, the files are read in place. With uncommitted work, the committed head is reviewed in a checkout, and one line says your uncommitted work is not part of it.
+
+Without `--agent`, the scanners report on the change and the checkout is removed at the end. With `--agent`, the brief names the checkout, tells the agent to read the code there and never to run its tests or scripts, and prints the finalize line with `--run <id>`, run from your repository. The run folder stays in your repository. Finalize checks that the checkout is still at the reviewed commit. It removes the checkout when it succeeds or when the review must be run again, and keeps it after an error the agent can fix in its findings file. A target review writes no receipt, so it never replaces the review of the change you are about to push. A later `review` removes a checkout left for more than 24 hours.
+
+`review --all` and `--uncommitted` cannot be combined with a target.
 
 ### Reviewing the whole repository
 

@@ -165,6 +165,11 @@ function touchesChange(f: AgentFinding, change: Change): string | null {
   if (lines) {
     for (const n of lines) if (f.line_number <= n && n <= end) return null;
   }
+  // A deletion has no line of its own: the lines just above and just below it
+  // in the new file, those that exist, stand for it.
+  for (const p of change.deletionPoints.get(f.file_path) ?? []) {
+    for (const n of p.anchors) if (f.line_number <= n && n <= end) return null;
+  }
   const where = end > f.line_number ? `lines ${f.line_number} to ${end} are` : `line ${f.line_number} is`;
   return `${where} not a line this change added or modified`;
 }
@@ -342,10 +347,17 @@ function candidateFinding(c: Candidate): ReportFinding {
   };
 }
 
+// The rule of the candidate a scanner raises for a changed file it reads as
+// its own settings or ignore list. In a scan nobody clears it, so it is a
+// note beside the findings and never counts; in a review it is a candidate.
+export const SETTINGS_RULE = "settings-file";
+
 export function scanReport(args: { change: Change; scan: ScanResult; config: Config }): Report {
   const { change, scan, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
-  const live = scan.candidates.filter((c) => !disabled(c.token, config)).map((c) => candidateFinding(c));
+  const enabled = scan.candidates.filter((c) => !disabled(c.token, config));
+  const settings = enabled.filter((c) => c.ruleId === SETTINGS_RULE).map((c) => candidateFinding(c));
+  const live = enabled.filter((c) => c.ruleId !== SETTINGS_RULE).map((c) => candidateFinding(c));
   const findings = live.filter((f) => shown(f, config));
   const report: Report = {
     version: 1,
@@ -369,6 +381,7 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
     scanners: scan.scanners,
     not_reviewed_paths: change.notReviewed,
     stats: change.stats,
+    ...(settings.length > 0 ? { settings_changes: settings } : {}),
   };
   return redactAll(report, clean);
 }

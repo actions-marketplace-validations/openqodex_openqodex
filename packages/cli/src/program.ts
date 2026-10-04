@@ -10,9 +10,13 @@ type CommandModule = { run: (args: string[]) => Promise<number> };
 // shows the four a person uses; the hidden ones stay callable: hooks, the
 // skill, the Action and pre-commit call them (docs/plumbing.md). `scan` is
 // what plain `review` does, kept by its own name for released hooks.
-const commands: Record<string, { summary: string; hidden?: true; load: () => Promise<CommandModule> }> = {
+const commands: Record<string, { summary: string; usage?: string; hidden?: true; load: () => Promise<CommandModule> }> = {
   init: { summary: "Install OpenQodex into your coding agent", load: () => import("./commands/init.js") },
-  review: { summary: "Review the current change", load: () => import("./commands/review.js") },
+  review: {
+    summary: "Review the current change, or a branch or pull request",
+    usage: "[--agent] [<branch> | #<pr> | <pr link>] [--base <ref>] [options], or --finalize [--run <id> | <path>], or --all",
+    load: () => import("./commands/review.js"),
+  },
   update: { summary: "Update OpenQodex now, roll back, or turn updates off", load: () => import("./commands/update.js") },
   trust: { summary: "Approve a custom scanner from .openqodex.yaml", load: () => import("./commands/trust.js") },
   scan: { summary: "Run the scanners on the current change", hidden: true, load: () => import("./commands/scan.js") },
@@ -53,8 +57,9 @@ export async function main(argv: string[]): Promise<void> {
     .exitOverride();
 
   for (const [name, entry] of Object.entries(commands)) {
-    program
-      .command(name, { hidden: entry.hidden === true })
+    const command = program.command(name, { hidden: entry.hidden === true });
+    if (entry.usage !== undefined) command.usage(entry.usage);
+    command
       .description(entry.summary)
       .allowUnknownOption()
       .allowExcessArguments()

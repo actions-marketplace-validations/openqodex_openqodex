@@ -559,8 +559,11 @@ function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapte
 }
 
 // One adapter per custom entry; an entry that is not approved comes back with `skipped` set.
-export function customAdapters(repoRoot: string, config: Config): CustomAdapter[] {
-  return assess(repoRoot, config).map(({ entry, state, record, reason }) =>
+// `approvalRoot` is the repository the approvals were given for. The adapter
+// runs in the folder the runner passes as `repoDir`, which for a review of a
+// branch or a pull request is a temporary checkout, not that repository.
+export function customAdapters(approvalRoot: string, config: Config): CustomAdapter[] {
+  return assess(approvalRoot, config).map(({ entry, state, record, reason }) =>
     state === "trusted" && record ? trustedAdapter(entry, record) : skippedAdapter(`custom:${entry.name}`, reason ?? NOT_APPROVED),
   );
 }

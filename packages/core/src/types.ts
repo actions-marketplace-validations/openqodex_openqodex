@@ -120,6 +120,13 @@ export type ResolveTool = (scanner: BuiltinScanner) => Promise<ToolResolution>;
 // Path to the set of new-side line numbers the developer added or changed.
 export type DiffCoverage = Map<string, Set<number>>;
 
+// A place where the change only removed lines: `lines` lines were deleted
+// after new-side line `after` (0: at the top of the file). Its `anchors`, the
+// new file's lines on either side of it that exist (line 1 for an emptied or
+// deleted file), count as changed when a finding is cited, so a change that
+// only deletes a check can carry a finding.
+export type DeletionPoint = { after: number; lines: number; anchors: number[] };
+
 export type ChangeScope = {
   base?: string; // explicit ref
   uncommitted?: boolean; // diff against HEAD only
@@ -145,6 +152,7 @@ export type Change = {
   files: ChangedFile[]; // everything in the change, exclusions already applied
   changedPaths: string[]; // files that still exist (not deleted), what scanners receive
   coverage: DiffCoverage; // from the zero-context diff
+  deletionPoints: Map<string, DeletionPoint[]>; // from the same diff, per file that still exists
   diff: string; // the three-lines-of-context diff, capped
   notReviewed: string[]; // paths left out because the change was too large
   stats: { files: number; additions: number; deletions: number };
@@ -346,6 +354,9 @@ export type Report = {
   // "skipped" or "failed" says why there is nothing in it.
   impact: ImpactSummary | null;
   not_reviewed_paths: string[]; // Change.notReviewed
+  // scan only: changed files a scanner reads as its own settings or ignore
+  // list, which can hide its findings. Shown, never counted. Absent when none.
+  settings_changes?: ReportFinding[];
   stats: { files: number; additions: number; deletions: number };
 };
 
@@ -364,6 +375,25 @@ export type RunManifest = {
   // The openqodex version that wrote the brief; finalize runs on that
   // version. Absent in manifests before version 3.
   runtime_version?: string;
+  // Set for a review of a branch or a pull request (`review <target>`):
+  // what was reviewed and where its files were read. Absent otherwise.
+  target?: RunTarget;
+  // The run folder's name, which `review --finalize --run` takes.
+  run_id?: string;
+};
+
+// Where the base of a target review came from, in the order they are tried.
+export type BaseSource = "--base" | "the pull request" | "review.default_base" | "the remote's default branch";
+
+export type RunTarget = {
+  spec: string; // as the developer wrote it: a branch, #<n> or a pull request URL
+  base_ref: string;
+  base_source: BaseSource;
+  base_sha: string;
+  merge_base: string; // the change is merge_base to head_sha
+  head_sha: string;
+  repo_root: string; // the developer's repository: the run folder, the settings, the approvals
+  checkout: string | null; // the temporary checkout the files are read from; null: read in place
 };
 
 // What the agent hook does. It never allows: allowing would skip the
