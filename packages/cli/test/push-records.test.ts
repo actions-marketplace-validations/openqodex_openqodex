@@ -10,13 +10,18 @@
 //     the developer's own change could match.
 //  4. Records never go away: init does not prune those older than 30 days,
 //     or prunes fresh ones.
-import { mkdirSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+//  5. The legacy `review --finalize` trusts a run's manifest, scan and
+//     findings files in the repository folder, which a branch can carry, and
+//     writes a home record for a run whose scan never ran on this machine, or
+//     whose scan.json was edited after `review --agent` wrote it.
+import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getChange } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { runReview } from "../src/review-run.js";
-import { homeReceiptPath, readHomeReceipt } from "../src/receipts.js";
+import { homeReceiptPath, homeRunPath, readHomeReceipt } from "../src/receipts.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { cli, sandbox, type Sandbox } from "./init-helpers.js";
@@ -93,10 +98,54 @@ describe("the home record", () => {
     mkdirSync(join(old, ".."), { recursive: true });
     writeFileSync(old, "{}\n");
     writeFileSync(fresh, "{}\n");
+    const oldRun = homeRunPath(s.oqHome, s.repo, "20260101-000000-aaaaaaaaaaaa");
+    mkdirSync(join(oldRun, ".."), { recursive: true });
+    writeFileSync(oldRun, "{}\n");
     const longAgo = (Date.now() - 31 * 24 * 3600_000) / 1000;
     utimesSync(old, longAgo, longAgo);
+    utimesSync(oldRun, longAgo, longAgo);
     expect(cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
     expect(existsSync(old)).toBe(false);
+    expect(existsSync(oldRun)).toBe(false);
     expect(existsSync(fresh)).toBe(true);
+  });
+});
+
+describe("5. the legacy two-step protocol", () => {
+  // `review --agent` in this home, then the findings written as the brief says.
+  function agentRun(): { dir: string; changeId: string } {
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    const brief = cli(s, ["review", "--agent", "--no-install"]);
+    expect(brief.status, brief.stderr).toBe(0);
+    const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string; change_id: string };
+    const dir = join(s.repo, latest.dir);
+    const scan = JSON.parse(readFileSync(join(dir, "scan.json"), "utf8")) as { candidates: { id: string }[] };
+    const findings = { version: 1, change_id: latest.change_id, summary: "Edits the readme.", reviewer: "subagent", findings: [], dropped: scan.candidates.map((c) => ({ candidate: c.id, reason: "Not actionable here" })) };
+    writeFileSync(join(dir, "agent-findings.json"), JSON.stringify(findings));
+    return { dir, changeId: latest.change_id };
+  }
+
+  it("finalize in the home that ran the scan writes the legacy record", () => {
+    const { changeId } = agentRun();
+    expect(cli(s, ["review", "--finalize"]).status).toBe(0);
+    expect(readHomeReceipt(s.oqHome, s.repo, changeId)?.kind).toBe("legacy");
+  });
+
+  it("finalize of a run this home never scanned writes no record and says so in one line", () => {
+    const { changeId } = agentRun();
+    const other = mkdtempSync(join(tmpdir(), "oq-other-home-"));
+    const r = cli(s, ["review", "--finalize"], { env: { OPENQODEX_HOME: other } });
+    expect(r.status).toBe(0);
+    expect(readHomeReceipt(other, s.repo, changeId)).toBeNull();
+    expect(r.stderr).toMatch(/not recorded for the push hooks/);
+  });
+
+  it("finalize of a run whose scan.json changed after review --agent writes no record", () => {
+    const { dir, changeId } = agentRun();
+    const scan = JSON.parse(readFileSync(join(dir, "scan.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(dir, "scan.json"), `${JSON.stringify({ ...scan, candidates: [], planted: true }, null, 2)}\n`);
+    const r = cli(s, ["review", "--finalize"]);
+    expect(readHomeReceipt(s.oqHome, s.repo, changeId)).toBeNull();
+    expect(r.stderr).toMatch(/not recorded for the push hooks/);
   });
 });

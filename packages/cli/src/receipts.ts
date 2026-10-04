@@ -7,6 +7,13 @@
 //
 //   <home>/receipts/<repo id>/<change id>.json   one per reviewed change
 //   <home>/receipts/<repo id>/latest.json        the newest, for its base
+//   <home>/runs/<repo id>/<run id>.json          one per `review --agent` run
+//
+// A run record binds a legacy run (`review --agent`, then `review
+// --finalize`) to this machine: the change id and the sha256 of the
+// manifest.json and scan.json that `review --agent` wrote. Finalize writes a
+// receipt only for a run whose files still match it, so a branch that carries
+// a run folder of its own gets no receipt.
 //
 // The repo id is the sha256 of the repository's real root path. Folders are
 // 0700 and real (never a link), files 0600, written to a fresh temporary
@@ -20,6 +27,9 @@ import type { GateReceipt } from "@openqodex/core";
 const MAX_BYTES = 64 * 1024;
 const KEEP_MS = 30 * 24 * 3600_000;
 const ID = /^([0-9a-f]{64}|latest)$/;
+const RUN_ID = /^\d{8}-\d{6}-[0-9a-f]{12}(?:-\d+)?$/;
+
+export type RunRecord = { version: 1; change_id: string; manifest_sha256: string; scan_sha256: string; written_at: string };
 
 function repoId(repoRoot: string): string {
   let real = repoRoot;
@@ -46,46 +56,76 @@ function realFolder(path: string): void {
   if (!st.isDirectory() || st.isSymbolicLink()) throw new Error(`${path} is not a real folder`);
 }
 
-export function writeHomeReceipt(home: string, repoRoot: string, receipt: GateReceipt): void {
-  if (!ID.test(receipt.change_id)) throw new Error("a receipt needs a full change id");
+// Each named file written 0600 into <home>/<kind>/<repo id>/.
+function writeRecord(home: string, kind: string, repoRoot: string, names: string[], value: unknown): void {
   realFolder(home);
-  realFolder(receiptsDir(home));
-  const dir = join(receiptsDir(home), repoId(repoRoot));
+  realFolder(join(home, kind));
+  const dir = join(home, kind, repoId(repoRoot));
   realFolder(dir);
-  const text = `${JSON.stringify(receipt, null, 2)}\n`;
-  for (const name of [`${receipt.change_id}.json`, "latest.json"]) {
+  const text = `${JSON.stringify(value, null, 2)}\n`;
+  for (const name of names) {
     const tmp = join(dir, `.${name}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
     writeFileSync(tmp, text, { flag: "wx", mode: 0o600 });
     renameSync(tmp, join(dir, name));
   }
 }
 
-// The receipt of `changeId` ("latest" for the newest), or null.
-export function readHomeReceipt(home: string, repoRoot: string, changeId: string): GateReceipt | null {
-  if (!ID.test(changeId)) return null;
-  const path = homeReceiptPath(home, repoRoot, changeId);
+// The parsed file, or null when it is not a regular file within the cap.
+function readRecord(path: string): unknown {
   try {
     const st = lstatSync(path);
     if (!st.isFile() || st.size > MAX_BYTES) return null;
-    const value = JSON.parse(readFileSync(path, "utf8")) as Partial<GateReceipt>;
-    const ok =
-      value.version === 1 &&
-      typeof value.change_id === "string" &&
-      (changeId === "latest" || value.change_id === changeId) &&
-      (value.kind === "complete" || value.kind === "incomplete" || value.kind === "legacy") &&
-      typeof value.report === "string" &&
-      typeof value.base?.sha === "string" &&
-      typeof value.base?.ref === "string";
-    return ok ? (value as GateReceipt) : null;
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
   } catch {
     return null;
   }
 }
 
-// Removes receipts not written for 30 days, and repo folders left empty.
-// Run by init and the foreground update, never by a hook.
+export function writeHomeReceipt(home: string, repoRoot: string, receipt: GateReceipt): void {
+  if (!ID.test(receipt.change_id)) throw new Error("a receipt needs a full change id");
+  writeRecord(home, "receipts", repoRoot, [`${receipt.change_id}.json`, "latest.json"], receipt);
+}
+
+export function homeRunPath(home: string, repoRoot: string, runId: string): string {
+  return join(home, "runs", repoId(repoRoot), `${runId}.json`);
+}
+
+export function writeHomeRun(home: string, repoRoot: string, runId: string, run: RunRecord): void {
+  if (!RUN_ID.test(runId) || !ID.test(run.change_id)) throw new Error("a run record needs a run name and a full change id");
+  writeRecord(home, "runs", repoRoot, [`${runId}.json`], run);
+}
+
+// The run record of `runId`, or null.
+export function readHomeRun(home: string, repoRoot: string, runId: string): RunRecord | null {
+  if (!RUN_ID.test(runId)) return null;
+  const value = readRecord(homeRunPath(home, repoRoot, runId)) as Partial<RunRecord> | null;
+  const ok = value !== null && value.version === 1 && typeof value.change_id === "string" && typeof value.manifest_sha256 === "string" && typeof value.scan_sha256 === "string";
+  return ok ? (value as RunRecord) : null;
+}
+
+// The receipt of `changeId` ("latest" for the newest), or null.
+export function readHomeReceipt(home: string, repoRoot: string, changeId: string): GateReceipt | null {
+  if (!ID.test(changeId)) return null;
+  const value = readRecord(homeReceiptPath(home, repoRoot, changeId)) as Partial<GateReceipt> | null;
+  const ok =
+    value !== null &&
+    value.version === 1 &&
+    typeof value.change_id === "string" &&
+    (changeId === "latest" || value.change_id === changeId) &&
+    (value.kind === "complete" || value.kind === "incomplete" || value.kind === "legacy") &&
+    typeof value.report === "string" &&
+    typeof value.base?.sha === "string" &&
+    typeof value.base?.ref === "string";
+  return ok ? (value as GateReceipt) : null;
+}
+
+// Removes receipts and run records not written for 30 days, and repo
+// folders left empty. Run by init and the foreground update, never by a hook.
 export function pruneHomeReceipts(home: string, now = Date.now()): void {
-  const root = receiptsDir(home);
+  for (const kind of ["receipts", "runs"]) pruneFolder(join(home, kind), now);
+}
+
+function pruneFolder(root: string, now: number): void {
   let repos: string[];
   try {
     if (!lstatSync(root).isDirectory()) return;
