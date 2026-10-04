@@ -1,5 +1,32 @@
 # openqodex
 
+## 0.3.0
+
+### Minor Changes
+
+- [#21](https://github.com/openqodex/openqodex/pull/21) [`db539cd`](https://github.com/openqodex/openqodex/commit/db539cd986ba385aaf53d88cc689b206f4ac73ad) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - `init` inside a repository adds a short review section to the repository's `CLAUDE.md` and `AGENTS.md`, so a teammate's agent reviews before pushing with nothing installed; the files show in `git status` to be committed. `--no-repo` skips it, and `--uninstall` removes exactly that section.
+  Every user-scope install gets the launcher in `~/.openqodex/bin/`, even for Cursor or Cline alone. The user-scope skill is now a short stub that runs `<launcher> guide skill` for the full procedure of the active version, and the user-scope Cursor and Cline rules call the launcher instead of `npx -y openqodex@<version>`. The next `init` replaces a skill or rule an earlier `init` wrote, while it is unchanged.
+  New `guide skill`: prints the review procedure of the running version, with its commands written for the launcher when the launcher started it.
+  The launcher runs the version named on the first line of `~/.openqodex/runtime/current`, and the version `init` installed when that line is missing, malformed or names a copy that is gone. A runtime copy is never replaced once written.
+  The skill installed with `npx skills add` uses `~/.openqodex/bin/openqodex` when it exists.
+
+- [#21](https://github.com/openqodex/openqodex/pull/21) [`3f53203`](https://github.com/openqodex/openqodex/commit/3f53203a0e3e01ca87f65b003266375f69be6353) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - In user scope, `init` adds rules so Claude Code runs the exact review command lines the skill names (`review --agent`, `review --finalize`, their `--all` and `--offline` forms) and `guide` without asking. When the launcher's path holds `*`, no rule is written and `init` says so, so a review can run unattended; any other flag or command still asks. `init --uninstall` removes exactly the rules it added.
+  The skill `init` writes in project scope keeps the committed `npx -y openqodex@<version>` commands and no longer tells an agent to prefer the launcher.
+  `init` skips the team review section for a `CLAUDE.md` or `AGENTS.md` the repository's git ignore rules hide, and says why.
+  `init --uninstall` removes the update state, and `~/.openqodex/config.yaml` when `openqodex update` created it and it is unchanged.
+  `openqodex update --rollback` turns updates off before anything else and changes nothing when it cannot.
+  `openqodex --help` now shows four commands; `scan` is part of `review`; the other commands still work.
+  `init`, uninstall, `hook install` and the update's switch take one lock that the operating system releases when a process ends: a listener on 127.0.0.1 that accepts no data. Lock files from earlier versions are removed by `init`.
+
+- [#21](https://github.com/openqodex/openqodex/pull/21) [`23f6714`](https://github.com/openqodex/openqodex/commit/23f67146e67cda5abb195577fe63a70d5e23adc9) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - An install made with `init` updates itself: at most once a day, after a review, scan or push check run through the launcher, a background check installs a newer release that is at least 24 hours old and whose npm provenance was signed by this repository's release workflow. The command never waits for it, and the next command says once which version it moved to.
+  New `openqodex update` command: `--now`, `--rollback`, `--off`, `--on` and `--status`. `doctor` shows the update state. Updates are off with `update: off` in `~/.openqodex/config.yaml`, `OPENQODEX_AUTO_UPDATE=0`, `--offline` and in CI.
+  `review --finalize` runs on the openqodex version that wrote the brief, and the brief's finalize command names that version's own runtime when the launcher started it.
+  A run through npx or a project-scope file never checks for updates; `doctor`, `review` and `scan` say when that pinned version is behind the newest one a check on this machine saw.
+
+### Patch Changes
+
+- [#21](https://github.com/openqodex/openqodex/pull/21) [`58b8578`](https://github.com/openqodex/openqodex/commit/58b8578b24a5722c219d0534a74ed2651ac77c5a) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - A review no longer misses a file edited at the same size within the same second that git last wrote its index.
+
 ## 0.2.1
 
 ### Patch Changes
