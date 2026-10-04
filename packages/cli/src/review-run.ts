@@ -52,7 +52,7 @@ import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
 import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
-import { openqodexHomeDir } from "./launcher.js";
+import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
 import { writeHomeReceipt } from "./receipts.js";
 import { claudeDriver } from "./reviewers/claude.js";
 import { codexDriver } from "./reviewers/codex.js";
@@ -519,6 +519,17 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
   return { p, snapshot: snap, tree: treeSha };
 }
 
+// The two-step review through the agent the developer works in, for when no
+// reviewer can start: the same scope, the launcher or the pinned npx form.
+function fallbackCommand(o: ReviewOptions): string {
+  const runner = launcherStarted() ? launcherRunner(launcherPath(openqodexHomeDir())) : `npx -y openqodex@${__OPENQODEX_VERSION__}`;
+  const base = o.base ?? o.scope.base;
+  const scope = o.all
+    ? ["--all"]
+    : [...(o.target !== undefined ? [shQuote(o.target)] : []), ...(base !== undefined ? ["--base", shQuote(base)] : []), ...(o.scope.uncommitted ? ["--uncommitted"] : [])];
+  return [runner, "review", "--agent", ...scope].join(" ");
+}
+
 export async function runReview(o: ReviewOptions): Promise<number> {
   if (process.env[DEPTH_ENV]) throw new OpenQodexError("openqodex review cannot run inside an openqodex reviewer");
   const say = progress(o.flags);
@@ -565,6 +576,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       warn("Full review unavailable: openqodex could not start a reviewer.");
       for (const line of chosen.unavailable) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
+      warn(`To review with the agent you are in instead (not an independent review), run \`${fallbackCommand(o)}\` and follow the brief it prints.`);
       return EXIT_TOOL_FAILED;
     }
 

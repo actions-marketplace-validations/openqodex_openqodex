@@ -1,6 +1,6 @@
 # Agents
 
-OpenQodex runs from Claude Code, Cursor, Codex CLI and Cline. `openqodex init` installs it into each one it finds. Whichever agent asks for the review, the review itself runs in a reviewer process OpenQodex starts: Claude Code, on your Claude Code login, with no other key. Codex and Cursor are not used as reviewers yet (`security` says why); in Cursor, Codex and Cline the review works when Claude Code is installed too.
+OpenQodex runs from Claude Code, Cursor, Codex CLI and Cline. `openqodex init` installs it into each one it finds. Whichever agent asks for the review, the review itself runs in a reviewer process OpenQodex starts: Claude Code, on your Claude Code login, with no other key. Codex and Cursor are not used as reviewers yet (`security` says why); in Cursor, Codex and Cline the review works when Claude Code is installed too. Without it, `review` names a fallback review by the agent you are in, labelled as not independent (see "Who reviews, by what is installed").
 
 ## Run init
 
@@ -55,6 +55,16 @@ The skill tells the agent to run one command, `review`, wait for it, and show yo
 A review takes one to three minutes. Agents often stop a command after two minutes, so the skill tells the agent to allow up to ten minutes or run it in the background; `review` prints a line every 15 seconds while the reviewer works.
 
 The reviewer runs nothing: no tests, no scripts, no shell.
+
+## Who reviews, by what is installed
+
+| Installed | What `review` gives you |
+|---|---|
+| Claude Code, logged in | An independent review: a fresh Claude Code process OpenQodex starts reviews the change. |
+| Only Codex or only Cursor (or Claude Code logged out) | "Full review unavailable", exit 2, and a fallback: run `review --agent` and the agent you are in follows the brief it prints, then `review --finalize`. That report says on its first line after the verdict "Reviewed by the same agent that may have written the code: not an independent review." |
+| None of them | "Full review unavailable", exit 2, and the scanner findings saved to a file as unchecked candidates, never as a review. The fallback line prints too, but no agent is there to follow it. |
+
+The skill tells the agent to follow the fallback when `review` prints it, and to tell you the review was not independent. The push hooks count a fallback review as reviewed, with one line saying it was not independent.
 
 ## The repo folder
 
@@ -150,7 +160,7 @@ The git pre-push hook covers pushes from any tool, by an agent or by hand. `init
 npx openqodex hook install
 ```
 
-Before each push it runs `openqodex hook pre-push` through the launcher. For each branch the push sends, it measures the change from the commit the remote already holds for that branch, or, for a new branch, from the merge base with the default branch (`review.default_base`, else the remote's default branch), to the pushed commit. It then looks for the review recorded in your home for exactly that change. When there is none, it also accepts the newest complete review whose range contains the push: its base is the push's base or an ancestor of it, and the change from its base to the pushed commit is exactly the change it reviewed. So a branch reviewed with no upstream set, which a review measures from the default branch, still counts when it is pushed over its remote tip, while a push of another branch, or of work changed after the review, counts as not reviewed. When a branch the remote has is not reviewed and has no upstream here, the line says to set the upstream (`git branch --set-upstream-to <remote>/<branch>`), run `openqodex review`, then push. It prints the gate's line on stderr and nothing from the scanners. It stops the push only when the config sets `review.block_on_severity` and the review is missing or blocked. A lookup that fails for its own reasons never stops the push.
+Before each push it runs `openqodex hook pre-push` through the launcher. For each branch the push sends, it measures the change from the commit the remote already holds for that branch, or, for a new branch, from the merge base with the default branch (`review.default_base`, else the remote's default branch), to the pushed commit. It then looks for the review recorded in your home for exactly that change. When there is none, it also accepts the newest complete review whose range contains the push: its base is the push's base or an ancestor of it, the push's base is an ancestor of the pushed commit (so not a force push over work the review never saw), and the change from its base to the pushed commit is exactly the change it reviewed. So a branch reviewed with no upstream set, which a review measures from the default branch, still counts when it is pushed over its remote tip, while a push of another branch, or of work changed after the review, counts as not reviewed. When a branch the remote has is not reviewed and has no upstream here, the line says to set the upstream (`git branch --set-upstream-to <remote>/<branch>`), run `openqodex review`, then push. It prints the gate's line on stderr and nothing from the scanners. It stops the push only when the config sets `review.block_on_severity` and the review is missing or blocked. A lookup that fails for its own reasons never stops the push.
 
 ## Other ways to install
 

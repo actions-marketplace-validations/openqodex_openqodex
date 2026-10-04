@@ -247,6 +247,10 @@ function verdictFor(threshold: Severity | null, severities: Severity[]): Verdict
   return threshold && severities.some((s) => atOrAbove(s, threshold)) ? "blocked" : "passed";
 }
 
+// The line every output of a legacy review carries: the agent the developer
+// works in reviewed the change, and it may have written it.
+export const NOT_INDEPENDENT = "Reviewed by the same agent that may have written the code: not an independent review.";
+
 export function finalizeReview(args: {
   change: Change;
   scan: ScanResult;
@@ -320,6 +324,7 @@ export function finalizeReview(args: {
   const report: Report = {
     version: 1,
     kind: "review",
+    independence: NOT_INDEPENDENT,
     impact: null,
     change_id: change.id,
     base: { ref: change.baseRef, sha: change.baseSha },

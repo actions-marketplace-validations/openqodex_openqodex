@@ -18,6 +18,8 @@ OpenQodex reviews a change in one command. It takes a frozen copy of the change,
 
 OpenQodex starts its own reviewer process for every review, with no memory of this session and none of your instructions. You do not start a subagent for it and you do not review the change yourself: run the command and show what it prints.
 
+If `review` says "Full review unavailable" and prints a way to review with the agent you are in, follow it: run the command it names and do what the brief it prints says. Then tell the developer the review was not independent: the agent that may have written the code reviewed it.
+
 ## Procedure
 
 When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed.

@@ -44,6 +44,14 @@
 //     developer's folder instead of the redacted snapshot, a secret a broken
 //     redaction left in place, a file the snapshot dropped or a binary file,
 //     or megabytes in one long line.
+// 26. With no reviewer available (Codex only, Cursor only, Claude Code
+//     logged out), the developer is left with no AI review: the message does
+//     not name the fallback through the agent they are in; or the fallback
+//     text shows when a reviewer is available.
+// 27. A fallback review (review --agent, then --finalize) cannot be finished
+//     from the brief alone, now that the skill no longer describes it; or it
+//     is not labelled as a review by the same agent in some output format, or
+//     writes no legacy record for the push hooks.
 // 19. Redacting a multi-line secret (a private key) joins its lines, so every
 //     line below it moves while scanner locations and citations do not.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -58,6 +66,8 @@ import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/dri
 import { DELIVER_LINES, deliverRanges, redactSnapshot, runReview } from "../src/review-run.js";
 import { claudeDriver, reviewerEnv } from "../src/reviewers/claude.js";
 import type { ToolCall } from "../src/reviewers/trace.js";
+import { readHomeReceipt } from "../src/receipts.js";
+import { cli, sandbox } from "./init-helpers.js";
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -559,5 +569,48 @@ describe("the reviewer process", () => {
     };
     expect(alive(child.pid!)).toBe(false);
     expect(alive(grandchild)).toBe(false);
+  });
+});
+
+const FALLBACK = "To review with the agent you are in instead (not an independent review), run `npx -y openqodex@0.0.0-test review --agent` and follow the brief it prints.";
+const SAME_AGENT = "Reviewed by the same agent that may have written the code: not an independent review.";
+
+describe("26. the fallback when no reviewer can start", () => {
+  it("with no driver available the message names the fallback command", async () => {
+    expect(await review(repo(), fake([good], false))).toBe(2);
+    expect(err).toContain("Full review unavailable");
+    expect(err).toContain(FALLBACK);
+  });
+
+  it("with a driver available the fallback text never appears", async () => {
+    expect(await review(repo(), fake([good]))).toBe(0);
+    expect(out + err).not.toContain("review --agent");
+    expect(out + err).not.toContain("not an independent review");
+  });
+});
+
+describe("27. a fallback review", () => {
+  it("ends with a legacy record and says it was not independent in every output format", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "notes.txt"), "one line\n");
+    const brief = cli(s, ["review", "--agent", "--no-install"]);
+    expect(brief.status, brief.stderr).toBe(0);
+    const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string; change_id: string };
+    // Everything an agent with only the brief needs to finish.
+    for (const part of ["## How to review", "## Finding shape", "`dropped`: one entry per candidate", join(s.repo, latest.dir, "agent-findings.json"), "review --finalize", "Show the developer the report finalize prints"]) {
+      expect(brief.stdout).toContain(part);
+    }
+    const findings = { version: 1, change_id: latest.change_id, summary: "Adds a notes file.", reviewer: "same-agent", findings: [] };
+    writeFileSync(join(s.repo, latest.dir, "agent-findings.json"), JSON.stringify(findings));
+    const done = cli(s, ["review", "--finalize", "--no-color"]);
+    expect(done.status, done.stderr).toBe(0);
+    expect(done.stdout.split("\n")[1]).toBe(SAME_AGENT);
+    const dir = join(s.repo, latest.dir);
+    const md = readFileSync(join(dir, "report.md"), "utf8").split("\n").filter((l) => l !== "");
+    expect(md[md.findIndex((l) => l.startsWith("**")) + 1]).toBe(SAME_AGENT);
+    expect((JSON.parse(readFileSync(join(dir, "report.json"), "utf8")) as { independence?: string }).independence).toBe(SAME_AGENT);
+    const sarif = JSON.parse(readFileSync(join(dir, "report.sarif"), "utf8")) as { runs: { properties?: { independence?: string } }[] };
+    expect(sarif.runs[0]?.properties?.independence).toBe(SAME_AGENT);
+    expect(readHomeReceipt(s.oqHome, s.repo, "latest")?.kind).toBe("legacy");
   });
 });
