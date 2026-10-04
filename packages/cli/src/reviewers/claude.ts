@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ReviewerUsage } from "@openqodex/core";
 import { REVIEWER_TOOLS, REVIEWER_WEB_TOOLS } from "@openqodex/core";
+import { checkoutsDir } from "../checkout.js";
 import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
 import type { ToolCall } from "./trace.js";
@@ -78,7 +79,7 @@ export function reviewerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
 const DETECT_TIMEOUT_MS = 20_000;
 
 async function detect(repoRoot: string): Promise<Detected> {
-  const bin = findOnPath("claude", repoRoot);
+  const bin = findOnPath("claude", [repoRoot, checkoutsDir()]);
   if (bin === null) return { ok: false, missing: "Claude Code (claude) is not on PATH", fix: "install Claude Code and log in, then review again" };
   const env = reviewerEnv();
   let version: string;

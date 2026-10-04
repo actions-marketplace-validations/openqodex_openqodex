@@ -26,9 +26,13 @@
 // 18. A Glob alternative list, a `..` inside a pattern, or a wildcard on the
 //     snapshot folder's own name reaches outside and the run completes; or a
 //     Grep search expression is taken for a path and fails a clean run.
+// 20. A `claude` the repository owns is run by detection: one in a PATH
+//     folder reached through a link into the repo, one in a folder whose
+//     name starts with two dots (`<repo>/..tools`), or one that is a link
+//     into the repo from a folder outside it.
 // 19. Redacting a multi-line secret (a private key) joins its lines, so every
 //     line below it moves while scanner locations and citations do not.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -38,7 +42,7 @@ import { parseFlags } from "../src/flags.js";
 import { DEPTH_ENV, killGroup, spawnGroup } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { redactSnapshot, runReview } from "../src/review-run.js";
-import { reviewerEnv } from "../src/reviewers/claude.js";
+import { claudeDriver, reviewerEnv } from "../src/reviewers/claude.js";
 import type { ToolCall } from "../src/reviewers/trace.js";
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
@@ -346,6 +350,25 @@ describe("the snapshot", () => {
 });
 
 describe("the reviewer process", () => {
+  it("20. never runs a claude that resolves inside the repository, however PATH reaches it", async () => {
+    const dir = repo();
+    const marker = join(mkdtempSync(join(tmpdir(), "oq-marker-")), "ran");
+    const plant = (folder: string) => {
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, "claude"), `#!/bin/sh\necho ran >> '${marker}'\necho 9.9.9\n`);
+      chmodSync(join(folder, "claude"), 0o755);
+    };
+    plant(join(dir, "bin"));
+    plant(join(dir, "..tools"));
+    const outside = mkdtempSync(join(tmpdir(), "oq-path-"));
+    symlinkSync(join(dir, "bin"), join(outside, "linked"));
+    mkdirSync(join(outside, "single"));
+    symlinkSync(join(dir, "bin/claude"), join(outside, "single/claude"));
+    vi.stubEnv("PATH", [join(outside, "linked"), join(dir, "..tools"), join(outside, "single")].join(":"));
+    const found = await claudeDriver.detect(dir);
+    expect(found.ok).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+  });
   it("11. killing the group on timeout leaves no child or grandchild running", async () => {
     const script = "const { spawn } = require('node:child_process'); const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); console.log(c.pid); setInterval(() => {}, 1000);";
     const child = spawnGroup(process.execPath, ["-e", script], { cwd: tmpdir(), env: process.env });

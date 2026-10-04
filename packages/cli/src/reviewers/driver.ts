@@ -11,8 +11,8 @@
 // is enabled once its isolation was shown with the real binary.
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
-import { delimiter, isAbsolute, join, relative } from "node:path";
+import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ReviewerUsage } from "@openqodex/core";
 import type { ToolCall } from "./trace.js";
 
@@ -41,8 +41,9 @@ export interface ReviewerSession {
 
 export interface ReviewerDriver {
   readonly name: string;
-  // `repoRoot`: PATH entries inside it are skipped, so a repository cannot
-  // put its own program in the reviewer's place.
+  // `repoRoot`: a program that resolves inside it, or inside the review
+  // snapshots, is never run (findOnPath), so a repository cannot put its own
+  // program in the reviewer's place.
   detect(repoRoot: string): Promise<Detected>;
   // `deadline`: epoch milliseconds after which the process group is killed.
   // `web`: the user config allows the agent's web tools (reviewer_web: on).
@@ -64,15 +65,52 @@ export function killGroup(child: ChildProcess): void {
   }
 }
 
-// The first executable `name` on PATH, from absolute entries outside `repoRoot` only.
-export function findOnPath(name: string, repoRoot: string, path = process.env.PATH ?? ""): string | null {
+const FOLD_CASE = process.platform === "darwin" || process.platform === "win32";
+const MAX_HOPS = 40;
+
+function real(path: string): string {
+  const r = realpathSync.native(path);
+  return FOLD_CASE ? r.toLowerCase() : r;
+}
+
+// `path` is `root` or below it, compared by whole path components: a
+// sibling named `..tools` is below the root, not above it.
+function inside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === "" || (!isAbsolute(rel) && rel.split(sep)[0] !== "..");
+}
+
+// The first executable `name` on PATH, from absolute entries only, as its
+// real path. An entry is skipped when the folder, the file, or any link on
+// the way from one to the other resolves inside one of the `forbidden`
+// folders (the repository, the review snapshots), so a repository cannot put
+// its own program in the reviewer's place through a link or a folder name.
+export function findOnPath(name: string, forbidden: string[], path = process.env.PATH ?? ""): string | null {
+  const roots: string[] = [];
+  for (const f of forbidden) {
+    try {
+      roots.push(real(f));
+    } catch {
+      roots.push(FOLD_CASE ? f.toLowerCase() : f);
+    }
+  }
+  const owned = (p: string) => roots.some((r) => inside(r, p));
   for (const dir of path.split(delimiter)) {
     if (dir === "" || !isAbsolute(dir)) continue;
-    const rel = relative(repoRoot, dir);
-    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) continue;
-    const bin = join(dir, name);
     try {
-      if (existsSync(bin) && statSync(bin).isFile() && (statSync(bin).mode & 0o111) !== 0) return bin;
+      let hop = join(dir, name);
+      if (!existsSync(hop)) continue;
+      let safe = true;
+      for (let n = 0; n < MAX_HOPS && safe; n++) {
+        // Each hop's folder resolved, the name kept: the link itself is checked.
+        if (owned(join(real(dirname(hop)), FOLD_CASE ? basename(hop).toLowerCase() : basename(hop)))) safe = false;
+        if (!lstatSync(hop).isSymbolicLink()) break;
+        hop = resolve(dirname(hop), readlinkSync(hop));
+      }
+      const bin = realpathSync.native(join(dir, name));
+      if (!safe || owned(real(bin))) continue;
+      const st = statSync(bin);
+      if (st.isFile() && (st.mode & 0o111) !== 0) return bin;
     } catch {
       // unreadable entry: try the next
     }
