@@ -48,6 +48,7 @@ function repo(change: boolean): string {
 function fake(): ReviewerDriver & { started: number } {
   const driver = {
     name: "claude",
+    traced: true,
     started: 0,
     async detect() {
       return { ok: true as const, version: "9.9.9", bin: "/fake/claude" };
@@ -118,7 +119,7 @@ describe("the review init ends with", () => {
   });
 
   it("2. a review that cannot start is reported and never throws", async () => {
-    const none: ReviewerDriver = { name: "claude", detect: async () => ({ ok: false, missing: "claude is not installed", fix: "install it" }), start: () => { throw new Error("no"); } };
+    const none: ReviewerDriver = { name: "claude", traced: true, detect: async () => ({ ok: false, missing: "claude is not installed", fix: "install it" }), start: () => { throw new Error("no"); } };
     await expect(reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [none] })).resolves.toBeUndefined();
     expect(err).toContain("Full review unavailable");
   });

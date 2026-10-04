@@ -2,14 +2,19 @@
 // coverage it is built from. Coverage comes from the reviewer's trace (the
 // tool calls its agent reported), never from the reviewer's own word: a
 // changed range counts as given to the reviewer when its file's diff was in
-// the brief, or when successful reads cover every line of it. A deletion has
-// no line in the snapshot, so only the diff in the brief can show it.
+// the brief, when the run put it in a correction round, or when successful
+// reads cover every line of it. A deletion has no line in the snapshot, so
+// only the diff in the brief or a correction round can show it. A reviewer
+// whose trace is not complete (Codex) reports no reads, so for it only the
+// brief and the correction rounds count.
 import type { Change, CompletionRecord, ReviewerRecord } from "./types.js";
 
 // One tool call of the reviewer. `path` is relative to the snapshot when
 // `inside`, else as the agent named it. `range` is the first and last line a
-// read delivered.
-export type TraceEntry = { tool: string; path: string | null; inside: boolean; range: [number, number] | null; ok: boolean };
+// read delivered. For a reviewer whose trace is not complete (Codex),
+// `inside` is null (not checked) and `detail` holds the call's input as
+// reported (a command, a search), kept as a diagnostic only.
+export type TraceEntry = { tool: string; path: string | null; inside: boolean | null; range: [number, number] | null; ok: boolean; detail?: string };
 
 export type Hunk = { path: string; start: number; end: number; deletion: boolean };
 
@@ -66,7 +71,7 @@ function covers(ranges: [number, number][], start: number, end: number): boolean
 export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<string>; trace: TraceEntry[]; lineCount?: (path: string) => number | null; delivered?: Hunk[] }): Coverage {
   const reads = new Map<string, [number, number][]>();
   for (const t of args.trace) {
-    if (t.tool !== "Read" || !t.ok || !t.inside || t.path === null || t.range === null) continue;
+    if (t.tool !== "Read" || !t.ok || t.inside !== true || t.path === null || t.range === null) continue;
     reads.set(t.path, [...(reads.get(t.path) ?? []), t.range]);
   }
   const given = new Map<string, [number, number][]>();
@@ -116,7 +121,12 @@ export function completionRecord(args: {
   failure?: string | null;
   // The tools the reviewer was given; REVIEWER_TOOLS when left out.
   tools?: readonly string[];
+  // False when the reviewer's event stream does not show every tool call
+  // (Codex): the trace is then a diagnostic list, and neither its paths nor
+  // its tool names can complete or fail the review. True when left out.
+  traced?: boolean;
 }): CompletionRecord {
+  const traced = args.traced ?? true;
   const missing: string[] = [];
   if (args.reviewer === null) missing.push("no reviewer process was started by openqodex");
   if (args.failure) missing.push(args.failure);
@@ -124,10 +134,10 @@ export function completionRecord(args: {
     missing.push("the snapshot changed while the reviewer read it");
   }
   // Fails closed: an attempt counts, whether or not the agent's own rules refused it.
-  const outside = [...new Set(args.trace.filter((t) => !t.inside).map((t) => t.path ?? "(no path)"))];
+  const outside = traced ? [...new Set(args.trace.filter((t) => t.inside !== true).map((t) => t.path ?? "(no path)"))] : [];
   if (outside.length > 0) missing.push(`the reviewer tried to read outside the snapshot: ${listed(outside)}`);
   const given = args.tools ?? REVIEWER_TOOLS;
-  const tools = [...new Set(args.trace.map((t) => t.tool).filter((t) => !given.includes(t)))];
+  const tools = traced ? [...new Set(args.trace.map((t) => t.tool).filter((t) => !given.includes(t)))] : [];
   if (tools.length > 0) missing.push(`the reviewer used a tool it was not given: ${tools.join(", ")}`);
   const open = args.candidates.total - args.candidates.disposed;
   if (open > 0) missing.push(`${open} scanner ${open === 1 ? "candidate has" : "candidates have"} no disposition`);
@@ -137,7 +147,7 @@ export function completionRecord(args: {
   }
   if (!args.wholeRepo && args.coverage.unread.length > 0) {
     const n = args.coverage.unread.length;
-    missing.push(`${n} changed ${n === 1 ? "range was" : "ranges were"} not read: ${listed(args.coverage.unread.map(where))}`);
+    missing.push(`${n} changed ${n === 1 ? "range was" : "ranges were"} ${traced ? "not read" : "not given to the reviewer"}: ${listed(args.coverage.unread.map(where))}`);
   }
   return {
     version: 1,
@@ -147,7 +157,9 @@ export function completionRecord(args: {
     reviewer: args.reviewer,
     snapshot: { change_id: args.change.id, ...args.snapshot },
     candidates: args.candidates,
-    coverage: args.coverage,
+    // Reads were not measured without a complete trace: no file is listed as read or not read.
+    coverage: traced ? args.coverage : { ...args.coverage, files_read: [], files_not_read: [] },
     outside_reads: outside,
+    trace_complete: traced,
   };
 }

@@ -7,8 +7,9 @@
 //   redact    secrets the scanners found, in the snapshot copy only
 //   review    a reviewer process the tool starts (reviewers/), given the
 //             brief, reading the snapshot alone
-//   check     the answer, by script, with at most two correction rounds in
-//             the same session; coverage from the reviewer's trace
+//   check     the answer, by script, with at most two correction rounds;
+//             coverage from the brief, the correction rounds and, for a
+//             reviewer whose trace is complete, its reads
 //   report    one standard report, the report files and the completion record
 //   clean     the snapshot is deleted, whatever happened
 //
@@ -104,7 +105,8 @@ type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unava
 // --reviewer or the user config, else the agent running this command when
 // its driver is enabled, else the first enabled driver. A driver is enabled
 // when detect() says its agent is installed, logged in and isolated; one
-// that is not (Codex, Cursor) says why and is passed by.
+// that is not (Cursor, or Codex inside its own sandbox) says why and is
+// passed by.
 async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoot: string): Promise<Chosen> {
   if (choice !== "auto" && !(REVIEWER_NAMES as readonly string[]).includes(choice)) {
     throw new OpenQodexError(`--reviewer must be auto or one of ${REVIEWER_NAMES.join(", ")}, not ${choice}`);
@@ -327,6 +329,9 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
   return { text, delivered, left, leak: false };
 }
 
+// How much of one untraced call's input trace.json keeps.
+const MAX_DETAIL_CHARS = 2000;
+
 const renumber = (errors: string[]) => errors.map((e, i) => `${i + 1}. ${e.replace(/^\d+\.\s+/, "")}`);
 
 type Prepared = {
@@ -353,16 +358,20 @@ type Conversation = {
   endedAt: number;
 };
 
-// The brief, then at most two correction rounds in the same session. A
+// The brief, then at most two correction rounds. A
 // round goes back when the answer failed a check or when changed ranges are
 // still unread: the tool then puts those ranges in the message itself
 // (deliverRanges), so coverage never depends on the model choosing to open a
-// file. The message is never printed or saved. A read outside the snapshot ends the conversation.
+// file. The message is never printed or saved. A read outside the snapshot
+// ends the conversation when the driver's trace is complete.
 async function converse(args: {
   session: ReviewerSession;
   snapshotDir: string;
   brief: string;
   deadline: number;
+  // The driver's trace shows every tool call: a read outside the snapshot
+  // in it ends the conversation. Without that, the trace is diagnostic only.
+  traced: boolean;
   check: (submission: unknown, trace: TraceEntry[], delivered: Hunk[]) => { report: Report | null; errors: string[]; unread: Hunk[]; required: number; disposed: number };
   deliver: (unread: Hunk[], earlier: Hunk[]) => { text: string; delivered: Hunk[]; left: Hunk[]; leak: boolean };
   say: (line: string) => void;
@@ -387,14 +396,14 @@ async function converse(args: {
       } finally {
         clearTimeout(timer);
       }
-      c.trace.push(...turn.calls.map((call) => classify(args.snapshotDir, call)));
+      c.trace.push(...turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) })));
       c.usage = turn.usage;
       if (turn.failure !== null) {
         c.failure = turn.failure;
         break;
       }
       // An attempt outside the snapshot ends the review: it never completes.
-      if (c.trace.some((t) => !t.inside)) break;
+      if (args.traced && c.trace.some((t) => t.inside !== true)) break;
       const parsed = parseAnswer(turn.finalText);
       const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [] as Hunk[], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace, c.delivered);
       if ("value" in parsed) c.submission = parsed.value;
@@ -627,6 +636,9 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       PRIVATE,
     );
 
+    // A reviewer whose trace is not complete (Codex) has no read counted:
+    // coverage is the brief and the correction rounds only.
+    const traced = chosen.driver.traced;
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
     // A secret in a path would reach the reviewer through any listing: the
@@ -642,10 +654,11 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       snapshotDir: prep.snapshot.tree,
       brief: brief.text,
       deadline,
+      traced,
       say,
       check: (submission, trace, delivered) => {
         const r = checkSubmission({ change, scan, manifest, config, submission, lineCount, wholeRepo: prep.whole ? { lines: prep.whole.lines } : undefined });
-        const unread = prep.whole ? [] : readCoverage({ change, briefFiles: brief.diffFiles, trace, lineCount, delivered }).unread;
+        const unread = prep.whole ? [] : readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? trace : [], lineCount, delivered }).unread;
         return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
       },
       deliver: (unread, earlier) => deliverRanges({ snapshotDir: prep.snapshot.tree, unread, earlier, secrets: p.secrets }),
@@ -665,7 +678,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       rounds: talk.rounds,
       usage: talk.usage,
     };
-    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: talk.trace, lineCount, delivered: talk.delivered });
+    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? talk.trace : [], lineCount, delivered: talk.delivered });
     // Redacted like the report: a path or a tool input may hold a secret.
     const completion = redactStored(completionRecord({
       change,
@@ -678,6 +691,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       wholeRepo: prep.whole !== undefined,
       failure: talk.failure,
       tools: settings.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS,
+      traced,
     }), p.secrets);
     // An incomplete review keeps the findings of an answer that passed every
     // check: the report prints them as the findings so far.

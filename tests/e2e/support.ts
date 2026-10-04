@@ -137,11 +137,23 @@ export function snapshot(dir: string): Snapshot {
 export function changedFiles(before: Record<string, string>, after: Record<string, string>): string[] {
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((p) => before[p] !== after[p]).sort();
 }
-// PATH with every folder that holds a `claude` program left out: `review`
-// then finds no reviewer, whatever is installed on this machine.
+// PATH with every folder that holds a `claude` or `codex` program left out:
+// `review` then finds no reviewer, whatever is installed on this machine.
 export function noReviewerEnv(): NodeJS.ProcessEnv {
-  const path = (process.env.PATH ?? "").split(delimiter).filter((d) => d !== "" && !existsSync(join(d, "claude"))).join(delimiter);
+  const path = (process.env.PATH ?? "").split(delimiter).filter((d) => d !== "" && !existsSync(join(d, "claude")) && !existsSync(join(d, "codex"))).join(delimiter);
   return { PATH: path };
+}
+// The reason a case that needs the real Codex reviewer cannot run here, or
+// null when it can: installed, logged in, not offline and not in CI (CI has
+// no Codex login).
+export function codexMissing(): string | null {
+  if (offline()) return "OPENQODEX_E2E_OFFLINE=1";
+  if (process.env.CI) return "CI is set";
+  if (process.env.CODEX_SANDBOX) return "inside a Codex sandbox";
+  const status = spawnSync("codex", ["login", "status"], { encoding: "utf8", timeout: 30_000 });
+  if (status.error) return "codex is not installed";
+  if (status.status !== 0) return "codex is not logged in";
+  return null;
 }
 // The reason a case that needs the real Claude Code reviewer cannot run here,
 // or null when it can: installed, logged in and not offline.

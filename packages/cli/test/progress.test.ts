@@ -26,6 +26,7 @@ function git(cwd: string, ...args: string[]): void {
 // The model provider stand-in: drops every candidate after reading the file.
 const driver: ReviewerDriver = {
   name: "claude",
+  traced: true,
   detect: async () => ({ ok: true, version: "9.9.9", bin: "/fake/claude" }),
   start(): ReviewerSession {
     return {

@@ -269,4 +269,4 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
   };
 }
 
-export const claudeDriver: ReviewerDriver = { name: "claude", detect, start };
+export const claudeDriver: ReviewerDriver = { name: "claude", traced: true, detect, start };

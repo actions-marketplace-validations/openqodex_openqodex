@@ -18,6 +18,10 @@ const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+// The product name of a driver, for the report.
+const PRODUCT: Record<string, string> = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
+const product = (driver: string) => PRODUCT[driver] ?? driver;
+
 export function reviewerLine(r: ReviewerRecord | null): string {
   if (r === null) return "Reviewer: none started";
   const parts = [`${r.driver} ${r.version}`, `${Math.round(r.duration_ms / 1000)} s`, plural(r.usage.turns, "turn", "turns")];
@@ -81,8 +85,15 @@ function lines(report: Report): Line[] {
   }
   if (c) {
     out.push({ kind: "heading", text: "Coverage" });
-    out.push({ kind: "field", label: "Files read", text: c.coverage.files_read.length > 0 ? c.coverage.files_read.join(", ") : "none" });
-    out.push({ kind: "field", label: "Files not read", text: c.coverage.files_not_read.length > 0 ? c.coverage.files_not_read.join(", ") : "none" });
+    if (c.trace_complete === false) {
+      // Reads were not measured: say so, never "Files not read".
+      const by = `not recorded by ${c.reviewer ? product(c.reviewer.driver) : "the reviewer"}`;
+      out.push({ kind: "field", label: "Files read", text: by });
+      out.push({ kind: "field", label: "Reads outside the snapshot", text: by });
+    } else {
+      out.push({ kind: "field", label: "Files read", text: c.coverage.files_read.length > 0 ? c.coverage.files_read.join(", ") : "none" });
+      out.push({ kind: "field", label: "Files not read", text: c.coverage.files_not_read.length > 0 ? c.coverage.files_not_read.join(", ") : "none" });
+    }
     out.push({ kind: "field", label: "Changed ranges given to the reviewer", text: `${c.coverage.covered} of ${c.coverage.hunks}` });
   }
   if (report.not_reviewed_paths.length > 0) out.push({ kind: "field", label: "Left out, change too large", text: report.not_reviewed_paths.join(", ") });

@@ -383,6 +383,10 @@ export type CompletionRecord = {
     files_not_read: string[];
   };
   outside_reads: string[];
+  // Whether the reviewer's event stream shows every tool call (Claude Code).
+  // When false (Codex), files_read and outside_reads are not measured, and
+  // coverage counts only the changed ranges put in front of the reviewer.
+  trace_complete: boolean;
 };
 
 export type ReportFinding = {

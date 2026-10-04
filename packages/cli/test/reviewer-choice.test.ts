@@ -5,9 +5,14 @@
 // driver object that answers with a recorded submission.
 //
 // Ways it could fail, written before the code:
-//  1. `auto` picks a driver that is not enabled (Codex, Cursor).
-//  2. `--reviewer codex` on a machine where Codex is not enabled starts
-//     something, or does not say why it is off.
+//  1. `auto` picks a driver that is not enabled (Cursor).
+//  2. `--reviewer codex` run from inside Codex's own sandbox, where a nested
+//     Codex cannot start, crashes or hangs instead of saying "Full review
+//     unavailable" with the reason and the fallback command.
+//  8. `auto` inside Claude Code does not pick Claude Code, though Codex is
+//     installed too.
+//  9. `auto` with only Codex available does not pick Codex.
+// 10. `auto` inside a Codex session does not pick Codex first.
 //  3. The config's `reviewer:` key is ignored.
 //  4. The flag does not win over the config.
 //  5. The reviewer gets web tools with the default config.
@@ -51,13 +56,16 @@ function repo(): string {
 type Fake = ReviewerDriver & { starts: { web: boolean }[] };
 
 // The model provider stand-in: reads the changed file, then answers with an
-// empty, valid submission. `calls` adds tool calls to the answer.
-function fake(calls: Turn["calls"] = []): Fake {
+// empty, valid submission. `calls` adds tool calls to the answer. `name`
+// and `available` make it stand in for another agent, or for one that is
+// not installed.
+function fake(calls: Turn["calls"] = [], name = "claude", available = true): Fake {
   const driver: Fake = {
-    name: "claude",
+    name,
+    traced: name === "claude",
     starts: [],
     async detect() {
-      return { ok: true as const, version: "9.9.9", bin: "/fake/claude" };
+      return available ? { ok: true as const, version: "9.9.9", bin: `/fake/${name}` } : { ok: false as const, missing: `${name} is not installed`, fix: `install ${name}` };
     },
     start(opts): ReviewerSession {
       driver.starts.push({ web: opts.web });
@@ -85,6 +93,10 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "oq-choice-home-"));
   vi.stubEnv("OPENQODEX_HOME", home);
   vi.stubEnv(DEPTH_ENV, "");
+  // The agent running the tests must not decide `auto`.
+  vi.stubEnv("CLAUDECODE", "");
+  vi.stubEnv("CODEX_THREAD_ID", "");
+  vi.stubEnv("CODEX_SANDBOX", "");
   vi.spyOn(process.stdout, "write").mockImplementation((s) => ((out += String(s)), true));
   vi.spyOn(process.stderr, "write").mockImplementation((s) => ((err += String(s)), true));
 });
@@ -104,19 +116,48 @@ function review(drivers: ReviewerDriver[], reviewer?: string): Promise<number> {
 }
 
 describe("choosing the reviewer", () => {
-  it("1. auto passes by Codex and Cursor, which are not enabled, and starts Claude Code", async () => {
+  it("1. auto passes by Cursor, which is not enabled, and starts Claude Code", async () => {
     const claude = fake();
-    expect(await review([codexDriver, cursorDriver, claude])).toBe(0);
+    expect(await review([cursorDriver, claude])).toBe(0);
     expect(claude.starts).toHaveLength(1);
     expect((JSON.parse(out) as Report).completion?.reviewer?.driver).toBe("claude");
   });
 
-  it("2. --reviewer codex exits 2 with Full review unavailable and the reason Codex is off", async () => {
+  it("2. --reviewer codex inside Codex's own sandbox exits 2 with Full review unavailable, the reason and the fallback command", async () => {
+    vi.stubEnv("CODEX_SANDBOX", "seatbelt");
     const claude = fake();
     expect(await review([codexDriver, cursorDriver, claude], "codex")).toBe(2);
     expect(claude.starts).toHaveLength(0);
     expect(err).toContain("Full review unavailable");
-    expect(err).toMatch(/codex: not enabled: .*AGENTS\.md/);
+    expect(err).toMatch(/codex: Codex cannot start a second Codex inside its own sandbox/);
+    expect(err).toMatch(/review --agent/);
+  });
+
+  it("8. auto inside Claude Code picks Claude Code, with Codex available too", async () => {
+    vi.stubEnv("CLAUDECODE", "1");
+    const codex = fake([], "codex");
+    const claude = fake();
+    expect(await review([codex, claude])).toBe(0);
+    expect(claude.starts).toHaveLength(1);
+    expect(codex.starts).toHaveLength(0);
+  });
+
+  it("9. auto with only Codex available picks Codex, and the report names it", async () => {
+    const codex = fake([], "codex");
+    expect(await review([fake([], "claude", false), codex])).toBe(0);
+    expect(codex.starts).toHaveLength(1);
+    const completion = (JSON.parse(out) as Report).completion;
+    expect(completion?.reviewer?.driver).toBe("codex");
+    expect(completion?.trace_complete).toBe(false);
+  });
+
+  it("10. auto inside a Codex session picks Codex before Claude Code", async () => {
+    vi.stubEnv("CODEX_THREAD_ID", "00000000-0000-0000-0000-000000000001");
+    const codex = fake([], "codex");
+    const claude = fake();
+    expect(await review([claude, codex])).toBe(0);
+    expect(codex.starts).toHaveLength(1);
+    expect(claude.starts).toHaveLength(0);
   });
 
   it("3. the config's reviewer: key picks the driver", async () => {

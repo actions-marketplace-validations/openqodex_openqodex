@@ -54,6 +54,11 @@
 //     writes no legacy record for the push hooks.
 // 19. Redacting a multi-line secret (a private key) joins its lines, so every
 //     line below it moves while scanner locations and citations do not.
+// 28. With a reviewer whose trace is not complete (Codex), a read it claims
+//     counts as coverage, or a command it ran outside the snapshot fails the
+//     review, or the report prints "Files not read" for reads it never measured.
+// 29. With such a reviewer, ranges the correction rounds could not carry are
+//     reported as read, or the run completes.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +103,7 @@ type Fake = ReviewerDriver & { sent: string[]; snapshots: string[]; closed: numb
 function fake(answers: Answer[], available = true): Fake {
   const driver: Fake = {
     name: "claude",
+    traced: true,
     sent: [],
     snapshots: [],
     closed: 0,
@@ -448,6 +454,51 @@ describe("22, 23, 24. ranges the brief could not carry", () => {
     const records = readdirSync(receipts).flatMap((r) => readdirSync(join(receipts, r)).map((f) => JSON.parse(readFileSync(join(receipts, r, f), "utf8")) as { kind: string; verdict: unknown }));
     expect(records.length).toBeGreaterThan(0);
     for (const r of records) expect(r).toMatchObject({ kind: "incomplete", verdict: null });
+  });
+});
+
+describe("28, 29. a reviewer whose trace is not complete (Codex)", () => {
+  function bigChange(lines: number): string {
+    const dir = repo();
+    writeFileSync(join(dir, "big.txt"), "kept\n");
+    git(dir, "add", "big.txt");
+    git(dir, "commit", "-qm", "Big file");
+    writeFileSync(join(dir, "big.txt"), `kept\n${Array.from({ length: lines }, (_, i) => `added ${String(i).padStart(6, "0")} ${"x".repeat(64)}`).join("\n")}\n`);
+    return dir;
+  }
+  // The stand-in claims a read of the whole file and reports a command that
+  // reached outside the snapshot, as Codex's stream may.
+  const claims: Answer = (text) => ({
+    finalText: submission(text),
+    calls: [
+      { tool: "Read", input: { file_path: "big.txt" }, ok: true, read: { path: "big.txt", start: 1, lines: 100_000 } },
+      { tool: "shell", input: { command: "cat /etc/hosts" }, ok: true, read: null },
+    ],
+  });
+  const untraced = (answers: Answer[]): Fake => Object.assign(fake(answers), { name: "codex", traced: false });
+  const runDir = (dir: string) => join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
+
+  it("28. completes from the brief and both delivery rounds, keeps its commands as a diagnostic list, and says reads were not recorded", async () => {
+    const driver = untraced([claims]);
+    const dir = bigChange(Math.round(DELIVER_LINES * 1.5));
+    expect(await review(dir, driver)).toBe(0);
+    expect(driver.sent).toHaveLength(3);
+    const report = JSON.parse(out) as Report;
+    expect(report.completion).toMatchObject({ status: "complete", trace_complete: false, outside_reads: [] });
+    expect(report.completion?.coverage.files_read).toEqual([]);
+    expect(report.completion?.coverage.files_not_read).toEqual([]);
+    const md = readFileSync(join(runDir(dir), "report.md"), "utf8");
+    expect(md).toContain("not recorded by Codex");
+    expect(md).not.toContain("Files not read");
+    expect(readFileSync(join(runDir(dir), "trace.json"), "utf8")).toContain("cat /etc/hosts");
+  });
+
+  it("29. ranges the rounds could not carry leave it incomplete, named as not given to the reviewer", async () => {
+    const dir = bigChange(DELIVER_LINES * 3);
+    expect(await review(dir, untraced([claims]))).toBe(2);
+    const report = JSON.parse(out) as Report;
+    expect(report.completion?.status).toBe("incomplete");
+    expect(report.completion?.missing.join("\n")).toMatch(/not given to the reviewer: big\.txt:\d+-\d+/);
   });
 });
 
