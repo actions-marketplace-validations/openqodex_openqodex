@@ -6,41 +6,49 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ReviewerUsage } from "@openqodex/core";
-import { REVIEWER_TOOLS } from "@openqodex/core";
+import { REVIEWER_TOOLS, REVIEWER_WEB_TOOLS } from "@openqodex/core";
 import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
 import type { ToolCall } from "./trace.js";
 
 const execFileAsync = promisify(execFile);
 
-export const CLAUDE_ARGS = [
-  "-p",
-  // One JSON event per line out, user messages as JSON lines in: the session
-  // stays open between answers, so a correction round goes to the same session.
-  "--output-format",
-  "stream-json",
-  "--verbose",
-  "--input-format",
-  "stream-json",
-  // Reading, searching and listing only: no shell, no edits, no web, no subagent.
-  "--tools",
-  "Read,Grep,Glob",
-  // Anything not allowed is refused without a prompt; reads outside the
-  // working folder are not allowed.
-  "--permission-mode",
-  "dontAsk",
-  // No user, project or local settings: no CLAUDE.md, no hooks, no plugins,
-  // no permission rules of the developer's.
-  "--setting-sources",
-  "",
-  "--settings",
-  JSON.stringify({ autoMemoryEnabled: false, hooks: {} }),
-  "--strict-mcp-config",
-  "--mcp-config",
-  JSON.stringify({ mcpServers: {} }),
-  "--disable-slash-commands",
-  "--no-session-persistence",
-];
+// `web`: WebSearch and WebFetch are added only when the user config sets
+// `reviewer_web: on`.
+export function claudeArgs(web: boolean): string[] {
+  const tools = web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS;
+  return [
+    "-p",
+    // One JSON event per line out, user messages as JSON lines in: the session
+    // stays open between answers, so a correction round goes to the same session.
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--input-format",
+    "stream-json",
+    // Reading, searching and listing only (and the web, when allowed): no
+    // shell, no edits, no subagent.
+    "--tools",
+    tools.join(","),
+    // Anything not allowed is refused without a prompt; reads outside the
+    // working folder are not allowed.
+    "--permission-mode",
+    "dontAsk",
+    // No user, project or local settings: no CLAUDE.md, no hooks, no plugins,
+    // no permission rules of the developer's.
+    "--setting-sources",
+    "",
+    "--settings",
+    JSON.stringify({ autoMemoryEnabled: false, hooks: {} }),
+    "--strict-mcp-config",
+    "--mcp-config",
+    JSON.stringify({ mcpServers: {} }),
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    // dontAsk refuses the web tools unless they are allowed by name.
+    ...(web ? ["--allowedTools", REVIEWER_WEB_TOOLS.join(",")] : []),
+  ];
+}
 
 // The reviewer's environment, from an allowlist: what Claude Code needs to
 // run and to find its login (the keychain needs USER on macOS) and nothing
@@ -102,8 +110,9 @@ type Event = Record<string, unknown> & { type?: string; subtype?: string };
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-function start(opts: { snapshotDir: string; deadline: number; bin: string }): ReviewerSession {
-  const child = spawnGroup(opts.bin, CLAUDE_ARGS, { cwd: opts.snapshotDir, env: reviewerEnv() });
+function start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession {
+  const allowed = opts.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS;
+  const child = spawnGroup(opts.bin, claudeArgs(opts.web), { cwd: opts.snapshotDir, env: reviewerEnv() });
   // Every tool call is kept from the moment the agent asks for it, whether or
   // not a result follows, and whichever turn or nesting it came from.
   const pending = new Map<string, ToolCall>();
@@ -133,7 +142,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string }): Re
     if (e.type === "system" && e.subtype === "init") {
       sessionId = str(e.session_id);
       const tools = Array.isArray(e.tools) ? (e.tools as unknown[]).map(String) : [];
-      const extra = tools.filter((t) => !REVIEWER_TOOLS.includes(t));
+      const extra = tools.filter((t) => !allowed.includes(t));
       const mcp = Array.isArray(e.mcp_servers) ? e.mcp_servers.length : 0;
       if (extra.length > 0) fail(`the reviewer started with tools it must not have: ${extra.join(", ")}`);
       else if (mcp > 0) fail("the reviewer started with MCP servers");

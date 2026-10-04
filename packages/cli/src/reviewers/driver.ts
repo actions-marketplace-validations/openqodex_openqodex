@@ -5,9 +5,10 @@
 // of every tool call the agent reported. Nothing a driver returns is trusted
 // as a claim: the run checks the trace and the answer with scripts.
 //
-// One driver exists today (claude.ts). A new one implements the same
-// interface and is added to DRIVERS once its isolation was shown with the
-// real binary (docs/internal-reviewer-drivers.md).
+// Claude Code (claude.ts) is the one enabled driver. Codex and Cursor
+// (codex.ts, cursor.ts) failed checks with their real binaries and say so
+// from detect(); docs/internal-reviewer-drivers.md records the runs. A driver
+// is enabled once its isolation was shown with the real binary.
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
@@ -44,7 +45,8 @@ export interface ReviewerDriver {
   // put its own program in the reviewer's place.
   detect(repoRoot: string): Promise<Detected>;
   // `deadline`: epoch milliseconds after which the process group is killed.
-  start(opts: { snapshotDir: string; deadline: number; bin: string }): ReviewerSession;
+  // `web`: the user config allows the agent's web tools (reviewer_web: on).
+  start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession;
 }
 
 // Spawned without a shell, as the leader of a new process group, so the
@@ -79,7 +81,7 @@ export function findOnPath(name: string, repoRoot: string, path = process.env.PA
 }
 
 // The reviewers `--reviewer` accepts, besides `auto`.
-export const REVIEWER_NAMES = ["claude"] as const;
+export const REVIEWER_NAMES = ["claude", "codex", "cursor"] as const;
 
 // The agent running this command, when its environment says so.
 export function hostAgent(env: NodeJS.ProcessEnv = process.env): string | null {

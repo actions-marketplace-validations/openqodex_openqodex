@@ -24,6 +24,8 @@ import {
   buildInventory,
   buildReviewerBrief,
   checkSubmission,
+  REVIEWER_TOOLS,
+  REVIEWER_WEB_TOOLS,
   completionRecord,
   configHash,
   getChange,
@@ -48,6 +50,9 @@ import type { GlobalFlags } from "./flags.js";
 import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
 import { claudeDriver } from "./reviewers/claude.js";
+import { codexDriver } from "./reviewers/codex.js";
+import { cursorDriver } from "./reviewers/cursor.js";
+import { readReviewerSettings } from "./reviewers/settings.js";
 import { DEPTH_ENV, REVIEWER_NAMES, hostAgent } from "./reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "./reviewers/driver.js";
 import { classify } from "./reviewers/trace.js";
@@ -65,7 +70,8 @@ const MAX_REDACT_BYTES = 64 * 1024 * 1024;
 // redactSecrets ignores shorter matches; so does the byte check.
 const MIN_SECRET_LENGTH = 6;
 
-const DRIVERS: ReviewerDriver[] = [claudeDriver];
+// The order `auto` tries them in, after the agent running the command.
+const DRIVERS: ReviewerDriver[] = [claudeDriver, codexDriver, cursorDriver];
 
 // Every file a review writes in its run folder may quote the code under review.
 const PRIVATE = 0o600;
@@ -79,7 +85,8 @@ export type ReviewOptions = {
   only?: string;
   skip?: string;
   noGraph: boolean;
-  reviewer: string;
+  // --reviewer; when left out, `reviewer:` in the user config, else auto.
+  reviewer?: string;
   timeoutMs: number;
   // The drivers to choose from; tests pass a model provider stand-in.
   drivers?: ReviewerDriver[];
@@ -87,8 +94,10 @@ export type ReviewOptions = {
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
 
-// --reviewer, else the agent running this command when it has a driver,
-// else the first driver whose agent is installed and logged in.
+// --reviewer or the user config, else the agent running this command when
+// its driver is enabled, else the first enabled driver. A driver is enabled
+// when detect() says its agent is installed, logged in and isolated; one
+// that is not (Codex, Cursor) says why and is passed by.
 async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoot: string): Promise<Chosen> {
   if (choice !== "auto" && !(REVIEWER_NAMES as readonly string[]).includes(choice)) {
     throw new OpenQodexError(`--reviewer must be auto or one of ${REVIEWER_NAMES.join(", ")}, not ${choice}`);
@@ -400,7 +409,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const owner = checkoutOwner(repoRoot);
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
   announceRepoFiles(repoRoot);
-  const chosen = await chooseReviewer(o.reviewer, o.drivers ?? DRIVERS, repoRoot);
+  const settings = readReviewerSettings();
+  const chosen = await chooseReviewer(o.reviewer ?? settings.reviewer, o.drivers ?? DRIVERS, repoRoot);
   const deadline = Date.now() + o.timeoutMs;
 
   let snapshot: Checkout | null = null;
@@ -476,7 +486,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
-    session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin });
+    session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: settings.web });
     const pid = session.pid;
     say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
     const startedIso = new Date().toISOString();
@@ -524,6 +534,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       submissionErrors: talk.report ? [] : talk.errors,
       wholeRepo: prep.whole !== undefined,
       failure: talk.failure,
+      tools: settings.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS,
     });
     const report: Report = {
       ...(completion.status === "complete" && talk.report ? talk.report : incompleteReport(change, scan, config)),

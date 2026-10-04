@@ -11,6 +11,8 @@
 //  4. With no reviewer it prints findings, or exits anything but 2.
 //  5. A review started inside a reviewer starts another one.
 //  6. The snapshot stays on disk after the run.
+//  7. Asked for Codex, which is not enabled, it starts something or does
+//     not say why.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -33,6 +35,14 @@ describe("without a reviewer", () => {
     expect(out.stderr).toMatch(/Unchecked scanner candidates, not a review: \S+unchecked-candidates\.json/);
     expect(out.stderr).not.toContain(generatedSecret(dir));
     expect(ours()).toEqual(before);
+  });
+  it("7. --reviewer codex exits 2 with Full review unavailable and the reason Codex is not enabled", () => {
+    const dir = demo("total-codex");
+    const out = run("total-codex", dir, ["review", "--reviewer", "codex", "--format", "json"]);
+    expect(out.status).toBe(2);
+    expect(out.stdout).toBe("");
+    expect(out.stderr).toContain("Full review unavailable");
+    expect(out.stderr).toMatch(/codex: not enabled: .*AGENTS\.md/);
   });
   it("5. refuses inside a reviewer with one line", () => {
     const out = run("total-nested", baseline(), ["review"], { env: { OPENQODEX_REVIEW_DEPTH: "1" } });

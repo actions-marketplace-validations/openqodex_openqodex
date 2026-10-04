@@ -17,6 +17,8 @@ export type Coverage = CompletionRecord["coverage"];
 
 // The tools a reviewer is given. Anything else in a trace fails the run.
 export const REVIEWER_TOOLS: readonly string[] = ["Read", "Grep", "Glob"];
+// Added only when the user config sets `reviewer_web: on`.
+export const REVIEWER_WEB_TOOLS: readonly string[] = ["WebSearch", "WebFetch"];
 
 // Shown in `missing`, so a long list stays readable.
 const MAX_LISTED = 10;
@@ -88,6 +90,8 @@ export function completionRecord(args: {
   // Why the reviewer gave no answer that could be checked (it timed out, it
   // exited, it started with more than it was given).
   failure?: string | null;
+  // The tools the reviewer was given; REVIEWER_TOOLS when left out.
+  tools?: readonly string[];
 }): CompletionRecord {
   const missing: string[] = [];
   if (args.reviewer === null) missing.push("no reviewer process was started by openqodex");
@@ -98,7 +102,8 @@ export function completionRecord(args: {
   // Fails closed: an attempt counts, whether or not the agent's own rules refused it.
   const outside = [...new Set(args.trace.filter((t) => !t.inside).map((t) => t.path ?? "(no path)"))];
   if (outside.length > 0) missing.push(`the reviewer tried to read outside the snapshot: ${listed(outside)}`);
-  const tools = [...new Set(args.trace.map((t) => t.tool).filter((t) => !REVIEWER_TOOLS.includes(t)))];
+  const given = args.tools ?? REVIEWER_TOOLS;
+  const tools = [...new Set(args.trace.map((t) => t.tool).filter((t) => !given.includes(t)))];
   if (tools.length > 0) missing.push(`the reviewer used a tool it was not given: ${tools.join(", ")}`);
   const open = args.candidates.total - args.candidates.disposed;
   if (open > 0) missing.push(`${open} scanner ${open === 1 ? "candidate has" : "candidates have"} no disposition`);

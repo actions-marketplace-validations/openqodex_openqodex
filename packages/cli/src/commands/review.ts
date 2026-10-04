@@ -122,7 +122,7 @@ export async function run(args: string[]): Promise<number> {
       only: values.get("--only"),
       skip: values.get("--skip"),
       noGraph,
-      reviewer: values.get("--reviewer") ?? "auto",
+      reviewer: values.get("--reviewer"),
       timeoutMs: timeoutSeconds(values.get("--timeout")) * 1000,
     });
   }
