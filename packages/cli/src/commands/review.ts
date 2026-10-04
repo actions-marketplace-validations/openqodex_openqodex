@@ -1,20 +1,18 @@
 // `openqodex review`:
-//   --agent            scan, then write the brief for the host agent and print it
-//   --finalize [path]  check the agent's findings without a model and write the report
-//   neither            the same as `scan`, plus how to get the AI review
-//   --all              the whole repository instead of the change: the scanners
-//                      on every file, then the brief, with or without --agent.
-//                      There is never a scan-only report of the whole repo.
-//   <target>           a branch or a pull request instead of the current work,
-//                      read in a temporary checkout (see runTarget).
+//   neither            the whole review in one run, with a reviewer process
+//                      the tool starts (review-run.ts)
+//   --all              the whole repository instead of the change
+//   <target>           a branch or a pull request instead of the current work
+//   --agent            hidden, the two-step protocol of older skills: scan,
+//                      then write the brief for the host agent and print it
+//   --finalize [path]  hidden, its second step: check the agent's findings
+//                      without a model and write the report (a legacy review)
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, openSync, readSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   MANIFEST_VERSION,
   OpenQodexError,
-  DIFF_CAP_BYTES,
   INVENTORY_FILE,
   buildBrief,
   buildInventory,
@@ -26,50 +24,51 @@ import {
   getTreeChange,
   getWholeRepo,
   safeGit,
-  loadLensCatalog,
   openReportDir,
   readLatest,
   readManifest,
   readRepoFile,
   readScan,
-  redactSecrets,
   repoStat,
   STATE_DIR,
   selectLenses,
-  selectLensesForDiff,
   writeLatest,
   writeManifest,
   writeReportFiles,
   writeScan,
 } from "@openqodex/core";
-import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, SelectedLens, WholeRepo } from "@openqodex/core";
+import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
-import { announceRepoFiles, instructionsTemplate } from "../agents/repo-folder.js";
+import { announceRepoFiles } from "../agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, checkoutsDir, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
 import { HANDED_OFF } from "../update/trigger.js";
 import { readInstructions } from "../instructions.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
+import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
 import type { GlobalFlags } from "../flags.js";
 import {
   buildHotSpots,
   buildImpact,
   emitReport,
   exitFor,
+  instructionsHash,
   loadRepo,
   nothingToReview,
+  ownersInstructions,
   redactStored,
   reportFiles,
   progress,
   runPipeline,
   scanChange,
   warn,
+  wholeRepoLenses,
 } from "../pipeline.js";
 import type { PipelineResult } from "../pipeline.js";
 import { dropTempRef, resolveTarget, sweepTempRefs } from "../target.js";
 import type { Resolved } from "../target.js";
-import { SCOPE_BOOLS, SCOPE_VALUES, reportScan, runScan, scopeFrom } from "./scan.js";
+import { SCOPE_BOOLS, SCOPE_VALUES, scopeFrom } from "./scan.js";
 
 const FINDINGS_FILE = "agent-findings.json";
 const IMPACT_FILE = "impact.json";
@@ -84,7 +83,7 @@ type RunFile = { version: 1; scope: ChangeScope | "all" | "target" };
 export async function run(args: string[]): Promise<number> {
   const { global, bools, values, positionals } = parseFlags(args, {
     bools: [...SCOPE_BOOLS, "--agent", "--finalize", ALL, NO_GRAPH, HANDED_OFF],
-    values: [...SCOPE_VALUES, "--only", "--skip", "--run"],
+    values: [...SCOPE_VALUES, "--only", "--skip", "--run", "--reviewer", "--timeout"],
     positionals: 1,
   });
   const agent = bools.has("--agent");
@@ -92,6 +91,9 @@ export async function run(args: string[]): Promise<number> {
   const noGraph = bools.has(NO_GRAPH);
   if (agent && finalize) throw new OpenQodexError("--agent and --finalize cannot be used together");
   if (values.has("--run") && !finalize) throw new OpenQodexError("--run names the run to finalize and needs --finalize");
+  if ((values.has("--reviewer") || values.has("--timeout")) && (agent || finalize)) {
+    throw new OpenQodexError("--reviewer and --timeout are for the review openqodex runs itself, not --agent or --finalize");
+  }
   const target = finalize ? undefined : positionals[0];
   if (target !== undefined && bools.has(ALL)) {
     throw new OpenQodexError("--all reviews the whole repository and takes no branch or pull request");
@@ -109,16 +111,33 @@ export async function run(args: string[]): Promise<number> {
   // Checkouts that a review of a branch or a pull request left behind.
   const root = await findRepoRoot(global.cwd).catch(() => null);
   if (root !== null) await Promise.all([sweepCheckouts(root), sweepTempRefs(root)]);
-  if (target !== undefined) {
-    return runTarget(global, target, { agent, base: values.get("--base"), only: values.get("--only"), skip: values.get("--skip"), noGraph });
-  }
-  if (bools.has(ALL)) return runAll(global, agent, values.get("--only"), values.get("--skip"), noGraph);
   const scope = scopeFrom(bools, values);
-  if (agent) return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
+  if (!agent) {
+    return runReview({
+      flags: global,
+      scope,
+      target,
+      base: values.get("--base"),
+      all: bools.has(ALL),
+      only: values.get("--only"),
+      skip: values.get("--skip"),
+      noGraph,
+      reviewer: values.get("--reviewer") ?? "auto",
+      timeoutMs: timeoutSeconds(values.get("--timeout")) * 1000,
+    });
+  }
+  if (target !== undefined) {
+    return runTarget(global, target, { base: values.get("--base"), only: values.get("--only"), skip: values.get("--skip"), noGraph });
+  }
+  if (bools.has(ALL)) return runAll(global, values.get("--only"), values.get("--skip"), noGraph);
+  return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
+}
 
-  const outcome = await runScan({ flags: global, scope, only: values.get("--only"), skip: values.get("--skip") });
-  if (outcome.report !== null) warn("For the AI review, ask your coding agent: review my change with openqodex");
-  return outcome.exitCode;
+function timeoutSeconds(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_TIMEOUT_SECONDS;
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || n < 1) throw new OpenQodexError(`--timeout takes a whole number of seconds, not ${value}`);
+  return n;
 }
 
 // Quoted for a POSIX shell: the agent pastes this line as it is.
@@ -147,19 +166,6 @@ function finalizeCommand(repoRoot: string, flags: GlobalFlags, findingsPath: str
   if (flags.config !== undefined) args.push("--config", isAbsolute(flags.config) ? flags.config : resolve(repoRoot, flags.config));
   args.push(...(runId === undefined ? [findingsPath] : run));
   return [runner, ...args.map(shellQuote)].join(" ");
-}
-
-// sha256 of the instructions file, null when there is none. Finalize compares
-// it with the brief's, so a review always follows the instructions as they are.
-function instructionsHash(text: string): string | null {
-  return text === "" ? null : createHash("sha256").update(text).digest("hex");
-}
-
-// The owners' instructions as the brief takes them, and their hash. The
-// untouched template says nothing about this repo: no block for it.
-function ownersInstructions(repoRoot: string, secrets: string[]): { text: string; hash: string | null } {
-  const raw = readInstructions(repoRoot);
-  return { text: raw === "" || raw === instructionsTemplate() ? "" : redactSecrets(raw, secrets), hash: instructionsHash(raw) };
 }
 
 async function runAgent(flags: GlobalFlags, scope: ChangeScope, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
@@ -245,7 +251,7 @@ function cleanWorkTree(repoRoot: string): boolean {
 async function runTarget(
   flags: GlobalFlags,
   spec: string,
-  opts: { agent: boolean; base: string | undefined; only: string | undefined; skip: string | undefined; noGraph: boolean },
+  opts: { base: string | undefined; only: string | undefined; skip: string | undefined; noGraph: boolean },
 ): Promise<number> {
   const { repoRoot, config } = await loadRepo(flags);
   announceRepoFiles(repoRoot);
@@ -261,7 +267,7 @@ async function runTarget(
 async function reviewResolved(
   flags: GlobalFlags,
   spec: string,
-  opts: { agent: boolean; base: string | undefined; only: string | undefined; skip: string | undefined; noGraph: boolean },
+  opts: { base: string | undefined; only: string | undefined; skip: string | undefined; noGraph: boolean },
   repoRoot: string,
   config: Config,
   t: Resolved,
@@ -305,48 +311,12 @@ async function reviewResolved(
       only: scannerList("--only", opts.only),
       skip: scannerList("--skip", opts.skip),
     });
-    if (!opts.agent) {
-      const outcome = reportScan(p, flags);
-      if (outcome.report !== null) warn(`For the AI review, ask your coding agent: review ${spec} with openqodex`);
-      return outcome.exitCode;
-    }
     await writeBrief(p, flags, opts.noGraph, null, target);
     keep = true;
     return EXIT_OK;
   } finally {
     if (tree !== null && !keep) await removeTargetCheckout(repoRoot, tree);
   }
-}
-
-// The lens triggers over the whole repo: every line counts as changed. Each
-// text file contributes its first bytes, an equal share of the 5 MB the
-// brief's diff may carry, so a late file is sampled as fully as an early
-// one; the matches are then ranked and capped as for a change.
-const LENS_SAMPLE_MIN_BYTES = 1024;
-
-function wholeRepoLenses(change: WholeRepo): SelectedLens[] {
-  const text = [...change.lines.keys()];
-  const share = Math.max(LENS_SAMPLE_MIN_BYTES, Math.floor(DIFF_CAP_BYTES / Math.max(1, text.length)));
-  const buf = Buffer.alloc(share);
-  let diff = "";
-  for (const path of text) {
-    let fd: number;
-    try {
-      fd = openSync(join(change.repoRoot, path), constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch {
-      continue;
-    }
-    let read = 0;
-    try {
-      read = readSync(fd, buf, 0, share, 0);
-    } catch {
-      // unreadable now: it contributes nothing
-    } finally {
-      closeSync(fd);
-    }
-    for (const line of buf.subarray(0, read).toString("utf8").split("\n")) diff += `+${line}\n`;
-  }
-  return selectLensesForDiff({ diff, files: change.changedPaths, catalog: loadLensCatalog() });
 }
 
 // The receipt of the newest whole-repo run, beside latest.json, which only
@@ -358,7 +328,7 @@ function writeLatestAll(repoRoot: string, latest: Latest): void {
   writeReportFiles(repoRoot, join(repoRoot, STATE_DIR), { [LATEST_ALL_FILE]: `${JSON.stringify(latest, null, 2)}\n` });
 }
 
-async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
+async function runAll(flags: GlobalFlags, only: string | undefined, skip: string | undefined, noGraph: boolean): Promise<number> {
   const { repoRoot, config } = await loadRepo(flags);
   announceRepoFiles(repoRoot);
   const whole = await getWholeRepo({ repoRoot, exclude: config.exclude });
@@ -421,11 +391,6 @@ async function runAll(flags: GlobalFlags, agent: boolean, only: string | undefin
     verdict: null,
   });
   process.stdout.write(brief);
-  if (!agent) {
-    process.stdout.write(
-      "\nThis is the brief, not the review: the review is done when your coding agent writes its findings and runs the finalize command above. Ask it: review my whole repo with openqodex\n",
-    );
-  }
   return EXIT_OK;
 }
 

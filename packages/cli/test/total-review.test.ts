@@ -69,7 +69,8 @@ function fake(answers: Answer[], available = true): Fake {
         async send(text: string): Promise<Turn> {
           driver.sent.push(text);
           const next = answers[driver.sent.length - 1] ?? answers[answers.length - 1]!;
-          const t = await next(text, snapshotDir);
+          // Every answer is built from the brief, the first text the session got.
+          const t = await next(driver.sent[0] ?? text, snapshotDir);
           return { finalText: "", trace: [], usage: { turns: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01 }, sessionId: "fake", failure: null, ...t };
         },
         async close() {
@@ -166,7 +167,9 @@ describe("the total review run", () => {
 
   it("a correction round that fixes the answer completes", async () => {
     const driver = fake([noDisposition, good]);
-    expect(await review(repo(), driver)).toBe(0);
+    const code = await review(repo(), driver);
+    expect((JSON.parse(out) as Report).completion?.missing).toEqual([]);
+    expect(code).toBe(0);
     expect(driver.sent).toHaveLength(2);
   });
 

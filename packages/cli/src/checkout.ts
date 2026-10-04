@@ -15,7 +15,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { OpenQodexError, readRepoFile, safeGit } from "@openqodex/core";
+import { OpenQodexError, quoteAlternate, readRepoFile, safeGit } from "@openqodex/core";
 import { openqodexHomeDir } from "./launcher.js";
 
 const execFileAsync = promisify(execFile);
@@ -77,13 +77,21 @@ export async function addCheckout(repoRoot: string, sha: string, prefix: string)
 // switched off: an include can add drivers only for linked work trees, so
 // the developer's work tree does not know them all. No missing object is
 // fetched: a partial clone without it fails in one line.
-export async function addTargetCheckout(repoRoot: string, sha: string, prefix: string): Promise<Checkout> {
+// `tree`: fill the work tree from this git tree instead of the commit's, with
+// its new objects read from a temporary object folder: the developer's
+// committed, uncommitted and untracked work, as the change source staged it.
+export async function addTargetCheckout(
+  repoRoot: string,
+  sha: string,
+  prefix: string,
+  tree?: { sha: string; objects: string; alternates: string },
+): Promise<Checkout> {
   const parent = checkoutsDir();
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const st = lstatSync(parent);
   if (!st.isDirectory() || st.isSymbolicLink()) throw new OpenQodexError(`${parent} is not a real folder; remove it and run the review again`);
   const folder = mkdtempSync(join(parent, prefix));
-  const tree = join(folder, "tree");
+  const work = join(folder, "tree");
   const marker: Marker = { repo: repoRoot, sha, created: new Date().toISOString() };
   writeFileSync(join(folder, CHECKOUT_MARKER), `${JSON.stringify(marker)}\n`, { flag: "wx", mode: 0o600 });
   const fail = async (step: string, stderr: string): Promise<never> => {
@@ -94,13 +102,14 @@ export async function addTargetCheckout(repoRoot: string, sha: string, prefix: s
     }
     throw new OpenQodexError(`could not ${step} ${sha.slice(0, 12)} to review it: ${why}`);
   };
-  const added = await safeGit(repoRoot, ["worktree", "add", "--no-checkout", "--detach", "--quiet", tree, sha]);
+  const added = await safeGit(repoRoot, ["worktree", "add", "--no-checkout", "--detach", "--quiet", work, sha]);
   if (added.code !== 0) return fail("add a work tree for", added.stderr);
   // core.symlinks=false: a link in the target becomes a small file holding its
   // target text, so no tool that reads the checkout follows it out.
-  const filled = await safeGit(tree, ["-c", "core.symlinks=false", "read-tree", "--reset", "-u", "HEAD"]);
+  const env = tree ? { GIT_OBJECT_DIRECTORY: tree.objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(tree.alternates) } : undefined;
+  const filled = await safeGit(work, ["-c", "core.symlinks=false", "read-tree", "--reset", "-u", tree?.sha ?? "HEAD"], undefined, env);
   if (filled.code !== 0) return fail("check out", filled.stderr);
-  return { folder, tree };
+  return { folder, tree: work };
 }
 
 export async function removeCheckout(repoRoot: string, folder: string): Promise<void> {
