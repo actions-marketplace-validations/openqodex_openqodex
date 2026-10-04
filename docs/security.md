@@ -102,6 +102,7 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 - `update.json`: the state of the version check, private to you.
 - `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews) and `reviewer_web` (the reviewer's web tools, off by default).
 - `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
+- `receipts/<repo id>/`: one small record per reviewed change, readable by you only, written by `review` at the end of a run (and by `review --finalize` for the older two-step protocol). The push hooks decide from these records only. The files under the repository's `.openqodex/` are the readable report, never the proof: a branch can carry those files, so a record found only there counts as no review. `init` and `openqodex update` remove records older than 30 days.
 - `trust.json`: your approvals of custom scanners.
 
 In the repository, under `.openqodex/` only:
@@ -109,7 +110,7 @@ In the repository, under `.openqodex/` only:
 - `config.yaml` and `custom-instructions.md`: the team's config and instructions for the reviewer, created once and never touched after. They are meant to be committed.
 - `.gitignore`: keeps the run state below out of git, so after the first run `git status` shows only the two files above and the `.gitignore`.
 - `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the reviewer's answer, the list of its tool calls and the reports. OpenQodex keeps the newest 20.
-- `latest.json`: points at the newest review; the push gate reads only this. `latest-scan.json` points at the newest scan.
+- `latest.json`: points at the newest review, for you and older tools; the push gate does not trust it (see `receipts/` above). `latest-scan.json` points at the newest scan.
 
 OpenQodex never reads or writes `.openqodex/` or the root `.openqodex.yaml` through a symbolic link, at the file or at any folder above it inside the repository. A link there stops the command with one line naming it, or, for a run file such as `latest.json`, counts as no file. Only regular files are read there, each within a size limit, so a link or a device in their place cannot hang a run.
 

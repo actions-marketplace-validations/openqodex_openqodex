@@ -27,6 +27,7 @@ import {
   REVIEWER_TOOLS,
   REVIEWER_WEB_TOOLS,
   completionRecord,
+  gateReceipt,
   configHash,
   getChange,
   getTreeChange,
@@ -49,6 +50,8 @@ import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
 import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
+import { openqodexHomeDir } from "./launcher.js";
+import { writeHomeReceipt } from "./receipts.js";
 import { claudeDriver } from "./reviewers/claude.js";
 import { codexDriver } from "./reviewers/codex.js";
 import { cursorDriver } from "./reviewers/cursor.js";
@@ -558,7 +561,16 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     };
     // The push gate's receipt is the developer's own change only.
     if (prep.whole) writeReportFiles(repoRoot, join(repoRoot, STATE_DIR), { "latest-all.json": `${JSON.stringify(receipt, null, 2)}\n` });
-    else if (!prep.target) writeLatest(repoRoot, receipt);
+    else if (!prep.target) {
+      writeLatest(repoRoot, receipt);
+      // The record the push hooks trust, in the developer's home: a branch
+      // cannot plant it the way it can carry files under .openqodex/.
+      try {
+        writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, completion.status, relative(repoRoot, dir)));
+      } catch (error) {
+        warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
+      }
+    }
     emitReport(report, o.flags, repoRoot);
     say(`Report: ${relative(repoRoot, join(dir, "report.md"))}`);
     return exitFor(report);

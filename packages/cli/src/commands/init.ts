@@ -20,6 +20,7 @@ import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
 import { reviewAfterInit } from "./init-review.js";
+import { pruneHomeReceipts } from "../receipts.js";
 
 type HookChoice = "pre-push" | "none";
 
@@ -450,6 +451,7 @@ export async function run(args: string[]): Promise<number> {
       removeOldLocks(setup.oqHome);
       const code = await runLocked(setup);
       if (!flags.uninstall) pruneRuntimes(setup.oqHome);
+      pruneHomeReceipts(setup.oqHome);
       return code;
     });
     // After the boundary is released, so the review holds no install lock.

@@ -7,10 +7,10 @@
 For machines. Kept for the pre-commit hook and the GitHub Action, which call it, and for the git pre-push hook of earlier releases.
 
 ```
-openqodex scan [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>]
+openqodex scan [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>] [--block-on-severity <severity>]
 ```
 
-Runs the scanners on the change and prints their findings, labelled as scanner data. No model is involved and nothing is checked: it is not a review. The pre-commit hook and the GitHub Action run this command.
+Runs the scanners on the change and prints their findings, labelled as scanner data. No model is involved and nothing is checked: it is not a review. The pre-commit hook and the GitHub Action run this command. `--block-on-severity` sets the severity that makes it exit 1, and wins over `review.block_on_severity` in the config.
 
 ## review --agent and review --finalize
 
@@ -26,7 +26,7 @@ openqodex review --finalize [--run <id> | path]
 
 `--finalize` exits 2 when the findings file breaks the shape (naming the first wrong field), the change or the config moved since the brief, a finding cites a scanner rule or candidate that is not in this scan, the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`, or, for a branch or a pull request, the temporary checkout moved from the reviewed commit or is gone. When the launcher started the review, the brief's finalize command is the plain line `<launcher> review --finalize`, with `--all` and `--offline` as the review had them. When the version that runs `--finalize` is not the one that wrote the brief, and that one is installed, it hands the run to that version. It never repairs a finding.
 
-A review finished this way is a legacy review: the agent that ran it reviewed the change itself. The push hooks accept it as reviewed, with a line saying it was not an independent review; it never counts as a complete record.
+A review finished this way is a legacy review: the agent that ran it reviewed the change itself. Finalize writes a legacy record to `~/.openqodex/receipts/`, and the push hooks accept it as reviewed, with a line saying it was not an independent review; it never counts as a complete record.
 
 ## doctor
 

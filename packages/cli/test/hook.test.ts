@@ -28,6 +28,11 @@
 // 13. The agent hook stays silent for an unreviewed change.
 // 14. A legacy receipt (the old two-step protocol) counts as a complete
 //     review, or blocks a push that it passed.
+// 15. A record the repository carries (a force-added .openqodex/latest.json
+//     and report for its own change) counts as a review: only the record in
+//     the developer's own OpenQodex home may.
+// 16. A legacy finalize writes no record in the home, so older installs are
+//     suddenly blocked.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,6 +49,8 @@ import {
 } from "@openqodex/core";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BIN, cli, env, git, sandbox, type Sandbox } from "./init-helpers.js";
+import { gateReceipt } from "@openqodex/core";
+import { readHomeReceipt, writeHomeReceipt } from "../src/receipts.js";
 
 function check(s: Sandbox, command: string, opts: { env?: Record<string, string>; cwd?: string } = {}) {
   const input = JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: opts.cwd ?? s.repo });
@@ -129,10 +136,10 @@ describe("hook check: which commands are pushes", () => {
   });
 });
 
-// Writes the files a complete passing review of the current change leaves,
-// through the core functions (the review command is built elsewhere).
+// Writes the files a complete passing review of the current change leaves in
+// the repository, through the core functions: what a branch could carry.
 // `status` "incomplete" writes the record of a review that did not finish.
-async function finalizedPassingReview(repo: string, status: "complete" | "incomplete" = "complete"): Promise<void> {
+async function repoRecord(repo: string, status: "complete" | "incomplete" = "complete"): Promise<{ report: Report; dir: string }> {
   const change = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
   const report: Report = {
     ...scanReport({
@@ -150,6 +157,14 @@ async function finalizedPassingReview(repo: string, status: "complete" | "incomp
   writeReportFiles(repo, dir, { "report.json": JSON.stringify(report) });
   const done = status === "complete";
   writeLatest(repo, { dir: relative(repo, dir), change_id: change.id, kind: "review", finalized: done, verdict: done ? "passed" : null, completion: status });
+  return { report, dir: relative(repo, dir) };
+}
+
+// The same review with its record in the developer's OpenQodex home, as
+// `review` writes it at the end of a run.
+async function finalizedPassingReview(oqHome: string, repo: string, status: "complete" | "incomplete" = "complete"): Promise<void> {
+  const { report, dir } = await repoRecord(repo, status);
+  writeHomeReceipt(oqHome, repo, gateReceipt(report, status, dir));
 }
 
 function blockingRepo(root: string, name: string): string {
@@ -182,7 +197,7 @@ describe("hook check: decisions", () => {
   it("12. an incomplete record of this change never blocks, even in block mode", async () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
-    await finalizedPassingReview(s.repo, "incomplete");
+    await finalizedPassingReview(s.oqHome, s.repo, "incomplete");
     const r = check(s, "git push");
     expect(decision(r.stdout)).toBeUndefined();
     expect(r.stdout).toContain("incomplete");
@@ -197,7 +212,7 @@ describe("hook check: decisions", () => {
   it("a finalized passing review of the same change prints nothing, and stops covering it once the change moves", async () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
-    await finalizedPassingReview(s.repo);
+    await finalizedPassingReview(s.oqHome, s.repo);
     expect(check(s, "git push").stdout).toBe("");
     writeFileSync(join(s.repo, "README.md"), "changed again\n");
     expect(decision(check(s, "git push").stdout)).toBe("deny");
@@ -207,7 +222,7 @@ describe("hook check: decisions", () => {
     const s = sandbox();
     const a = blockingRepo(s.root, "a");
     blockingRepo(s.root, "b");
-    await finalizedPassingReview(a);
+    await finalizedPassingReview(s.oqHome, a);
     const at = (cwd: string, command: string) => check(s, command, { cwd }).stdout;
     expect(at(s.root, "git -C a push")).toBe("");
     expect(decision(at(s.root, "git -C b push"))).toBe("deny");
@@ -324,6 +339,28 @@ function reviewAndFinalize(s: Sandbox): void {
 }
 
 const LEGACY = "not an independent review";
+
+describe("the record the hooks trust", () => {
+  it("15. a complete passing record the repository carries counts as no review", async () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    await repoRecord(s.repo);
+    const warn = check(s, "git push").stdout;
+    expect(warn).toContain(UNREVIEWED);
+    expect(decision(warn)).toBeUndefined();
+    writeFileSync(join(s.repo, BLOCK), BLOCK_YAML);
+    await repoRecord(s.repo);
+    expect(decision(check(s, "git push").stdout)).toBe("deny");
+  });
+
+  it("16. a legacy finalize writes a legacy record in the home", async () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "README.md"), "changed\n");
+    reviewAndFinalize(s);
+    const change = await getChange({ repoRoot: s.repo, scope: {}, exclude: [] });
+    expect(readHomeReceipt(s.oqHome, s.repo, change.id)?.kind).toBe("legacy");
+  });
+});
 
 describe("the review receipt", () => {
   it("9, 14. a legacy review lets the push through with one line, and a later scan does not make it forget the review", () => {

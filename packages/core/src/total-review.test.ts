@@ -1,6 +1,6 @@
 // The core contract of the total review: submission version 2, its script
 // checks, the coverage taken from the reviewer's trace, the completion
-// record, the one standard report and the push gate's view of a receipt.
+// record and the one standard report.
 //
 // Ways it could fail, written before the code:
 //  1. A candidate with no disposition yields a passing or complete result.
@@ -20,7 +20,7 @@
 //     snapshot that changed, or a missing reviewer process still yields a
 //     complete record.
 // 10. Terminal and markdown say different things.
-// 11. A legacy receipt (two-step protocol) counts as an independent review.
+// 11. (moved: a legacy receipt is tested in push-gate.test.ts)
 // 12. Text the reviewer wrote, or a repo path, makes structure in report.md:
 //     an image (fetched when the report is viewed), a link, a heading, raw
 //     HTML, a table cell, a fence, or a line that imitates a fixed label; or
@@ -29,7 +29,6 @@ import { describe, expect, it } from "vitest";
 import { changedHunks, completionRecord, readCoverage } from "./completion.js";
 import type { TraceEntry } from "./completion.js";
 import { checkSubmission } from "./finalize.js";
-import { receiptKind } from "./push-gate.js";
 import { renderReview } from "./render/review.js";
 import { KEY_CANDIDATE, LINT_CANDIDATE, SQL_CANDIDATE, makeChange, makeConfig, makeManifest, makeScan } from "./test-fixtures.js";
 import type { CompletionRecord, Report, ReviewerRecord } from "./types.js";
@@ -290,15 +289,5 @@ describe("12. markdown injection from the reviewer's text or a repo path", () =>
     // oxlint-disable-next-line no-control-regex
     expect(out).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
     expect(out.split("\n").filter((l) => l.includes("Problem:"))).toEqual(["   Problem: Line one. Line two.[2J"]);
-  });
-});
-
-describe("the push gate's view of a receipt", () => {
-  it("11. labels a receipt from the two-step protocol legacy, never complete", () => {
-    const legacy = { dir: ".openqodex/reviews/x", change_id: "a", kind: "review" as const, finalized: true, verdict: "passed" as const };
-    expect(receiptKind(legacy, null)).toBe("legacy");
-    expect(receiptKind({ ...legacy, completion: "complete" }, completeReport())).toBe("complete");
-    expect(receiptKind({ ...legacy, finalized: false, completion: "incomplete" }, null)).toBe("incomplete");
-    expect(receiptKind(null, null)).toBeNull();
   });
 });

@@ -13,6 +13,7 @@ import { pushFolders } from "../agents/push-command.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
+import { readHomeReceipt } from "../receipts.js";
 import { launcherPath, openqodexHomeDir, planRuntime, shQuote } from "../launcher.js";
 
 const execFileAsync = promisify(execFile);
@@ -109,12 +110,14 @@ async function decide(input: HookInput): Promise<void> {
   }
   const denials: string[] = [];
   const notes: string[] = [];
+  const home = openqodexHomeDir();
   for (const repoRoot of roots) {
     const { config } = core.loadConfig(repoRoot);
     const change = await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase });
-    const latest = core.readLatest(repoRoot);
-    const report = latest ? core.readReport(repoRoot, join(repoRoot, latest.dir)) : null;
-    const decision = core.checkPush({ currentChangeId: change.id, latest, report, config });
+    // Only the record in the developer's own home counts, never one under
+    // the repository's .openqodex/, which a branch can carry.
+    const receipt = readHomeReceipt(home, repoRoot, change.id) ?? readHomeReceipt(home, repoRoot, "latest");
+    const decision = core.checkPush({ currentChangeId: change.id, receipt, config });
     const message = decision.message === null ? null : roots.length > 1 ? `${repoRoot}: ${decision.message}` : decision.message;
     if (decision.decision === "deny") denials.push(message ?? `${repoRoot}: OpenQodex blocks this push`);
     else if (message) notes.push(message);
@@ -163,8 +166,8 @@ function pushedCommits(input: string): (string | null)[] {
 
 // `openqodex hook pre-push`, run by the git pre-push hook. The same lookup
 // as the agent hook (core checkPush), for exactly what is pushed: each pushed
-// commit's change, measured from the base the last review used, must be the
-// change that review covered. It prints no scanner output and never starts a
+// commit's change, measured from the base of the newest review recorded in
+// the developer's home, must be a change a review there covered. It prints no scanner output and never starts a
 // review. Exit 1 only when the lookup denies (block_on_severity is set and
 // the review is missing or blocked); an incomplete review never blocks.
 async function prePush(): Promise<number> {
@@ -174,19 +177,21 @@ async function prePush(): Promise<number> {
   if (repoRoot === null) return fail("openqodex hook pre-push: run it inside a git repository");
   const core = await import("@openqodex/core");
   const { config } = core.loadConfig(repoRoot);
-  const latest = core.readLatest(repoRoot);
-  const report = latest ? core.readReport(repoRoot, join(repoRoot, latest.dir)) : null;
+  const home = openqodexHomeDir();
+  // Only the record in the developer's own home counts (see hook check).
+  const newest = readHomeReceipt(home, repoRoot, "latest");
   const messages = new Set<string>();
   let denied = false;
   for (const sha of pushedCommits(await readAll())) {
     let changeId: string;
     if (sha === null) {
       changeId = (await core.getChange({ repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase })).id;
-    } else if (report !== null) {
-      const tree = await core.getTreeChange({ repoRoot, baseRef: report.base.ref, baseSha: report.base.sha, headSha: sha, exclude: config.exclude });
+    } else if (newest !== null) {
+      const tree = await core.getTreeChange({ repoRoot, baseRef: newest.base.ref, baseSha: newest.base.sha, headSha: sha, exclude: config.exclude });
       changeId = tree.id;
     } else changeId = "";
-    const decision = core.checkPush({ currentChangeId: changeId, latest, report, config });
+    const receipt = (changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId)) ?? newest;
+    const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
     if (decision.decision === "deny") denied = true;
     if (decision.message !== null) messages.add(decision.message);
   }

@@ -19,6 +19,7 @@ import {
   buildWholeRepoBrief,
   configHash,
   finalizeReview,
+  gateReceipt,
   findRepoRoot,
   getChange,
   getTreeChange,
@@ -45,6 +46,7 @@ import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
 import { HANDED_OFF } from "../update/trigger.js";
 import { readInstructions } from "../instructions.js";
+import { writeHomeReceipt } from "../receipts.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
 import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
 import type { GlobalFlags } from "../flags.js";
@@ -587,7 +589,16 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   };
   // A target review is not the developer's change: no receipt.
   if (whole) writeLatestAll(repoRoot, receipt);
-  else if (!target) writeLatest(repoRoot, receipt);
+  else if (!target) {
+    writeLatest(repoRoot, receipt);
+    // A legacy record in the developer's home, so the push hooks of an older
+    // install accept this review as before.
+    try {
+      writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir)));
+    } catch (error) {
+      warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
+    }
+  }
   await discard();
   emitReport(report, flags, repoRoot);
   return exitFor(report);

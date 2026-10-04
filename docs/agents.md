@@ -130,7 +130,7 @@ OpenQodex writes no Cline hook. The rule carries the instruction section and ask
 
 ## What the push gate does
 
-The gate runs in Claude Code and Codex, through the hooks above, and in the git pre-push hook below. It looks for the record `review` wrote for exactly the change being pushed. It never scans, never starts a review, and never approves a push for you: your agent's own permission prompt for `git push` still applies.
+The gate runs in Claude Code and Codex, through the hooks above, and in the git pre-push hook below. It looks for the record `review` wrote for exactly the change being pushed, in your own `~/.openqodex/receipts/`. Report files a branch carries under `.openqodex/` never count. It never scans, never starts a review, and never approves a push for you: your agent's own permission prompt for `git push` still applies.
 
 - A complete review of this change that passed: the gate says nothing.
 - A complete review of this change that is blocked: the gate denies the push when `review.block_on_severity` is set, with the counts and the report path.
@@ -150,7 +150,7 @@ The git pre-push hook covers pushes from any tool, by an agent or by hand. `init
 npx openqodex hook install
 ```
 
-Before each push it runs `openqodex hook pre-push` through the launcher. For each commit the push sends, it measures that commit's change from the base the last review used, and checks it is the change that review covered, so a push of another branch, or of work changed after the review, counts as not reviewed. It prints the gate's line on stderr and nothing from the scanners. It stops the push only when the config sets `review.block_on_severity` and the review is missing or blocked. A lookup that fails for its own reasons never stops the push.
+Before each push it runs `openqodex hook pre-push` through the launcher. For each commit the push sends, it measures that commit's change from the base of the newest review recorded in your home, and checks it is the change that review covered, so a push of another branch, or of work changed after the review, counts as not reviewed. It prints the gate's line on stderr and nothing from the scanners. It stops the push only when the config sets `review.block_on_severity` and the review is missing or blocked. A lookup that fails for its own reasons never stops the push.
 
 ## Other ways to install
 
