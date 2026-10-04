@@ -2,16 +2,7 @@
 // entries call before a shell command. `openqodex hook install|uninstall`:
 // the optional git pre-push hook, the gate that sees every real push.
 import { execFile } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
 import type { ChangeScope } from "@openqodex/core";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -202,26 +193,6 @@ async function pushedPairs(repoRoot: string, input: string, remoteName: string |
   return pairs;
 }
 
-// The repo's config and instructions as they are in the work tree, so a scan
-// of a pushed commit in a temporary tree is judged by the same settings.
-const SETTINGS = [".openqodex.yaml", ".openqodex/config.yaml", ".openqodex/custom-instructions.md", ".openqodex/.gitignore"];
-
-// Replaces the pushed commit's own `.openqodex` folder and root config in the
-// temporary checkout with the work tree's settings. What the commit holds there
-// never reaches the scan: links that point anywhere, or run state such as a
-// receipt. rmSync removes a link itself and never follows one inside a folder
-// it removes; the files are then created exclusively in a fresh real folder.
-function placeSettings(repoRoot: string, tree: string, readRepoFile: (root: string, path: string) => string | null): void {
-  rmSync(join(tree, ".openqodex"), { recursive: true, force: true });
-  rmSync(join(tree, ".openqodex.yaml"), { recursive: true, force: true });
-  mkdirSync(join(tree, ".openqodex"));
-  for (const rel of SETTINGS) {
-    // From the work tree through the repo state reader: a link there stops the push scan with one line.
-    const text = readRepoFile(repoRoot, rel);
-    if (text !== null) writeFileSync(join(tree, rel), text, { flag: "wx" });
-  }
-}
-
 async function scanIn(cwd: string, scope: ChangeScope): Promise<number> {
   const [{ runScan }, { parseFlags }] = await Promise.all([import("./scan.js"), import("../flags.js")]);
   try {
@@ -232,21 +203,21 @@ async function scanIn(cwd: string, scope: ChangeScope): Promise<number> {
   }
 }
 
-// Scans a pushed commit in a temporary detached work tree of it, removed
-// afterwards whatever happens.
+// Scans a pushed commit in a temporary detached work tree of it, with the
+// work tree's settings (the root config included), removed afterwards
+// whatever happens. Loaded only for a push, like the core.
 async function scanCommit(repoRoot: string, sha: string, scope: ChangeScope): Promise<number> {
-  const tmp = mkdtempSync(join(tmpdir(), "openqodex-push-"));
-  const tree = join(tmp, "tree");
+  const { PUSH_PREFIX, addCheckout, placeSettings, removeCheckout } = await import("../checkout.js");
+  const checkout = await addCheckout(repoRoot, sha, PUSH_PREFIX);
+  if (checkout === null) {
+    process.stderr.write(`openqodex hook pre-push: could not check out ${sha} to scan it\n`);
+    return EXIT_TOOL_FAILED;
+  }
   try {
-    if ((await gitOut(repoRoot, ["worktree", "add", "--detach", "--quiet", tree, sha])) === null) {
-      process.stderr.write(`openqodex hook pre-push: could not check out ${sha} to scan it\n`);
-      return EXIT_TOOL_FAILED;
-    }
-    placeSettings(repoRoot, tree, (await import("@openqodex/core")).readRepoFile);
-    return await scanIn(tree, scope);
+    placeSettings(repoRoot, checkout.tree, true);
+    return await scanIn(checkout.tree, scope);
   } finally {
-    await gitOut(repoRoot, ["worktree", "remove", "--force", tree]);
-    rmSync(tmp, { recursive: true, force: true });
+    await removeCheckout(repoRoot, checkout.folder);
   }
 }
 

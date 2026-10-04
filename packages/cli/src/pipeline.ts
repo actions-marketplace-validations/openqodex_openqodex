@@ -37,7 +37,11 @@ export function warn(line: string): void {
 }
 
 export type PipelineResult = {
+  // The developer's repository: its config, its run folders, its approvals.
   repoRoot: string;
+  // Where the changed files are read and the scanners run: repoRoot, or the
+  // temporary checkout of a branch or a pull request under review.
+  workDir: string;
   config: Config;
   change: Change;
   // null when the change is empty and nothing was scanned.
@@ -68,6 +72,7 @@ export async function runPipeline(args: {
 // coverage is passed: every finding in a file of the inventory is kept.
 export async function scanChange<C extends Change>(args: {
   repoRoot: string;
+  workDir?: string;
   config: Config;
   change: C;
   wholeRepo?: boolean;
@@ -76,11 +81,12 @@ export async function scanChange<C extends Change>(args: {
   skip?: ScannerSource[];
 }): Promise<PipelineResult & { change: C }> {
   const { repoRoot, config, change, flags } = args;
-  if (change.files.length === 0) return { repoRoot, config, change, scan: null, secrets: [] };
+  const workDir = args.workDir ?? repoRoot;
+  if (change.files.length === 0) return { repoRoot, workDir, config, change, scan: null, secrets: [] };
 
   const onProgress = progress(flags);
   const { scan, secrets } = await runScanners({
-    repoDir: repoRoot,
+    repoDir: workDir,
     changedPaths: change.changedPaths,
     coverage: args.wholeRepo ? undefined : change.coverage,
     config,
@@ -89,13 +95,15 @@ export async function scanChange<C extends Change>(args: {
       installBudgetMs: INSTALL_BUDGET_MS,
       onProgress,
     }),
+    // Approvals belong to the developer's repository; an approved scanner
+    // runs in workDir, where the files are.
     custom: config.custom.length > 0 ? customAdapters(repoRoot, config) : [],
     only: args.only,
     skip: args.skip,
     onProgress,
   });
   noteScan(repoRoot, scan);
-  return { repoRoot, config, change, scan: redactStored(scan, secrets), secrets };
+  return { repoRoot, workDir, config, change, scan: redactStored(scan, secrets), secrets };
 }
 
 // Every string in the scan passes through the secret redaction before it is
@@ -126,13 +134,13 @@ async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean,
   }
   try {
     return await buildGraph({
-      repoRoot: p.repoRoot,
+      repoRoot: p.workDir,
       files: withBase ? p.change.changedPaths : undefined,
       only: withBase ? undefined : p.change.changedPaths,
       budgetMs: p.config.graph.budgetMs,
       maxFiles: p.config.graph.maxFiles,
       maxFileBytes: p.config.graph.maxFileBytes,
-      cacheDir: join(p.repoRoot, STATE_DIR, "graph"),
+      cacheDir: join(p.workDir, STATE_DIR, "graph"),
       onProgress: progress(flags),
       base: withBase ? { sha: p.change.baseSha, files: p.change.files } : undefined,
     });

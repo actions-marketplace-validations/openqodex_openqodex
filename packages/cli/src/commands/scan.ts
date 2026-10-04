@@ -7,6 +7,7 @@ import type { ChangeScope, Report } from "@openqodex/core";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
 import { emitReport, exitFor, nothingToReview, reportFiles, runPipeline } from "../pipeline.js";
+import type { PipelineResult } from "../pipeline.js";
 
 export const SCOPE_BOOLS = ["--uncommitted"];
 export const SCOPE_VALUES = ["--base"];
@@ -35,6 +36,12 @@ export async function runScan(args: {
     skip: scannerList("--skip", args.skip),
   });
   announceRepoFiles(p.repoRoot);
+  return reportScan(p, flags);
+}
+
+// The scan report of a pipeline run, written to a run folder of the
+// developer's repository and printed.
+export function reportScan(p: PipelineResult, flags: GlobalFlags): ScanOutcome {
   if (p.scan === null) return { exitCode: nothingToReview(p.change), report: null, dir: null };
 
   const report = scanReport({ change: p.change, scan: p.scan, config: p.config });
