@@ -14,6 +14,9 @@
 //  8. The warning line breaks: the stderr extraction fails under pipefail on
 //     empty input, or the tool's text writes a workflow command of its own (a
 //     line break, `::`, `%` or a control character).
+// 12. A killed scan (137, 139, 143) is not a tool error, so fail-on-tool-error
+//     misses it and no warning is written.
+// 13. A push event scans an empty change: no base reaches the scan.
 //  9. In a pull request the head's config hides findings (disabled_rules,
 //     scanners.disable, severity_threshold): the config must come from the
 //     base branch, and a failed fetch, a missing file or an odd branch name
@@ -73,8 +76,9 @@ describe("the GitHub Action", () => {
   });
 
   it("2. says first that it runs the scanners only and is not a review", () => {
-    const first = SCRIPT.split("\n").find((l) => l.trim() !== "" && !l.startsWith("#") && !l.startsWith("set "));
-    expect(first).toMatch(/^echo "OpenQodex scanners only: .*not a review/);
+    // The first line the step prints, as the job log shows it.
+    const first = runStep(gitRepo().dir, {}).stdout.split("\n")[0];
+    expect(first).toMatch(/^OpenQodex scanners only: .*not a review/);
   });
 });
 
@@ -92,6 +96,9 @@ function runStep(dir: string, env: Record<string, string>): { status: number | n
       "#!/bin/sh",
       'shift; shift',
       'if [ "$1" = "doctor" ]; then shift; set -- doctor $(for a in "$@"; do [ "$a" = "--install" ] || printf "%s\\n" "$a"; done); fi',
+      // OQ_KILL_SCAN: the scan process is killed (exit 137), as the runner's
+      // out-of-memory killer would.
+      'if [ "$1" = "scan" ] && [ -n "$OQ_KILL_SCAN" ]; then kill -9 $$; fi',
       'if [ "$1" = "scan" ] && [ -z "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install --only sqllint "$@"; fi',
       'if [ "$1" = "scan" ] && [ -n "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install "$@"; fi',
       `exec "${process.execPath}" "${bin}" "$@"`,
@@ -105,7 +112,7 @@ function runStep(dir: string, env: Record<string, string>): { status: number | n
   const r = spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", SCRIPT_PATH], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${shim}:${process.env.PATH}`, RUNNER_TEMP: temp, GITHUB_OUTPUT: outputs, GITHUB_STEP_SUMMARY: join(temp, "summary"), OPENQODEX_HOME: mkdtempSync(join(tmpdir(), "oq-action-home-")), OPENQODEX_VERSION: "0.0.0", BASE_SHA: "", BASE_REF: "", BLOCK_ON_SEVERITY: "", CONFIG_FROM: "base", EVENT_NAME: "push", ...env },
+    env: { ...process.env, PATH: `${shim}:${process.env.PATH}`, RUNNER_TEMP: temp, GITHUB_OUTPUT: outputs, GITHUB_STEP_SUMMARY: join(temp, "summary"), OPENQODEX_HOME: mkdtempSync(join(tmpdir(), "oq-action-home-")), OPENQODEX_VERSION: "0.0.0", BASE_SHA: "", BASE_REF: "", PUSH_BEFORE: "", DEFAULT_BRANCH: "", BLOCK_ON_SEVERITY: "", CONFIG_FROM: "base", EVENT_NAME: "push", ...env },
   });
   return { status: r.status, stdout: r.stdout, outputs: readFileSync(outputs, "utf8") };
 }
@@ -218,6 +225,54 @@ describe("the scan step, run", () => {
       const r = runStep(dir, { EVENT_NAME: "pull_request", BASE_SHA: base, BASE_REF: "main", CONFIG_FROM: from, OQ_ALL_SCANNERS: "1" });
       expect(r.outputs, from).toMatch(/status=(passed|blocked)/);
       expect(existsSync(marker), from).toBe(false);
+    }
+  });
+
+  it("12. a scan killed by a signal is a tool error: exit-code 2, status tool-failed and the warning", () => {
+    const { dir } = gitRepo();
+    const r = runStep(dir, { OQ_KILL_SCAN: "1" });
+    expect(r.status).toBe(0);
+    expect(r.outputs).toContain("exit-code=2");
+    expect(r.outputs).toContain("status=tool-failed");
+    expect(r.stdout).toContain("::warning title=OpenQodex did not run::");
+  });
+
+  // A clone of a remote holding main, with a pushed commit that adds the SQL
+  // file, checked out detached as the runner does.
+  function pushedClone(onBranch: boolean): { dir: string; before: string } {
+    const { dir: origin } = gitRepo();
+    const dir = mkdtempSync(join(tmpdir(), "oq-action-push-"));
+    spawnSync("git", ["clone", "-q", origin, dir]);
+    const git = (...a: string[]) => spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: dir, encoding: "utf8" }).stdout.trim();
+    const before = git("rev-parse", "HEAD");
+    if (onBranch) git("checkout", "-q", "-b", "feature");
+    mkdirSync(join(dir, "db"));
+    writeFileSync(join(dir, "db/x.sql"), SQL);
+    git("add", "-A");
+    git("commit", "-qm", "Pushed");
+    git("checkout", "-q", "--detach");
+    // actions/checkout sets no origin/HEAD, so the CLI has no default base.
+    git("remote", "set-head", "origin", "-d");
+    return { dir, before };
+  }
+
+  it("13. a push event scans the pushed commits from the event's previous commit", () => {
+    const { dir, before } = pushedClone(false);
+    const r = runStep(dir, { EVENT_NAME: "push", PUSH_BEFORE: before, BLOCK_ON_SEVERITY: "info" });
+    expect(r.outputs).toContain("status=blocked");
+  });
+
+  it("13. a push that creates a branch scans from the merge base with the default branch", () => {
+    const { dir } = pushedClone(true);
+    const r = runStep(dir, { EVENT_NAME: "push", PUSH_BEFORE: "0".repeat(40), DEFAULT_BRANCH: "main", BLOCK_ON_SEVERITY: "info" });
+    expect(r.outputs).toContain("status=blocked");
+  });
+
+  it("13. an event with no usable base says so in its first line", () => {
+    const { dir } = gitRepo();
+    for (const env of [{ EVENT_NAME: "workflow_dispatch" }, { EVENT_NAME: "push", PUSH_BEFORE: "not-a-sha" }]) {
+      const first = runStep(dir, env).stdout.split("\n")[0];
+      expect(first, env.EVENT_NAME).toMatch(/^OpenQodex scanners only: .*not a review.*no base/);
     }
   });
 });

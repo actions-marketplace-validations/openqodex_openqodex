@@ -4,6 +4,8 @@
 #   OPENQODEX_VERSION   the openqodex version to run
 #   BASE_SHA            the pull request's base commit, empty outside one
 #   BASE_REF            the pull request's base branch, empty outside one
+#   PUSH_BEFORE         a push event's previous commit (all zeros for a new ref)
+#   DEFAULT_BRANCH      the repository's default branch
 #   BLOCK_ON_SEVERITY   empty, or a severity name
 #   CONFIG_FROM         base or head
 #   EVENT_NAME          the event that started the workflow
@@ -13,7 +15,29 @@
 # whether that fails the job.
 set -eo pipefail
 
-echo "OpenQodex scanners only: this job runs the scanners on the change and is not a review. The full review runs on your machine with openqodex review."
+plain_name() { [[ "$1" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ ]] && [[ "$1" != -* ]]; }
+is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
+
+# The commit the change is measured from: the pull request's base, a push's
+# previous commit, or for a push that creates a branch the merge base with
+# the default branch. Fetched when the checkout lacks it.
+base=""
+if is_sha "$BASE_SHA"; then
+  base="$BASE_SHA"
+elif [ "$EVENT_NAME" = "push" ] && is_sha "$PUSH_BEFORE"; then
+  if [[ "$PUSH_BEFORE" =~ ^0+$ ]]; then
+    if plain_name "$DEFAULT_BRANCH" && git fetch --no-tags --quiet origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" 2>/dev/null; then
+      base="$(git merge-base HEAD "refs/remotes/origin/${DEFAULT_BRANCH}" 2>/dev/null || true)"
+    fi
+  else
+    git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null || git fetch --no-tags --quiet origin "$PUSH_BEFORE" 2>/dev/null || true
+    if git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then base="$PUSH_BEFORE"; fi
+  fi
+fi
+no_base=""
+[ -n "$base" ] || no_base=" This event gives no base to measure the change from, so the scan uses its default scope."
+
+echo "OpenQodex scanners only: this job runs the scanners on the change and is not a review. The full review runs on your machine with openqodex review.${no_base}"
 
 # A wrong input is a workflow error: it fails the step with one line.
 case "$CONFIG_FROM" in
@@ -50,7 +74,7 @@ if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target"
   if [ "$CONFIG_FROM" = "base" ]; then
     base_config="${out_dir}/base-config.yaml"
     : > "$base_config"
-    if [[ ! "$BASE_REF" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ ]] || [[ "$BASE_REF" == -* ]]; then
+    if ! plain_name "$BASE_REF"; then
       echo "::warning title=OpenQodex config::the base branch name is not a plain branch name, so the scan uses the built-in defaults"
     elif ! git fetch --no-tags --quiet origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
       echo "::warning title=OpenQodex config::could not fetch the base branch, so the scan uses the built-in defaults, not the pull request's config"
@@ -62,7 +86,7 @@ if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target"
 fi
 
 args=(scan "${config_args[@]}" --format sarif --output "$sarif")
-if [ -n "$BASE_SHA" ]; then args+=(--base "$BASE_SHA"); fi
+if [ -n "$base" ]; then args+=(--base "$base"); fi
 if [ -n "$BLOCK_ON_SEVERITY" ]; then args+=(--block-on-severity "$BLOCK_ON_SEVERITY"); fi
 
 set +e
@@ -73,6 +97,8 @@ if [ "$code" = "0" ]; then
   npx -y "openqodex@${OPENQODEX_VERSION}" "${args[@]}" 2> >(tee "$err" >&2)
   code=$?
   wait
+  # Anything but 0 and 1 (a crash, a kill: 137, 139, 143) is a tool error.
+  if [ "$code" != "0" ] && [ "$code" != "1" ]; then code=2; fi
 elif [ "$code" != "2" ]; then
   code=2
 fi
