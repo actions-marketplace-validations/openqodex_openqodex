@@ -28,6 +28,7 @@
 // 13. A finding range that only overlaps a changed line is accepted: one that
 //     starts on an unchanged line, ends past the end of the file, or spans
 //     far beyond its start (`line_number: 1, line_end: 999999`).
+// 15. An incomplete review throws away the findings that passed every check.
 // 14. A changed file the change could not map (past the coverage line cap)
 //     or could not put in the brief (past the diff budget) counts as read
 //     when the reviewer never read it: the run completes by omission.
@@ -300,13 +301,20 @@ describe("the standard report", () => {
     expect(text).toMatch(/Reviewer: claude 2\.1\.289, 72 s, 10 turns/);
     expect(text).not.toContain(KEY_CANDIDATE.message);
   });
-  it("an incomplete record prints what is missing and no finding", () => {
+  it("15. an incomplete record prints what is missing first, then the findings so far under their own heading", () => {
     const report = completeReport();
-    const incomplete: Report = { ...report, completion: { ...report.completion!, status: "incomplete", missing: ["2 changed ranges were not read: app/search.py:14-15"] } };
-    const text = renderReview(incomplete, { format: "terminal", color: false });
-    expect(text).toMatch(/^Review incomplete/);
-    expect(text).toContain("app/search.py:14-15");
-    expect(text).not.toContain("Problem: ");
+    const second = { ...report.findings[0]!, title: "A second checked finding", line_number: 15, line_end: 15 };
+    const incomplete: Report = { ...report, verdict: "incomplete", findings: [report.findings[0]!, second], completion: { ...report.completion!, status: "incomplete", missing: ["2 changed ranges were not read: app/search.py:14-15"] } };
+    for (const format of ["terminal", "markdown"] as const) {
+      const text = renderReview(incomplete, { format, color: false });
+      expect(text, format).toMatch(/^(# )?Review incomplete/);
+      const missing = text.indexOf("app/search.py:14-15");
+      const heading = text.indexOf("Findings so far");
+      expect(text.replace(/\\/g, ""), format).toContain("Findings so far (the change was not fully reviewed)");
+      expect(missing, format).toBeGreaterThan(-1);
+      expect(heading, format).toBeGreaterThan(missing);
+      for (const title of [report.findings[0]!.title, "A second checked finding"]) expect(text.indexOf(title), `${format} ${title}`).toBeGreaterThan(heading);
+    }
   });
 });
 

@@ -60,18 +60,28 @@ function covers(ranges: [number, number][], start: number, end: number): boolean
 // told. A file the change could not map (Change.uncovered) is one range from
 // its first line to its last, read only when reads cover all of it; with no
 // line count it can never be shown read.
-export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<string>; trace: TraceEntry[]; lineCount?: (path: string) => number | null }): Coverage {
+// `delivered`: ranges the tool itself put in front of the reviewer in a
+// correction round; a line range counts like a read, a deletion when the
+// same deletion was delivered.
+export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<string>; trace: TraceEntry[]; lineCount?: (path: string) => number | null; delivered?: Hunk[] }): Coverage {
   const reads = new Map<string, [number, number][]>();
   for (const t of args.trace) {
     if (t.tool !== "Read" || !t.ok || !t.inside || t.path === null || t.range === null) continue;
     reads.set(t.path, [...(reads.get(t.path) ?? []), t.range]);
   }
+  const given = new Map<string, [number, number][]>();
+  const deletions = new Set<string>();
+  for (const d of args.delivered ?? []) {
+    if (d.deletion) deletions.add(`${d.path}\0${d.start}\0${d.end}`);
+    else given.set(d.path, [...(given.get(d.path) ?? []), [d.start, d.end]]);
+  }
   const whole = (args.change.uncovered ?? []).map((path) => ({ path, start: 1, end: args.lineCount?.(path) ?? 0, deletion: false }));
   const hunks = [...changedHunks(args.change), ...whole];
   const unread = hunks.filter((h) => {
     if (args.briefFiles.has(h.path)) return false;
-    if (h.deletion || h.end < h.start) return true;
-    return !covers(reads.get(h.path) ?? [], h.start, h.end);
+    if (h.deletion) return !deletions.has(`${h.path}\0${h.start}\0${h.end}`);
+    if (h.end < h.start) return true;
+    return !covers([...(reads.get(h.path) ?? []), ...(given.get(h.path) ?? [])], h.start, h.end);
   });
   const readable = args.change.files.filter((f) => f.status !== "deleted" && !f.binary).map((f) => f.path);
   return {

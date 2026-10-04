@@ -46,9 +46,14 @@ function lines(report: Report): Line[] {
   const { files, additions, deletions } = report.stats;
   const changeLine = { kind: "text" as const, text: `Change ${report.change_id.slice(0, 12)} against ${report.base.ref}, ${plural(files, "file", "files")}, +${additions} -${deletions}` };
   const complete = c?.status === "complete";
+  const ordered = SEVERITIES_DESC.flatMap((s) => report.findings.filter((f) => f.severity === s));
   if (!complete) {
+    // What is missing comes first; the findings that passed every check
+    // follow under a heading that says the change was not fully reviewed.
     out.push({ kind: "verdict", text: "Review incomplete: this is not a review of the change", bad: true }, changeLine, { kind: "heading", text: "Missing" });
     for (const m of c?.missing ?? ["no completion record"]) out.push({ kind: "item", text: m });
+    out.push({ kind: "heading", text: `Findings so far (the change was not fully reviewed) (${ordered.length})` });
+    if (ordered.length === 0) out.push({ kind: "text", text: "None yet." });
   } else {
     out.push({ kind: "verdict", text: verdictLine(report), bad: report.verdict === "blocked" }, changeLine);
     const risk = impactLine(report);
@@ -57,24 +62,22 @@ function lines(report: Report): Line[] {
     counts.push(`${plural(report.dropped.length, "scanner candidate", "scanner candidates")} dropped`);
     if (report.below_threshold > 0) counts.push(`${report.below_threshold} below the severity threshold`);
     out.push({ kind: "text", text: `Counts: ${counts.join(", ")}` });
-
-    const ordered = SEVERITIES_DESC.flatMap((s) => report.findings.filter((f) => f.severity === s));
     out.push({ kind: "heading", text: `Findings (${ordered.length})` });
     if (ordered.length === 0) out.push({ kind: "text", text: "No findings on the changed lines." });
-    ordered.forEach((f, i) => out.push(...findingLines(f, i + 1)));
+  }
+  ordered.forEach((f, i) => out.push(...findingLines(f, i + 1)));
 
-    if (report.dropped.length > 0) {
-      out.push({ kind: "heading", text: `Dropped scanner candidates (${report.dropped.length})` });
-      for (const d of report.dropped) {
-        const cited = d.cited ? ` (see ${d.cited.file_path}:${d.cited.line_number})` : "";
-        out.push({ kind: "item", text: `${d.candidate.id} at ${candidateLocation(d.candidate)}: ${d.reason}${cited}` });
-        out.push({ kind: "field", label: "Source", text: d.candidate.token });
-      }
+  if (report.dropped.length > 0) {
+    out.push({ kind: "heading", text: `Dropped scanner candidates (${report.dropped.length})` });
+    for (const d of report.dropped) {
+      const cited = d.cited ? ` (see ${d.cited.file_path}:${d.cited.line_number})` : "";
+      out.push({ kind: "item", text: `${d.candidate.id} at ${candidateLocation(d.candidate)}: ${d.reason}${cited}` });
+      out.push({ kind: "field", label: "Source", text: d.candidate.token });
     }
-    if (report.low_confidence.length > 0) {
-      out.push({ kind: "heading", text: "Below the confidence floor (not counted)" });
-      for (const l of report.low_confidence) out.push({ kind: "item", text: `${l.file_path}: ${l.title} (confidence ${l.confidence}, floor ${l.floor})` });
-    }
+  }
+  if (report.low_confidence.length > 0) {
+    out.push({ kind: "heading", text: "Below the confidence floor (not counted)" });
+    for (const l of report.low_confidence) out.push({ kind: "item", text: `${l.file_path}: ${l.title} (confidence ${l.confidence}, floor ${l.floor})` });
   }
   if (c) {
     out.push({ kind: "heading", text: "Coverage" });

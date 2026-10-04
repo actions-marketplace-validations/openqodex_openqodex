@@ -16,7 +16,8 @@
 // review and a missing reviewer all exit 2.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   MANIFEST_VERSION,
@@ -35,13 +36,14 @@ import {
   getWholeRepo,
   openReportDir,
   readCoverage,
+  redactSecrets,
   redactSecretsKeepingLines,
   safeGit,
   selectLenses,
   writeLatest,
   writeReportFiles,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, TraceEntry, WholeRepo } from "@openqodex/core";
+import type { Change, ChangeScope, Config, Hunk, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, TraceEntry, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles } from "./agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, lfsPaths, placeSettings, removeTargetCheckout } from "./checkout.js";
@@ -240,6 +242,119 @@ export function parseAnswer(text: string): { value: unknown } | { error: string 
   return { error: "the answer is not one JSON object; answer with the JSON object only" };
 }
 
+// The most lines a correction round carries of changed ranges the reviewer
+// was not given, context included.
+export const DELIVER_LINES = 4000;
+const CONTEXT = 3;
+
+// Changed ranges put in front of the reviewer by the tool itself, numbered as
+// the snapshot holds them, with a few lines of context: added and modified
+// lines from the snapshot, a deletion as the diff hunk that removed it (the
+// base file against the snapshot, git diff --no-index). Up to DELIVER_LINES
+// lines; a range split at the bound continues next round. A range that cannot
+// be shown (a file it cannot read, a deletion hunk over the bound, a file with
+// no line count) is left. The text is redacted like the brief.
+// The parts of `h` no earlier delivery covered.
+function gaps(h: Hunk, earlier: Hunk[]): [number, number][] {
+  const out: [number, number][] = [];
+  let at = h.start;
+  for (const d of earlier.filter((e) => e.path === h.path && !e.deletion).sort((a, b) => a.start - b.start)) {
+    if (d.end < at) continue;
+    if (d.start > h.end) break;
+    if (d.start > at) out.push([at, d.start - 1]);
+    at = Math.max(at, d.end + 1);
+  }
+  if (at <= h.end) out.push([at, h.end]);
+  return out;
+}
+
+export function deliverRanges(args: { repoRoot: string; snapshotDir: string; change: Change; unread: Hunk[]; earlier?: Hunk[]; secrets: string[]; budget?: number }): { text: string; delivered: Hunk[]; left: Hunk[] } {
+  let room = args.budget ?? DELIVER_LINES;
+  const out: string[] = [];
+  const delivered: Hunk[] = [];
+  const left: Hunk[] = [];
+  const files = new Map<string, string[] | null>();
+  const fileLines = (path: string): string[] | null => {
+    if (!files.has(path)) {
+      let lines: string[] | null = null;
+      try {
+        const full = join(args.snapshotDir, path);
+        if (lstatSync(full).isFile() && lstatSync(full).size <= MAX_FILE_BYTES) lines = readFileSync(full, "utf8").split("\n");
+      } catch {
+        lines = null;
+      }
+      files.set(path, lines);
+    }
+    return files.get(path) ?? null;
+  };
+  const diffs = new Map<string, { start: number; end: number; text: string[] }[] | null>();
+  const deletionHunks = (path: string): { start: number; end: number; text: string[] }[] | null => {
+    if (!diffs.has(path)) diffs.set(path, removedHunks(args.repoRoot, args.snapshotDir, args.change, path));
+    return diffs.get(path) ?? null;
+  };
+  // Deletions first: a deletion hunk cannot be split across rounds.
+  for (const h of [...args.unread.filter((u) => u.deletion), ...args.unread.filter((u) => !u.deletion)]) {
+    if (h.deletion) {
+      const hunks = (deletionHunks(h.path) ?? []).filter((d) => d.start - 1 <= h.end && h.start <= d.end + 1);
+      const size = hunks.reduce((n, d) => n + d.text.length, 0);
+      if (hunks.length === 0 || size + 1 > room) {
+        left.push(h);
+        continue;
+      }
+      out.push(`${h.path}, lines removed by the change (diff, new line numbers on the + side):`, ...hunks.flatMap((d) => d.text), "");
+      room -= size + 1;
+      delivered.push(h);
+      continue;
+    }
+    const lines = fileLines(h.path);
+    if (lines === null || h.end < h.start) {
+      left.push(h);
+      continue;
+    }
+    for (const [first, last] of gaps(h, args.earlier ?? [])) {
+    let at = first;
+    while (at <= last && room > 2 * CONTEXT + 2) {
+      const n = Math.min(last - at + 1, room - 2 * CONTEXT - 1);
+      const from = Math.max(1, at - CONTEXT);
+      const to = Math.min(lines.length, at + n - 1 + CONTEXT);
+      out.push(`${h.path} lines ${at} to ${at + n - 1} (with context ${from} to ${to}):`);
+      for (let i = from; i <= to; i++) out.push(`${i}\t${lines[i - 1] ?? ""}`);
+      out.push("");
+      room -= to - from + 2;
+      delivered.push({ path: h.path, start: at, end: at + n - 1, deletion: false });
+      at += n;
+    }
+    if (at <= last) left.push({ ...h, start: at, end: last });
+    }
+  }
+  return { text: redactSecrets(out.join("\n").trimEnd(), args.secrets), delivered, left };
+}
+
+// The diff hunks of one file, the base against the snapshot, each with the
+// new-side lines it sits at; null when they cannot be made.
+function removedHunks(repoRoot: string, snapshotDir: string, change: Change, path: string): { start: number; end: number; text: string[] }[] | null {
+  const file = change.files.find((f) => f.path === path);
+  if (!file) return null;
+  const tmp = mkdtempSync(join(tmpdir(), "openqodex-removed-"));
+  try {
+    const base = spawnSync("git", ["cat-file", "blob", `${change.baseSha}:${file.oldPath ?? path}`], { cwd: repoRoot, maxBuffer: MAX_FILE_BYTES * 2 });
+    if (base.status !== 0) return null;
+    writeFileSync(join(tmp, "base"), base.stdout);
+    const head = file.status === "deleted" ? "/dev/null" : join(snapshotDir, path);
+    const d = spawnSync("git", ["diff", "--no-index", "--no-color", "--no-ext-diff", "--no-textconv", "-U3", "--", join(tmp, "base"), head], { encoding: "utf8", maxBuffer: MAX_FILE_BYTES * 4 });
+    if (d.status !== 0 && d.status !== 1) return null;
+    const hunks: { start: number; end: number; text: string[] }[] = [];
+    for (const line of d.stdout.split("\n")) {
+      const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (m) hunks.push({ start: Number(m[1]), end: Number(m[1]) + Math.max(0, Number(m[2] ?? 1) - 1), text: [line] });
+      else if (hunks.length > 0 && /^[ +\-\\]/.test(line)) hunks[hunks.length - 1]!.text.push(line);
+    }
+    return hunks;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 const renumber = (errors: string[]) => errors.map((e, i) => `${i + 1}. ${e.replace(/^\d+\.\s+/, "")}`);
 
 type Prepared = {
@@ -260,22 +375,28 @@ type Conversation = {
   disposed: number;
   failure: string | null;
   submission: unknown;
+  // Changed ranges the tool put in front of the reviewer in a correction.
+  delivered: Hunk[];
   startedAt: number;
   endedAt: number;
 };
 
-// The brief, then at most two correction rounds in the same session. A read
-// outside the snapshot ends the conversation at once.
+// The brief, then at most two correction rounds in the same session. A
+// round goes back when the answer failed a check or when changed ranges are
+// still unread: the tool then puts those ranges in the message itself (up to
+// DELIVER_LINES lines a round), so coverage never depends on the model
+// choosing to open a file. A read outside the snapshot ends the conversation.
 async function converse(args: {
   session: ReviewerSession;
   snapshotDir: string;
   brief: string;
   deadline: number;
-  check: (submission: unknown, trace: TraceEntry[]) => { report: Report | null; errors: string[]; unread: string[]; required: number; disposed: number };
+  check: (submission: unknown, trace: TraceEntry[], delivered: Hunk[]) => { report: Report | null; errors: string[]; unread: Hunk[]; required: number; disposed: number };
+  deliver: (unread: Hunk[], earlier: Hunk[]) => { text: string; delivered: Hunk[]; left: Hunk[] };
   say: (line: string) => void;
 }): Promise<Conversation> {
   const startedAt = Date.now();
-  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, startedAt, endedAt: startedAt };
+  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], startedAt, endedAt: startedAt };
   const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((Date.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
   heartbeat.unref();
   try {
@@ -303,16 +424,24 @@ async function converse(args: {
       // An attempt outside the snapshot ends the review: it never completes.
       if (c.trace.some((t) => !t.inside)) break;
       const parsed = parseAnswer(turn.finalText);
-      const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace);
+      const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [] as Hunk[], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace, c.delivered);
       if ("value" in parsed) c.submission = parsed.value;
       c.report = result.report;
       c.errors = result.errors;
       c.required = result.required;
       c.disposed = result.disposed;
-      const problems = renumber([...result.errors, ...result.unread]);
-      if (problems.length === 0 || c.rounds > MAX_CORRECTIONS) break;
-      args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"} sent back to the reviewer`);
-      text = ["Your answer failed these checks. Fix every one, then answer again with the whole JSON object and nothing else.", "", ...problems].join("\n");
+      const problems = renumber(result.errors);
+      if ((problems.length === 0 && result.unread.length === 0) || c.rounds > MAX_CORRECTIONS) break;
+      const given = args.deliver(result.unread, c.delivered);
+      if (problems.length === 0 && given.delivered.length === 0) break;
+      c.delivered.push(...given.delivered);
+      args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
+      text = [
+        ...(problems.length > 0 ? ["Your answer failed these checks. Fix every one.", "", ...problems, ""] : []),
+        ...(given.text !== "" ? ["These changed lines were not in front of you yet. Check them now, as part of the change.", "", given.text, ""] : []),
+        ...(given.left.length > 0 ? [`${given.left.length} more changed ${given.left.length === 1 ? "range follows" : "ranges follow"} in the next round, if one is left.`, ""] : []),
+        "Then answer again with the whole JSON object and nothing else.",
+      ].join("\n");
     }
   } finally {
     clearInterval(heartbeat);
@@ -512,24 +641,18 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     if (session !== null) say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
     const startedIso = new Date().toISOString();
     const now = Date.now();
-    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, startedAt: now, endedAt: now } : await converse({
+    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], startedAt: now, endedAt: now } : await converse({
       session,
       snapshotDir: prep.snapshot.tree,
       brief: brief.text,
       deadline,
       say,
-      check: (submission, trace) => {
+      check: (submission, trace, delivered) => {
         const r = checkSubmission({ change, scan, manifest, config, submission, lineCount, wholeRepo: prep.whole ? { lines: prep.whole.lines } : undefined });
-        // A changed range the reviewer was not given is sent back once it can
-        // be read; a deletion the brief could not carry, or a file too large
-        // to count, cannot, and stays missing.
-        const unread = prep.whole
-          ? []
-          : readCoverage({ change, briefFiles: brief.diffFiles, trace, lineCount })
-              .unread.filter((h) => !h.deletion && h.end >= h.start)
-              .map((h) => `you have not read ${h.path} lines ${h.start} to ${h.end}, a changed range; read them with your read tool and check your answer`);
+        const unread = prep.whole ? [] : readCoverage({ change, briefFiles: brief.diffFiles, trace, lineCount, delivered }).unread;
         return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
       },
+      deliver: (unread, earlier) => deliverRanges({ repoRoot, snapshotDir: prep.snapshot.tree, change, unread, earlier, secrets: p.secrets }),
     }).finally(async () => {
       await session?.close();
     });
@@ -546,7 +669,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       rounds: talk.rounds,
       usage: talk.usage,
     };
-    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: talk.trace, lineCount });
+    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: talk.trace, lineCount, delivered: talk.delivered });
     // Redacted like the report: a path or a tool input may hold a secret.
     const completion = redactStored(completionRecord({
       change,
@@ -560,8 +683,10 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       failure: talk.failure,
       tools: settings.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS,
     }), p.secrets);
+    // An incomplete review keeps the findings of an answer that passed every
+    // check: the report prints them as the findings so far.
     const report: Report = {
-      ...(completion.status === "complete" && talk.report ? talk.report : incompleteReport(change, scan, config)),
+      ...(talk.report ?? incompleteReport(change, scan, config)),
       impact: prep.whole ? null : impact,
       completion,
     };

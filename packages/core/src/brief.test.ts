@@ -15,8 +15,11 @@
 // 9. The repo's custom instructions, which anyone who can commit may write,
 //    start a heading or a fence of their own and so pass as part of the
 //    brief, or reach the agent framed as commands to follow.
+// 10. The reviewer brief does not say plainly which files it must open and
+//     that the others are already in front of it, or leaves out the deletions
+//     of a file whose diff did not fit.
 import { describe, expect, it } from "vitest";
-import { buildBrief } from "./brief.js";
+import { buildBrief, buildReviewerBrief } from "./brief.js";
 import { selectLenses } from "./lenses.js";
 import { SECRET, SQL_CANDIDATE, makeChange, makeConfig, makeScan } from "./test-fixtures.js";
 import type { Candidate, Change, SelectedLens } from "./types.js";
@@ -179,3 +182,20 @@ describe("buildBrief with lenses from the shipped catalog", () => {
   });
 });
 
+
+describe("10. the reviewer brief's diff section", () => {
+  it("names the files to open with their changed lines and deletions, and says the rest is already shown", () => {
+    const big = { path: "app/big.py", text: `diff --git a/app/big.py b/app/big.py\n${"+x\n".repeat(120_000)}` };
+    const change = makeChange({
+      files: [...makeChange().files, { path: "app/big.py", status: "modified", oldPath: null, binary: false }],
+      changedPaths: [...makeChange().changedPaths, "app/big.py"],
+      coverage: new Map([...makeChange().coverage, ["app/big.py", new Set([3, 4])]]),
+      deletionPoints: new Map([["app/big.py", [{ after: 9, lines: 2, anchors: [9, 10] }]]]),
+      diffs: [{ path: "app/search.py", text: "diff --git a/app/search.py b/app/search.py\n+q\n" }, big],
+    });
+    const { text, diffFiles } = buildReviewerBrief({ change, scan: makeScan(), lenses: [], config: makeConfig(), secrets: [] });
+    expect([...diffFiles]).toEqual(["app/search.py"]);
+    expect(text).toMatch(/- app\/big\.py: lines 3-4; lines removed next to lines 9-10/);
+    expect(text).toMatch(/every other changed file is in the diff above/i);
+  });
+});

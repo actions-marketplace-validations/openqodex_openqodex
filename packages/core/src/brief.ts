@@ -570,11 +570,19 @@ function diffBlockV2(change: Change): { text: string; files: Set<string> } {
   }
   const missing = [...new Set([...left, ...change.notReviewed])];
   if (missing.length > 0) {
-    lines.push("", "These files changed but their diff is not in this brief. Read their changed lines with your read tool:");
+    lines.push(
+      "",
+      "These files changed but their diff is not in this brief. Open only these, at the lines named, with your read tool; lines removed from them come to you later if you have not seen them. Every other changed file is in the diff above: its changed lines are already in front of you, so do not open it to account for them.",
+    );
     for (const p of missing) {
       const set = change.coverage.get(p);
-      lines.push(`- ${p}${set && set.size > 0 ? `: lines ${lineRanges(set)}` : ""}`);
+      const parts: string[] = [];
+      if (set && set.size > 0) parts.push(`lines ${lineRanges(set)}`);
+      for (const d of change.deletionPoints.get(p) ?? []) parts.push(`lines removed next to lines ${d.anchors.length > 1 ? `${Math.min(...d.anchors)}-${Math.max(...d.anchors)}` : d.anchors[0]}`);
+      lines.push(`- ${p}${parts.length > 0 ? `: ${parts.join("; ")}` : ""}`);
     }
+  } else if (shown.length > 0) {
+    lines.push("", "Every changed file is in the diff above: its changed lines are already in front of you, so do not open a file only to account for them.");
   }
   return { text: lines.join("\n"), files };
 }
