@@ -14,6 +14,19 @@ inputs:
     description: Upload the findings to GitHub code scanning as SARIF.
     required: false
     default: "true"
+  block-on-severity:
+    description: Fail the job on a finding at or above this severity (info, nitpick, minor, major or critical). It wins over the block_on_severity in the repository's config, which a pull request can change. Empty uses the config.
+    required: false
+    default: ""
+  fail-on-tool-error:
+    description: Fail the job when OpenQodex itself could not run the scan (exit 2). By default a tool failure is a warning.
+    required: false
+    default: "false"
+
+outputs:
+  status:
+    description: passed, blocked or tool-failed.
+    value: ${{ steps.scan.outputs.status }}
 
 runs:
   using: composite
@@ -41,21 +54,35 @@ runs:
       env:
         OPENQODEX_VERSION: ${{ inputs.version }}
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        BLOCK_ON_SEVERITY: ${{ inputs.block-on-severity }}
       # The SARIF goes to a fresh folder under RUNNER_TEMP, never into the
       # checkout, so a file the pull request ships cannot pass as the result.
       run: |
         echo "OpenQodex scanners only: this job runs the scanners on the change and is not a review. The full review runs on your machine with openqodex review."
         out_dir="$(mktemp -d "${RUNNER_TEMP}/openqodex-XXXXXX")"
         sarif="${out_dir}/openqodex.sarif"
+        err="${out_dir}/stderr.txt"
         args=(scan --format sarif --output "$sarif")
         if [ -n "$BASE_SHA" ]; then args+=(--base "$BASE_SHA"); fi
+        if [ -n "$BLOCK_ON_SEVERITY" ]; then args+=(--block-on-severity "$BLOCK_ON_SEVERITY"); fi
         set +e
-        npx -y "openqodex@${OPENQODEX_VERSION}" "${args[@]}"
+        npx -y "openqodex@${OPENQODEX_VERSION}" "${args[@]}" 2> >(tee "$err" >&2)
         code=$?
         set -e
+        wait
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-        # A tool failure is reported and never fails the job.
-        if [ "$code" = "2" ]; then echo "::warning::OpenQodex could not finish the scan (exit 2). The output above says why."; fi
+        if [ "$code" = "0" ]; then
+          echo "status=passed" >> "$GITHUB_OUTPUT"
+        elif [ "$code" = "1" ]; then
+          echo "status=blocked" >> "$GITHUB_OUTPUT"
+        else
+          echo "status=tool-failed" >> "$GITHUB_OUTPUT"
+          # The last line the tool wrote, made safe for a workflow command.
+          reason="$(grep -v '^[[:space:]]*$' "$err" | tail -n 1 | tr -d '\r' | sed -e 's/%/%25/g' -e 's/::/: :/g' | cut -c 1-300)"
+          [ -n "$reason" ] || reason="exit code $code"
+          echo "::warning title=OpenQodex did not run::${reason}"
+          echo "OpenQodex did not run: ${reason}" >> "$GITHUB_STEP_SUMMARY"
+        fi
         if [ -f "$sarif" ]; then
           echo "sarif=true" >> "$GITHUB_OUTPUT"
           echo "sarif-file=$sarif" >> "$GITHUB_OUTPUT"
@@ -70,9 +97,15 @@ runs:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: openqodex
 
-    - name: Fail on blocking findings
-      if: steps.scan.outputs.exit-code == '1'
+    - name: Fail on blocking findings or a tool failure
+      if: steps.scan.outputs.exit-code == '1' || (steps.scan.outputs.exit-code == '2' && inputs.fail-on-tool-error == 'true')
       shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
       run: |
-        echo "OpenQodex found findings at or above review.block_on_severity."
+        if [ "$CODE" = "1" ]; then
+          echo "OpenQodex found findings at or above the block severity."
+        else
+          echo "OpenQodex could not run the scan, and fail-on-tool-error is true."
+        fi
         exit 1
