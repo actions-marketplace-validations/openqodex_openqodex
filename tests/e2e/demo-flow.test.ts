@@ -28,10 +28,10 @@ beforeAll(() => {
   planted = git(dir, "ls-files", "--modified", "--others", "--exclude-standard").trim().split("\n");
   snaps.start = snapshot(dir);
 
-  init = run("flow-init", dir, ["init", "--yes", "--agent", "all"], { home });
+  init = run("flow-init", dir, ["init", "--yes", "--no-review", "--agent", "all"], { home });
   snaps.init = snapshot(dir);
   homeAfterFirstInit = inventory(home, true);
-  run("flow-init-again", dir, ["init", "--yes", "--agent", "all"], { home });
+  run("flow-init-again", dir, ["init", "--yes", "--no-review", "--agent", "all"], { home });
   homeAfterSecondInit = inventory(home, true);
   const settings = readJson<{ hooks: { PreToolUse: { hooks: { command: string }[] }[] } }>(join(home, ".claude/settings.json"));
   hookCommand = settings.hooks.PreToolUse.flatMap((h) => h.hooks)[0]!.command;
