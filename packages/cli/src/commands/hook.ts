@@ -355,10 +355,9 @@ export function gitHookScript(launcher: string): string {
 // lefthook, a hook of the developer's own). The same exit mapping as the hook
 // it writes: only exit 1 stops the push; a tool that fails (exit 2) or
 // cannot start never does. `args` hands on git's hook arguments (the remote
-// name and URL): "$@" in a shell hook; lefthook puts them in place of {1} and
-// {2} instead.
+// name and URL): "$@" in a shell hook; empty for lefthook (see hookManager).
 export function hookLine(command: string, args = '"$@"'): string {
-  return `${command} hook pre-push ${args} || [ $? -ne 1 ]`;
+  return `${command} hook pre-push ${args === "" ? "" : `${args} `}|| [ $? -ne 1 ]`;
 }
 
 const MANAGED_LINE = (manager: HookManager): string => hookLine(`npx -y openqodex@${__OPENQODEX_VERSION__}`, manager.args);
@@ -375,13 +374,15 @@ export async function gitHookPath(repoRoot: string): Promise<string> {
 
 // A hook manager the repo uses, and how its pre-push command gets git's
 // arguments. Husky runs .husky/pre-push as a shell script with git's
-// arguments; lefthook puts them in place of {1} and {2} in its `run` line.
+// arguments. Lefthook inserts them raw in place of {1} and {2} in its `run`
+// line, so a remote URL holding a quote and `$(...)` would run as shell code:
+// the lefthook line passes none, and the push is looked up against origin.
 type HookManager = { label: string; args: string };
 
 function hookManager(repoRoot: string): HookManager | null {
   if (existsSync(join(repoRoot, ".husky"))) return { label: "husky (.husky/pre-push)", args: '"$@"' };
   for (const name of ["lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml"]) {
-    if (existsSync(join(repoRoot, name))) return { label: `lefthook (${name}, under pre-push commands)`, args: "'{1}' '{2}'" };
+    if (existsSync(join(repoRoot, name))) return { label: `lefthook (${name}, under pre-push commands)`, args: "" };
   }
   return null;
 }

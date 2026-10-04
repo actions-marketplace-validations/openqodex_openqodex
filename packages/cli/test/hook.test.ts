@@ -38,8 +38,11 @@
 //     forever; or a review of another head covers the push.
 // 18. A later review of other work, saved as the newest record, hides an
 //     earlier complete review that contains the push.
-// 19. The line printed for husky or lefthook drops git's hook arguments, so
-//     a push to a remote other than origin is looked up against origin.
+// 19. The line printed for husky drops git's hook arguments, so a push to a
+//     remote other than origin is looked up against origin.
+// 20. The line printed for lefthook puts git's hook arguments into a shell
+//     line: lefthook inserts {1} and {2} raw, so a remote URL holding
+//     '$(id)' closes the quotes and runs.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -561,12 +564,13 @@ describe("the line printed for a hook manager", () => {
     expect(r.out).toContain("git branch --set-upstream-to 'upstream/feature' 'feature'");
   }, 60_000);
 
-  it("19. the lefthook line passes the remote, so the hint names upstream", () => {
+  it("20. the lefthook line carries no git argument, so no remote name or URL reaches a shell line", () => {
     const s = upstreamFeature("lefthook.yml");
-    // Lefthook puts git's first and second hook arguments in place of {1}
-    // and {2} before it runs the command (AddGitArgs in its replacer).
-    installLine(s, (line) => line.replaceAll("{1}", "upstream").replaceAll("{2}", join(s.root, "remote.git")));
-    const r = push(s, "upstream", "feature");
-    expect(r.out).toContain("git branch --set-upstream-to 'upstream/feature' 'feature'");
+    const r = cli(s, ["hook", "install"]);
+    expect(r.status).toBe(0);
+    const line = r.stdout.split("\n").map((l) => l.trim()).find((l) => l.startsWith("npx -y openqodex@"));
+    expect(line).toMatch(/hook pre-push \|\| \[ \$\? -ne 1 \]$/);
+    expect(line).not.toContain("{");
+    expect(line).not.toContain("$@");
   }, 60_000);
 });
