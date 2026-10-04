@@ -27,13 +27,13 @@ When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y op
 1. From the repository, run:
 
    ```
-   npx -y openqodex@0.4.0 review
+   npx -y openqodex@0.5.0 review
    ```
 
    It reviews the change: the commits not yet pushed plus everything uncommitted, untracked files included. To review the whole repository instead, run:
 
    ```
-   npx -y openqodex@0.4.0 review --all
+   npx -y openqodex@0.5.0 review --all
    ```
 
 2. Wait for it. A review takes one to three minutes. Many agents stop a command after two minutes, so give it up to ten minutes, or run it in the background and wait until it exits. While the reviewer works, it prints a progress line every 15 seconds on stderr. Do not start it a second time while one runs.
@@ -50,8 +50,8 @@ When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y op
 When the developer asks you to review a branch or a pull request that is not their current work, name it:
 
 ```
-npx -y openqodex@0.4.0 review feature/login
-npx -y openqodex@0.4.0 review '#42'
+npx -y openqodex@0.5.0 review feature/login
+npx -y openqodex@0.5.0 review '#42'
 ```
 
 Quote `#42`: in a shell `#` starts a comment. A pull request link works too. OpenQodex fetches the target, checks it out in a temporary folder and reviews what it added since it left its base. This is someone else's code: never run its tests, scripts, builds or services, and never edit it.
@@ -62,7 +62,7 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 - Never run `openqodex trust` without asking the developer first. It approves a custom scanner, which is a command that runs on their machine.
 - Never set `OPENQODEX_SKIP`. It is the developer's switch, not yours.
 - When the verdict is `blocked`, do not push unless the developer says so after seeing the findings.
-- When OpenQodex prints "OpenQodex had a problem. Nothing has been sent." with `1 create a GitHub issue` and `2 ignore`, tell the developer in one line what went wrong and give them the two choices. Never choose 1 yourself. If they say 1, run `npx -y openqodex@0.4.0 report --send-last` from the same folder. Anything else means 2: do nothing.
+- When OpenQodex prints "OpenQodex had a problem. Nothing has been sent." with `1 create a GitHub issue` and `2 ignore`, tell the developer in one line what went wrong and give them the two choices. Never choose 1 yourself. If they say 1, run `npx -y openqodex@0.5.0 report --send-last` from the same folder. Anything else means 2: do nothing.
 
 ## Reading the report
 
@@ -74,7 +74,7 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
   - `installing`: it is being downloaded for the first time; it is included from the next run. Say so to the developer rather than waiting.
   - `not installed`: it could not be installed here; the reason says why.
   - `needs Ruby 2.7+` or `needs Go`: brakeman and rubocop need Ruby, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
-  - `untrusted`: a custom scanner from the repo's config that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.4.0 trust`).
+  - `untrusted`: a custom scanner from the repo's config that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.5.0 trust`).
   - `failed`: the scanner ran and broke; the reason has its error. A scanner problem never changes the exit code.
 
 ## Inside a sandbox
@@ -82,11 +82,11 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 Some agents run commands in a sandbox that cannot reach the network or write outside the project. There the first run cannot download the scanners, and the reviewer may not reach its model. Tell the developer to run this once in their own terminal, outside the agent:
 
 ```
-npx -y openqodex@0.4.0 doctor --install
+npx -y openqodex@0.5.0 doctor --install
 ```
 
-It downloads every scanner that fits the machine into `~/.openqodex/tools/`. If the review still says "Full review unavailable" inside the sandbox, the developer runs `npx -y openqodex@0.4.0 review` in their own terminal.
+It downloads every scanner that fits the machine into `~/.openqodex/tools/`. If the review still says "Full review unavailable" inside the sandbox, the developer runs `npx -y openqodex@0.5.0 review` in their own terminal.
 
 ## More
 
-`npx -y openqodex@0.4.0 guide` prints this guide. `npx -y openqodex@0.4.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`.
+`npx -y openqodex@0.5.0 guide` prints this guide. `npx -y openqodex@0.5.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`.
