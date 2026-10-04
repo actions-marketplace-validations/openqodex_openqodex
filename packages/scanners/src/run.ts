@@ -183,7 +183,9 @@ function ruffTables(text: string): [number, number][] {
     const header = /^\s*\[\[?\s*([^\]]+?)\s*\]/.exec(line);
     if (!header) return;
     if (start !== null) out.push([start, i]);
-    start = /^tool\.ruff(\.|$)/.test(header[1] as string) ? i + 1 : null;
+    // TOML lets a key be quoted and spaced: [tool."ruff".lint], [ tool . ruff ].
+    const name = (header[1] as string).replace(/["'\s]/g, "");
+    start = /^tool\.ruff(\.|$)/.test(name) ? i + 1 : null;
   });
   if (start !== null) out.push([start, lines.length]);
   return out;
@@ -191,16 +193,36 @@ function ruffTables(text: string): [number, number][] {
 
 const SETTINGS_MAX_BYTES = 1024 * 1024;
 
-// True when the change touches ruff's table in this pyproject.toml: a changed
-// line or a deletion inside it, or a table the base had and the change removed.
+const mentionsRuff = (text: string): number => text.match(/ruff/gi)?.length ?? 0;
+
+// True when the change may touch ruff's settings in this pyproject.toml. It
+// does not parse TOML, so it errs towards yes: a changed line or a deletion
+// inside a ruff table, a changed line that names ruff in any form (a dotted
+// key under [tool], an inline table), a different count of the word between
+// the base and the head, or a file that cannot be read.
 async function touchesRuffTable(args: SettingsArgs, filePath: string): Promise<boolean> {
-  const head = await readRepoFile(args.repoDir, filePath, SETTINGS_MAX_BYTES).catch(() => "");
+  let head: string | null;
+  try {
+    head = await readRepoFile(args.repoDir, filePath, SETTINGS_MAX_BYTES);
+  } catch {
+    return true;
+  }
+  // A deleted file: only the base can say whether it held ruff settings.
+  if (head === null) {
+    if (args.baseText === undefined) return true;
+    const gone = await args.baseText(filePath).catch(() => undefined);
+    return gone === undefined || mentionsRuff(gone ?? "") > 0;
+  }
   const tables = ruffTables(head);
   const inside = (n: number) => tables.some(([a, b]) => a <= n && n <= b);
-  if ([...(args.coverage.get(filePath) ?? [])].some(inside)) return true;
+  const lines = head.split(/\r?\n/);
+  const changed = [...(args.coverage.get(filePath) ?? [])];
+  if (changed.some((n) => inside(n) || mentionsRuff(lines[n - 1] ?? "") > 0)) return true;
   if ((args.deletionPoints?.get(filePath) ?? []).some((p) => p.anchors.some(inside))) return true;
-  if (tables.length > 0 || args.baseText === undefined) return false;
-  return /^\s*\[\[?\s*tool\.ruff(\.|\s*\])/m.test((await args.baseText(filePath)) ?? "");
+  if (args.baseText === undefined) return false;
+  const base = await args.baseText(filePath).catch(() => undefined);
+  if (base === undefined) return true;
+  return mentionsRuff(base ?? "") !== mentionsRuff(head);
 }
 
 type SettingsArgs = {

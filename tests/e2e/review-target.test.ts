@@ -633,6 +633,28 @@ describe("a changed scanner settings file", () => {
     write(dir, "pyproject.toml", "[project]\nname = \"app\"\n\n[tool.ruff]\nline-length = 100\nlint.ignore = [\"ALL\"]\n");
     expect(settingsTokens(scan("settings-ruff-table", dir))).toEqual(["ruff:settings-file pyproject.toml"]);
   });
+  it("ruff settings written in a form other than a [tool.ruff] header still raise the ruff note", () => {
+    for (const [label, body] of [
+      ["quoted", '[project]\nname = "app"\n\n[tool."ruff".lint]\nignore = ["ALL"]\n'],
+      ["dotted", '[project]\nname = "app"\n\n[tool]\nruff.lint.ignore = ["ALL"]\n'],
+      ["inline", '[project]\nname = "app"\n\n[tool]\nruff = { line-length = 320 }\n'],
+    ] as const) {
+      const dir = fresh();
+      write(dir, "pyproject.toml", '[project]\nname = "app"\n');
+      commitAll(dir, "Project file");
+      git(dir, "push", "-q", "origin", "HEAD:main", "-f");
+      write(dir, "pyproject.toml", body);
+      expect(settingsTokens(scan(`settings-ruff-${label}`, dir)), label).toEqual(["ruff:settings-file pyproject.toml"]);
+    }
+  });
+  it("a pyproject.toml too large to read raises the ruff note rather than none", () => {
+    const dir = fresh();
+    write(dir, "pyproject.toml", '[project]\nname = "app"\n');
+    commitAll(dir, "Project file");
+    git(dir, "push", "-q", "origin", "HEAD:main", "-f");
+    write(dir, "pyproject.toml", `[project]\nname = "app"\n# ${"x".repeat(1024 * 1024 + 10)}\n`);
+    expect(settingsTokens(scan("settings-ruff-unreadable", dir))).toEqual(["ruff:settings-file pyproject.toml"]);
+  });
   it("a root .gitleaksignore added with a secret is a candidate in the agent's brief", () => {
     const dir = fresh();
     write(dir, "app/keys.py", `KEY = "sk_live_${randomBytes(12).toString("hex")}"\n`);
