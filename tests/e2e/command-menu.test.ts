@@ -1,15 +1,16 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
-import { bin, demo, root, run, writeConfig } from "./support.js";
+import { bin, demo, noReviewerEnv, root, run, writeConfig } from "./support.js";
 
 // Four visible commands; `scan` stays as a hidden alias that behaves exactly
 // as it did, because released hooks, pre-commit and the Action call it.
 //
 // Ways it could fail, written before the code:
 //  a. `--help` lists a hidden command, or misses one of the four.
-//  b. `scan` and plain `review` report different findings or exit codes on
-//     the demo repo under block_on_severity.
-//  c. Plain `review` writes its hint on stdout and breaks --format json.
+//  b. Plain `review` with no reviewer available presents the scanner output
+//     as a review, or exits like `scan` does (the total review changed this:
+//     plain `review` no longer equals `scan`).
+//  c. Plain `review` writes its progress or messages on stdout and breaks --format json.
 //  d. A 0.2.1-style hook line that calls `scan` stops working.
 
 type Json = { verdict: string; findings: { source: string | null; file_path: string; line_number: number; severity: string }[] };
@@ -32,19 +33,18 @@ describe("the command menu", () => {
       dir = demo("menu");
       writeConfig(dir, "review:\n  block_on_severity: major\n");
       scan = run("menu-scan", dir, ["scan", "--format", "json"]);
-      review = run("menu-review", dir, ["review", "--format", "json"]);
+      review = run("menu-review", dir, ["review", "--format", "json"], { env: noReviewerEnv() });
     }, 300_000);
 
-    it("b. report the same findings and the same exit code", () => {
+    it("b. scan still blocks on its findings; plain review with no reviewer exits 2 and is never a scan report", () => {
       expect(scan.status).toBe(1);
-      expect(review.status).toBe(scan.status);
-      expect(key(JSON.parse(review.stdout) as Json)).toEqual(key(JSON.parse(scan.stdout) as Json));
+      expect(key(JSON.parse(scan.stdout) as Json).length).toBeGreaterThan(0);
+      expect(review.status).toBe(2);
+      expect(review.stderr).toContain("Full review unavailable");
     });
 
-    it("c. plain review keeps stdout one JSON document and puts its hint on stderr", () => {
-      expect(() => JSON.parse(review.stdout)).not.toThrow();
-      expect(review.stdout).not.toContain("ask your coding agent");
-      expect(review.stderr).toContain("ask your coding agent");
+    it("c. plain review writes nothing but the report on stdout: here, with no report, nothing", () => {
+      expect(review.stdout).toBe("");
     });
 
     it("d. a 0.2.1-style hook line calling scan still stops the push on a blocking finding", () => {
