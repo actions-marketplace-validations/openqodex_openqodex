@@ -34,7 +34,7 @@ import {
   getWholeRepo,
   openReportDir,
   readCoverage,
-  redactSecrets,
+  redactSecretsKeepingLines,
   safeGit,
   selectLenses,
   writeLatest,
@@ -139,9 +139,10 @@ function snapshotFiles(dir: string): string[] {
 // Replaces every copy of a secret the scanners found, in every file of the
 // snapshot, so the reviewer never reads one. The snapshot is the tool's own
 // copy; the developer's files are never touched.
-// Every file is checked, whatever the diff shows. Text gets "[redacted]";
-// a file that is not UTF-8 text gets each secret's bytes overwritten in
-// place. A file too large to check is removed from the snapshot, so the
+// Every file is checked, whatever the diff shows. Text gets "[redacted]" on
+// each line the secret held, its line breaks kept, so scanner locations and
+// citations still name the same lines; a file that is not UTF-8 text gets
+// each secret's bytes overwritten in place. A file too large to check is removed from the snapshot, so the
 // reviewer cannot read it. A file that still holds a secret afterwards, or
 // cannot be read or written, stops the run: nothing unredacted is shown.
 export function redactSnapshot(dir: string, secrets: string[]): { redacted: number; removed: string[] } {
@@ -161,7 +162,7 @@ export function redactSnapshot(dir: string, secrets: string[]): { redacted: numb
       const text = buf.toString("utf8");
       let next: Buffer;
       if (Buffer.from(text, "utf8").equals(buf) && !buf.includes(0)) {
-        next = Buffer.from(redactSecrets(text, secrets), "utf8");
+        next = Buffer.from(redactSecretsKeepingLines(text, secrets), "utf8");
       } else {
         next = Buffer.from(buf);
         for (const s of usable) for (let at = next.indexOf(s); at !== -1; at = next.indexOf(s, at + 1)) next.fill(0x78, at, at + s.length);

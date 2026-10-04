@@ -26,6 +26,8 @@
 // 18. A Glob alternative list, a `..` inside a pattern, or a wildcard on the
 //     snapshot folder's own name reaches outside and the run completes; or a
 //     Grep search expression is taken for a path and fails a clean run.
+// 19. Redacting a multi-line secret (a private key) joins its lines, so every
+//     line below it moves while scanner locations and citations do not.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -321,6 +323,18 @@ describe("the snapshot", () => {
     expect(redactSnapshot(dir, [secret])).toEqual({ redacted: 2, removed: [] });
     expect(readFileSync(join(dir, "app/config.py"), "utf8")).not.toContain(secret);
     expect(readFileSync(join(dir, "app/other.py"), "utf8")).toBe("# copied: [redacted]\nx = 1\n");
+  });
+  it("19. masks a multi-line secret line by line, so every line below it keeps its number", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oq-redact-lines-"));
+    const body = Array.from({ length: 3 }, () => Math.random().toString(36).slice(2).padEnd(40, "q")).join("\n");
+    const key = `-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----`;
+    const text = `KEY = """\n${key}\n"""\ncheck(user)  # line 8\n`;
+    writeFileSync(join(dir, "keys.py"), text);
+    redactSnapshot(dir, [key]);
+    const after = readFileSync(join(dir, "keys.py"), "utf8");
+    expect(after).not.toContain(body.split("\n")[0]);
+    expect(after.split("\n")).toHaveLength(text.split("\n").length);
+    expect(after.split("\n")[7]).toBe("check(user)  # line 8");
   });
   it("16. overwrites a secret inside a binary file too", () => {
     const dir = mkdtempSync(join(tmpdir(), "oq-redact-bin-"));
