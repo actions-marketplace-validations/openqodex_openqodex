@@ -20,8 +20,14 @@
 //  8. Finalize checks the run files against the home record, then reads them
 //     again to use them, so a file swapped between the check and the use is
 //     trusted.
-//  9. A push form the agent hook does not resolve counts as reviewed, one
-//     refspec among several escapes the check, or a deletion is blocked.
+//  9. A command the agent hook cannot read exactly as the shell will run
+//     it counts as reviewed: anything but a plain `git push` with plain
+//     words must be unresolved (no record), one refspec among several must
+//     not escape the check, and --no-verify (which skips the git hook) must
+//     not pass an unreviewed range.
+// 11. A missing input counts as reviewed: no upstream, no remote default
+//     branch for a new branch; an unreadable config blocks instead of
+//     taking the tool-error path (allow, one line).
 // 10. The git hook passes a push where one range among several is unreviewed.
 //  7. The agent hook checks the checkout, not what the push command names:
 //     `git push origin unreviewed:main` passes on the checkout's review.
@@ -84,9 +90,28 @@ function check(command = "git push"): string {
   return r.stdout;
 }
 
+const sh = (...a: string[]) => {
+  const r = spawnSync("git", a, { cwd: s.repo, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+// The start commit on a bare remote as the branch's upstream.
+function published(): void {
+  const remote = mkdtempSync(join(tmpdir(), "oq-remote-"));
+  spawnSync("git", ["init", "-q", "--bare", remote]);
+  sh("remote", "add", "origin", remote);
+  sh("push", "-q", "-u", "origin", sh("symbolic-ref", "--short", "HEAD"));
+}
+function commitAll(): void {
+  sh("add", "-A");
+  sh("commit", "-q", "-m", "change");
+}
+
 describe("the home record", () => {
   it("1, 2. a complete review writes a 0600 record in the home, and the agent hook is silent for that change", async () => {
+    published();
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    commitAll();
     expect(await review()).toBe(0);
     const change = await getChange({ repoRoot: s.repo, scope: {}, exclude: [] });
     expect(readHomeReceipt(s.oqHome, s.repo, change.id)?.kind).toBe("complete");
@@ -251,13 +276,14 @@ describe("the pushed range", () => {
     g("checkout", "-q", "main");
     config("review:\n  block_on_severity: critical\n");
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    g("add", "README.md");
+    g("commit", "-q", "-m", "readme");
     expect(await review()).toBe(0);
     expect(check("git push")).toBe("");
-    expect(check("git add -A && git commit -qm readme && git push")).toBe("");
     const named = check("git push origin unreviewed:main");
     expect(named, named).toContain('"permissionDecision":"deny"');
     expect(named).toContain("has not reviewed this change");
-    expect(check("git push origin +unreviewed:refs/heads/main")).toContain('"permissionDecision":"deny"');
+    expect(check("git push origin +unreviewed:main")).toContain('"permissionDecision":"deny"');
   });
 });
 
@@ -283,57 +309,71 @@ describe("9, 10. every form of push", () => {
     mkdirSync(join(s.repo, ".openqodex"), { recursive: true });
     writeFileSync(join(s.repo, ".openqodex/config.yaml"), threshold ? "review:\n  block_on_severity: critical\n" : "");
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    g("add", "README.md");
+    g("commit", "-q", "-m", "readme");
     expect(await review()).toBe(0);
     return sha;
   }
   const DENY = '"permissionDecision":"deny"';
   const COULD_NOT = "could not tell what this push sends";
 
-  it("9. passes what the review covers, and a deletion, silently", async () => {
+  it("9. passes the whitelisted forms that send only what the review covers, silently", async () => {
     await setUp(true);
     for (const command of [
       "git push",
+      "  git push  ".trim(),
+      "git push origin",
       "git push origin main",
+      "git push origin main:main",
+      "git push -u origin main",
+      "git push --set-upstream origin main",
       "git push --force-with-lease origin main",
-      "git push --follow-tags",
-      "git push -o ci.skip origin main",
-      "git -c push.default=current push",
-      "git push && git push origin main",
-      "git push origin :old",
-      "git push --delete origin old",
-      `git -C '${s.repo}' push origin main`,
+      "git push --no-verify",
     ]) {
       expect(check(command), command).toBe("");
     }
   });
 
-  it("9. denies under a threshold any push that sends a range no review covers, whatever its form", async () => {
-    const sha = await setUp(true);
-    for (const command of [
-      "git push origin unreviewed:main",
-      "git push origin main unreviewed:other",
-      `git push origin ${sha}:main`,
-      "git push --force origin +unreviewed:main",
-      "git push --all origin",
-      "git push --branches origin",
-      `git -C '${s.repo}' push origin unreviewed:main`,
-      `cd '${s.repo}' && git push origin unreviewed:main`,
-      "git push; git push origin unreviewed:main",
-    ]) {
-      expect(check(command), command).toContain(DENY);
+  it("9. denies under a threshold a whitelisted push that sends a range no review covers", async () => {
+    await setUp(true);
+    for (const command of ["git push origin unreviewed:main", "git push origin main unreviewed:other", "git push --force origin +unreviewed:main", "git push -f origin unreviewed:main"]) {
+      const out = check(command);
+      expect(out, command).toContain(DENY);
+      // `other` is a new branch with no remote default branch: no record either way.
+      expect(out, command).toMatch(/has not reviewed this change|could not tell what this push sends/);
     }
   });
 
-  it("9. treats the forms it cannot follow as no record: a deny with the one-line ask under a threshold", async () => {
-    await setUp(true);
+  it("9. treats every construct outside the whitelist as unresolved: a deny with the one-line ask under a threshold", async () => {
+    const sha = await setUp(true);
     for (const command of [
+      "git push --all origin",
       "git push --mirror origin",
       "git push --tags origin",
+      "git push --follow-tags",
       "git push --repo=origin",
+      "git push --delete origin old",
+      "git push origin :old",
       "git push https://example.invalid/x.git main",
-      "git push origin 'refs/heads/*:refs/heads/*'",
-      `git push origin ${"HEAD"}~5:main`,
-      "git -c 'alias.ship=!git push origin unreviewed:main' ship",
+      "git push origin refs/heads/*:refs/heads/*",
+      `git push origin ${sha}:main`,
+      "git push origin HEAD~5:main",
+      "git push origin HEAD",
+      "git push origin 'main'",
+      'git push origin "$BRANCH"',
+      "git push origin `echo main`",
+      "git push origin main > /dev/null",
+      "git push origin main | cat",
+      "git push\ngit push origin unreviewed:main",
+      "git push; git push origin unreviewed:main",
+      "git push && git push origin unreviewed:main",
+      "git -C . push",
+      "git -c push.default=current push",
+      "cd . && git push",
+      "FOO=1 git push",
+      "git add -A && git commit -qm x && git push",
+      "git push --no-verify origin unreviewed:main",
+      "git push -o ci.skip origin main",
     ]) {
       const out = check(command);
       expect(out, command).toContain(DENY);
@@ -341,17 +381,38 @@ describe("9, 10. every form of push", () => {
     }
   });
 
-  it("9. without a threshold, a form it cannot follow prints the ask and allows", async () => {
+  it("9. without a threshold, an unresolved push prints the ask and allows", async () => {
     await setUp(false);
     const out = check("git push --mirror origin");
     expect(out).toContain(COULD_NOT);
     expect(out).not.toContain(DENY);
   });
 
+  it("11. a branch with no upstream, and a new branch with no remote default branch, are unresolved", async () => {
+    await setUp(true);
+    g("checkout", "-q", "-b", "feature");
+    for (const command of ["git push", "git push origin feature"]) {
+      const out = check(command);
+      expect(out, command).toContain(DENY);
+      expect(out, command).toContain(COULD_NOT);
+    }
+  });
+
+  it("11. an unreadable config is a tool error: both hooks allow, with one line on stderr", async () => {
+    await setUp(true);
+    writeFileSync(join(s.repo, ".openqodex/config.yaml"), "review: [\n");
+    const input = JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push origin unreviewed:main" }, cwd: s.repo });
+    const agent = cli(s, ["hook", "check"], { input });
+    expect(agent.status).toBe(0);
+    expect(agent.stdout).toBe("");
+    expect(agent.stderr.trim().split("\n")).toHaveLength(1);
+    const zero = "0".repeat(40);
+    // Exit 2: the installed hook script maps it to letting the push through.
+    expect(cli(s, ["hook", "pre-push", "origin"], { input: `refs/heads/x ${g("rev-parse", "HEAD")} refs/heads/x ${zero}\n` }).status).toBe(2);
+  });
+
   it("10. the git hook refuses a push where one range of several is unreviewed, and skips a deletion", async () => {
     const sha = await setUp(true);
-    g("add", "-A");
-    g("commit", "-q", "-m", "readme");
     const head = g("rev-parse", "HEAD");
     const base = g("rev-parse", "origin/main");
     const zero = "0".repeat(40);

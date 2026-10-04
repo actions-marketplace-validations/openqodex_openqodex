@@ -61,6 +61,7 @@ function check(s: Sandbox, command: string, opts: { env?: Record<string, string>
 }
 
 const UNREVIEWED = "OpenQodex has not reviewed this change";
+const COULD_NOT = "could not tell what this push sends";
 const BLOCK = ".openqodex.yaml";
 const BLOCK_YAML = "review:\n  block_on_severity: major\n";
 
@@ -102,8 +103,10 @@ describe("hook check: which commands are pushes", () => {
     "git -c alias.publish=status publish",
   ];
 
+  // None of these is a plain push the agent hook can read, and the plain one
+  // has no upstream here: each is a push it cannot resolve.
   it.each(pushes)("treats %j as a push", (command) => {
-    expect(check(s, command).stdout).toContain(UNREVIEWED);
+    expect(check(s, command).stdout).toContain(COULD_NOT);
   });
 
   it.each(notPushes)("treats %j as not a push and prints nothing", (command) => {
@@ -180,6 +183,23 @@ function blockingRepo(root: string, name: string): string {
   return repo;
 }
 
+// A bare remote holding the start commit as the branch's upstream, then the
+// change in the work tree committed: `git push` sends exactly that change,
+// the change a review of the committed work records.
+function published(s: Sandbox, repo = s.repo): void {
+  const remote = mkdtempSync(join(tmpdir(), "oq-hook-remote-"));
+  git(repo, "init", "-q", "--bare", remote);
+  git(repo, "remote", "add", "origin", remote);
+  const branch = git(repo, "symbolic-ref", "--short", "HEAD").trim();
+  git(repo, "push", "-q", "-u", "origin", branch);
+  commitAll(repo);
+}
+
+function commitAll(repo: string): void {
+  git(repo, "add", "-A");
+  git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "change");
+}
+
 function decision(stdout: string): string | undefined {
   return stdout === "" ? undefined : (JSON.parse(stdout) as { hookSpecificOutput: { permissionDecision?: string } }).hookSpecificOutput.permissionDecision;
 }
@@ -188,6 +208,7 @@ describe("hook check: decisions", () => {
   it("13. warn mode with no review abstains with one line asking for openqodex review", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    published(s);
     const r = check(s, "git push");
     expect(r.stdout).toContain(UNREVIEWED);
     expect(r.stdout).toContain("Run openqodex review");
@@ -197,6 +218,7 @@ describe("hook check: decisions", () => {
   it("12. an incomplete record of this change never blocks, even in block mode", async () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    published(s);
     await finalizedPassingReview(s.oqHome, s.repo, "incomplete");
     const r = check(s, "git push");
     expect(decision(r.stdout)).toBeUndefined();
@@ -206,31 +228,33 @@ describe("hook check: decisions", () => {
   it("block mode with no review denies", () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    published(s);
     expect(decision(check(s, "git push").stdout)).toBe("deny");
   });
 
   it("a finalized passing review of the same change prints nothing, and stops covering it once the change moves", async () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    published(s);
     await finalizedPassingReview(s.oqHome, s.repo);
     expect(check(s, "git push").stdout).toBe("");
     writeFileSync(join(s.repo, "README.md"), "changed again\n");
+    commitAll(s.repo);
     expect(decision(check(s, "git push").stdout)).toBe("deny");
   });
 
-  it("checks the repo each push names, and every push on the line", async () => {
+  it("checks a plain push in the folder it runs in, and treats any other form as unresolved", async () => {
     const s = sandbox();
     const a = blockingRepo(s.root, "a");
-    blockingRepo(s.root, "b");
+    published(s, a);
     await finalizedPassingReview(s.oqHome, a);
     const at = (cwd: string, command: string) => check(s, command, { cwd }).stdout;
-    expect(at(s.root, "git -C a push")).toBe("");
-    expect(decision(at(s.root, "git -C b push"))).toBe("deny");
-    expect(decision(at(s.root, "git -C a push && git -C b push"))).toBe("deny");
-    expect(decision(at(s.root, "(cd a); cd b && git push"))).toBe("deny");
-    expect(at(s.root, "(cd b); cd a && git push")).toBe("");
-    expect(decision(at(a, "git --git-dir=../b/.git --work-tree=../b push"))).toBe("deny");
-    expect(decision(at(a, "GIT_DIR=../b/.git GIT_WORK_TREE=../b git push"))).toBe("deny");
+    expect(at(a, "git push")).toBe("");
+    for (const command of ["git -C a push", "cd a && git push", "(cd a && git push)", "GIT_DIR=a/.git git push"]) {
+      const out = at(s.root, command);
+      expect(decision(out), command).toBe("deny");
+      expect(out, command).toContain(COULD_NOT);
+    }
   });
 });
 
@@ -344,6 +368,7 @@ describe("the record the hooks trust", () => {
   it("15. a complete passing record the repository carries counts as no review", async () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    published(s);
     await repoRecord(s.repo);
     const warn = check(s, "git push").stdout;
     expect(warn).toContain(UNREVIEWED);
@@ -366,6 +391,7 @@ describe("the review receipt", () => {
   it("9, 14. a legacy review lets the push through with one line, and a later scan does not make it forget the review", () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
+    published(s);
     reviewAndFinalize(s);
     const first = check(s, "git push").stdout;
     expect(decision(first)).toBeUndefined();

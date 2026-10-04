@@ -193,20 +193,9 @@ const isPushAlias = (expansion: string): boolean => /^push(\s|$)/.test(expansion
 // Looks up `git config --get alias.<name>` in a folder; null when unset.
 export type AliasLookup = (folder: string, name: string) => Promise<string | null>;
 
-// One `git push` on the line: the folder it runs in and the words after
-// `push` (for an alias, the words its expansion adds, then the rest).
-// `opaque`: set for a push the line hides (an alias that runs a shell
-// command which pushes), saying why its arguments cannot be read.
-export type PushCommand = { folder: string; args: string[]; opaque?: string };
-
 // The folder of every `git push` on the line, in order, without repeats.
 export async function pushFolders(line: string, cwd: string, lookupAlias: AliasLookup): Promise<string[]> {
-  return [...new Set((await pushCommands(line, cwd, lookupAlias)).map((p) => p.folder))];
-}
-
-// Every `git push` on the line, in order.
-export async function pushCommands(line: string, cwd: string, lookupAlias: AliasLookup): Promise<PushCommand[]> {
-  const found: PushCommand[] = [];
+  const found: string[] = [];
   const dirs: string[] = [cwd];
   let words: string[] = [];
 
@@ -261,16 +250,12 @@ export async function pushCommands(line: string, cwd: string, lookupAlias: Alias
     const sub = ws[j];
     if (sub === undefined) return;
     let push = sub === "push";
-    let expansion: string | null = null;
-    if (!push && aliases[sub] !== undefined) expansion = aliases[sub];
-    else if (!push && !GIT_BUILTINS.has(sub) && !sub.startsWith("-")) expansion = await lookupAlias(folder, sub);
-    if (!push && expansion !== null) push = isPushAlias(expansion);
-    if (!push && expansion !== null && /^\s*!/.test(expansion) && /\bpush\b/.test(expansion)) {
-      found.push({ folder, args: [], opaque: `the alias ${sub} runs a shell command that pushes` });
-      return;
+    if (!push && aliases[sub] !== undefined) push = isPushAlias(aliases[sub]);
+    else if (!push && !GIT_BUILTINS.has(sub) && !sub.startsWith("-")) {
+      const expansion = await lookupAlias(folder, sub);
+      push = expansion !== null && isPushAlias(expansion);
     }
-    const added = expansion === null ? [] : expansion.trim().split(/\s+/).slice(1);
-    if (push) found.push({ folder, args: [...added, ...ws.slice(j + 1)] });
+    if (push && !found.includes(folder)) found.push(folder);
   };
 
   for (const t of tokenize(line)) {
