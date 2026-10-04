@@ -12,7 +12,7 @@ The agent installs the skill, runs the review and tells you the result. The step
 ## Before you start
 
 - Node 22 or newer, and git.
-- Claude Code, installed and logged in. It is the reviewer OpenQodex starts. Without it, `review` runs the scanners, says "Full review unavailable", and names the command with which the agent you are in reviews the change itself.
+- Claude Code or Codex, installed and logged in. It is the reviewer OpenQodex starts. Without either, `review` runs the scanners, says "Full review unavailable", and names the command with which the agent you are in reviews the change itself.
 - macOS or Linux. On Windows, use WSL.
 - A git repository with a change in it.
 
@@ -46,7 +46,7 @@ Say to your agent:
 review my change with openqodex
 ```
 
-The agent runs `openqodex review` and shows you the report it prints. That one command works out the change, copies it to a temporary folder, runs the scanners and the code graph, and starts its own reviewer: a separate Claude Code process that can only read that copy. The reviewer checks every scanner finding and reads every changed line; a script checks its answer, and OpenQodex prints the report. It takes one to three minutes and uses your Claude Code plan. You can run the same command in your terminal.
+The agent runs `openqodex review` and shows you the report it prints. That one command works out the change, copies it to a temporary folder, runs the scanners and the code graph, and starts its own reviewer: a separate Claude Code or Codex process that reads that copy. The reviewer checks every scanner finding and is given every changed line; a script checks its answer, and OpenQodex prints the report. It takes one to three minutes and uses your Claude Code or Codex plan. You can run the same command in your terminal.
 
 To review the whole repository instead of one change, say:
 
@@ -67,7 +67,7 @@ The agent runs `openqodex review feature/login` or `openqodex review '#42'`. Ope
 
 ## 3. Read the report
 
-The agent shows you the report as OpenQodex printed it: the verdict, the counts, and for each finding where it is, the problem, why it matters and the fix. A complete review means every stage ran, every scanner finding was checked and every changed line was read; anything not covered is named. It does not mean nothing was missed. The same report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.
+The agent shows you the report as OpenQodex printed it: the verdict, the counts, and for each finding where it is, the problem, why it matters and the fix. A complete review means every stage ran, every scanner finding was checked and every changed line was put in front of the reviewer; anything not covered is named. It does not mean nothing was missed. The same report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.
 
 The verdict is `passed` unless `.openqodex/config.yaml` sets `review.block_on_severity` and a finding meets it. With no config, OpenQodex warns and never blocks.
 
