@@ -17,6 +17,7 @@ import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { readHomeReceipt } from "../receipts.js";
+import type { GateReceipt } from "@openqodex/core";
 import { launcherPath, openqodexHomeDir, planRuntime, shQuote } from "../launcher.js";
 
 const execFileAsync = promisify(execFile);
@@ -108,7 +109,7 @@ const commitOf = (repoRoot: string, rev: string) => git(repoRoot, ["rev-parse", 
 // the change id hashes the base commit and the diff between them. So a
 // review of base B to H does not cover a push of H over a remote commit R
 // that is not B, such as a force push over work the review never saw.
-async function rangeChangeId(core: Core, repoRoot: string, config: Config, remote: string, localSha: string, remoteSha: string | null): Promise<{ id: string } | { unknown: string }> {
+async function rangeChangeId(core: Core, repoRoot: string, config: Config, remote: string, localSha: string, remoteSha: string | null): Promise<{ id: string; base: string } | { unknown: string }> {
   let base: string | null = null;
   if (remoteSha !== null) {
     base = await commitOf(repoRoot, remoteSha);
@@ -123,7 +124,27 @@ async function rangeChangeId(core: Core, repoRoot: string, config: Config, remot
     if (base === null) return { unknown: "this push starts a new branch and no base to measure it from was found (review.default_base, or the remote's default branch)" };
   }
   const change = await core.getTreeChange({ repoRoot, baseRef: base, baseSha: base, headSha: localSha, exclude: config.exclude });
-  return { id: change.id };
+  return { id: change.id, base };
+}
+
+// The newest complete review when its range contains the pushed one: its
+// base is the push's base or an ancestor of it, and the change from its base
+// to the pushed commit is the very change it reviewed (the change id hashes
+// the base and the diff, so any other content gives another id). A branch
+// reviewed with no upstream is measured from the merge base with the default
+// branch, while its push is measured from the remote branch's tip; this
+// lets that review count. Returned under the pushed range's id; else null.
+async function containingReceipt(core: Core, repoRoot: string, config: Config, newest: GateReceipt | null, pushBase: string, localSha: string, pushedId: string): Promise<GateReceipt | null> {
+  if (newest === null || newest.kind !== "complete") return null;
+  const base = await commitOf(repoRoot, newest.base.sha);
+  if (base === null) return null;
+  try {
+    await execFileAsync("git", ["merge-base", "--is-ancestor", base, pushBase], { cwd: repoRoot, timeout: 10_000 });
+  } catch {
+    return null;
+  }
+  const change = await core.getTreeChange({ repoRoot, baseRef: base, baseSha: base, headSha: localSha, exclude: config.exclude });
+  return change.id === newest.change_id ? { ...newest, change_id: pushedId } : null;
 }
 
 // The one command shape the agent hook recognises, after trimming: `git
@@ -233,15 +254,17 @@ function readAll(): Promise<string> {
 // sha> <remote ref> <remote sha>`. An all-zero local sha deletes the remote
 // ref and sends nothing; an all-zero remote sha starts a new branch (null).
 // No lines (a push that sends nothing) is no range: nothing to check.
-function pushedRanges(input: string): { local: string; remoteSha: string | null }[] {
+type Range = { localRef: string; local: string; remoteRef: string; remoteSha: string | null };
+
+function pushedRanges(input: string): Range[] {
   const lines = input.split("\n").map((l) => l.trim()).filter((l) => l !== "");
-  const out = new Map<string, { local: string; remoteSha: string | null }>();
+  const out = new Map<string, Range>();
   for (const l of lines) {
-    const [, local, , remote] = l.split(/\s+/);
+    const [localRef = "", local, remoteRef = "", remote] = l.split(/\s+/);
     if (local === undefined || ZERO_SHA.test(local)) continue;
     const remoteSha = remote === undefined || ZERO_SHA.test(remote) ? null : remote;
     if (remoteSha === local) continue; // the remote has it already: nothing is sent
-    out.set(`${local} ${remoteSha}`, { local, remoteSha });
+    out.set(`${local} ${remoteSha}`, { localRef, local, remoteRef, remoteSha });
   }
   return [...out.values()];
 }
@@ -270,10 +293,18 @@ async function prePush(args: string[]): Promise<number> {
     const found = await rangeChangeId(core, repoRoot, config, remote, range.local, range.remoteSha);
     if ("id" in found) changeId = found.id;
     else messages.add(`OpenQodex could not tell what this push sends (${found.unknown}); run openqodex review, then push again.`);
-    const receipt = (changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId)) ?? newest;
+    const exact = changeId === "" ? null : readHomeReceipt(home, repoRoot, changeId);
+    const receipt = exact ?? ("id" in found ? await containingReceipt(core, repoRoot, config, newest, found.base, range.local, changeId) : null) ?? newest;
     const decision = core.checkPush({ currentChangeId: changeId, receipt, config });
     if (decision.decision === "deny") denied = true;
-    if (decision.message !== null) messages.add(decision.message);
+    if (decision.message === null) continue;
+    // A branch the remote has, with no upstream here: a review measures it
+    // from another base than the push, so say how to line the two up.
+    const unreviewed = decision.message.startsWith("OpenQodex has not reviewed");
+    const branch = range.remoteRef.replace(/^refs\/heads\//, "");
+    const upstream = range.localRef.startsWith("refs/heads/") ? await git(repoRoot, ["for-each-ref", "--format=%(upstream)", range.localRef]) : null;
+    const fix = unreviewed && range.remoteSha !== null && upstream === null ? ` If you reviewed it already, set the branch's upstream (git branch --set-upstream-to ${remote}/${branch}), run openqodex review, then push.` : "";
+    messages.add(`${decision.message}${fix}`);
   }
   for (const m of messages) process.stderr.write(`${m}\n`);
   return denied ? 1 : EXIT_OK;

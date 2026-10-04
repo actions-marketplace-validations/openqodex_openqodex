@@ -33,6 +33,9 @@
 //     the developer's own OpenQodex home may.
 // 16. A legacy finalize writes no record in the home, so older installs are
 //     suddenly blocked.
+// 17. A branch reviewed with no upstream (measured from the merge base with
+//     the default branch) and pushed over its remote tip counts as unreviewed
+//     forever; or a review of another head covers the push.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -451,6 +454,41 @@ describe("the pre-push hook looks up the review of what the push sends", () => {
     const r = push(s, "origin", "main");
     expect(r.status, r.out).toBe(0);
     expect(r.out).toContain(LEGACY);
+  }, 60_000);
+
+  // A branch the remote already has, reviewed with no upstream set: the
+  // review measured from the merge base with the default branch, the push
+  // from the remote branch's tip.
+  async function reviewedFeature(s: Sandbox): Promise<void> {
+    withRemote(s);
+    git(s.repo, "remote", "set-head", "origin", "main");
+    git(s.repo, "checkout", "-q", "-b", "feature");
+    writeFileSync(join(s.repo, "one.txt"), "one\n");
+    commitAll(s.repo);
+    git(s.repo, "push", "-q", "origin", "feature");
+    writeFileSync(join(s.repo, "two.txt"), "two\n");
+    commitAll(s.repo);
+    await finalizedPassingReview(s.oqHome, s.repo);
+    expect(cli(s, ["hook", "install"]).status).toBe(0);
+  }
+
+  it("17. a review of a branch with no upstream covers a push of that branch over its remote tip", async () => {
+    const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
+    await reviewedFeature(s);
+    const r = push(s, "origin", "feature");
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).not.toContain(UNREVIEWED);
+  }, 60_000);
+
+  it("17. that review does not cover a push of a different head", async () => {
+    const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
+    await reviewedFeature(s);
+    writeFileSync(join(s.repo, "three.txt"), "three\n");
+    commitAll(s.repo);
+    const r = push(s, "origin", "feature");
+    expect(r.status).not.toBe(0);
+    expect(r.out).toContain(UNREVIEWED);
+    expect(r.out).toContain("set the branch's upstream");
   }, 60_000);
 
   it("11. a branch that is not checked out is looked up by its own commit, not the reviewed work in place", () => {

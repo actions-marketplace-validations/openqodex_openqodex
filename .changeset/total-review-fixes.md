@@ -11,3 +11,5 @@
 - Ctrl-C during a review stops the reviewer and its children and removes the snapshot.
 - The review `init` ends with now reviews your own earlier edits to files init writes, such as CLAUDE.md, without init's own section.
 - A review from the older two-step protocol counts for the push hooks only when this machine ran its scan.
+- The review `init` ends with now runs when `init` also installs the git pre-push hook or adds a `.git/info/exclude` line; before, it stopped with "the review after init did not run".
+- The git pre-push hook accepts a review of a branch made with no upstream set when it is pushed over its remote tip, as long as the review covered exactly the pushed commit; before, such a push counted as unreviewed and, under `block_on_severity`, was stopped every time. When a branch the remote has is still unreviewed and has no upstream, the hook's line says to set the upstream, review, then push.
