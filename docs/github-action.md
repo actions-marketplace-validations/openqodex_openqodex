@@ -1,6 +1,6 @@
 # GitHub Action
 
-The OpenQodex Action runs `openqodex scan` on a pull request's change. It uploads the findings to GitHub code scanning as SARIF. No model is involved: the Action runs the scanners only.
+The OpenQodex Action runs `openqodex scan` on a pull request's change. It uploads the findings to GitHub code scanning as SARIF. No model is involved: the Action runs the scanners only, and its first output line says it is not a review. The full review runs on your machine with `openqodex review`.
 
 ## Example workflow
 
@@ -44,9 +44,9 @@ jobs:
 3. Runs `npx -y openqodex@<version> doctor --install`, which installs every scanner and waits.
 4. Runs `npx -y openqodex@<version> scan --base <pull request base commit> --format sarif`. The SARIF goes to a new folder under the runner's temporary folder, never into the checkout.
 5. Uploads that SARIF to code scanning, when `upload-sarif` is `true` and the scan wrote a report.
-6. Fails the job when the scan exited 1 or 2.
+6. Fails the job when the scan exited 1.
 
-The scan exits 1 only when `.openqodex.yaml` sets `review.block_on_severity` and a finding on a changed line meets it. Without that key, the job never fails on findings. A scan that fails for its own reasons exits 2, and the job fails too.
+The scan exits 1 only when `.openqodex.yaml` sets `review.block_on_severity` and a finding on a changed line meets it. Without that key, the job never fails on findings. A scan that fails for its own reasons exits 2: the job shows a warning and does not fail.
 
 ## Config
 

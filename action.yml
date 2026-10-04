@@ -1,5 +1,5 @@
 name: OpenQodex
-description: Run the OpenQodex scanners on a pull request's change and upload the findings to code scanning.
+description: Run the OpenQodex scanners on a pull request's change and upload the findings to code scanning. Scanners only, not a review.
 author: OpenQodex
 branding:
   icon: check-circle
@@ -44,6 +44,7 @@ runs:
       # The SARIF goes to a fresh folder under RUNNER_TEMP, never into the
       # checkout, so a file the pull request ships cannot pass as the result.
       run: |
+        echo "OpenQodex scanners only: this job runs the scanners on the change and is not a review. The full review runs on your machine with openqodex review."
         out_dir="$(mktemp -d "${RUNNER_TEMP}/openqodex-XXXXXX")"
         sarif="${out_dir}/openqodex.sarif"
         args=(scan --format sarif --output "$sarif")
@@ -53,6 +54,8 @@ runs:
         code=$?
         set -e
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        # A tool failure is reported and never fails the job.
+        if [ "$code" = "2" ]; then echo "::warning::OpenQodex could not finish the scan (exit 2). The output above says why."; fi
         if [ -f "$sarif" ]; then
           echo "sarif=true" >> "$GITHUB_OUTPUT"
           echo "sarif-file=$sarif" >> "$GITHUB_OUTPUT"
@@ -68,14 +71,8 @@ runs:
         category: openqodex
 
     - name: Fail on blocking findings
-      if: steps.scan.outputs.exit-code != '0'
+      if: steps.scan.outputs.exit-code == '1'
       shell: bash
-      env:
-        CODE: ${{ steps.scan.outputs.exit-code }}
       run: |
-        if [ "$CODE" = "1" ]; then
-          echo "OpenQodex found findings at or above review.block_on_severity."
-        else
-          echo "OpenQodex failed with exit code $CODE. The scan output above says why."
-        fi
+        echo "OpenQodex found findings at or above review.block_on_severity."
         exit 1
