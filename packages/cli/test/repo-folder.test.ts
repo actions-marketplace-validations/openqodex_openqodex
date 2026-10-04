@@ -10,7 +10,7 @@
 //     arrive quoted, one "> " per line).
 //  4. Finalize accepts a review whose instructions changed after the brief.
 //  5. An instructions file over the limit is cut instead of refused.
-//  6. A review by the agent that wrote the code is reported as independent,
+//  6. A review by the agent that wrote the code is reported as a separate reviewer,
 //     or a new run finalizes without saying who reviewed.
 //  7. Init replaces a team file another first run created after init made
 //     its plan, and records it as its own.
@@ -113,7 +113,7 @@ describe("the owners' instructions in the review", () => {
     submit(s, { reviewer: "same-agent" });
     expect(cli(s, ["review", "--finalize"]).status).toBe(0);
     const report = JSON.parse(read(s, join(latest(s).dir, "report.json"))) as { summary: string };
-    expect(report.summary.split("\n")[0]).toBe("Not an independent review: the agent that wrote the code reviewed it.");
+    expect(report.summary.split("\n")[0]).toBe("Reviewed by the coding agent you are using.");
   });
 });
 

@@ -60,6 +60,7 @@ export function renderMarkdown(report: Report): string {
     "",
     `**${verdictLine(report)}**`,
     "",
+    ...(report.reviewed_by ? [cell(report.reviewed_by), ""] : []),
     ...(impactLine(report) ? [cell(impactLine(report) as string), ""] : []),
     `Change ${code(report.change_id.slice(0, 12))} against ${code(report.base.ref)} (${code(report.base.sha.slice(0, 12))}), ${files} ${files === 1 ? "file" : "files"}, +${additions} -${deletions}.`,
   ];

@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { withBoundary } from "../agents/lock.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
+import { pruneHomeReceipts } from "../receipts.js";
 import { activeVersion, launcherStarted, openqodexHomeDir, pruneRuntimes, readActive, runtimeBin, writeActive } from "../launcher.js";
 import { pinnedNote } from "../update/trigger.js";
 import { readState, setUserUpdate, updatesAllowed, userConfigPath } from "../update/state.js";
@@ -108,6 +109,7 @@ export async function run(args: string[]): Promise<number> {
     for (const line of result.lines) out(line);
     // Old runtimes go here and in init, never in the background worker.
     await withBoundary(home, { wait: WAIT_MS }, () => pruneRuntimes(home));
+    pruneHomeReceipts(home);
     return result.outcome === "failed" || result.outcome === "busy" ? EXIT_TOOL_FAILED : EXIT_OK;
   } catch (error) {
     return fail(message(error));

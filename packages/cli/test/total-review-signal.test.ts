@@ -1,0 +1,97 @@
+// `openqodex review` stopped by a signal while its reviewer works: the built
+// CLI as a real process, the real Claude Code driver, and a stand-in `claude`
+// on PATH as the model provider (it answers detection, then starts a child of
+// its own and waits, the way an agent with a running tool would).
+//
+// Ways it could fail, written before the code:
+//  1. Ctrl-C or a kill ends the CLI but leaves the reviewer, which runs in a
+//     process group of its own, and its children running.
+//  2. The snapshot of the change stays on disk after the signal.
+//  3. The exit code is not the conventional one (130 for SIGINT, 143 for SIGTERM).
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
+
+function git(cwd: string, ...args: string[]): void {
+  const r = spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+}
+
+// The stand-in `claude`: `--version` and `auth status` as Claude Code answers
+// them; started as the reviewer, it writes its pid and its child's, then waits.
+function standIn(pids: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "oq-signal-bin-"));
+  writeFileSync(
+    join(dir, "claude"),
+    [
+      `#!${process.execPath}`,
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const args = process.argv.slice(2);",
+      "if (args[0] === '--version') { console.log('2.1.289 (Claude Code)'); process.exit(0); }",
+      "if (args[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }",
+      "process.stdin.once('data', () => {",
+      "  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      `  writeFileSync(${JSON.stringify(pids)}, process.pid + ' ' + child.pid);`,
+      "});",
+      "setInterval(() => {}, 1000);",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(join(dir, "claude"), 0o755);
+  return dir;
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function waitFor(check: () => boolean, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error("timed out waiting");
+    await new Promise((done) => setTimeout(done, 100));
+  }
+}
+
+for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+  describe(`${signal} during the review`, () => {
+    it(`1, 2, 3. kills the reviewer's process group, removes the snapshot and exits ${code}`, async () => {
+      const repo = mkdtempSync(join(tmpdir(), "oq-signal-repo-"));
+      git(repo, "init", "-q", "-b", "main");
+      writeFileSync(join(repo, "README.md"), "hello\n");
+      git(repo, "add", "-A");
+      git(repo, "commit", "-qm", "Base");
+      mkdirSync(join(repo, "db"));
+      writeFileSync(join(repo, "db/x.sql"), "SELECT 1;\n");
+      const home = mkdtempSync(join(tmpdir(), "oq-signal-home-"));
+      const pids = join(mkdtempSync(join(tmpdir(), "oq-signal-pids-")), "pids");
+      const env: NodeJS.ProcessEnv = { ...process.env, OPENQODEX_HOME: home, OPENQODEX_AUTO_UPDATE: "0", PATH: [standIn(pids), dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter) };
+      delete env.OPENQODEX_REVIEW_DEPTH;
+      const cli = spawn(process.execPath, [BIN, "review", "--only", "sqllint", "--no-install", "--no-graph"], { cwd: repo, env, stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      cli.stderr.on("data", (b: Buffer) => (stderr += String(b)));
+      const exited = new Promise<number | null>((done) => cli.once("exit", (c) => done(c)));
+      await waitFor(() => existsSync(pids) && readFileSync(pids, "utf8").includes(" "), 30_000).catch(() => {
+        throw new Error(`the reviewer never started: ${stderr}`);
+      });
+      const [reviewer, child] = readFileSync(pids, "utf8").split(" ").map(Number) as [number, number];
+      expect(readdirSync(join(home, "checkouts"))).toHaveLength(1);
+      cli.kill(signal);
+      expect(await exited).toBe(code);
+      await new Promise((done) => setTimeout(done, 300));
+      expect([reviewer, child].filter(alive)).toEqual([]);
+      expect(readdirSync(join(home, "checkouts"))).toEqual([]);
+    }, 60_000);
+  });
+}

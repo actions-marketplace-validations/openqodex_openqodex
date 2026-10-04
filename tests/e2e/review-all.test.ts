@@ -8,8 +8,9 @@
 // 3. Finalize treats the whole repo like a change: an agent finding on a
 //    valid line lands in outside_change, or the run's id does not match.
 // 4. `--all` with `--base` or `--uncommitted` silently picks one scope.
-// 5. `review --all` without `--agent` prints a scan-only report instead of
-//    the brief (the founder's rule: the review always sits on the scanners).
+// 5. `review --all` without `--agent` prints a scan-only report as if it were
+//    a review (the founder's rule: the review always sits on the scanners);
+//    with no reviewer it must exit 2 and print none.
 // 6. A clean repo gives a brief that does not say the scanners found nothing.
 // 7. An --all run replaces latest.json, the receipt the push gate reads, so
 //    a passing change review stops counting.
@@ -18,12 +19,12 @@
 //    limit is cut instead of refused.
 // 10. A file of many short lines crashes the lens selection, or a pattern in
 //     a file late in the alphabet gets no lens once earlier files are large.
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Candidate, Report } from "@openqodex/core";
 import "./global-setup.js";
-import { baseline, demo, git, readJson, root, run, skipNetwork, submission } from "./support.js";
+import { baseline, demo, git, noReviewerEnv, readJson, root, run, skipNetwork, submission } from "./support.js";
 import type { Brief, Result } from "./support.js";
 
 // The newest whole-repo run, from its own receipt (never latest.json).
@@ -89,13 +90,15 @@ it("review --all with --base exits 2 with one line", () => {
   expect(r.stderr.trim().split("\n")).toHaveLength(1);
 });
 
-it("review --all without --agent prints the brief and the line that the agent finishes it, never a scan report", () => {
+// The total review changed this case: plain `review --all` runs the whole
+// review itself, so with no reviewer it exits 2 and writes no receipt.
+it("review --all without --agent and with no reviewer exits 2, prints no report and writes no whole-repo receipt", () => {
   const dir = demo("all-human");
-  const r = run("all-without-agent", dir, ["review", "--all"]);
-  expect(r.status).toBe(0);
-  expect(r.stdout).toMatch(/^# OpenQodex review brief: the whole repository\n/);
-  expect(r.stdout).toContain("the review is done when your coding agent writes its findings and runs the finalize command");
-  expect(readJson<{ kind: string; finalized: boolean }>(join(dir, ".openqodex/latest-all.json"))).toMatchObject({ kind: "review", finalized: false });
+  const r = run("all-without-agent", dir, ["review", "--all"], { env: noReviewerEnv() });
+  expect(r.status).toBe(2);
+  expect(r.stdout).toBe("");
+  expect(r.stderr).toContain("Full review unavailable");
+  expect(existsSync(join(dir, ".openqodex/latest-all.json"))).toBe(false);
 });
 
 it("review --all leaves latest.json, the push gate's receipt, as the change review wrote it", () => {

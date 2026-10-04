@@ -7,5 +7,8 @@ export default defineConfig({
     // end-to-end config runs them.
     exclude: ["**/node_modules/**", "packages/scanners/test/adapters.subprocess.test.ts"],
     passWithNoTests: true,
+    // Many tests start the real CLI and git several times; a busy CI runner
+    // takes more than the 5 second default for those.
+    testTimeout: 30_000,
   },
 });

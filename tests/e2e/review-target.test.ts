@@ -118,25 +118,25 @@ describe("review <target>: base, head and diff", () => {
 
   it("takes the base from --base before review.default_base", () => {
     writeConfig(r.dev, "review:\n  default_base: release\n");
-    const out = run("target-base-flag", r.dev, ["review", "feature", "--base", "origin/main", ...FAST]);
+    const out = run("target-base-flag", r.dev, ["review", "--agent", "feature", "--base", "origin/main", ...FAST]);
     expect(out.status).toBe(0);
     expect(out.stderr).toContain("base origin/main (from --base)");
   });
   it("takes the base from review.default_base before the remote's default branch", () => {
     writeConfig(r.dev, "review:\n  default_base: release\n");
-    const out = run("target-base-config", r.dev, ["review", "feature", ...FAST]);
+    const out = run("target-base-config", r.dev, ["review", "--agent", "feature", ...FAST]);
     expect(out.status).toBe(0);
     expect(out.stderr).toContain("base origin/release (from review.default_base)");
   });
   it("falls back to the remote's default branch when nothing else names a base", () => {
     writeConfig(r.dev, "");
-    const out = run("target-base-remote", r.dev, ["review", "feature", ...FAST]);
+    const out = run("target-base-remote", r.dev, ["review", "--agent", "feature", ...FAST]);
     expect(out.status).toBe(0);
     expect(out.stderr).toContain("base origin/main (from the remote's default branch)");
   });
   it("reviews a branch when gh is not installed", () => {
     writeConfig(r.dev, "");
-    const out = run("target-no-gh", r.dev, ["review", "feature", ...FAST], { env: { PATH: gitOnlyPath() } });
+    const out = run("target-no-gh", r.dev, ["review", "--agent", "feature", ...FAST], { env: { PATH: gitOnlyPath() } });
     expect(out.status).toBe(0);
     expect(out.stderr).toContain("(from the remote's default branch)");
   });
@@ -163,7 +163,7 @@ describe("review <target>: base, head and diff", () => {
     });
     it("without gh takes the next base for a pull request number and says so", () => {
       writeConfig(r.dev, "");
-      const out = run("target-pr-no-gh", r.dev, ["review", "#7", ...FAST], { env: { PATH: gitOnlyPath() } });
+      const out = run("target-pr-no-gh", r.dev, ["review", "--agent", "#7", ...FAST], { env: { PATH: gitOnlyPath() } });
       expect(out.status).toBe(0);
       expect(out.stderr).toContain("the pull request's base is not known");
       expect(out.stderr).toContain("(from the remote's default branch)");
@@ -186,7 +186,7 @@ describe("review <target>: base, head and diff", () => {
   it("says that uncommitted work is not part of a review of the current branch", () => {
     git(r.dev, "checkout", "-q", "-b", "mine", "origin/feature");
     writeFileSync(join(r.dev, "feature.txt"), "edited, not committed\n");
-    const out = run("target-dirty", r.dev, ["review", "mine", "--base", "origin/main", ...FAST]);
+    const out = run("target-dirty", r.dev, ["review", "--agent", "mine", "--base", "origin/main", ...FAST]);
     expect(out.status).toBe(0);
     expect(out.stderr).toContain("Uncommitted work is not part of a target review");
     git(r.dev, "checkout", "-q", "--", "feature.txt");
@@ -244,10 +244,11 @@ describe("review <target>: settings and what runs", () => {
     const env = { PATH: `${bin}:${process.env.PATH}` };
     writeConfig(r.dev, "scanners:\n  custom:\n    - source: https://github.com/example/probe\n      name: probe\n      run: oq-probe {report} {targets}\n      format: sarif\n      install: path\n");
     expect(run("target-probe-trust", r.dev, ["trust", "--yes"], { env }).status).toBe(0);
-    const out = run("target-probe", r.dev, ["review", "feature", "--base", "origin/main", "--only", "custom:probe", "--no-install", "--no-graph", "--format", "json"], { env });
+    const out = run("target-probe", r.dev, ["review", "--agent", "feature", "--base", "origin/main", "--only", "custom:probe", "--no-install", "--no-graph"], { env });
     expect(out.status).toBe(0);
-    const report = JSON.parse(out.stdout) as Report;
-    expect(report.scanners.find((s) => s.scanner === "custom:probe")?.status).toBe("ran");
+    const findingsPath = /Write the JSON to `([^`]+agent-findings\.json)`/.exec(out.stdout)?.[1] ?? "";
+    const scan = readJson<Report>(join(dirname(findingsPath), "scan.json"));
+    expect(scan.scanners.find((s) => s.scanner === "custom:probe")?.status).toBe("ran");
     // The checkout is gone by now, so the path is compared as written.
     const cwd = readFileSync(where, "utf8").trim();
     expect(cwd).not.toBe(r.dev);
@@ -330,7 +331,7 @@ describe("review <target>: the agent flow and the temporary checkout", () => {
     const c = agentReview("target-flow-c", r.dev, ["feature", "--base", "origin/main"]);
     const old = new Date(Date.now() - 25 * 3600_000);
     utimesSync(join(dirname(checkoutOf(c)!), MARKER), old, old);
-    expect(run("target-sweep", r.dev, ["review", "second", "--base", "origin/main", ...FAST]).status).toBe(0);
+    expect(run("target-sweep", r.dev, ["review", "--agent", "second", "--base", "origin/main", ...FAST]).status).toBe(0);
     expect(existsSync(dirname(checkoutOf(c)!))).toBe(false);
     expect(git(r.dev, "worktree", "list")).not.toContain(checkoutOf(c)!);
   });
@@ -345,7 +346,7 @@ describe("review <target>: checkouts live only in the developer's openqodex home
     write(folder, "keep.txt", "not openqodex's to delete\n");
     utimesSync(join(folder, MARKER), old, old);
   };
-  const review = (label: string) => run(label, r.dev, ["review", "feature", "--base", "origin/main", ...FAST], { env: { OPENQODEX_HOME: home } });
+  const review = (label: string) => run(label, r.dev, ["review", "--agent", "feature", "--base", "origin/main", ...FAST], { env: { OPENQODEX_HOME: home } });
   beforeAll(() => { r = repos(); home = mkdtempSync(join(tmpdir(), "oq-target-home-")); }, 120_000);
 
   it("ignores a folder with a forged marker in the OS temp folder", () => {
@@ -541,7 +542,7 @@ describe("review <target>: fetching touches nothing of the developer's", () => {
     git(r.dev, "tag", "keep-me");
     const refs = () => git(r.dev, "for-each-ref", "--format=%(refname) %(objectname)");
     const before = refs();
-    const out = run("target-refmap", r.dev, ["review", "#5", "--base", shaOf(r.dev, "origin/main"), ...FAST]);
+    const out = run("target-refmap", r.dev, ["review", "--agent", "#5", "--base", shaOf(r.dev, "origin/main"), ...FAST]);
     expect(out.status, out.stderr).toBe(0);
     expect(refs()).toBe(before);
   });
@@ -557,7 +558,7 @@ describe("review <target>: fetching touches nothing of the developer's", () => {
   it("fetches a remote base that this clone has never seen", () => {
     pushBranch(r, "release-next", { "next.txt": "next\n" });
     expect(spawnSync("git", ["rev-parse", "--verify", "--quiet", "origin/release-next"], { cwd: r.dev }).status).not.toBe(0);
-    const out = run("target-new-base", r.dev, ["review", "feature", "--base", "origin/release-next", ...FAST]);
+    const out = run("target-new-base", r.dev, ["review", "--agent", "feature", "--base", "origin/release-next", ...FAST]);
     expect(out.status, out.stderr).toBe(0);
     expect(out.stderr).toContain("base origin/release-next (from --base)");
   });
@@ -580,7 +581,7 @@ describe("review <target> in a partial clone", () => {
     git(partial, "cat-file", "-p", "origin/y:y.txt");
     const missing = () => spawnSync("git", ["cat-file", "-e", "origin/x:big.txt"], { cwd: partial, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" } }).status !== 0;
     expect(missing()).toBe(true);
-    const out = run("target-partial", partial, ["review", "origin/y", "--base", "origin/x", "--offline", ...FAST]);
+    const out = run("target-partial", partial, ["review", "--agent", "origin/y", "--base", "origin/x", "--offline", ...FAST]);
     expect(out.status).toBe(2);
     expect(out.stderr).toContain("not downloaded");
     expect(missing()).toBe(true);

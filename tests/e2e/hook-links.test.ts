@@ -5,10 +5,9 @@ import { describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { baseline, git, inventory, run } from "./support.js";
 
-// `hook pre-push` scans a pushed commit that is not the clean HEAD in a
-// temporary checkout and copies the work tree's settings into it. A pushed
-// commit can carry symbolic links where those settings go; the copy must
-// never write or delete through them.
+// `hook pre-push` looks up the review of a pushed commit from the run state
+// in .openqodex/. A pushed commit or the work tree can carry symbolic links
+// where that state goes; the hook must never write, delete or hang through them.
 const ZERO = "0".repeat(40);
 
 // A clean repo whose branch `pushed` holds one commit made by `plant`, with
@@ -75,15 +74,14 @@ describe("pre-push hook with links in the run state", () => {
     expect(push.status).toBe(0);
   });
 
-  it("refuses a .openqodex/.gitignore in the checkout that links outside, in one line, and leaves its target alone", () => {
+  it("leaves the target of a .openqodex/.gitignore that links outside alone", () => {
     const outside = outsideFolder();
     const before = inventory(outside, true);
     const dir = baseline();
     mkdirSync(join(dir, ".openqodex"));
     symlinkSync(join(outside, ".gitignore"), join(dir, ".openqodex/.gitignore"));
     const push = run("hook-links-checkout-gitignore", dir, ["hook", "pre-push"], { input: "", timeout: BOUNDED });
-    expect(push.status).toBe(2);
-    expect(push.stderr).toContain(".gitignore is a symbolic link");
+    expect(push.status).toBe(0);
     expect(inventory(outside, true)).toEqual(before);
   });
 

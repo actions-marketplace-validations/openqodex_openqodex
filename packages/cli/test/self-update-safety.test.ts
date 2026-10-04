@@ -379,7 +379,7 @@ describe("12 and 13. the user-scope skill and the rules", () => {
     const r = cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
     expect(r.status, r.stderr).toBe(0);
     expect(readFileSync(skillPath(s), "utf8")).toContain("guide skill");
-    expect(readFileSync(skillPath(s), "utf8")).not.toContain("## The finding shape");
+    expect(readFileSync(skillPath(s), "utf8")).not.toContain("## Reviewing a branch or a pull request");
   });
 
   it("the user-scope skill is a stub with who reviews, that sends the agent to guide skill (failure 13)", () => {
@@ -389,7 +389,7 @@ describe("12 and 13. the user-scope skill and the rules", () => {
       expect(text, p).toMatch(/^---\nname: openqodex\ndescription: /);
       expect(text, p).toContain("## Who reviews");
       expect(text, p).toContain(`'${join(s.oqHome, "bin/openqodex")}' guide skill`);
-      expect(text, p).not.toContain("## The finding shape");
+      expect(text, p).not.toContain("## Reviewing a branch or a pull request");
       expect(text, p).not.toMatch(/npx -y openqodex@/);
     }
   });
@@ -398,8 +398,8 @@ describe("12 and 13. the user-scope skill and the rules", () => {
     const s = installed();
     const r = launch(s, ["guide", "skill"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("## The finding shape");
-    expect(r.stdout).toContain(`'${join(s.oqHome, "bin/openqodex")}' review --agent`);
+    expect(r.stdout).toContain("## Reviewing a branch or a pull request");
+    expect(r.stdout).toContain(`'${join(s.oqHome, "bin/openqodex")}' review\n`);
     expect(r.stdout).not.toMatch(/npx -y openqodex@/);
     expect(r.stdout).not.toContain("guide skill` and follow");
     expect(r.stdout).not.toContain("When the file `~/.openqodex/bin/openqodex` exists");
@@ -409,7 +409,7 @@ describe("12 and 13. the user-scope skill and the rules", () => {
     const s = sandbox();
     const r = cli(s, ["guide", "skill"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain(`npx -y openqodex@${version} review --agent`);
+    expect(r.stdout).toContain(`npx -y openqodex@${version} review\n`);
     expect(r.stdout).not.toContain("When the file `~/.openqodex/bin/openqodex` exists");
   });
 
@@ -419,7 +419,7 @@ describe("12 and 13. the user-scope skill and the rules", () => {
     for (const p of [join(s.repo, ".cursor/rules/openqodex.mdc"), join(s.home, "Documents/Cline/Rules/openqodex.md")]) {
       const text = readFileSync(p, "utf8");
       expect(text, p).not.toMatch(/npx -y openqodex@/);
-      expect(text, p).toContain(`${launcher} review --agent`);
+      expect(text, p).toContain(`${launcher} review\``);
       expect(text, p).toContain(`${launcher} guide skill`);
     }
   });
@@ -428,7 +428,7 @@ describe("12 and 13. the user-scope skill and the rules", () => {
     const s = sandbox();
     expect(cli(s, ["init", "--yes", "--project", "--agent", "cursor", "--agent", "cline"]).status).toBe(0);
     for (const p of [".cursor/rules/openqodex.mdc", ".clinerules/openqodex.md"]) {
-      expect(readFileSync(join(s.repo, p), "utf8"), p).toContain(`npx -y openqodex@${version} review --agent`);
+      expect(readFileSync(join(s.repo, p), "utf8"), p).toContain(`npx -y openqodex@${version} review\``);
     }
   });
 });
@@ -457,53 +457,65 @@ describe("14. Claude Code permission rules", () => {
       const body = r.slice("Bash(".length, -1);
       return body.endsWith(" *") ? command === body.slice(0, -2) || command.startsWith(body.slice(0, -1)) : command === body;
     });
-  const EXACT = ["review --agent", "review --finalize", "review --agent --all", "review --finalize --all"];
+  const EXACT = ["review", "review --all"];
   const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   it("allows exactly the review command lines and guide, with no wildcard after review", () => {
     const p = plain();
-    const r = p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
+    const r = p.run(["init", "--yes", "--hook", "none", "--no-repo", "--no-review", "--agent", "claude-code"]);
     expect(r.status, String(r.stderr)).toBe(0);
     const launcher = join(p.oqHome, "bin/openqodex");
     const rules = allow(join(p.home, ".claude/settings.json"));
     expect(rules).toEqual([...EXACT, ...EXACT.map((c) => `${c} --offline`), "guide", "guide *"].map((c) => `Bash(${launcher} ${c})`));
-    for (const banned of ["scan", "doctor", "trust", "update", "init", "report", "hook"]) {
+    for (const banned of ["scan", "doctor", "trust", "update", "init", "report", "hook", "review --agent", "review --finalize"]) {
       expect(rules.filter((x) => x.startsWith(`Bash(${launcher} ${banned}`)), banned).toEqual([]);
     }
   });
 
-  it("every review or guide line the stub, guide skill and a launcher-started brief give the agent is allowed; trust, report and doctor lines are not", () => {
+  it("every review or guide line the stub and guide skill give the agent is allowed; trust, report and doctor lines are not", () => {
     const p = plain();
-    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]).status).toBe(0);
+    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--no-review", "--agent", "claude-code"]).status).toBe(0);
     const launcher = join(p.oqHome, "bin/openqodex");
     const rules = allow(join(p.home, ".claude/settings.json"));
-    git(p.repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "start");
-    writeFileSync(join(p.repo, "app.py"), "print('hello')\n");
     const texts = [readFileSync(join(p.home, ".claude/skills/openqodex/SKILL.md"), "utf8")];
     const guide = spawnSync("sh", [launcher, "guide", "skill"], { cwd: p.repo, env: p.env, encoding: "utf8" });
     expect(guide.status, guide.stderr).toBe(0);
     texts.push(guide.stdout);
-    for (const args of [["review", "--agent"], ["review", "--agent", "--offline"], ["review", "--agent", "--all"], ["review", "--agent", "--all", "--offline"]]) {
-      const r = spawnSync("sh", [launcher, ...args, "--no-install"], { cwd: p.repo, env: p.env, encoding: "utf8" });
-      expect(r.status, `${args.join(" ")}: ${r.stderr}`).toBe(0);
-      texts.push(r.stdout);
-    }
+    // The procedure is one command now: no findings file to write, no finalize step.
+    for (const t of texts) expect(t).not.toMatch(/agent-findings\.json|findings file|--finalize/);
     const lines = texts.flatMap((x) => [...x.matchAll(new RegExp(`${escape(launcher)} [^\`\n]*`, "g"))].map((m) => m[0].trim()));
     // A review of a branch or a pull request names its target, which no exact rule can cover: the developer is asked.
-    const isTarget = (l: string) => / review --agent [^-]/.test(l);
+    const isTarget = (l: string) => / review [^-]/.test(l);
     const targetRuns = lines.filter(isTarget);
     expect(targetRuns.length).toBeGreaterThan(0);
     for (const l of targetRuns) expect(covers(rules, l), l).toBe(false);
     const agentRuns = lines.filter((l) => / (review|guide)\b/.test(l) && !l.includes("<topic>") && !isTarget(l));
     expect(agentRuns).toContain(`${launcher} guide skill`);
-    expect(agentRuns).toContain(`${launcher} review --agent`);
-    expect(agentRuns.filter((l) => l.includes("review --finalize")).length).toBeGreaterThanOrEqual(5);
+    expect(agentRuns).toContain(`${launcher} review`);
+    expect(agentRuns).toContain(`${launcher} review --all`);
+    expect(agentRuns.filter((l) => / review --(agent|finalize)\b/.test(l))).toEqual([]);
     for (const l of agentRuns) expect(covers(rules, l), l).toBe(true);
     const asked = lines.filter((l) => / (trust|report --send-last|doctor --install)\b/.test(l));
     expect(asked.length).toBeGreaterThan(0);
     for (const l of asked) expect(covers(rules, l), l).toBe(false);
-    for (const l of [`${launcher} review --agent --output /etc/x`, `${launcher} review --agent && rm -rf x`]) expect(covers(rules, l), l).toBe(false);
+    for (const l of [`${launcher} review --output /etc/x`, `${launcher} review && rm -rf x`]) expect(covers(rules, l), l).toBe(false);
   }, 180_000);
+
+  it("the two-step rules an earlier version granted are removed by the next init", () => {
+    const p = plain();
+    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--no-review", "--agent", "claude-code"]).status).toBe(0);
+    const launcher = join(p.oqHome, "bin/openqodex");
+    const settings = join(p.home, ".claude/settings.json");
+    const old = ["review --agent", "review --finalize", "review --agent --all", "review --finalize --all"].flatMap((l) => [l, `${l} --offline`]).map((l) => `Bash(${launcher} ${l})`);
+    const data = JSON.parse(readFileSync(settings, "utf8")) as { permissions: { allow: string[] } };
+    data.permissions.allow.push(...old);
+    writeFileSync(settings, `${JSON.stringify(data, null, 2)}\n`);
+    const rec = JSON.parse(readFileSync(join(p.oqHome, "install.json"), "utf8")) as { allowRules: { path: string; rule: string }[] };
+    rec.allowRules.push(...old.map((rule) => ({ path: settings, rule })));
+    writeFileSync(join(p.oqHome, "install.json"), JSON.stringify(rec, null, 2));
+    expect(p.run(["init", "--yes", "--hook", "none", "--no-repo", "--no-review", "--agent", "claude-code"]).status).toBe(0);
+    for (const rule of old) expect(allow(settings)).not.toContain(rule);
+  });
 
   it("a second init adds no rule, and uninstall removes only the rules init added", () => {
     const p = plain();
@@ -561,7 +573,7 @@ describe("16 and 17. what init writes into a repository", () => {
     expect(cli(s, ["init", "--yes", "--project", "--agent", "claude-code"]).status).toBe(0);
     const text = readFileSync(join(s.repo, ".claude/skills/openqodex/SKILL.md"), "utf8");
     expect(text).not.toContain("~/.openqodex/bin/openqodex");
-    expect(text).toContain(`npx -y openqodex@${version} review --agent`);
+    expect(text).toContain(`npx -y openqodex@${version} review\n`);
   });
 
   it("a team file the repo ignores is not written and not named to commit (failure 17)", () => {
@@ -653,7 +665,7 @@ describe("20 to 27. the third review", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(existsSync(join(s.oqHome, "bin/openqodex"))).toBe(true);
     const rule = readFileSync(join(other, ".cursor/rules/openqodex.mdc"), "utf8");
-    const command = /`('[^']+') review --agent`/.exec(rule)?.[1];
+    const command = /`('[^']+') review`/.exec(rule)?.[1];
     expect(command).toBe(`'${join(s.oqHome, "bin/openqodex")}'`);
     expect(spawnSync("sh", ["-c", `${command} --version`], { encoding: "utf8", env: env(s) }).stdout.trim()).toBe(version);
   }, 120_000);

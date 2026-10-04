@@ -43,6 +43,7 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
   const c = pc.createColors(opts.color);
   const verdict = verdictLine(report);
   const out: string[] = [report.verdict === "blocked" ? c.red(c.bold(verdict)) : c.green(c.bold(verdict))];
+  if (report.reviewed_by) out.push(display(report.reviewed_by));
   const risk = impactLine(report);
   if (risk) out.push(display(risk));
 

@@ -4,13 +4,29 @@
 
 ## scan
 
-Plain `openqodex review` does the same. Kept under this name for the git pre-push hook of earlier releases, the pre-commit hook and the GitHub Action, which call it.
+For machines. Kept for the pre-commit hook and the GitHub Action, which call it, and for the git pre-push hook of earlier releases.
 
 ```
-openqodex scan [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>]
+openqodex scan [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>] [--block-on-severity <severity>]
 ```
 
-Runs the scanners on the change and prints the report. No model is involved. The git hook, the pre-commit hook and the GitHub Action run this command.
+Runs the scanners on the change and prints their findings, labelled as scanner data. No model is involved and nothing is checked: it is not a review. The pre-commit hook and the GitHub Action run this command. `--block-on-severity` sets the severity that makes it exit 1, and wins over `review.block_on_severity` in the config.
+
+## review --agent and review --finalize
+
+The two-step protocol of earlier versions, kept so a skill installed before the one-command review keeps working, and the fallback `review` names when no reviewer can start (only Codex or only Cursor installed, or Claude Code logged out). The brief `review --agent` prints carries the whole procedure. New skills, rules and permission rules no longer name it.
+
+```
+openqodex review --agent [--all | <target>] [...]
+openqodex review --finalize [--run <id> | path]
+```
+
+- `review --agent`: run the scanners, write the brief and print it for the agent running the command.
+- `review --finalize [path]`: check the agent's findings file and write the report. Without a path it reads `agent-findings.json` in the newest report folder. With a path it finds the run by the `change_id` in that file. `--run <id>` names the run folder instead; a review of a branch or a pull request is finalized only that way.
+
+`--finalize` exits 2 when the findings file breaks the shape (naming the first wrong field), the change or the config moved since the brief, a finding cites a scanner rule or candidate that is not in this scan, the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`, or, for a branch or a pull request, the temporary checkout moved from the reviewed commit or is gone. When the launcher started the review, the brief's finalize command is the plain line `<launcher> review --finalize`, with `--all` and `--offline` as the review had them. When the version that runs `--finalize` is not the one that wrote the brief, and that one is installed, it hands the run to that version. It never repairs a finding.
+
+A review finished this way is a legacy review: the agent that ran it reviewed the change itself. Its report says so on the first line after the verdict, in every format ("Reviewed by the coding agent you are using."; `reviewed_by` in `report.json`, a run property in `report.sarif`). Finalize writes a legacy record to `~/.openqodex/receipts/`, and the push hooks accept it as reviewed, with a line naming who reviewed; it never counts as a complete record.
 
 ## doctor
 
@@ -43,12 +59,12 @@ openqodex hook install [--force]
 openqodex hook uninstall
 ```
 
-- `hook check`: the push gate. The Claude Code and Codex hooks call it before a shell command. It reads the hook's JSON on stdin. It always exits 0.
-- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `hook pre-push`, which scans each commit the push sends against the remote's tip of its branch (`agents` has the details). It stops the push only when the scan exits 1. A scan that fails for its own reasons never stops the push.
+- `hook check`: the push gate. The Claude Code and Codex hooks call it before a shell command. It reads the hook's JSON on stdin and looks up the review of exactly the change being pushed. It always exits 0.
+- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `hook pre-push`, which does the same lookup for each commit the push sends (`agents` has the details). It prints no scanner findings and never starts a review. It stops the push (exit 1) only when the config sets `block_on_severity` and the review is missing or blocked. A lookup that fails for its own reasons never stops the push.
 - `hook install` refuses to replace a hook it did not write. `--force` replaces it and keeps the old hook as `pre-push.openqodex.bak`.
 - `hook uninstall`: remove that hook and put back the one it replaced. A hook you edited after install is left in place.
 
-When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook: `npx -y openqodex@<version> hook pre-push || [ $? -ne 1 ]`. The part after `||` makes the line stop the push only on exit 1, as the hook `hook install` writes does: a scan that fails for its own reasons (exit 2) never stops the push.
+When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook: `npx -y openqodex@<version> hook pre-push || [ $? -ne 1 ]`. The part after `||` makes the line stop the push only on exit 1, as the hook `hook install` writes does: a lookup that fails for its own reasons (exit 2) never stops the push.
 
 `init` asks whether to install the git hook. `agents` explains the push gate.
 

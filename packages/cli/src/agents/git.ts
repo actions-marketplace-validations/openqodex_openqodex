@@ -31,6 +31,27 @@ export async function gitPath(repoRoot: string, name: string): Promise<string> {
   return isAbsolute(p) ? p : resolve(repoRoot, p);
 }
 
+// The repository's git folders, absolute: this work tree's own and the one
+// all work trees share (the same folder outside a linked work tree).
+export async function gitDirs(repoRoot: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const flag of ["--absolute-git-dir", "--git-common-dir"]) {
+    const p = await gitLine(repoRoot, ["rev-parse", flag]);
+    if (p !== null) out.push(isAbsolute(p) ? p : resolve(repoRoot, p));
+  }
+  return out;
+}
+
+// True when `file` lies in the work tree and outside every git folder: a
+// path git could stage.
+export function inWorkTree(repoRoot: string, gitFolders: string[], file: string): boolean {
+  const inside = (dir: string) => {
+    const rel = relative(dir, file);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
+  return inside(repoRoot) && !gitFolders.some(inside);
+}
+
 export async function trackedFiles(repoRoot: string): Promise<string[]> {
   const { stdout } = await execFileAsync("git", ["ls-files", "-z"], { cwd: repoRoot, maxBuffer: 256 << 20 });
   return stdout.split("\0").filter((p) => p !== "");

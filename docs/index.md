@@ -11,7 +11,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - Scanner: a program that checks code without a model, such as gitleaks or semgrep.
 - Finding: one problem at one place in the code, with a severity.
 - Candidate: a scanner finding on a changed line, waiting for the agent to verify it.
-- Brief: the text `openqodex review --agent` prints for the agent to review from.
+- Brief: the text `openqodex review` gives its reviewer to review from.
 - Report: the result of a scan or a review, written as `report.md`, `report.json` and `report.sarif`.
 - Verdict: `passed` or `blocked`.
 

@@ -82,6 +82,27 @@ function run(name: string, version: string | null, results: SarifResult[]) {
   };
 }
 
+// A review run by `review` itself says whether it completed, so a code
+// scanning view cannot read an incomplete review's empty results as clean:
+// the run's invocation failed, a notification names what is missing, and the
+// completion record rides along. A scan report has no completion record.
+function completionOf(report: Report): Record<string, unknown> {
+  const c = report.completion;
+  if (c === undefined) return {};
+  const complete = c.status === "complete" && report.verdict !== "incomplete";
+  return {
+    invocations: [
+      {
+        executionSuccessful: complete,
+        toolExecutionNotifications: complete
+          ? []
+          : [{ level: "error", message: { text: `The review is incomplete, so it is not a clean result: ${c.missing.join("; ") || "no completion record"}` } }],
+      },
+    ],
+    properties: { completion: c },
+  };
+}
+
 // The scanner a token "<source>:<rule>" came from. A custom source holds a
 // colon itself ("custom:trivy"), so the longest known scanner name wins.
 function scannerOf(token: string, report: Report): string {
@@ -101,7 +122,9 @@ export function renderSarif(report: Report): string {
   for (const c of report.not_reviewed) add(c.source, fromCandidate(c));
 
   const versions = new Map(report.scanners.map((s) => [s.scanner as string, s.version]));
-  const runs = [run("openqodex", null, agent)];
+  const completion = completionOf(report);
+  const reviewed_by = report.reviewed_by ? { properties: { ...(completion.properties as Record<string, unknown> | undefined), reviewed_by: report.reviewed_by } } : {};
+  const runs: Record<string, unknown>[] = [{ ...run("openqodex", null, agent), ...completion, ...reviewed_by }];
   for (const [source, results] of byScanner) runs.push(run(source, versions.get(source) ?? null, results));
 
   const sarif = {

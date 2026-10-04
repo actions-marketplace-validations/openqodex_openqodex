@@ -8,7 +8,7 @@
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm, stat, utimes } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm, stat, utimes, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +24,8 @@ export const DIFF_CAP_BYTES = 5 * 1024 * 1024;
 
 // Changed-line coverage is held as one number per added line, so it is capped
 // too. A file that would take the total past this gets no coverage and is
-// left out of the brief; it is listed as not reviewed.
+// left out of the brief; it is listed as not reviewed and as uncovered, so
+// a review counts it as read only when the reviewer read all of it.
 export const COVERAGE_MAX_LINES = 500_000;
 
 // Coverage needs only the first character of a patch line and the headers.
@@ -331,7 +332,7 @@ function excluded(path: string, exclude: string[]): boolean {
 
 // git separates alternate object folders with ":", so a path is C-quoted to
 // survive a colon (or a leading quote) in it.
-function quoteAlternate(path: string): string {
+export function quoteAlternate(path: string): string {
   return `"${path.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
@@ -368,6 +369,15 @@ export async function getChange(args: {
   exclude: string[];
   // Config.defaultBase: what the default scope diffs against with no upstream.
   defaultBase?: string | null;
+  // Called with the git tree of the working state the change is taken from,
+  // while its objects still exist: `objects` holds the new ones and
+  // `alternates` the repo's own. The review copies its snapshot from it, so
+  // the snapshot and the change are the same state by construction.
+  onTree?: (tree: { sha: string; objects: string; alternates: string }) => Promise<void>;
+  // Files to take as they were, not as they are on disk: the path relative
+  // to the repo and its earlier text, or null for a file that did not exist.
+  // `init` passes the files it wrote, so the change is the developer's own.
+  overlay?: { path: string; content: string | null }[];
 }): Promise<Change> {
   const { repoRoot, scope, exclude } = args;
   const base = await resolveBase(repoRoot, scope, args.defaultBase ?? null);
@@ -405,6 +415,21 @@ export async function getChange(args: {
     // repo's own .gitignore ignores. The report folder is left out by the
     // pathspec on every diff below instead.
     await gitOk(repoRoot, ["add", "-A", "--", "."], { env, config: noFilters });
+    for (const [i, o] of (args.overlay ?? []).entries()) {
+      if (o.content === null) {
+        await gitOk(repoRoot, ["update-index", "--force-remove", "--", o.path], { env });
+        continue;
+      }
+      const file = join(tmp, `overlay-${i}`);
+      await writeFile(file, o.content);
+      const blob = (await gitOk(repoRoot, ["hash-object", "-w", "--no-filters", "--", file], { env })).toString("utf8").trim();
+      await gitOk(repoRoot, ["update-index", "--add", "--cacheinfo", `100644,${blob},${o.path}`], { env });
+    }
+    if (args.onTree) {
+      // Written into the temp object folder, like the blobs `add` wrote.
+      const sha = (await gitOk(repoRoot, ["write-tree"], { env })).toString("utf8").trim();
+      await args.onTree({ sha, objects: tmpObjects, alternates: objectsPath });
+    }
 
     return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], newSide: ":", env, exclude });
   } finally {
@@ -525,6 +550,8 @@ async function diffChange(args: {
   const covered = new Set<string>();
   const briefable = new Set<string>();
   const tooLarge = new Set<string>();
+  // Past the coverage cap: no line of these is mapped.
+  const uncoverable = new Set<string>();
   let additions = 0;
   let deletions = 0;
   let coveredLines = 0;
@@ -541,6 +568,7 @@ async function diffChange(args: {
     if (pair.status !== "deleted") {
       if (coveredLines + stat.additions > COVERAGE_MAX_LINES) {
         tooLarge.add(pair.path);
+        uncoverable.add(pair.path);
         continue;
       }
       coveredLines += stat.additions;
@@ -564,7 +592,9 @@ async function diffChange(args: {
     (onLine) =>
       gitLines(
         repoRoot,
-        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+        // A file left out of the brief keeps its coverage: its changed lines
+        // must then be read through the tools, or they count as unread.
+        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...uncoverable])),
         opts,
         COVERAGE_MAX_LINE_BYTES,
         onLine,
@@ -629,10 +659,8 @@ async function diffChange(args: {
   );
 
   const notReviewed = files.filter((f) => tooLarge.has(f.path)).map((f) => f.path);
-  const diff = files
-    .filter((f) => text.has(f.path))
-    .map((f) => `${text.get(f.path)!.join("\n")}\n`)
-    .join("");
+  const diffs = files.filter((f) => text.has(f.path)).map((f) => ({ path: f.path, text: `${text.get(f.path)!.join("\n")}\n` }));
+  const diff = diffs.map((d) => d.text).join("");
   const changedPaths = files.filter((f) => f.status !== "deleted").map((f) => f.path);
 
   return {
@@ -646,7 +674,9 @@ async function diffChange(args: {
     coverage,
     deletionPoints,
     diff,
+    diffs,
     notReviewed,
+    uncovered: files.filter((f) => uncoverable.has(f.path) && !f.binary).map((f) => f.path),
     stats: { files: files.length, additions, deletions },
   };
 }

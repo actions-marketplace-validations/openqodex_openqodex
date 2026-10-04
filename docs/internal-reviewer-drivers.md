@@ -1,0 +1,143 @@
+# Reviewer drivers
+
+This page is for contributors. It records how `openqodex review` starts its own reviewer process, and what was observed with the real binary before a driver was enabled. A driver is enabled only when every property below was shown by a real run.
+
+The reviewer is a separate coding-agent process that openqodex starts, without a window, for one review. It reads a frozen copy of the change (the snapshot) and answers with one JSON object. The trace is the agent's own event stream: every tool call, its input and whether it succeeded.
+
+## Claude Code
+
+Tested with Claude Code 2.1.289 (`claude --version`) on macOS, 2026-10-03, on a throwaway folder and on the demo repo.
+
+### The command line
+
+The driver starts this command without a shell, with the snapshot as the working directory, and writes the brief to standard input:
+
+```
+claude -p --output-format stream-json --verbose --input-format stream-json
+  --tools Read,Grep,Glob
+  --permission-mode dontAsk
+  --setting-sources ""
+  --settings {"autoMemoryEnabled":false,"hooks":{},"disableAllHooks":true}
+  --strict-mcp-config --mcp-config {"mcpServers":{}}
+  --disable-slash-commands
+  --no-session-persistence
+```
+
+The child gets an environment built from an allowlist (`reviewerEnv` in `packages/cli/src/reviewers/claude.ts`): `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, locale, `TERM`, `TZ`, `CLAUDE_CONFIG_DIR`, proxy and CA settings, the `ANTHROPIC_*` key, URL and model variables, and the Bedrock, Vertex or Foundry variables only when the matching `CLAUDE_CODE_USE_*` flag is set; plus `OPENQODEX_REVIEW_DEPTH=1`. No other variable is copied, so no developer token and nothing that ties the child to a running Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, messaging sockets) reaches it. A run from inside a Claude Code session with this environment worked as the runs below did.
+
+### What each flag was observed to do
+
+| Flag | Observed |
+|---|---|
+| `-p` with `--input-format stream-json` | A fresh session that reads user messages as JSON lines on standard input. After each answer it prints a `result` event and waits for the next message, so a correction round goes to the same session. Closing standard input ends the process with exit 0. |
+| `--output-format stream-json --verbose` | One JSON event per line: an `init` event (tools, MCP servers, plugins, permission mode, memory paths, version), every `tool_use` with its input, every `tool_result` with `is_error`, a `permission_denied` event for each refusal, and a `result` event with the final text, turns, usage and cost. For a Read, `tool_use_result.file` gives the path, `startLine` and `numLines` delivered. |
+| `--tools Read,Grep,Glob` | The `init` event lists exactly `Glob`, `Grep`, `Read`. Asked to run `ls /` and to write a file, the model answered that it has no Bash or Write tool; no such tool call appears in the trace. The `Agent` tool is absent, so no subagent can start. |
+| `--permission-mode dontAsk` | Reads inside the working directory succeed. A Read of an absolute path outside it (`/tmp/.../outside/secret.txt`, `/etc/hosts`, a decoy ssh config), a relative path that leaves it (`../outside/secret.txt`), a Read through a link inside the folder that points outside, and a Grep or Glob rooted outside (`/tmp/...`, `/`) were each refused with a `permission_denied` event and an error result. A recursive Grep and a `**/*` Glob in the folder did not follow the link out. |
+| `--tools Read,Grep,Glob,WebSearch,WebFetch --allowedTools WebSearch,WebFetch` (only with `reviewer_web: on`) | The `init` event lists the five tools. Without `--allowedTools`, `dontAsk` refused both web tools ("Permission to use WebFetch has been denied because Claude Code is running in don't ask mode"); with it, a WebFetch of example.com and a WebSearch both returned results (2026-10-03). |
+| `--setting-sources ""` | No user, project or local settings file is read. In the same folder, a run without this flag loaded the project `CLAUDE.md` canary (the answer ended with the canary word) and the user's global instructions (the answer quoted them, about 155,000 input tokens); with it, the input was about 4,500 tokens and neither canary nor any sentence of the global file appeared anywhere in the event stream. With `--include-hook-events`, a run reading user settings showed 11 hook events; this run showed none. |
+| `--settings {"autoMemoryEnabled":false,"hooks":{},"disableAllHooks":true}` | The `init` event has no `memory_paths`: auto memory is off. With `disableAllHooks`, a SessionStart hook that a terminal wrapper (cmux) added to every `claude` it starts no longer ran: 2 hook events without it, 0 with it (2026-10-04, Claude Code 2.1.289). The driver also stops the run if any hook event appears in the stream. A repository `AGENTS.md` with a canary instruction was not followed. |
+| `--strict-mcp-config --mcp-config {"mcpServers":{}}` | The `init` event lists no MCP server. |
+| `--disable-slash-commands` | The `init` event lists no skill and no slash command. |
+| `--no-session-persistence` | Nothing is saved for a later `--resume`; the correction rounds use the open process instead. |
+
+`AGENTS.md`: a canary there was not loaded in any run, with or without settings. The built-in plugins (`cc-plugin-agents-md`, `cc-plugin-telemetry`, `cc-plugin-plugin-authoring`) stay listed; they are part of Claude Code and read no repository instruction file in this configuration.
+
+### Where it works
+
+- Started from a Bash tool inside a running Claude Code session: works, with the same tools and the same refusals.
+- Started from a plain environment (`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR` and the developer's own `CLAUDE_CONFIG_DIR`): works. Without `USER` the login in the macOS keychain is not found and the run ends with "Not logged in".
+- A temporary `CLAUDE_CONFIG_DIR` loses the login, so the driver keeps the developer's own configuration folder and excludes its contents with the flags above.
+
+### Detecting it
+
+- `claude --version` prints the version.
+- `claude auth status` prints JSON with `loggedIn`. Exit 1 and `"loggedIn": false` mean the reviewer cannot start.
+
+### Usage
+
+Each `result` event carries `num_turns` and `usage` for that turn (input, output and cache tokens), and `total_cost_usd` and `modelUsage` for the session so far. The driver adds up the turns and takes tokens and cost from the last `result` event.
+
+### The boundary and the alarm
+
+The boundary is Claude Code's own permission rules: `--tools Read,Grep,Glob` and `--permission-mode dontAsk` with no settings source, which refused every read outside the working folder in the runs above. The alarm is the tool's own check of the event stream (`packages/cli/src/reviewers/trace.ts`), which does not trust the boundary and fails closed:
+
+- the run fails when the `init` event lists any tool beyond Read, Grep and Glob, any MCP server or a memory path; the `Agent` tool is never listed, so no subagent or nested turn can make a call the stream does not show, and every `tool_use` in the stream is checked whichever turn it came from;
+- every tool call counts from the moment the agent asks for it, with or without a result; a tool name other than the three makes the review incomplete;
+- every path-bearing input (`file_path`, `path`, `notebook_path`, `cwd`, `directory`, and a `pattern` or `glob` that starts at `/`, `~`, a drive or `..`) is resolved against the snapshot, then through the real path of its deepest existing folder, and compared case-insensitively on macOS and Windows; a path with `$`, `%` or a NUL is refused, `~` is the home folder;
+- an input that is not an object, or a path field that is not text, makes the review incomplete;
+- any attempt outside the snapshot makes the review incomplete, even one the agent refused.
+
+The snapshot holds no links (they are written as plain files) and secrets the scanners found are redacted in every file of it before the reviewer starts; a file too large to check is removed from it.
+
+### What the agent stores
+
+With `--no-session-persistence` and auto memory off, real runs with Claude Code 2.1.289 left no transcript, no `history.jsonl` line and no project entry for a snapshot folder in the configuration folder (searched for the brief's text and the snapshot paths after the runs). An earlier run without `autoMemoryEnabled: false` left one empty `projects/<folder>/memory` folder; with the flag, none. The driver keeps the developer's configuration folder because a temporary one loses the login.
+
+### Not covered
+
+- Managed (policy) settings set by an organisation still apply; they can add hooks or permission rules. The trace check above still fails a run that reads outside the snapshot.
+- Each new Claude Code version can change these flags. Re-run these checks before raising the tested version.
+
+## Codex
+
+Not enabled. Tested with codex-cli 0.160.0 (`/opt/homebrew/bin/codex --version`) on macOS, 2026-10-03, logged in with a ChatGPT account, on a throwaway folder under `~/.openqodex/` with canaries. `--reviewer codex` names it, `auto` never picks it, and its `detect()` says why it is off. Two properties failed; the rest held.
+
+### The command line that was tested
+
+Started without a shell, from an environment built with `env -i` (`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`), the prompt on standard input:
+
+```
+codex exec --json --color never --ephemeral --skip-git-repo-check
+  --ignore-user-config --ignore-rules
+  -C <snapshot>
+  -c approval_policy="never"
+  -c default_permissions="openqodex_review"
+  -c permissions.openqodex_review.filesystem={":minimal"="read",":project_roots"="read","/tmp"="deny"}
+  -c web_search="disabled"
+  -c project_doc_max_bytes=0
+  -c allow_login_shell=false
+  -c shell_environment_policy.inherit="core"
+  -c skills.include_instructions=false -c skills.bundled.enabled=false
+  --disable plugins --disable apps --disable hooks --disable multi_agent --disable memories
+  --disable browser_use --disable computer_use --disable image_generation --disable skill_search
+  --disable tool_suggest --disable goals --disable in_app_browser --disable view_image
+  -
+```
+
+`codex sandbox -c ... -- <command>` runs one command under the same sandbox without a model, and `codex debug prompt-input -c ...` prints what the model would be given; both cost nothing and were used for most checks below.
+
+### What each part was observed to do
+
+| Part | Observed |
+|---|---|
+| `exec --json` | One JSON event per line: `thread.started`, `turn.started`, `item.started` and `item.completed` for messages and commands, `turn.completed` with `usage` (`input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`). The run ends after one answer. |
+| `--ephemeral` | No rollout file was written for the test folder. A follow-up in the same session is not possible, so a correction round would need a new run that carries the previous answer. A subagent cannot start: `spawn_agent` failed with "no rollout found for thread id". |
+| `-s read-only` alone | Writes and network were refused, but every read was allowed: `cat` of a file in another `/tmp` folder, of `/etc/hosts` and `ls ~/.ssh` all succeeded. |
+| the `openqodex_review` permission profile | Reads outside the folder were refused (`Operation not permitted`): a file in a home folder outside it, `~/.ssh`, `~/.codex`, `~/Projects`, `$TMPDIR`, and `/tmp` with the `/tmp` deny entry. Reads inside it worked. `/etc` and the system folders `:minimal` names stay readable; without `:minimal` no command could start. `touch` was refused. `curl` could not resolve a host. The patch tool was refused ("writing is blocked by read-only sandbox"). |
+| `web_search="disabled"` | The model reported no web search tool. |
+| `project_doc_max_bytes=0` | A canary `AGENTS.md` in the folder did not appear in the prompt input or the answer. |
+| `skills.include_instructions=false` | Without it, a canary skill in the folder's `.agents/skills/` was listed to the model, which then followed it. With it, the skills block is gone from the prompt input. |
+| `--ignore-user-config` | The developer's `config.toml` (MCP servers, plugins, model, trusted projects) is not read. A canary `developer_instructions` in the folder's `.codex/config.toml` did not appear either way: the folder is not a trusted project. |
+
+### Why it is not enabled
+
+1. The developer's global instructions are loaded. `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`) appeared in the prompt input with every flag above, and the model quoted its first sentence. No configuration key removed it (`instructions`, `user_instructions`, `agents_md.enabled`, `include_agents_md`, `features.agents_md` were tried). Only a different `CODEX_HOME` leaves it out, and that moves the login: a copy of `auth.json` would refresh its token on its own and can leave the developer's real login with a used refresh token.
+2. The event stream does not show every command. Every current model in the catalog (`codex debug models`) has `tool_mode: code_mode_only` except gpt-5.5: the shell is a nested tool inside a code tool. In one run, two shell commands ran (their output came back in the answer) and no `command_execution` event appeared in the stream. So neither the alarm (every read checked from the trace) nor coverage from the trace can be computed. `--disable code_mode_host` removes the shell altogether ("code-mode host is disabled").
+
+Read confinement, by contrast, held: the permission profile is a real boundary, stronger than `-s read-only`. The code tool's own JavaScript runtime has no file or network access (`require`, `import("node:fs")` and `fetch` were all undefined or refused).
+
+### Where it was run
+
+From a Bash tool inside a running Claude Code session, through `env -i`: it worked. A plain terminal was not tried separately, because the driver stays off.
+
+### Usage
+
+Each `turn.completed` event carries `usage`. The test runs used 51,000 to 92,000 input tokens (most of them cached) and 600 to 950 output tokens per run, in 45 seconds or less.
+
+### What would enable it
+
+A switch that leaves out `$CODEX_HOME/AGENTS.md` without moving the login, and an event for every command the code tool runs. Re-run the checks above on each new Codex version.
+
+## Cursor
+
+Not enabled. `cursor-agent` 2025.09.18-7ae6800 was on this Mac and not logged in. Its help shows `-p` ("Has access to all tools, including write and bash"), `--output-format stream-json`, `--model`, `--force` and `--resume`: no option to limit its tools, no read-only sandbox, no switch to skip the repository's rules or the developer's settings. None of the checks above can pass with those options, so no invocation was built. Cursor users get the full review through Claude Code when it is installed.

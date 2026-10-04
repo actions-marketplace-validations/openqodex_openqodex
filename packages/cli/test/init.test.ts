@@ -376,7 +376,7 @@ describe("init, the hook question and the instruction section", () => {
     const first = cli(s, ["init", "--yes", "--agent", "all"]);
     expect(first.status, first.stderr).toBe(0);
     expect(readFileSync(join(s.repo, ".git/hooks/pre-push"), "utf8")).toContain(join(s.oqHome, "bin/openqodex"));
-    expect(first.stdout).toContain("Every push from this repo now gets a scan");
+    expect(first.stdout).toContain("Every push from this repo is now checked for a review");
     const before = snapshot(s);
     // No terminal and no --yes: a run that had to ask or write would exit 2.
     const second = cli(s, ["init", "--agent", "all"]);
@@ -402,7 +402,7 @@ describe("init, the hook question and the instruction section", () => {
     expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
     const installed = readFileSync(claudeMd, "utf8");
     expect(installed).toContain(SECTION_START);
-    expect(installed).toContain("separate subagent");
+    expect(installed).toContain("its own reviewer process");
     writeFileSync(claudeMd, `${installed}\nMore of mine.\n`);
 
     const r = cli(s, ["init", "--uninstall", "--yes"]);
