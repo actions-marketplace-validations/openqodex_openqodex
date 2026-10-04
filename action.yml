@@ -22,6 +22,10 @@ inputs:
     description: Fail the job when OpenQodex itself could not run the scan (exit 2). By default a tool failure is a warning.
     required: false
     default: "false"
+  config-from:
+    description: In a pull request, read the OpenQodex config from the base branch (base, the default) or from the pull request's own code (head). The pull request's author can change the head config to hide findings.
+    required: false
+    default: "base"
 
 outputs:
   status:
@@ -40,14 +44,9 @@ runs:
         path: ~/.openqodex/tools
         key: openqodex-tools-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
 
-    - name: Install the scanners
-      shell: bash
-      env:
-        OPENQODEX_VERSION: ${{ inputs.version }}
-      run: npx -y "openqodex@${OPENQODEX_VERSION}" doctor --install
-
     # Inputs and event values reach the shell through the environment only,
     # never pasted into the script, so a branch name cannot inject a command.
+    # The scanner install runs here too, under the same tool-failure policy.
     - name: Scan the change
       id: scan
       shell: bash
@@ -55,6 +54,8 @@ runs:
         OPENQODEX_VERSION: ${{ inputs.version }}
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         BLOCK_ON_SEVERITY: ${{ inputs.block-on-severity }}
+        CONFIG_FROM: ${{ inputs.config-from }}
+        EVENT_NAME: ${{ github.event_name }}
       # The SARIF goes to a fresh folder under RUNNER_TEMP, never into the
       # checkout, so a file the pull request ships cannot pass as the result.
       run: |
@@ -62,14 +63,39 @@ runs:
         out_dir="$(mktemp -d "${RUNNER_TEMP}/openqodex-XXXXXX")"
         sarif="${out_dir}/openqodex.sarif"
         err="${out_dir}/stderr.txt"
-        args=(scan --format sarif --output "$sarif")
+        # The last non-empty line of a file, safe inside a workflow command:
+        # one line, no control characters, no %, no run of colons.
+        last_line() {
+          { grep -v '^[[:space:]]*$' "$1" || true; } | tail -n 1 | tr -d '\000-\037\177' | sed -e 's/%/%25/g' -e 's/::*/:/g' | cut -c 1-300
+        }
+        # In a pull request the config comes from the base branch unless the
+        # workflow says head: the pull request's own config could hide findings.
+        config_args=()
+        if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
+          if [ "$CONFIG_FROM" != "head" ] && [ -n "$BASE_SHA" ]; then
+            base_config="${out_dir}/base-config.yaml"
+            git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --quiet origin "$BASE_SHA" || true
+            if ! git show "${BASE_SHA}:.openqodex/config.yaml" > "$base_config" 2>/dev/null; then
+              git show "${BASE_SHA}:.openqodex.yaml" > "$base_config" 2>/dev/null || : > "$base_config"
+            fi
+            config_args=(--config "$base_config")
+          fi
+        fi
+        args=(scan "${config_args[@]}" --format sarif --output "$sarif")
         if [ -n "$BASE_SHA" ]; then args+=(--base "$BASE_SHA"); fi
         if [ -n "$BLOCK_ON_SEVERITY" ]; then args+=(--block-on-severity "$BLOCK_ON_SEVERITY"); fi
         set +e
-        npx -y "openqodex@${OPENQODEX_VERSION}" "${args[@]}" 2> >(tee "$err" >&2)
+        npx -y "openqodex@${OPENQODEX_VERSION}" doctor --install "${config_args[@]}" 2> >(tee "$err" >&2)
         code=$?
-        set -e
         wait
+        if [ "$code" = "0" ]; then
+          npx -y "openqodex@${OPENQODEX_VERSION}" "${args[@]}" 2> >(tee "$err" >&2)
+          code=$?
+          wait
+        elif [ "$code" != "2" ]; then
+          code=2
+        fi
+        set -e
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         if [ "$code" = "0" ]; then
           echo "status=passed" >> "$GITHUB_OUTPUT"
@@ -77,8 +103,7 @@ runs:
           echo "status=blocked" >> "$GITHUB_OUTPUT"
         else
           echo "status=tool-failed" >> "$GITHUB_OUTPUT"
-          # The last line the tool wrote, made safe for a workflow command.
-          reason="$(grep -v '^[[:space:]]*$' "$err" | tail -n 1 | tr -d '\r' | sed -e 's/%/%25/g' -e 's/::/: :/g' | cut -c 1-300)"
+          reason="$(last_line "$err")"
           [ -n "$reason" ] || reason="exit code $code"
           echo "::warning title=OpenQodex did not run::${reason}"
           echo "OpenQodex did not run: ${reason}" >> "$GITHUB_STEP_SUMMARY"
