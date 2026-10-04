@@ -165,10 +165,10 @@ function touchesChange(f: AgentFinding, change: Change): string | null {
   if (lines) {
     for (const n of lines) if (f.line_number <= n && n <= end) return null;
   }
-  // A deletion has no line of its own: the line just above and the line just
-  // below it in the new file stand for it.
+  // A deletion has no line of its own: the lines just above and just below it
+  // in the new file, those that exist, stand for it.
   for (const p of change.deletionPoints.get(f.file_path) ?? []) {
-    for (const n of [p.after, p.after + 1]) if (n >= 1 && f.line_number <= n && n <= end) return null;
+    for (const n of p.anchors) if (f.line_number <= n && n <= end) return null;
   }
   const where = end > f.line_number ? `lines ${f.line_number} to ${end} are` : `line ${f.line_number} is`;
   return `${where} not a line this change added or modified`;

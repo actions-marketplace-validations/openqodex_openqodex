@@ -67,10 +67,10 @@ export function parseDiffCoverage(diff: string): DiffCoverage {
 export function createCoverageParser(): {
   push(rawLine: string): void;
   result(): DiffCoverage;
-  deletionPoints(): Map<string, DeletionPoint[]>;
+  deletionPoints(): Map<string, Omit<DeletionPoint, "anchors">[]>;
 } {
   const out: DiffCoverage = new Map();
-  const deleted = new Map<string, DeletionPoint[]>();
+  const deleted = new Map<string, Omit<DeletionPoint, "anchors">[]>();
   let currentFile: string | null = null;
   let rightLine = 0;
 

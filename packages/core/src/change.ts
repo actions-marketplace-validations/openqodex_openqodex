@@ -16,7 +16,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { createCoverageParser, unquoteDiffPath } from "./diff.js";
 import { matchesGlob } from "./glob.js";
 import { STATE_DIR } from "./report-files.js";
-import type { Change, ChangedFile, ChangeScope } from "./types.js";
+import type { Change, ChangedFile, ChangeScope, DeletionPoint } from "./types.js";
 import { OpenQodexError } from "./types.js";
 
 // Text handed to the brief is capped; files past the cap are left out whole.
@@ -406,7 +406,7 @@ export async function getChange(args: {
     // pathspec on every diff below instead.
     await gitOk(repoRoot, ["add", "-A", "--", "."], { env, config: noFilters });
 
-    return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], env, exclude });
+    return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], newSide: ":", env, exclude });
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -423,7 +423,7 @@ export async function getTreeChange(args: {
   headSha: string;
   exclude: string[];
 }): Promise<Change> {
-  return diffChange({ ...args, range: [args.baseSha, args.headSha], env: process.env });
+  return diffChange({ ...args, range: [args.baseSha, args.headSha], newSide: `${args.headSha}:`, env: process.env });
 }
 
 // Everything after the two sides are known: the file list, the id, the
@@ -433,6 +433,8 @@ async function diffChange(args: {
   baseRef: string;
   baseSha: string;
   range: string[];
+  // How git names a file on the new side: ":" (the index) or "<sha>:".
+  newSide: string;
   env: NodeJS.ProcessEnv;
   exclude: string[];
 }): Promise<Change> {
@@ -513,8 +515,24 @@ async function diffChange(args: {
   );
   const coverage = parser.result();
   for (const path of coverage.keys()) if (!covered.has(path)) coverage.delete(path);
-  const deletionPoints = parser.deletionPoints();
-  for (const path of deletionPoints.keys()) if (!covered.has(path)) deletionPoints.delete(path);
+  // Each deletion's anchors are the new file's lines on either side of it
+  // that exist: one past the end is none, and an emptied file has line 1.
+  // A deleted file keeps line 1 of its path as its one anchor.
+  const deletionPoints = new Map<string, DeletionPoint[]>();
+  for (const [path, points] of parser.deletionPoints()) {
+    if (!covered.has(path)) continue;
+    const count = lineCount(await gitOk(repoRoot, ["cat-file", "blob", `${args.newSide}${path}`], { env }));
+    deletionPoints.set(
+      path,
+      points.map((p) => ({
+        ...p,
+        anchors: count === 0 ? [1] : [p.after, p.after + 1].filter((n) => n >= 1 && n <= count),
+      })),
+    );
+  }
+  for (const f of files) {
+    if (f.status === "deleted") deletionPoints.set(f.path, [{ after: 0, lines: numstat.get(f.path)?.deletions ?? 0, anchors: [1] }]);
+  }
 
   // The brief's diff, kept per path within the cap; a file that does not
   // fit is dropped whole as soon as it overflows.

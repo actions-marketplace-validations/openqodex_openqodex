@@ -121,10 +121,11 @@ export type ResolveTool = (scanner: BuiltinScanner) => Promise<ToolResolution>;
 export type DiffCoverage = Map<string, Set<number>>;
 
 // A place where the change only removed lines: `lines` lines were deleted
-// after new-side line `after` (0: at the top of the file). The new file's
-// lines on either side of it count as changed when a finding is cited, so a
-// change that only deletes a check can carry a finding.
-export type DeletionPoint = { after: number; lines: number };
+// after new-side line `after` (0: at the top of the file). Its `anchors`, the
+// new file's lines on either side of it that exist (line 1 for an emptied or
+// deleted file), count as changed when a finding is cited, so a change that
+// only deletes a check can carry a finding.
+export type DeletionPoint = { after: number; lines: number; anchors: number[] };
 
 export type ChangeScope = {
   base?: string; // explicit ref

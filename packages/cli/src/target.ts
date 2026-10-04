@@ -6,6 +6,7 @@
 // a pull request's base; without it the next source is used. No token is
 // ever read here.
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import { OpenQodexError } from "@openqodex/core";
 import type { BaseSource } from "@openqodex/core";
@@ -22,6 +23,8 @@ export type Resolved = {
   baseSource: BaseSource;
   baseSha: string;
   mergeBase: string;
+  // The run's own ref holding a fetched pull request head, dropped at its end; null for a branch.
+  tmpRef: string | null;
   // One plain line each, for stderr.
   notes: string[];
 };
@@ -42,7 +45,7 @@ export function parseTarget(spec: string): Parsed {
 // git with nothing from the repo's config run: no hooks, no prompt for a password.
 async function git(repoRoot: string, args: string[], timeout = 60_000): Promise<{ ok: boolean; out: string; err: string }> {
   try {
-    const { stdout } = await execFileAsync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+    const { stdout } = await execFileAsync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], {
       cwd: repoRoot,
       timeout,
       maxBuffer: 16 << 20,
@@ -73,31 +76,83 @@ async function defaultRemote(repoRoot: string): Promise<string> {
   throw new OpenQodexError(all.length === 0 ? "this repository has no remote to fetch from" : "this repository has several remotes and none is origin; name the branch as <remote>/<branch>");
 }
 
-// "owner/repo" of a GitHub remote URL, lower case, or null.
-function githubSlug(url: string): string | null {
-  const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
+// "owner/repo" (lower case) of a remote URL whose host is exactly github.com,
+// in the forms git accepts: https://[user@]github.com/o/r[.git],
+// ssh://[user@]github.com[:port]/o/r[.git] and the scp-like
+// [user@]github.com:o/r[.git]. Null for any other host or path shape.
+export function githubRepoOf(url: string): string | null {
+  let host: string;
+  let path: string;
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i.exec(url);
+  if (scheme) {
+    if (!/^(https?|ssh|git)$/i.test(scheme[1])) return null;
+    const slash = scheme[2].indexOf("/");
+    if (slash === -1) return null;
+    const authority = scheme[2].slice(0, slash);
+    host = authority.slice(authority.lastIndexOf("@") + 1).replace(/:\d+$/, "");
+    path = scheme[2].slice(slash + 1);
+  } else {
+    const scp = /^(?:[^@/:]+@)?([^/:]+):(.*)$/.exec(url);
+    if (!scp) return null;
+    host = scp[1];
+    path = scp[2];
+  }
+  if (host.toLowerCase() !== "github.com") return null;
+  const m = /^([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(path);
   return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
 }
 
 async function remoteFor(repoRoot: string, owner: string, repo: string): Promise<string> {
   for (const name of await remotes(repoRoot)) {
     const url = await git(repoRoot, ["remote", "get-url", name]);
-    if (url.ok && githubSlug(url.out) === `${owner}/${repo.replace(/\.git$/, "")}`.toLowerCase()) return name;
+    if (url.ok && githubRepoOf(url.out) === `${owner}/${repo.replace(/\.git$/, "")}`.toLowerCase()) return name;
   }
-  throw new OpenQodexError(`the pull request is on ${owner}/${repo}, which is not a remote of this repository`);
+  throw new OpenQodexError(`the pull request is on github.com/${owner}/${repo}, which is not a remote of this repository`);
 }
 
+// Fetches exactly `refspec`, into the destination it names and nowhere else:
+// no configured mapping (--refmap=), no tags, no pruning, no submodules, no
+// background maintenance, and no FETCH_HEAD for another run to read.
 async function fetch(repoRoot: string, remote: string, refspec: string, what: string): Promise<void> {
-  const r = await git(repoRoot, ["fetch", "--quiet", "--no-tags", "--no-recurse-submodules", remote, refspec], FETCH_TIMEOUT_MS);
+  const r = await git(
+    repoRoot,
+    [
+      "-c", "fetch.prune=false", "-c", "fetch.pruneTags=false", "-c", "fetch.writeCommitGraph=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+      "fetch", "--quiet", "--refmap=", "--no-tags", "--no-prune", "--no-recurse-submodules", "--no-write-fetch-head", "--no-auto-maintenance",
+      remote, refspec,
+    ],
+    FETCH_TIMEOUT_MS,
+  );
   if (!r.ok) throw new OpenQodexError(`could not fetch ${what} from ${remote}: ${r.err}`);
+}
+
+// A ref of this run only, for a fetched pull request head: two reviews at
+// once never read each other's. Named with the time, so a ref left by a run
+// that died is known by its age.
+export const TEMP_REFS = "refs/openqodex/tmp/";
+
+export async function dropTempRef(repoRoot: string, ref: string): Promise<void> {
+  await git(repoRoot, ["update-ref", "-d", ref]);
+}
+
+// Removes temporary refs older than a day: runs that never reached their end.
+export async function sweepTempRefs(repoRoot: string): Promise<void> {
+  const r = await git(repoRoot, ["for-each-ref", "--format=%(refname)", TEMP_REFS]);
+  if (!r.ok) return;
+  for (const ref of r.out.split("\n")) {
+    const at = Number(/\/(\d+)-[0-9a-f]+$/.exec(ref)?.[1]);
+    if (Number.isFinite(at) && Date.now() - at > 24 * 3600_000) await dropTempRef(repoRoot, ref);
+  }
 }
 
 // Refreshes a remote-tracking branch from its remote. The name goes into a
 // refspec, so it must be a valid branch name first: no colon, no wildcard.
+async function validBranch(repoRoot: string, branch: string): Promise<boolean> {
+  return !branch.startsWith("-") && (await git(repoRoot, ["check-ref-format", `refs/heads/${branch}`])).ok;
+}
+
 async function refresh(repoRoot: string, remote: string, branch: string): Promise<void> {
-  if (!(await git(repoRoot, ["check-ref-format", `refs/heads/${branch}`])).ok || branch.startsWith("-")) {
-    throw new OpenQodexError(`not a valid branch name: ${branch}`);
-  }
+  if (!(await validBranch(repoRoot, branch))) throw new OpenQodexError(`not a valid branch name: ${branch}`);
   await fetch(repoRoot, remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`, branch);
 }
 
@@ -126,7 +181,7 @@ async function ghBase(repoRoot: string, args: string[]): Promise<string | null> 
   }
 }
 
-type Head = { sha: string; remote: string | null; branch: string | null; prNumber: number | null };
+type Head = { sha: string; remote: string | null; branch: string | null; prNumber: number | null; tmpRef?: string };
 
 async function resolveHead(repoRoot: string, spec: string, parsed: Parsed, offline: boolean): Promise<Head> {
   const missing = (what: string) =>
@@ -141,10 +196,11 @@ async function resolveHead(repoRoot: string, spec: string, parsed: Parsed, offli
       }
       throw missing(`pull request ${parsed.number}`);
     }
-    await fetch(repoRoot, remote, `refs/pull/${parsed.number}/head`, `pull request ${parsed.number}`);
-    const sha = await commitOf(repoRoot, "FETCH_HEAD");
+    const tmpRef = `${TEMP_REFS}${Date.now()}-${randomBytes(6).toString("hex")}`;
+    await fetch(repoRoot, remote, `+refs/pull/${parsed.number}/head:${tmpRef}`, `pull request ${parsed.number}`);
+    const sha = await commitOf(repoRoot, tmpRef);
     if (sha === null) throw new OpenQodexError(`the fetch of pull request ${parsed.number} returned no commit`);
-    return { sha, remote, branch: null, prNumber: parsed.number };
+    return { sha, remote, branch: null, prNumber: parsed.number, tmpRef };
   }
 
   const name = parsed.name;
@@ -172,13 +228,28 @@ export async function resolveTarget(args: {
   const { repoRoot, spec, offline } = args;
   const parsed = parseTarget(spec);
   const head = await resolveHead(repoRoot, spec, parsed, offline);
+  try {
+    return { ...(await resolveBase(args, parsed, head)), tmpRef: head.tmpRef ?? null };
+  } catch (error) {
+    if (head.tmpRef !== undefined) await dropTempRef(repoRoot, head.tmpRef);
+    throw error;
+  }
+}
+
+async function resolveBase(
+  args: { repoRoot: string; spec: string; offline: boolean; base: string | undefined; defaultBase: string | null },
+  parsed: Parsed,
+  head: Head,
+): Promise<Omit<Resolved, "tmpRef">> {
+  const { repoRoot, spec, offline } = args;
   const notes: string[] = [];
 
-  // A remote-tracking base is refreshed too, so commits that are already on
-  // the base are never shown as part of the target.
+  // A base on a remote (<remote>/<branch>) is fetched when online, whether or
+  // not this clone has seen it, so commits already on the base are never
+  // shown as part of the target. Anything else (a sha, main~3) is read here.
   const at = async (ref: string): Promise<string | null> => {
     const split = await splitRemote(repoRoot, ref);
-    if (!offline && split !== null && (await commitOf(repoRoot, `refs/remotes/${ref}`)) !== null) await refresh(repoRoot, split.remote, split.branch);
+    if (!offline && split !== null && (await validBranch(repoRoot, split.branch))) await refresh(repoRoot, split.remote, split.branch);
     return commitOf(repoRoot, ref);
   };
 

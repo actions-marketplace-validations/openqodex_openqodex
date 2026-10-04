@@ -10,12 +10,12 @@
 // included), no submodule. It carries a marker file beside the tree that
 // names the repository, so a later review can tell an abandoned one of its
 // own from anything else.
-import { execFile, spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { OpenQodexError, readRepoFile } from "@openqodex/core";
+import { OpenQodexError, readRepoFile, safeGit } from "@openqodex/core";
 import { openqodexHomeDir } from "./launcher.js";
 
 const execFileAsync = promisify(execFile);
@@ -57,57 +57,48 @@ export function inCheckouts(tree: string): boolean {
   return sameDir(dirname(dirname(tree)), checkoutsDir());
 }
 
-// `-c` settings that switch off every program the repo's config names for a
-// checkout: hooks, each configured filter driver, the file system monitor
-// and submodule recursion.
-async function runNothing(repoRoot: string): Promise<string[]> {
-  const out = (await gitOut(repoRoot, ["config", "--get-regexp", "^filter\\."])) ?? "";
-  const drivers = new Set<string>();
-  for (const line of out.split("\n")) {
-    const key = line.split(" ", 1)[0];
-    const m = /^filter\.(.+)\.[^.]+$/.exec(key);
-    if (m) drivers.add(m[1]);
-  }
-  const config = ["core.hooksPath=/dev/null", "core.fsmonitor=false", "submodule.recurse=false"];
-  for (const d of drivers) {
-    config.push(`filter.${d}.smudge=`, `filter.${d}.clean=`, `filter.${d}.process=`, `filter.${d}.required=false`);
-  }
-  return config.flatMap((c) => ["-c", c]);
-}
-
-// A detached work tree of `sha` in a new folder named with `prefix` under
-// `parent`. With `safe` (a target), nothing from the repo's config runs, and
-// the marker is written first, so even a checkout that dies half made is
-// swept later. Null when git refuses; the folder is then gone.
-async function addCheckoutIn(parent: string, repoRoot: string, sha: string, prefix: string, safe: boolean): Promise<Checkout | null> {
-  const folder = mkdtempSync(join(parent, prefix));
+// The push hook's checkout, under the OS temp folder: a detached work tree of
+// the developer's own pushed commit, made with mkdtemp and removed by the
+// same process. Null when git refuses; the folder is then gone.
+export async function addCheckout(repoRoot: string, sha: string, prefix: string): Promise<Checkout | null> {
+  const folder = mkdtempSync(join(tmpdir(), prefix));
   const tree = join(folder, "tree");
-  if (safe) {
-    const marker: Marker = { repo: repoRoot, sha, created: new Date().toISOString() };
-    writeFileSync(join(folder, CHECKOUT_MARKER), `${JSON.stringify(marker)}\n`, { flag: "wx", mode: 0o600 });
-  }
-  const pre = safe ? await runNothing(repoRoot) : [];
-  const env = safe ? { ...process.env, GIT_LFS_SKIP_SMUDGE: "1" } : undefined;
-  if ((await gitOut(repoRoot, [...pre, "worktree", "add", "--detach", "--quiet", tree, sha], env)) === null) {
+  if ((await gitOut(repoRoot, ["worktree", "add", "--detach", "--quiet", tree, sha])) === null) {
     await removeCheckout(repoRoot, folder);
     return null;
   }
   return { folder, tree };
 }
 
-// The push hook's checkout, under the OS temp folder.
-export function addCheckout(repoRoot: string, sha: string, prefix: string): Promise<Checkout | null> {
-  return addCheckoutIn(tmpdir(), repoRoot, sha, prefix, false);
-}
-
 // A target review's checkout, in a new 0700 folder under <home>/checkouts/,
-// itself a real folder made 0700.
-export async function addTargetCheckout(repoRoot: string, sha: string, prefix: string): Promise<Checkout | null> {
+// itself a real folder made 0700. The marker is written first, so even a
+// checkout that dies half made is swept later. The work tree is added empty,
+// then filled with every filter driver its own effective config names
+// switched off: an include can add drivers only for linked work trees, so
+// the developer's work tree does not know them all. No missing object is
+// fetched: a partial clone without it fails in one line.
+export async function addTargetCheckout(repoRoot: string, sha: string, prefix: string): Promise<Checkout> {
   const parent = checkoutsDir();
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const st = lstatSync(parent);
   if (!st.isDirectory() || st.isSymbolicLink()) throw new OpenQodexError(`${parent} is not a real folder; remove it and run the review again`);
-  return addCheckoutIn(parent, repoRoot, sha, prefix, true);
+  const folder = mkdtempSync(join(parent, prefix));
+  const tree = join(folder, "tree");
+  const marker: Marker = { repo: repoRoot, sha, created: new Date().toISOString() };
+  writeFileSync(join(folder, CHECKOUT_MARKER), `${JSON.stringify(marker)}\n`, { flag: "wx", mode: 0o600 });
+  const fail = async (step: string, stderr: string): Promise<never> => {
+    await removeCheckout(repoRoot, folder);
+    const why = stderr.trim().split("\n")[0] ?? "";
+    if (/lazy fetch|promisor|missing (blob|tree|object)|unable to read|bad object/i.test(stderr)) {
+      throw new OpenQodexError(`a file of ${sha.slice(0, 12)} is not downloaded in this partial clone, and openqodex fetches nothing for a checkout; run git fetch and try again (${why})`);
+    }
+    throw new OpenQodexError(`could not ${step} ${sha.slice(0, 12)} to review it: ${why}`);
+  };
+  const added = await safeGit(repoRoot, ["worktree", "add", "--no-checkout", "--detach", "--quiet", tree, sha]);
+  if (added.code !== 0) return fail("add a work tree for", added.stderr);
+  const filled = await safeGit(tree, ["read-tree", "--reset", "-u", "HEAD"]);
+  if (filled.code !== 0) return fail("check out", filled.stderr);
+  return { folder, tree };
 }
 
 export async function removeCheckout(repoRoot: string, folder: string): Promise<void> {
@@ -168,11 +159,11 @@ export async function sweepCheckouts(repoRoot: string): Promise<void> {
 
 // How many of `paths` the checkout stores in Git LFS: their content was not
 // fetched, so the files hold pointers.
-export function lfsPaths(tree: string, paths: string[]): number {
+export async function lfsPaths(tree: string, paths: string[]): Promise<number> {
   if (paths.length === 0) return 0;
-  const r = spawnSync("git", ["check-attr", "-z", "--stdin", "filter"], { cwd: tree, input: `${paths.join("\0")}\0`, encoding: "utf8", maxBuffer: 16 << 20 });
-  if (r.status !== 0) return 0;
-  const parts = r.stdout.split("\0");
+  const r = await safeGit(tree, ["check-attr", "-z", "--stdin", "filter"], `${paths.join("\0")}\0`);
+  if (r.code !== 0) return 0;
+  const parts = r.stdout.toString("utf8").split("\0");
   let n = 0;
   for (let i = 0; i + 2 < parts.length; i += 3) if (parts[i + 2] === "lfs") n++;
   return n;

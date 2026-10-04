@@ -65,3 +65,18 @@ export const ADAPTERS: readonly Adapter[] = [
   // Go lint and gosec.
   golangci,
 ];
+
+// The settings and ignore files each scanner reads from the scanned tree, by
+// file name in any folder. A change to one can hide that scanner's findings,
+// so the runner raises it as a candidate for the reviewer to clear. oxlint,
+// rubocop, brakeman and golangci run on settings of their own and read none.
+export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly string[]>> = {
+  gitleaks: [".gitleaks.toml", "gitleaks.toml", ".gitleaksignore"],
+  semgrep: [".semgrepignore"],
+  ruff: ["ruff.toml", ".ruff.toml", "pyproject.toml"],
+  hadolint: [".hadolint.yaml", ".hadolint.yml"],
+  shellcheck: [".shellcheckrc", "shellcheckrc"],
+  "osv-scanner": ["osv-scanner.toml"],
+  bandit: [".bandit"],
+  actionlint: ["actionlint.yaml", "actionlint.yml"],
+};

@@ -120,12 +120,15 @@ function deletionsBlock(change: Change): string {
   const lines = [
     "## Deleted lines",
     "",
-    "At these places the change only removed lines. A deletion has no line of its own: to raise a problem it causes, such as a removed check, cite the line just above or just below the deletion point in the new file, and say in `description` what was removed. Those two lines count as changed.",
+    "At these places the change only removed lines. A deletion has no line of its own: to raise a problem it causes, such as a removed check, cite one of the lines named for it (the lines just above and just below it in the new file), and say in `description` what was removed. Those lines count as changed.",
     "",
   ];
+  const deleted = new Set(change.files.filter((f) => f.status === "deleted").map((f) => f.path));
   for (const p of points.slice(0, MAX_DELETION_POINTS_SHOWN)) {
     const n = `${p.lines} ${p.lines === 1 ? "line" : "lines"} deleted`;
-    lines.push(p.after === 0 ? `- ${n} at the top of ${p.path} (cite line 1)` : `- ${n} after line ${p.after} of ${p.path}`);
+    const cite = `cite line ${p.anchors.join(" or ")}`;
+    if (deleted.has(p.path)) lines.push(`- ${p.path} was deleted (${cite})`);
+    else lines.push(p.after === 0 ? `- ${n} at the top of ${p.path} (${cite})` : `- ${n} after line ${p.after} of ${p.path} (${cite})`);
   }
   const more = points.length - MAX_DELETION_POINTS_SHOWN;
   if (more > 0) lines.push("", `${more} more deletion ${more === 1 ? "point is" : "points are"} in the diff.`);

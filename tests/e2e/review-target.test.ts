@@ -2,14 +2,15 @@
 // repos with a local bare remote. A pull request head is a real
 // `refs/pull/<n>/head` ref on that remote, read by `git fetch` exactly as on
 // GitHub. Every case guards one failure, named in its title.
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Report, RunManifest } from "@openqodex/core";
 import "./global-setup.js";
-import { git, readJson, run, toolsHome, writeConfig } from "./support.js";
+import { bin, git, readJson, run, toolsHome, writeConfig } from "./support.js";
 import type { Result } from "./support.js";
 
 // No scanner fits a text file: the cases test the target, not the scanners.
@@ -404,5 +405,193 @@ describe("a change that only deletes code", () => {
     const report = readJson<Report>(join(a.dir, "report.json"));
     expect(report.findings).toHaveLength(1);
     expect(report.verdict).toBe("blocked");
+  });
+});
+
+// The CLI as a child that runs alongside another, with the same environment as `run`.
+function runAsync(cwd: string, args: string[]): Promise<string> {
+  const home = mkdtempSync(join(tmpdir(), "oq-e2e-user-"));
+  const env = { ...process.env, HOME: home, OPENQODEX_HOME: toolsHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", OPENQODEX_AUTO_UPDATE: "0" };
+  return new Promise((done, fail) => {
+    const child = spawn(process.execPath, [bin, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (b: Buffer) => { out += b.toString("utf8"); });
+    child.stderr.on("data", (b: Buffer) => { err += b.toString("utf8"); });
+    child.on("close", (code) => (code === 0 ? done(out) : fail(new Error(`exit ${code}: ${err}`))));
+  });
+}
+
+// True when a finding on that line counts toward the verdict, on the same run.
+function counts(label: string, dir: string, a: Agent, file: string, line: number): boolean {
+  findings(a, [finding(file, line)]);
+  const out = run(label, dir, ["review", "--finalize"]);
+  if (out.status === 2) throw new Error(out.stderr);
+  return readJson<Report>(join(a.dir, "report.json")).findings.length === 1;
+}
+
+describe("deletion anchors name only lines that exist", () => {
+  let dir: string; let a: Agent;
+  const five = "one\ntwo\nthree\nfour\nfive\n";
+  beforeAll(() => {
+    dir = repos().dev;
+    git(dir, "reset", "-q", "--hard", "origin/main");
+    for (const f of ["start.txt", "end.txt", "emptied.txt", "gone.txt"]) write(dir, f, five);
+    write(dir, "old-name.txt", "a\nb\nc\nd\ne\nf\n");
+    write(dir, "crlf.txt", five.replaceAll("\n", "\r\n"));
+    commitAll(dir, "Files to delete from");
+    git(dir, "push", "-q", "origin", "main");
+    writeConfig(dir, "review:\n  block_on_severity: major\n");
+    write(dir, "start.txt", "two\nthree\nfour\nfive\n");
+    write(dir, "end.txt", "one\ntwo\nthree\nfour\n");
+    write(dir, "emptied.txt", "");
+    git(dir, "rm", "-q", "gone.txt");
+    git(dir, "mv", "old-name.txt", "new-name.txt");
+    write(dir, "new-name.txt", "a\nb\nd\ne\nf\n");
+    write(dir, "crlf.txt", "one\r\ntwo\r\nthree\r\nfour\r\n");
+    a = agentReview("anchors-brief", dir, []);
+  }, 120_000);
+
+  it("a deletion at the start counts on line 1, and two lines away does not", () => {
+    expect(counts("anchors-start", dir, a, "start.txt", 1)).toBe(true);
+    expect(counts("anchors-start-far", dir, a, "start.txt", 3)).toBe(false);
+  });
+  it("a deletion at the end counts on the last line, never on the line past it", () => {
+    expect(counts("anchors-end", dir, a, "end.txt", 4)).toBe(true);
+    expect(counts("anchors-end-past", dir, a, "end.txt", 5)).toBe(false);
+  });
+  it("an emptied file counts only on line 1", () => {
+    expect(counts("anchors-emptied", dir, a, "emptied.txt", 1)).toBe(true);
+    expect(counts("anchors-emptied-2", dir, a, "emptied.txt", 2)).toBe(false);
+  });
+  it("a deleted file counts only on line 1", () => {
+    expect(counts("anchors-gone", dir, a, "gone.txt", 1)).toBe(true);
+    expect(counts("anchors-gone-2", dir, a, "gone.txt", 2)).toBe(false);
+  });
+  it("a renamed file anchors on its new path", () => {
+    expect(counts("anchors-renamed", dir, a, "new-name.txt", 3)).toBe(true);
+    expect(counts("anchors-renamed-far", dir, a, "new-name.txt", 5)).toBe(false);
+  });
+  it("a CRLF file with a deletion at the end counts on the last line only", () => {
+    expect(counts("anchors-crlf", dir, a, "crlf.txt", 4)).toBe(true);
+    expect(counts("anchors-crlf-past", dir, a, "crlf.txt", 5)).toBe(false);
+  });
+});
+
+describe("review <target>: git in the checkout runs nothing", () => {
+  let r: Repos;
+  beforeAll(() => { r = repos(); }, 120_000);
+
+  it("runs no fsmonitor program while the graph reads the checkout", () => {
+    const marker = join(r.top, "fsmonitor-ran");
+    pushBranch(r, "monitored", { "fsmon.sh": `#!/bin/sh\ntouch '${marker}'\n`, "app.py": "def f():\n    return 1\n" });
+    writeConfig(r.dev, "");
+    git(r.dev, "config", "core.fsmonitor", "sh ./fsmon.sh");
+    const out = run("target-fsmonitor", r.dev, ["review", "--agent", "monitored", "--base", "origin/main", "--only", "hadolint", "--no-install"]);
+    git(r.dev, "config", "--unset", "core.fsmonitor");
+    expect(out.status, out.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+  });
+  it("runs no filter that a config include adds only for linked work trees", () => {
+    const marker = join(r.top, "include-smudge-ran");
+    write(r.top, "smudge.sh", `touch '${marker}'\ncat\n`);
+    write(r.top, "worktree.cfg", `[filter "y"]\n\tsmudge = sh ${join(r.top, "smudge.sh")}\n\trequired = true\n`);
+    git(r.dev, "config", "includeIf.gitdir:**/.git/worktrees/**.path", join(r.top, "worktree.cfg"));
+    pushBranch(r, "included", { ".gitattributes": "*.txt filter=y\n", "included.txt": "through the filter\n" });
+    const a = agentReview("target-include-filter", r.dev, ["included", "--base", "origin/main"]);
+    git(r.dev, "config", "--unset", "includeIf.gitdir:**/.git/worktrees/**.path");
+    expect(checkoutOf(a)).not.toBeNull();
+    expect(existsSync(marker)).toBe(false);
+  });
+  it("finalize inside a checkout refuses before it reads the checkout's config", () => {
+    const a = agentReview("target-inside-yaml", r.dev, ["feature", "--base", "origin/main"]);
+    const tree = checkoutOf(a)!;
+    rmSync(join(tree, ".openqodex/config.yaml"), { force: true });
+    writeFileSync(join(tree, ".openqodex.yaml"), "review: [unclosed\n");
+    const out = run("target-inside-yaml-finalize", tree, ["review", "--finalize", "--run", a.id]);
+    expect(out.status).toBe(2);
+    expect(out.stderr).toContain("run finalize from");
+  });
+});
+
+describe("review <target>: fetching touches nothing of the developer's", () => {
+  let r: Repos;
+  beforeAll(() => { r = repos(); }, 120_000);
+
+  it("a pull request review creates, moves or deletes no local branch or tag", () => {
+    pushBranch(r, "pr-five", { "five.txt": "pr five\n" }, "refs/pull/5/head");
+    git(r.dev, "config", "--add", "remote.origin.fetch", "+refs/pull/*/head:refs/heads/pr-*");
+    git(r.dev, "config", "fetch.prune", "true");
+    git(r.dev, "config", "fetch.pruneTags", "true");
+    git(r.dev, "update-ref", "refs/remotes/origin/gone", "HEAD");
+    git(r.dev, "tag", "keep-me");
+    const refs = () => git(r.dev, "for-each-ref", "--format=%(refname) %(objectname)");
+    const before = refs();
+    const out = run("target-refmap", r.dev, ["review", "#5", "--base", shaOf(r.dev, "origin/main"), ...FAST]);
+    expect(out.status, out.stderr).toBe(0);
+    expect(refs()).toBe(before);
+  });
+  it("two pull request reviews started together each record their own head", async () => {
+    const eight = pushBranch(r, "pr-eight", { "eight.txt": "eight\n" }, "refs/pull/8/head");
+    const nine = pushBranch(r, "pr-nine", { "nine.txt": "nine\n" }, "refs/pull/9/head");
+    const base = shaOf(r.dev, "origin/main");
+    const [x, y] = await Promise.all(["#8", "#9"].map((spec) => runAsync(r.dev, ["review", "--agent", spec, "--base", base, ...FAST])));
+    const head = (stdout: string) => /- Target: \S+ at ([0-9a-f]{12})/.exec(stdout)?.[1];
+    expect(head(x)).toBe(eight.slice(0, 12));
+    expect(head(y)).toBe(nine.slice(0, 12));
+  });
+  it("fetches a remote base that this clone has never seen", () => {
+    pushBranch(r, "release-next", { "next.txt": "next\n" });
+    expect(spawnSync("git", ["rev-parse", "--verify", "--quiet", "origin/release-next"], { cwd: r.dev }).status).not.toBe(0);
+    const out = run("target-new-base", r.dev, ["review", "feature", "--base", "origin/release-next", ...FAST]);
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stderr).toContain("base origin/release-next (from --base)");
+  });
+});
+
+describe("review <target> in a partial clone", () => {
+  it("fails in one line rather than fetch a missing file during checkout", () => {
+    const r = repos();
+    git(r.remote, "config", "uploadpack.allowFilter", "true");
+    git(r.remote, "config", "uploadpack.allowAnySHA1InWant", "true");
+    pushBranch(r, "x", { "big.txt": "only on x\n" });
+    git(r.other, "fetch", "-q", "origin");
+    git(r.other, "checkout", "-q", "-B", "y", "origin/x");
+    write(r.other, "y.txt", "on y\n");
+    commitAll(r.other, "y");
+    git(r.other, "push", "-q", "origin", "HEAD:refs/heads/y");
+    git(r.other, "checkout", "-q", "main");
+    const partial = join(r.top, "partial");
+    git(r.top, "clone", "-q", "--filter=blob:none", `file://${r.remote}`, partial);
+    git(partial, "cat-file", "-p", "origin/y:y.txt");
+    const missing = () => spawnSync("git", ["cat-file", "-e", "origin/x:big.txt"], { cwd: partial, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" } }).status !== 0;
+    expect(missing()).toBe(true);
+    const out = run("target-partial", partial, ["review", "origin/y", "--base", "origin/x", "--offline", ...FAST]);
+    expect(out.status).toBe(2);
+    expect(out.stderr).toContain("not downloaded");
+    expect(missing()).toBe(true);
+  });
+});
+
+describe("a changed scanner settings file", () => {
+  let dir: string;
+  // Made at run time: a key written out here reads as a real secret to a push check.
+  const secret = `sk_live_${randomBytes(12).toString("hex")}`;
+  const settings = (label: string) => {
+    const out = run(label, dir, ["scan", "--only", "gitleaks", "--format", "json"]);
+    if (out.status === 2) throw new Error(out.stderr);
+    return (JSON.parse(out.stdout) as Report).findings.filter((f) => f.source === "gitleaks:settings-file");
+  };
+  beforeAll(() => { dir = repos().dev; }, 120_000);
+
+  it("a change that touches no scanner settings file raises no settings candidate", () => {
+    write(dir, "app/keys.py", `KEY = "${secret}"\n`);
+    expect(settings("settings-none")).toEqual([]);
+  });
+  it("a change that adds a secret and a .gitleaksignore entry raises the settings candidate", () => {
+    write(dir, ".gitleaksignore", "app/keys.py:stripe-access-token:1\n");
+    const hits = settings("settings-gitleaksignore");
+    expect(hits.map((f) => f.file_path)).toEqual([".gitleaksignore"]);
+    expect(hits[0]?.severity).toBe("major");
   });
 });

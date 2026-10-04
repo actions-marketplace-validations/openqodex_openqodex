@@ -35,6 +35,10 @@ The report lists every selected scanner with one status. A scanner left out with
 
 A scanner problem never changes the exit code.
 
+## Changed scanner settings
+
+Several scanners read settings or an ignore list from the repository: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`, semgrep `.semgrepignore`, ruff `ruff.toml`, `.ruff.toml` and `pyproject.toml`, hadolint `.hadolint.yaml`, shellcheck `.shellcheckrc`, osv-scanner `osv-scanner.toml`, bandit `.bandit`, actionlint `actionlint.yaml`. A change to one of them can hide that scanner's findings. Each changed file of that name, in any folder, is raised as a major candidate of that scanner, rule `settings-file`, on its first changed line. The reviewer verifies it like any other candidate and raises it or drops it with a reason. It is raised even when the scanner itself did not run; `--only`, `--skip` and `scanners.disable` leave it out with the scanner.
+
 ## semgrep
 
 - Version: 1.94.0.

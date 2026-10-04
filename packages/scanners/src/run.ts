@@ -24,6 +24,7 @@ import {
 } from "@openqodex/core";
 import type {
   AdapterResult,
+  BuiltinScanner,
   Candidate,
   Config,
   DiffCoverage,
@@ -34,7 +35,7 @@ import type {
   ScannerSource,
   StaticFinding,
 } from "@openqodex/core";
-import { ADAPTERS, IN_PROCESS } from "./adapters/index.js";
+import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
 
@@ -103,6 +104,9 @@ export async function runScanners(args: {
     const rebased = toRunDirRelative(o.findings, args.repoDir);
     return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
   });
+  if (coverage) {
+    merged.push(...settingsFindings(args.changedPaths, coverage, (s) => selected(s) && !args.config.disabledScanners.includes(s)));
+  }
 
   // Fixture, mock and snapshot files hold throwaway data shaped like the
   // real thing; hits there are noise unless the developer asks for them.
@@ -151,6 +155,32 @@ export async function runScanners(args: {
     },
     secrets,
   };
+}
+
+// One candidate per changed file that a scanner reads as its own settings or
+// ignore list, from that scanner, on the file's first changed line. Raised
+// whether or not the scanner ran: the reviewer clears it or raises it.
+function settingsFindings(changedPaths: string[], coverage: DiffCoverage, wanted: (s: BuiltinScanner) => boolean): StaticFinding[] {
+  const out: StaticFinding[] = [];
+  for (const [source, names] of Object.entries(SETTINGS_FILES) as [BuiltinScanner, readonly string[]][]) {
+    if (!wanted(source)) continue;
+    for (const filePath of changedPaths) {
+      if (!names.includes(filePath.slice(filePath.lastIndexOf("/") + 1))) continue;
+      const lines = coverage.get(filePath);
+      const line = lines && lines.size > 0 ? Math.min(...lines) : 1;
+      out.push({
+        source,
+        ruleId: "settings-file",
+        filePath,
+        lineStart: line,
+        lineEnd: line,
+        severity: "high",
+        message: `This change edits a scanner settings file; findings of ${source} may be hidden by it`,
+        reference: null,
+      });
+    }
+  }
+  return out;
 }
 
 async function runBuiltin(

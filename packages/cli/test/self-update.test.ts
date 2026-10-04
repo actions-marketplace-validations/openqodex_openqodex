@@ -21,9 +21,10 @@
 // 16. The brief's finalize command names a runner other than the launcher or the pinned npx version.
 // 17. A finalize handed to another version hands off again.
 // 18. An inherited OPENQODEX_FINALIZE_HANDOFF stops a legitimate handoff.
+// 19. finalize --run hands the older runtime both --run and a findings path.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { readState } from "../src/update/state.js";
 import { bundleChildEntry } from "./bundle.js";
@@ -297,6 +298,13 @@ describe("finalize across versions", () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/handed/);
     expect(existsSync(join(findings(), "..", "report.json"))).toBe(false);
+  });
+
+  it("finalize --run after an activation hands the run to the version that wrote the brief without --run (failure 19)", () => {
+    const r = launch(s, ["review", "--finalize", "--run", basename(join(findings(), ".."))]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(findings(), "..", "report.json"))).toBe(true);
+    rmSync(join(findings(), "..", "report.json"));
   });
 
   it("finalize after an activation runs the version that wrote the brief, even with an inherited handoff variable (failures 14 and 18)", () => {

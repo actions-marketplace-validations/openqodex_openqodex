@@ -25,6 +25,7 @@ import {
   getChange,
   getTreeChange,
   getWholeRepo,
+  safeGit,
   loadLensCatalog,
   openReportDir,
   readLatest,
@@ -66,7 +67,8 @@ import {
   warn,
 } from "../pipeline.js";
 import type { PipelineResult } from "../pipeline.js";
-import { resolveTarget } from "../target.js";
+import { dropTempRef, resolveTarget, sweepTempRefs } from "../target.js";
+import type { Resolved } from "../target.js";
 import { SCOPE_BOOLS, SCOPE_VALUES, reportScan, runScan, scopeFrom } from "./scan.js";
 
 const FINDINGS_FILE = "agent-findings.json";
@@ -106,7 +108,7 @@ export async function run(args: string[]): Promise<number> {
   if (finalize) return runFinalize(global, positionals[0], bools.has(ALL), args, bools.has(HANDED_OFF), values.get("--run"));
   // Checkouts that a review of a branch or a pull request left behind.
   const root = await findRepoRoot(global.cwd).catch(() => null);
-  if (root !== null) await sweepCheckouts(root);
+  if (root !== null) await Promise.all([sweepCheckouts(root), sweepTempRefs(root)]);
   if (target !== undefined) {
     return runTarget(global, target, { agent, base: values.get("--base"), only: values.get("--only"), skip: values.get("--skip"), noGraph });
   }
@@ -248,6 +250,22 @@ async function runTarget(
   const { repoRoot, config } = await loadRepo(flags);
   announceRepoFiles(repoRoot);
   const t = await resolveTarget({ repoRoot, spec, offline: flags.offline, base: opts.base, defaultBase: config.defaultBase });
+  try {
+    return await reviewResolved(flags, spec, opts, repoRoot, config, t);
+  } finally {
+    // The run's own ref for a fetched pull request head; the checkout or HEAD now holds the commit.
+    if (t.tmpRef !== null) await dropTempRef(repoRoot, t.tmpRef);
+  }
+}
+
+async function reviewResolved(
+  flags: GlobalFlags,
+  spec: string,
+  opts: { agent: boolean; base: string | undefined; only: string | undefined; skip: string | undefined; noGraph: boolean },
+  repoRoot: string,
+  config: Config,
+  t: Resolved,
+): Promise<number> {
   for (const note of t.notes) warn(note);
   progress(flags)(
     `Reviewing ${spec} at ${t.headSha.slice(0, 12)}: base ${t.baseRef} (from ${t.baseSource}), merge base ${t.mergeBase.slice(0, 12)}`,
@@ -259,9 +277,7 @@ async function runTarget(
   let tree: string | null = null;
   if (t.headSha !== head || !cleanWorkTree(repoRoot)) {
     if (t.headSha === head) warn(`Uncommitted work is not part of a target review: reviewing the committed ${spec} at ${t.headSha.slice(0, 12)}`);
-    const checkout = await addTargetCheckout(repoRoot, t.headSha, `${change.shortId}-`);
-    if (checkout === null) throw new OpenQodexError(`could not check out ${t.headSha.slice(0, 12)} to review ${spec}`);
-    tree = checkout.tree;
+    tree = (await addTargetCheckout(repoRoot, t.headSha, `${change.shortId}-`)).tree;
   }
   const target: RunTarget = {
     spec,
@@ -277,7 +293,7 @@ async function runTarget(
   try {
     if (tree !== null) {
       placeSettings(repoRoot, tree, false);
-      const lfs = lfsPaths(tree, change.changedPaths);
+      const lfs = await lfsPaths(tree, change.changedPaths);
       if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
     }
     const p = await scanChange({
@@ -516,7 +532,10 @@ function finalizeOnVersion(version: unknown, args: string[], path: string | unde
   // The flags as given, without the path, then -- and the selected path, so a
   // path after -- or one that starts with a dash reaches the child as a path.
   const dash = args.indexOf("--");
-  const flags = dash !== -1 ? args.slice(0, dash) : path === undefined ? args : args.filter((a, i) => i !== args.indexOf(path));
+  const given = dash !== -1 ? args.slice(0, dash) : path === undefined ? args : args.filter((a, i) => i !== args.indexOf(path));
+  // --run chose the run here; the child gets that run's findings path instead,
+  // and a version from before --run would not know the flag.
+  const flags = given.filter((a, i) => a !== "--run" && given[i - 1] !== "--run" && !a.startsWith("--run="));
   const child = spawnSync(process.execPath, [bin, "review", HANDED_OFF, ...flags, "--", findingsPath], { stdio: "inherit" });
   return child.status ?? EXIT_TOOL_FAILED;
 }
@@ -532,14 +551,14 @@ function findRunById(repoRoot: string, id: string): { dir: string; findingsPath:
 }
 
 // The checkout a target review was briefed on, still at the head it recorded.
-function checkTargetCheckout(target: RunTarget): void {
+async function checkTargetCheckout(target: RunTarget): Promise<void> {
   if (target.checkout === null) return;
   // Only a checkout this tool made is read, or later removed.
   if (!inCheckouts(target.checkout)) {
     throw new OpenQodexError(`the run names a checkout outside ${checkoutsDir()}, which openqodex never makes; run the review again`);
   }
   if (!existsSync(target.checkout)) throw new OpenQodexError(`the temporary checkout of ${target.spec} is gone; run the review again`);
-  const head = spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: target.checkout, encoding: "utf8" }).stdout.trim();
+  const head = (await safeGit(target.checkout, ["rev-parse", "--verify", "--quiet", "HEAD"])).stdout.toString("utf8").trim();
   if (head !== target.head_sha) {
     throw new OpenQodexError(
       `the temporary checkout of ${target.spec} moved from ${target.head_sha.slice(0, 12)} to ${head.slice(0, 12) || "nothing"} since the brief; run the review again`,
@@ -548,9 +567,10 @@ function checkTargetCheckout(target: RunTarget): void {
 }
 
 async function runFinalize(flags: GlobalFlags, path: string | undefined, all: boolean, args: string[], handedOff: boolean, runId: string | undefined): Promise<number> {
-  const { repoRoot, config } = await loadRepo(flags);
-  const owner = checkoutOwner(repoRoot);
+  // Refused before any config is read: a checkout's root config is the target's.
+  const owner = checkoutOwner(await findRepoRoot(flags.cwd));
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run finalize from ${owner}`);
+  const { repoRoot, config } = await loadRepo(flags);
   if (runId !== undefined && (path !== undefined || all)) throw new OpenQodexError("--run names the run; give no findings path and no --all with it");
   const { dir, findingsPath, submission } = runId !== undefined ? findRunById(repoRoot, runId) : findRun(repoRoot, path, all);
   const manifest = readManifest(repoRoot, dir);
@@ -577,7 +597,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   };
   try {
     checkBinding(repoRoot, config, manifest);
-    if (target !== undefined) checkTargetCheckout(target);
+    if (target !== undefined) await checkTargetCheckout(target);
   } catch (error) {
     await discard();
     throw error;
