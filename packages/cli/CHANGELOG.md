@@ -1,5 +1,34 @@
 # openqodex
 
+## 0.6.0
+
+### Minor Changes
+
+- [#35](https://github.com/openqodex/openqodex/pull/35) [`dfef509`](https://github.com/openqodex/openqodex/commit/dfef5093ded29019f795e98108b02362d4b2f5c4) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Codex can now be the reviewer. `openqodex review --reviewer codex` runs the full review with `codex exec` on your Codex login, and `auto` picks Codex when you run the command from Codex or when Codex is the only reviewer installed.
+  The Codex reviewer reads the copy of the change in a read-only sandbox with no network for its commands. It still loads your global `~/.codex/AGENTS.md`.
+  Before each Codex review, OpenQodex checks that the sandbox refuses a read outside the copy and a write inside it. If it does not, the review does not start and you get "Full review unavailable" with the fallback.
+  With Codex, the report says file reads were not recorded, because Codex does not show every command it runs. Changed lines count only when the brief or a correction round put them in front of the reviewer.
+  Inside Codex's own sandbox, where a second Codex cannot start, `review --reviewer codex` prints "Full review unavailable" and the `review --agent` fallback.
+  The reviewer brief no longer tells the reviewer which tools it has; it says to inspect the copy with its own tools, edit nothing and run none of the repository's code.
+
+- [#35](https://github.com/openqodex/openqodex/pull/35) [`8e614e4`](https://github.com/openqodex/openqodex/commit/8e614e493386a0e371afc21594a3e8fe9bc0c20a) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The reviewer can now search the web and open web pages by default; set `reviewer_web: off` in `~/.openqodex/config.yaml` to remove the web tools.
+
+### Patch Changes
+
+- [#37](https://github.com/openqodex/openqodex/pull/37) [`0b0b923`](https://github.com/openqodex/openqodex/commit/0b0b923c911d6591bf25e924638183bb85cc0ef0) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - A scanner download that is stopped for being too large or too slow no longer leaves its partial file behind.
+
+- [#35](https://github.com/openqodex/openqodex/pull/35) [`59bb4b6`](https://github.com/openqodex/openqodex/commit/59bb4b60353da73ae96f2a1d26a7e7dd239f8e1e) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - The terminal report no longer prints a line reading only "agent" under a finding the reviewing agent raised from its own reading; a scanner finding the agent verified still names its scanner.
+
+  - The line `hook install` prints for husky or a pre-push hook of your own now passes git's hook arguments (`"$@"`), so a push to a remote other than origin is checked against that remote. The lefthook line passes none, because lefthook would put a remote URL into the command as raw shell text; with lefthook a push is still checked against origin.
+  - `docs/security.md` now lists the problem report among the network uses: what the issue holds, and that it is sent only when you choose it.
+  - The skill now says that two scanners go online: semgrep downloads its rule packs, and osv-scanner sends dependency names and versions to osv.dev. `--offline` skips both.
+  - A brief written by a local build of OpenQodex (run with `node <path>/dist/bin.js`) now names that same node and file in its finalize command, and in the fallback line when no reviewer can start, instead of `npx -y openqodex@<version>`. A run through npx or the launcher is unchanged.
+  - `init` and the first scan or review no longer tell you to commit a file that git ignores in your repository; they say it is ignored and not shared with your team.
+
+- [#35](https://github.com/openqodex/openqodex/pull/35) [`379c2ca`](https://github.com/openqodex/openqodex/commit/379c2ca96ef8798c838f9e4c9d51556abb76aa91) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - In a work tree nested inside its bare repository (such as `repo.git/main`), the review after `init` no longer includes the files `init` itself wrote.
+
+- [#35](https://github.com/openqodex/openqodex/pull/35) [`1ce2fac`](https://github.com/openqodex/openqodex/commit/1ce2fac3df1173a986a044d87e47ecedc3030f19) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The pre-push hook now finds a complete review of the pushed branch even after a later review of other work.
+
 ## 0.5.0
 
 ### Minor Changes
