@@ -184,15 +184,16 @@ function realDir(repoRoot: string, parts: string[]): string {
 // Writes `content` to `path` in the repo state, making the folders on the way.
 // A link at the file or on the way throws. A temp file then a rename, so a
 // reader never sees half a file; with `exclusive` the file is created only
-// when nothing is there, and false says something was.
-export function writeRepoFile(repoRoot: string, path: string, content: string, opts: { exclusive?: boolean } = {}): boolean {
+// when nothing is there, and false says something was. `mode` sets the
+// permissions of a new file (0600 for what may quote the code under review).
+export function writeRepoFile(repoRoot: string, path: string, content: string, opts: { exclusive?: boolean; mode?: number } = {}): boolean {
   const parts = steps(repoRoot, path);
   const dir = realDir(repoRoot, parts.slice(0, -1));
   const target = join(dir, parts[parts.length - 1]!);
   if (lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) throw linkError(repoRoot, target);
   if (opts.exclusive) {
     try {
-      writeFileSync(target, content, { flag: "wx" });
+      writeFileSync(target, content, { flag: "wx", mode: opts.mode });
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
@@ -201,7 +202,7 @@ export function writeRepoFile(repoRoot: string, path: string, content: string, o
   }
   const tmp = join(dir, `.${parts[parts.length - 1]}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
   try {
-    writeFileSync(tmp, content, { flag: "wx" });
+    writeFileSync(tmp, content, { flag: "wx", mode: opts.mode });
     renameSync(tmp, target);
   } finally {
     rmSync(tmp, { force: true });

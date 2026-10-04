@@ -12,7 +12,8 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, relative } from "node:path";
-import type { ReviewerUsage, TraceEntry } from "@openqodex/core";
+import type { ReviewerUsage } from "@openqodex/core";
+import type { ToolCall } from "./trace.js";
 
 // Set in every reviewer's environment. A `review` that starts with it set
 // refuses: a review never starts another review.
@@ -23,7 +24,9 @@ export type Detected = { ok: true; version: string; bin: string } | { ok: false;
 // One answer of the reviewer. `usage` is the session's total so far.
 // `failure` is one plain line when the agent could not answer (it exited,
 // it timed out, it started with more than it was given).
-export type Turn = { finalText: string; trace: TraceEntry[]; usage: ReviewerUsage; sessionId: string | null; failure: string | null };
+// `calls`: every tool call of this answer, as the agent sent it; the run
+// decides from them, by script, what was read and where.
+export type Turn = { finalText: string; calls: ToolCall[]; usage: ReviewerUsage; sessionId: string | null; failure: string | null };
 
 // An open reviewer. `send` asks for one answer in the same session: the
 // brief first, then each correction round. A driver whose agent cannot keep a

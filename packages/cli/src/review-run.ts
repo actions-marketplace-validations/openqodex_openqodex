@@ -35,9 +35,7 @@ import {
   safeGit,
   selectLenses,
   writeLatest,
-  writeManifest,
   writeReportFiles,
-  writeScan,
 } from "@openqodex/core";
 import type { Change, ChangeScope, Config, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, TraceEntry, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
@@ -47,11 +45,12 @@ import type { Checkout } from "./checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
-import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, reportFiles, scanChange, warn, wholeRepoLenses } from "./pipeline.js";
+import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
 import { claudeDriver } from "./reviewers/claude.js";
 import { DEPTH_ENV, REVIEWER_NAMES, hostAgent } from "./reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "./reviewers/driver.js";
+import { classify } from "./reviewers/trace.js";
 import { dropTempRef, resolveTarget } from "./target.js";
 
 export const DEFAULT_TIMEOUT_SECONDS = 600;
@@ -61,8 +60,15 @@ const HEARTBEAT_MS = 15_000;
 const MAX_ANSWER_BYTES = 2 * 1024 * 1024;
 // Snapshot files bigger than this are neither redacted nor hashed by content.
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+// Snapshot files bigger than this cannot be checked for secrets and are removed from it.
+const MAX_REDACT_BYTES = 64 * 1024 * 1024;
+// redactSecrets ignores shorter matches; so does the byte check.
+const MIN_SECRET_LENGTH = 6;
 
 const DRIVERS: ReviewerDriver[] = [claudeDriver];
+
+// Every file a review writes in its run folder may quote the code under review.
+const PRIVATE = 0o600;
 
 export type ReviewOptions = {
   flags: GlobalFlags;
@@ -121,20 +127,41 @@ function snapshotFiles(dir: string): string[] {
 // Replaces every copy of a secret the scanners found, in every file of the
 // snapshot, so the reviewer never reads one. The snapshot is the tool's own
 // copy; the developer's files are never touched.
-export function redactSnapshot(dir: string, secrets: string[]): number {
-  if (secrets.length === 0) return 0;
-  let changed = 0;
+// Every file is checked, whatever the diff shows. Text gets "[redacted]";
+// a file that is not UTF-8 text gets each secret's bytes overwritten in
+// place. A file too large to check is removed from the snapshot, so the
+// reviewer cannot read it. A file that still holds a secret afterwards, or
+// cannot be read or written, stops the run: nothing unredacted is shown.
+export function redactSnapshot(dir: string, secrets: string[]): { redacted: number; removed: string[] } {
+  const usable = [...new Set(secrets)].filter((s) => s.length >= MIN_SECRET_LENGTH).map((s) => Buffer.from(s, "utf8"));
+  const out = { redacted: 0, removed: [] as string[] };
+  if (usable.length === 0) return out;
   for (const path of snapshotFiles(dir)) {
     const full = join(dir, path);
-    if (lstatSync(full).size > MAX_FILE_BYTES) continue;
-    const text = readFileSync(full, "utf8");
-    const clean = redactSecrets(text, secrets);
-    if (clean !== text) {
-      writeFileSync(full, clean);
-      changed++;
+    try {
+      if (lstatSync(full).size > MAX_REDACT_BYTES) {
+        rmSync(full, { force: true });
+        out.removed.push(path);
+        continue;
+      }
+      const buf = readFileSync(full);
+      if (!usable.some((s) => buf.includes(s))) continue;
+      const text = buf.toString("utf8");
+      let next: Buffer;
+      if (Buffer.from(text, "utf8").equals(buf) && !buf.includes(0)) {
+        next = Buffer.from(redactSecrets(text, secrets), "utf8");
+      } else {
+        next = Buffer.from(buf);
+        for (const s of usable) for (let at = next.indexOf(s); at !== -1; at = next.indexOf(s, at + 1)) next.fill(0x78, at, at + s.length);
+      }
+      writeFileSync(full, next);
+      if (usable.some((s) => readFileSync(full).includes(s))) throw new Error("a secret is still there");
+      out.redacted++;
+    } catch (error) {
+      throw new OpenQodexError(`could not redact secrets in the snapshot copy of ${path} (${(error as Error).message.split("\n")[0]}); the review stops so the reviewer never reads it`);
     }
   }
-  return changed;
+  return out;
 }
 
 // One hash over every snapshot file's path and content (size and time for a
@@ -209,6 +236,7 @@ type Conversation = {
   usage: Turn["usage"];
   report: Report | null;
   errors: string[];
+  required: number;
   disposed: number;
   failure: string | null;
   submission: unknown;
@@ -220,13 +248,14 @@ type Conversation = {
 // outside the snapshot ends the conversation at once.
 async function converse(args: {
   session: ReviewerSession;
+  snapshotDir: string;
   brief: string;
   deadline: number;
-  check: (submission: unknown, trace: TraceEntry[]) => { report: Report | null; errors: string[]; unread: string[]; disposed: number };
+  check: (submission: unknown, trace: TraceEntry[]) => { report: Report | null; errors: string[]; unread: string[]; required: number; disposed: number };
   say: (line: string) => void;
 }): Promise<Conversation> {
   const startedAt = Date.now();
-  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], disposed: 0, failure: null, submission: null, startedAt, endedAt: startedAt };
+  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, startedAt, endedAt: startedAt };
   const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((Date.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
   heartbeat.unref();
   try {
@@ -235,28 +264,30 @@ async function converse(args: {
       c.rounds++;
       let timer: NodeJS.Timeout | undefined;
       const late = new Promise<Turn>((done) => {
-        timer = setTimeout(() => done({ finalText: "", trace: [], usage: c.usage, sessionId: null, failure: "the reviewer timed out and was stopped" }), Math.max(0, args.deadline - Date.now()));
+        timer = setTimeout(() => done({ finalText: "", calls: [], usage: c.usage, sessionId: null, failure: "the reviewer timed out and was stopped" }), Math.max(0, args.deadline - Date.now()));
       });
       let turn: Turn;
       try {
         turn = await Promise.race([args.session.send(text), late]);
       } catch (error) {
-        turn = { finalText: "", trace: [], usage: c.usage, sessionId: null, failure: `the reviewer failed: ${(error as Error).message}` };
+        turn = { finalText: "", calls: [], usage: c.usage, sessionId: null, failure: `the reviewer failed: ${(error as Error).message}` };
       } finally {
         clearTimeout(timer);
       }
-      c.trace.push(...turn.trace);
+      c.trace.push(...turn.calls.map((call) => classify(args.snapshotDir, call)));
       c.usage = turn.usage;
       if (turn.failure !== null) {
         c.failure = turn.failure;
         break;
       }
-      if (c.trace.some((t) => t.ok && !t.inside)) break;
+      // An attempt outside the snapshot ends the review: it never completes.
+      if (c.trace.some((t) => !t.inside)) break;
       const parsed = parseAnswer(turn.finalText);
-      const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [], disposed: 0 } : args.check(parsed.value, c.trace);
+      const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace);
       if ("value" in parsed) c.submission = parsed.value;
       c.report = result.report;
       c.errors = result.errors;
+      c.required = result.required;
       c.disposed = result.disposed;
       const problems = renumber([...result.errors, ...result.unread]);
       if (problems.length === 0 || c.rounds > MAX_CORRECTIONS) break;
@@ -397,15 +428,16 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       const path = join(dir, "unchecked-candidates.json");
       writeReportFiles(repoRoot, dir, {
         "unchecked-candidates.json": `${JSON.stringify({ label: "unchecked scanner candidates, not a review: no reviewer checked them", change_id: change.id, candidates: scan.candidates }, null, 2)}\n`,
-      });
+      }, PRIVATE);
       warn("Full review unavailable: openqodex could not start a reviewer.");
       for (const line of chosen.unavailable) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
       return EXIT_TOOL_FAILED;
     }
 
-    const removed = redactSnapshot(prep.snapshot.tree, p.secrets);
-    if (removed > 0) say(`Redacted secrets in ${removed} ${removed === 1 ? "file" : "files"} of the snapshot`);
+    const redaction = redactSnapshot(prep.snapshot.tree, p.secrets);
+    if (redaction.redacted > 0) say(`Redacted secrets in ${redaction.redacted} ${redaction.redacted === 1 ? "file" : "files"} of the snapshot`);
+    if (redaction.removed.length > 0) warn(`Left out of the review, too large to check for secrets: ${redaction.removed.join(", ")}`);
     const instructions = ownersInstructions(repoRoot, p.secrets);
     let lenses: SelectedLens[];
     let impact: ImpactSummary;
@@ -430,19 +462,27 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       runtime_version: __OPENQODEX_VERSION__,
       ...(prep.target ? { target: prep.target } : {}),
     };
-    writeManifest(repoRoot, dir, manifest);
-    writeScan(repoRoot, dir, scan);
-    writeReportFiles(repoRoot, dir, { "brief.md": brief.text, "impact.json": `${JSON.stringify(impact, null, 2)}\n` });
+    writeReportFiles(
+      repoRoot,
+      dir,
+      {
+        "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
+        "scan.json": `${JSON.stringify(scan, null, 2)}\n`,
+        "brief.md": brief.text,
+        "impact.json": `${JSON.stringify(impact, null, 2)}\n`,
+      },
+      PRIVATE,
+    );
 
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
-    const live = scan.candidates.length;
     session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin });
     const pid = session.pid;
     say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
     const startedIso = new Date().toISOString();
     const talk = await converse({
       session,
+      snapshotDir: prep.snapshot.tree,
       brief: brief.text,
       deadline,
       say,
@@ -455,7 +495,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
           : readCoverage({ change, briefFiles: brief.diffFiles, trace })
               .unread.filter((h) => !h.deletion)
               .map((h) => `you have not read ${h.path} lines ${h.start} to ${h.end}, a changed range; read them with your read tool and check your answer`);
-        return r.ok ? { report: r.report, errors: [], unread, disposed: r.disposed } : { report: null, errors: r.errors, unread, disposed: r.disposed };
+        return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
       },
     }).finally(async () => {
       await session?.close();
@@ -478,7 +518,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       change,
       reviewer,
       snapshot: { tree: prep.tree, before, after },
-      candidates: { total: live, disposed: talk.report ? live : talk.disposed },
+      candidates: { total: talk.required, disposed: talk.disposed },
       coverage,
       trace: talk.trace,
       submissionErrors: talk.report ? [] : talk.errors,
@@ -494,9 +534,9 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
     writeReportFiles(repoRoot, dir, {
       ...reportFiles(report),
-      "submission.json": `${JSON.stringify(talk.submission, null, 2)}\n`,
+      "submission.json": `${JSON.stringify(redactStored(talk.submission, p.secrets), null, 2)}\n`,
       "trace.json": `${JSON.stringify(talk.trace, null, 2)}\n`,
-    });
+    }, PRIVATE);
     const receipt: Latest = {
       dir: relative(repoRoot, dir),
       change_id: change.id,

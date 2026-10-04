@@ -69,6 +69,19 @@ Updates are off with `openqodex update --off`, `update: off` in `~/.openqodex/co
 
 OpenQodex sends no telemetry. See `telemetry`.
 
+## The reviewer process
+
+`openqodex review` starts Claude Code (`claude -p`) as its reviewer. It sends the review brief and the files the reviewer reads to the model your Claude Code login uses, as any Claude Code session does. The reviewer:
+
+- reads a snapshot of the change in `~/.openqodex/checkouts/`, never your folder. Secrets the scanners found are redacted in every file of the snapshot first, and a file too large to check is left out of it.
+- has the read, search and list tools only: no shell, no edits, no web, no MCP server, no subagent. Claude Code's own permission rules refuse a read outside the snapshot; that is the boundary. OpenQodex also checks every tool call in the agent's event stream and marks the review incomplete when one names a path outside the snapshot, an unknown tool or an input it cannot read; that is the alarm.
+- loads none of your Claude Code settings, hooks, plugins, memory or `CLAUDE.md` files, and none of the repository's.
+- gets an environment built from a short allowlist: the variables Claude Code needs to run and find its login (`PATH`, `HOME`, `USER`, `CLAUDE_CONFIG_DIR`, proxy settings, `ANTHROPIC_*` keys, and cloud provider variables only when Claude Code is set to that provider). Other tokens in your shell, such as `GITHUB_TOKEN` or `NPM_TOKEN`, never reach it.
+
+The reviewer runs with session saving off (`--no-session-persistence`). After real runs with Claude Code 2.1.289, no transcript, history line or project entry for a snapshot was found in the Claude Code configuration folder. Claude Code's own logs and telemetry follow its own settings.
+
+The run folder of a review holds the brief, the scan, the reviewer's answer and the list of its tool calls (paths and line ranges, never file contents). Each file is created readable by you only, and secrets are redacted in all of them.
+
 ## Secrets
 
 When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. It keeps the length and sha256 of each secret, to redact any text the agent quotes.

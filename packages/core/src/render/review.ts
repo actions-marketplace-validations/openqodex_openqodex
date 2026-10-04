@@ -89,17 +89,28 @@ function lines(report: Report): Line[] {
   return out;
 }
 
+// Text for markdown that cannot make structure. The reviewer read a change
+// that may be hostile, and paths come from the repository, so every string
+// first becomes one line with no control character (`display`), then every
+// character markdown or HTML gives meaning to is escaped: no heading, list,
+// link, image, HTML tag, table cell, code span, fence or emphasis can start
+// inside it. A reader of the rendered page sees the same words.
+export function markdownText(text: string): string {
+  return display(text).replace(/[\\`*_[\]()!<>#|~]/g, (c) => `\\${c}`);
+}
+
 export function renderReview(report: Report, opts: { format: "terminal" | "markdown"; color?: boolean }): string {
   const c = pc.createColors(opts.format === "terminal" && opts.color === true);
   const out: string[] = [];
+  const md = opts.format === "markdown";
   for (const l of lines(report)) {
+    // Terminal: one line, no control character. Markdown: also escaped.
+    const text = md ? markdownText(l.text) : display(l.text);
     if (l.kind === "field") {
-      const text = display(l.text);
-      out.push(opts.format === "markdown" ? `- **${l.label}:** ${text}` : `   ${c.dim(`${l.label}:`)} ${text}`);
+      out.push(md ? `- **${l.label}:** ${text}` : `   ${c.dim(`${l.label}:`)} ${text}`);
       continue;
     }
-    const text = display(l.text);
-    if (opts.format === "markdown") {
+    if (md) {
       if (l.kind === "verdict") out.push(`# ${text}`, "");
       else if (l.kind === "heading") out.push("", `## ${text}`, "");
       else if (l.kind === "item") out.push("", `### ${text}`, "");

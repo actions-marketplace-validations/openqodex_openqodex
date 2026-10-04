@@ -22,7 +22,7 @@ By default the change is the commits not yet pushed plus everything uncommitted,
 4. The point where the branch left the remote's default branch (`origin/HEAD`).
 5. The last commit, `HEAD`.
 
-A repository with no commits checks every file. A review of your own change never fetches from a remote; a review of a branch or a pull request does (see "Reviewing a branch or a pull request").
+A repository with no commits checks every file with `scan`; `review` needs a first commit to make its snapshot. A review of your own change never fetches from a remote; a review of a branch or a pull request does (see "Reviewing a branch or a pull request").
 
 ## Shared flags
 

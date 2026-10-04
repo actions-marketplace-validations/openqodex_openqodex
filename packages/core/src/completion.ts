@@ -95,8 +95,9 @@ export function completionRecord(args: {
   if (args.snapshot.after === null || args.snapshot.after !== args.snapshot.before) {
     missing.push("the snapshot changed while the reviewer read it");
   }
-  const outside = [...new Set(args.trace.filter((t) => t.ok && !t.inside).map((t) => t.path ?? "(no path)"))];
-  if (outside.length > 0) missing.push(`the reviewer read outside the snapshot: ${listed(outside)}`);
+  // Fails closed: an attempt counts, whether or not the agent's own rules refused it.
+  const outside = [...new Set(args.trace.filter((t) => !t.inside).map((t) => t.path ?? "(no path)"))];
+  if (outside.length > 0) missing.push(`the reviewer tried to read outside the snapshot: ${listed(outside)}`);
   const tools = [...new Set(args.trace.map((t) => t.tool).filter((t) => !REVIEWER_TOOLS.includes(t)))];
   if (tools.length > 0) missing.push(`the reviewer used a tool it was not given: ${tools.join(", ")}`);
   const open = args.candidates.total - args.candidates.disposed;

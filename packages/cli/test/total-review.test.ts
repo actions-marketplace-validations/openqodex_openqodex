@@ -16,7 +16,14 @@
 // 10. A secret the scanners found is shown to the reviewer in the snapshot.
 // 11. A timeout leaves a child process running.
 // 12. The numbered errors are not sent back to the same session.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+// 13. A tool call escapes the trace check: a relative path with ../, an
+//     absolute path, a Grep path or a Glob pattern rooted outside, an unknown
+//     tool, or an input that cannot be read still lets the run complete.
+// 14. The reviewer's environment carries a token of the developer's.
+// 15. A run file that may quote the code is readable by other users.
+// 16. A binary file with a secret in it reaches the reviewer unredacted.
+// 17. Stderr echoes the reviewer's raw answer.
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -26,6 +33,8 @@ import { parseFlags } from "../src/flags.js";
 import { DEPTH_ENV, killGroup, spawnGroup } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { redactSnapshot, runReview } from "../src/review-run.js";
+import { reviewerEnv } from "../src/reviewers/claude.js";
+import type { ToolCall } from "../src/reviewers/trace.js";
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -71,7 +80,7 @@ function fake(answers: Answer[], available = true): Fake {
           const next = answers[driver.sent.length - 1] ?? answers[answers.length - 1]!;
           // Every answer is built from the brief, the first text the session got.
           const t = await next(driver.sent[0] ?? text, snapshotDir);
-          return { finalText: "", trace: [], usage: { turns: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01 }, sessionId: "fake", failure: null, ...t };
+          return { finalText: "", calls: [], usage: { turns: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01 }, sessionId: "fake", failure: null, ...t };
         },
         async close() {
           driver.closed++;
@@ -174,7 +183,7 @@ describe("the total review run", () => {
   });
 
   it("3. a successful read outside the snapshot makes the run incomplete", async () => {
-    const outside: Answer = (text) => ({ finalText: submission(text), trace: [{ tool: "Read", path: "/etc/hosts", inside: false, range: [1, 3], ok: true }] });
+    const outside: Answer = (text) => ({ finalText: submission(text), calls: [{ tool: "Read", input: { file_path: "/etc/hosts" }, ok: true, read: { path: "/etc/hosts", start: 1, lines: 3 } }] });
     expect(await review(repo(), fake([outside]))).toBe(2);
     expect((JSON.parse(out) as Report).completion?.missing.join("\n")).toContain("/etc/hosts");
   });
@@ -231,6 +240,62 @@ describe("the total review run", () => {
   });
 });
 
+describe("13. the trace check fails closed", () => {
+  const cases: [string, ToolCall][] = [
+    ["a relative path that climbs out with ../", { tool: "Read", input: { file_path: "../../../etc/hosts" }, ok: true, read: null }],
+    ["an absolute path outside", { tool: "Read", input: { file_path: "/etc/hosts" }, ok: false, read: null }],
+    ["a Grep with its path outside", { tool: "Grep", input: { pattern: "key", path: "/Users" }, ok: true, read: null }],
+    ["a Glob pattern rooted outside", { tool: "Glob", input: { pattern: "/etc/**/*.conf" }, ok: true, read: null }],
+    ["a Glob pattern that climbs out", { tool: "Glob", input: { pattern: "../**/*" }, ok: true, read: null }],
+    ["a home path", { tool: "Read", input: { file_path: "~/.ssh/config" }, ok: true, read: null }],
+    ["an environment-style path", { tool: "Read", input: { file_path: "$HOME/.ssh/config" }, ok: true, read: null }],
+    ["a URL-encoded path", { tool: "Read", input: { file_path: "%2e%2e/%2e%2e/etc/hosts" }, ok: true, read: null }],
+    ["an unknown tool", { tool: "Bash", input: { command: "ls" }, ok: true, read: null }],
+    ["an input that cannot be read", { tool: "Read", input: "not an object", ok: true, read: null }],
+    ["a path that is not text", { tool: "Grep", input: { pattern: "x", path: 7 }, ok: true, read: null }],
+  ];
+  for (const [name, call] of cases) {
+    it(`${name} makes the run incomplete`, async () => {
+      const answer: Answer = (text) => ({ finalText: submission(text), calls: [call] });
+      expect(await review(repo(), fake([answer]))).toBe(2);
+      expect((JSON.parse(out) as Report).completion?.status).toBe("incomplete");
+    });
+  }
+  it("reads inside the snapshot, relative or absolute, keep the run complete", async () => {
+    const answer: Answer = (text, snapshotDir) => ({
+      finalText: submission(text),
+      calls: [
+        { tool: "Read", input: { file_path: join(snapshotDir, "db/x.sql") }, ok: true, read: { path: join(snapshotDir, "db/x.sql"), start: 1, lines: 2 } },
+        { tool: "Grep", input: { pattern: "admin", path: "db" }, ok: true, read: null },
+        { tool: "Glob", input: { pattern: "**/*.sql" }, ok: true, read: null },
+      ],
+    });
+    expect(await review(repo(), fake([answer]))).toBe(0);
+    expect((JSON.parse(out) as Report).completion?.coverage.files_read).toEqual(["db/x.sql"]);
+  });
+});
+
+describe("what leaves the process", () => {
+  it("14. the reviewer's environment holds no token of the developer's", () => {
+    const env = reviewerEnv({ PATH: "/usr/bin", HOME: "/h", USER: "u", CLAUDE_CONFIG_DIR: "/c", ANTHROPIC_API_KEY: "k", GITHUB_TOKEN: "g", NPM_TOKEN: "n", AWS_SECRET_ACCESS_KEY: "a", OPENAI_API_KEY: "o", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s" });
+    expect(Object.keys(env).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "HOME", DEPTH_ENV, "PATH", "USER"].sort());
+    expect(reviewerEnv({ CLAUDE_CODE_USE_BEDROCK: "1", AWS_REGION: "r", GITHUB_TOKEN: "g" })).toMatchObject({ CLAUDE_CODE_USE_BEDROCK: "1", AWS_REGION: "r" });
+  });
+  it("15. every file of the run folder is readable by its owner only", async () => {
+    const dir = repo();
+    expect(await review(dir, fake([good]))).toBe(0);
+    const run = join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
+    const files = readdirSync(run);
+    expect(files).toEqual(expect.arrayContaining(["brief.md", "scan.json", "submission.json", "trace.json", "report.md"]));
+    for (const name of files) expect((statSync(join(run, name)).mode & 0o777).toString(8), name).toBe("600");
+  });
+  it("17. stderr never echoes the reviewer's raw answer", async () => {
+    const canary = "CANARY-RAW-ANSWER-4417";
+    expect(await review(repo(), fake([() => ({ finalText: `not json ${canary}` })]))).toBe(2);
+    expect(err).not.toContain(canary);
+  });
+});
+
 describe("the snapshot", () => {
   it("10. redacts every copy of a secret the scanners found and leaves the developer's files alone", () => {
     const dir = mkdtempSync(join(tmpdir(), "oq-redact-"));
@@ -239,9 +304,16 @@ describe("the snapshot", () => {
     writeFileSync(join(dir, "app/config.py"), `KEY = "${secret}"\n`);
     writeFileSync(join(dir, "app/other.py"), `# copied: ${secret}\nx = 1\n`);
     writeFileSync(join(dir, ".git"), "gitdir: /somewhere\n");
-    redactSnapshot(dir, [secret]);
+    expect(redactSnapshot(dir, [secret])).toEqual({ redacted: 2, removed: [] });
     expect(readFileSync(join(dir, "app/config.py"), "utf8")).not.toContain(secret);
     expect(readFileSync(join(dir, "app/other.py"), "utf8")).toBe("# copied: [redacted]\nx = 1\n");
+  });
+  it("16. overwrites a secret inside a binary file too", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oq-redact-bin-"));
+    const secret = ["sk", "live", Math.random().toString(36).slice(2).padEnd(24, "y")].join("_");
+    writeFileSync(join(dir, "blob.bin"), Buffer.concat([Buffer.from([0, 255, 254, 0]), Buffer.from(secret), Buffer.from([0, 1])]));
+    expect(redactSnapshot(dir, [secret]).redacted).toBe(1);
+    expect(readFileSync(join(dir, "blob.bin")).includes(Buffer.from(secret))).toBe(false);
   });
 });
 

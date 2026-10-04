@@ -23,7 +23,7 @@ claude -p --output-format stream-json --verbose --input-format stream-json
   --no-session-persistence
 ```
 
-The child gets the parent's environment minus the variables that tie a process to a running Claude Code session (`CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_JOB_DIR`, `CLAUDE_EFFORT` and the `CLAUDE_CODE_*` session, entry point, messaging and path variables), plus `OPENQODEX_REVIEW_DEPTH=1`.
+The child gets an environment built from an allowlist (`reviewerEnv` in `packages/cli/src/reviewers/claude.ts`): `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, locale, `TERM`, `TZ`, `CLAUDE_CONFIG_DIR`, proxy and CA settings, the `ANTHROPIC_*` key, URL and model variables, and the Bedrock, Vertex or Foundry variables only when the matching `CLAUDE_CODE_USE_*` flag is set; plus `OPENQODEX_REVIEW_DEPTH=1`. No other variable is copied, so no developer token and nothing that ties the child to a running Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, messaging sockets) reaches it. A run from inside a Claude Code session with this environment worked as the runs below did.
 
 ### What each flag was observed to do
 
@@ -56,9 +56,21 @@ The child gets the parent's environment minus the variables that tie a process t
 
 Each `result` event carries `num_turns` and `usage` for that turn (input, output and cache tokens), and `total_cost_usd` and `modelUsage` for the session so far. The driver adds up the turns and takes tokens and cost from the last `result` event.
 
-### What the tool still checks itself
+### The boundary and the alarm
 
-The permission rules are the agent's own. The tool does not trust them alone: it fails a run whose `init` event lists any tool beyond Read, Grep and Glob, any MCP server or a memory path, and a run whose trace shows any tool other than those three or any successful read of a path outside the snapshot. The snapshot holds no links (they are written as plain files) and secrets the scanners found are redacted in it.
+The boundary is Claude Code's own permission rules: `--tools Read,Grep,Glob` and `--permission-mode dontAsk` with no settings source, which refused every read outside the working folder in the runs above. The alarm is the tool's own check of the event stream (`packages/cli/src/reviewers/trace.ts`), which does not trust the boundary and fails closed:
+
+- the run fails when the `init` event lists any tool beyond Read, Grep and Glob, any MCP server or a memory path; the `Agent` tool is never listed, so no subagent or nested turn can make a call the stream does not show, and every `tool_use` in the stream is checked whichever turn it came from;
+- every tool call counts from the moment the agent asks for it, with or without a result; a tool name other than the three makes the review incomplete;
+- every path-bearing input (`file_path`, `path`, `notebook_path`, `cwd`, `directory`, and a `pattern` or `glob` that starts at `/`, `~`, a drive or `..`) is resolved against the snapshot, then through the real path of its deepest existing folder, and compared case-insensitively on macOS and Windows; a path with `$`, `%` or a NUL is refused, `~` is the home folder;
+- an input that is not an object, or a path field that is not text, makes the review incomplete;
+- any attempt outside the snapshot makes the review incomplete, even one the agent refused.
+
+The snapshot holds no links (they are written as plain files) and secrets the scanners found are redacted in every file of it before the reviewer starts; a file too large to check is removed from it.
+
+### What the agent stores
+
+With `--no-session-persistence` and auto memory off, real runs with Claude Code 2.1.289 left no transcript, no `history.jsonl` line and no project entry for a snapshot folder in the configuration folder (searched for the brief's text and the snapshot paths after the runs). An earlier run without `autoMemoryEnabled: false` left one empty `projects/<folder>/memory` folder; with the flag, none. The driver keeps the developer's configuration folder because a temporary one loses the login.
 
 ### Not covered
 

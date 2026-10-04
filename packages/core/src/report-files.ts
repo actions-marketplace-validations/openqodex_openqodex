@@ -139,11 +139,11 @@ export function findReportDir(repoRoot: string, changeId: string): string | null
 }
 
 // Writes each file atomically (temp file, then rename) into `dir`, a folder
-// in the repo state.
-export function writeReportFiles(repoRoot: string, dir: string, files: Record<string, string>): void {
+// in the repo state, with `mode` for new files when given.
+export function writeReportFiles(repoRoot: string, dir: string, files: Record<string, string>, mode?: number): void {
   for (const [name, content] of Object.entries(files)) {
     if (name !== basename(name) || name.startsWith(".")) throw new Error(`not a plain file name: ${name}`);
-    writeRepoFile(repoRoot, join(dir, name), content);
+    writeRepoFile(repoRoot, join(dir, name), content, { mode });
   }
 }
 

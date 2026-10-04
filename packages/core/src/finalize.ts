@@ -407,7 +407,9 @@ function proseErrors(at: string, text: string, banned: ReturnType<typeof scanner
   return errors;
 }
 
-export type SubmissionCheck = { ok: true; report: Report; disposed: number } | { ok: false; errors: string[]; disposed: number };
+// `required`: the candidates that need a disposition (those no disabled rule
+// covers); `disposed`: how many of them have exactly one.
+export type SubmissionCheck = { ok: true; report: Report; required: number; disposed: number } | { ok: false; errors: string[]; required: number; disposed: number };
 
 // Checks a version 2 submission with no model and returns every rejection at
 // once, numbered, so the reviewer can fix them all in one round; or the
@@ -425,7 +427,8 @@ export function checkSubmission(args: {
   const { change, scan, manifest, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
   const errors: string[] = [];
-  const done = (disposed: number): SubmissionCheck => ({ ok: false, errors: errors.map((e, i) => `${i + 1}. ${clean(e)}`), disposed });
+  const live = scan.candidates.filter((c) => !disabled(c.token, config));
+  const done = (disposed: number): SubmissionCheck => ({ ok: false, errors: errors.map((e, i) => `${i + 1}. ${clean(e)}`), required: live.length, disposed });
 
   const parsed = submissionV2Schema.safeParse(args.submission);
   if (!parsed.success) {
@@ -481,7 +484,6 @@ export function checkSubmission(args: {
     else if (d.line_number > count) errors.push(`${at}: it cites line ${d.line_number} of ${d.file_path}, which has ${count} lines`);
   });
 
-  const live = scan.candidates.filter((c) => !disabled(c.token, config));
   for (const c of live) {
     const n = dispositions.get(c.id) ?? 0;
     if (n === 0) errors.push(`candidate ${c.id} (${c.filePath}:${c.lineStart}) has no disposition: raise it in a finding or add it to dropped with a reason and a line`);
@@ -549,7 +551,7 @@ export function checkSubmission(args: {
     not_reviewed_paths: change.notReviewed,
     stats: change.stats,
   };
-  return { ok: true, report: redactAll(report, clean), disposed };
+  return { ok: true, report: redactAll(report, clean), required: live.length, disposed };
 }
 
 // What each scanner's findings are about, for a scan-only report.

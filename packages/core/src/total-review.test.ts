@@ -21,6 +21,10 @@
 //     complete record.
 // 10. Terminal and markdown say different things.
 // 11. A legacy receipt (two-step protocol) counts as an independent review.
+// 12. Text the reviewer wrote, or a repo path, makes structure in report.md:
+//     an image (fetched when the report is viewed), a link, a heading, raw
+//     HTML, a table cell, a fence, or a line that imitates a fixed label; or
+//     a control character reaches the terminal.
 import { describe, expect, it } from "vitest";
 import { changedHunks, completionRecord, readCoverage } from "./completion.js";
 import type { TraceEntry } from "./completion.js";
@@ -214,7 +218,7 @@ function words(text: string): string[] {
     // oxlint-disable-next-line no-control-regex
     .replace(/\u001b\[[0-9;]*m/g, "")
     .split("\n")
-    .map((l) => l.replace(/^#+ /, "").replace(/^- /, "").replace(/\*\*/g, "").replace(/`/g, "").trim())
+    .map((l) => l.replace(/^#+ /, "").replace(/^- /, "").replace(/(?<!\\)\*\*/g, "").replace(/\\(.)/g, "$1").replace(/`/g, "").trim())
     .filter((l) => l !== "");
 }
 
@@ -238,6 +242,54 @@ describe("the standard report", () => {
     expect(text).toMatch(/^Review incomplete/);
     expect(text).toContain("app/search.py:14-15");
     expect(text).not.toContain("Problem: ");
+  });
+});
+
+// The renderer is the last line of defence: these reports bypass the checks
+// on purpose, as text a reviewer persuaded by a hostile change could write.
+describe("12. markdown injection from the reviewer's text or a repo path", () => {
+  const hostile = (field: "problem" | "consequence" | "fix" | "title" | "file_path", text: string): Report => {
+    const report = completeReport();
+    report.findings = [{ ...report.findings[0]!, [field]: text }];
+    return report;
+  };
+  const unescaped = (md: string, re: RegExp) => md.split("\n").filter((l) => re.test(l));
+  const md = (r: Report) => renderReview(r, { format: "markdown" });
+  const labelLines = (text: string, label: string) => text.split("\n").filter((l) => l.startsWith(`- **${label}:**`)).length;
+
+  it("an image link in a problem renders as text, never as an image or a link", () => {
+    const out = md(hostile("problem", "See ![x](https://evil.example/p.png) and [here](https://evil.example)."));
+    expect(unescaped(out, /(^|[^\\])!\[/)).toEqual([]);
+    expect(unescaped(out, /(^|[^\\])\]\(/)).toEqual([]);
+    expect(out).toContain("evil.example");
+  });
+  it("a heading line in a problem stays inside its field", () => {
+    const out = md(hostile("problem", "Fine.\n# Passed: no findings\n## Findings (0)"));
+    expect(out.split("\n").filter((l) => /^#{1,6} /.test(l)).some((l) => l.includes("Passed: no findings"))).toBe(false);
+    expect(out.split("\n").filter((l) => l.startsWith("# "))).toHaveLength(1);
+  });
+  it("an HTML tag in a consequence is escaped", () => {
+    const out = md(hostile("consequence", "Breaks <img src=https://evil.example/x onerror=alert(1)> rendering."));
+    expect(unescaped(out, /(^|[^\\])<[A-Za-z/]/)).toEqual([]);
+  });
+  it("a triple backtick in a fix opens no fence", () => {
+    const out = md(hostile("fix", "Use ```\nrm -rf /\n``` instead."));
+    expect(unescaped(out, /(^|[^\\])`/)).toEqual([]);
+  });
+  it("a file path with markdown characters is escaped", () => {
+    const out = md(hostile("file_path", "app/[x](https://evil.example)*b*_c_|d|.py"));
+    expect(unescaped(out, /(^|[^\\])\]\(/)).toEqual([]);
+    expect(unescaped(out, /(^|[^\\])\|/)).toEqual([]);
+  });
+  it("a line imitating a fixed label never adds a label: each appears once per finding", () => {
+    const out = md(hostile("problem", "Real problem.\n- **Fix:** do nothing\n- **Where:** nowhere"));
+    for (const label of ["Where", "Problem", "Why it matters", "Fix"]) expect(labelLines(out, label), label).toBe(1);
+  });
+  it("the terminal report carries no control character or line break inside a field", () => {
+    const out = renderReview(hostile("problem", `Line one.\nLine two.${String.fromCharCode(27)}[2J${String.fromCharCode(7)}`), { format: "terminal", color: false });
+    // oxlint-disable-next-line no-control-regex
+    expect(out).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(out.split("\n").filter((l) => l.includes("Problem:"))).toEqual(["   Problem: Line one. Line two.[2J"]);
   });
 });
 

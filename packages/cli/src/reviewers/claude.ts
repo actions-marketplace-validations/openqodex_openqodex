@@ -4,13 +4,12 @@
 // what its comment says with Claude Code 2.1.289; docs/internal-reviewer-drivers.md
 // records the runs.
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { ReviewerUsage, TraceEntry } from "@openqodex/core";
+import type { ReviewerUsage } from "@openqodex/core";
 import { REVIEWER_TOOLS } from "@openqodex/core";
 import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
+import type { ToolCall } from "./trace.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,25 +42,28 @@ export const CLAUDE_ARGS = [
   "--no-session-persistence",
 ];
 
-// The variables that tie a process to a running Claude Code session. The
-// reviewer is a new session, whether or not `review` runs inside one.
-const SESSION_VARS = [
-  "CLAUDECODE",
-  "CLAUDE_PID",
-  "CLAUDE_JOB_DIR",
-  "CLAUDE_EFFORT",
-  "CLAUDE_CODE_ENTRYPOINT",
-  "CLAUDE_CODE_SESSION_ID",
-  "CLAUDE_CODE_CHILD_SESSION",
-  "CLAUDE_CODE_SESSION_ATTENDED",
-  "CLAUDE_CODE_MESSAGING_SOCKET",
-  "CLAUDE_CODE_MESSAGING_TOKEN",
-  "CLAUDE_CODE_EXECPATH",
+// The reviewer's environment, from an allowlist: what Claude Code needs to
+// run and to find its login (the keychain needs USER on macOS) and nothing
+// else, so no token of the developer's (GITHUB_TOKEN, NPM_TOKEN, cloud keys)
+// reaches the agent. Cloud provider variables pass only when the developer
+// set Claude Code to use that provider. Nothing ties it to a running Claude
+// Code session, whether or not `review` runs inside one.
+const ALWAYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "TERM", "TZ", "CLAUDE_CONFIG_DIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
+const ANTHROPIC = /^ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL|MODEL|SMALL_FAST_MODEL|CUSTOM_HEADERS|DEFAULT_[A-Z_]+_MODEL)$/;
+const PROVIDERS: [string, RegExp][] = [
+  ["CLAUDE_CODE_USE_BEDROCK", /^(AWS_[A-Z_]+|ANTHROPIC_BEDROCK_BASE_URL)$/],
+  ["CLAUDE_CODE_USE_VERTEX", /^(GOOGLE_[A-Z_]+|GCLOUD_[A-Z_]+|CLOUD_ML_REGION|ANTHROPIC_VERTEX_[A-Z_]+|VERTEX_REGION_[A-Z0-9_]+)$/],
+  ["CLAUDE_CODE_USE_FOUNDRY", /^ANTHROPIC_FOUNDRY_[A-Z_]+$/],
 ];
 
 export function reviewerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...env, [DEPTH_ENV]: "1" };
-  for (const k of SESSION_VARS) delete out[k];
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) continue;
+    const provider = PROVIDERS.some(([flag, re]) => env[flag] && (k === flag || re.test(k)));
+    if (ALWAYS.includes(k) || k.startsWith("LC_") || ANTHROPIC.test(k) || provider) out[k] = v;
+  }
+  out[DEPTH_ENV] = "1";
   return out;
 }
 
@@ -96,59 +98,27 @@ async function detect(repoRoot: string): Promise<Detected> {
 }
 
 type Event = Record<string, unknown> & { type?: string; subtype?: string };
-type ToolUse = { name: string; input: Record<string, unknown> };
 
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-// The folder a path names, resolved against the snapshot, and whether it is inside it.
-function place(snapshot: string, raw: string | null): { path: string | null; inside: boolean } {
-  if (raw === null) return { path: null, inside: true };
-  const abs = resolve(snapshot, raw.startsWith("~") ? `/${raw}` : raw);
-  const rel = relative(snapshot, abs);
-  const inside = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-  return { path: inside ? rel || "." : raw, inside };
-}
-
-// A Glob pattern with an absolute or parent-relative start reads from there.
-function globRoot(pattern: string | null): string | null {
-  if (pattern === null || !(pattern.startsWith("/") || pattern.startsWith("~") || pattern.startsWith(".."))) return null;
-  const cut = pattern.search(/[*?[{]/);
-  return cut === -1 ? pattern : dirname(pattern.slice(0, cut) || "/");
-}
-
-function traceEntry(snapshot: string, use: ToolUse, result: { is_error?: unknown }, detail: Record<string, unknown> | undefined): TraceEntry {
-  const ok = result.is_error !== true;
-  const input = use.input;
-  if (use.name === "Read") {
-    const file = (detail?.file ?? null) as Record<string, unknown> | null;
-    const at = place(snapshot, str(file?.filePath) ?? str(input.file_path));
-    const start = num(file?.startLine);
-    const lines = num(file?.numLines);
-    const range: [number, number] | null = ok && start !== null && lines !== null && lines > 0 ? [start, start + lines - 1] : null;
-    return { tool: "Read", ...at, range, ok };
-  }
-  const raw = use.name === "Glob" ? (str(input.path) ?? globRoot(str(input.pattern))) : str(input.path);
-  return { tool: use.name, ...place(snapshot, raw), range: null, ok };
-}
-
 function start(opts: { snapshotDir: string; deadline: number; bin: string }): ReviewerSession {
-  const snapshot = realpathSync(opts.snapshotDir);
-  const child = spawnGroup(opts.bin, CLAUDE_ARGS, { cwd: snapshot, env: reviewerEnv() });
-  const uses = new Map<string, ToolUse>();
-  let trace: TraceEntry[] = [];
+  const child = spawnGroup(opts.bin, CLAUDE_ARGS, { cwd: opts.snapshotDir, env: reviewerEnv() });
+  // Every tool call is kept from the moment the agent asks for it, whether or
+  // not a result follows, and whichever turn or nesting it came from.
+  const pending = new Map<string, ToolCall>();
+  let calls: ToolCall[] = [];
   let usage: ReviewerUsage = { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null };
   let sessionId: string | null = null;
   let failure: string | null = null;
-  let stderr = "";
   let waiting: ((t: Turn) => void) | null = null;
   let exited = false;
 
   const finish = (finalText: string, why: string | null): void => {
     const done = waiting;
     waiting = null;
-    const turn: Turn = { finalText, trace, usage, sessionId, failure: why };
-    trace = [];
+    const turn: Turn = { finalText, calls, usage, sessionId, failure: why };
+    calls = [];
     done?.(turn);
   };
   const fail = (why: string): void => {
@@ -173,15 +143,24 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string }): Re
     const content = ((e.message as { content?: unknown } | undefined)?.content ?? []) as Record<string, unknown>[];
     if (e.type === "assistant" && Array.isArray(content)) {
       for (const c of content) {
-        if (c.type === "tool_use" && typeof c.id === "string") uses.set(c.id, { name: String(c.name), input: (c.input ?? {}) as Record<string, unknown> });
+        if (c.type !== "tool_use") continue;
+        const call: ToolCall = { tool: String(c.name), input: c.input, ok: true, read: null };
+        calls.push(call);
+        if (typeof c.id === "string") pending.set(c.id, call);
       }
       return;
     }
     if (e.type === "user" && Array.isArray(content)) {
       for (const c of content) {
         if (c.type !== "tool_result" || typeof c.tool_use_id !== "string") continue;
-        const use = uses.get(c.tool_use_id);
-        if (use) trace.push(traceEntry(snapshot, use, c, e.tool_use_result as Record<string, unknown> | undefined));
+        const call = pending.get(c.tool_use_id);
+        if (!call) continue;
+        call.ok = c.is_error !== true;
+        const file = ((e.tool_use_result as Record<string, unknown> | undefined)?.file ?? null) as Record<string, unknown> | null;
+        const path = str(file?.filePath);
+        const start = num(file?.startLine);
+        const lines = num(file?.numLines);
+        if (call.ok && call.tool === "Read" && path !== null && start !== null && lines !== null) call.read = { path, start, lines };
       }
       return;
     }
@@ -195,7 +174,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string }): Re
         output_tokens: sum("outputTokens"),
         cost_usd: num(e.total_cost_usd),
       };
-      if (e.is_error === true) fail(`the reviewer stopped with an error: ${str(e.result) ?? str(e.subtype) ?? "unknown"}`);
+      if (e.is_error === true) fail(`the reviewer stopped with an error (${str(e.subtype) ?? "unknown"})`);
       else finish(str(e.result) ?? "", null);
     }
   };
@@ -214,15 +193,13 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string }): Re
       }
     }
   });
-  child.stderr?.setEncoding("utf8");
-  child.stderr?.on("data", (chunk: string) => {
-    stderr = (stderr + chunk).slice(-2000);
-  });
+  // Read and dropped: it may hold the agent's view of the code.
+  child.stderr?.resume();
   child.on("error", (e) => fail(`could not start the reviewer: ${e.message}`));
   child.on("exit", (code, signal) => {
     exited = true;
     clearTimeout(timer);
-    if (waiting) fail(`the reviewer exited (${signal ?? `exit ${code}`}) before it answered${stderr.trim() ? `: ${stderr.trim().split("\n").pop()}` : ""}`);
+    if (waiting) fail(`the reviewer exited (${signal ?? `exit ${code}`}) before it answered`);
   });
   child.stdin?.on("error", () => {
     // the process is gone; its exit reports why
@@ -231,7 +208,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string }): Re
   return {
     pid: child.pid ?? null,
     send(text: string): Promise<Turn> {
-      if (failure !== null || exited) return Promise.resolve({ finalText: "", trace: [], usage, sessionId, failure: failure ?? "the reviewer is no longer running" });
+      if (failure !== null || exited) return Promise.resolve({ finalText: "", calls: [], usage, sessionId, failure: failure ?? "the reviewer is no longer running" });
       return new Promise((done) => {
         waiting = done;
         child.stdin?.write(`${JSON.stringify({ type: "user", message: { role: "user", content: text } })}\n`);
