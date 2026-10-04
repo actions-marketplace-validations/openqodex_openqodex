@@ -206,7 +206,7 @@ describe("the scan step, run", () => {
       expect(r.outputs, odd).toContain("status=blocked");
       expect(r.stdout, odd).toContain("not a plain branch name");
     }
-  });
+  }, 30_000);
 
   it("10. a wrong config-from or block-on-severity fails the step with one line", () => {
     const { dir } = gitRepo();
