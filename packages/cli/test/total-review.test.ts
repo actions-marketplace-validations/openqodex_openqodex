@@ -40,6 +40,10 @@
 //     third one runs.
 // 24. An incomplete review drops the findings that passed every check, or
 //     writes a record the push hooks could count as a review.
+// 25. A correction message carries a secret: text from git objects or the
+//     developer's folder instead of the redacted snapshot, a secret a broken
+//     redaction left in place, a file the snapshot dropped or a binary file,
+//     or megabytes in one long line.
 // 19. Redacting a multi-line secret (a private key) joins its lines, so every
 //     line below it moves while scanner locations and citations do not.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -51,7 +55,7 @@ import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { DEPTH_ENV, killGroup, spawnGroup } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
-import { DELIVER_LINES, redactSnapshot, runReview } from "../src/review-run.js";
+import { DELIVER_LINES, deliverRanges, redactSnapshot, runReview } from "../src/review-run.js";
 import { claudeDriver, reviewerEnv } from "../src/reviewers/claude.js";
 import type { ToolCall } from "../src/reviewers/trace.js";
 
@@ -404,13 +408,17 @@ describe("22, 23, 24. ranges the brief could not carry", () => {
 
   it("22, 23. a reviewer that never opens a file still completes: the corrections carry the ranges, two rounds and never a third", async () => {
     const driver = fake([good]);
-    expect(await review(bigChange(Math.round(DELIVER_LINES * 1.5), 5), driver)).toBe(0);
+    expect(await review(bigChange(Math.round(DELIVER_LINES * 1.5)), driver)).toBe(0);
     expect(driver.sent).toHaveLength(3);
-    expect(driver.sent[1]).toMatch(/big\.txt/);
-    expect(driver.sent[1]).toMatch(/^-kept line 6$/m);
+    expect(driver.sent[1]).toMatch(/big\.txt lines 21 to/);
     const report = JSON.parse(out) as Report;
     expect(report.completion?.status).toBe("complete");
     expect(report.completion?.coverage.unread).toEqual([]);
+  });
+
+  it("22. a deletion outside the brief is never delivered (its lines live only in git objects): named as unread", async () => {
+    expect(await review(bigChange(3000, 5), fake([good]))).toBe(2);
+    expect((JSON.parse(out) as Report).completion?.missing.join("\n")).toMatch(/big\.txt:5-6/);
   });
 
   it("22, 24. a change too large for the rounds ends incomplete, names what was left, keeps the checked findings and writes no receipt", async () => {
@@ -430,6 +438,52 @@ describe("22, 23, 24. ranges the brief could not carry", () => {
     const records = readdirSync(receipts).flatMap((r) => readdirSync(join(receipts, r)).map((f) => JSON.parse(readFileSync(join(receipts, r, f), "utf8")) as { kind: string; verdict: unknown }));
     expect(records.length).toBeGreaterThan(0);
     for (const r of records) expect(r).toMatchObject({ kind: "incomplete", verdict: null });
+  });
+});
+
+describe("25. what a correction message may carry", () => {
+  const snap = () => mkdtempSync(join(tmpdir(), "oq-deliver-"));
+  const key = () => ["sk", "live", Math.random().toString(36).slice(2).padEnd(24, "z")].join("_");
+
+  it("never sends a secret a redaction left in the snapshot: nothing is delivered and the leak is flagged", () => {
+    const dir = snap();
+    const secret = key();
+    writeFileSync(join(dir, "a.py"), `x = 1\nKEY = "${secret}"\n`);
+    const r = deliverRanges({ snapshotDir: dir, unread: [{ path: "a.py", start: 2, end: 2, deletion: false }], secrets: [secret] });
+    expect(r.text).not.toContain(secret);
+    expect(r.leak).toBe(true);
+    expect(r.delivered).toEqual([]);
+  });
+
+  it("never delivers a deletion (it would come from git objects), a dropped file, a binary file or a very long line", () => {
+    const dir = snap();
+    writeFileSync(join(dir, "bin.dat"), Buffer.from([0, 1, 2, 10, 3, 10]));
+    writeFileSync(join(dir, "long.js"), `${"a".repeat(20_000)}\n`);
+    const unread = [
+      { path: "gone.py", start: 1, end: 1, deletion: false },
+      { path: "bin.dat", start: 1, end: 2, deletion: false },
+      { path: "long.js", start: 1, end: 1, deletion: false },
+      { path: "bin.dat", start: 3, end: 4, deletion: true },
+    ];
+    const r = deliverRanges({ snapshotDir: dir, unread, secrets: [] });
+    expect(r.delivered).toEqual([]);
+    expect(r.left).toHaveLength(4);
+    expect(r.text).toBe("");
+  });
+
+  it("a planted secret in an unread range never reaches the correction the reviewer gets", async () => {
+    const gitleaks = installedGitleaks();
+    if (gitleaks === null) return void process.stdout.write("correction secret: skipped, gitleaks is not installed\n");
+    const dir = repo();
+    const secret = `sk_live_${Array.from({ length: 24 }, (_, i) => "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"[(i * 7 + Math.floor(Math.random() * 57)) % 57]).join("")}`;
+    writeFileSync(join(dir, "big.py"), `${Array.from({ length: 3000 }, (_, i) => `value_${i} = "${"y".repeat(70)}"`).join("\n")}\nSTRIPE_KEY = "${secret}"\n`);
+    cpSync(gitleaks, join(home, "tools/gitleaks"), { recursive: true });
+    const driver = fake([good]);
+    const { global } = parseFlags(["--cwd", dir, "--no-color", "--format", "json", "--no-install"], {});
+    await runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint,gitleaks", reviewer: "auto", timeoutMs: 60_000, drivers: [driver] });
+    expect(driver.sent.length).toBeGreaterThan(1);
+    expect(driver.sent.join("\n")).not.toContain(secret);
+    expect(driver.sent.slice(1).join("\n")).toContain("STRIPE_KEY");
   });
 });
 
