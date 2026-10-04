@@ -10,10 +10,11 @@
 //   <home>/runs/<repo id>/<run id>.json          one per `review --agent` run
 //
 // A run record binds a legacy run (`review --agent`, then `review
-// --finalize`) to this machine: the change id and the sha256 of the
-// manifest.json and scan.json that `review --agent` wrote. Finalize writes a
-// receipt only for a run whose files still match it, so a branch that carries
-// a run folder of its own gets no receipt.
+// --finalize`) to this machine: the change id, the config and instructions
+// hashes, and the sha256 of each run file `review --agent` wrote. Finalize
+// writes a receipt only for a run whose files, change, config and
+// instructions still match it, so a branch that carries a run folder of its
+// own gets no receipt.
 //
 // The repo id is the sha256 of the repository's real root path. Folders are
 // 0700 and real (never a link), files 0600, written to a fresh temporary
@@ -29,7 +30,17 @@ const KEEP_MS = 30 * 24 * 3600_000;
 const ID = /^([0-9a-f]{64}|latest)$/;
 const RUN_ID = /^\d{8}-\d{6}-[0-9a-f]{12}(?:-\d+)?$/;
 
-export type RunRecord = { version: 1; change_id: string; manifest_sha256: string; scan_sha256: string; written_at: string };
+export type RunRecord = {
+  version: 1;
+  change_id: string;
+  config_hash: string;
+  instructions_hash: string | null;
+  manifest_sha256: string;
+  scan_sha256: string;
+  candidates_sha256: string;
+  run_sha256: string;
+  written_at: string;
+};
 
 function repoId(repoRoot: string): string {
   let real = repoRoot;
@@ -99,7 +110,8 @@ export function writeHomeRun(home: string, repoRoot: string, runId: string, run:
 export function readHomeRun(home: string, repoRoot: string, runId: string): RunRecord | null {
   if (!RUN_ID.test(runId)) return null;
   const value = readRecord(homeRunPath(home, repoRoot, runId)) as Partial<RunRecord> | null;
-  const ok = value !== null && value.version === 1 && typeof value.change_id === "string" && typeof value.manifest_sha256 === "string" && typeof value.scan_sha256 === "string";
+  const text = ["change_id", "config_hash", "manifest_sha256", "scan_sha256", "candidates_sha256", "run_sha256"] as const;
+  const ok = value !== null && value.version === 1 && text.every((k) => typeof value[k] === "string") && (value.instructions_hash === null || typeof value.instructions_hash === "string");
   return ok ? (value as RunRecord) : null;
 }
 

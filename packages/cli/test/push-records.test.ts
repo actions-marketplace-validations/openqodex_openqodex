@@ -19,7 +19,8 @@
 //     over a remote commit that held more than the reviewed base passes.
 //  7. The agent hook checks the checkout, not what the push command names:
 //     `git push origin unreviewed:main` passes on the checkout's review.
-import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -145,6 +146,27 @@ describe("5. the legacy two-step protocol", () => {
     expect(readHomeReceipt(other, s.repo, changeId)).toBeNull();
     expect(r.stderr).toMatch(/not recorded for the push hooks/);
   });
+
+  it("the run record binds every run file finalize relies on, and the config and instructions, as the tool wrote them", () => {
+    const { dir } = agentRun();
+    const runs = join(s.oqHome, "runs");
+    const repoDir = join(runs, readdirSync(runs)[0]!);
+    const record = JSON.parse(readFileSync(join(repoDir, readdirSync(repoDir)[0]!), "utf8")) as Record<string, string>;
+    const sha = (name: string) => createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
+    expect(record).toMatchObject({ manifest_sha256: sha("manifest.json"), scan_sha256: sha("scan.json"), candidates_sha256: sha("candidates.json"), run_sha256: sha("run.json") });
+    const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { config_hash: string; instructions_hash: string };
+    expect(record).toMatchObject({ config_hash: manifest.config_hash, instructions_hash: manifest.instructions_hash });
+  });
+
+  for (const file of ["candidates.json", "run.json"]) {
+    it(`finalize of a run whose ${file} changed after review --agent writes no record`, () => {
+      const { dir, changeId } = agentRun();
+      writeFileSync(join(dir, file), `${readFileSync(join(dir, file), "utf8")} `);
+      const r = cli(s, ["review", "--finalize"]);
+      expect(readHomeReceipt(s.oqHome, s.repo, changeId)).toBeNull();
+      expect(r.stderr).toMatch(/not recorded for the push hooks/);
+    });
+  }
 
   it("finalize of a run whose scan.json changed after review --agent writes no record", () => {
     const { dir, changeId } = agentRun();

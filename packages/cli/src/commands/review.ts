@@ -196,7 +196,7 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
   const lenses = selectLenses(p.change);
   const dir = openReportDir(p.repoRoot, p.change.shortId);
   const runId = target ? basename(dir) : undefined;
-  writeManifest(p.repoRoot, dir, {
+  const manifest: RunManifest = {
     version: MANIFEST_VERSION,
     change_id: p.change.id,
     config_hash: configHash(p.config),
@@ -205,11 +205,7 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     instructions_hash: instructions.hash,
     runtime_version: __OPENQODEX_VERSION__,
     ...(target ? { target, run_id: runId } : {}),
-  });
-  writeScan(p.repoRoot, dir, p.scan);
-  // The run record in the developer's home: finalize issues a push receipt
-  // only for a run this machine scanned, with these files unchanged.
-  if (!target) recordRun(p.repoRoot, dir, p.change.id);
+  };
   const impact = await buildImpact(p, flags, noGraph);
   const brief = buildBrief({
     change: p.change,
@@ -224,12 +220,22 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     target,
   });
   const runFile: RunFile = { version: 1, scope: scope ?? "target" };
-  writeReportFiles(p.repoRoot, dir, {
-    [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
+  // Every file finalize reads, as text, so the run record hashes exactly what
+  // was written and never what the folder holds a moment later.
+  const bound = {
+    "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
+    "scan.json": `${JSON.stringify(p.scan, null, 2)}\n`,
     "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
+    [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
+  };
+  writeReportFiles(p.repoRoot, dir, {
+    ...bound,
     [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
     "brief.md": brief,
   });
+  // The run record in the developer's home: finalize issues a push receipt
+  // only for a run this machine scanned, with these files unchanged.
+  if (!target) recordRun(p.repoRoot, dir, manifest, bound);
   if (!target) {
     writeLatest(p.repoRoot, {
       dir: relative(p.repoRoot, dir),
@@ -598,7 +604,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     // A legacy record in the developer's home, so the push hooks accept this
     // review as before; only for a run this machine scanned (recordRun).
     try {
-      if (ranHere(repoRoot, dir, change.id)) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir)));
+      if (ranHere(repoRoot, dir, change.id, config)) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir)));
       else warn("openqodex: this review is not recorded for the push hooks: its scan was not run by review --agent on this machine, or its files changed since; run openqodex review");
     } catch (error) {
       warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
@@ -611,28 +617,51 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
 
 const sha256Of = (text: string | null): string | null => (text === null ? null : createHash("sha256").update(text, "utf8").digest("hex"));
 
-// Writes the home run record of a change run: its change id and the hashes of
-// the manifest and scan files as written. A failure is one warning line: the
-// run then finalizes with no push receipt.
-function recordRun(repoRoot: string, dir: string, changeId: string): void {
+// Writes the home run record of a change run: its change id, the config and
+// instructions hashes it was made with, and the sha256 of each file finalize
+// reads, from the text this process wrote (never read back from the folder,
+// which the repository and the agent can write too). A failure is one
+// warning line: the run then finalizes with no push receipt.
+function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: Record<"manifest.json" | "scan.json" | "candidates.json" | "run.json", string>): void {
   try {
-    const manifest = sha256Of(readRepoFile(repoRoot, join(dir, "manifest.json")));
-    const scan = sha256Of(readRepoFile(repoRoot, join(dir, "scan.json")));
-    if (manifest === null || scan === null) throw new Error("the run files were not written");
-    writeHomeRun(openqodexHomeDir(), repoRoot, basename(dir), { version: 1, change_id: changeId, manifest_sha256: manifest, scan_sha256: scan, written_at: new Date().toISOString() });
+    writeHomeRun(openqodexHomeDir(), repoRoot, basename(dir), {
+      version: 1,
+      change_id: manifest.change_id,
+      config_hash: manifest.config_hash,
+      instructions_hash: manifest.instructions_hash ?? null,
+      manifest_sha256: sha256Of(files["manifest.json"])!,
+      scan_sha256: sha256Of(files["scan.json"])!,
+      candidates_sha256: sha256Of(files["candidates.json"])!,
+      run_sha256: sha256Of(files["run.json"])!,
+      written_at: new Date().toISOString(),
+    });
   } catch (error) {
     warn(`openqodex: could not record this run for the push hooks: ${(error as Error).message.split("\n")[0]}`);
   }
 }
 
-// The home run record of this run exists and matches its change and files.
-function ranHere(repoRoot: string, dir: string, changeId: string): boolean {
+// The home run record of this run (looked up by the run folder's name, whose
+// shape checkRunDir and readHomeRun both check) exists and matches: the change
+// computed now from the working state, the config and instructions now, and
+// every run file as it is now.
+function ranHere(repoRoot: string, dir: string, changeId: string, config: Config): boolean {
   const run = readHomeRun(openqodexHomeDir(), repoRoot, basename(dir));
+  if (run === null) return false;
+  let instructions: string | null;
+  try {
+    instructions = instructionsHash(readInstructions(repoRoot));
+  } catch {
+    instructions = "unreadable";
+  }
+  const file = (name: string) => sha256Of(readRepoFile(repoRoot, join(dir, name)));
   return (
-    run !== null &&
     run.change_id === changeId &&
-    run.manifest_sha256 === sha256Of(readRepoFile(repoRoot, join(dir, "manifest.json"))) &&
-    run.scan_sha256 === sha256Of(readRepoFile(repoRoot, join(dir, "scan.json")))
+    run.config_hash === configHash(config) &&
+    run.instructions_hash === instructions &&
+    run.manifest_sha256 === file("manifest.json") &&
+    run.scan_sha256 === file("scan.json") &&
+    run.candidates_sha256 === file("candidates.json") &&
+    run.run_sha256 === file(RUN_FILE)
   );
 }
 
