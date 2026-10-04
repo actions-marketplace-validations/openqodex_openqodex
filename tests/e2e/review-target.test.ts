@@ -503,6 +503,20 @@ describe("review <target>: git in the checkout runs nothing", () => {
     expect(checkoutOf(a)).not.toBeNull();
     expect(existsSync(marker)).toBe(false);
   });
+  it("writes a link from the target as a plain file, so nothing outside is read through it", () => {
+    const outside = join(r.top, "outside-secret.txt");
+    writeFileSync(outside, "credentials outside the checkout\n");
+    git(r.other, "checkout", "-q", "-B", "linked", "origin/main");
+    symlinkSync(outside, join(r.other, "leak"));
+    write(r.other, "linked.txt", "a change\n");
+    commitAll(r.other, "A link out");
+    git(r.other, "push", "-q", "-f", "origin", "HEAD:refs/heads/linked");
+    git(r.other, "checkout", "-q", "main");
+    const a = agentReview("target-symlink", r.dev, ["linked", "--base", "origin/main"]);
+    const leak = join(checkoutOf(a)!, "leak");
+    expect(lstatSync(leak).isFile()).toBe(true);
+    expect(readFileSync(leak, "utf8")).toBe(outside);
+  });
   it("finalize inside a checkout refuses before it reads the checkout's config", () => {
     const a = agentReview("target-inside-yaml", r.dev, ["feature", "--base", "origin/main"]);
     const tree = checkoutOf(a)!;
@@ -574,24 +588,57 @@ describe("review <target> in a partial clone", () => {
 });
 
 describe("a changed scanner settings file", () => {
-  let dir: string;
-  // Made at run time: a key written out here reads as a real secret to a push check.
-  const secret = `sk_live_${randomBytes(12).toString("hex")}`;
-  const settings = (label: string) => {
-    const out = run(label, dir, ["scan", "--only", "gitleaks", "--format", "json"]);
+  // Each case starts from a fresh clone, so earlier edits never leak into the next.
+  type Scan = { status: number | null; report: Report & { settings_changes?: { file_path: string; source: string | null }[] } };
+  const scan = (label: string, dir: string): Scan => {
+    const out = run(label, dir, ["scan", "--only", "gitleaks,ruff", "--no-install", "--format", "json"]);
     if (out.status === 2) throw new Error(out.stderr);
-    return (JSON.parse(out.stdout) as Report).findings.filter((f) => f.source === "gitleaks:settings-file");
+    return { status: out.status, report: JSON.parse(out.stdout) as Scan["report"] };
   };
-  beforeAll(() => { dir = repos().dev; }, 120_000);
+  const settingsTokens = (s: Scan) => [
+    ...s.report.findings.filter((f) => f.source?.endsWith(":settings-file")),
+    ...(s.report.settings_changes ?? []),
+  ].map((f) => `${f.source} ${f.file_path}`);
+  const fresh = () => {
+    const dir = repos().dev;
+    writeConfig(dir, "review:\n  block_on_severity: major\n");
+    return dir;
+  };
 
-  it("a change that touches no scanner settings file raises no settings candidate", () => {
-    write(dir, "app/keys.py", `KEY = "${secret}"\n`);
-    expect(settings("settings-none")).toEqual([]);
+  it("a pyproject.toml version bump and a gitleaks config gitleaks never reads raise nothing and do not block", () => {
+    const dir = fresh();
+    write(dir, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1.0.0\"\n");
+    commitAll(dir, "Project file");
+    git(dir, "push", "-q", "origin", "HEAD:main", "-f");
+    write(dir, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1.0.1\"\n");
+    write(dir, "sub/.gitleaks.toml", "[allowlist]\npaths = [\".*\"]\n");
+    const s = scan("settings-not-honoured", dir);
+    expect(s.status).toBe(0);
+    expect(s.report.verdict).toBe("passed");
+    expect(settingsTokens(s)).toEqual([]);
   });
-  it("a change that adds a secret and a .gitleaksignore entry raises the settings candidate", () => {
+  it("a root .gitleaksignore in a scan is a note that never blocks", () => {
+    const dir = fresh();
     write(dir, ".gitleaksignore", "app/keys.py:stripe-access-token:1\n");
-    const hits = settings("settings-gitleaksignore");
-    expect(hits.map((f) => f.file_path)).toEqual([".gitleaksignore"]);
-    expect(hits[0]?.severity).toBe("major");
+    const s = scan("settings-scan-note", dir);
+    expect(s.status).toBe(0);
+    expect(s.report.findings.filter((f) => f.source?.endsWith(":settings-file"))).toEqual([]);
+    expect((s.report.settings_changes ?? []).map((f) => f.file_path)).toEqual([".gitleaksignore"]);
+  });
+  it("a change to the [tool.ruff] table of pyproject.toml raises the ruff note", () => {
+    const dir = fresh();
+    write(dir, "pyproject.toml", "[project]\nname = \"app\"\n\n[tool.ruff]\nline-length = 100\n");
+    commitAll(dir, "Ruff settings");
+    git(dir, "push", "-q", "origin", "HEAD:main", "-f");
+    write(dir, "pyproject.toml", "[project]\nname = \"app\"\n\n[tool.ruff]\nline-length = 100\nlint.ignore = [\"ALL\"]\n");
+    expect(settingsTokens(scan("settings-ruff-table", dir))).toEqual(["ruff:settings-file pyproject.toml"]);
+  });
+  it("a root .gitleaksignore added with a secret is a candidate in the agent's brief", () => {
+    const dir = fresh();
+    write(dir, "app/keys.py", `KEY = "sk_live_${randomBytes(12).toString("hex")}"\n`);
+    write(dir, ".gitleaksignore", "app/keys.py:stripe-access-token:1\n");
+    const out = run("settings-brief", dir, ["review", "--agent", "--only", "gitleaks", "--no-install", "--no-graph"]);
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stdout).toMatch(/\[gitleaks:settings-file\] \.gitleaksignore:1/);
   });
 });

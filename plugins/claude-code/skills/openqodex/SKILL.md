@@ -108,7 +108,7 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 - `title`: a short noun phrase naming the problem. No line numbers, no quoted code.
 - `description`: one to three sentences: what is wrong, why it matters, the fix.
 - `suggested_change`: the replacement text for the cited lines when the fix fits in a few lines, matching the indentation. Otherwise `null`, and explain the fix in `description`.
-- `source`: `null` for your own finding, the candidate's token when raising a candidate, or `lens:<name>` when a listed pattern led to it.
+- `source`: `null` for your own finding, the candidate's token (the text in the square brackets, without them) when raising a candidate, or `lens:<name>` when a listed pattern led to it.
 - `candidate`: the candidate id when raising one, else leave it out. The id and the token must belong to the same candidate.
 - `confidence`: from 0 to 1, how sure you are that the problem is real, based on what you read.
 

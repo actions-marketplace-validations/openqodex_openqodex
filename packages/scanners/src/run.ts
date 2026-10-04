@@ -21,10 +21,12 @@ import {
   matchesGlob,
   REDACTED,
   redactSecrets,
+  SETTINGS_RULE,
 } from "@openqodex/core";
 import type {
   AdapterResult,
   BuiltinScanner,
+  DeletionPoint,
   Candidate,
   Config,
   DiffCoverage,
@@ -36,6 +38,8 @@ import type {
   StaticFinding,
 } from "@openqodex/core";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
+import type { SettingsFile } from "./adapters/index.js";
+import { readRepoFile } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
 
@@ -70,6 +74,10 @@ export async function runScanners(args: {
   // The changed lines. Absent for a whole-repo review: then every finding
   // in a file of `changedPaths` is kept, whatever its line.
   coverage?: DiffCoverage;
+  // Where the change only deleted lines, and the base's copy of a file: what
+  // tells whether a change touched ruff's table in pyproject.toml.
+  deletionPoints?: Map<string, DeletionPoint[]>;
+  baseText?: (path: string) => Promise<string | null>;
   config: Config;
   resolveTool: ResolveTool;
   custom?: CustomAdapter[];
@@ -105,7 +113,16 @@ export async function runScanners(args: {
     return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
   });
   if (coverage) {
-    merged.push(...settingsFindings(args.changedPaths, coverage, (s) => selected(s) && !args.config.disabledScanners.includes(s)));
+    merged.push(
+      ...(await settingsFindings({
+        repoDir: args.repoDir,
+        changedPaths: args.changedPaths,
+        coverage,
+        deletionPoints: args.deletionPoints,
+        baseText: args.baseText,
+        wanted: (s) => selected(s) && !args.config.disabledScanners.includes(s),
+      })),
+    );
   }
 
   // Fixture, mock and snapshot files hold throwaway data shaped like the
@@ -157,20 +174,63 @@ export async function runScanners(args: {
   };
 }
 
-// One candidate per changed file that a scanner reads as its own settings or
-// ignore list, from that scanner, on the file's first changed line. Raised
-// whether or not the scanner ran: the reviewer clears it or raises it.
-function settingsFindings(changedPaths: string[], coverage: DiffCoverage, wanted: (s: BuiltinScanner) => boolean): StaticFinding[] {
+// The line ranges (1-based, inclusive) of every `[tool.ruff...]` table.
+function ruffTables(text: string): [number, number][] {
+  const lines = text.split(/\r?\n/);
+  const out: [number, number][] = [];
+  let start: number | null = null;
+  lines.forEach((line, i) => {
+    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]/.exec(line);
+    if (!header) return;
+    if (start !== null) out.push([start, i]);
+    start = /^tool\.ruff(\.|$)/.test(header[1] as string) ? i + 1 : null;
+  });
+  if (start !== null) out.push([start, lines.length]);
+  return out;
+}
+
+const SETTINGS_MAX_BYTES = 1024 * 1024;
+
+// True when the change touches ruff's table in this pyproject.toml: a changed
+// line or a deletion inside it, or a table the base had and the change removed.
+async function touchesRuffTable(args: SettingsArgs, filePath: string): Promise<boolean> {
+  const head = await readRepoFile(args.repoDir, filePath, SETTINGS_MAX_BYTES).catch(() => "");
+  const tables = ruffTables(head);
+  const inside = (n: number) => tables.some(([a, b]) => a <= n && n <= b);
+  if ([...(args.coverage.get(filePath) ?? [])].some(inside)) return true;
+  if ((args.deletionPoints?.get(filePath) ?? []).some((p) => p.anchors.some(inside))) return true;
+  if (tables.length > 0 || args.baseText === undefined) return false;
+  return /^\s*\[\[?\s*tool\.ruff(\.|\s*\])/m.test((await args.baseText(filePath)) ?? "");
+}
+
+type SettingsArgs = {
+  repoDir: string;
+  changedPaths: string[];
+  coverage: DiffCoverage;
+  deletionPoints?: Map<string, DeletionPoint[]>;
+  // The file as the base has it, for a settings block the change removed.
+  baseText?: (path: string) => Promise<string | null>;
+  wanted: (s: BuiltinScanner) => boolean;
+};
+
+// One candidate per changed file that a scanner really reads as its settings
+// or ignore list, from that scanner, on the file's first changed line, with
+// rule `settings-file`. Raised whether or not the scanner ran. A review's
+// reviewer clears it or raises it; a scan shows it as a note, never counted.
+async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
   const out: StaticFinding[] = [];
-  for (const [source, names] of Object.entries(SETTINGS_FILES) as [BuiltinScanner, readonly string[]][]) {
-    if (!wanted(source)) continue;
-    for (const filePath of changedPaths) {
-      if (!names.includes(filePath.slice(filePath.lastIndexOf("/") + 1))) continue;
-      const lines = coverage.get(filePath);
+  for (const [source, files] of Object.entries(SETTINGS_FILES) as [BuiltinScanner, readonly SettingsFile[]][]) {
+    if (!args.wanted(source)) continue;
+    for (const filePath of args.changedPaths) {
+      const name = filePath.slice(filePath.lastIndexOf("/") + 1);
+      const entry = files.find((f) => (f.anyFolder ? f.path === name : f.path === filePath));
+      if (entry === undefined) continue;
+      if (entry.ruffTable && !(await touchesRuffTable(args, filePath))) continue;
+      const lines = args.coverage.get(filePath);
       const line = lines && lines.size > 0 ? Math.min(...lines) : 1;
       out.push({
         source,
-        ruleId: "settings-file",
+        ruleId: SETTINGS_RULE,
         filePath,
         lineStart: line,
         lineEnd: line,

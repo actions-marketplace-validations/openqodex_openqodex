@@ -8,7 +8,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
-import { OpenQodexError } from "@openqodex/core";
+import { OpenQodexError, safeGitEnv } from "@openqodex/core";
 import type { BaseSource } from "@openqodex/core";
 
 const execFileAsync = promisify(execFile);
@@ -49,7 +49,8 @@ async function git(repoRoot: string, args: string[], timeout = 60_000): Promise<
       cwd: repoRoot,
       timeout,
       maxBuffer: 16 << 20,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      // No inherited GIT_* variable, no prompt, no lazy fetch.
+      env: safeGitEnv(),
     });
     return { ok: true, out: stdout.trim(), err: "" };
   } catch (error) {
@@ -181,13 +182,44 @@ async function ghBase(repoRoot: string, args: string[]): Promise<string | null> 
   }
 }
 
-type Head = { sha: string; remote: string | null; branch: string | null; prNumber: number | null; tmpRef?: string };
+// For a pull request, the base branch gh names and the repository it was
+// opened against ("owner/repo"), or null without gh.
+async function ghPullRequest(repoRoot: string, which: string): Promise<{ base: string; repo: string | null } | null> {
+  const line = await ghBase(repoRoot, ["pr", "view", which, "--json", "baseRefName,url", "--jq", '.baseRefName + " " + .url']);
+  if (line === null) return null;
+  const [base, url] = line.split(" ");
+  if (!base) return null;
+  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url ?? "");
+  return { base, repo: m ? `${m[1]}/${m[2]}` : null };
+}
+
+type Head = {
+  sha: string;
+  remote: string | null;
+  branch: string | null;
+  prNumber: number | null;
+  tmpRef?: string;
+  // For a pull request online: the base gh named (null: gh had no answer).
+  ghBase?: string | null;
+  note?: string;
+};
 
 async function resolveHead(repoRoot: string, spec: string, parsed: Parsed, offline: boolean): Promise<Head> {
   const missing = (what: string) =>
     new OpenQodexError(`${what} is not available locally and --offline forbids fetching it; run without --offline, or fetch it first`);
   if (parsed.kind === "pr") {
-    const remote = parsed.owner && parsed.repo ? await remoteFor(repoRoot, parsed.owner, parsed.repo) : await defaultRemote(repoRoot);
+    // gh, when it is there, names the repository the pull request was opened
+    // against; a remote for that repository is where its head and base live
+    // (a fork with an upstream remote), else origin.
+    const gh = offline ? null : await ghPullRequest(repoRoot, parsed.owner ? spec : String(parsed.number));
+    let remote: string;
+    if (parsed.owner && parsed.repo) remote = await remoteFor(repoRoot, parsed.owner, parsed.repo);
+    else {
+      const [owner, repo] = gh?.repo?.split("/") ?? [];
+      const viaGh = owner && repo ? await remoteFor(repoRoot, owner, repo).catch(() => null) : null;
+      remote = viaGh ?? (await defaultRemote(repoRoot));
+    }
+    const ghInfo = offline ? {} : { ghBase: gh?.base ?? null, note: `pull request ${parsed.number} is read from the remote ${remote}` };
     if (offline) {
       // Only what a fetch configured for pull requests left here.
       for (const ref of [`refs/remotes/${remote}/pr/${parsed.number}`, `refs/pull/${parsed.number}/head`]) {
@@ -200,7 +232,7 @@ async function resolveHead(repoRoot: string, spec: string, parsed: Parsed, offli
     await fetch(repoRoot, remote, `+refs/pull/${parsed.number}/head:${tmpRef}`, `pull request ${parsed.number}`);
     const sha = await commitOf(repoRoot, tmpRef);
     if (sha === null) throw new OpenQodexError(`the fetch of pull request ${parsed.number} returned no commit`);
-    return { sha, remote, branch: null, prNumber: parsed.number, tmpRef };
+    return { sha, remote, branch: null, prNumber: parsed.number, tmpRef, ...ghInfo };
   }
 
   const name = parsed.name;
@@ -218,6 +250,16 @@ async function resolveHead(repoRoot: string, spec: string, parsed: Parsed, offli
   return { sha, remote, branch, prNumber: null };
 }
 
+async function partialClone(repoRoot: string): Promise<boolean> {
+  const r = await git(repoRoot, ["config", "--get-regexp", "^(extensions\\.partialclone|remote\\..*\\.promisor)$"]);
+  return r.ok && r.out !== "";
+}
+
+async function gitAtLeast(repoRoot: string, major: number, minor: number): Promise<boolean> {
+  const m = /(\d+)\.(\d+)/.exec((await git(repoRoot, ["--version"])).out);
+  return m !== null && (Number(m[1]) > major || (Number(m[1]) === major && Number(m[2]) >= minor));
+}
+
 export async function resolveTarget(args: {
   repoRoot: string;
   spec: string;
@@ -227,6 +269,11 @@ export async function resolveTarget(args: {
 }): Promise<Resolved> {
   const { repoRoot, spec, offline } = args;
   const parsed = parseTarget(spec);
+  // git before 2.44 ignores GIT_NO_LAZY_FETCH and would fetch a missing file
+  // of a partial clone during the checkout, which --offline forbids.
+  if (offline && (await partialClone(repoRoot)) && !(await gitAtLeast(repoRoot, 2, 44))) {
+    throw new OpenQodexError("this is a partial clone and this git is older than 2.44, which fetches missing files on its own; update git, or run without --offline");
+  }
   const head = await resolveHead(repoRoot, spec, parsed, offline);
   try {
     return { ...(await resolveBase(args, parsed, head)), tmpRef: head.tmpRef ?? null };
@@ -242,7 +289,7 @@ async function resolveBase(
   head: Head,
 ): Promise<Omit<Resolved, "tmpRef">> {
   const { repoRoot, spec, offline } = args;
-  const notes: string[] = [];
+  const notes: string[] = head.note === undefined ? [] : [head.note];
 
   // A base on a remote (<remote>/<branch>) is fetched when online, whether or
   // not this clone has seen it, so commits already on the base are never
@@ -263,7 +310,7 @@ async function resolveBase(
   if (base === null) {
     let name: string | null = null;
     if (!offline) {
-      if (parsed.kind === "pr") name = await ghBase(repoRoot, ["pr", "view", parsed.owner ? spec : String(parsed.number), "--json", "baseRefName", "--jq", ".baseRefName"]);
+      if (parsed.kind === "pr") name = head.ghBase ?? null;
       else if (head.branch !== null) name = await ghBase(repoRoot, ["pr", "list", "--head", head.branch, "--state", "open", "--json", "baseRefName", "--jq", ".[].baseRefName"]);
     }
     if (name !== null) {

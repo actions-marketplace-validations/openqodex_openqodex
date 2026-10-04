@@ -426,6 +426,67 @@ export async function getTreeChange(args: {
   return diffChange({ ...args, range: [args.baseSha, args.headSha], newSide: `${args.headSha}:`, env: process.env });
 }
 
+// The line count of each named blob ("<rev>:<path>" or ":<path>"), from one
+// `git cat-file --batch` for all of them. Counted as the output streams, so
+// no blob is held whole.
+function lineCounts(repoRoot: string, specs: string[], env: NodeJS.ProcessEnv): Promise<number[]> {
+  if (specs.length === 0) return Promise.resolve([]);
+  return new Promise((done, fail) => {
+    const argv: string[] = [];
+    for (const c of GIT_CONFIG) argv.push("-c", c);
+    const child = spawn("git", [...argv, "cat-file", "--batch"], { cwd: repoRoot, env: childEnv(env), stdio: ["pipe", "pipe", "pipe"] });
+    const counts: number[] = [];
+    let header = Buffer.alloc(0); // bytes of a header line not yet ended
+    let left = -1; // content bytes still to read for the current blob, -1 between blobs
+    let lines = 0;
+    let last = 10; // the last content byte seen
+    let size = 0;
+    const err: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => {
+      let i = 0;
+      while (i < chunk.length) {
+        if (left === -1) {
+          const nl = chunk.indexOf(10, i);
+          if (nl === -1) {
+            header = Buffer.concat([header, chunk.subarray(i)]);
+            return;
+          }
+          const line = Buffer.concat([header, chunk.subarray(i, nl)]).toString("utf8");
+          header = Buffer.alloc(0);
+          i = nl + 1;
+          const m = / (\S+) (\d+)$/.exec(line);
+          if (!m || line.endsWith(" missing")) {
+            counts.push(0);
+            continue;
+          }
+          size = Number(m[2]);
+          left = size;
+          lines = 0;
+          last = 10;
+        } else if (left > 0) {
+          const part = chunk.subarray(i, i + left);
+          for (let j = part.indexOf(10); j !== -1; j = part.indexOf(10, j + 1)) lines++;
+          last = part[part.length - 1] as number;
+          left -= part.length;
+          i += part.length;
+        } else {
+          // The newline git writes after each blob's content.
+          counts.push(size > 0 && last !== 10 ? lines + 1 : lines);
+          left = -1;
+          i += 1;
+        }
+      }
+    });
+    child.stderr.on("data", (b: Buffer) => err.push(b));
+    child.on("error", (e) => fail(new OpenQodexError(`could not run git: ${e.message}`)));
+    child.on("close", (code) => {
+      if (code !== 0 || counts.length !== specs.length) fail(failure(["cat-file"], code ?? 1, Buffer.concat(err).toString("utf8")));
+      else done(counts);
+    });
+    child.stdin.end(`${specs.join("\n")}\n`);
+  });
+}
+
 // Everything after the two sides are known: the file list, the id, the
 // changed lines and the brief's diff, from `git diff <range>`.
 async function diffChange(args: {
@@ -519,9 +580,10 @@ async function diffChange(args: {
   // that exist: one past the end is none, and an emptied file has line 1.
   // A deleted file keeps line 1 of its path as its one anchor.
   const deletionPoints = new Map<string, DeletionPoint[]>();
-  for (const [path, points] of parser.deletionPoints()) {
-    if (!covered.has(path)) continue;
-    const count = lineCount(await gitOk(repoRoot, ["cat-file", "blob", `${args.newSide}${path}`], { env }));
+  const withPoints = [...parser.deletionPoints()].filter(([path]) => covered.has(path));
+  const counts = await lineCounts(repoRoot, withPoints.map(([path]) => `${args.newSide}${path}`), env);
+  for (const [i, [path, points]] of withPoints.entries()) {
+    const count = counts[i] as number;
     deletionPoints.set(
       path,
       points.map((p) => ({

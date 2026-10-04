@@ -347,10 +347,17 @@ function candidateFinding(c: Candidate): ReportFinding {
   };
 }
 
+// The rule of the candidate a scanner raises for a changed file it reads as
+// its own settings or ignore list. In a scan nobody clears it, so it is a
+// note beside the findings and never counts; in a review it is a candidate.
+export const SETTINGS_RULE = "settings-file";
+
 export function scanReport(args: { change: Change; scan: ScanResult; config: Config }): Report {
   const { change, scan, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
-  const live = scan.candidates.filter((c) => !disabled(c.token, config)).map((c) => candidateFinding(c));
+  const enabled = scan.candidates.filter((c) => !disabled(c.token, config));
+  const settings = enabled.filter((c) => c.ruleId === SETTINGS_RULE).map((c) => candidateFinding(c));
+  const live = enabled.filter((c) => c.ruleId !== SETTINGS_RULE).map((c) => candidateFinding(c));
   const findings = live.filter((f) => shown(f, config));
   const report: Report = {
     version: 1,
@@ -374,6 +381,7 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
     scanners: scan.scanners,
     not_reviewed_paths: change.notReviewed,
     stats: change.stats,
+    ...(settings.length > 0 ? { settings_changes: settings } : {}),
   };
   return redactAll(report, clean);
 }

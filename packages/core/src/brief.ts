@@ -56,7 +56,7 @@ function candidatesBlock(scan: ScanResult): string {
     return lines.join("\n");
   }
   lines.push(
-    "Each line is a scanner hit on a line this change touched: a candidate, not a fact. Scanners often fire on test fixtures, intentional code and this repo's own idioms. Verify each one against the code. When you agree, raise it as a finding with `candidate` set to its id and `source` set to the token in square brackets. When you do not, list it under `dropped` with a one-line reason. A candidate you neither raise nor drop is reported as not reviewed and counts toward the verdict at the severity shown. A candidate you verified that the repo's instructions put out of scope, by its kind or its path, is dropped with a reason that starts with `repo instructions:`.",
+    "Each line is a scanner hit on a line this change touched: a candidate, not a fact. Scanners often fire on test fixtures, intentional code and this repo's own idioms. Verify each one against the code. When you agree, raise it as a finding with `candidate` set to its id and `source` set to its token, the text in the square brackets without them. When you do not, list it under `dropped` with a one-line reason. A candidate you neither raise nor drop is reported as not reviewed and counts toward the verdict at the severity shown. A candidate you verified that the repo's instructions put out of scope, by its kind or its path, is dropped with a reason that starts with `repo instructions:`.",
     "",
   );
   const sorted = [...scan.candidates].sort((a, b) => severityRank(b.reviewSeverity) - severityRank(a.reviewSeverity));
@@ -233,7 +233,8 @@ function findingShapeBlock(change: Change, whole = false): string {
     "- `title`: a short noun phrase naming the problem, such as \"Missing null check on session\". No sentences, no line numbers, no quoted code.",
     "- `description`: one to three sentences: what is wrong, why it matters, the fix. Do not restate the code or narrate your reasoning.",
     "- `suggested_change`: the literal replacement text for the cited lines when the fix fits in them, matching their indentation; otherwise null, with the fix explained in `description`.",
-    "- `source`: the candidate's token in square brackets when you raise a scanner candidate, `lens:<name>` when a lens above led to the finding, otherwise null. Any other value is rejected.",
+    "- `source`: `null` for your own finding, the candidate's token (the text in the square brackets, without them) when raising a candidate, or `lens:<name>` when a listed pattern led to it.",
+    "  Any other value is rejected.",
     "- `candidate`: the candidate id (`c1`, `c2`, ...) when the finding raises a scanner candidate; its token must equal `source`. Otherwise omit it or set null.",
     "- `dropped`: one entry per candidate you checked and rejected, with the reason.",
     "",
@@ -422,7 +423,7 @@ function wholeCandidatesBlock(scan: ScanResult): string {
     return lines.join("\n");
   }
   lines.push(
-    `The scanners reported ${total} ${total === 1 ? "candidate" : "candidates"} across the repository; ${total > MAX_CANDIDATES_SHOWN ? `the ${MAX_CANDIDATES_SHOWN} most severe are below, and all of them` : "all are below and"} are in candidates.json beside this brief. Each is a candidate, not a fact: scanners often fire on test fixtures, intentional code and this repo's own idioms. When you agree, raise it as a finding with \`candidate\` set to its id and \`source\` set to the token in square brackets. When you do not, list it under \`dropped\` with a one-line reason. A candidate you neither raise nor drop is reported as not reviewed and counts toward the verdict at the severity shown. A candidate you verified that the repo's instructions put out of scope, by its kind or its path, is dropped with a reason that starts with \`repo instructions:\`.`,
+    `The scanners reported ${total} ${total === 1 ? "candidate" : "candidates"} across the repository; ${total > MAX_CANDIDATES_SHOWN ? `the ${MAX_CANDIDATES_SHOWN} most severe are below, and all of them` : "all are below and"} are in candidates.json beside this brief. Each is a candidate, not a fact: scanners often fire on test fixtures, intentional code and this repo's own idioms. When you agree, raise it as a finding with \`candidate\` set to its id and \`source\` set to its token, the text in the square brackets without them. When you do not, list it under \`dropped\` with a one-line reason. A candidate you neither raise nor drop is reported as not reviewed and counts toward the verdict at the severity shown. A candidate you verified that the repo's instructions put out of scope, by its kind or its path, is dropped with a reason that starts with \`repo instructions:\`.`,
     "",
   );
   const sorted = [...scan.candidates].sort((a, b) => severityRank(b.reviewSeverity) - severityRank(a.reviewSeverity));

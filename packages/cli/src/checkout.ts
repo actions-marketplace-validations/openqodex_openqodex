@@ -96,7 +96,9 @@ export async function addTargetCheckout(repoRoot: string, sha: string, prefix: s
   };
   const added = await safeGit(repoRoot, ["worktree", "add", "--no-checkout", "--detach", "--quiet", tree, sha]);
   if (added.code !== 0) return fail("add a work tree for", added.stderr);
-  const filled = await safeGit(tree, ["read-tree", "--reset", "-u", "HEAD"]);
+  // core.symlinks=false: a link in the target becomes a small file holding its
+  // target text, so no tool that reads the checkout follows it out.
+  const filled = await safeGit(tree, ["-c", "core.symlinks=false", "read-tree", "--reset", "-u", "HEAD"]);
   if (filled.code !== 0) return fail("check out", filled.stderr);
   return { folder, tree };
 }
