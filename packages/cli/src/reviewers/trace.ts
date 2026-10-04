@@ -50,15 +50,29 @@ function within(root: string, path: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel) && !rel.split(sep).includes(".."));
 }
 
+// True when an alternative list holds a path, a home or an unbalanced brace:
+// `{../a/*,*.ts}` or `{/etc/*,x}`. An extension list such as `*.{py,sh}`
+// holds no path and is fine.
+function pathInBraces(pattern: string): boolean {
+  let depth = 0;
+  for (const c of pattern) {
+    if (c === "{") depth++;
+    else if (c === "}") depth--;
+    else if (depth > 0 && (c === "/" || c === "\\" || c === "~")) return true;
+    if (depth < 0) return true;
+  }
+  return depth !== 0;
+}
+
 // A file pattern that may reach outside, or the folder an absolute one is
 // rooted in. `..` anywhere, a home pattern, and an alternative list that
-// holds a path (`{../a/*,*.ts}`) are outside whatever else they say. An
-// absolute pattern is rooted at the last folder before its first wildcard:
-// `/a/snap*/x` is rooted at `/a/`, since `snap*` also matches `snapshot-2`.
-// Null for a relative pattern with none of these: it stays below its folder.
+// holds a path are outside whatever else they say. An absolute pattern is
+// rooted at the last folder before its first wildcard: `/a/snap*/x` is
+// rooted at `/a/`, since `snap*` also matches `snapshot-2`. Null for a
+// relative pattern with none of these: it stays below its folder.
 function patternRoot(pattern: string): string | null {
   const outside = "/";
-  if (pattern.includes("..") || pattern.startsWith("~") || (pattern.includes("{") && /[\\/]/.test(pattern))) return outside;
+  if (pattern.includes("..") || pattern.startsWith("~") || pathInBraces(pattern)) return outside;
   if (!(pattern.startsWith("/") || /^[A-Za-z]:[\\/]/.test(pattern))) return null;
   const cut = pattern.search(/[*?[{]/);
   if (cut === -1) return pattern;
@@ -97,6 +111,8 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
     if (fields[k] === undefined || fields[k] === null) continue;
     if (typeof fields[k] !== "string") return { tool: call.tool, path: `(a ${k} that is not text)`, inside: false, range: null, ok: true };
     const root = patternRoot(fields[k] as string);
+    // Named by the pattern itself in the trace, so the record says what was asked.
+    if (root !== null && !within(snapshot, place(snapshot, root) ?? "/")) return { tool: call.tool, path: fields[k] as string, inside: false, range: null, ok: call.ok };
     if (root !== null) raws.push(root);
   }
   if (call.read) raws.push(call.read.path);

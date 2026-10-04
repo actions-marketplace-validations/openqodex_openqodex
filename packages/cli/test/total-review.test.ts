@@ -292,6 +292,15 @@ describe("13. the trace check fails closed", () => {
     const answer: Answer = (text, snapshotDir) => ({ finalText: submission(text), calls: [{ tool: "Glob", input: { pattern: `${snapshotDir}*/**/*` }, ok: true, read: null }] });
     expect(await review(repo(), fake([answer]))).toBe(2);
   });
+  it("a Glob extension list and an absolute pattern rooted in the snapshot keep the run complete", async () => {
+    const answer: Answer = (text, snapshotDir) => ({ finalText: submission(text), calls: [{ tool: "Glob", input: { pattern: "**/*.{sql,py}" }, ok: true, read: null }, { tool: "Glob", input: { pattern: `${snapshotDir}/**/*.{sql,py}` }, ok: true, read: null }] });
+    expect(await review(repo(), fake([answer]))).toBe(0);
+  });
+  it("a Glob alternative list rooted outside is named by its pattern in the record", async () => {
+    const answer: Answer = (text) => ({ finalText: submission(text), calls: [{ tool: "Glob", input: { pattern: "{/etc/*,*.sql}" }, ok: true, read: null }] });
+    expect(await review(repo(), fake([answer]))).toBe(2);
+    expect((JSON.parse(out) as Report).completion?.outside_reads).toEqual(["{/etc/*,*.sql}"]);
+  });
   it("a Grep search expression that looks like a path is not a path and keeps the run complete", async () => {
     const answer: Answer = (text) => ({ finalText: submission(text), calls: [{ tool: "Grep", input: { pattern: "/api/../v1", path: "db" }, ok: true, read: null }] });
     expect(await review(repo(), fake([answer]))).toBe(0);

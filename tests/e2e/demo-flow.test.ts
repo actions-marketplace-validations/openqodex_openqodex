@@ -80,9 +80,10 @@ describe("init", () => {
 });
 
 describe("push hook written by init", () => {
-  it("tells the agent an unreviewed change has not been reviewed, without denying the push", () => {
+  it("tells the agent it cannot count a push it cannot resolve as reviewed, without denying it", () => {
     expect(hookBefore.status).toBe(0);
-    expect(hookBefore.stdout).toContain("has not reviewed this change");
+    // The demo repo has no upstream, so a plain push is unresolved: one line, no deny without a threshold.
+    expect(hookBefore.stdout).toContain("could not tell what this push sends");
     expect(hookBefore.stdout).not.toContain("permissionDecision");
   });
   it("abstains after a finalized review and never prints allow", () => {
