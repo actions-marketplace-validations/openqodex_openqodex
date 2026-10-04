@@ -8,6 +8,9 @@
 //     process group of its own, and its children running.
 //  2. The snapshot of the change stays on disk after the signal.
 //  3. The exit code is not the conventional one (130 for SIGINT, 143 for SIGTERM).
+//  4. A signal during Codex's sandbox probe, before any reviewer session
+//     exists, leaves the probe's process group running or its canary file in
+//     the openqodex home.
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -95,3 +98,56 @@ for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
     }, 60_000);
   });
 }
+
+// The stand-in `codex`: `--version` and `login status` as Codex answers them;
+// started for the sandbox probe, it writes its pid and its child's, then waits.
+function codexStandIn(pids: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "oq-signal-codex-"));
+  writeFileSync(
+    join(dir, "codex"),
+    [
+      `#!${process.execPath}`,
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const args = process.argv.slice(2);",
+      "if (args[0] === '--version') { console.log('codex-cli 0.160.0'); process.exit(0); }",
+      "if (args[0] === 'login') { console.log('Logged in using ChatGPT'); process.exit(0); }",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      `writeFileSync(${JSON.stringify(pids)}, process.pid + ' ' + child.pid);`,
+      "setInterval(() => {}, 1000);",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(join(dir, "codex"), 0o755);
+  return dir;
+}
+
+describe("SIGTERM during Codex's sandbox probe", () => {
+  it("4. kills the probe's process group and removes its canary and snapshot", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "oq-signal-repo-"));
+    git(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "README.md"), "hello\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-qm", "Base");
+    writeFileSync(join(repo, "x.sql"), "SELECT 1;\n");
+    const home = mkdtempSync(join(tmpdir(), "oq-signal-home-"));
+    const pids = join(mkdtempSync(join(tmpdir(), "oq-signal-pids-")), "pids");
+    const env: NodeJS.ProcessEnv = { ...process.env, OPENQODEX_HOME: home, OPENQODEX_AUTO_UPDATE: "0", PATH: [codexStandIn(pids), dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter) };
+    for (const k of ["OPENQODEX_REVIEW_DEPTH", "CODEX_SANDBOX", "CODEX_THREAD_ID", "CLAUDECODE"]) delete env[k];
+    const cli = spawn(process.execPath, [BIN, "review", "--reviewer", "codex", "--only", "sqllint", "--no-install", "--no-graph"], { cwd: repo, env, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    cli.stderr.on("data", (b: Buffer) => (stderr += String(b)));
+    const exited = new Promise<number | null>((done) => cli.once("exit", (c) => done(c)));
+    await waitFor(() => existsSync(pids) && readFileSync(pids, "utf8").includes(" "), 30_000).catch(() => {
+      throw new Error(`the probe never started: ${stderr}`);
+    });
+    const [probe, child] = readFileSync(pids, "utf8").split(" ").map(Number) as [number, number];
+    expect(readdirSync(home).filter((n) => n.startsWith(".openqodex-probe"))).toHaveLength(1);
+    cli.kill("SIGTERM");
+    expect(await exited).toBe(143);
+    await new Promise((done) => setTimeout(done, 300));
+    expect([probe, child].filter(alive)).toEqual([]);
+    expect(readdirSync(home).filter((n) => n.startsWith(".openqodex-probe"))).toEqual([]);
+    expect(readdirSync(join(home, "checkouts"))).toEqual([]);
+  }, 60_000);
+});

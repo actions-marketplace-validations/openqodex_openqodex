@@ -98,6 +98,10 @@ export function codexEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   for (const [k, v] of Object.entries(env)) {
     if (v !== undefined && (ALWAYS.includes(k) || k.startsWith("LC_"))) out[k] = v;
   }
+  // Only absolute PATH entries: an empty or relative one (".", "bin") would
+  // resolve inside the snapshot, where a committed program could stand in
+  // for a system one.
+  if (out.PATH !== undefined) out.PATH = out.PATH.split(":").filter((d) => d.startsWith("/")).join(":");
   out[DEPTH_ENV] = "1";
   return out;
 }
@@ -155,17 +159,21 @@ async function detect(repoRoot: string, env: NodeJS.ProcessEnv = process.env): P
 // configuration that a newer version could rename or ignore, and the event
 // stream would not show it, so before the first model run the same keys run
 // one command under `codex sandbox` (no model): it reads a canary file
-// outside the snapshot, reads a file inside it, and tries to write inside it.
+// outside the snapshot, reads a file inside it, tries to write inside it,
+// and prints a random completion marker as its last act.
 export const PROBE_REFUSED = "Codex's sandbox did not confine reads to the review copy; the review did not start";
 const PROBE_TIMEOUT_MS = 30_000;
 
-export type ProbeResult = { insideRead: boolean; outsideRead: boolean; wrote: boolean; error: string | null };
+// `finished`: the completion marker came back, so every step ran.
+export type ProbeResult = { insideRead: boolean; outsideRead: boolean; wrote: boolean; finished: boolean; code: number | null; signal: string | null; error: string | null };
 
-// Null when the review may start: the inside read worked (the sandbox runs
-// commands at all), the outside read and the write were refused, and the
-// probe itself ran. Anything else refuses, in one line.
+// Null when the review may start: the probe ran to its end (the marker,
+// exit 0, no signal), the inside read worked (the sandbox runs commands at
+// all), and the outside read and the write were refused. Anything else
+// refuses, in one line.
 export function probeVerdict(r: ProbeResult): string | null {
   if (r.error !== null) return `${PROBE_REFUSED} (${r.error})`;
+  if (r.signal !== null || r.code !== 0 || !r.finished) return `${PROBE_REFUSED} (the probe did not run to its end: ${r.signal ?? `exit ${r.code}`})`;
   if (r.outsideRead) return `${PROBE_REFUSED} (a file outside it could be read)`;
   if (r.wrote) return `${PROBE_REFUSED} (a file inside it could be written)`;
   if (!r.insideRead) return `${PROBE_REFUSED} (a file inside it could not be read either, so the sandbox was not working)`;
@@ -174,56 +182,73 @@ export function probeVerdict(r: ProbeResult): string | null {
 
 // Runs the probe and removes everything it wrote, whatever happened.
 // `filesystem` is the profile's filesystem entry; tests pass a wider one to
-// show the probe fails it.
-export async function probeSandbox(bin: string, snapshotDir: string, filesystem: string = PROFILE_FILESYSTEM): Promise<string | null> {
+// show the probe fails it. `register` receives a synchronous cleanup (kill
+// the probe's group, remove its files) while the probe runs, and null after,
+// so a signal handler can call it before the process exits.
+export async function probeSandbox(bin: string, snapshotDir: string, filesystem: string = PROFILE_FILESYSTEM, register: (cleanup: (() => void) | null) => void = () => {}): Promise<string | null> {
   const tag = randomBytes(12).toString("hex");
   const insideToken = randomBytes(16).toString("hex");
   const outsideToken = randomBytes(16).toString("hex");
   const inside = join(snapshotDir, `.openqodex-probe-${tag}`);
   const written = join(snapshotDir, `.openqodex-probe-write-${tag}`);
   const canary = join(openqodexHomeDir(), `.openqodex-probe-${tag}`);
-  const result: ProbeResult = { insideRead: false, outsideRead: false, wrote: false, error: null };
+  const marker = randomBytes(16).toString("hex");
+  const result: ProbeResult = { insideRead: false, outsideRead: false, wrote: false, finished: false, code: null, signal: null, error: null };
+  let proc: ChildProcess | null = null;
+  const files = [canary, inside, written];
+  register(() => {
+    if (proc !== null) killGroup(proc);
+    for (const f of files) rmSync(f, { force: true });
+  });
   try {
     writeFileSync(canary, `${outsideToken}\n`, { mode: 0o600 });
     writeFileSync(inside, `${insideToken}\n`, { mode: 0o600 });
-    // The paths go in as arguments, never into the script text.
-    const script = 'cat "$1"; cat "$2"; : > "$3"';
-    const args = ["sandbox", ...profileConfig(filesystem), "--", "/bin/sh", "-c", script, "sh", inside, canary, written];
-    const out = await new Promise<{ stdout: string; error: string | null }>((done) => {
-      const proc = spawnGroup(bin, args, { cwd: snapshotDir, env: codexEnv() });
+    // The paths and the marker go in as arguments, never into the script
+    // text. Every program by absolute path with a fixed PATH, so nothing in
+    // the snapshot runs in place of it. Each expected refusal is handled, so
+    // the marker prints only when every step ran.
+    const script = 'PATH=/usr/bin:/bin; export PATH; /bin/cat "$1" || :; /bin/cat "$2" 2>/dev/null || :; { : > "$3"; } 2>/dev/null || :; printf "%s\\n" "$4"';
+    const args = ["sandbox", ...profileConfig(filesystem), "--", "/bin/sh", "-c", script, "sh", inside, canary, written, marker];
+    const out = await new Promise<{ stdout: string; error: string | null; code: number | null; signal: string | null }>((done) => {
+      const child = spawnGroup(bin, args, { cwd: snapshotDir, env: codexEnv() });
+      proc = child;
       let stdout = "";
       let error: string | null = null;
       const timer = setTimeout(() => {
         error = "the probe timed out";
-        killGroup(proc);
+        killGroup(child);
       }, PROBE_TIMEOUT_MS);
       timer.unref();
-      proc.stdout?.setEncoding("utf8");
-      proc.stdout?.on("data", (c: string) => {
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (c: string) => {
         if (stdout.length < 64 * 1024) stdout += c;
       });
-      proc.stderr?.resume();
-      proc.stdin?.on("error", () => {
+      child.stderr?.resume();
+      child.stdin?.on("error", () => {
         // gone; close reports
       });
-      proc.stdin?.end();
-      proc.on("error", (e) => {
+      child.stdin?.end();
+      child.on("error", (e) => {
         error = `the probe could not start: ${e.message}`;
       });
-      proc.on("close", () => {
+      child.on("close", (code, signal) => {
         clearTimeout(timer);
-        killGroup(proc);
-        done({ stdout, error });
+        killGroup(child);
+        done({ stdout, error, code, signal });
       });
     });
     result.error = out.error;
+    result.code = out.code;
+    result.signal = out.signal;
     result.insideRead = out.stdout.includes(insideToken);
     result.outsideRead = out.stdout.includes(outsideToken);
+    result.finished = out.stdout.trimEnd().endsWith(marker);
   } catch (error) {
     result.error = `the probe could not run: ${(error as Error).message.split("\n")[0]}`;
   } finally {
     result.wrote = existsSync(written);
-    for (const f of [canary, inside, written]) rmSync(f, { force: true });
+    for (const f of files) rmSync(f, { force: true });
+    register(null);
   }
   return probeVerdict(result);
 }
@@ -407,5 +432,5 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
   };
 }
 
-export const codexDriver: ReviewerDriver = { name: "codex", traced: false, detect: (repoRoot) => detect(repoRoot), check: ({ snapshotDir, bin }) => probeSandbox(bin, snapshotDir), start };
+export const codexDriver: ReviewerDriver = { name: "codex", traced: false, detect: (repoRoot) => detect(repoRoot), check: ({ snapshotDir, bin, register }) => probeSandbox(bin, snapshotDir, PROFILE_FILESYSTEM, register), start };
 export { detect as detectCodex };

@@ -84,7 +84,7 @@ Enabled since 0.6.0, with two stated limits. Tested with codex-cli 0.160.0 (`/op
 
 ### The command line
 
-The driver starts this command without a shell, with the snapshot as the working directory, and writes the prompt to standard input. Its environment comes from an allowlist (`codexEnv`): `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, locale, `TERM`, `TZ`, `CODEX_HOME`, `CODEX_CA_CERTIFICATE`, `SSL_CERT_FILE` and proxy settings, plus `OPENQODEX_REVIEW_DEPTH=1`. No `OPENAI_API_KEY`, no `CODEX_THREAD_ID` and no `CODEX_SANDBOX` reach it.
+The driver starts this command without a shell, with the snapshot as the working directory, and writes the prompt to standard input. Its environment comes from an allowlist (`codexEnv`): `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, locale, `TERM`, `TZ`, `CODEX_HOME`, `CODEX_CA_CERTIFICATE`, `SSL_CERT_FILE` and proxy settings, plus `OPENQODEX_REVIEW_DEPTH=1`. No `OPENAI_API_KEY`, no `CODEX_THREAD_ID` and no `CODEX_SANDBOX` reach it. Only absolute `PATH` entries are kept: an empty or relative one would resolve inside the snapshot.
 
 ```
 codex exec --json --color never --ephemeral --skip-git-repo-check
@@ -126,9 +126,10 @@ The read confinement rests on two `-c` keys (`default_permissions` and `permissi
 
 - it reads a canary file that openqodex writes in its home folder (`~/.openqodex/.openqodex-probe-<random>`, mode 0600, random content), outside the snapshot;
 - it reads a file with random content that openqodex writes inside the snapshot;
-- it tries to create a file inside the snapshot.
+- it tries to create a file inside the snapshot;
+- it prints a random marker as its last act.
 
-The review starts only when the inside read worked, the canary's content did not come back and no file was created. Any other result, a probe that cannot start, or one that runs past 30 seconds ends the run as "Full review unavailable" with "Codex's sandbox did not confine reads to the review copy; the review did not start" and the `review --agent` fallback. The canary and both probe files are removed whatever happened, before the snapshot is hashed.
+The script runs every program by absolute path (`/bin/cat`) with `PATH=/usr/bin:/bin`, so a program committed in the snapshot cannot stand in for one. It handles each expected refusal itself, so the marker prints only when every step ran. The review starts only when the probe exits 0 with no signal, the marker came back, the inside read worked, the canary's content did not come back and no file was created. Any other result, a probe that cannot start, or one that runs past 30 seconds ends the run as "Full review unavailable" with "Codex's sandbox did not confine reads to the review copy; the review did not start" and the `review --agent` fallback. The canary and both probe files are removed whatever happened, before the snapshot is hashed. A Ctrl-C or a kill during the probe ends the probe's process group and removes the files before `review` exits. `codex sandbox` passes on the command's exit status (3 for `exit 3`, 137 for a killed shell).
 
 Observed with codex-cli 0.160.0 (2026-10-04):
 

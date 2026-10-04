@@ -33,6 +33,11 @@
 // 15. The probe, run against the real binary, does not tell the review
 //     profile (confined) from a profile that reads everywhere (not confined),
 //     or leaves its canary or its files behind.
+// 16. A probe that printed the inside file and then died (a signal, a
+//     nonzero exit) before it tried the outside read and the write passes.
+// 17. A relative or empty PATH entry (".", "", "bin") reaches the reviewer or
+//     the probe, so a program committed in the snapshot runs in place of a
+//     system one (a `cat` that prints the inside file and skips the rest).
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -186,6 +191,10 @@ describe("the Codex command line and environment", () => {
     }
   });
 
+  it("17. relative and empty PATH entries never reach the reviewer", () => {
+    expect(codexEnv({ PATH: [".", "", "/usr/bin", "bin", "./x", "/bin"].join(":") }).PATH).toBe("/usr/bin:/bin");
+  });
+
   it("9. the environment keeps what Codex needs and drops tokens and session ties", () => {
     const env = codexEnv({ PATH: "/bin", HOME: "/h", CODEX_HOME: "/h/.codex", GITHUB_TOKEN: "t", OPENAI_API_KEY: "k", CODEX_THREAD_ID: "x", CODEX_SANDBOX: "seatbelt", CLAUDECODE: "1" });
     expect(env).toEqual({ PATH: "/bin", HOME: "/h", CODEX_HOME: "/h/.codex", [DEPTH_ENV]: "1" });
@@ -215,12 +224,18 @@ describe("the version check", () => {
 });
 
 describe("the per-run sandbox probe", () => {
-  const confined = { insideRead: true, outsideRead: false, wrote: false, error: null };
+  const confined = { insideRead: true, outsideRead: false, wrote: false, finished: true, code: 0, signal: null, error: null };
 
   it("13. a read outside the snapshot or a write inside it refuses the review", () => {
     expect(probeVerdict(confined)).toBeNull();
     expect(probeVerdict({ ...confined, outsideRead: true })).toMatch(PROBE_REFUSED);
     expect(probeVerdict({ ...confined, wrote: true })).toMatch(PROBE_REFUSED);
+  });
+
+  it("16. a probe that did not finish (no completion marker, a nonzero exit or a signal) refuses the review", () => {
+    expect(probeVerdict({ ...confined, finished: false })).toMatch(PROBE_REFUSED);
+    expect(probeVerdict({ ...confined, code: 1 })).toMatch(PROBE_REFUSED);
+    expect(probeVerdict({ ...confined, code: null, signal: "SIGKILL" })).toMatch(PROBE_REFUSED);
   });
 
   it("14. a sandbox that refuses the inside read, or a probe error or timeout, refuses the review", () => {

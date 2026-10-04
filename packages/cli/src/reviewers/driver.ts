@@ -57,7 +57,9 @@ export interface ReviewerDriver {
   // Run once the snapshot exists and before `start`: a reason in one line
   // when the agent's boundary could not be shown for this run, so the
   // reviewer must not start (Codex's per-run sandbox probe). Null to go on.
-  check?(opts: { snapshotDir: string; bin: string }): Promise<string | null>;
+  // `register` receives a synchronous cleanup while the check runs (and null
+  // after), which the run's signal handler calls before it exits.
+  check?(opts: { snapshotDir: string; bin: string; register: (cleanup: (() => void) | null) => void }): Promise<string | null>;
   // `deadline`: epoch milliseconds after which the process group is killed.
   // `web`: the agent gets its web tools (on unless reviewer_web: off).
   start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession;

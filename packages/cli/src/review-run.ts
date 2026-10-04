@@ -565,7 +565,11 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   // synchronously, since the process exits right after. The reviewer runs in
   // a group of its own, so nothing else would stop it. Git then forgets the
   // snapshot's work tree.
+  // A driver's boundary check that is running (Codex's sandbox probe): its
+  // process group and files, ended synchronously.
+  let checking: (() => void) | null = null;
   const onSignal = (signal: NodeJS.Signals): void => {
+    checking?.();
     session?.kill?.();
     if (snapshot !== null) {
       rmSync((snapshot as Checkout).folder, { recursive: true, force: true });
@@ -645,7 +649,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const traced = chosen.driver.traced;
     // The driver's per-run proof of its boundary (Codex's sandbox probe),
     // on the redacted snapshot, before its hash is taken.
-    const unsafe = (await chosen.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: chosen.bin })) ?? null;
+    const unsafe = (await chosen.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: chosen.bin, register: (cleanup) => (checking = cleanup) })) ?? null;
     if (unsafe !== null) return unavailable([`${chosen.driver.name}: ${unsafe}`]);
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
