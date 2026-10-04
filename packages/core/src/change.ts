@@ -331,7 +331,7 @@ function excluded(path: string, exclude: string[]): boolean {
 
 // git separates alternate object folders with ":", so a path is C-quoted to
 // survive a colon (or a leading quote) in it.
-function quoteAlternate(path: string): string {
+export function quoteAlternate(path: string): string {
   return `"${path.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
@@ -368,6 +368,11 @@ export async function getChange(args: {
   exclude: string[];
   // Config.defaultBase: what the default scope diffs against with no upstream.
   defaultBase?: string | null;
+  // Called with the git tree of the working state the change is taken from,
+  // while its objects still exist: `objects` holds the new ones and
+  // `alternates` the repo's own. The review copies its snapshot from it, so
+  // the snapshot and the change are the same state by construction.
+  onTree?: (tree: { sha: string; objects: string; alternates: string }) => Promise<void>;
 }): Promise<Change> {
   const { repoRoot, scope, exclude } = args;
   const base = await resolveBase(repoRoot, scope, args.defaultBase ?? null);
@@ -405,6 +410,11 @@ export async function getChange(args: {
     // repo's own .gitignore ignores. The report folder is left out by the
     // pathspec on every diff below instead.
     await gitOk(repoRoot, ["add", "-A", "--", "."], { env, config: noFilters });
+    if (args.onTree) {
+      // Written into the temp object folder, like the blobs `add` wrote.
+      const sha = (await gitOk(repoRoot, ["write-tree"], { env })).toString("utf8").trim();
+      await args.onTree({ sha, objects: tmpObjects, alternates: objectsPath });
+    }
 
     return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], newSide: ":", env, exclude });
   } finally {
@@ -629,10 +639,8 @@ async function diffChange(args: {
   );
 
   const notReviewed = files.filter((f) => tooLarge.has(f.path)).map((f) => f.path);
-  const diff = files
-    .filter((f) => text.has(f.path))
-    .map((f) => `${text.get(f.path)!.join("\n")}\n`)
-    .join("");
+  const diffs = files.filter((f) => text.has(f.path)).map((f) => ({ path: f.path, text: `${text.get(f.path)!.join("\n")}\n` }));
+  const diff = diffs.map((d) => d.text).join("");
   const changedPaths = files.filter((f) => f.status !== "deleted").map((f) => f.path);
 
   return {
@@ -646,6 +654,7 @@ async function diffChange(args: {
     coverage,
     deletionPoints,
     diff,
+    diffs,
     notReviewed,
     stats: { files: files.length, additions, deletions },
   };

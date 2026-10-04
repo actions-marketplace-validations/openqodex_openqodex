@@ -154,6 +154,8 @@ export type Change = {
   coverage: DiffCoverage; // from the zero-context diff
   deletionPoints: Map<string, DeletionPoint[]>; // from the same diff, per file that still exists
   diff: string; // the three-lines-of-context diff, capped
+  // The same diff split per file, in the same order; absent where a caller built a Change by hand.
+  diffs?: { path: string; text: string }[];
   notReviewed: string[]; // paths left out because the change was too large
   stats: { files: number; additions: number; deletions: number };
 };
@@ -306,6 +308,79 @@ export type AgentSubmission = {
   reviewer?: "subagent" | "same-agent";
 };
 
+// Submission version 2, what the reviewer process `review` starts returns.
+// Every scanner candidate gets exactly one disposition: raised by a finding
+// that names it, or dropped with a reason and the line that shows why. The
+// prose is in three fields the report prints under fixed labels. Any other
+// key (a `reviewer` claim included) is ignored: the tool records who reviewed.
+export type FindingV2 = {
+  severity: Severity;
+  category: Category;
+  confidence: number;
+  file_path: string;
+  line_number: number;
+  line_end?: number;
+  title: string;
+  problem: string; // what is wrong, one or two sentences
+  consequence: string; // why it matters
+  fix: string;
+  suggested_change?: string | null;
+  source: string | null;
+  candidate?: string | null;
+};
+
+export type DroppedV2 = { candidate: string; reason: string; file_path: string; line_number: number };
+
+export type SubmissionV2 = {
+  version: 2;
+  change_id: string;
+  summary: string;
+  findings: FindingV2[];
+  dropped: DroppedV2[];
+};
+
+// What the tool records about the reviewer process it started. Nothing in it
+// comes from the model.
+export type ReviewerUsage = { turns: number; input_tokens: number | null; output_tokens: number | null; cost_usd: number | null };
+
+export type ReviewerRecord = {
+  driver: string;
+  version: string;
+  pid: number | null;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  rounds: number; // answers asked for: the first plus the correction rounds
+  usage: ReviewerUsage;
+};
+
+// The completion record: script-owned and versioned, separate from the
+// verdict. "complete" only when the reviewer was a process the tool started,
+// the snapshot it read is the one the scanners and the diff used and did not
+// change, every candidate has a disposition and every changed range was
+// given to the reviewer. Anything less is "incomplete", with each missing
+// condition in `missing`.
+export type CompletionRecord = {
+  version: 1;
+  contract: "openqodex-review-2";
+  status: "complete" | "incomplete";
+  missing: string[];
+  reviewer: ReviewerRecord | null;
+  // The change id, the git tree the change and the snapshot were made from
+  // (null for a target, whose head commit is in the change), and a hash of
+  // every snapshot file before and after the reviewer ran.
+  snapshot: { change_id: string; tree: string | null; before: string; after: string | null };
+  candidates: { total: number; disposed: number };
+  coverage: {
+    hunks: number;
+    covered: number;
+    unread: { path: string; start: number; end: number; deletion: boolean }[];
+    files_read: string[];
+    files_not_read: string[];
+  };
+  outside_reads: string[];
+};
+
 export type ReportFinding = {
   origin: "agent" | "scanner";
   severity: Severity;
@@ -320,9 +395,15 @@ export type ReportFinding = {
   source: string | null;
   candidate: string | null;
   notes: string[]; // what finalize flagged, in plain words
+  // Submission version 2 only: the three prose fields the standard report prints.
+  problem?: string;
+  consequence?: string;
+  fix?: string;
 };
 
-export type Verdict = "passed" | "blocked";
+// "incomplete": a review `review` ran whose completion record is incomplete.
+// It has no findings, judges nothing and is never finalized.
+export type Verdict = "passed" | "blocked" | "incomplete";
 
 export type Report = {
   version: 1;
@@ -347,8 +428,9 @@ export type Report = {
   // review only: candidates the agent neither raised nor dropped. They count
   // toward the verdict at their reviewSeverity.
   not_reviewed: Candidate[];
-  // review only: candidates the agent dropped, with its reason
-  dropped: { candidate: Candidate; reason: string }[];
+  // review only: candidates the agent dropped, with its reason and, from
+  // submission version 2 on, the line it cited
+  dropped: { candidate: Candidate; reason: string; cited?: { file_path: string; line_number: number } }[];
   scanners: ScannerRunSummary[];
   // The code graph's view of the change. Always present: status "off",
   // "skipped" or "failed" says why there is nothing in it.
@@ -358,6 +440,9 @@ export type Report = {
   // list, which can hide its findings. Shown, never counted. Absent when none.
   settings_changes?: ReportFinding[];
   stats: { files: number; additions: number; deletions: number };
+  // A review run by `review` itself: its completion record. Absent in a scan
+  // and in a review from the two-step protocol (a legacy review).
+  completion?: CompletionRecord;
 };
 
 // manifest.json in the report folder, written by `review --agent`, read by
@@ -408,8 +493,11 @@ export type Latest = {
   dir: string; // repo-relative report folder
   change_id: string;
   kind: "scan" | "review";
-  finalized: boolean; // true only after `review --finalize` accepted a submission
+  finalized: boolean; // true only after a submission was accepted
   verdict: Verdict | null;
+  // Written by `review` itself; absent in a receipt of the two-step protocol.
+  // An incomplete run is never finalized.
+  completion?: "complete" | "incomplete";
 };
 
 // ---------- errors ----------

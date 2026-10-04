@@ -17,6 +17,18 @@ function counts(report: Report | null): string | null {
   return severities.length > 0 ? severityBreakdown(severities) : null;
 }
 
+// What kind of review a receipt records: "complete" or "incomplete" for a
+// review `review` ran with its own reviewer (its completion record decides),
+// "legacy" for one from the two-step protocol, which never counts as an
+// independent review. Null when there is no review receipt.
+export type ReceiptKind = "complete" | "incomplete" | "legacy";
+
+export function receiptKind(latest: Latest | null, report: Report | null): ReceiptKind | null {
+  if (latest === null || latest.kind !== "review") return null;
+  if (latest.completion === undefined) return "legacy";
+  return latest.completion === "complete" && report?.completion?.status === "complete" ? "complete" : "incomplete";
+}
+
 export function checkPush(args: {
   currentChangeId: string;
   latest: Latest | null;

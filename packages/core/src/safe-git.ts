@@ -20,9 +20,9 @@ export function safeGitEnv(): NodeJS.ProcessEnv {
 
 const BASE = ["core.hooksPath=/dev/null", "core.fsmonitor=false", "submodule.recurse=false", "gc.auto=0", "maintenance.auto=false"];
 
-function runGit(cwd: string, argv: string[], input?: string): Promise<SafeGitResult> {
+function runGit(cwd: string, argv: string[], input?: string, env?: Record<string, string>): Promise<SafeGitResult> {
   return new Promise((done, fail) => {
-    const child = spawn("git", argv, { cwd, env: safeGitEnv(), stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    const child = spawn("git", argv, { cwd, env: { ...safeGitEnv(), ...env }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout?.on("data", (b: Buffer) => out.push(b));
@@ -66,6 +66,8 @@ export function safeGitConfig(cwd: string): Promise<string[]> {
   return found;
 }
 
-export async function safeGit(cwd: string, args: string[], input?: string): Promise<SafeGitResult> {
-  return runGit(cwd, [...(await safeGitConfig(cwd)), ...args], input);
+// `env`: variables this one call needs, set after the inherited GIT_* ones
+// are removed (the review fills its snapshot from a temporary object folder).
+export async function safeGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<SafeGitResult> {
+  return runGit(cwd, [...(await safeGitConfig(cwd)), ...args], input, env);
 }
