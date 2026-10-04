@@ -64,7 +64,7 @@ openqodex hook uninstall
 - `hook install` refuses to replace a hook it did not write. `--force` replaces it and keeps the old hook as `pre-push.openqodex.bak`.
 - `hook uninstall`: remove that hook and put back the one it replaced. A hook you edited after install is left in place.
 
-When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook: `npx -y openqodex@<version> hook pre-push || [ $? -ne 1 ]`. The part after `||` makes the line stop the push only on exit 1, as the hook `hook install` writes does: a lookup that fails for its own reasons (exit 2) never stops the push.
+When the repository uses husky or lefthook, `hook install` writes nothing. It prints the line to add to their pre-push hook. For husky it is `npx -y openqodex@<version> hook pre-push "$@" || [ $? -ne 1 ]`; for lefthook, `'{1}' '{2}'` takes the place of `"$@"`, because lefthook puts git's hook arguments in place of `{1}` and `{2}`. Either way the hook gets the remote's name, which picks the base for a new branch. The part after `||` makes the line stop the push only on exit 1, as the hook `hook install` writes does: a lookup that fails for its own reasons (exit 2) never stops the push.
 
 `init` asks whether to install the git hook. `agents` explains the push gate.
 
