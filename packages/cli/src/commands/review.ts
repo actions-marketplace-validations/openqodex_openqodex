@@ -28,9 +28,7 @@ import {
   safeGit,
   openReportDir,
   readLatest,
-  readManifest,
   readRepoFile,
-  readScan,
   repoStat,
   STATE_DIR,
   selectLenses,
@@ -39,7 +37,7 @@ import {
   writeReportFiles,
   writeScan,
 } from "@openqodex/core";
-import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, WholeRepo } from "@openqodex/core";
+import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles } from "../agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, checkoutsDir, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
@@ -48,6 +46,7 @@ import { launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtim
 import { HANDED_OFF } from "../update/trigger.js";
 import { readInstructions } from "../instructions.js";
 import { readHomeRun, writeHomeReceipt, writeHomeRun } from "../receipts.js";
+import type { RunRecord } from "../receipts.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
 import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
 import type { GlobalFlags } from "../flags.js";
@@ -472,7 +471,7 @@ function findRun(repoRoot: string, path: string | undefined, all: boolean): { di
       throw new OpenQodexError(`no review brief found in this repository; ${RUN_AGAIN}`);
     }
     ({ dir, findingsPath } = checkRunDir(repoRoot, resolve(repoRoot, latest.dir), join(resolve(repoRoot, latest.dir), FINDINGS_FILE)));
-    if (readManifest(repoRoot, dir) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
+    if (repoStat(repoRoot, join(dir, "manifest.json")) === null) throw new OpenQodexError(`the newest run has no review brief; ${RUN_AGAIN}`);
     if (repoStat(repoRoot, findingsPath) === null) {
       throw new OpenQodexError(`no agent findings at ${findingsPath}; write them there as the brief says, then run this again`);
     }
@@ -521,7 +520,7 @@ function finalizeOnVersion(version: unknown, args: string[], path: string | unde
 function findRunById(repoRoot: string, id: string): { dir: string; findingsPath: string; submission: unknown } {
   if (!RUN_DIR_NAME.test(id)) throw new OpenQodexError(`--run ${id} is not a run name; copy it from the brief's finalize line`);
   const { dir, findingsPath } = checkRunDir(repoRoot, join(repoRoot, STATE_DIR, "reviews", id), join(repoRoot, STATE_DIR, "reviews", id, FINDINGS_FILE));
-  if (readManifest(repoRoot, dir) === null) throw new OpenQodexError(`the run ${id} has no review brief; ${RUN_AGAIN}`);
+  if (repoStat(repoRoot, join(dir, "manifest.json")) === null) throw new OpenQodexError(`the run ${id} has no review brief; ${RUN_AGAIN}`);
   const submission = readJsonFile(repoRoot, findingsPath, "agent findings");
   if (submission === null) throw new OpenQodexError(`no agent findings at ${findingsPath}; write them there as the brief says, then run this again`);
   return { dir, findingsPath, submission };
@@ -550,7 +549,11 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   const { repoRoot, config } = await loadRepo(flags);
   if (runId !== undefined && (path !== undefined || all)) throw new OpenQodexError("--run names the run; give no findings path and no --all with it");
   const { dir, findingsPath, submission } = runId !== undefined ? findRunById(repoRoot, runId) : findRun(repoRoot, path, all);
-  const manifest = readManifest(repoRoot, dir);
+  // Each run file is read once, here; everything below, the run record check
+  // included, uses these texts and what was parsed from them, never the files
+  // again, so a file swapped after this read changes nothing.
+  const texts = readRunTexts(repoRoot, dir);
+  const manifest = parseRunFile<RunManifest>(texts["manifest.json"]);
   const target = manifest?.target;
   // A review of a branch or a pull request is bound to its run by name.
   if (target !== undefined && runId === undefined) {
@@ -562,8 +565,8 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     }
     return finalizeOnVersion(manifest.runtime_version, args, path, findingsPath, handedOff);
   }
-  const scan = readScan(repoRoot, dir);
-  const runFile = readJsonFile(repoRoot, join(dir, RUN_FILE), "run file") as RunFile | null;
+  const scan = parseRunFile<ScanResult>(texts["scan.json"]);
+  const runFile = parseRunFile<RunFile>(texts[RUN_FILE]);
   if (manifest === null || scan === null || runFile === null) {
     throw new OpenQodexError(`the run in ${relative(repoRoot, dir)} has no review brief; ${RUN_AGAIN}`);
   }
@@ -604,7 +607,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     // A legacy record in the developer's home, so the push hooks accept this
     // review as before; only for a run this machine scanned (recordRun).
     try {
-      if (ranHere(repoRoot, dir, change.id, config)) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir)));
+      if (runMatches(readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)), { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts })) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir)));
       else warn("openqodex: this review is not recorded for the push hooks: its scan was not run by review --agent on this machine, or its files changed since; run openqodex review");
     } catch (error) {
       warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
@@ -640,28 +643,51 @@ function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: 
   }
 }
 
-// The home run record of this run (looked up by the run folder's name, whose
-// shape checkRunDir and readHomeRun both check) exists and matches: the change
-// computed now from the working state, the config and instructions now, and
-// every run file as it is now.
-function ranHere(repoRoot: string, dir: string, changeId: string, config: Config): boolean {
-  const run = readHomeRun(openqodexHomeDir(), repoRoot, basename(dir));
-  if (run === null) return false;
-  let instructions: string | null;
+type RunFileName = "manifest.json" | "scan.json" | "candidates.json" | "run.json";
+const RUN_FILES: RunFileName[] = ["manifest.json", "scan.json", "candidates.json", "run.json"];
+
+// The run files as text, each read once through the repo state reader (no
+// link, nothing but a regular file); null for a file that is not there.
+function readRunTexts(repoRoot: string, dir: string): Record<RunFileName, string | null> {
+  return Object.fromEntries(RUN_FILES.map((name) => [name, readRepoFile(repoRoot, join(dir, name))])) as Record<RunFileName, string | null>;
+}
+
+function parseRunFile<T>(text: string | null): T | null {
+  if (text === null) return null;
   try {
-    instructions = instructionsHash(readInstructions(repoRoot));
+    return JSON.parse(text) as T;
   } catch {
-    instructions = "unreadable";
+    return null;
   }
-  const file = (name: string) => sha256Of(readRepoFile(repoRoot, join(dir, name)));
+}
+
+function currentInstructionsHash(repoRoot: string): string | null {
+  try {
+    return instructionsHash(readInstructions(repoRoot));
+  } catch {
+    return "unreadable";
+  }
+}
+
+// Whether a home run record (looked up by the run folder's name, whose shape
+// checkRunDir and readHomeRun both check) matches this run now: the change
+// computed now from the working state, the config and instructions now, and
+// the exact run file texts finalize goes on to use. It takes text, never a
+// path, so what it checks is what finalize uses.
+export function runMatches(
+  run: RunRecord | null,
+  now: { changeId: string; configHash: string; instructionsHash: string | null; texts: Record<RunFileName, string | null> },
+): boolean {
+  if (run === null) return false;
+  const t = now.texts;
   return (
-    run.change_id === changeId &&
-    run.config_hash === configHash(config) &&
-    run.instructions_hash === instructions &&
-    run.manifest_sha256 === file("manifest.json") &&
-    run.scan_sha256 === file("scan.json") &&
-    run.candidates_sha256 === file("candidates.json") &&
-    run.run_sha256 === file(RUN_FILE)
+    run.change_id === now.changeId &&
+    run.config_hash === now.configHash &&
+    run.instructions_hash === now.instructionsHash &&
+    run.manifest_sha256 === sha256Of(t["manifest.json"]) &&
+    run.scan_sha256 === sha256Of(t["scan.json"]) &&
+    run.candidates_sha256 === sha256Of(t["candidates.json"]) &&
+    run.run_sha256 === sha256Of(t["run.json"])
   );
 }
 

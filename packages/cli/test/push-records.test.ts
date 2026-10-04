@@ -17,6 +17,9 @@
 //  6. The git pre-push hook measures the pushed commit from the newest
 //     review's base and ignores the remote commit git names, so a force push
 //     over a remote commit that held more than the reviewed base passes.
+//  8. Finalize checks the run files against the home record, then reads them
+//     again to use them, so a file swapped between the check and the use is
+//     trusted.
 //  7. The agent hook checks the checkout, not what the push command names:
 //     `git push origin unreviewed:main` passes on the checkout's review.
 import { createHash } from "node:crypto";
@@ -28,7 +31,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getChange } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { runReview } from "../src/review-run.js";
-import { homeReceiptPath, homeRunPath, readHomeReceipt } from "../src/receipts.js";
+import { homeReceiptPath, homeRunPath, readHomeReceipt, readHomeRun } from "../src/receipts.js";
+import { runMatches } from "../src/commands/review.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { cli, sandbox, type Sandbox } from "./init-helpers.js";
@@ -156,6 +160,20 @@ describe("5. the legacy two-step protocol", () => {
     expect(record).toMatchObject({ manifest_sha256: sha("manifest.json"), scan_sha256: sha("scan.json"), candidates_sha256: sha("candidates.json"), run_sha256: sha("run.json") });
     const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { config_hash: string; instructions_hash: string };
     expect(record).toMatchObject({ config_hash: manifest.config_hash, instructions_hash: manifest.instructions_hash });
+  });
+
+  it("8. the record check takes the run files' text, the text finalize then uses, never a path read again", () => {
+    const { dir, changeId } = agentRun();
+    const read = (name: string) => readFileSync(join(dir, name), "utf8");
+    const texts = { "manifest.json": read("manifest.json"), "scan.json": read("scan.json"), "candidates.json": read("candidates.json"), "run.json": read("run.json") };
+    const manifest = JSON.parse(texts["manifest.json"]) as { config_hash: string; instructions_hash: string };
+    const record = readHomeRun(s.oqHome, s.repo, dir.split("/").pop()!);
+    const now = { changeId, configHash: manifest.config_hash, instructionsHash: manifest.instructions_hash, texts };
+    // The files on disk swapped after the read: the check is about the text it was given.
+    writeFileSync(join(dir, "scan.json"), "{}\n");
+    expect(runMatches(record, now)).toBe(true);
+    expect(runMatches(record, { ...now, texts: { ...texts, "scan.json": "{}\n" } })).toBe(false);
+    expect(runMatches(record, { ...now, changeId: "f".repeat(64) })).toBe(false);
   });
 
   for (const file of ["candidates.json", "run.json"]) {
