@@ -1,0 +1,252 @@
+// The core contract of the total review: submission version 2, its script
+// checks, the coverage taken from the reviewer's trace, the completion
+// record, the one standard report and the push gate's view of a receipt.
+//
+// Ways it could fail, written before the code:
+//  1. A candidate with no disposition yields a passing or complete result.
+//  2. Scanner text (a rule id or a scanner name) in problem, consequence or
+//     fix is accepted, so it reaches the printed report.
+//  3. A sentence over 20 words, an em dash or a control character in a
+//     prose field is accepted.
+//  4. A finding cited outside the change, or a dropped candidate cited on a
+//     line that does not exist, is accepted.
+//  5. A missing problem, consequence or fix field is accepted.
+//  6. Rejections stop at the first one, or come without numbers, so the
+//     reviewer cannot fix them all in one round.
+//  7. The model's own `reviewer` claim reaches the report.
+//  8. A changed hunk the trace never covered counts as reviewed; a deleted
+//     region counts as read through the new file.
+//  9. A read outside the snapshot, a tool beyond read, grep and glob, a
+//     snapshot that changed, or a missing reviewer process still yields a
+//     complete record.
+// 10. Terminal and markdown say different things.
+// 11. A legacy receipt (two-step protocol) counts as an independent review.
+import { describe, expect, it } from "vitest";
+import { changedHunks, completionRecord, readCoverage } from "./completion.js";
+import type { TraceEntry } from "./completion.js";
+import { checkSubmission } from "./finalize.js";
+import { receiptKind } from "./push-gate.js";
+import { renderReview } from "./render/review.js";
+import { KEY_CANDIDATE, LINT_CANDIDATE, SQL_CANDIDATE, makeChange, makeConfig, makeManifest, makeScan } from "./test-fixtures.js";
+import type { CompletionRecord, Report, ReviewerRecord } from "./types.js";
+
+const reviewer: ReviewerRecord = {
+  driver: "claude",
+  version: "2.1.289",
+  pid: 4242,
+  started_at: "2026-10-03T10:00:00.000Z",
+  ended_at: "2026-10-03T10:01:12.000Z",
+  duration_ms: 72_000,
+  rounds: 1,
+  usage: { turns: 10, input_tokens: 45_000, output_tokens: 3_000, cost_usd: 0.31 },
+};
+
+function v2(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 2,
+    change_id: "3f9a1c0b2d4e",
+    summary: "Builds the search query from request input and adds a settings module.",
+    findings: [
+      {
+        severity: "critical",
+        category: "security",
+        confidence: 0.9,
+        file_path: "app/search.py",
+        line_number: 14,
+        title: "Query built from request input",
+        problem: "The search query puts q from the request straight into the SQL text.",
+        consequence: "Anyone who can call search can read or change every row.",
+        fix: "Pass q as a bound parameter to cur.execute.",
+        source: SQL_CANDIDATE.token,
+        candidate: "c1",
+      },
+    ],
+    dropped: [
+      { candidate: "c2", reason: "The key is a documented local sample.", file_path: "app/settings.py", line_number: 3 },
+      { candidate: "c3", reason: "The import is used by the next change.", file_path: "app/settings.py", line_number: 1 },
+    ],
+    ...over,
+  };
+}
+
+// Built at run time: the em dash never appears in this file as a character.
+const EM = String.fromCharCode(0x2014);
+const BEL = String.fromCharCode(7);
+
+const lineCount = (path: string) => (path === "app/search.py" ? 40 : path === "app/settings.py" ? 3 : null);
+
+function check(submission: unknown) {
+  const change = makeChange();
+  return checkSubmission({ change, scan: makeScan(), manifest: makeManifest(change), config: makeConfig({ blockOnSeverity: "major" }), submission, lineCount });
+}
+
+function errorsOf(submission: unknown): string[] {
+  const r = check(submission);
+  if (r.ok) throw new Error("expected the submission to be rejected");
+  return r.errors;
+}
+
+function withFinding(over: Record<string, unknown>): Record<string, unknown> {
+  const base = (v2().findings as Record<string, unknown>[])[0]!;
+  return v2({ findings: [{ ...base, ...over }] });
+}
+
+describe("submission version 2", () => {
+  it("1. rejects a submission that leaves a candidate with no disposition", () => {
+    const errors = errorsOf(v2({ dropped: [(v2().dropped as unknown[])[0]] }));
+    expect(errors.join("\n")).toContain("c3");
+    expect(errors.join("\n")).toMatch(/no disposition/);
+  });
+  it("1. rejects a candidate both raised and dropped", () => {
+    const dropped = [...(v2().dropped as unknown[]), { candidate: "c1", reason: "Not real.", file_path: "app/search.py", line_number: 14 }];
+    expect(errorsOf(v2({ dropped })).join("\n")).toMatch(/c1.*more than one disposition/);
+  });
+  it("2. rejects a rule id or a scanner name in a prose field", () => {
+    expect(errorsOf(withFinding({ problem: `The rule ${SQL_CANDIDATE.ruleId} fired on this line.` })).join("\n")).toMatch(/problem.*rule id/);
+    expect(errorsOf(withFinding({ consequence: "Semgrep says anyone can read every row." })).join("\n")).toMatch(/consequence.*scanner name/);
+    expect(errorsOf(withFinding({ fix: `Silence ${LINT_CANDIDATE.token} and move on.` })).join("\n")).toMatch(/fix/);
+  });
+  it("3. rejects a sentence over 20 words, an em dash and a control character", () => {
+    const long = "This sentence has far too many words in it because it keeps going on and on about the query that is built here.";
+    expect(errorsOf(withFinding({ problem: long })).join("\n")).toMatch(/problem: sentence 1 has 2\d words; the limit is 20/);
+    expect(errorsOf(withFinding({ fix: `Bind q ${EM} never format it.` })).join("\n")).toMatch(/fix.*em dash/);
+    expect(errorsOf(withFinding({ consequence: `Anyone can read${BEL} every row.` })).join("\n")).toMatch(/consequence.*control character/);
+  });
+  it("4. rejects a finding cited outside the change and a dropped candidate cited on a line that does not exist", () => {
+    expect(errorsOf(withFinding({ line_number: 3, file_path: "app/search.py" })).join("\n")).toMatch(/not a line this change added or modified/);
+    const dropped = [{ candidate: "c2", reason: "A sample key.", file_path: "app/settings.py", line_number: 99 }, (v2().dropped as unknown[])[1]];
+    expect(errorsOf(v2({ dropped })).join("\n")).toMatch(/line 99 of app\/settings.py, which has 3 lines/);
+  });
+  it("5. rejects a finding with no consequence", () => {
+    const base = { ...(v2().findings as Record<string, unknown>[])[0]! };
+    delete base.consequence;
+    expect(errorsOf(v2({ findings: [base] })).join("\n")).toMatch(/findings\[0\]\.consequence/);
+  });
+  it("6. returns every rejection at once, numbered", () => {
+    const errors = errorsOf(withFinding({ problem: `Bad ${EM} one.`, fix: `Also bad ${EM} two.` }));
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+    errors.forEach((e, i) => expect(e.startsWith(`${i + 1}. `)).toBe(true));
+  });
+  it("7. ignores the model's own reviewer claim", () => {
+    const r = check(v2({ reviewer: "subagent" }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(JSON.stringify(r.report)).not.toContain("subagent");
+  });
+  it("accepts a clean submission and blocks on the raised critical finding", () => {
+    const r = check(v2());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.report.verdict).toBe("blocked");
+    expect(r.report.not_reviewed).toEqual([]);
+    expect(r.report.findings[0]).toMatchObject({ problem: expect.any(String), consequence: expect.any(String), fix: expect.any(String) });
+    expect(r.report.dropped.map((d) => d.candidate.id)).toEqual(["c2", "c3"]);
+  });
+});
+
+describe("coverage from the trace", () => {
+  const read = (path: string, start: number, end: number): TraceEntry => ({ tool: "Read", path, inside: true, range: [start, end], ok: true });
+
+  it("8. counts a hunk outside the brief's diff as unread until a read covers it", () => {
+    const change = makeChange();
+    const none = readCoverage({ change, briefFiles: new Set(["app/settings.py"]), trace: [] });
+    expect(none.unread.map((h) => h.path)).toEqual(["app/search.py"]);
+    const partial = readCoverage({ change, briefFiles: new Set(["app/settings.py"]), trace: [read("app/search.py", 1, 14)] });
+    expect(partial.unread).toHaveLength(1);
+    const full = readCoverage({ change, briefFiles: new Set(["app/settings.py"]), trace: [read("app/search.py", 10, 20)] });
+    expect(full.unread).toEqual([]);
+    expect(full.files_read).toEqual(["app/search.py"]);
+    expect(full.files_not_read).toEqual(["app/settings.py"]);
+  });
+  it("8. a deletion point is covered only by the diff in the brief, never by reading the new file", () => {
+    const change = makeChange({ deletionPoints: new Map([["app/search.py", [{ after: 20, lines: 2, anchors: [20, 21] }]]]) });
+    expect(changedHunks(change).some((h) => h.deletion)).toBe(true);
+    const c = readCoverage({ change, briefFiles: new Set(["app/settings.py"]), trace: [read("app/search.py", 1, 40)] });
+    expect(c.unread).toEqual([{ path: "app/search.py", start: 20, end: 21, deletion: true }]);
+  });
+  it("8. a failed read covers nothing", () => {
+    const change = makeChange();
+    const c = readCoverage({ change, briefFiles: new Set(["app/settings.py"]), trace: [{ ...read("app/search.py", 1, 40), ok: false }] });
+    expect(c.unread).toHaveLength(1);
+  });
+});
+
+describe("the completion record", () => {
+  const change = makeChange();
+  const coverage = readCoverage({ change, briefFiles: new Set(change.changedPaths), trace: [] });
+  const base = { change, reviewer, snapshot: { tree: "a".repeat(40), before: "b".repeat(64), after: "b".repeat(64) }, candidates: { total: 3, disposed: 3 }, coverage, trace: [] as TraceEntry[], submissionErrors: [] as string[], wholeRepo: false };
+
+  it("is complete when every condition holds", () => {
+    expect(completionRecord(base)).toMatchObject({ status: "complete", missing: [] });
+  });
+  it("9. is incomplete without a reviewer process the tool started", () => {
+    expect(completionRecord({ ...base, reviewer: null }).status).toBe("incomplete");
+  });
+  it("9. is incomplete when the trace shows a successful read outside the snapshot", () => {
+    const r = completionRecord({ ...base, trace: [{ tool: "Read", path: "/etc/hosts", inside: false, range: [1, 5], ok: true }] });
+    expect(r.status).toBe("incomplete");
+    expect(r.missing.join("\n")).toContain("/etc/hosts");
+  });
+  it("9. is incomplete when the reviewer used a tool beyond read, grep and glob", () => {
+    expect(completionRecord({ ...base, trace: [{ tool: "Bash", path: null, inside: true, range: null, ok: true }] }).status).toBe("incomplete");
+  });
+  it("9. is incomplete when the snapshot changed during the review", () => {
+    expect(completionRecord({ ...base, snapshot: { ...base.snapshot, after: "c".repeat(64) } }).status).toBe("incomplete");
+  });
+  it("9. is incomplete when a candidate has no disposition or a changed range was not read", () => {
+    expect(completionRecord({ ...base, candidates: { total: 3, disposed: 2 } }).status).toBe("incomplete");
+    const unread = readCoverage({ change, briefFiles: new Set(), trace: [] });
+    expect(completionRecord({ ...base, coverage: unread }).missing.join("\n")).toMatch(/not read/);
+  });
+});
+
+function completeReport(): Report {
+  const change = makeChange();
+  const r = checkSubmission({ change, scan: makeScan(), manifest: makeManifest(change), config: makeConfig(), submission: v2(), lineCount });
+  if (!r.ok) throw new Error(r.errors.join("\n"));
+  const coverage = readCoverage({ change, briefFiles: new Set(change.changedPaths), trace: [] });
+  const completion: CompletionRecord = completionRecord({ change, reviewer, snapshot: { tree: null, before: "b", after: "b" }, candidates: { total: 3, disposed: 3 }, coverage, trace: [], submissionErrors: [], wholeRepo: false });
+  return { ...r.report, completion };
+}
+
+// The words a reader sees: markup and colour codes removed, lines trimmed.
+function words(text: string): string[] {
+  return text
+    // oxlint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split("\n")
+    .map((l) => l.replace(/^#+ /, "").replace(/^- /, "").replace(/\*\*/g, "").replace(/`/g, "").trim())
+    .filter((l) => l !== "");
+}
+
+describe("the standard report", () => {
+  it("10. terminal and markdown carry the same words in the same order", () => {
+    const report = completeReport();
+    expect(words(renderReview(report, { format: "markdown" }))).toEqual(words(renderReview(report, { format: "terminal", color: true })));
+  });
+  it("prints the four fixed labels, the source on its own line, dropped reasons, coverage and the tool's reviewer line", () => {
+    const text = renderReview(completeReport(), { format: "terminal", color: false });
+    for (const label of ["Where: app/search.py:14", "Problem: ", "Why it matters: ", "Fix: ", `Source: ${SQL_CANDIDATE.token}`]) expect(text).toContain(label);
+    expect(text).toContain("The key is a documented local sample.");
+    expect(text).toMatch(/Files read: /);
+    expect(text).toMatch(/Reviewer: claude 2\.1\.289, 72 s, 10 turns/);
+    expect(text).not.toContain(KEY_CANDIDATE.message);
+  });
+  it("an incomplete record prints what is missing and no finding", () => {
+    const report = completeReport();
+    const incomplete: Report = { ...report, completion: { ...report.completion!, status: "incomplete", missing: ["2 changed ranges were not read: app/search.py:14-15"] } };
+    const text = renderReview(incomplete, { format: "terminal", color: false });
+    expect(text).toMatch(/^Review incomplete/);
+    expect(text).toContain("app/search.py:14-15");
+    expect(text).not.toContain("Problem: ");
+  });
+});
+
+describe("the push gate's view of a receipt", () => {
+  it("11. labels a receipt from the two-step protocol legacy, never complete", () => {
+    const legacy = { dir: ".openqodex/reviews/x", change_id: "a", kind: "review" as const, finalized: true, verdict: "passed" as const };
+    expect(receiptKind(legacy, null)).toBe("legacy");
+    expect(receiptKind({ ...legacy, completion: "complete" }, completeReport())).toBe("complete");
+    expect(receiptKind({ ...legacy, finalized: false, completion: "incomplete" }, null)).toBe("incomplete");
+    expect(receiptKind(null, null)).toBeNull();
+  });
+});
