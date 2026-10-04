@@ -12,6 +12,7 @@ The agent installs the skill, runs the review and tells you the result. The step
 ## Before you start
 
 - Node 22 or newer, and git.
+- Claude Code, installed and logged in. It is the reviewer OpenQodex starts. Without it, `review` runs the scanners, says "Full review unavailable" and gives no review.
 - macOS or Linux. On Windows, use WSL.
 - A git repository with a change in it.
 
@@ -27,11 +28,13 @@ npx openqodex init
 
 Inside a repository, `init` also:
 
-- asks whether to add the git pre-push hook, so every push from that repository gets a scan, from an agent or by hand. The default is yes.
-- adds a short section to each agent's instruction file, such as `~/.claude/CLAUDE.md` for Claude Code: when a feature or fix is done, review it with openqodex in a separate subagent, so the agent that wrote the code does not judge its own work. It prints the section before writing it.
+- asks whether to add the git pre-push hook, so every push from that repository is checked for a review, from an agent or by hand. The default is yes.
+- adds a short section to each agent's instruction file, such as `~/.claude/CLAUDE.md` for Claude Code: when a feature or fix is done, review it with openqodex. It prints the section before writing it.
 - creates `.openqodex/config.yaml` and `.openqodex/custom-instructions.md`. Commit both. Write in `custom-instructions.md` what a reviewer of your repository must know: conventions, what never to flag, what always to check. The review brief carries it word for word.
 
 `init` also starts the scanner downloads that your repo needs, in the background. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
+
+Last, `init` reviews: when the repository has a change, it runs `openqodex review` and prints the report. When it has none, it asks what to review: the whole repository, a pull request, a branch, or not now. With `--yes` or without a terminal it prints the three commands instead of asking. `--no-review` skips this step. The review uses the scanners already installed and never fails `init`.
 
 Codex only: open Codex, run `/hooks` and trust the OpenQodex hook. Codex runs a new hook only after you trust it.
 
@@ -43,7 +46,7 @@ Say to your agent:
 review my change with openqodex
 ```
 
-The agent hands the review to a separate subagent where it can, and tells you when it cannot. The reviewer runs `openqodex review --agent`. That command works out the change, runs the scanners and prints a brief. The agent verifies each scanner finding, reviews the change itself, and writes its findings to a file. Then it runs `openqodex review --finalize`, which checks those findings without a model and writes the report.
+The agent runs `openqodex review` and shows you the report it prints. That one command works out the change, copies it to a temporary folder, runs the scanners and the code graph, and starts its own reviewer: a separate Claude Code process that can only read that copy. The reviewer checks every scanner finding and reads every changed line; a script checks its answer, and OpenQodex prints the report. It takes one to three minutes and uses your Claude Code plan. You can run the same command in your terminal.
 
 To review the whole repository instead of one change, say:
 
@@ -51,7 +54,7 @@ To review the whole repository instead of one change, say:
 review my whole repo with openqodex
 ```
 
-The agent runs `openqodex review --all --agent`. The scanners check every file, and the brief tells the agent where to start: the most-called functions and the files with the most scanner hits. See `docs/cli.md` for the details.
+The agent runs `openqodex review --all`. The scanners check every file, and the brief tells the reviewer where to start: the most-called functions and the files with the most scanner hits. See `docs/cli.md` for the details.
 
 To review a teammate's branch or a pull request before it merges, without leaving your own work, say:
 
@@ -60,11 +63,11 @@ review the branch feature/login with openqodex
 review pull request #42 with openqodex
 ```
 
-The agent runs `openqodex review --agent feature/login` or `openqodex review --agent '#42'`. OpenQodex fetches the branch or the pull request, checks it out in a temporary folder and reviews what it added since it left its base. Your working folder is not touched. See "Reviewing a branch or a pull request" in `docs/cli.md`.
+The agent runs `openqodex review feature/login` or `openqodex review '#42'`. OpenQodex fetches the branch or the pull request, checks it out in a temporary folder and reviews what it added since it left its base. Your working folder is not touched. See "Reviewing a branch or a pull request" in `docs/cli.md`.
 
 ## 3. Read the report
 
-The agent tells you the verdict and the most serious findings. The full report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.
+The agent shows you the report as OpenQodex printed it: the verdict, the counts, and for each finding where it is, the problem, why it matters and the fix. A complete review means every stage ran, every scanner finding was checked and every changed line was read; anything not covered is named. It does not mean nothing was missed. The same report is in `.openqodex/reviews/<time>-<id>/report.md` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.
 
 The verdict is `passed` unless `.openqodex/config.yaml` sets `review.block_on_severity` and a finding meets it. With no config, OpenQodex warns and never blocks.
 
@@ -74,17 +77,17 @@ The verdict is `passed` unless `.openqodex/config.yaml` sets `review.block_on_se
 npx openqodex demo /tmp/openqodex-demo
 ```
 
-`demo` builds a small repo with planted bugs: a secret, a SQL injection, a bad Dockerfile, a vulnerable lockfile, a shell bug and a workflow injection. It scans the change and prints the report. Then open the folder in your agent and ask for a review.
+`demo` builds a small repo with planted bugs: a secret, a SQL injection, a bad Dockerfile, a vulnerable lockfile, a shell bug and a workflow injection. It scans the change and prints the scanner report. Then run `openqodex review` in that folder, or open it in your agent and ask for a review.
 
 ## Without an agent
 
-`openqodex scan` runs the scanners on the change and prints the report:
+Run the review yourself:
 
 ```
-npx openqodex scan
+npx openqodex review
 ```
 
-It is the same check the git hook, the pre-commit hook and the GitHub Action run.
+`openqodex scan` runs the scanners only and prints their findings unchecked. It is the check the pre-commit hook and the GitHub Action run; it is not a review.
 
 ## First run
 

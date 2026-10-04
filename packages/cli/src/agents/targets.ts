@@ -126,14 +126,15 @@ function userRule(text: string, runner: string): string {
 // Claude Code without a prompt, in user scope only. A rule with no `*`
 // matches one exact command, and "a rule must match each subcommand
 // independently" (Claude Code permissions page, Compound commands), so
-// `review --agent && other` is not covered. No wildcard after `review`: one
+// `review && other` is not covered. No wildcard after `review`: one
 // would pass --output, --config and --cwd with any path unasked. `guide *` is
 // the one wildcard: guide only prints a page bundled in the package, chosen
 // by name from its docs folder. Not allowed: `scan`, `doctor`, `trust`
 // (approving a custom scanner stays the developer's decision), `update`,
 // `init`, `report`; `hook check` runs from Claude Code's hook system, which
-// needs no Bash rule.
-const REVIEW_LINES = ["review --agent", "review --finalize", "review --agent --all", "review --finalize --all"];
+// needs no Bash rule. The two-step lines of older versions (`review --agent`,
+// `review --finalize`) are no longer granted; init removes the ones it recorded.
+const REVIEW_LINES = ["review", "review --all"];
 const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *"];
 
 export function allowRules(runner: string): string[] {

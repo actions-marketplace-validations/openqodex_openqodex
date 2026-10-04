@@ -25,11 +25,11 @@ npx openqodex trust
 
 The stored sha256 is checked against the project's checksum file when the project publishes one. Otherwise it is the hash of your first download. `custom-scanners` explains the difference.
 
-Agents that follow the OpenQodex skill are told never to run `openqodex trust` without asking you. In user scope, `init` adds rules so Claude Code runs exactly `review --agent`, `review --finalize`, `review --agent --all` and `review --finalize --all` (each also with ` --offline`), `guide` and `guide <topic>` through the launcher without asking. An `ask` or `deny` rule in your own or your organisation's managed Claude Code settings still wins over these. Any other flag, any other command (`scan`, `doctor`, `trust`, `update`, `init`, `report`) and `init --project` grant nothing.
+Agents that follow the OpenQodex skill are told never to run `openqodex trust` without asking you. In user scope, `init` adds rules so Claude Code runs exactly `review` and `review --all` (each also with ` --offline`), `guide` and `guide <topic>` through the launcher without asking. It removes the rules for the older two-step lines (`review --agent`, `review --finalize`) that an earlier `init` added. A review of a branch or a pull request names its target, so Claude Code asks before each one. An `ask` or `deny` rule in your own or your organisation's managed Claude Code settings still wins over these. Any other flag, any other command (`scan`, `doctor`, `trust`, `update`, `init`, `report`) and `init --project` grant nothing.
 
 ## What is sent where
 
-OpenQodex and the built-in scanners send no code anywhere. The review runs on the model your agent already uses, which sees what the agent reads. A custom scanner you approved does whatever its own command does.
+OpenQodex and the built-in scanners send no code anywhere. The review runs on the model your Claude Code login uses: the reviewer process sends it the brief and what the reviewer reads (see "The reviewer process"). A custom scanner you approved does whatever its own command does.
 
 OpenQodex and the built-in scanners use the network for these things only:
 
@@ -71,10 +71,10 @@ OpenQodex sends no telemetry. See `telemetry`.
 
 ## The reviewer process
 
-`openqodex review` starts Claude Code (`claude -p`) as its reviewer. It sends the review brief and the files the reviewer reads to the model your Claude Code login uses, as any Claude Code session does. The reviewer:
+`openqodex review` starts Claude Code (`claude -p`) as its reviewer. Codex and Cursor are not used as reviewers: with the versions tested, one loads your global instructions and does not report every command it runs, and the other cannot be limited to reading. `docs/internal-reviewer-drivers.md` in the repository records the tests. It sends the review brief and the files the reviewer reads to the model your Claude Code login uses, as any Claude Code session does. The reviewer:
 
 - reads a snapshot of the change in `~/.openqodex/checkouts/`, never your folder. Secrets the scanners found are redacted in every file of the snapshot first, and a file too large to check is left out of it.
-- has the read, search and list tools only: no shell, no edits, no web, no MCP server, no subagent. Claude Code's own permission rules refuse a read outside the snapshot; that is the boundary. OpenQodex also checks every tool call in the agent's event stream and marks the review incomplete when one names a path outside the snapshot, an unknown tool or an input it cannot read; that is the alarm.
+- has the read, search and list tools only: no shell, no edits, no web, no MCP server, no subagent. The one exception is the web: `reviewer_web: on` in `~/.openqodex/config.yaml` adds Claude Code's WebSearch and WebFetch. It is off by default. A reviewer that reads private code and untrusted text from the change and can open web addresses can be talked into putting that code into a web address. Turn it on only when you accept that risk. Claude Code's own permission rules refuse a read outside the snapshot; that is the boundary. OpenQodex also checks every tool call in the agent's event stream and marks the review incomplete when one names a path outside the snapshot, an unknown tool or an input it cannot read; that is the alarm.
 - loads none of your Claude Code settings, hooks, plugins, memory or `CLAUDE.md` files, and none of the repository's.
 - gets an environment built from a short allowlist: the variables Claude Code needs to run and find its login (`PATH`, `HOME`, `USER`, `CLAUDE_CONFIG_DIR`, proxy settings, `ANTHROPIC_*` keys, and cloud provider variables only when Claude Code is set to that provider). Other tokens in your shell, such as `GITHUB_TOKEN` or `NPM_TOKEN`, never reach it.
 
@@ -100,7 +100,7 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 - `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`. Updates add copies beside it; a copy is never changed after it is written. `init` and `openqodex update` remove copies older than 7 days, except the one `init` installed, the current one and the previous one.
 - `runtime/current`: the version the launcher runs, and on a second line the version a rollback goes back to.
 - `update.json`: the state of the version check, private to you.
-- `config.yaml`: your own settings; today only `update`.
+- `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews) and `reviewer_web` (the reviewer's web tools, off by default).
 - `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
 - `trust.json`: your approvals of custom scanners.
 
@@ -108,7 +108,7 @@ In the repository, under `.openqodex/` only:
 
 - `config.yaml` and `custom-instructions.md`: the team's config and instructions for the reviewer, created once and never touched after. They are meant to be committed.
 - `.gitignore`: keeps the run state below out of git, so after the first run `git status` shows only the two files above and the `.gitignore`.
-- `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the agent's findings and the reports. OpenQodex keeps the newest 20.
+- `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the reviewer's answer, the list of its tool calls and the reports. OpenQodex keeps the newest 20.
 - `latest.json`: points at the newest review; the push gate reads only this. `latest-scan.json` points at the newest scan.
 
 OpenQodex never reads or writes `.openqodex/` or the root `.openqodex.yaml` through a symbolic link, at the file or at any folder above it inside the repository. A link there stops the command with one line naming it, or, for a run file such as `latest.json`, counts as no file. Only regular files are read there, each within a size limit, so a link or a device in their place cannot hang a run.

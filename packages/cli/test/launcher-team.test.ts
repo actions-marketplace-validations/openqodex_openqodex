@@ -134,7 +134,7 @@ describe("the user-scope skill calls the launcher", () => {
     const s = sandbox();
     expect(cli(s, ["init", "--yes", "--project", "--agent", "claude-code"]).status).toBe(0);
     const skill = readFileSync(join(s.repo, ".claude/skills/openqodex/SKILL.md"), "utf8");
-    expect(skill).toContain(`npx -y openqodex@${version} review --agent`);
+    expect(skill).toContain(`npx -y openqodex@${version} review\n`);
     expect(skill).not.toContain(launcher(s));
   });
 });
@@ -147,7 +147,7 @@ describe("the team section in the repo", () => {
     for (const f of ["CLAUDE.md", "AGENTS.md"]) {
       const text = readFileSync(join(s.repo, f), "utf8");
       expect(count(text, START), f).toBe(1);
-      expect(text).toContain(`npx -y openqodex@${version} review --agent`);
+      expect(text).toContain(`npx -y openqodex@${version} review\``);
       expect(text.toLowerCase()).not.toContain("skill");
       expect(text).not.toContain(String.fromCodePoint(0x2014));
     }
