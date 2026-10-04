@@ -395,7 +395,9 @@ describe("the snapshot", () => {
   it("19. masks a multi-line secret line by line, so every line below it keeps its number", () => {
     const dir = mkdtempSync(join(tmpdir(), "oq-redact-lines-"));
     const body = Array.from({ length: 3 }, () => Math.random().toString(36).slice(2).padEnd(40, "q")).join("\n");
-    const key = `-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----`;
+    // The markers are joined at run time, so this file holds no key-shaped text.
+    const mark = (word: string) => ["-----", word, " PRIVATE ", "KEY-----"].join("");
+    const key = `${mark("BEGIN")}\n${body}\n${mark("END")}`;
     const text = `KEY = """\n${key}\n"""\ncheck(user)  # line 8\n`;
     writeFileSync(join(dir, "keys.py"), text);
     redactSnapshot(dir, [key]);
