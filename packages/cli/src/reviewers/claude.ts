@@ -78,6 +78,15 @@ export function reviewerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
 
 const DETECT_TIMEOUT_MS = 20_000;
 
+// Bounds on what the stream reader holds, checked as the bytes arrive, so a
+// reviewer that prints without end is stopped before it fills memory. One
+// event line (a read's result carries the text it read); the tool inputs of
+// one answer, as the trace keeps them; and the answer itself, the same limit
+// the run applies when it parses it.
+const MAX_EVENT_LINE_CHARS = 16 * 1024 * 1024;
+const MAX_TRACE_CHARS = 8 * 1024 * 1024;
+const MAX_ANSWER_BYTES = 2 * 1024 * 1024;
+
 async function detect(repoRoot: string): Promise<Detected> {
   const bin = findOnPath("claude", [repoRoot, checkoutsDir()]);
   if (bin === null) return { ok: false, missing: "Claude Code (claude) is not on PATH", fix: "install Claude Code and log in, then review again" };
@@ -118,6 +127,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
   // not a result follows, and whichever turn or nesting it came from.
   const pending = new Map<string, ToolCall>();
   let calls: ToolCall[] = [];
+  let traceChars = 0;
   let usage: ReviewerUsage = { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null };
   let sessionId: string | null = null;
   let failure: string | null = null;
@@ -129,6 +139,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
     waiting = null;
     const turn: Turn = { finalText, calls, usage, sessionId, failure: why };
     calls = [];
+    traceChars = 0;
     done?.(turn);
   };
   const fail = (why: string): void => {
@@ -155,6 +166,8 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
       for (const c of content) {
         if (c.type !== "tool_use") continue;
         const call: ToolCall = { tool: String(c.name), input: c.input, ok: true, read: null };
+        traceChars += JSON.stringify(c.input ?? null).length;
+        if (traceChars > MAX_TRACE_CHARS) return fail(`the reviewer stopped: its trace over ${MAX_TRACE_CHARS / 1024 / 1024} MB of tool input in one answer`);
         calls.push(call);
         if (typeof c.id === "string") pending.set(c.id, call);
       }
@@ -184,24 +197,32 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
         output_tokens: sum("outputTokens"),
         cost_usd: num(e.total_cost_usd),
       };
+      const answer = str(e.result) ?? "";
       if (e.is_error === true) fail(`the reviewer stopped with an error (${str(e.subtype) ?? "unknown"})`);
-      else finish(str(e.result) ?? "", null);
+      else if (Buffer.byteLength(answer, "utf8") > MAX_ANSWER_BYTES) fail(`the reviewer stopped: its answer over ${MAX_ANSWER_BYTES / 1024 / 1024} MB`);
+      else finish(answer, null);
     }
   };
 
   let buf = "";
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
+    if (failure !== null) return;
     buf += chunk;
-    for (let nl = buf.indexOf("\n"); nl !== -1; nl = buf.indexOf("\n")) {
+    for (let nl = buf.indexOf("\n"); nl !== -1 && failure === null; nl = buf.indexOf("\n")) {
       const line = buf.slice(0, nl);
       buf = buf.slice(nl + 1);
-      try {
-        onEvent(JSON.parse(line) as Event);
-      } catch {
-        // a line that is not an event: ignored
+      if (line.length > MAX_EVENT_LINE_CHARS) buf = line;
+      else {
+        try {
+          onEvent(JSON.parse(line) as Event);
+        } catch {
+          // a line that is not an event: ignored
+        }
       }
     }
+    if (failure === null && buf.length > MAX_EVENT_LINE_CHARS) fail(`the reviewer stopped: an event line over ${MAX_EVENT_LINE_CHARS / 1024 / 1024} MB`);
+    if (failure !== null) buf = "";
   });
   // Read and dropped: it may hold the agent's view of the code.
   child.stderr?.resume();
@@ -226,12 +247,14 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
     },
     async close(): Promise<void> {
       clearTimeout(timer);
-      if (exited) return;
-      child.stdin?.end();
-      const gone = new Promise<void>((done) => child.once("exit", () => done()));
-      const grace = new Promise<void>((done) => setTimeout(done, 3_000).unref());
-      await Promise.race([gone, grace]);
-      // The agent may leave children of its own: the whole group goes.
+      if (!exited) {
+        child.stdin?.end();
+        const gone = new Promise<void>((done) => child.once("exit", () => done()));
+        const grace = new Promise<void>((done) => setTimeout(done, 3_000).unref());
+        await Promise.race([gone, grace]);
+      }
+      // The agent may leave children of its own, also after it exited
+      // itself: the whole group goes.
       killGroup(child);
     },
   };
