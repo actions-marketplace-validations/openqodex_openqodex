@@ -2,7 +2,8 @@
 // one step. User scope by default, so one install works in every repo and the
 // agent files stay out of the repo's git status; `--project` writes them into
 // the repo for a team to commit. Inside a repo it also asks about the git
-// pre-push hook and creates the two team files in `.openqodex/`.
+// pre-push hook and creates the two team files in `.openqodex/`. It ends
+// with a review (init-review.ts) unless --no-review is given.
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
@@ -18,23 +19,25 @@ import { instructionSection, targetsFor, teamSection, teamTargets, type Scope, t
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
+import { reviewAfterInit } from "./init-review.js";
 
 type HookChoice = "pre-push" | "none";
 
-type Flags = { agents: AgentId[]; project: boolean; yes: boolean; uninstall: boolean; dryRun: boolean; hook: HookChoice | null; noRepo: boolean };
+type Flags = { agents: AgentId[]; project: boolean; yes: boolean; uninstall: boolean; dryRun: boolean; hook: HookChoice | null; noRepo: boolean; noReview: boolean };
 
 const USAGE =
-  "usage: openqodex init [--agent <claude-code|cursor|codex|cline|all>]... [--project] [--hook <pre-push|none>] [--no-repo] [--yes] [--uninstall] [--dry-run]";
+  "usage: openqodex init [--agent <claude-code|cursor|codex|cline|all>]... [--project] [--hook <pre-push|none>] [--no-repo] [--no-review] [--yes] [--uninstall] [--dry-run]";
 
-const HOOK_QUESTION = "Add the git pre-push hook, so every push from this repo gets a scan, from an agent or by hand?";
+const HOOK_QUESTION = "Add the git pre-push hook, so every push from this repo is checked for a review, from an agent or by hand?";
 const TEAM_QUESTION = "Add a review section to this repo's CLAUDE.md and AGENTS.md, so teammates' agents review before they push too?";
 
 function parseFlags(args: string[]): Flags | string {
-  const flags: Flags = { agents: [], project: false, yes: false, uninstall: false, dryRun: false, hook: null, noRepo: false };
+  const flags: Flags = { agents: [], project: false, yes: false, uninstall: false, dryRun: false, hook: null, noRepo: false, noReview: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--project") flags.project = true;
     else if (arg === "--no-repo") flags.noRepo = true;
+    else if (arg === "--no-review") flags.noReview = true;
     else if (arg === "--yes" || arg === "-y") flags.yes = true;
     else if (arg === "--uninstall") flags.uninstall = true;
     else if (arg === "--dry-run") flags.dryRun = true;
@@ -143,6 +146,9 @@ type Setup = {
   oqHome: string;
   repoRoot: string | null;
   version: string;
+  // Files this run wrote, so the closing review does not take init's own
+  // files for the developer's change.
+  written: string[];
 };
 
 function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
@@ -357,6 +363,7 @@ async function runLocked(s: Setup): Promise<number> {
           throw new Error(`changed while init was running, nothing written to ${a.guard.path}`);
         }
         await a.apply!();
+        s.written.push(a.path);
       } catch (error) {
         process.stderr.write(`openqodex init: ${a.path}: ${message(error)}\n`);
         failed = true;
@@ -379,7 +386,7 @@ async function runLocked(s: Setup): Promise<number> {
 
   if (s.repoRoot !== null) await startScannerInstalls(s.repoRoot);
   out(`OpenQodex is set up for ${s.agents.map((a) => AGENT_NAMES[a]).join(", ")}.`);
-  out('Say this to your agent: "review my change with openqodex". Each agent\'s instructions now say to review in a separate subagent when a feature or fix is done.');
+  out('Say this to your agent: "review my change with openqodex". Each agent\'s instructions now say to run the review when a feature or fix is done.');
   if (s.agents.includes("codex")) out("Codex: run /hooks once inside Codex and trust the new OpenQodex hook, or Codex will not run it.");
   closingRepoLines(s, rootConfig);
   const teamChanged = teamActions.filter((a) => a.apply && !failedPaths.has(a.path)).map((a) => relative(s.repoRoot!, a.path));
@@ -387,7 +394,7 @@ async function runLocked(s: Setup): Promise<number> {
     out(`Changed ${teamChanged.join(" and ")}: a review section your teammates' agents follow before they push.`);
     out(`Commit ${teamChanged.join(" and ")} so your team shares ${teamChanged.length > 1 ? "them" : "it"}.`);
   }
-  if (s.repoRoot !== null && hookChoice === "pre-push") out("Every push from this repo now gets a scan through the git pre-push hook.");
+  if (s.repoRoot !== null && hookChoice === "pre-push") out("Every push from this repo is now checked for a review through the git pre-push hook.");
   out(`To undo: npx openqodex init --uninstall${s.flags.project ? " --project" : ""}`);
   return failed ? EXIT_TOOL_FAILED : EXIT_OK;
 }
@@ -433,17 +440,24 @@ export async function run(args: string[]): Promise<number> {
     oqHome: openqodexHomeDir(),
     repoRoot,
     version: __OPENQODEX_VERSION__,
+    written: [],
   };
   try {
     // A dry run writes nothing and takes no lock. Otherwise everything runs
     // inside the commit boundary, so no update switches versions meanwhile.
     if (flags.dryRun) return await runLocked(setup);
-    return await withBoundary(setup.oqHome, { wait: 60_000 }, async () => {
+    const code = await withBoundary(setup.oqHome, { wait: 60_000 }, async () => {
       removeOldLocks(setup.oqHome);
       const code = await runLocked(setup);
       if (!flags.uninstall) pruneRuntimes(setup.oqHome);
       return code;
     });
+    // After the boundary is released, so the review holds no install lock.
+    if (code === EXIT_OK && !flags.uninstall && !flags.noReview && repoRoot !== null) {
+      const runner = flags.project ? `npx -y openqodex@${setup.version}` : launcherRunner(launcherPath(setup.oqHome));
+      await reviewAfterInit({ repoRoot, runner, interactive: interactive() && !flags.yes, initFiles: setup.written });
+    }
+    return code;
   } catch (error) {
     process.stderr.write(`openqodex init: ${message(error)}\n`);
     return EXIT_TOOL_FAILED;
