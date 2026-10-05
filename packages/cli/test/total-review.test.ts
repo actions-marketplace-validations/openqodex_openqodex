@@ -64,9 +64,18 @@
 //     nested one, two dots formed by joining a list to its neighbour, an
 //     escape that hides a path, unbalanced braces or more alternatives than
 //     the bound let the run complete.
+// 31. Two dots inside a name (`[...slug]`) end the review; or a `..` step, or
+//     a two-character segment a wildcard could turn into `..`, completes.
+// 32. A read of a file named with `$` or `%` that exists in the snapshot
+//     ends the review; or such a path that names no file there completes.
+// 33. A reading of ours is looser than Claude Code's or ripgrep's: a Grep
+//     file glob Claude Code splits at a space or comma, a leading `!`, a
+//     brace inside a bracket class, or an absolute pattern Claude Code roots
+//     above the snapshot completes; or the stricter Windows reading fails an
+//     escaped bracket on macOS and Linux.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "@openqodex/core";
@@ -339,9 +348,27 @@ describe("13. the trace check fails closed", () => {
   });
 });
 
+const glob = (pattern: string): ToolCall => ({ tool: "Glob", input: { pattern }, ok: true, read: null });
+const grep = (files: string): ToolCall => ({ tool: "Grep", input: { pattern: "readFileSync", glob: files }, ok: true, read: null });
+const readOf = (file: string): ToolCall => ({ tool: "Read", input: { file_path: file }, ok: true, read: null });
+
+// One call in an otherwise good answer: inside keeps the run complete,
+// outside ends it incomplete and names what the call asked for.
+async function expectInside(call: (snapshotDir: string) => ToolCall, dir = repo()): Promise<void> {
+  const answer: Answer = (text, snapshotDir) => ({ finalText: submission(text), calls: [call(snapshotDir)] });
+  expect(await review(dir, fake([answer]))).toBe(0);
+  expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
+}
+async function expectOutside(call: ToolCall): Promise<void> {
+  const answer: Answer = (text) => ({ finalText: submission(text), calls: [call] });
+  expect(await review(repo(), fake([answer]))).toBe(2);
+  const report = JSON.parse(out) as Report;
+  expect(report.completion?.status).toBe("incomplete");
+  const input = call.input as Record<string, string>;
+  expect(report.completion?.outside_reads).toEqual([input.file_path ?? (call.tool === "Grep" ? input.glob : input.pattern)]);
+}
+
 describe("30. brace lists in a file pattern", () => {
-  const glob = (pattern: string): ToolCall => ({ tool: "Glob", input: { pattern }, ok: true, read: null });
-  const grep = (files: string): ToolCall => ({ tool: "Grep", input: { pattern: "readFileSync", glob: files }, ok: true, read: null });
   const inside: [string, (snapshotDir: string) => ToolCall][] = [
     ["the first pattern from issue 38, a list of paths", () => grep("{packages/cli/src/**,packages/cli/*.json,scripts/*.mjs}")],
     ["the second pattern from issue 38, a list of folders before /**", () => grep("{packages/cli/src,packages/cli/scripts,scripts,packages/cli/package.json}/**")],
@@ -351,13 +378,7 @@ describe("30. brace lists in a file pattern", () => {
     ["a list of absolute paths in the snapshot", (snapshotDir) => glob(`{${snapshotDir}/db/**,${snapshotDir}/README.md}`)],
     ["an escaped brace in a file name", () => glob("**/\\{id\\}.sql")],
   ];
-  for (const [name, call] of inside) {
-    it(`${name} keeps the run complete`, async () => {
-      const answer: Answer = (text, snapshotDir) => ({ finalText: submission(text), calls: [call(snapshotDir)] });
-      expect(await review(repo(), fake([answer]))).toBe(0);
-      expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
-    });
-  }
+  for (const [name, call] of inside) it(`${name} keeps the run complete`, () => expectInside(call));
   const outside: [string, ToolCall][] = [
     ["a list with one alternative that climbs out", glob("{db/**,../x}")],
     ["a list with one absolute alternative outside", glob("{/etc/*,x}")],
@@ -371,16 +392,72 @@ describe("30. brace lists in a file pattern", () => {
     ["a pattern of a million alternatives, past the bound, which must not be expanded", glob("{a,b,c,d}/".repeat(10))],
     ["a list nested deeper than the stack can follow", glob(`${"{".repeat(100_000)}a${"}".repeat(100_000)}`)],
   ];
-  for (const [name, call] of outside) {
-    it(`${name} makes the run incomplete`, async () => {
-      const answer: Answer = (text) => ({ finalText: submission(text), calls: [call] });
-      expect(await review(repo(), fake([answer]))).toBe(2);
-      const report = JSON.parse(out) as Report;
-      expect(report.completion?.status).toBe("incomplete");
-      const input = call.input as Record<string, string>;
-      expect(report.completion?.outside_reads).toEqual([call.tool === "Grep" ? input.glob : input.pattern]);
-    });
+  for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
+});
+
+describe("31. two dots inside a name", () => {
+  const inside: [string, ToolCall][] = [
+    ["a Next.js catch-all folder in a Glob pattern", glob("app/[...slug]/page.tsx")],
+    ["a Next.js catch-all folder in a Grep file glob", grep("**/[...slug]/**")],
+    ["a dotfile pattern, whose .* never matches the parent folder", glob("**/.*")],
+  ];
+  for (const [name, call] of inside) it(`${name} keeps the run complete`, () => expectInside(() => call));
+  it("a read of a file whose name starts with two dots keeps the run complete", () => expectInside((s) => readOf(join(s, "..env.example"))));
+  const outside: [string, ToolCall][] = [
+    ["two parent steps after a folder", glob("a/../../x")],
+    ["a parent step between backslashes", glob("a\\..\\x")],
+    ["a dot and a one-character wildcard", glob(".?/x")],
+    ["a one-character wildcard and a dot", glob("?./x")],
+    ["two one-character wildcards", glob("??/x")],
+    ["a dot and a class that holds a dot", glob(".[.]/x")],
+  ];
+  for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
+});
+
+describe("32. $ and % in a name", () => {
+  // Remix and TanStack Router name route files with `$`; a doc may hold `%`.
+  function named(): string {
+    const dir = repo();
+    mkdirSync(join(dir, "app/routes"), { recursive: true });
+    writeFileSync(join(dir, "app/routes/posts.$slug.tsx"), "export default function Post() {}\n");
+    mkdirSync(join(dir, "docs"));
+    writeFileSync(join(dir, "docs/100%.md"), "# Full\n");
+    git(dir, "add", "app", "docs");
+    git(dir, "commit", "-qm", "Names with $ and %");
+    return dir;
   }
+  const delivered = (snapshotDir: string, file: string): ToolCall => ({ tool: "Read", input: { file_path: join(snapshotDir, file) }, ok: true, read: { path: join(snapshotDir, file), start: 1, lines: 1 } });
+  it("a read of a Remix route file named with $ keeps the run complete", () => expectInside((s) => delivered(s, "app/routes/posts.$slug.tsx"), named()));
+  it("a read of a file named with % keeps the run complete", () => expectInside((s) => delivered(s, "docs/100%.md"), named()));
+  it("a Grep file glob holding $ keeps the run complete", () => expectInside(() => grep("app/routes/*.$slug.tsx"), named()));
+  it("an absolute file pattern in the snapshot naming a $ file keeps the run complete", () => expectInside((s) => glob(`${s}/app/routes/posts.$slug.tsx`), named()));
+  const outside: [string, ToolCall][] = [
+    ["a $HOME path", readOf("$HOME/.ssh/id_rsa")],
+    ["a %USERPROFILE% path", readOf("%USERPROFILE%\\x")],
+    ["a ${HOME} path", readOf("${HOME}/x")],
+  ];
+  for (const [name, call] of outside) it(`${name} that names no file in the snapshot makes the run incomplete`, () => expectOutside(call));
+});
+
+describe("33. no reading of ours is looser than Claude Code's or ripgrep's", () => {
+  it("an escaped bracket at the start of a pattern is a name, not a Windows root, on macOS and Linux", () => expectInside(() => glob("\\[id\\]/page.tsx")));
+  const outside: [string, ToolCall][] = [
+    ["a Grep file glob that Claude Code splits at a space into an absolute piece", grep("*.ts /etc/*")],
+    ["a Grep file glob that Claude Code splits at a comma into an absolute piece", grep("a,/etc/*")],
+    ["a Grep file glob that Claude Code splits at a comma into a piece that climbs out", grep("src/*,../x")],
+    ["a negated pattern that climbs out", grep("!../secrets/*")],
+    ["a negated absolute pattern", glob("!/etc/*")],
+    ["a brace inside a bracket class, which ripgrep reads as a plain character", glob("*.[{]ts")],
+  ];
+  for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
+  it("an absolute pattern whose list starts above the snapshot, where Claude Code roots the search, makes the run incomplete", async () => {
+    const answer: Answer = (text, snapshotDir) => {
+      const base = basename(snapshotDir);
+      return { finalText: submission(text), calls: [glob(`${dirname(snapshotDir)}/{${base}/db,${base}/src}/*`)] };
+    };
+    expect(await review(repo(), fake([answer]))).toBe(2);
+    expect((JSON.parse(out) as Report).completion?.status).toBe("incomplete");
+  });
 });
 
 describe("what leaves the process", () => {
