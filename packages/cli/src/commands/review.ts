@@ -84,9 +84,10 @@ const RUN_AGAIN = "run openqodex review --agent first";
 type RunFile = { version: 1; scope: ChangeScope | "all" | "target" };
 
 // Flags of the review openqodex runs itself only. The GitHub Action passes
-// the last three: a gate the change's own config cannot weaken, the base
-// branch's instructions, and a folder of its own for this run's report.
-const OWN_REVIEW_FLAGS = ["--reviewer", "--timeout", "--block-on-severity", "--instructions", "--report-dir"];
+// the last four: a gate the change's own config cannot weaken, the base
+// branch's instructions, a folder of its own for this run's report, and the
+// reviewer's web tools off whatever the runner's user config says.
+const OWN_REVIEW_FLAGS = ["--reviewer", "--timeout", "--block-on-severity", "--instructions", "--report-dir", "--reviewer-web"];
 
 export async function run(args: string[]): Promise<number> {
   const { global, bools, values, positionals } = parseFlags(args, {
@@ -107,6 +108,8 @@ export async function run(args: string[]): Promise<number> {
   if (blockOn !== undefined && !(SEVERITIES as readonly string[]).includes(blockOn)) {
     throw new OpenQodexError(`--block-on-severity must be one of ${SEVERITIES.join(", ")}, not ${blockOn}`);
   }
+  const web = values.get("--reviewer-web");
+  if (web !== undefined && web !== "on" && web !== "off") throw new OpenQodexError(`--reviewer-web must be on or off, not ${web}`);
   const target = finalize ? undefined : positionals[0];
   if (target !== undefined && bools.has(ALL)) {
     throw new OpenQodexError("--all reviews the whole repository and takes no branch or pull request");
@@ -140,6 +143,7 @@ export async function run(args: string[]): Promise<number> {
       blockOn: blockOn as Severity | undefined,
       instructions: values.get("--instructions"),
       reportDir: values.get("--report-dir"),
+      web: web === undefined ? undefined : web === "on",
     });
   }
   if (target !== undefined) {

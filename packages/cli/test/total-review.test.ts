@@ -713,23 +713,52 @@ describe("the Action's review flags", () => {
     writeFileSync(join(planted, "report.md"), "# PLANTED\n");
     const folder = join(mkdtempSync(join(tmpdir(), "oq-report-dir-")), "review");
     expect(await withOptions(dir, fake([good]), { reportDir: folder })).toBe(0);
-    expect(readdirSync(folder).sort()).toEqual(["report.json", "report.md", "report.sarif"]);
+    expect(readdirSync(folder).sort()).toEqual(["report.json", "report.md", "report.sarif", "reviewer.json"]);
     const report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report;
     expect(report.completion?.status).toBe("complete");
     expect(report).toEqual(JSON.parse(out) as Report);
     expect(readFileSync(join(folder, "report.md"), "utf8")).not.toContain("PLANTED");
+    expect(JSON.parse(readFileSync(join(folder, "reviewer.json"), "utf8"))).toEqual({ started: true });
     for (const f of readdirSync(folder)) expect(statSync(join(folder, f)).mode & 0o777).toBe(0o600);
-    // No reviewer, or nothing to review: no report, so no folder.
+    // No reviewer: no report, and reviewer.json says none started and why.
     const none = join(mkdtempSync(join(tmpdir(), "oq-report-dir-")), "review");
     expect(await withOptions(dir, fake([good], false), { reportDir: none })).toBe(2);
-    expect(existsSync(none)).toBe(false);
+    expect(readdirSync(none)).toEqual(["reviewer.json"]);
+    expect(JSON.parse(readFileSync(join(none, "reviewer.json"), "utf8"))).toEqual({ started: false, reasons: ["claude: claude is not installed; install Claude Code"] });
+    // Nothing to review: no folder.
+    const empty = join(mkdtempSync(join(tmpdir(), "oq-report-dir-")), "review");
     const clean = mkdtempSync(join(tmpdir(), "oq-total-clean-"));
     git(clean, "init", "-q", "-b", "main");
     writeFileSync(join(clean, "README.md"), "hello\n");
     git(clean, "add", "-A");
     git(clean, "commit", "-qm", "Base");
-    expect(await withOptions(clean, fake([good]), { reportDir: none })).toBe(0);
-    expect(existsSync(none)).toBe(false);
+    expect(await withOptions(clean, fake([good]), { reportDir: empty })).toBe(0);
+    expect(existsSync(empty)).toBe(false);
+  });
+
+  it("R27. a .openqodex/latest.json link the branch planted leaves the review's exit code and report as they would be without it", async () => {
+    const outside = join(mkdtempSync(join(tmpdir(), "oq-latest-target-")), "latest.json");
+    writeFileSync(outside, "{}\n");
+    const run = async (planted: boolean): Promise<{ code: number; report: Report }> => {
+      const dir = repo();
+      if (planted) {
+        mkdirSync(join(dir, ".openqodex"), { recursive: true });
+        symlinkSync(outside, join(dir, ".openqodex/latest.json"));
+      }
+      const folder = join(mkdtempSync(join(tmpdir(), "oq-report-dir-")), "review");
+      out = "";
+      const code = await withOptions(dir, fake([good]), { reportDir: folder, blockOn: "major" });
+      return { code, report: JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report };
+    };
+    const plain = await run(false);
+    const linked = await run(true);
+    expect(plain.code).toBe(1);
+    expect(linked.code).toBe(plain.code);
+    expect(linked.report.verdict).toBe(plain.report.verdict);
+    expect(linked.report.completion?.status).toBe("complete");
+    expect(err).toContain("could not write the review record in .openqodex: .openqodex/latest.json is a symbolic link");
+    // Nothing was written through the link.
+    expect(readFileSync(outside, "utf8")).toBe("{}\n");
   });
 
   it("R6, R7. an incomplete review writes its partial report to --report-dir, marked incomplete", async () => {

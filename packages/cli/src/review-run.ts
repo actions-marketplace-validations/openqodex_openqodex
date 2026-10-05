@@ -106,8 +106,12 @@ export type ReviewOptions = {
   instructions?: string;
   // --report-dir: report.md, report.json and report.sarif of this run, also
   // written to this folder, so a caller takes this run's report and never
-  // one a branch planted under .openqodex/.
+  // one a branch planted under .openqodex/. reviewer.json there says whether
+  // a reviewer started, and why none could when none did.
   reportDir?: string;
+  // --reviewer-web: the reviewer's web tools for this run, over the user
+  // config's reviewer_web.
+  web?: boolean;
 };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -568,6 +572,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
   announceRepoFiles(repoRoot);
   const settings = readReviewerSettings();
+  const web = o.web ?? settings.web;
   const chosen = await chooseReviewer(o.reviewer ?? settings.reviewer, o.drivers ?? DRIVERS, repoRoot);
   const deadline = Date.now() + o.timeoutMs;
 
@@ -601,6 +606,11 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const scan = p.scan as ScanResult;
     const change = p.change;
     const dir = openReportDir(repoRoot, change.shortId);
+    // --report-dir: whether a reviewer started, so a caller tells a review
+    // that stopped from one that never began without reading stderr.
+    const noteReviewer = (record: { started: boolean; reasons?: string[] }): void => {
+      if (o.reportDir !== undefined) writeReportCopies(o.reportDir, repoRoot, { "reviewer.json": `${JSON.stringify(redactStored(record, p.secrets))}\n` });
+    };
 
     // No reviewer can start: the scanner candidates are saved as unchecked,
     // never as a review, and the fallback through the agent the developer is in is named.
@@ -609,6 +619,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       writeReportFiles(repoRoot, dir, {
         "unchecked-candidates.json": `${JSON.stringify({ label: "unchecked scanner candidates, not a review: no reviewer checked them", change_id: change.id, candidates: scan.candidates }, null, 2)}\n`,
       }, PRIVATE);
+      noteReviewer({ started: false, reasons });
       warn("Full review unavailable: openqodex could not start a reviewer.");
       for (const line of reasons) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
@@ -668,7 +679,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     // A secret in a path would reach the reviewer through any listing: the
     // reviewer is not started and the review is incomplete.
     const refused = redaction.named > 0 ? "a file name in the change holds a secret the scanners found, so the reviewer was not started; rename the file" : null;
-    if (refused === null) session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: settings.web });
+    if (refused === null) session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web });
+    if (session !== null) noteReviewer({ started: true });
     const pid = session?.pid ?? null;
     if (session !== null) say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
     const startedIso = new Date().toISOString();
@@ -714,7 +726,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       submissionErrors: talk.report ? [] : talk.errors,
       wholeRepo: prep.whole !== undefined,
       failure: talk.failure,
-      tools: settings.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS,
+      tools: web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS,
       traced,
     }), p.secrets);
     // An incomplete review keeps the findings of an answer that passed every
@@ -744,7 +756,14 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     // The push gate's receipt is the developer's own change only.
     if (prep.whole) writeReportFiles(repoRoot, join(repoRoot, STATE_DIR), { "latest-all.json": `${JSON.stringify(receipt, null, 2)}\n` });
     else if (!prep.target) {
-      writeLatest(repoRoot, receipt);
+      // A link a branch put at .openqodex/latest.json stops this record only,
+      // never the review: the report is written, and the push hooks trust the
+      // record in the developer's home below.
+      try {
+        writeLatest(repoRoot, receipt);
+      } catch (error) {
+        warn(`openqodex: could not write the review record in .openqodex: ${(error as Error).message.split("\n")[0]}`);
+      }
       // The record the push hooks trust, in the developer's home: a branch
       // cannot plant it the way it can carry files under .openqodex/.
       try {

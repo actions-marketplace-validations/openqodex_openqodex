@@ -15,7 +15,7 @@
 // - With a real review, it needs Claude Code installed and logged in, so it
 //   skips with a printed reason in CI, which has no login, and offline.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -35,8 +35,8 @@ type Run = { status: number | null; stdout: string; stderr: string; outputs: Rec
 
 // The step as GitHub runs a composite bash step. OQ_REVIEW_TIMEOUT adds
 // --timeout to the review. The shim records each command and whether the
-// key was in its environment (never the key), and the user config the
-// review command found.
+// key was in its environment (never the key), and the review command's
+// arguments, one per line.
 function runAction(label: string, dir: string, env: Record<string, string>): Run {
   const shim = mkdtempSync(join(tmpdir(), "oq-e2e-npx-"));
   writeFileSync(
@@ -45,7 +45,7 @@ function runAction(label: string, dir: string, env: Record<string, string>): Run
       "#!/bin/sh",
       "shift; shift",
       'echo "$1 key=${ANTHROPIC_API_KEY:+set}" >> "$OQ_CALLS"',
-      'if [ "$1" = "review" ]; then cat "${OPENQODEX_HOME:-$HOME/.openqodex}/config.yaml" > "$OQ_PROBE" 2>/dev/null || true; fi',
+      'if [ "$1" = "review" ]; then printf "%s\\n" "$@" > "$OQ_PROBE"; fi',
       'if [ "$1" = "review" ] && [ -n "$OQ_REVIEW_TIMEOUT" ]; then set -- "$@" --timeout "$OQ_REVIEW_TIMEOUT"; fi',
       `exec "${process.execPath}" "${bin}" "$@"`,
       "",
@@ -117,10 +117,35 @@ function jobFails(o: Record<string, string>, inputs: { review?: string; failOnTo
   return new Function("o", "i", `return ${expr};`)(o, i) as boolean;
 }
 
+// The workflow commands the runner acts on in a step's output: lines that
+// start with "::" (or the older "##["), leading spaces aside, outside the
+// stretches between ::stop-commands::<token> and ::<token>::.
+function runnerCommands(stdout: string): { commands: string[]; tokens: string[]; open: boolean } {
+  const commands: string[] = [];
+  const tokens: string[] = [];
+  let stopped: string | null = null;
+  for (const line of stdout.split("\n")) {
+    if (stopped !== null) {
+      if (line === `::${stopped}::`) stopped = null;
+      continue;
+    }
+    const stop = /^::stop-commands::(.*)$/.exec(line);
+    if (stop) {
+      stopped = stop[1]!;
+      tokens.push(stopped);
+    } else if (/^\s*(::|##\[)/.test(line)) commands.push(line);
+  }
+  return { commands, tokens, open: stopped !== null };
+}
+
+// The review command's arguments, as the shim recorded them, hold `--reviewer-web off`.
+const webOff = (probe: string | null): boolean => (probe ?? "").includes("\n--reviewer-web\noff\n");
+
 // A pull request on the demo repo: its baseline on `main` in a bare origin,
 // with the base files committed there, and one commit on top holding the
-// planted change and the head files, checked out as the runner does.
-function pullRequest(label: string, baseFiles: Record<string, string>, headFiles: Record<string, string>): { dir: string; base: string } {
+// planted change and the head files, checked out as the runner does. `head`
+// adds more to the pull request's commit, and stages what it adds.
+function pullRequest(label: string, baseFiles: Record<string, string>, headFiles: Record<string, string>, head?: (dir: string) => void): { dir: string; base: string } {
   const dir = demo(label);
   const write = (files: Record<string, string>): void => {
     for (const [path, text] of Object.entries(files)) {
@@ -137,6 +162,7 @@ function pullRequest(label: string, baseFiles: Record<string, string>, headFiles
   const base = git(dir, "rev-parse", "HEAD").trim();
   git(dir, "add", "-A");
   write(headFiles);
+  head?.(dir);
   git(dir, "commit", "-qm", "Pull request");
   git(dir, "checkout", "-q", "--detach");
   return { dir, base };
@@ -200,9 +226,9 @@ describe("the Action's review mode with no login", () => {
     expect(sarif).toContain("app/search.py");
     expect(sarif).not.toContain(generatedSecret(dir));
     expect(jobFails(r.outputs, { review: "required" })).toBe(true);
-    // The review found reviewer_web: off in the home folder it reads, and the
-    // folder's config is as it was afterwards.
-    expect(r.probe?.trimEnd().split("\n").at(-1)).toBe("reviewer_web: off");
+    // The review ran with its web tools off by flag, and the home folder's
+    // config is as it was.
+    expect(webOff(r.probe)).toBe(true);
     expect(homeConfig()).toBe(before);
   }, 900_000);
 
@@ -221,11 +247,28 @@ describe("the Action's review mode with no login", () => {
     expect(jobFails(r.outputs, { review: "required" })).toBe(false);
   }, 900_000);
 
-  it("R4, R5, R6, R2. a key reaches the review command alone and is written nowhere; a review that cannot finish is incomplete, with the base branch's instructions in its brief", () => {
+  it("R4, R5, R6, R2, R26. a key reaches the review command alone and is written nowhere; a review that cannot finish is incomplete, with the base branch's instructions in its brief; a user config written as a flow mapping stays as it was", () => {
     if (skip !== null) return void process.stdout.write(`action review with a refused key: skipped, ${skip}\n`);
     const { dir, base } = pullRequest("action-refused-key", { ".openqodex/custom-instructions.md": BASE_INSTRUCTIONS }, { ".openqodex/custom-instructions.md": HEAD_INSTRUCTIONS });
-    // Claude Code retries a refused key for minutes: the review stops at 20 seconds.
-    const r = runAction("action-refused-key", dir, { ...noLogin, ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "20", BASE_SHA: base, BASE_REF: "main" });
+    // A runner's user config written as a flow mapping, with the web tools on:
+    // appending a line to it would make invalid YAML and stop the review.
+    const before = homeConfig();
+    const flow = "{reviewer_web: on}\n";
+    writeFileSync(join(toolsHome, "config.yaml"), flow);
+    let after: string | null = null;
+    const r = ((): Run => {
+      try {
+        // Claude Code retries a refused key for minutes: the review stops at 20 seconds.
+        const run = runAction("action-refused-key", dir, { ...noLogin, ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "20", BASE_SHA: base, BASE_REF: "main" });
+        after = homeConfig();
+        return run;
+      } finally {
+        if (before === null) rmSync(join(toolsHome, "config.yaml"), { force: true });
+        else writeFileSync(join(toolsHome, "config.yaml"), before);
+      }
+    })();
+    expect(after).toBe(flow);
+    expect(webOff(r.probe)).toBe(true);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout.split("\n")[0]).toContain("on the repository's Anthropic API key");
     expect(r.calls).toBe("doctor key=\nreview key=set\nscan key=\n");
@@ -277,17 +320,55 @@ describe("an incomplete review and the scanner findings", () => {
     expect(r.summary + r.stdout).not.toContain(generatedSecret(dir));
     expect(r.stdout + r.stderr + r.summary + JSON.stringify(r.outputs)).not.toContain(KEY);
   }, 900_000);
+
+  it("R25, R28. text the pull request controls writes no workflow command into the job log and no markdown or HTML into the job summary: a file name with a line break and ::error::, a scanner reason with an image and a tag", () => {
+    if (skip !== null) return void process.stdout.write(`action review with hostile text: skipped, ${skip}\n`);
+    // Ruff prints the selector it cannot read; the backticks close its code span.
+    const selector = "x` ![x](https://e.invalid/a.png) <img src=x> `y";
+    // A file over the 64 MiB the snapshot redaction checks: review names it raw in a warning.
+    const hostile = "big\n::error::INJECTED-7Q.txt";
+    const { dir, base } = pullRequest("action-hostile-text", {}, { "ruff.toml": `[lint]\nselect = ["${selector}"]\n` }, (d) => {
+      writeFileSync(join(d, hostile), Buffer.alloc(65 * 1024 * 1024, "a\n"));
+      git(d, "add", "-f", hostile);
+    });
+    const r = runAction("action-hostile-text", dir, { CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "oq-e2e-no-login-")), ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "1", BASE_SHA: base, BASE_REF: "main" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.outputs["review-status"]).toBe("incomplete");
+    // The hostile line reached the log, and the runner reads no command in it.
+    expect(r.stdout).toContain("\n::error::INJECTED-7Q.txt");
+    const log = runnerCommands(r.stdout);
+    expect(log.open).toBe(false);
+    expect(log.tokens.length).toBeGreaterThan(0);
+    for (const t of log.tokens) expect(t).toMatch(/^[0-9a-f]{32}$/);
+    expect(new Set(log.tokens).size).toBe(1);
+    // Every command the runner reads is the Action's own; one may quote the
+    // file name, with the line break and the colon runs taken out.
+    for (const c of log.commands) expect(c).toMatch(/^::(warning|error) title=OpenQodex[^:]*::[^:]*(:[^:]+)*$/);
+    expect(log.commands.join("\n")).not.toContain("::error::INJECTED");
+    // The scanner's reason is in the summary, every character escaped.
+    expect(r.summary).toContain("e.invalid/a.png");
+    expect(r.summary).not.toMatch(/(^|[^\\])!\[/);
+    expect(r.summary).not.toMatch(/(^|[^\\])<img/);
+    expect(r.summary).not.toMatch(/(^|[^\\])\]\(https:\/\/e\.invalid/);
+  }, 900_000);
 });
 
 describe("the Action's review mode with the real Claude Code", () => {
   const missing = process.env.CI ? "CI has no Claude Code login" : reviewerMissing();
 
-  it("R2, R3, R18, R20. review: required with a logged-in Claude Code: a complete review of the planted secret and SQL injection, blocking at the workflow's severity", () => {
+  it("R2, R3, R18, R20, R27. review: required with a logged-in Claude Code: a complete review of the planted secret and SQL injection, blocking at the workflow's severity, whatever link the pull request put at .openqodex/latest.json", () => {
     if (missing !== null) return void process.stdout.write(`action review with claude: skipped, ${missing}\n`);
+    const outside = join(mkdtempSync(join(tmpdir(), "oq-e2e-latest-")), "latest.json");
+    writeFileSync(outside, "{}\n");
     const { dir, base } = pullRequest(
       "action-claude",
       { ".openqodex/custom-instructions.md": BASE_INSTRUCTIONS },
       { ".openqodex/custom-instructions.md": HEAD_INSTRUCTIONS, ".openqodex.yaml": HEAD_CONFIG },
+      (d) => {
+        mkdirSync(join(d, ".openqodex"), { recursive: true });
+        symlinkSync(outside, join(d, ".openqodex/latest.json"));
+        git(d, "add", "-f", ".openqodex/latest.json");
+      },
     );
     const before = homeConfig();
     const r = runAction("action-claude", dir, { REVIEW: "required", BASE_SHA: base, BASE_REF: "main", BLOCK_ON_SEVERITY: "major" });
@@ -312,8 +393,11 @@ describe("the Action's review mode with the real Claude Code", () => {
     const brief = readFileSync(join(runFolders(dir).at(-1)!, "brief.md"), "utf8");
     expect(brief).toContain("BASE-CANARY-7F3A");
     expect(brief).not.toContain("HEAD-CANARY-9C1D");
-    expect(r.probe?.trimEnd().split("\n").at(-1)).toBe("reviewer_web: off");
+    expect(webOff(r.probe)).toBe(true);
     expect(homeConfig()).toBe(before);
+    // The link stopped only the review record in the checkout, written through nowhere.
+    expect(r.stdout).toContain("could not write the review record in .openqodex: .openqodex/latest.json is a symbolic link");
+    expect(readFileSync(outside, "utf8")).toBe("{}\n");
   }, 900_000);
 
   it("R6, R7, R11, R12. a review stopped at its timeout keeps its partial report; the job passes by default and fails with fail-on-tool-error or review: required", () => {

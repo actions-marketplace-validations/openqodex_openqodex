@@ -24,3 +24,13 @@ Written before the tests. Each test of the review mode names the lines it guards
 20. The outputs `reviewed`, `review-status` and `reviewer` are missing, or say a review ran when it did not.
 21. npm runs in the checkout, so the pull request's `.npmrc` points `npx` at a registry of its own, or a committed `node_modules` supplies the `openqodex` that runs, and that program gets the key.
 22. The reviewer stops before any answer passes its checks (a timeout, an error, a refused key), so the partial report holds no findings, and a secret the scanners found is neither shown nor counted, where the scanners-only mode fails the job on it at the block severity.
+
+Added after the code review of the first build:
+
+23. The script runs a program from the checkout: `claude`, `node`, `npx`, `npm` or `git` reached through a link (or a chain of links) in a PATH folder outside the checkout, a relative PATH folder, or a PATH folder inside the repository but outside the working folder.
+24. The `version` or `claude-code-version` input names a path, a `file:` or git package, an alias, a tag or a range, and npm installs a package the pull request controls.
+25. Text a program prints to the job log (a file name with a line break followed by `::error::`) is read by the runner as a workflow command.
+26. Turning the reviewer's web tools off edits the runner's user config: a config written as a flow mapping (`{reviewer_web: on}`) becomes invalid YAML, an unwritable file leaves the web tools on, or a killed job leaves the file changed.
+27. `review` ends abnormally (a crash, a kill, or a failure after its report was written) and the Action takes the report's verdict as the result; or a review that stopped after the reviewer started is called unavailable; or a `.openqodex/latest.json` link the pull request planted changes the result.
+28. Text from the pull request makes markdown or HTML structure in the job summary through the scan report (a scanner's reason, a finding's message) or the tool-failure line.
+29. A step of the Action other than the one that runs the script holds the key.

@@ -7,7 +7,7 @@ branding:
 
 inputs:
   version:
-    description: The openqodex version to run. The release workflow sets the default to the version it publishes.
+    description: The openqodex version to run, an exact release version such as 0.6.1. The release workflow sets the default to the version it publishes.
     required: false
     default: "0.6.1"
   review:
@@ -15,7 +15,7 @@ inputs:
     required: false
     default: "auto"
   claude-code-version:
-    description: The Claude Code version the review runs. The Action installs it from npm into the runner's temporary folder unless the runner's own claude is that version.
+    description: The Claude Code version the review runs, an exact release version. The Action installs it from npm into the runner's temporary folder unless the runner's own claude is that version.
     required: false
     default: "2.1.289"
   upload-sarif:
@@ -51,12 +51,20 @@ outputs:
 
 runs:
   using: composite
+  # Every step here inherits the environment of the workflow step that uses
+  # this Action, ANTHROPIC_API_KEY included. Each step but the one that runs
+  # the script sets it empty, so setup-node, the cache, the SARIF upload and
+  # the last step never hold the key.
   steps:
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      env:
+        ANTHROPIC_API_KEY: ""
       with:
         node-version: 22
 
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      env:
+        ANTHROPIC_API_KEY: ""
       with:
         path: ~/.openqodex/tools
         key: openqodex-tools-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
@@ -66,7 +74,8 @@ runs:
     # is not an input: the workflow sets ANTHROPIC_API_KEY on the step that
     # uses this Action. The script (scripts/action-scan.sh) validates the
     # inputs, decides between the review and the scanners only, and runs them
-    # under one tool-failure policy.
+    # under one tool-failure policy; it hands the key to the review command
+    # alone.
     - name: Review or scan the change
       id: scan
       shell: bash
@@ -86,6 +95,8 @@ runs:
     - name: Upload SARIF
       if: inputs.upload-sarif == 'true' && steps.scan.outputs.sarif == 'true'
       uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      env:
+        ANTHROPIC_API_KEY: ""
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: openqodex
@@ -96,6 +107,7 @@ runs:
       if: steps.scan.outputs.exit-code == '1' || (steps.scan.outputs.exit-code == '2' && inputs.fail-on-tool-error == 'true') || (inputs.review == 'required' && steps.scan.outputs.review-status != 'complete' && steps.scan.outputs.review-status != 'skipped')
       shell: bash
       env:
+        ANTHROPIC_API_KEY: ""
         CODE: ${{ steps.scan.outputs.exit-code }}
         REVIEW: ${{ inputs.review }}
         REVIEW_STATUS: ${{ steps.scan.outputs.review-status }}

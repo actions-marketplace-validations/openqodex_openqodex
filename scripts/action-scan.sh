@@ -18,6 +18,11 @@
 # The key leaves the environment on the first line below. Only the review
 # command gets it back: doctor, the Claude Code install and a fallback scan
 # never see it, and nothing here prints it or writes it to a file.
+# Every program the script runs is looked up on a PATH without relative
+# folders and folders in the repository, and git, node, npx, npm and claude
+# are run only when their file, every link followed, lies outside it.
+# The output of every program goes to the job log with workflow commands
+# off, so text from the pull request (a file name) cannot write one.
 # The scanner install, the review and the scan run under one tool-failure
 # policy: a failure sets status tool-failed and warns; the next step decides
 # whether that fails the job.
@@ -28,8 +33,12 @@ unset ANTHROPIC_API_KEY
 
 plain_name() { [[ "$1" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ ]] && [[ "$1" != -* ]]; }
 is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
+# An exact release version, which npm installs as it is: never a path, a
+# file: or git package, an alias, a tag or a range.
+is_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; }
 
-# A wrong input is a workflow error: it fails the step with one line.
+# A wrong input is a workflow error: it fails the step with one line, before
+# any program runs.
 case "$CONFIG_FROM" in
   base | head) ;;
   *)
@@ -51,10 +60,99 @@ case "$REVIEW" in
     exit 1
     ;;
 esac
-if ! [[ "$CLAUDE_CODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "::error title=OpenQodex input::claude-code-version must be a version number such as 2.1.289"
+if ! is_version "$OPENQODEX_VERSION"; then
+  echo "::error title=OpenQodex input::version must be an exact release version such as 0.6.1"
   exit 1
 fi
+if ! is_version "$CLAUDE_CODE_VERSION"; then
+  echo "::error title=OpenQodex input::claude-code-version must be an exact release version such as 2.1.289"
+  exit 1
+fi
+
+# The repository root: the nearest folder up from here that holds .git, so
+# a working folder inside the repository still protects all of it. Shell
+# builtins only, since no program is trusted yet.
+repo_root="$(pwd -P)"
+while [ -n "$repo_root" ] && [ ! -e "${repo_root}/.git" ]; do repo_root="${repo_root%/*}"; done
+[ -n "$repo_root" ] || repo_root="$(pwd -P)"
+in_repo() {
+  case "$1/" in "${repo_root}/"*) return 0 ;; esac
+  return 1
+}
+
+# PATH without relative folders and folders in the repository, for this
+# script's lookups and its programs': a pull request can commit a folder of
+# programs, and a workflow can put such a folder on PATH.
+safe_path=""
+rest="${PATH}:"
+while [ -n "$rest" ]; do
+  entry="${rest%%:*}"
+  rest="${rest#*:}"
+  case "$entry" in /*) ;; *) continue ;; esac
+  real="$(cd -P "$entry" 2>/dev/null && pwd -P)" || continue
+  if in_repo "$real"; then continue; fi
+  safe_path="${safe_path:+${safe_path}:}${entry}"
+done
+PATH="$safe_path"
+export PATH
+
+# The file a path names once every link on the way is followed.
+real_path() {
+  local p="$1" link dir n=0
+  while [ -L "$p" ]; do
+    n=$((n + 1))
+    [ "$n" -le 40 ] || return 1
+    link="$(readlink "$p")" || return 1
+    case "$link" in
+      /*) p="$link" ;;
+      *) p="${p%/*}/${link}" ;;
+    esac
+  done
+  dir="$(cd -P "${p%/*}/" 2>/dev/null && pwd -P)" || return 1
+  printf '%s/%s\n' "${dir%/}" "${p##*/}"
+}
+outside_repo() {
+  local real
+  real="$(real_path "$1")" || return 1
+  ! in_repo "$real"
+}
+
+# The absolute path of a program on PATH whose file lies outside the
+# repository, every link followed; nothing, and status 1, otherwise. The
+# script runs programs by these paths only.
+program() {
+  local found
+  found="$(command -v "$1" 2>/dev/null)" || return 1
+  case "$found" in /*) ;; *) return 1 ;; esac
+  outside_repo "$found" || return 1
+  printf '%s\n' "$found"
+}
+refuse() {
+  echo "::error title=OpenQodex::$1 was not found on PATH outside the repository; OpenQodex never runs a program the checkout holds"
+  exit 1
+}
+git_bin="$(program git)" || refuse git
+node_bin="$(program node)" || refuse node
+npx_bin="$(program npx)" || refuse npx
+
+# While a program's output goes to the job log, the runner reads no workflow
+# command in it: the output sits between ::stop-commands::<token> and
+# ::<token>::. The token is new and unpredictable each run, and never
+# exported, so no program can end the stretch early.
+token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+
+# Runs a command with its stdout and stderr copied to the job log, both on
+# stdout so they stay inside the stretch, and its stderr also to the file
+# $1 for the reason line. Returns the command's exit code. The Action's own
+# annotations are written outside these stretches.
+forward() {
+  local file="$1" rc
+  shift
+  echo "::stop-commands::${token}"
+  { "$@" 2>&1 1>&3 3>&- | tee "$file"; rc=${PIPESTATUS[0]}; } 3>&1
+  printf '\n::%s::\n' "$token"
+  return "$rc"
+}
 
 # The commit the change is measured from: the pull request's base, a push's
 # previous commit, or for a push that creates a branch the merge base with
@@ -64,12 +162,12 @@ if is_sha "$BASE_SHA"; then
   base="$BASE_SHA"
 elif [ "$EVENT_NAME" = "push" ] && is_sha "$PUSH_BEFORE"; then
   if [[ "$PUSH_BEFORE" =~ ^0+$ ]]; then
-    if plain_name "$DEFAULT_BRANCH" && git fetch --no-tags --quiet origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" 2>/dev/null; then
-      base="$(git merge-base HEAD "refs/remotes/origin/${DEFAULT_BRANCH}" 2>/dev/null || true)"
+    if plain_name "$DEFAULT_BRANCH" && "$git_bin" fetch --no-tags --quiet origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" 2>/dev/null; then
+      base="$("$git_bin" merge-base HEAD "refs/remotes/origin/${DEFAULT_BRANCH}" 2>/dev/null || true)"
     fi
   else
-    git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null || git fetch --no-tags --quiet origin "$PUSH_BEFORE" 2>/dev/null || true
-    if git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then base="$PUSH_BEFORE"; fi
+    "$git_bin" cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null || "$git_bin" fetch --no-tags --quiet origin "$PUSH_BEFORE" 2>/dev/null || true
+    if "$git_bin" cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then base="$PUSH_BEFORE"; fi
   fi
 fi
 no_base=""
@@ -122,7 +220,8 @@ command_text() {
 }
 
 # A line for the job summary: one line, every character markdown or HTML
-# gives meaning to escaped, so text from the pull request makes no structure.
+# gives meaning to escaped (the characters the review report escapes), so
+# text from the pull request makes no structure.
 summary_text() {
   printf '%s' "$1" | tr -d '\000-\037\177' | sed -e 's/[]\`*_[()!<>#|~\\]/\\&/g' | cut -c 1-600
 }
@@ -142,13 +241,13 @@ if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target"
     : > "$base_instructions"
     if ! plain_name "$BASE_REF"; then
       echo "::warning title=OpenQodex config::the base branch name is not a plain branch name, so OpenQodex uses the built-in defaults"
-    elif ! git fetch --no-tags --quiet origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
+    elif ! forward "${out_dir}/fetch.txt" "$git_bin" fetch --no-tags --quiet origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
       echo "::warning title=OpenQodex config::could not fetch the base branch, so OpenQodex uses the built-in defaults, not the pull request's config"
     else
-      git show "refs/remotes/origin/${BASE_REF}:.openqodex/config.yaml" > "$base_config" 2>/dev/null ||
-        git show "refs/remotes/origin/${BASE_REF}:.openqodex.yaml" > "$base_config" 2>/dev/null ||
+      "$git_bin" show "refs/remotes/origin/${BASE_REF}:.openqodex/config.yaml" > "$base_config" 2>/dev/null ||
+        "$git_bin" show "refs/remotes/origin/${BASE_REF}:.openqodex.yaml" > "$base_config" 2>/dev/null ||
         : > "$base_config"
-      git show "refs/remotes/origin/${BASE_REF}:.openqodex/custom-instructions.md" > "$base_instructions" 2>/dev/null ||
+      "$git_bin" show "refs/remotes/origin/${BASE_REF}:.openqodex/custom-instructions.md" > "$base_instructions" 2>/dev/null ||
         : > "$base_instructions"
     fi
     config_args=(--config "$base_config")
@@ -157,94 +256,107 @@ if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target"
 fi
 
 # Claude Code at the pinned version: the claude on PATH when it is that
-# version and lives outside the checkout, else a copy installed from npm into
-# the runner's temporary folder, never over a Claude Code the runner has.
+# version and lies outside the repository, else a copy installed from npm
+# into the runner's temporary folder, never over a Claude Code the runner has.
 claude_prefix="${RUNNER_TEMP}/openqodex-claude-code"
+claude_bin="${claude_prefix}/bin/claude"
 claude_version() { (cd "$out_dir" && "$1" --version 2>/dev/null) | head -n 1 | cut -d ' ' -f 1; }
+pinned_claude() { [ -x "$1" ] && outside_repo "$1" && [ "$(claude_version "$1")" = "$CLAUDE_CODE_VERSION" ]; }
+install_claude_code() { (cd "$out_dir" && "$npm_bin" install --global --prefix "$claude_prefix" --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"); }
 use_claude_code() {
-  local found found_dir checkout
-  found="$(command -v claude || true)"
-  case "$found" in
-    /*) ;;
-    *) found="" ;;
-  esac
-  # Compared as physical paths, so a PATH folder reached through a link into
-  # the checkout is still inside it.
-  if [ -n "$found" ]; then
-    checkout="$(pwd -P)"
-    found_dir="$(cd "$(dirname "$found")" 2>/dev/null && pwd -P)" || found_dir=""
-    case "${found_dir}/" in
-      "${checkout}"/* | /) found="" ;;
-    esac
-  fi
-  if [ -n "$found" ] && [ "$(claude_version "$found")" = "$CLAUDE_CODE_VERSION" ]; then return 0; fi
-  if [ "$(claude_version "${claude_prefix}/bin/claude")" != "$CLAUDE_CODE_VERSION" ]; then
+  local found npm_bin
+  if found="$(program claude)" && pinned_claude "$found"; then return 0; fi
+  if ! pinned_claude "$claude_bin"; then
+    npm_bin="$(program npm)" || return 1
     echo "Installing Claude Code ${CLAUDE_CODE_VERSION} from npm"
-    (cd "$out_dir" && npm install --global --prefix "$claude_prefix" --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}") >&2 || return 1
+    forward "${out_dir}/npm.txt" install_claude_code || return 1
+    pinned_claude "$claude_bin" || return 1
   fi
-  [ "$(claude_version "${claude_prefix}/bin/claude")" = "$CLAUDE_CODE_VERSION" ] || return 1
   PATH="${claude_prefix}/bin:${PATH}"
   export PATH
 }
 
-# The reviewer's web tools are off in the Action: `reviewer_web: off` in the
-# user config of the OpenQodex home folder this run reads (OPENQODEX_HOME
-# when set). The file is put back as it was when the review ends, so a
-# self-hosted runner keeps its own settings.
-oq_home="${OPENQODEX_HOME:-${HOME}/.openqodex}"
-user_config="${oq_home}/config.yaml"
-saved_config="${out_dir}/user-config.yaml"
-had_config=""
-web_off() {
-  mkdir -p "$oq_home"
-  if [ -f "$user_config" ]; then
-    cp -p "$user_config" "$saved_config"
-    had_config=1
-  fi
-  {
-    if [ -n "$had_config" ]; then grep -v -E '^reviewer_web[[:space:]]*:' "$saved_config" || true; fi
-    echo "reviewer_web: off"
-  } > "$user_config"
-  trap put_back_config EXIT
-}
-put_back_config() {
-  if [ -n "$had_config" ]; then cp -p "$saved_config" "$user_config"; else rm -f "$user_config"; fi
-  trap - EXIT
-}
-
-# The fields of this run's report.json, one per line: complete or incomplete;
-# 1 when a finding (or a candidate nobody checked) meets the block severity;
-# the reviewer and its version; what is missing.
-read_report() {
-  node -e '
-const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-const c = r.completion || {};
+# This run's own review folder, one field per line:
+#   report    complete, incomplete, unreadable, or none without report.json
+#   blocking  1 when a finding (or a candidate nobody checked) meets the
+#             block severity
+#   reviewer  the reviewer and its version
+#   missing   what the review is missing
+#   started   true or false from reviewer.json, which review writes there
+#             when the reviewer starts or none can; empty without it
+#   reasons   why no reviewer could start
+read_run() {
+  "$node_bin" -e '
+const fs = require("fs");
+const path = require("path");
+const file = (name) => path.join(process.argv[1], name);
+const parse = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return undefined; } };
+const read = (name) => (fs.existsSync(file(name)) ? parse(file(name)) : null);
+const r = read("report.json");
+const s = read("reviewer.json");
+const c = (r && r.completion) || {};
 const order = ["info", "nitpick", "minor", "major", "critical"];
-const at = order.indexOf(r.block_on_severity);
-const severities = (r.findings || []).map((f) => f.severity).concat((r.not_reviewed || []).map((n) => n.reviewSeverity));
-const blocking = r.verdict === "blocked" || (at >= 0 && severities.some((s) => order.indexOf(s) >= at));
-const line = (s) => String(s).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 300);
+const at = r ? order.indexOf(r.block_on_severity) : -1;
+const severities = r ? (r.findings || []).map((f) => f.severity).concat((r.not_reviewed || []).map((n) => n.reviewSeverity)) : [];
+const blocking = Boolean(r) && (r.verdict === "blocked" || (at >= 0 && severities.some((x) => order.indexOf(x) >= at)));
+const line = (x) => String(x).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 300);
+const report = r === null ? "none" : r === undefined ? "unreadable" : c.status === "complete" && r.verdict !== "incomplete" ? "complete" : "incomplete";
 const who = c.reviewer ? `${c.reviewer.driver} ${c.reviewer.version}` : "";
-const complete = c.status === "complete" && r.verdict !== "incomplete";
-process.stdout.write([complete ? "complete" : "incomplete", blocking ? "1" : "0", line(who), line((c.missing || []).join("; "))].join("\n") + "\n");
+const started = s ? (s.started === true ? "true" : "false") : "";
+const reasons = s && Array.isArray(s.reasons) ? s.reasons.join("; ") : "";
+process.stdout.write([report, blocking ? "1" : "0", line(who), line((c.missing || []).join("; ")), started, line(reasons)].join("\n") + "\n");
 ' "$1"
 }
 
-# Why no reviewer started: the first reason the review printed under "Full
-# review unavailable", else its last line.
-unavailable_reason() {
-  local r
-  r="$(awk '/^Full review unavailable/ { f = 1; next } f && /^- / { sub(/^- /, ""); print; exit }' "$1" || true)"
-  [ -n "$r" ] || r="$(last_line "$1")"
-  printf '%s' "$r"
+# What the review came to, from its exit code ($1), the files it wrote in
+# this run's own folder ($2) and its stderr ($3): sets review_status, code,
+# run_scan, review_reason, reviewer and summary_file. A report counts only
+# with the exit code that goes with it: 0 or 1 for a complete one, 2 for an
+# incomplete one. Any other end (a crash, a kill, a failure after the report
+# was written) is a tool failure, and a blocking finding in a report it left
+# still counts. Whether the reviewer started comes from reviewer.json, never
+# from what review printed.
+review_result() {
+  local rc="$1" dir="$2" report="" blocking="" missing="" started="" reasons="" last
+  # Empty last fields are cut from the output, so a read can meet its end.
+  { IFS= read -r report; IFS= read -r blocking; IFS= read -r reviewer; IFS= read -r missing; IFS= read -r started; IFS= read -r reasons; } <<< "$(read_run "$dir")" || true
+  if [ "$report" = "complete" ] || [ "$report" = "incomplete" ]; then summary_file="${dir}/report.md"; fi
+  if [ "$report" = "complete" ] && { [ "$rc" = "0" ] || [ "$rc" = "1" ]; }; then
+    review_status=complete
+    if [ "$blocking" = "1" ] || [ "$rc" = "1" ]; then code=1; else code=0; fi
+    return 0
+  fi
+  if [ "$report" = "none" ] && [ "$rc" = "0" ] && [ -z "$started" ]; then
+    review_status=skipped
+    code=0
+    return 0
+  fi
+  # The reviewer may have stopped before it checked any scanner finding, or
+  # never started: the scan runs too, so a scanner finding still counts.
+  run_scan=1
+  if [ "$report" = "incomplete" ] && [ "$rc" = "2" ]; then
+    review_status=incomplete
+    review_reason="${missing:-the review is incomplete}"
+  elif [ "$report" = "none" ] && [ "$rc" = "2" ] && [ "$started" = "false" ]; then
+    review_status=unavailable
+    review_reason="${reasons:-no reviewer could start}"
+  else
+    if [ "$report" = "complete" ] || [ "$report" = "incomplete" ] || [ "$started" = "true" ]; then review_status=incomplete; else review_status=unavailable; fi
+    review_reason="openqodex review stopped with exit code ${rc}"
+    last="$(last_line "$3")"
+    [ -z "$last" ] || review_reason="${review_reason}: ${last}"
+  fi
+  if [ "$blocking" = "1" ]; then code=1; else code=2; fi
 }
 
-npx_openqodex() { (cd "$out_dir" && npx -y "openqodex@${OPENQODEX_VERSION}" "$@" --cwd "$repo_dir"); }
+npx_openqodex() { (cd "$out_dir" && "$npx_bin" -y "openqodex@${OPENQODEX_VERSION}" "$@" --cwd "$repo_dir"); }
+# The one command that gets the key, in its environment only (never on a
+# command line, where other processes could read it).
+review_with_key() { (cd "$out_dir" && ANTHROPIC_API_KEY="$key" "$npx_bin" -y "openqodex@${OPENQODEX_VERSION}" "$@" --cwd "$repo_dir"); }
 
 set +e
-npx_openqodex doctor --install "${config_args[@]}" 2> >(tee "$err" >&2)
+forward "$err" npx_openqodex doctor --install "${config_args[@]}"
 code=$?
-wait
 scan_failed=""
 run_scan=""
 review_reason=""
@@ -264,51 +376,22 @@ elif ! use_claude_code; then
   review_reason="Claude Code ${CLAUDE_CODE_VERSION} could not be installed from npm"
   run_scan=1
 else
+  # Only this run's own folder is read: a report the pull request committed
+  # under .openqodex/ is never looked at. The reviewer's web tools are off
+  # for this run, whatever the runner's user config says.
   report_dir="${out_dir}/review"
   review_err="${out_dir}/review-stderr.txt"
-  rargs=(review "${config_args[@]}" "${instructions_args[@]}" --reviewer claude --report-dir "$report_dir")
+  rargs=(review "${config_args[@]}" "${instructions_args[@]}" --reviewer claude --reviewer-web off --report-dir "$report_dir")
   if [ -n "$base" ]; then rargs+=(--base "$base"); fi
   if [ -n "$BLOCK_ON_SEVERITY" ]; then rargs+=(--block-on-severity "$BLOCK_ON_SEVERITY"); fi
-  web_off
-  # The one command that gets the key, in its environment only (never on a
-  # command line, where other processes could read it).
   if [ -n "$key" ]; then
-    (cd "$out_dir" && ANTHROPIC_API_KEY="$key" npx -y "openqodex@${OPENQODEX_VERSION}" "${rargs[@]}" --cwd "$repo_dir") 2> >(tee "$review_err" >&2)
+    forward "$review_err" review_with_key "${rargs[@]}"
   else
-    (cd "$out_dir" && npx -y "openqodex@${OPENQODEX_VERSION}" "${rargs[@]}" --cwd "$repo_dir") 2> >(tee "$review_err" >&2)
+    forward "$review_err" npx_openqodex "${rargs[@]}"
   fi
   rc=$?
-  wait
-  put_back_config
-  # Only this run's own folder is read: a report the pull request committed
-  # under .openqodex/ is never looked at.
-  fields=""
-  if [ -f "${report_dir}/report.json" ]; then fields="$(read_report "${report_dir}/report.json")" || fields=""; fi
-  if [ -n "$fields" ]; then
-    { IFS= read -r status_field; IFS= read -r blocking; IFS= read -r reviewer; IFS= read -r missing; } <<< "$fields"
-    sarif="${report_dir}/report.sarif"
-    summary_file="${report_dir}/report.md"
-    if [ "$status_field" = "complete" ]; then
-      review_status=complete
-      if [ "$blocking" = "1" ]; then code=1; else code=0; fi
-    else
-      # An incomplete review keeps its partial report, and the scan runs too,
-      # so a scanner finding still counts: the reviewer may have stopped
-      # before it checked any. A blocking finding in either fails the job.
-      review_status=incomplete
-      review_reason="${missing:-the review is incomplete}"
-      if [ "$blocking" = "1" ]; then code=1; else code=2; fi
-      run_scan=1
-    fi
-  elif [ "$rc" = "0" ] && [ ! -e "${report_dir}/report.json" ]; then
-    review_status=skipped
-    code=0
-  else
-    review_status=unavailable
-    review_reason="$(unavailable_reason "$review_err")"
-    [ -n "$review_reason" ] || review_reason="exit code $rc"
-    run_scan=1
-  fi
+  review_result "$rc" "$report_dir" "$review_err"
+  if [ "$review_status" = "complete" ]; then sarif="${report_dir}/report.sarif"; fi
 fi
 
 if [ -n "$run_scan" ]; then
@@ -321,9 +404,8 @@ if [ -n "$run_scan" ]; then
   if [ "$mode" = "review" ]; then args+=(--report-dir "$scan_dir"); fi
   if [ -n "$base" ]; then args+=(--base "$base"); fi
   if [ -n "$BLOCK_ON_SEVERITY" ]; then args+=(--block-on-severity "$BLOCK_ON_SEVERITY"); fi
-  npx_openqodex "${args[@]}" 2> >(tee "$err" >&2)
+  forward "$err" npx_openqodex "${args[@]}"
   code=$?
-  wait
   # Anything but 0 and 1 (a crash, a kill: 137, 139, 143) is a tool error.
   if [ "$code" != "0" ] && [ "$code" != "1" ]; then
     code=2
@@ -354,7 +436,7 @@ if [ -n "$scan_failed" ]; then
   reason="$(last_line "$err")"
   [ -n "$reason" ] || reason="exit code $code"
   echo "::warning title=OpenQodex did not run::${reason}"
-  echo "OpenQodex did not run: ${reason}" >> "$GITHUB_STEP_SUMMARY"
+  echo "OpenQodex did not run: $(summary_text "$reason")" >> "$GITHUB_STEP_SUMMARY"
 fi
 if [ "$review_status" = "incomplete" ] || [ "$review_status" = "unavailable" ]; then
   echo "::warning title=OpenQodex review did not complete::$(command_text "$review_reason")"
@@ -370,10 +452,12 @@ fi
     incomplete)
       echo "**The review did not complete:** $(summary_text "$review_reason")"
       echo
-      echo "The partial report of this run follows. Its findings passed every check, but the change was not fully reviewed."
-      echo
-      head -c 500000 "$summary_file"
-      echo
+      if [ -n "$summary_file" ]; then
+        echo "The report this run wrote follows. Its findings passed every check, but this job does not count it as a complete review."
+        echo
+        head -c 500000 "$summary_file"
+        echo
+      fi
       echo "The scanner findings below come from a separate scan, because the review did not complete."
       echo
       if [ -f "${scan_dir}/report.md" ]; then head -c 500000 "${scan_dir}/report.md"; fi
