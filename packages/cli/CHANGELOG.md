@@ -1,5 +1,16 @@
 # openqodex
 
+## 0.6.1
+
+### Patch Changes
+
+- [#41](https://github.com/openqodex/openqodex/pull/41) [`9c0a2e5`](https://github.com/openqodex/openqodex/commit/9c0a2e541a7aac5c672cb25391aada25744905b9) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The package and the three plugins now name https://qodex.ai/openqodex as their homepage.
+
+- [#20](https://github.com/openqodex/openqodex/pull/20) [`da8878f`](https://github.com/openqodex/openqodex/commit/da8878fd4fe1eb746afde985a4002207952b8b24) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - OpenQodex is packaged for three plugin directories: the Claude Code plugin gains a README and an icon, a new Codex plugin in `plugins/codex/` carries the skill for the OpenAI plugin directory, and `.cursor-plugin/plugin.json` makes the repository a Cursor plugin.
+  A new privacy page, `docs/privacy.md`, says what OpenQodex collects (nothing) and lists every network call it makes. `openqodex guide privacy` prints it.
+  The skill's description now names the requests it answers: a code review, a security scan, a diff or a pull request.
+  The npm package, the GitHub Action and the plugins have new descriptions and keywords, and the README opens with a banner.
+
 ## 0.6.0
 
 ### Minor Changes
