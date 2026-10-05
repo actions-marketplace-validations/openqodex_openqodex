@@ -50,34 +50,95 @@ function within(root: string, path: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel) && !rel.split(sep).includes(".."));
 }
 
-// True when an alternative list holds a path, a home or an unbalanced brace:
-// `{../a/*,*.ts}` or `{/etc/*,x}`. An extension list such as `*.{py,sh}`
-// holds no path and is fine.
-function pathInBraces(pattern: string): boolean {
-  let depth = 0;
-  for (const c of pattern) {
-    if (c === "{") depth++;
-    else if (c === "}") depth--;
-    else if (depth > 0 && (c === "/" || c === "\\" || c === "~")) return true;
-    if (depth < 0) return true;
-  }
-  return depth !== 0;
+// The most alternatives a file pattern's brace lists may expand to before the
+// check gives up and marks the call outside: `{a,b}` ten times over is 1024.
+const MAX_PATTERN_ALTERNATIVES = 256;
+
+// Every alternative a file pattern's brace lists name, nested lists included:
+// `{src,lib/{a,b}}/*.ts` is `src/*.ts`, `lib/a/*.ts` and `lib/b/*.ts`. A
+// backslash escapes the next character, as the glob engines of macOS and
+// Linux read it, and is kept in the alternative. Null when the braces do not
+// balance or the alternatives would number more than MAX_PATTERN_ALTERNATIVES.
+function alternatives(pattern: string): string[] | null {
+  let i = 0;
+  // One alternative's text up to a `,` or `}` of the list it is in, or to the
+  // end of the pattern at the top level, where a `,` is plain text.
+  const sequence = (inList: boolean): string[] | null => {
+    let out = [""];
+    while (i < pattern.length) {
+      const c = pattern[i]!;
+      if (c === "\\") {
+        const escaped = pattern.slice(i, i + 2);
+        out = out.map((s) => s + escaped);
+        i += 2;
+      } else if (c === "{") {
+        i++;
+        const listed = list();
+        if (listed === null || out.length * listed.length > MAX_PATTERN_ALTERNATIVES) return null;
+        out = out.flatMap((s) => listed.map((l) => s + l));
+      } else if (c === "}" || (c === "," && inList)) {
+        return inList ? out : null;
+      } else {
+        out = out.map((s) => s + c);
+        i++;
+      }
+    }
+    return inList ? null : out;
+  };
+  // The alternatives of one list, from after its `{` to after its `}`.
+  const list = (): string[] | null => {
+    const all: string[] = [];
+    for (;;) {
+      const part = sequence(true);
+      if (part === null) return null;
+      all.push(...part);
+      if (all.length > MAX_PATTERN_ALTERNATIVES) return null;
+      if (pattern[i++] === "}") return all;
+    }
+  };
+  return sequence(false);
 }
 
-// A file pattern that may reach outside, or the folder an absolute one is
-// rooted in. `..` anywhere, a home pattern, and an alternative list that
-// holds a path are outside whatever else they say. An absolute pattern is
-// rooted at the last folder before its first wildcard: `/a/snap*/x` is
-// rooted at `/a/`, since `snap*` also matches `snapshot-2`. Null for a
-// relative pattern with none of these: it stays below its folder.
-function patternRoot(pattern: string): string | null {
+// The folder one alternative is rooted in, outside when it may reach out, or
+// null for a relative one: it stays below its folder. `..` anywhere and a
+// home pattern are outside whatever else they say. An absolute alternative is
+// rooted at the last folder before its first wildcard: `/a/snap*/x` is rooted
+// at `/a/`, since `snap*` also matches `snapshot-2`.
+function alternativeRoot(alternative: string): string | null {
   const outside = "/";
-  if (pattern.includes("..") || pattern.startsWith("~") || pathInBraces(pattern)) return outside;
-  if (!(pattern.startsWith("/") || /^[A-Za-z]:[\\/]/.test(pattern))) return null;
-  const cut = pattern.search(/[*?[{]/);
-  if (cut === -1) return pattern;
-  const slash = Math.max(pattern.lastIndexOf("/", cut), pattern.lastIndexOf("\\", cut));
-  return pattern.slice(0, slash + 1) || outside;
+  if (alternative.includes("..") || alternative.startsWith("~")) return outside;
+  if (!(alternative.startsWith("/") || /^[A-Za-z]:[\\/]/.test(alternative))) return null;
+  const cut = alternative.search(/[*?[{]/);
+  if (cut === -1) return alternative;
+  const slash = Math.max(alternative.lastIndexOf("/", cut), alternative.lastIndexOf("\\", cut));
+  return alternative.slice(0, slash + 1) || outside;
+}
+
+// The folders a file pattern is rooted in: one for each alternative of its
+// brace lists that is absolute or may reach out, read both as written and
+// with its escapes removed (`\/etc` is `/etc` to the glob engine). Empty when
+// every alternative is relative. Outside when the pattern holds `..`, its
+// braces do not balance, or it has too many alternatives, or lists nested too
+// deep, to check.
+function patternRoots(pattern: string): string[] {
+  const outside = ["/"];
+  if (pattern.includes("..")) return outside;
+  let alts: string[] | null;
+  try {
+    alts = alternatives(pattern);
+  } catch {
+    // lists nested deeper than the stack can follow
+    alts = null;
+  }
+  if (alts === null) return outside;
+  const roots = new Set<string>();
+  for (const alt of alts) {
+    for (const form of [alt, alt.replace(/\\(.)/gs, "$1")]) {
+      const root = alternativeRoot(form);
+      if (root !== null) roots.add(root);
+    }
+  }
+  return [...roots];
 }
 
 // Each raw path placed: its real form, or null when it cannot be placed.
@@ -110,10 +171,10 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
   for (const k of call.tool === "Grep" ? GREP_PATTERN_FIELDS : PATTERN_FIELDS) {
     if (fields[k] === undefined || fields[k] === null) continue;
     if (typeof fields[k] !== "string") return { tool: call.tool, path: `(a ${k} that is not text)`, inside: false, range: null, ok: true };
-    const root = patternRoot(fields[k] as string);
+    const roots = patternRoots(fields[k] as string);
     // Named by the pattern itself in the trace, so the record says what was asked.
-    if (root !== null && !within(snapshot, place(snapshot, root) ?? "/")) return { tool: call.tool, path: fields[k] as string, inside: false, range: null, ok: call.ok };
-    if (root !== null) raws.push(root);
+    if (roots.some((root) => !within(snapshot, place(snapshot, root) ?? "/"))) return { tool: call.tool, path: fields[k] as string, inside: false, range: null, ok: call.ok };
+    raws.push(...roots);
   }
   if (call.read) raws.push(call.read.path);
   if (call.tool === "Read" && typeof fields.file_path !== "string") {

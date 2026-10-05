@@ -59,6 +59,11 @@
 //     review, or the report prints "Files not read" for reads it never measured.
 // 29. With such a reviewer, ranges the correction rounds could not carry are
 //     reported as read, or the run completes.
+// 30. A file pattern with a brace list whose every alternative is inside the
+//     snapshot ends the review (issue 38); or one alternative outside, a
+//     nested one, two dots formed by joining a list to its neighbour, an
+//     escape that hides a path, unbalanced braces or more alternatives than
+//     the bound let the run complete.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -332,6 +337,50 @@ describe("13. the trace check fails closed", () => {
     const answer: Answer = (text) => ({ finalText: submission(text), calls: [{ tool: "Grep", input: { pattern: "/api/../v1", path: "db" }, ok: true, read: null }] });
     expect(await review(repo(), fake([answer]))).toBe(0);
   });
+});
+
+describe("30. brace lists in a file pattern", () => {
+  const glob = (pattern: string): ToolCall => ({ tool: "Glob", input: { pattern }, ok: true, read: null });
+  const grep = (files: string): ToolCall => ({ tool: "Grep", input: { pattern: "readFileSync", glob: files }, ok: true, read: null });
+  const inside: [string, (snapshotDir: string) => ToolCall][] = [
+    ["the first pattern from issue 38, a list of paths", () => grep("{packages/cli/src/**,packages/cli/*.json,scripts/*.mjs}")],
+    ["the second pattern from issue 38, a list of folders before /**", () => grep("{packages/cli/src,packages/cli/scripts,scripts,packages/cli/package.json}/**")],
+    ["a nested list of paths", () => glob("{db/{a,b}/**,src/{x,y}/*.sql}")],
+    ["a list of paths that start with ./", () => glob("{./db/**,./src/**}")],
+    ["a list of paths followed by an extension list", () => glob("{db/a,src/b}/**/*.{sql,py}")],
+    ["a list of absolute paths in the snapshot", (snapshotDir) => glob(`{${snapshotDir}/db/**,${snapshotDir}/README.md}`)],
+    ["an escaped brace in a file name", () => glob("**/\\{id\\}.sql")],
+  ];
+  for (const [name, call] of inside) {
+    it(`${name} keeps the run complete`, async () => {
+      const answer: Answer = (text, snapshotDir) => ({ finalText: submission(text), calls: [call(snapshotDir)] });
+      expect(await review(repo(), fake([answer]))).toBe(0);
+      expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
+    });
+  }
+  const outside: [string, ToolCall][] = [
+    ["a list with one alternative that climbs out", glob("{db/**,../x}")],
+    ["a list with one absolute alternative outside", glob("{/etc/*,x}")],
+    ["a list with one home alternative", glob("{~/a,b}")],
+    ["a nested list with one absolute alternative outside", glob("{db/**,{x,/etc/*}}")],
+    ["two dots formed by joining a list to its neighbour", glob(".{.,x}/*")],
+    ["an escaped slash that makes an alternative absolute", glob("{\\/etc/*,x}")],
+    ["an escaped dot that forms two dots", glob(".\\./*")],
+    ["a list that is never closed", grep("{packages/cli/src/**,scripts/*.mjs")],
+    ["a close with no open", grep("packages/cli/src/**}")],
+    ["a pattern of a million alternatives, past the bound, which must not be expanded", glob("{a,b,c,d}/".repeat(10))],
+    ["a list nested deeper than the stack can follow", glob(`${"{".repeat(100_000)}a${"}".repeat(100_000)}`)],
+  ];
+  for (const [name, call] of outside) {
+    it(`${name} makes the run incomplete`, async () => {
+      const answer: Answer = (text) => ({ finalText: submission(text), calls: [call] });
+      expect(await review(repo(), fake([answer]))).toBe(2);
+      const report = JSON.parse(out) as Report;
+      expect(report.completion?.status).toBe("incomplete");
+      const input = call.input as Record<string, string>;
+      expect(report.completion?.outside_reads).toEqual([call.tool === "Grep" ? input.glob : input.pattern]);
+    });
+  }
 });
 
 describe("what leaves the process", () => {
