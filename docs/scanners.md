@@ -39,7 +39,31 @@ A scanner problem never changes the exit code.
 
 Several scanners read settings or an ignore list from the repository, as OpenQodex runs them. At the repository root only: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`; semgrep `.semgrepignore`; hadolint `.hadolint.yaml` and `.hadolint.yml`; actionlint `.github/actionlint.yaml` and `.github/actionlint.yml`. In any folder: ruff `ruff.toml` and `.ruff.toml`, and `pyproject.toml` when the change touches its `[tool.ruff` table; shellcheck `.shellcheckrc` and `shellcheckrc`; osv-scanner `osv-scanner.toml`. A change to one of them can hide that scanner's findings.
 
-In a review, each such changed file is a major candidate of that scanner, rule `settings-file`, on its first changed line; the reviewer verifies it and raises it or drops it with a reason. In a scan (`scan`, plain `review`, the git hook, the Action) nobody can clear it, so the report lists it under "This change edits a scanner settings file" and it never counts toward the verdict. `--only`, `--skip` and `scanners.disable` leave it out with its scanner.
+In a review, each such changed file is a major candidate of that scanner, rule `settings-file`, on its first changed line; the reviewer verifies it and raises it or drops it with a reason. In a scan (`scan`, which the pre-commit hook and the Action run) nobody can clear it, so it is a minor finding and counts toward the verdict. The scanner still reads the changed file. `--only`, `--skip` and `scanners.disable` leave it out with its scanner.
+
+## Suppression comments
+
+A comment in the code can tell a scanner to skip a line, such as `# nosec` for bandit. The scanner obeys it and reports nothing there. So each such comment on a line the change adds is a candidate of the scanner it silences, rule `openqodex.suppression-added`, on that line. It is raised whether or not that scanner is installed, and only in a file that scanner checks. Its message names the comment and the scanner, never the rest of the line, which can hold a secret.
+
+In a review, the reviewer verifies it and raises it or drops it with a reason. In a scan it is a minor finding and counts toward the verdict, so `block_on_severity: minor` blocks on it. The scanner still obeys the comment. A comment the change did not add raises nothing, and neither does `review --all`. `--only`, `--skip` and `scanners.disable` leave it out with its scanner, and `review.disabled_rules: ["*:openqodex.suppression-added"]` turns it off.
+
+A comment counts only where its scanner reads it. OpenQodex finds the comments of the whole file first, so the same text inside a string, a multi-line string or a heredoc does not count. semgrep and gitleaks obey their marker anywhere on the line, in a string too, and so does OpenQodex. A file over 5 MB is not read for these comments.
+
+| Scanner | Comment | Where it counts | Checked against |
+|---|---|---|---|
+| semgrep | `nosemgrep` or `nosem`, in any case, after a space | anywhere on the line | the 1.94.0 binary; [docs](https://docs.semgrep.dev/ignoring-files-folders-code) |
+| gitleaks | `gitleaks:allow` | anywhere on the line | the 8.21.2 binary; [detect.go](https://github.com/gitleaks/gitleaks/blob/v8.21.2/detect/detect.go) |
+| bandit | `# nosec`, with or without the space | anywhere in a Python comment | the 1.9.4 binary; [manager.py](https://github.com/PyCQA/bandit/blob/1.9.4/bandit/core/manager.py) |
+| ruff | `# noqa` in any case; `# ruff: noqa` and `# flake8: noqa` | anywhere in a Python comment; the file forms on a line of their own | the 0.8.4 binary; [noqa.rs](https://github.com/astral-sh/ruff/blob/0.8.4/crates/ruff_linter/src/noqa.rs) |
+| shellcheck | `# shellcheck disable=` | a shell comment | the 0.10.0 binary; [Parser.hs](https://github.com/koalaman/shellcheck/blob/v0.10.0/src/ShellCheck/Parser.hs) |
+| hadolint | `# hadolint ignore=`, `# hadolint global ignore=`, `# hadolint stage ignore=` | a Dockerfile comment line | the 2.15.1 binary; [Pragma.hs](https://github.com/hadolint/hadolint/blob/v2.15.1/src/Hadolint/Pragma.hs) |
+| oxlint | `eslint-disable`, `oxlint-disable`, each also with `-line` or `-next-line` | the start of a `//` or `/* */` comment | the 1.71.0 binary; [disable_directives.rs](https://github.com/oxc-project/oxc/blob/oxlint_v1.71.0/crates/oxc_linter/src/disable_directives.rs) |
+| golangci | `//nolint`; gosec's `#nosec` and `//gosec:disable` | a `//` comment for `//nolint`; the start of a comment line for `#nosec` | source only: [nolint_filter.go](https://github.com/golangci/golangci-lint/blob/v2.12.2/pkg/result/processors/nolint_filter.go), [gosec analyzer.go](https://github.com/securego/gosec/blob/v2.26.1/analyzer.go) |
+| rubocop | `# rubocop:disable` and `# rubocop:todo` with a cop name or `all` | a Ruby comment, `=begin` blocks included | source only: [directive_comment.rb](https://github.com/rubocop/rubocop/blob/v1.69.2/lib/rubocop/directive_comment.rb) |
+
+actionlint, brakeman, osv-scanner and sqllint have no inline comment. actionlint ([usage](https://github.com/rhysd/actionlint/blob/v1.7.7/docs/usage.md)) and osv-scanner ([configuration](https://google.github.io/osv-scanner/configuration/)) skip findings only through their settings files; brakeman ([ignoring false positives](https://brakemanscanner.org/docs/ignoring_false_positives/)) only through its ignore file.
+
+The comments are found by a small reader per comment family, not a full parser. Text in JSX, a regular expression in an unusual place, or `<<` inside shell arithmetic can be read wrongly on a rare line.
 
 ## semgrep
 

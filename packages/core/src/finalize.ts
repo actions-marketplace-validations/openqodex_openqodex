@@ -602,16 +602,27 @@ function candidateFinding(c: Candidate): ReportFinding {
 }
 
 // The rule of the candidate a scanner raises for a changed file it reads as
-// its own settings or ignore list. In a scan nobody clears it, so it is a
-// note beside the findings and never counts; in a review it is a candidate.
+// its own settings or ignore list.
 export const SETTINGS_RULE = "settings-file";
+
+// The rule of the candidate a scanner raises for a suppression comment the
+// change adds, such as `# nosec`, which makes that scanner skip the line.
+export const SUPPRESSION_RULE = "openqodex.suppression-added";
+
+// True for a candidate OpenQodex raises about the change itself rather than
+// a scanner's hit: a changed settings file or an added suppression comment.
+// The scanner still obeys either one. In a review the reviewer keeps or drops
+// it like any candidate; in a scan nobody can, so it counts as minor.
+export function isOwnCandidate(f: { source: ScannerSource; ruleId: string }): boolean {
+  return !f.source.startsWith("custom:") && (f.ruleId === SETTINGS_RULE || f.ruleId === SUPPRESSION_RULE);
+}
 
 export function scanReport(args: { change: Change; scan: ScanResult; config: Config }): Report {
   const { change, scan, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
-  const enabled = scan.candidates.filter((c) => !disabled(c.token, config));
-  const settings = enabled.filter((c) => c.ruleId === SETTINGS_RULE).map((c) => candidateFinding(c));
-  const live = enabled.filter((c) => c.ruleId !== SETTINGS_RULE).map((c) => candidateFinding(c));
+  const live = scan.candidates
+    .filter((c) => !disabled(c.token, config))
+    .map((c): ReportFinding => (isOwnCandidate(c) ? { ...candidateFinding(c), severity: "minor" } : candidateFinding(c)));
   const findings = live.filter((f) => shown(f, config));
   const report: Report = {
     version: 1,
@@ -635,7 +646,6 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
     scanners: scan.scanners,
     not_reviewed_paths: change.notReviewed,
     stats: change.stats,
-    ...(settings.length > 0 ? { settings_changes: settings } : {}),
   };
   return redactAll(report, clean);
 }

@@ -17,11 +17,13 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   fingerprintSecrets,
+  isOwnCandidate,
   mapScannerSeverity,
   matchesGlob,
   REDACTED,
   redactSecrets,
   SETTINGS_RULE,
+  SUPPRESSION_RULE,
 } from "@openqodex/core";
 import type {
   AdapterResult,
@@ -42,6 +44,7 @@ import type { SettingsFile } from "./adapters/index.js";
 import { readRepoFile } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
+import { findMarkers, SUPPRESSION_MARKERS } from "./suppression.js";
 
 // A custom scanner prepared by the custom module. `skipped` is set when the
 // entry must not run (untrusted, changed since approval); the runner then
@@ -108,6 +111,7 @@ export async function runScanners(args: {
     return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
   });
   if (coverage) {
+    const wanted = (s: BuiltinScanner) => selected(s) && !args.config.disabledScanners.includes(s);
     merged.push(
       ...(await settingsFindings({
         repoDir: args.repoDir,
@@ -115,8 +119,9 @@ export async function runScanners(args: {
         coverage,
         deletionPoints: args.deletionPoints,
         baseText: args.baseText,
-        wanted: (s) => selected(s) && !args.config.disabledScanners.includes(s),
+        wanted,
       })),
+      ...(await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted })),
     );
   }
 
@@ -234,7 +239,7 @@ type SettingsArgs = {
 // One candidate per changed file that a scanner really reads as its settings
 // or ignore list, from that scanner, on the file's first changed line, with
 // rule `settings-file`. Raised whether or not the scanner ran. A review's
-// reviewer clears it or raises it; a scan shows it as a note, never counted.
+// reviewer clears it or raises it; a scan counts it as minor.
 async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
   const out: StaticFinding[] = [];
   for (const [source, files] of Object.entries(SETTINGS_FILES) as [BuiltinScanner, readonly SettingsFile[]][]) {
@@ -254,6 +259,54 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
         lineEnd: line,
         severity: "high",
         message: `This change edits a scanner settings file; findings of ${source} may be hidden by it`,
+        reference: null,
+      });
+    }
+  }
+  return out;
+}
+
+// The largest file read for suppression comments: the size above which a
+// review leaves a file out.
+const SUPPRESSION_MAX_BYTES = 5 * 1024 * 1024;
+
+// One candidate per suppression comment on a line the change added, such as
+// `# nosec`, from the scanner it silences, with rule SUPPRESSION_RULE. Only
+// in a file that scanner checks, and whether or not it ran: the
+// scanner obeys the comment, so its own output never shows what it hides.
+// The message names the marker and the scanner, never the line, which can
+// hold a secret no scanner reported.
+async function suppressionFindings(args: {
+  repoDir: string;
+  changedPaths: string[];
+  coverage: DiffCoverage;
+  wanted: (s: BuiltinScanner) => boolean;
+}): Promise<StaticFinding[]> {
+  const out: StaticFinding[] = [];
+  for (const filePath of args.changedPaths) {
+    const added = args.coverage.get(filePath);
+    if (added === undefined || added.size === 0) continue;
+    const scanners = ADAPTERS.filter(
+      (a) => SUPPRESSION_MARKERS[a.source] !== undefined && args.wanted(a.source) && a.wants([filePath], args.repoDir),
+    ).map((a) => a.source);
+    if (scanners.length === 0) continue;
+    let text: string;
+    try {
+      text = await readRepoFile(args.repoDir, filePath, SUPPRESSION_MAX_BYTES);
+    } catch {
+      // Gone, not a regular file in the repo, or over the size cap.
+      continue;
+    }
+    for (const hit of findMarkers(text, scanners)) {
+      if (!added.has(hit.line)) continue;
+      out.push({
+        source: hit.scanner,
+        ruleId: SUPPRESSION_RULE,
+        filePath,
+        lineStart: hit.line,
+        lineEnd: hit.line,
+        severity: "medium",
+        message: `This change adds ${hit.name}, which stops ${hit.scanner} reporting what it covers; check that it hides no real problem`,
         reference: null,
       });
     }
@@ -504,7 +557,12 @@ function severityRank(s: ScannerSeverity): number {
 // pattern-based on the rule id; coverage focuses on the categories
 // where semgrep overlaps gitleaks (secret) or where multiple semgrep
 // rules commonly co-fire on one line (injection, auth).
+//
+// A candidate OpenQodex raises about the change itself (a changed settings
+// file, an added suppression comment) is not a scanner hit: it has a class
+// of its own, so a scanner's finding on the same line never swallows it.
 export function ruleClassFor(f: StaticFinding): string {
+  if (isOwnCandidate(f)) return `${f.source}:${f.ruleId}`;
   if (f.source === "gitleaks") return "secret";
   const id = f.ruleId.toLowerCase();
   if (/secret|credential|api[-_]?key|access[-_]?key|password|token/.test(id)) {
