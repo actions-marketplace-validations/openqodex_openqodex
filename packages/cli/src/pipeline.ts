@@ -260,10 +260,10 @@ function writeOutFile(out: string, repoRoot: string, text: string, mode?: number
   }
 }
 
-// `review --report-dir <folder>`: the run's report files, also written to a
-// folder the caller names, readable by its owner only. The GitHub Action
-// names a new folder of its own, so it never takes a report that a branch
-// committed under .openqodex/ for this run's.
+// `--report-dir <folder>` of scan and review: the run's files, written to a
+// folder the caller names instead of .openqodex/reviews/, readable by their
+// owner only. The GitHub Action names a new folder of its own, so it never
+// takes a report that a branch committed under .openqodex/ for this run's.
 export function writeReportCopies(folder: string, repoRoot: string, files: Record<string, string>): void {
   const dir = resolve(folder);
   if (isRepoState(repoRoot, dir) === null) mkdirSync(dir, { recursive: true });

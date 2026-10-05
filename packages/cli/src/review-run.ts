@@ -53,6 +53,7 @@ import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
 import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses, writeReportCopies } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
+import { keepRunStateOutOfRepo } from "./feedback.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
 import { writeHomeReceipt } from "./receipts.js";
 import { claudeDriver } from "./reviewers/claude.js";
@@ -104,10 +105,12 @@ export type ReviewOptions = {
   // repository's .openqodex/custom-instructions.md (the Action passes the
   // base branch's copy, so a pull request cannot supply its own).
   instructions?: string;
-  // --report-dir: report.md, report.json and report.sarif of this run, also
-  // written to this folder, so a caller takes this run's report and never
-  // one a branch planted under .openqodex/. reviewer.json there says whether
-  // a reviewer started, and why none could when none did.
+  // --report-dir: every file of this run goes to this folder alone, and
+  // nothing under .openqodex/ in the checkout is created, read or written,
+  // so a caller takes this run's report and never one a branch planted
+  // there, and a link a branch committed there cannot stop the run.
+  // reviewer.json there says whether a reviewer started (and which), and
+  // why none could when none did.
   reportDir?: string;
   // --reviewer-web: the reviewer's web tools for this run, over the user
   // config's reviewer_web.
@@ -562,6 +565,19 @@ function fallbackCommand(o: ReviewOptions): string {
   return [runner, "review", "--agent", ...scope, ...kept].join(" ");
 }
 
+// Where a run's files go: a new folder under .openqodex/reviews/ in the
+// repository, or with --report-dir that folder alone, so nothing under
+// .openqodex/ in the checkout is created, read or written (a branch can
+// commit links there). `shown`: the folder as the receipts name it.
+function runFolder(o: ReviewOptions, repoRoot: string, shortId: string): { dir: string; shown: string; write: (files: Record<string, string>) => void } {
+  if (o.reportDir !== undefined) {
+    const dir = resolve(o.reportDir);
+    return { dir, shown: dir, write: (files) => writeReportCopies(dir, repoRoot, files) };
+  }
+  const dir = openReportDir(repoRoot, shortId);
+  return { dir, shown: relative(repoRoot, dir), write: (files) => writeReportFiles(repoRoot, dir, files, PRIVATE) };
+}
+
 export async function runReview(o: ReviewOptions): Promise<number> {
   if (process.env[DEPTH_ENV]) throw new OpenQodexError("openqodex review cannot run inside an openqodex reviewer");
   const say = progress(o.flags);
@@ -570,7 +586,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const config: Config = o.blockOn === undefined ? loaded.config : { ...loaded.config, blockOnSeverity: o.blockOn };
   const owner = checkoutOwner(repoRoot);
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
-  announceRepoFiles(repoRoot);
+  if (o.reportDir === undefined) announceRepoFiles(repoRoot);
+  else keepRunStateOutOfRepo();
   const settings = readReviewerSettings();
   const web = o.web ?? settings.web;
   const chosen = await chooseReviewer(o.reviewer ?? settings.reviewer, o.drivers ?? DRIVERS, repoRoot);
@@ -605,20 +622,21 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const { p } = prep;
     const scan = p.scan as ScanResult;
     const change = p.change;
-    const dir = openReportDir(repoRoot, change.shortId);
-    // --report-dir: whether a reviewer started, so a caller tells a review
-    // that stopped from one that never began without reading stderr.
-    const noteReviewer = (record: { started: boolean; reasons?: string[] }): void => {
-      if (o.reportDir !== undefined) writeReportCopies(o.reportDir, repoRoot, { "reviewer.json": `${JSON.stringify(redactStored(record, p.secrets))}\n` });
+    const folder = runFolder(o, repoRoot, change.shortId);
+    const dir = folder.dir;
+    // --report-dir: whether a reviewer started, and which, so a caller tells
+    // a review that stopped from one that never began without reading stderr.
+    const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string }): void => {
+      if (o.reportDir !== undefined) folder.write({ "reviewer.json": `${JSON.stringify(redactStored(record, p.secrets))}\n` });
     };
 
     // No reviewer can start: the scanner candidates are saved as unchecked,
     // never as a review, and the fallback through the agent the developer is in is named.
     const unavailable = (reasons: string[]): number => {
       const path = join(dir, "unchecked-candidates.json");
-      writeReportFiles(repoRoot, dir, {
+      folder.write({
         "unchecked-candidates.json": `${JSON.stringify({ label: "unchecked scanner candidates, not a review: no reviewer checked them", change_id: change.id, candidates: scan.candidates }, null, 2)}\n`,
-      }, PRIVATE);
+      });
       noteReviewer({ started: false, reasons });
       warn("Full review unavailable: openqodex could not start a reviewer.");
       for (const line of reasons) warn(`- ${line}`);
@@ -655,17 +673,12 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       runtime_version: __OPENQODEX_VERSION__,
       ...(prep.target ? { target: prep.target } : {}),
     };
-    writeReportFiles(
-      repoRoot,
-      dir,
-      {
-        "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
-        "scan.json": `${JSON.stringify(scan, null, 2)}\n`,
-        "brief.md": brief.text,
-        "impact.json": `${JSON.stringify(impact, null, 2)}\n`,
-      },
-      PRIVATE,
-    );
+    folder.write({
+      "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
+      "scan.json": `${JSON.stringify(scan, null, 2)}\n`,
+      "brief.md": brief.text,
+      "impact.json": `${JSON.stringify(impact, null, 2)}\n`,
+    });
 
     // A reviewer whose trace is not complete (Codex) has no read counted:
     // coverage is the brief and the correction rounds only.
@@ -680,7 +693,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     // reviewer is not started and the review is incomplete.
     const refused = redaction.named > 0 ? "a file name in the change holds a secret the scanners found, so the reviewer was not started; rename the file" : null;
     if (refused === null) session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web });
-    if (session !== null) noteReviewer({ started: true });
+    if (session !== null) noteReviewer({ started: true, driver: chosen.driver.name, version: chosen.version });
     const pid = session?.pid ?? null;
     if (session !== null) say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
     const startedIso = new Date().toISOString();
@@ -738,42 +751,46 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     };
     if (completion.status !== "complete") report.verdict = "incomplete";
 
-    const files = reportFiles(report);
-    writeReportFiles(repoRoot, dir, {
-      ...files,
+    folder.write({
+      ...reportFiles(report),
       "submission.json": `${JSON.stringify(redactStored(talk.submission, p.secrets), null, 2)}\n`,
       "trace.json": `${JSON.stringify(redactStored(talk.trace, p.secrets), null, 2)}\n`,
-    }, PRIVATE);
-    if (o.reportDir !== undefined) writeReportCopies(o.reportDir, repoRoot, files);
+    });
     const receipt: Latest = {
-      dir: relative(repoRoot, dir),
+      dir: folder.shown,
       change_id: change.id,
       kind: "review",
       finalized: completion.status === "complete",
       verdict: completion.status === "complete" ? report.verdict : null,
       completion: completion.status,
     };
-    // The push gate's receipt is the developer's own change only.
-    if (prep.whole) writeReportFiles(repoRoot, join(repoRoot, STATE_DIR), { "latest-all.json": `${JSON.stringify(receipt, null, 2)}\n` });
-    else if (!prep.target) {
+    // The push gate's receipt is the developer's own change only. With
+    // --report-dir no receipt is written in the checkout; the one in the
+    // developer's home still is.
+    const inCheckout = o.reportDir === undefined;
+    if (prep.whole) {
+      if (inCheckout) writeReportFiles(repoRoot, join(repoRoot, STATE_DIR), { "latest-all.json": `${JSON.stringify(receipt, null, 2)}\n` });
+    } else if (!prep.target) {
       // A link a branch put at .openqodex/latest.json stops this record only,
       // never the review: the report is written, and the push hooks trust the
       // record in the developer's home below.
-      try {
-        writeLatest(repoRoot, receipt);
-      } catch (error) {
-        warn(`openqodex: could not write the review record in .openqodex: ${(error as Error).message.split("\n")[0]}`);
+      if (inCheckout) {
+        try {
+          writeLatest(repoRoot, receipt);
+        } catch (error) {
+          warn(`openqodex: could not write the review record in .openqodex: ${(error as Error).message.split("\n")[0]}`);
+        }
       }
       // The record the push hooks trust, in the developer's home: a branch
       // cannot plant it the way it can carry files under .openqodex/.
       try {
-        writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, completion.status, relative(repoRoot, dir)));
+        writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, completion.status, folder.shown));
       } catch (error) {
         warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
       }
     }
     emitReport(report, o.flags, repoRoot);
-    say(`Report: ${relative(repoRoot, join(dir, "report.md"))}`);
+    say(`Report: ${inCheckout ? relative(repoRoot, join(dir, "report.md")) : join(dir, "report.md")}`);
     return exitFor(report);
   } finally {
     process.off("SIGINT", onSignal);

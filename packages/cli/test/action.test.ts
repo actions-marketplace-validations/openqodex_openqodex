@@ -30,7 +30,7 @@
 // no reviewer: the cases with the real Claude Code are in
 // tests/e2e/action-review.test.ts.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -147,7 +147,8 @@ describe("the GitHub Action", () => {
 // runs this build of the CLI. To keep the test offline and fast it leaves
 // out doctor's --install and gives scan --no-install and, unless the test
 // sets OQ_ALL_SCANNERS, --only sqllint. With OQ_CALLS set, it records each
-// command it ran and whether the key was in its environment (never the key).
+// command it ran and whether the key was in its environment (never the key);
+// with OQ_PATHS, the PATH each command got.
 // `before`: PATH folders placed ahead of the stand-in's.
 function runStep(dir: string, env: Record<string, string>, before: string[] = []): { status: number | null; stdout: string; stderr: string; outputs: string; summary: string; temp: string } {
   const bin = join(here, "..", "dist", "bin.js");
@@ -159,6 +160,7 @@ function runStep(dir: string, env: Record<string, string>, before: string[] = []
       'shift; shift',
       'if [ -n "$OQ_CALLS" ]; then echo "$1 key=${ANTHROPIC_API_KEY:+set}" >> "$OQ_CALLS"; fi',
       'if [ -n "$OQ_FOLDERS" ]; then pwd -P >> "$OQ_FOLDERS"; fi',
+      'if [ -n "$OQ_PATHS" ]; then printf "%s\\n" "$PATH" >> "$OQ_PATHS"; fi',
       'if [ "$1" = "doctor" ]; then shift; set -- doctor $(for a in "$@"; do [ "$a" = "--install" ] || printf "%s\\n" "$a"; done); fi',
       // OQ_KILL_SCAN: the scan process is killed (exit 137), as the runner's
       // out-of-memory killer would.
@@ -319,7 +321,7 @@ describe("the scan step, run", () => {
 
   it("R24. a version that is not an exact release (a file: package, a path, an alias, a tag or a range) fails the step before npx or npm runs", () => {
     const { dir } = gitRepo();
-    const bad = ["file:/tmp/payload", "../payload", "/tmp/payload", "npm:evil@1.0.0", "latest", "^0.6.0", "0.6", "0.6.1 || 9.0.0", "git+https://e.invalid/x.git", "0.6.1+build"];
+    const bad = ["file:/tmp/payload", "../payload", "/tmp/payload", "npm:evil@1.0.0", "latest", "^0.6.0", "0.6", "0.6.1 || 9.0.0", "git+https://e.invalid/x.git", "0.6.1+build", "1.2.3-..", "1.2.3-", "1.2.3-a..b", "1.2.3-rc.", "01.2.3", "1.02.3", "1.2.3-01"];
     for (const [name, input, example] of [["OPENQODEX_VERSION", "version", "0.6.1"], ["CLAUDE_CODE_VERSION", "claude-code-version", "2.1.289"]] as const) {
       for (const value of bad) {
         const calls = callsFile();
@@ -329,9 +331,28 @@ describe("the scan step, run", () => {
         expect(existsSync(calls), value).toBe(false);
       }
     }
-    // A prerelease is an exact version.
-    expect(runStep(dir, { OPENQODEX_VERSION: "0.7.0-rc.1" }).outputs).toContain("status=passed");
+    // A SemVer prerelease is an exact version.
+    for (const good of ["0.7.0-rc.1", "1.0.0-0a.x-y", "10.20.30-alpha"]) expect(runStep(dir, { OPENQODEX_VERSION: good }).outputs, good).toContain("status=passed");
   });
+
+  it("R30. a pull request that commits .openqodex/reviews or .openqodex as a link still ends blocked on its finding, in the scanners-only mode and in the review mode's fallback, and nothing is written through the link", () => {
+    for (const planted of [".openqodex/reviews", ".openqodex"]) {
+      const elsewhere = mkdtempSync(join(tmpdir(), "oq-link-target-"));
+      const { dir, base } = pullRequest(null, null, (d) => {
+        mkdirSync(join(d, ".openqodex"), { recursive: true });
+        if (planted === ".openqodex") rmSync(join(d, ".openqodex"), { recursive: true });
+        symlinkSync(elsewhere, join(d, planted));
+      });
+      const pr = { EVENT_NAME: "pull_request", BASE_SHA: base, BASE_REF: "main", BLOCK_ON_SEVERITY: "info" };
+      for (const review of ["off", "required"]) {
+        const r = runStep(dir, { ...pr, REVIEW: review, ...noClaude() });
+        expect(r.outputs, `${planted} review ${review}`).toContain("status=blocked");
+        expect(outputOf(r.outputs, "exit-code"), `${planted} review ${review}`).toBe("1");
+        expect(r.stdout).not.toContain("is a symbolic link");
+      }
+      expect(readdirSync(elsewhere), planted).toEqual([]);
+    }
+  }, 60_000);
 
   it("11. a custom scanner the pull request adds never runs in CI, whichever config is used", () => {
     const marker = join(mkdtempSync(join(tmpdir(), "oq-custom-")), "ran");
@@ -425,9 +446,10 @@ function noClaude(): Record<string, string> {
   return { PATH: path, npm_config_registry: "http://127.0.0.1:9/", npm_config_fetch_retries: "0", npm_config_cache: mkdtempSync(join(tmpdir(), "oq-npm-cache-")) };
 }
 
-// Every file under a folder, for a search of its bytes.
+// Every file under a folder, for a search of its bytes. Links are left out:
+// the folder of links to the programs points at their files.
 function allFiles(dir: string): string[] {
-  return readdirSync(dir, { recursive: true, encoding: "utf8" }).map((p) => join(dir, p)).filter((p) => statSync(p).isFile());
+  return readdirSync(dir, { recursive: true, encoding: "utf8" }).map((p) => join(dir, p)).filter((p) => lstatSync(p).isFile());
 }
 
 const callsFile = () => join(mkdtempSync(join(tmpdir(), "oq-calls-")), "calls");
@@ -562,11 +584,47 @@ describe("the review mode, without a reviewer", () => {
     symlinkSync(join(dir, "tools", "npx"), join(npxLink, "npx"));
     const n = runStep(dir, {}, [npxLink]);
     expect(n.status).toBe(1);
-    expect(n.stdout).toContain("::error title=OpenQodex::npx was not found on PATH outside the repository");
+    expect(n.stdout).toContain("::error title=OpenQodex::OpenQodex found no npx on PATH outside the repository");
+    // A git whose links pass through the checkout, though the file they end
+    // at is the system git, stops the step too: a link in the checkout could
+    // be pointed elsewhere.
+    const real = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    symlinkSync(real, join(dir, "tools", "git-hop"));
+    const hop = mkdtempSync(join(tmpdir(), "oq-path-hop-"));
+    symlinkSync(join(dir, "tools", "git-hop"), join(hop, "git"));
+    const h = runStep(dir, {}, [hop]);
+    expect(h.status).toBe(1);
+    expect(h.stdout).toContain("::error title=OpenQodex::OpenQodex found no git on PATH outside the repository");
     expect(existsSync(marker)).toBe(false);
   });
 
-  it("R27. a review that ends abnormally is a tool failure whatever its report says, a blocking finding in it still counts, and whether the reviewer started comes from reviewer.json, never from stderr", () => {
+  it("R31, R25. the script's helpers come from the system folders, so an od planted ahead on PATH never picks the stop-commands token, and the programs it runs get a PATH of links to the validated files plus the system folders", () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "oq-helper-ran-")), "ran");
+    const planted = mkdtempSync(join(tmpdir(), "oq-path-helpers-"));
+    const chosen = "00112233445566778899aabbccddeeff";
+    for (const name of ["od", "tr", "tee", "mktemp", "sed", "grep", "cut", "head", "tail", "readlink", "ln", "mkdir"]) {
+      writeFileSync(join(planted, name), `#!/bin/sh\ntouch '${marker}'\necho ${name === "od" ? chosen : "x"}\n`);
+      chmodSync(join(planted, name), 0o755);
+    }
+    const paths = join(mkdtempSync(join(tmpdir(), "oq-paths-")), "paths");
+    const r = runStep(gitRepo().dir, { OQ_PATHS: paths }, [planted]);
+    expect(r.status).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    const tokens = [...r.stdout.matchAll(/^::stop-commands::(.*)$/gm)].map((m) => m[1]);
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const t of tokens) expect(t).toMatch(/^[0-9a-f]{32}$/);
+    expect(tokens).not.toContain(chosen);
+    // Every program got the folder of links and the system folders, never the workflow's PATH.
+    const got = readFileSync(paths, "utf8").trim().split("\n");
+    expect(got.length).toBe(2);
+    for (const p of got) {
+      const [links, ...rest] = p.split(delimiter);
+      expect(rest.join(delimiter)).toBe("/usr/bin:/bin:/usr/sbin:/sbin");
+      expect(links!.startsWith(`${r.temp}/openqodex-`) && links!.endsWith("/bin")).toBe(true);
+    }
+  });
+
+  it("R27, R32. a review that ends abnormally is a tool failure whatever its report says, a blocking finding in it still counts, and whether the reviewer started, and which, comes from reviewer.json, never from stderr", () => {
     const fns = ["last_line", "read_run", "review_result"].map((name) => new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}`).exec(SCRIPT)?.[0]);
     for (const f of fns) expect(f).toBeDefined();
     const result = (rc: number, files: Record<string, unknown>, stderr = "") => {
@@ -589,9 +647,10 @@ describe("the review mode, without a reviewer", () => {
     expect(failed).toMatchObject({ status: "incomplete", code: "2", scan: "1", reason: "openqodex review stopped with exit code 2: openqodex: could not write a file" });
     expect(failed.summary?.endsWith("/report.md")).toBe(true);
     expect(result(137, { "report.json": complete("blocked", major), "reviewer.json": started })).toMatchObject({ status: "incomplete", code: "1", scan: "1" });
-    // No report: started or not comes from reviewer.json, whatever stderr says.
+    // No report: started or not, and which reviewer, come from reviewer.json, whatever stderr says.
     const unavailableText = "Full review unavailable: openqodex could not start a reviewer.\n- claude: Claude Code 2.1.289 is not logged in\n";
     expect(result(143, { "reviewer.json": started }, unavailableText)).toMatchObject({ status: "incomplete", code: "2", scan: "1", reason: "openqodex review stopped with exit code 143: - claude: Claude Code 2.1.289 is not logged in" });
+    expect(result(137, { "reviewer.json": { started: true, driver: "claude", version: "2.1.289" } })).toMatchObject({ status: "incomplete", reviewer: "claude 2.1.289" });
     expect(result(2, { "reviewer.json": { started: false, reasons: ["claude: Claude Code 2.1.289 is not logged in"] } })).toMatchObject({ status: "unavailable", code: "2", scan: "1", reason: "claude: Claude Code 2.1.289 is not logged in", reviewer: "" });
     expect(result(2, {}, "openqodex: config file not found: x\n")).toMatchObject({ status: "unavailable", code: "2", scan: "1", reason: "openqodex review stopped with exit code 2: openqodex: config file not found: x" });
     // An incomplete review ends with 2 and keeps its report and reason.

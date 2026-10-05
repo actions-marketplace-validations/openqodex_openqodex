@@ -18,9 +18,12 @@
 # The key leaves the environment on the first line below. Only the review
 # command gets it back: doctor, the Claude Code install and a fallback scan
 # never see it, and nothing here prints it or writes it to a file.
-# Every program the script runs is looked up on a PATH without relative
-# folders and folders in the repository, and git, node, npx, npm and claude
-# are run only when their file, every link followed, lies outside it.
+# The script's own helpers (od, tee, mktemp, sed and the rest) come from the
+# system folders only. git, node, npx, npm and claude, and the runtimes the
+# scanners use, come from the workflow's PATH only when the file and every
+# link on the way to it lie outside the repository; the script runs them by
+# their resolved paths, and its programs get a PATH of links to those files
+# plus the system folders, never the workflow's PATH.
 # The output of every program goes to the job log with workflow commands
 # off, so text from the pull request (a file name) cannot write one.
 # The scanner install, the review and the scan run under one tool-failure
@@ -30,12 +33,22 @@ set -eo pipefail
 
 key="${ANTHROPIC_API_KEY-}"
 unset ANTHROPIC_API_KEY
+workflow_path="${PATH-}"
+BOOTSTRAP_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+PATH="$BOOTSTRAP_PATH"
+export PATH
 
 plain_name() { [[ "$1" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ ]] && [[ "$1" != -* ]]; }
 is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
-# An exact release version, which npm installs as it is: never a path, a
-# file: or git package, an alias, a tag or a range.
-is_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; }
+# A SemVer release version, which npm installs as it is: MAJOR.MINOR.PATCH
+# without leading zeros, and an optional prerelease of dot-separated
+# identifiers (letters, digits, hyphens; none empty, no leading zero in a
+# number). Never build metadata, a path, a file: or git package, an alias, a
+# tag or a range.
+SEMVER_NUMBER='(0|[1-9][0-9]*)'
+SEMVER_IDENT='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+SEMVER="^${SEMVER_NUMBER}\\.${SEMVER_NUMBER}\\.${SEMVER_NUMBER}(-${SEMVER_IDENT}(\\.${SEMVER_IDENT})*)?\$"
+is_version() { [[ "$1" =~ $SEMVER ]]; }
 
 # A wrong input is a workflow error: it fails the step with one line, before
 # any program runs.
@@ -80,66 +93,101 @@ in_repo() {
   return 1
 }
 
-# PATH without relative folders and folders in the repository, for this
-# script's lookups and its programs': a pull request can commit a folder of
-# programs, and a workflow can put such a folder on PATH.
-safe_path=""
-rest="${PATH}:"
+# The workflow's PATH without relative folders and folders in the
+# repository, searched for the programs below only: a pull request can
+# commit a folder of programs, and a workflow can put such a folder on PATH.
+search_path=""
+rest="${workflow_path}:"
 while [ -n "$rest" ]; do
   entry="${rest%%:*}"
   rest="${rest#*:}"
   case "$entry" in /*) ;; *) continue ;; esac
   real="$(cd -P "$entry" 2>/dev/null && pwd -P)" || continue
   if in_repo "$real"; then continue; fi
-  safe_path="${safe_path:+${safe_path}:}${entry}"
+  search_path="${search_path:+${search_path}:}${entry}"
 done
-PATH="$safe_path"
-export PATH
 
-# The file a path names once every link on the way is followed.
-real_path() {
-  local p="$1" link dir n=0
-  while [ -L "$p" ]; do
-    n=$((n + 1))
-    [ "$n" -le 40 ] || return 1
-    link="$(readlink "$p")" || return 1
-    case "$link" in
-      /*) p="$link" ;;
-      *) p="${p%/*}/${link}" ;;
+# The file an absolute path names, each part of the path and each link on
+# the way followed one step at a time, printed only when no step lands in
+# the repository; status 1 otherwise. So a link the checkout holds, or a
+# link that passes through it, never decides what runs.
+resolve_outside() {
+  local rest="$1" cur="" part link n=0
+  case "$rest" in /*) ;; *) return 1 ;; esac
+  while [ -n "$rest" ]; do
+    part="${rest%%/*}"
+    if [ "$part" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    case "$part" in
+      "" | .) continue ;;
+      ..)
+        cur="${cur%/*}"
+        continue
+        ;;
     esac
+    if in_repo "${cur}/${part}"; then return 1; fi
+    if [ -L "${cur}/${part}" ]; then
+      n=$((n + 1))
+      [ "$n" -le 64 ] || return 1
+      link="$(readlink "${cur}/${part}")" || return 1
+      case "$link" in /*) cur="" ;; esac
+      rest="${link}${rest:+/${rest}}"
+    else
+      cur="${cur}/${part}"
+    fi
   done
-  dir="$(cd -P "${p%/*}/" 2>/dev/null && pwd -P)" || return 1
-  printf '%s/%s\n' "${dir%/}" "${p##*/}"
-}
-outside_repo() {
-  local real
-  real="$(real_path "$1")" || return 1
-  ! in_repo "$real"
+  [ -f "$cur" ] && [ -x "$cur" ] || return 1
+  printf '%s\n' "$cur"
 }
 
-# The absolute path of a program on PATH whose file lies outside the
-# repository, every link followed; nothing, and status 1, otherwise. The
-# script runs programs by these paths only.
+# The resolved file of a program on the workflow's PATH, the first one found
+# there, when it passes resolve_outside; nothing, and status 1, otherwise.
+# The script runs programs by these paths only.
 program() {
-  local found
-  found="$(command -v "$1" 2>/dev/null)" || return 1
-  case "$found" in /*) ;; *) return 1 ;; esac
-  outside_repo "$found" || return 1
-  printf '%s\n' "$found"
+  local rest="${search_path}:" dir
+  while [ -n "$rest" ]; do
+    dir="${rest%%:*}"
+    rest="${rest#*:}"
+    [ -n "$dir" ] || continue
+    if [ -f "${dir}/$1" ] && [ -x "${dir}/$1" ]; then
+      resolve_outside "${dir}/$1"
+      return
+    fi
+  done
+  return 1
 }
 refuse() {
-  echo "::error title=OpenQodex::$1 was not found on PATH outside the repository; OpenQodex never runs a program the checkout holds"
+  echo "::error title=OpenQodex::OpenQodex found no $1 on PATH outside the repository, links followed; it never runs a program the checkout holds"
   exit 1
 }
 git_bin="$(program git)" || refuse git
 node_bin="$(program node)" || refuse node
 npx_bin="$(program npx)" || refuse npx
+npm_bin="$(program npm)" || npm_bin=""
+
+out_dir="$(mktemp -d "${RUNNER_TEMP}/openqodex-XXXXXX")"
+# The PATH the programs get: a folder of links named for each program the
+# script validated, pointing at the resolved files, then the system folders.
+# A scanner's runtime (ruby, gem, go, uv, xz) is linked the same way when the
+# workflow's PATH has one that passes the same check; nothing else from that
+# PATH reaches a program.
+links="${out_dir}/bin"
+mkdir "$links"
+ln -s "$git_bin" "${links}/git"
+ln -s "$node_bin" "${links}/node"
+ln -s "$npx_bin" "${links}/npx"
+if [ -n "$npm_bin" ]; then ln -s "$npm_bin" "${links}/npm"; fi
+for runtime in ruby gem go uv xz; do
+  if file="$(program "$runtime")"; then ln -s "$file" "${links}/${runtime}"; fi
+done
+PATH="${links}:${BOOTSTRAP_PATH}"
+export PATH
 
 # While a program's output goes to the job log, the runner reads no workflow
 # command in it: the output sits between ::stop-commands::<token> and
-# ::<token>::. The token is new and unpredictable each run, and never
-# exported, so no program can end the stretch early.
-token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+# ::<token>::. The token is new and unpredictable each run, read from
+# /dev/urandom by the system od, and never exported, so no program can end
+# the stretch early.
+token="$(/usr/bin/od -An -N16 -tx1 /dev/urandom | /usr/bin/tr -d ' \n')"
 
 # Runs a command with its stdout and stderr copied to the job log, both on
 # stdout so they stay inside the stretch, and its stderr also to the file
@@ -200,7 +248,6 @@ else
   echo "$note"
 fi
 
-out_dir="$(mktemp -d "${RUNNER_TEMP}/openqodex-XXXXXX")"
 sarif=""
 err="${out_dir}/stderr.txt"
 # npx and npm run from out_dir, never from the checkout: there npm would read
@@ -255,32 +302,36 @@ if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target"
   fi
 fi
 
-# Claude Code at the pinned version: the claude on PATH when it is that
-# version and lies outside the repository, else a copy installed from npm
-# into the runner's temporary folder, never over a Claude Code the runner has.
+# Claude Code at the pinned version: the claude on the workflow's PATH when
+# it is that version and passes resolve_outside, else a copy installed from
+# npm into the runner's temporary folder, never over a Claude Code the runner
+# has. The one chosen is linked as claude in the programs' PATH.
 claude_prefix="${RUNNER_TEMP}/openqodex-claude-code"
-claude_bin="${claude_prefix}/bin/claude"
 claude_version() { (cd "$out_dir" && "$1" --version 2>/dev/null) | head -n 1 | cut -d ' ' -f 1; }
-pinned_claude() { [ -x "$1" ] && outside_repo "$1" && [ "$(claude_version "$1")" = "$CLAUDE_CODE_VERSION" ]; }
 install_claude_code() { (cd "$out_dir" && "$npm_bin" install --global --prefix "$claude_prefix" --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"); }
 use_claude_code() {
-  local found npm_bin
-  if found="$(program claude)" && pinned_claude "$found"; then return 0; fi
-  if ! pinned_claude "$claude_bin"; then
-    npm_bin="$(program npm)" || return 1
+  local claude=""
+  if claude="$(program claude)" && [ "$(claude_version "$claude")" = "$CLAUDE_CODE_VERSION" ]; then
+    ln -s "$claude" "${links}/claude"
+    return 0
+  fi
+  claude="$(resolve_outside "${claude_prefix}/bin/claude")" || claude=""
+  if [ -z "$claude" ] || [ "$(claude_version "$claude")" != "$CLAUDE_CODE_VERSION" ]; then
+    [ -n "$npm_bin" ] || return 1
     echo "Installing Claude Code ${CLAUDE_CODE_VERSION} from npm"
     forward "${out_dir}/npm.txt" install_claude_code || return 1
-    pinned_claude "$claude_bin" || return 1
+    claude="$(resolve_outside "${claude_prefix}/bin/claude")" || return 1
+    [ "$(claude_version "$claude")" = "$CLAUDE_CODE_VERSION" ] || return 1
   fi
-  PATH="${claude_prefix}/bin:${PATH}"
-  export PATH
+  ln -s "$claude" "${links}/claude"
 }
 
 # This run's own review folder, one field per line:
 #   report    complete, incomplete, unreadable, or none without report.json
 #   blocking  1 when a finding (or a candidate nobody checked) meets the
 #             block severity
-#   reviewer  the reviewer and its version
+#   reviewer  the reviewer and its version, from the report, else from
+#             reviewer.json
 #   missing   what the review is missing
 #   started   true or false from reviewer.json, which review writes there
 #             when the reviewer starts or none can; empty without it
@@ -301,7 +352,7 @@ const severities = r ? (r.findings || []).map((f) => f.severity).concat((r.not_r
 const blocking = Boolean(r) && (r.verdict === "blocked" || (at >= 0 && severities.some((x) => order.indexOf(x) >= at)));
 const line = (x) => String(x).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 300);
 const report = r === null ? "none" : r === undefined ? "unreadable" : c.status === "complete" && r.verdict !== "incomplete" ? "complete" : "incomplete";
-const who = c.reviewer ? `${c.reviewer.driver} ${c.reviewer.version}` : "";
+const who = c.reviewer ? `${c.reviewer.driver} ${c.reviewer.version}` : s && s.driver ? `${s.driver} ${s.version}` : "";
 const started = s ? (s.started === true ? "true" : "false") : "";
 const reasons = s && Array.isArray(s.reasons) ? s.reasons.join("; ") : "";
 process.stdout.write([report, blocking ? "1" : "0", line(who), line((c.missing || []).join("; ")), started, line(reasons)].join("\n") + "\n");
@@ -376,9 +427,11 @@ elif ! use_claude_code; then
   review_reason="Claude Code ${CLAUDE_CODE_VERSION} could not be installed from npm"
   run_scan=1
 else
-  # Only this run's own folder is read: a report the pull request committed
-  # under .openqodex/ is never looked at. The reviewer's web tools are off
-  # for this run, whatever the runner's user config says.
+  # The run's files go to a folder of this run's own, and review touches
+  # nothing under .openqodex/ in the checkout, so a report or a link the pull
+  # request committed there is never read and cannot stop the run. The
+  # reviewer's web tools are off for this run, whatever the runner's user
+  # config says.
   report_dir="${out_dir}/review"
   review_err="${out_dir}/review-stderr.txt"
   rargs=(review "${config_args[@]}" "${instructions_args[@]}" --reviewer claude --reviewer-web off --report-dir "$report_dir")
@@ -396,12 +449,12 @@ fi
 
 if [ -n "$run_scan" ]; then
   # The scan's SARIF is the one uploaded: after a review that did not
-  # complete, it is the whole set of scanner findings.
+  # complete, it is the whole set of scanner findings. Its files go to a
+  # folder of this run's own, never under .openqodex/ in the checkout.
   review_code="$code"
   sarif="${out_dir}/openqodex.sarif"
   scan_dir="${out_dir}/scan"
-  args=(scan "${config_args[@]}" --format sarif --output "$sarif")
-  if [ "$mode" = "review" ]; then args+=(--report-dir "$scan_dir"); fi
+  args=(scan "${config_args[@]}" --format sarif --output "$sarif" --report-dir "$scan_dir")
   if [ -n "$base" ]; then args+=(--base "$base"); fi
   if [ -n "$BLOCK_ON_SEVERITY" ]; then args+=(--block-on-severity "$BLOCK_ON_SEVERITY"); fi
   forward "$err" npx_openqodex "${args[@]}"

@@ -27,10 +27,16 @@ Written before the tests. Each test of the review mode names the lines it guards
 
 Added after the code review of the first build:
 
-23. The script runs a program from the checkout: `claude`, `node`, `npx`, `npm` or `git` reached through a link (or a chain of links) in a PATH folder outside the checkout, a relative PATH folder, or a PATH folder inside the repository but outside the working folder.
-24. The `version` or `claude-code-version` input names a path, a `file:` or git package, an alias, a tag or a range, and npm installs a package the pull request controls.
+23. The script runs a program from the checkout: `claude`, `node`, `npx`, `npm` or `git` reached through a link (or a chain of links) in a PATH folder outside the checkout, through a link chain with any step inside the repository even when it ends outside, from a relative PATH folder, or from a PATH folder inside the repository but outside the working folder.
+24. The `version` or `claude-code-version` input names a path, a `file:` or git package, an alias, a tag, a range, or a malformed prerelease such as `1.2.3-..` that npm reads as a tag, and npm installs a package the pull request controls.
 25. Text a program prints to the job log (a file name with a line break followed by `::error::`) is read by the runner as a workflow command.
 26. Turning the reviewer's web tools off edits the runner's user config: a config written as a flow mapping (`{reviewer_web: on}`) becomes invalid YAML, an unwritable file leaves the web tools on, or a killed job leaves the file changed.
 27. `review` ends abnormally (a crash, a kill, or a failure after its report was written) and the Action takes the report's verdict as the result; or a review that stopped after the reviewer started is called unavailable; or a `.openqodex/latest.json` link the pull request planted changes the result.
 28. Text from the pull request makes markdown or HTML structure in the job summary through the scan report (a scanner's reason, a finding's message) or the tool-failure line.
 29. A step of the Action other than the one that runs the script holds the key.
+
+Added after the second code review:
+
+30. A pull request commits `.openqodex/reviews`, `.openqodex` or a file under it as a link, the scan or the review stops on it, and a blocking finding becomes a tool failure that the job passes by default; or something is written through the link.
+31. A helper the script runs (`od`, `tee`, `mktemp`, `sed` and the rest) is found through the workflow's PATH, so a program there runs or chooses the stop-commands token; or a program the script starts finds another program through the workflow's PATH.
+32. A review whose reviewer started and then ended without a report leaves the `reviewer` output empty.
