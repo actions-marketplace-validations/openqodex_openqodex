@@ -6,7 +6,7 @@
 // leaves the snapshot marks the whole call as outside. The agent's own
 // permission rules are the boundary; this check is the alarm that fails the
 // run when the trace shows the boundary was not where it should be.
-import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { TraceEntry } from "@openqodex/core";
@@ -43,10 +43,12 @@ function realDeep(abs: string): string {
 }
 
 // Whether the volume that holds the snapshot compares names without case,
-// asked once per snapshot. The evidence: the snapshot's name with its case
-// flipped (`tree` as `TREE`) is the same folder, same device and inode. A
-// platform says nothing: macOS and Windows volumes can keep case. When the
-// evidence cannot be read, names compare exactly, the stricter answer.
+// asked once per snapshot. The evidence: the snapshot's last name with its
+// case flipped (`tree` as `TREE`) is, without following a link, the same
+// folder, same device and inode. A link so named is no evidence. A platform
+// says nothing: macOS and Windows volumes can keep case. When the evidence
+// cannot be read, or the name has no letter to flip, names compare exactly,
+// the stricter answer.
 const caseFolding = new Map<string, boolean>();
 function foldsCase(snapshot: string): boolean {
   const known = caseFolding.get(snapshot);
@@ -56,9 +58,9 @@ function foldsCase(snapshot: string): boolean {
   let folds = false;
   if (flipped !== name) {
     try {
-      const own = statSync(snapshot, { bigint: true });
-      const other = statSync(join(dirname(snapshot), flipped), { bigint: true });
-      folds = own.dev === other.dev && own.ino === other.ino;
+      const own = lstatSync(snapshot, { bigint: true });
+      const other = lstatSync(join(dirname(snapshot), flipped), { bigint: true });
+      folds = !other.isSymbolicLink() && own.dev === other.dev && own.ino === other.ino;
     } catch {
       // no folder by the flipped name, or unreadable: exact
     }
@@ -76,11 +78,14 @@ function within(root: string, path: string, fold: boolean): boolean {
 
 // Bounds on the work one file pattern may cost before the check gives up
 // and marks the call outside: the alternatives its brace lists expand to
-// (`{a,b}` ten times over is 1024), the characters across all of them, and
-// the pieces Claude Code would split a Grep file glob into.
+// (`{a,b}` ten times over is 1024), the characters of the pattern and across
+// all its alternatives, the pieces Claude Code would split a Grep file glob
+// into, and the parser's steps (characters read and alternatives built)
+// across all of them.
 const MAX_PATTERN_ALTERNATIVES = 256;
 const MAX_PATTERN_CHARS = 65_536;
 const MAX_GLOB_PIECES = 256;
+const MAX_PATTERN_STEPS = 1_000_000;
 
 // How our reading of a tool call compares with the real one. Claude Code
 // 2.1.289 (read in its binary) reads every path field through its
@@ -117,13 +122,16 @@ const MAX_GLOB_PIECES = 256;
 
 // Alternatives and the characters across them.
 type Expansion = { alts: string[]; chars: number };
+// The parser steps one file pattern has taken, against MAX_PATTERN_STEPS.
+type Budget = { steps: number };
 
 // Every alternative of `a` followed by every alternative of `b`, or null when
 // the result would pass a bound; nothing is built past one.
-function product(a: Expansion, b: Expansion): Expansion | null {
+function product(a: Expansion, b: Expansion, budget: Budget): Expansion | null {
   const count = a.alts.length * b.alts.length;
   const chars = a.chars * b.alts.length + b.chars * a.alts.length;
-  if (count > MAX_PATTERN_ALTERNATIVES || chars > MAX_PATTERN_CHARS) return null;
+  budget.steps += count;
+  if (count > MAX_PATTERN_ALTERNATIVES || chars > MAX_PATTERN_CHARS || budget.steps > MAX_PATTERN_STEPS) return null;
   return { alts: a.alts.flatMap((s) => b.alts.map((t) => s + t)), chars };
 }
 
@@ -131,7 +139,7 @@ function product(a: Expansion, b: Expansion): Expansion | null {
 // `{src,lib/{a,b}}/*.ts` is `src/*.ts`, `lib/a/*.ts` and `lib/b/*.ts`. A
 // backslash escapes the next character and is kept in the alternative. Null
 // when the braces do not balance or the expansion would pass a bound.
-function alternatives(pattern: string): string[] | null {
+function alternatives(pattern: string, budget: Budget): string[] | null {
   let i = 0;
   // One alternative's text up to a `,` or `}` of the list it is in, or to the
   // end of the pattern at the top level, where a `,` is plain text. Plain
@@ -140,11 +148,12 @@ function alternatives(pattern: string): string[] | null {
     let out: Expansion | null = { alts: [""], chars: 0 };
     let run = "";
     const flush = (): Expansion | null => {
-      out = out === null ? null : product(out, { alts: [run], chars: run.length });
+      out = out === null ? null : product(out, { alts: [run], chars: run.length }, budget);
       run = "";
       return out;
     };
     while (i < pattern.length) {
+      if (++budget.steps > MAX_PATTERN_STEPS) return null;
       const c = pattern[i]!;
       if (c === "\\") {
         run += pattern.slice(i, i + 2);
@@ -152,7 +161,7 @@ function alternatives(pattern: string): string[] | null {
       } else if (c === "{") {
         i++;
         const listed = flush() === null ? null : list();
-        out = listed === null || out === null ? null : product(out, listed);
+        out = listed === null || out === null ? null : product(out, listed, budget);
         if (out === null) return null;
       } else if (c === "}" || (c === "," && inList)) {
         return inList ? flush() : null;
@@ -218,14 +227,17 @@ function texts(value: string, grepGlob: boolean): string[] | null {
 // absolute or may reach out. The readings of a text are the text itself and
 // each alternative of its brace lists, each as written and with its escapes
 // removed (`\/etc` is `/etc` to ripgrep). Empty when every reading is
-// relative. Outside when braces do not balance or a bound is passed.
+// relative. Outside when braces do not balance or a bound is passed; a
+// pattern longer than MAX_PATTERN_CHARS is not read at all.
 function patternRoots(value: string, grepGlob: boolean): string[] {
   const outside = ["/"];
+  if (value.length > MAX_PATTERN_CHARS) return outside;
   const all = texts(value, grepGlob);
   if (all === null) return outside;
+  const budget: Budget = { steps: 0 };
   const roots = new Set<string>();
   for (const text of all) {
-    const alts = alternatives(text);
+    const alts = alternatives(text, budget);
     if (alts === null) return outside;
     for (const reading of [text, ...alts]) {
       for (const form of [reading, reading.replace(/\\(.)/gs, "$1")]) {
@@ -237,14 +249,18 @@ function patternRoots(value: string, grepGlob: boolean): string[] {
   return [...roots];
 }
 
-// The paths a raw path may name: as written, and as Claude Code's
-// `expandPath` reads it (trimmed; on Windows `/c/x` is `C:\x`).
-function pathReadings(raw: string): string[] {
+// A raw path as Claude Code's `expandPath` reads it: trimmed, and on Windows
+// `/c/x` as `C:\x`.
+function expanded(raw: string): string {
   const trimmed = raw.trim();
-  const all = new Set([raw, trimmed]);
   const drive = /^\/([A-Za-z])\//.exec(trimmed);
-  if (process.platform === "win32" && drive) all.add(`${drive[1]}:\\${trimmed.slice(3)}`);
-  return [...all];
+  return process.platform === "win32" && drive ? `${drive[1]}:\\${trimmed.slice(3)}` : trimmed;
+}
+
+// The paths a raw path may name: as written, trimmed, and as `expandPath`
+// reads it.
+function pathReadings(raw: string): string[] {
+  return [...new Set([raw, raw.trim(), expanded(raw)])];
 }
 
 // The folders a pattern root may name: as written, and as the folder Claude
@@ -271,7 +287,8 @@ function place(snapshot: string, path: string): string | null {
 
 // A path holding `$` or `%` may be a variable the agent expanded (`$HOME`,
 // `%USERPROFILE%`) or a real name (Remix's `posts.$slug.tsx`, `100%.md`).
-// It is taken as the name only when that name exists.
+// It is taken as the name only when that name exists. Asked of the path as
+// `expandPath` reads it, the one Claude Code opens.
 function named(snapshot: string, path: string): boolean {
   if (!path.includes("$") && !path.includes("%")) return true;
   const abs = literal(snapshot, path);
@@ -326,7 +343,7 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
     return { tool: call.tool, path: "(a read with no file_path)", inside: false, range: null, ok: true };
   }
   for (const raw of paths) {
-    if (pathReadings(raw).some((r) => !inside(place(snapshot, r)) || !named(snapshot, r))) return { tool: call.tool, path: raw, inside: false, range, ok: call.ok };
+    if (pathReadings(raw).some((r) => !inside(place(snapshot, r))) || !named(snapshot, expanded(raw))) return { tool: call.tool, path: raw, inside: false, range, ok: call.ok };
   }
   const first = paths[0] ?? roots[0] ?? null;
   const real = first === null ? null : place(snapshot, call.read?.path ?? first);

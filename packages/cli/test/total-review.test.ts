@@ -75,9 +75,11 @@
 //     escaped bracket on macOS and Linux. A path or a search folder Claude
 //     Code trims to one outside completes. A pattern with too many
 //     characters or pieces to check is expanded anyway, or makes the check
-//     throw; or empty pieces Claude Code drops count toward the bound.
+//     throw, or takes seconds; or empty pieces Claude Code drops count
+//     toward the bound.
 // 34. On a volume that keeps case, a folder named like the snapshot in other
-//     case is taken for the snapshot; or on one that ignores case, the
+//     case is taken for the snapshot, or a link so named is taken as
+//     evidence that case is ignored; or on one that ignores case, the
 //     snapshot named in other case ends the review.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -90,6 +92,7 @@ import { DEPTH_ENV, killGroup, spawnGroup } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { DELIVER_LINES, deliverRanges, redactSnapshot, runReview } from "../src/review-run.js";
 import { claudeDriver, reviewerEnv } from "../src/reviewers/claude.js";
+import { classify } from "../src/reviewers/trace.js";
 import type { ToolCall } from "../src/reviewers/trace.js";
 import { readHomeReceipt } from "../src/receipts.js";
 import { cli, sandbox } from "./init-helpers.js";
@@ -397,7 +400,7 @@ describe("30. brace lists in a file pattern", () => {
     ["a close with no open", grep("packages/cli/src/**}")],
     ["a pattern of a million alternatives, past the bound, which must not be expanded", glob("{a,b,c,d}/".repeat(10))],
     ["a pattern whose alternatives would hold more characters than the bound, which must not be expanded", glob(`{${Array.from({ length: 256 }, (_, i) => `d${i}`).join(",")}}/${"x".repeat(4096)}`)],
-    ["a list nested deeper than the stack can follow", glob(`${"{".repeat(100_000)}a${"}".repeat(100_000)}`)],
+    ["a list nested deeper than the stack can follow, within the length bound", glob(`${"{".repeat(30_000)}a${"}".repeat(30_000)}`)],
   ];
   for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
 });
@@ -433,6 +436,7 @@ describe("32. $ and % in a name", () => {
   const delivered = (snapshotDir: string, file: string): ToolCall => ({ tool: "Read", input: { file_path: join(snapshotDir, file) }, ok: true, read: { path: join(snapshotDir, file), start: 1, lines: 1 } });
   it("a read of a Remix route file named with $ keeps the run complete", () => expectInside((s) => delivered(s, "app/routes/posts.$slug.tsx"), named()));
   it("a read of a file named with % keeps the run complete", () => expectInside((s) => delivered(s, "docs/100%.md"), named()));
+  it("a read of a Remix route file padded with spaces, which Claude Code trims, keeps the run complete", () => expectInside(() => readOf(" app/routes/posts.$slug.tsx "), named()));
   it("a Grep file glob holding $ keeps the run complete", () => expectInside(() => grep("app/routes/*.$slug.tsx"), named()));
   it("an absolute file pattern in the snapshot naming a $ file keeps the run complete", () => expectInside((s) => glob(`${s}/app/routes/posts.$slug.tsx`), named()));
   const outside: [string, ToolCall][] = [
@@ -454,11 +458,20 @@ describe("33. no reading of ours is looser than Claude Code's or ripgrep's", () 
     ["a brace inside a bracket class, which ripgrep reads as a plain character", glob("*.[{]ts")],
     ["a Grep folder with spaces around it, which Claude Code trims to an absolute folder", { tool: "Grep", input: { pattern: "key", path: " /etc " }, ok: true, read: null }],
     ["a read with a space before ~/, which Claude Code trims to the home folder", readOf(" ~/.ssh/id_rsa")],
-    ["a Grep file glob of more pieces than the bound", grep("a,".repeat(200_000))],
+    ["a Grep file glob of more pieces than the bound", grep("a,".repeat(300))],
   ];
   for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
   it("a Grep file glob of 200,000 commas is too large to check and does not crash the check", () => expectOutside(grep(",".repeat(200_000))));
   it("a Grep file glob with many empty pieces, which Claude Code drops before the bound, keeps the run complete", () => expectInside(() => grep(`${",".repeat(1000)}*.sql`)));
+  // Timed on the check alone: a review around it takes longer than the bound.
+  const timed = (pattern: string) => {
+    const snapshotDir = mkdtempSync(join(tmpdir(), "oq-work-"));
+    const started = Date.now();
+    expect(classify(snapshotDir, glob(pattern)).inside).toBe(false);
+    expect(Date.now() - started).toBeLessThan(250);
+  };
+  it("a pattern far longer than the bound, 256 empty alternatives then a million empty lists, is refused in well under a second", () => timed(`{${",".repeat(255)}}${"{}".repeat(1_000_000)}`));
+  it("a pattern within the length bound whose expansion work passes the budget is refused in well under a second", () => timed(`{${",".repeat(255)}}${"{}".repeat(32_000)}`));
   // The checkout writes links as plain files; this guards the check on its
   // own, should a link ever reach the snapshot.
   it("an absolute pattern whose search folder Claude Code trims to a link out of the snapshot makes the run incomplete", async () => {
@@ -512,6 +525,22 @@ describe("34. case in a path is compared as the snapshot's volume compares it", 
     mkdirSync(home, { recursive: true, mode: 0o700 });
     vi.stubEnv("OPENQODEX_HOME", home);
     expect(await review(repo(), fake([twin]))).toBe(2);
+    expect((JSON.parse(out) as Report).completion?.status).toBe("incomplete");
+  });
+  it("on a volume that keeps case, a link named like the snapshot in other case is no evidence that case is ignored", async () => {
+    const home = join(volume, "home-link");
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    vi.stubEnv("OPENQODEX_HOME", home);
+    // `TREE` links to the snapshot `tree`; `Tree` is another real folder.
+    const linked: Answer = (text, snapshotDir) => {
+      const name = basename(snapshotDir);
+      symlinkSync(name, join(dirname(snapshotDir), name.toUpperCase()));
+      const other = join(dirname(snapshotDir), `${name[0]!.toUpperCase()}${name.slice(1)}`);
+      mkdirSync(other);
+      writeFileSync(join(other, "x.sql"), SQL);
+      return { finalText: submission(text), calls: [readOf(join(other, "x.sql"))] };
+    };
+    expect(await review(repo(), fake([linked]))).toBe(2);
     expect((JSON.parse(out) as Report).completion?.status).toBe("incomplete");
   });
   it.runIf(process.platform === "darwin")("on a volume that ignores case, the snapshot named in other case keeps the run complete", async () => {
