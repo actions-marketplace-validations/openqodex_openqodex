@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   DIFF_CAP_BYTES,
   STATE_DIR,
+  DEFAULT_CONFIG,
   findRepoRoot,
   getChange,
   isRepoState,
@@ -57,8 +58,12 @@ export type PipelineResult = {
   secrets: string[];
 };
 
-export async function loadRepo(flags: GlobalFlags): Promise<{ repoRoot: string; config: Config }> {
+// `checkoutSettings` false (`--report-dir`): without `--config` the built-in
+// defaults, never the repository's own file, so nothing under .openqodex/
+// in the checkout is read.
+export async function loadRepo(flags: GlobalFlags, checkoutSettings = true): Promise<{ repoRoot: string; config: Config }> {
   const repoRoot = await findRepoRoot(flags.cwd);
+  if (!checkoutSettings && flags.config === undefined) return { repoRoot, config: structuredClone(DEFAULT_CONFIG) };
   const loaded = loadConfig(repoRoot, flags.config);
   for (const w of loaded.warnings) warn(`openqodex: ${w}`);
   return { repoRoot, config: loaded.config };
@@ -69,8 +74,9 @@ export async function runPipeline(args: {
   flags: GlobalFlags;
   only?: ScannerSource[];
   skip?: ScannerSource[];
+  checkoutSettings?: boolean;
 }): Promise<PipelineResult> {
-  const { repoRoot, config } = await loadRepo(args.flags);
+  const { repoRoot, config } = await loadRepo(args.flags, args.checkoutSettings);
   const change = await getChange({ repoRoot, scope: args.scope, exclude: config.exclude, defaultBase: config.defaultBase });
   return scanChange({ ...args, repoRoot, config, change });
 }

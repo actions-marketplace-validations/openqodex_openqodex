@@ -32,8 +32,9 @@ export async function runScan(args: {
   // a workflow can set a gate the change's own config cannot weaken.
   blockOn?: string;
   // --report-dir: this scan's files go to this folder alone, and nothing
-  // under .openqodex/ in the checkout is created, read or written, so a link
-  // a branch committed there cannot stop the scan (the GitHub Action).
+  // under .openqodex/ in the checkout is created, read or written (without
+  // --config, the built-in defaults), so a link a branch committed there
+  // cannot stop the scan (the GitHub Action).
   reportDir?: string;
 }): Promise<ScanOutcome> {
   const { flags } = args;
@@ -46,6 +47,7 @@ export async function runScan(args: {
     flags,
     only: scannerList("--only", args.only),
     skip: scannerList("--skip", args.skip),
+    checkoutSettings: args.reportDir === undefined,
   });
   if (args.blockOn !== undefined) p.config = { ...p.config, blockOnSeverity: args.blockOn as Severity };
   if (args.reportDir === undefined) announceRepoFiles(p.repoRoot);

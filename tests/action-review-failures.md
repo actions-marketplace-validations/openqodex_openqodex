@@ -40,3 +40,8 @@ Added after the second code review:
 30. A pull request commits `.openqodex/reviews`, `.openqodex` or a file under it as a link, the scan or the review stops on it, and a blocking finding becomes a tool failure that the job passes by default; or something is written through the link.
 31. A helper the script runs (`od`, `tee`, `mktemp`, `sed` and the rest) is found through the workflow's PATH, so a program there runs or chooses the stop-commands token; or a program the script starts finds another program through the workflow's PATH.
 32. A review whose reviewer started and then ended without a report leaves the `reviewer` output empty.
+
+Added after the third code review:
+
+33. On a push event or with `config-from: head`, a commit makes `.openqodex`, `.openqodex/config.yaml` or `.openqodex/custom-instructions.md` a link, and `doctor`, the scan or the review reads it from the checkout: the link stops the run, so a blocking finding becomes a tool failure, or the run reads the file the link points at.
+34. The `version` or `claude-code-version` input is longer than 64 characters, or has a major, minor or patch number over 9 digits, which npm's version parser refuses and reads as a tag.

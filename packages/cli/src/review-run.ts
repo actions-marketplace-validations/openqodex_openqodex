@@ -106,9 +106,11 @@ export type ReviewOptions = {
   // base branch's copy, so a pull request cannot supply its own).
   instructions?: string;
   // --report-dir: every file of this run goes to this folder alone, and
-  // nothing under .openqodex/ in the checkout is created, read or written,
-  // so a caller takes this run's report and never one a branch planted
-  // there, and a link a branch committed there cannot stop the run.
+  // nothing under .openqodex/ in the checkout is created, read or written
+  // (without --config and --instructions, the built-in defaults and no
+  // instructions), so a caller takes this run's report and never one a
+  // branch planted there, and a link a branch committed there cannot stop
+  // the run.
   // reviewer.json there says whether a reviewer started (and which), and
   // why none could when none did.
   reportDir?: string;
@@ -581,7 +583,7 @@ function runFolder(o: ReviewOptions, repoRoot: string, shortId: string): { dir: 
 export async function runReview(o: ReviewOptions): Promise<number> {
   if (process.env[DEPTH_ENV]) throw new OpenQodexError("openqodex review cannot run inside an openqodex reviewer");
   const say = progress(o.flags);
-  const loaded = await loadRepo(o.flags);
+  const loaded = await loadRepo(o.flags, o.reportDir === undefined);
   const repoRoot = loaded.repoRoot;
   const config: Config = o.blockOn === undefined ? loaded.config : { ...loaded.config, blockOnSeverity: o.blockOn };
   const owner = checkoutOwner(repoRoot);
@@ -649,7 +651,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const redaction = redactSnapshot(prep.snapshot.tree, p.secrets);
     if (redaction.redacted > 0) say(`Redacted secrets in ${redaction.redacted} ${redaction.redacted === 1 ? "file" : "files"} of the snapshot`);
     if (redaction.removed.length > 0) warn(`Left out of the review, too large to check for secrets: ${redaction.removed.join(", ")}`);
-    const instructions = ownersInstructions(repoRoot, p.secrets, o.instructions);
+    // --report-dir without --instructions: none, never the checkout's file.
+    const instructions = o.reportDir !== undefined && o.instructions === undefined ? { text: "", hash: null } : ownersInstructions(repoRoot, p.secrets, o.instructions);
     let lenses: SelectedLens[];
     let impact: ImpactSummary;
     let brief: { text: string; diffFiles: Set<string> };

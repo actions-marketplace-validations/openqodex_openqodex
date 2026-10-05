@@ -33,6 +33,10 @@ OpenQodex and the built-in scanners send no code anywhere. The review runs on th
 
 In the GitHub Action's review mode, the reviewer is Claude Code on the runner, and it sends the brief and what it reads to Anthropic's API under the repository's own key, the `ANTHROPIC_API_KEY` secret the workflow sets on the step. The reviewer's web tools are off there. The key is handed to the `review` command alone, never to `doctor`, the Claude Code install or a fallback `scan`. The `review` process holds the key while it runs the scanners on the pull request's files; `github-action` says what keeps it from the pull request's code, and what does not.
 
+The runner starts the step's shell from the job's `PATH` before the Action's script takes control. A workflow whose earlier steps add a folder the pull request controls to `PATH` is outside what the Action can protect: that folder's `bash` would run the step, with the key in its environment.
+
+The script's check that a program does not lie inside the repository compares paths as they are spelled. On a file system that ignores letter case, a `PATH` folder outside the repository that an attacker already controls could link back into it under a different capitalisation; like the first limit, this needs a `PATH` folder the attacker controls before the Action starts.
+
 OpenQodex and the built-in scanners use the network for these things only:
 
 - Scanner downloads on first use. GitHub release files are checked against sha256 sums pinned in the package. semgrep and bandit come from PyPI through uv, with a Python 3.11 that uv downloads. oxlint comes from npm. brakeman and rubocop come from RubyGems. These package installs are pinned by version.

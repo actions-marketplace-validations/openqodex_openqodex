@@ -41,14 +41,15 @@ export PATH
 plain_name() { [[ "$1" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ ]] && [[ "$1" != -* ]]; }
 is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
 # A SemVer release version, which npm installs as it is: MAJOR.MINOR.PATCH
-# without leading zeros, and an optional prerelease of dot-separated
-# identifiers (letters, digits, hyphens; none empty, no leading zero in a
-# number). Never build metadata, a path, a file: or git package, an alias, a
-# tag or a range.
-SEMVER_NUMBER='(0|[1-9][0-9]*)'
+# without leading zeros, each at most 9 digits, and an optional prerelease
+# of dot-separated identifiers (letters, digits, hyphens; none empty, no
+# leading zero in a number), 64 characters in all at most. Never build
+# metadata, a path, a file: or git package, an alias, a tag or a range, nor
+# a number or a length npm's version parser refuses and reads as a tag.
+SEMVER_NUMBER='(0|[1-9][0-9]{0,8})'
 SEMVER_IDENT='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
 SEMVER="^${SEMVER_NUMBER}\\.${SEMVER_NUMBER}\\.${SEMVER_NUMBER}(-${SEMVER_IDENT}(\\.${SEMVER_IDENT})*)?\$"
-is_version() { [[ "$1" =~ $SEMVER ]]; }
+is_version() { [ "${#1}" -le 64 ] && [[ "$1" =~ $SEMVER ]]; }
 
 # A wrong input is a workflow error: it fails the step with one line, before
 # any program runs.
@@ -273,34 +274,48 @@ summary_text() {
   printf '%s' "$1" | tr -d '\000-\037\177' | sed -e 's/[]\`*_[()!<>#|~\\]/\\&/g' | cut -c 1-600
 }
 
-# In a pull request the config comes from the base branch unless the workflow
-# says head: the pull request's own config could hide findings. Whatever goes
-# wrong, OpenQodex gets an explicit config (empty: the built-in defaults),
-# never the pull request's own file. The review's custom instructions follow
-# the same rule: the base branch's .openqodex/custom-instructions.md, or none.
-config_args=()
-instructions_args=()
-if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
-  if [ "$CONFIG_FROM" = "base" ]; then
-    base_config="${out_dir}/base-config.yaml"
-    base_instructions="${out_dir}/base-instructions.md"
-    : > "$base_config"
-    : > "$base_instructions"
-    if ! plain_name "$BASE_REF"; then
-      echo "::warning title=OpenQodex config::the base branch name is not a plain branch name, so OpenQodex uses the built-in defaults"
-    elif ! forward "${out_dir}/fetch.txt" "$git_bin" fetch --no-tags --quiet origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
-      echo "::warning title=OpenQodex config::could not fetch the base branch, so OpenQodex uses the built-in defaults, not the pull request's config"
-    else
-      "$git_bin" show "refs/remotes/origin/${BASE_REF}:.openqodex/config.yaml" > "$base_config" 2>/dev/null ||
-        "$git_bin" show "refs/remotes/origin/${BASE_REF}:.openqodex.yaml" > "$base_config" 2>/dev/null ||
-        : > "$base_config"
-      "$git_bin" show "refs/remotes/origin/${BASE_REF}:.openqodex/custom-instructions.md" > "$base_instructions" 2>/dev/null ||
-        : > "$base_instructions"
-    fi
-    config_args=(--config "$base_config")
-    instructions_args=(--instructions "$base_instructions")
+# The config and the review's custom instructions, always as files in this
+# run's own folder, read from the git objects of one commit and never from
+# the work tree: in a pull request with config-from: base, the base branch
+# (the pull request's own config could hide findings); otherwise the
+# checked-out commit. Only a regular file in that commit counts: a link, a
+# folder or nothing at the path gives the built-in defaults and no
+# instructions. So no command here reads .openqodex/ in the checkout, and a
+# link committed there cannot stop one.
+config_file="${out_dir}/config.yaml"
+instructions_file="${out_dir}/custom-instructions.md"
+: > "$config_file"
+: > "$instructions_file"
+# Writes the file at path $2 of commit $1 to $3 when the commit holds a
+# regular file there, by its object id; status 1 otherwise.
+blob_to() {
+  local entry mode type sha rest
+  entry="$("$git_bin" ls-tree --full-tree "$1" -- "$2" 2>/dev/null)" || return 1
+  read -r mode type sha rest <<< "$entry"
+  [ "$type" = "blob" ] || return 1
+  case "$mode" in 100644 | 100755) ;; *) return 1 ;; esac
+  "$git_bin" cat-file blob "$sha" > "$3" 2>/dev/null
+}
+settings_commit=HEAD
+if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; } && [ "$CONFIG_FROM" = "base" ]; then
+  settings_commit=""
+  if ! plain_name "$BASE_REF"; then
+    echo "::warning title=OpenQodex config::the base branch name is not a plain branch name, so OpenQodex uses the built-in defaults"
+  elif ! forward "${out_dir}/fetch.txt" "$git_bin" fetch --no-tags --quiet origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
+    echo "::warning title=OpenQodex config::could not fetch the base branch, so OpenQodex uses the built-in defaults, not the pull request's config"
+  else
+    settings_commit="refs/remotes/origin/${BASE_REF}"
   fi
 fi
+if [ -n "$settings_commit" ]; then
+  blob_to "$settings_commit" .openqodex/config.yaml "$config_file" ||
+    blob_to "$settings_commit" .openqodex.yaml "$config_file" ||
+    : > "$config_file"
+  blob_to "$settings_commit" .openqodex/custom-instructions.md "$instructions_file" ||
+    : > "$instructions_file"
+fi
+config_args=(--config "$config_file")
+instructions_args=(--instructions "$instructions_file")
 
 # Claude Code at the pinned version: the claude on the workflow's PATH when
 # it is that version and passes resolve_outside, else a copy installed from

@@ -10,7 +10,7 @@ For machines. Kept for the pre-commit hook and the GitHub Action, which call it,
 openqodex scan [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>] [--block-on-severity <severity>] [--report-dir <folder>]
 ```
 
-Runs the scanners on the change and prints their findings, labelled as scanner data. No model is involved and nothing is checked: it is not a review. The pre-commit hook runs this command, and so does the GitHub Action when it has no key for the review or no reviewer could start. `--block-on-severity` sets the severity that makes it exit 1, and wins over `review.block_on_severity` in the config. `--report-dir <folder>` writes this scan's files (`report.md`, `report.json`, `report.sarif`, `scan.json`) to that folder instead of `.openqodex/reviews/`, and then the scan creates, reads and writes nothing under `.openqodex/` in the repository but the config, as for `review`.
+Runs the scanners on the change and prints their findings, labelled as scanner data. No model is involved and nothing is checked: it is not a review. The pre-commit hook runs this command, and so does the GitHub Action when it has no key for the review or no reviewer could start. `--block-on-severity` sets the severity that makes it exit 1, and wins over `review.block_on_severity` in the config. `--report-dir <folder>` writes this scan's files (`report.md`, `report.json`, `report.sarif`, `scan.json`) to that folder instead of `.openqodex/reviews/`, and then the scan creates, reads and writes nothing under `.openqodex/` in the repository, as for `review`: without `--config` it uses the built-in defaults.
 
 ## review --agent and review --finalize
 
