@@ -33,8 +33,11 @@ export function impactLine(report: Report): string | null {
   const last = (edges: ImpactEdge[]) => edges[edges.length - 1] as ImpactEdge;
   const callers = new Set(impact.callers.map((p) => last(p.edges).from)).size;
   const files = new Set(impact.callers.flatMap((p) => last(p.edges).sites.map((s) => s.file))).size;
+  const moved = new Set(impact.symbols.filter((s) => s.movedTo).map((s) => s.id));
+  const removed = impact.removed.filter((id) => !moved.has(id)).length;
   const parts = [`${impact.touched.length} ${impact.touched.length === 1 ? "symbol" : "symbols"} touched`];
-  if (impact.removed.length > 0) parts.push(`${impact.removed.length} removed`);
+  if (removed > 0) parts.push(`${removed} removed`);
+  if (impact.removed.length > removed) parts.push(`${impact.removed.length - removed} moved`);
   parts.push(`${callers} ${callers === 1 ? "caller" : "callers"} in ${files} ${files === 1 ? "file" : "files"}`);
   const partial = impact.status === "partial" ? ", partial graph" : "";
   return `Blast radius: risk ${impact.risk ?? "none"} (${parts.join(", ")}${partial})`;

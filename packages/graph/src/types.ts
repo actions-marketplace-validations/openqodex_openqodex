@@ -125,7 +125,7 @@ export type Graph = {
   out: Map<string, GraphEdge[]>;
   importers: Map<string, GraphEdge[]>; // target file or Go package folder to its import edges
   defsByFile: Map<string, GraphNode[]>; // current symbols per file
-  removed: Map<string, GraphNode[]>; // per changed file: symbols in the base version and gone now
+  removed: Map<string, GraphNode[]>; // per changed file: symbols in the base version and gone now; `movedTo` on a move the build found
   misses: Miss[];
   status: GraphStatus;
 };

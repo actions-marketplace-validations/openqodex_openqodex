@@ -212,6 +212,8 @@ How OpenQodex gets the scanner. The default downloads the GitHub release asset t
 
 The code graph lists the callers and importers of the code a change touches, for the brief.
 
+The brief lists a function, class or type the change deletes as removed, with each call site that still reaches it. When exactly one file of the change now defines it with the same name and kind, and no call site still reaches the old place, it is listed as moved to that file and does not raise the risk. A move with a new name reads as removed.
+
 - `graph.enabled`: `true` or `false`. The default is `true`.
 - `graph.budget_ms`: the time the graph may take, in milliseconds. The default is `10000`.
 - `graph.max_files`: the most files the graph reads. The default is `4000`.
