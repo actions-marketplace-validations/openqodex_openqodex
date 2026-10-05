@@ -14,6 +14,9 @@
 // 11. A changed file left out by the size cap reports all its symbols as removed.
 // 12. Base versions are parsed past the file cap without saying so.
 // 13. A recursive call site is dropped from the graph.
+// 14. A name bound by destructuring (`const { a } = x`, `[a] = x`, a
+//     parameter `{ a }`) does not hide a definition of the same name, so a
+//     call to it gets a certain edge to that definition.
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -116,6 +119,35 @@ describe("certain edges", () => {
     expect(callSites(g, symbol(g, "a.ts", "helper", "outer"))).toEqual([at(files, "a.ts", "NESTED")]);
     expect(callSites(g, symbol(g, "b.py", "target"))).toEqual([at(files, "b.py", "PYTOP")]);
     expect(callSites(g, symbol(g, "c.go", "Target"))).toEqual([at(files, "c.go", "GOTOP")]);
+  });
+
+  it("lets a name bound by destructuring, in a declaration or a parameter, hide a definition of the same name (14)", async () => {
+    const files = {
+      "a.ts": [
+        "export function target() {}",
+        "export function viaObject(deps: { target: () => void }) {",
+        "  const { target } = deps;",
+        "  target(); // OBJECT",
+        "}",
+        "export function viaRenamed(deps: { run: () => void }) {",
+        "  const { run: target } = deps;",
+        "  target(); // RENAMED",
+        "}",
+        "export function viaArray(list: (() => void)[]) {",
+        "  const [target] = list;",
+        "  target(); // ARRAY",
+        "}",
+        "export function viaParam({ target }: { target: () => void }) {",
+        "  target(); // PARAM",
+        "}",
+        "export function own() {",
+        "  target(); // TOP",
+        "}",
+      ].join("\n"),
+    };
+    const g = await build(repo(files));
+    expect(callSites(g, symbol(g, "a.ts", "target"))).toEqual([at(files, "a.ts", "TOP")]);
+    expect(g.misses).toEqual([]);
   });
 
   it("resolves an import through the export table, never to a private definition of the same name (5)", async () => {

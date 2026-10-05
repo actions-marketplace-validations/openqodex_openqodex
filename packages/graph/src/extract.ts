@@ -9,7 +9,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 4;
+export const EXTRACTOR_VERSION = 5;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -352,9 +352,35 @@ function jsParams(ctx: Ctx, fn: Node, locals: Map<string, TypeRef | null>): void
       locals.set(p.text, null);
       continue;
     }
+    // TypeScript wraps each parameter and names its pattern; JavaScript does not.
     const pattern = p.childForFieldName("pattern");
     if (pattern?.type === "identifier") locals.set(pattern.text, declared(jsTypeRef(p.childForFieldName("type"))));
+    else for (const name of patternNames(pattern ?? p)) locals.set(name, null);
   }
+}
+
+// The names a destructuring pattern binds: `{ a, b: c, d = 1, ...e }`, `[f, [g] = h]`.
+function patternNames(node: Node | null, out: string[] = []): string[] {
+  if (!node) return out;
+  switch (node.type) {
+    case "identifier":
+    case "shorthand_property_identifier_pattern":
+      out.push(node.text);
+      break;
+    case "pair_pattern":
+      patternNames(node.childForFieldName("value"), out);
+      break;
+    case "assignment_pattern":
+    case "object_assignment_pattern":
+      patternNames(node.childForFieldName("left"), out);
+      break;
+    case "object_pattern":
+    case "array_pattern":
+    case "rest_pattern":
+      for (const c of node.namedChildren) patternNames(c, out);
+      break;
+  }
+  return out;
 }
 
 function isExportedDecl(node: Node): boolean {
@@ -466,21 +492,28 @@ function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): L
   return false;
 }
 
-// `const x = require("./m")` and `const { a, b: c } = require("./m")`.
+// `const x = require("./m")` and `const { a, b: c } = require("./m")`, and the
+// same with `await import("./m")`. Like a require, a dynamic import inside a
+// function binds its names for the whole file. Without `await` the value is
+// a promise, not the module, so it is not an import.
 function jsRequire(ctx: Ctx, node: Node, nameNode: Node, value: Node): boolean {
-  if (value.type !== "call_expression" || value.childForFieldName("function")?.text !== "require") return false;
-  const arg = value.childForFieldName("arguments")?.firstNamedChild;
+  const awaited = value.type === "await_expression";
+  const call = awaited ? value.firstNamedChild : value;
+  if (call?.type !== "call_expression") return false;
+  const fn = call.childForFieldName("function");
+  if (awaited ? fn?.type !== "import" : fn?.text !== "require") return false;
+  const arg = call.childForFieldName("arguments")?.firstNamedChild;
   if (arg?.type !== "string") return false;
   const fact: ImportFact = { spec: stringContent(arg), ...pos(node), names: [], namespace: null, star: false, reexport: false, typeOnly: false };
   if (nameNode.type === "identifier") fact.namespace = nameNode.text;
   else if (nameNode.type === "object_pattern") {
     for (const p of nameNode.namedChildren) {
+      const key = p.type === "pair_pattern" ? p.childForFieldName("key") : null;
+      const val = p.type === "pair_pattern" ? p.childForFieldName("value") : null;
       if (p.type === "shorthand_property_identifier_pattern") fact.names.push({ imported: p.text, local: p.text });
-      else if (p.type === "pair_pattern") {
-        const key = p.childForFieldName("key");
-        const val = p.childForFieldName("value");
-        if (key && val?.type === "identifier") fact.names.push({ imported: key.text, local: val.text });
-      }
+      else if (key && val?.type === "identifier") fact.names.push({ imported: key.text, local: val.text });
+      // A default value or a nested pattern: a local whose value is not known.
+      else for (const name of patternNames(p)) ctx.setLocal(name, null);
     }
   }
   ctx.imports.push(fact);
@@ -592,7 +625,12 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         const value = node.childForFieldName("value");
         if (!name) return;
         if (value && jsRequire(ctx, node, name, value)) return false;
-        if (name.type !== "identifier") return;
+        if (name.type !== "identifier") {
+          // `const { a } = x`, `const [b] = y`: each name is a local of this
+          // scope and hides a definition of the same name outside it.
+          for (const n of patternNames(name)) ctx.setLocal(n, null);
+          return;
+        }
         const isFn = value && ["arrow_function", "function_expression", "function", "generator_function"].includes(value.type);
         const parent = node.parent;
         const moduleLevel = (parent?.parent?.type === "program" || parent?.parent?.type === "export_statement") && ctx.atModuleLevel();
