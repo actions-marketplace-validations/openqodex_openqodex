@@ -8,7 +8,7 @@ Written before the tests. Each test of the review mode names the lines it guards
 4. The API key reaches `doctor`, the scanner install, the Claude Code install, a fallback `scan` or a scanner process.
 5. The key appears in the job log, the job summary, an output, or a file under the runner's temporary folder.
 6. The review ends incomplete (a timeout, a reviewer error, an answer that fails its checks) and the job reports `reviewed=true` or `review-status=complete`.
-7. An incomplete review that left a report is replaced by a scan, so the findings that passed every check are lost.
+7. An incomplete review that left a report is replaced by the scan, so the findings that passed every check are lost from the job summary or the verdict.
 8. No reviewer can start (no key and no login, or Claude Code fails to install), and the job shows no scanner findings and no reason.
 9. The change is empty after the config's exclusions, and `review: required` fails the job, or the outputs claim a review ran.
 10. The workflow runs on `pull_request_target`, and the Action reviews a fork's code with the repository's key.
@@ -23,4 +23,4 @@ Written before the tests. Each test of the review mode names the lines it guards
 19. Text from the pull request (a file name, a finding title, a reviewer's message) writes a workflow command or markdown structure into the annotation or the job summary.
 20. The outputs `reviewed`, `review-status` and `reviewer` are missing, or say a review ran when it did not.
 21. npm runs in the checkout, so the pull request's `.npmrc` points `npx` at a registry of its own, or a committed `node_modules` supplies the `openqodex` that runs, and that program gets the key.
-22. Open, not closed by this change: the reviewer stops before any answer passes its checks (a timeout, an error, a refused key), so the partial report holds no findings. The scanner findings, a secret among them, are then neither shown on their own nor counted, where the scanners-only mode fails the job on them at the block severity. The plan keeps the partial report and runs no scan when one exists; `review: required` fails such a job.
+22. The reviewer stops before any answer passes its checks (a timeout, an error, a refused key), so the partial report holds no findings, and a secret the scanners found is neither shown nor counted, where the scanners-only mode fails the job on it at the block severity.

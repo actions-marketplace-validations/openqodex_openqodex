@@ -292,11 +292,13 @@ else
       review_status=complete
       if [ "$blocking" = "1" ]; then code=1; else code=0; fi
     else
-      # An incomplete review keeps its partial report; a blocking finding in it
-      # fails the job like any other.
+      # An incomplete review keeps its partial report, and the scan runs too,
+      # so a scanner finding still counts: the reviewer may have stopped
+      # before it checked any. A blocking finding in either fails the job.
       review_status=incomplete
       review_reason="${missing:-the review is incomplete}"
       if [ "$blocking" = "1" ]; then code=1; else code=2; fi
+      run_scan=1
     fi
   elif [ "$rc" = "0" ] && [ ! -e "${report_dir}/report.json" ]; then
     review_status=skipped
@@ -310,8 +312,13 @@ else
 fi
 
 if [ -n "$run_scan" ]; then
+  # The scan's SARIF is the one uploaded: after a review that did not
+  # complete, it is the whole set of scanner findings.
+  review_code="$code"
   sarif="${out_dir}/openqodex.sarif"
+  scan_dir="${out_dir}/scan"
   args=(scan "${config_args[@]}" --format sarif --output "$sarif")
+  if [ "$mode" = "review" ]; then args+=(--report-dir "$scan_dir"); fi
   if [ -n "$base" ]; then args+=(--base "$base"); fi
   if [ -n "$BLOCK_ON_SEVERITY" ]; then args+=(--block-on-severity "$BLOCK_ON_SEVERITY"); fi
   npx_openqodex "${args[@]}" 2> >(tee "$err" >&2)
@@ -322,8 +329,12 @@ if [ -n "$run_scan" ]; then
     code=2
     scan_failed=1
   fi
-  # A review that did not complete is a tool failure too, unless a finding blocks.
-  if [ "$mode" = "review" ] && [ "$code" = "0" ]; then code=2; fi
+  # In review mode the result is the worse of the review and the scan: a
+  # blocking finding from either is 1, and a review that did not complete is
+  # a tool failure (2) otherwise.
+  if [ "$mode" = "review" ]; then
+    if [ "$code" = "1" ] || [ "$review_code" = "1" ]; then code=1; else code=2; fi
+  fi
 fi
 set -e
 
@@ -361,7 +372,11 @@ fi
       echo
       echo "The partial report of this run follows. Its findings passed every check, but the change was not fully reviewed."
       echo
-      head -c 1000000 "$summary_file"
+      head -c 500000 "$summary_file"
+      echo
+      echo "The scanner findings below come from a separate scan, because the review did not complete."
+      echo
+      if [ -f "${scan_dir}/report.md" ]; then head -c 500000 "${scan_dir}/report.md"; fi
       ;;
     unavailable)
       echo "**The review did not complete:** $(summary_text "$review_reason")"

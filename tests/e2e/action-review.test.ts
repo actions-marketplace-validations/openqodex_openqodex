@@ -145,16 +145,18 @@ function pullRequest(label: string, baseFiles: Record<string, string>, headFiles
 const PLANTED_NAME = "20260101-000000-aaaaaaaaaaaa";
 const PLANTED_RUN = `.openqodex/reviews/${PLANTED_NAME}`;
 
-// The run folders the review wrote in the checkout, newest last.
+// The run folders a review wrote in the checkout (a scan's has no brief), newest last.
 function runFolders(dir: string): string[] {
   const reviews = join(dir, ".openqodex/reviews");
-  return existsSync(reviews) ? readdirSync(reviews).filter((n) => n !== PLANTED_NAME).sort().map((n) => join(reviews, n)) : [];
+  return existsSync(reviews) ? readdirSync(reviews).filter((n) => n !== PLANTED_NAME).sort().map((n) => join(reviews, n)).filter((d) => existsSync(join(d, "brief.md"))) : [];
 }
 
 // The user config of the OpenQodex home folder, or null: the review mode
 // must leave it as it found it.
 const homeConfig = (): string | null => (existsSync(join(toolsHome, "config.yaml")) ? readFileSync(join(toolsHome, "config.yaml"), "utf8") : null);
 const isReportDirFile = (path: string | undefined, name: string): boolean => path !== undefined && path.startsWith(`${runnerTemp}/openqodex-`) && path.endsWith(`/review/${name}`);
+const isScanSarif = (path: string | undefined): boolean => path !== undefined && path.startsWith(`${runnerTemp}/openqodex-`) && path.endsWith("/openqodex.sarif");
+const SEPARATE_SCAN = "The scanner findings below come from a separate scan, because the review did not complete.";
 const plantedReport: Record<string, string> = {
   [`${PLANTED_RUN}/report.json`]: JSON.stringify({ version: 1, kind: "review", verdict: "passed", block_on_severity: null, findings: [], completion: { status: "complete", missing: [], reviewer: { driver: "claude", version: "9.9.9" } } }),
   [`${PLANTED_RUN}/report.md`]: "# PLANTED REVIEW: no findings\n",
@@ -226,13 +228,13 @@ describe("the Action's review mode with no login", () => {
     const r = runAction("action-refused-key", dir, { ...noLogin, ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "20", BASE_SHA: base, BASE_REF: "main" });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout.split("\n")[0]).toContain("on the repository's Anthropic API key");
-    expect(r.calls).toBe("doctor key=\nreview key=set\n");
+    expect(r.calls).toBe("doctor key=\nreview key=set\nscan key=\n");
     expect(r.outputs["review-status"]).toBe("incomplete");
     expect(r.outputs.reviewed).toBe("false");
     expect(r.outputs["exit-code"]).toBe("2");
     expect(r.summary).toContain("**The review did not complete:**");
     expect(r.summary).toContain("Review incomplete: this is not a review of the change");
-    expect(isReportDirFile(r.outputs["sarif-file"], "report.sarif")).toBe(true);
+    expect(isScanSarif(r.outputs["sarif-file"])).toBe(true);
     expect(jobFails(r.outputs)).toBe(false);
     expect(jobFails(r.outputs, { failOnToolError: true })).toBe(true);
     expect(jobFails(r.outputs, { review: "required" })).toBe(true);
@@ -241,6 +243,39 @@ describe("the Action's review mode with no login", () => {
     expect(brief).not.toContain("HEAD-CANARY-9C1D");
     expect(r.stdout + r.stderr + r.summary + JSON.stringify(r.outputs)).not.toContain(KEY);
     for (const f of [...allFiles(runnerTemp).filter((p) => !p.includes("openqodex-claude-code")), ...allFiles(join(dir, ".openqodex"))]) expect(readFileSync(f, "latin1"), f).not.toContain(KEY);
+  }, 900_000);
+});
+
+describe("an incomplete review and the scanner findings", () => {
+  const skip = offline() ? "OPENQODEX_E2E_OFFLINE=1" : null;
+
+  it("R22. a review forced incomplete by --timeout never hides a planted secret: the scan runs without the key, the job is blocked, and the secret's finding is in the SARIF", () => {
+    if (skip !== null) return void process.stdout.write(`action review forced incomplete: skipped, ${skip}\n`);
+    const { dir, base } = pullRequest("action-incomplete-secret", {}, {});
+    // A placeholder key and no login: the reviewer starts, and its deadline has passed already.
+    const r = runAction("action-incomplete-secret", dir, { CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "oq-e2e-no-login-")), ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "1", BASE_SHA: base, BASE_REF: "main", BLOCK_ON_SEVERITY: "major" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.calls).toBe("doctor key=\nreview key=set\nscan key=\n");
+    expect(r.outputs["review-status"]).toBe("incomplete");
+    expect(r.outputs.reviewed).toBe("false");
+    expect(r.outputs["exit-code"]).toBe("1");
+    expect(r.outputs.status).toBe("blocked");
+    // Blocked under auto, with fail-on-tool-error false, and under required.
+    expect(jobFails(r.outputs, { review: "auto", failOnToolError: false })).toBe(true);
+    expect(jobFails(r.outputs, { review: "required" })).toBe(true);
+    expect(isScanSarif(r.outputs["sarif-file"])).toBe(true);
+    const sarif = JSON.parse(readFileSync(r.outputs["sarif-file"]!, "utf8")) as { runs: { results: { ruleId: string; locations: { physicalLocation: { artifactLocation: { uri: string } } }[] }[] }[] };
+    const secret = sarif.runs.flatMap((run) => run.results).filter((x) => x.locations[0]?.physicalLocation.artifactLocation.uri === "app/config.py" && /stripe/i.test(x.ruleId));
+    expect(secret.length, JSON.stringify(sarif.runs.flatMap((run) => run.results.map((x) => x.ruleId)))).toBeGreaterThan(0);
+    expect(readFileSync(r.outputs["sarif-file"]!, "utf8")).not.toContain(generatedSecret(dir));
+    // The partial review first, then the line, then the scan's own report.
+    const at = (s: string) => r.summary.indexOf(s);
+    expect(at("Review incomplete: this is not a review of the change")).toBeGreaterThan(-1);
+    expect(at(SEPARATE_SCAN)).toBeGreaterThan(at("Review incomplete: this is not a review of the change"));
+    expect(at("# OpenQodex scan")).toBeGreaterThan(at(SEPARATE_SCAN));
+    expect(r.summary).toContain("app/config.py");
+    expect(r.summary + r.stdout).not.toContain(generatedSecret(dir));
+    expect(r.stdout + r.stderr + r.summary + JSON.stringify(r.outputs)).not.toContain(KEY);
   }, 900_000);
 });
 
@@ -292,8 +327,9 @@ describe("the Action's review mode with the real Claude Code", () => {
     expect(r.stdout).toContain("::warning title=OpenQodex review did not complete::");
     expect(r.summary).toMatch(/\*\*The review did not complete:\*\* .*timed out/);
     expect(r.summary).toContain("Review incomplete: this is not a review of the change");
-    expect(r.outputs.sarif).toBe("true");
-    expect(r.calls).toBe("doctor key=\nreview key=\n");
+    expect(r.summary).toContain(SEPARATE_SCAN);
+    expect(isScanSarif(r.outputs["sarif-file"])).toBe(true);
+    expect(r.calls).toBe("doctor key=\nreview key=\nscan key=\n");
     expect(jobFails(r.outputs)).toBe(false);
     expect(jobFails(r.outputs, { failOnToolError: true })).toBe(true);
     expect(jobFails(r.outputs, { review: "required" })).toBe(true);
