@@ -1,5 +1,18 @@
 # openqodex
 
+## 0.7.0
+
+### Minor Changes
+
+- [#46](https://github.com/openqodex/openqodex/pull/46) [`ee608c8`](https://github.com/openqodex/openqodex/commit/ee608c849458cdfccadda00e0c34dcb46cd57bc2) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - The GitHub Action runs the full review on a pull request when the workflow sets `ANTHROPIC_API_KEY` on its step from a secret: the scanners, the code graph and a Claude Code reviewer, with the report in the job summary and the findings in code scanning. Without a key it runs the scanners only, as before, and says in one line how to turn the review on. Each review spends the repository's own API credit.
+  - The new Action input `review` takes `auto` (the review with a key, the default), `off` or `required`, which fails the job without a complete review. The new input `claude-code-version` pins the Claude Code the Action installs. The new outputs `reviewed`, `review-status` and `reviewer` say what ran.
+  - In a pull request the Action's review reads the custom instructions from the base branch, like the config, so a pull request cannot write its own. The reviewer's web tools are off in the Action, the key reaches the review command alone, and the review never runs on `pull_request_target`.
+  - When the Action's review does not complete, the job also runs the scanners, so an incomplete review never hides a scanner finding: the summary shows the partial review and then the scan, code scanning gets the scan's findings, and a blocking finding from either fails the job.
+  - The Action's `version` and `claude-code-version` inputs take an exact SemVer release version only, such as `0.6.1`; a tag such as `latest`, a range, a path or a `file:` package now fails the step. The Action runs its helpers from the system folders only, runs `git`, `node`, `npx`, `npm` and `claude` only from outside the checkout and gives its programs a PATH of those alone plus the system folders, keeps every program's output from writing workflow commands into the job log, escapes the text it puts in the job summary, and sets the key empty on its other steps. A pull request that commits `.openqodex/reviews` or `.openqodex` as a link no longer turns a blocking finding into a tool failure.
+  - `openqodex review` takes `--block-on-severity`, as `scan` does, `--instructions <file>` to read the owners' instructions from another file, `--reviewer-web on|off` to set the reviewer's web tools for one run over the user config, and `--report-dir <folder>` to write every file of the run, and a `reviewer.json` that says whether a reviewer started and which, to a folder of your choice instead of `.openqodex/`, touching nothing under `.openqodex/` in the repository. `openqodex scan` takes `--report-dir` too.
+  - A `.openqodex/latest.json` that is a link no longer fails a finished review: `review` warns and keeps its exit code.
+  - The markdown scan report escapes every markdown and HTML character in scanner messages and reasons, as the review report does.
+
 ## 0.6.1
 
 ### Patch Changes
