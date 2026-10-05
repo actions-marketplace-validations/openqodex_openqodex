@@ -17,6 +17,15 @@
 //    with `await import()` inside a function. The call fell back to the
 //    caller's own file, where the old definition was, and read as a caller
 //    of the removed symbol.
+// 9. A name loaded with `await import()` inside one function binds the same
+//    name in another function of the file, which hides that function's
+//    broken call to the removed symbol.
+// 10. A `let` or `const` inside a block (or a for or catch binding) hides a
+//     call after the block, which still reaches the removed symbol.
+// 11. A call in a default value of a destructured `await import()` is never
+//     read, so its call to the removed symbol is lost.
+// 12. The Python form of 9: `from .b import f` inside one function binds `f`
+//     for the whole module.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -192,5 +201,79 @@ describe("moved symbols", () => {
     expect(callSites(g, symbol(g, "src/checkout.ts", "place"))).toEqual([at(change, "src/hook.ts", "NAMED"), at(change, "src/hook.ts", "MODULE")]);
     expect(removedNamed(impact, "place").movedTo?.file).toBe("src/checkout.ts");
     expect(block).not.toContain("still called");
+  });
+
+  it("keeps a name loaded with await import() inside one function out of the other functions of the file (9)", async () => {
+    const base = {
+      "src/a.ts": "export function f(): number {\n  return 1;\n}\n\nexport function oldCaller(): number {\n  return f(); // BROKEN\n}\n",
+    };
+    const change = {
+      "src/a.ts":
+        'export function oldCaller(): number {\n  return f(); // BROKEN\n}\n\nexport async function loader(): Promise<number> {\n  const { f } = await import("./b.js");\n  return f(); // LOADED\n}\n',
+      "src/b.ts": "export function f(): number {\n  return 1;\n}\n",
+    };
+    const { g, impact } = await review(base, change);
+    const f = removedNamed(impact, "f");
+    expect(f.movedTo).toBeUndefined();
+    expect(stillCalled(impact, f.id)).toEqual([at(change, "src/a.ts", "BROKEN")]);
+    expect(callSites(g, symbol(g, "src/b.ts", "f"))).toEqual([at(change, "src/a.ts", "LOADED")]);
+    expect(impact.risk).toBe("high");
+  });
+
+  it("lets a let, a const, a for binding or a catch binding hide a name only inside its block, and a var in its whole function (10)", async () => {
+    const run = [
+      "export function run(deps: { f: () => number }, list: (() => number)[]): number {",
+      "  {",
+      "    const { f } = deps;",
+      "    f();",
+      "  }",
+      "  for (const f of list) f();",
+      "  try {",
+      "    f(); // TRY",
+      "  } catch (f) {",
+      "    if (typeof f === 'function') f();",
+      "  }",
+      "  return f(); // OUTER",
+      "}",
+      "",
+      "export function viaVar(deps: { f: () => number }): number {",
+      "  {",
+      "    var f = deps.f;",
+      "  }",
+      "  return f(); // VAR",
+      "}",
+      "",
+    ].join("\n");
+    const base = { "src/a.ts": `export function f(): number {\n  return 1;\n}\n\n${run}` };
+    const change = { "src/a.ts": run };
+    const { impact } = await review(base, change);
+    const f = removedNamed(impact, "f");
+    expect(stillCalled(impact, f.id).sort()).toEqual([at(change, "src/a.ts", "TRY"), at(change, "src/a.ts", "OUTER")].sort());
+    expect(impact.risk).toBe("high");
+  });
+
+  it("reads a call in a default value of a destructured await import() (11)", async () => {
+    const load = 'export async function load(): Promise<number> {\n  const { a = fallback() } = await import("./m.js"); // DEFAULT\n  return a();\n}\n';
+    const base = {
+      "src/a.ts": `export function fallback(): () => number {\n  return () => 1;\n}\n\n${load}`,
+      "src/m.ts": "export function a(): number {\n  return 2;\n}\n",
+    };
+    const { impact } = await review(base, { "src/a.ts": load });
+    const fallback = removedNamed(impact, "fallback");
+    expect(stillCalled(impact, fallback.id)).toEqual([at({ "src/a.ts": load }, "src/a.ts", "DEFAULT")]);
+    expect(impact.risk).toBe("high");
+  });
+
+  it("keeps a Python import inside one function out of the other functions of the module (12)", async () => {
+    const base = { "pkg/a.py": "def f():\n    return 1\n\n\ndef old_caller():\n    return f()  # BROKEN\n" };
+    const change = {
+      "pkg/a.py": "def old_caller():\n    return f()  # BROKEN\n\n\ndef loader():\n    from .b import f\n    return f()  # LOADED\n",
+      "pkg/b.py": "def f():\n    return 1\n",
+    };
+    const { g, impact } = await review(base, change);
+    const f = removedNamed(impact, "f");
+    expect(f.movedTo).toBeUndefined();
+    expect(stillCalled(impact, f.id)).toEqual([at(change, "pkg/a.py", "BROKEN")]);
+    expect(callSites(g, symbol(g, "pkg/b.py", "f"))).toEqual([at(change, "pkg/a.py", "LOADED")]);
   });
 });

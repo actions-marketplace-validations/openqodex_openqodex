@@ -137,7 +137,12 @@ function isTypeRef(v: unknown): boolean {
   );
 }
 
-function isReceiver(v: unknown): boolean {
+// A scoped import binding: absent, or an import of this file by index.
+function optBound(b: unknown, imports: number): boolean {
+  return b === undefined || (isObj(b) && isInt(b.import) && (b.import as number) >= 0 && (b.import as number) < imports && isStr(b.imported));
+}
+
+function isReceiver(v: unknown, imports: number): boolean {
   if (!isObj(v)) return false;
   const path = (p: unknown) => isList(p, isStr, 64);
   switch (v.kind) {
@@ -150,7 +155,7 @@ function isReceiver(v: unknown): boolean {
     case "type":
       return isTypeRef(v.type) && path(v.path);
     case "name":
-      return isStr(v.name) && path(v.path) && (v.nesting === null || isStr(v.nesting));
+      return isStr(v.name) && path(v.path) && (v.nesting === null || isStr(v.nesting)) && optBound(v.bound, imports);
     default:
       return false;
   }
@@ -183,6 +188,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
   if (!isObj(v) || !LANGS.has(v.lang as string)) return false;
   if (!isList(v.defs, isDef)) return false;
   const defs = (v.defs as unknown[]).length;
+  const imports = Array.isArray(v.imports) ? v.imports.length : 0;
   const isCall = (c: unknown) =>
     isObj(c) &&
     isStr(c.name) &&
@@ -190,11 +196,12 @@ export function isFileFacts(v: unknown): v is FileFacts {
     isInt(c.column) &&
     isInt(c.caller) &&
     (c.caller as number) < defs &&
-    isReceiver(c.recv) &&
+    isReceiver(c.recv, imports) &&
     optBool(c.implicit) &&
     optBool(c.shadowed) &&
     optBool(c.static) &&
-    (c.local === undefined || (isInt(c.local) && (c.local as number) >= 0 && (c.local as number) < defs));
+    (c.local === undefined || (isInt(c.local) && (c.local as number) >= 0 && (c.local as number) < defs)) &&
+    optBound(c.bound, imports);
   const isImport = (i: unknown) =>
     isObj(i) &&
     isStr(i.spec) &&
@@ -206,7 +213,8 @@ export function isFileFacts(v: unknown): v is FileFacts {
     typeof i.reexport === "boolean" &&
     typeof i.typeOnly === "boolean" &&
     optBool(i.relative) &&
-    optBool(i.alias);
+    optBool(i.alias) &&
+    optBool(i.scoped);
   return (
     isList(v.calls, isCall) &&
     isList(v.imports, isImport, 20_000) &&
