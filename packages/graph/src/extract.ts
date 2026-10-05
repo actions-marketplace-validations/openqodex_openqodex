@@ -6,16 +6,20 @@
 // The node types and fields below are the tree-sitter grammars' own; the
 // patterns were written here against the pinned grammar files.
 import type { Node, Tree } from "web-tree-sitter";
-import type { CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
+import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 5;
+export const EXTRACTOR_VERSION = 6;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
   cls: string | null; // set on a class or module frame: its qualified name
   locals: Map<string, TypeRef | null> | null; // null: no scope of its own
   fns?: Map<string, number>; // definitions declared in this scope, by name
+  imports?: Map<string, BoundImport>; // names an import made in this scope binds
+  // A JavaScript block (`{ }`, a loop, a catch clause): `let`, `const` and
+  // a nested function land here; `var` and parameters skip it.
+  block?: boolean;
 };
 
 type Leave = () => void;
@@ -99,28 +103,64 @@ class Ctx {
     return null;
   }
 
-  // True when no function frame stands between here and the module.
+  // True when no function frame stands between here and the module. A block
+  // at the top of the module (an `if`, a `try`) keeps its definitions top level.
   atModuleLevel(): boolean {
-    return this.frames.every((f, i) => i === 0 || (f.cls !== null && f.locals === null));
+    return this.frames.every((f, i) => i === 0 || f.block === true || (f.cls !== null && f.locals === null));
   }
 
+  // The type of a local, null for a local of unknown type, undefined when
+  // the nearest scope that knows the name does not hold it as a local.
   local(name: string): TypeRef | null | undefined {
     for (let i = this.frames.length - 1; i >= 0; i--) {
-      const locals = (this.frames[i] as Frame).locals;
-      if (locals?.has(name)) return locals.get(name);
+      const f = this.frames[i] as Frame;
+      if (f.imports?.has(name)) return undefined;
+      if (f.locals?.has(name)) return f.locals.get(name);
     }
     return undefined;
   }
 
-  // A declaration: the name is new in the innermost scope.
-  setLocal(name: string, type: TypeRef | null): void {
+  // The scoped import a name stands for, when the nearest scope that knows
+  // the name got it from one.
+  bound(name: string): BoundImport | undefined {
     for (let i = this.frames.length - 1; i >= 0; i--) {
-      const locals = (this.frames[i] as Frame).locals;
-      if (locals) {
-        locals.set(name, type);
-        return;
-      }
+      const f = this.frames[i] as Frame;
+      if (f.fns?.has(name) || f.locals?.has(name)) return undefined;
+      const b = f.imports?.get(name);
+      if (b) return b;
     }
+    return undefined;
+  }
+
+  // The frame a declaration lands in: the innermost scope, or with
+  // `block` false (`var`, a parameter, Python) the innermost one that is not
+  // a JavaScript block. 0 is the module.
+  private scope(block: boolean): number {
+    for (let i = this.frames.length - 1; i > 0; i--) {
+      const f = this.frames[i] as Frame;
+      if (f.locals && (block || !f.block)) return i;
+    }
+    return 0;
+  }
+
+  // A declaration: the name is new in its scope.
+  setLocal(name: string, type: TypeRef | null, block = false): void {
+    (this.frames[this.scope(block)] as Frame).locals?.set(name, type);
+  }
+
+  // An import. At the top of the module its names are the file's; made
+  // inside a function or a block, they belong to that scope only, so a call
+  // elsewhere in the file never resolves through them.
+  addImport(fact: ImportFact, block = false): void {
+    const at = this.scope(block);
+    const index = this.imports.length;
+    this.imports.push(fact);
+    if (at === 0) return;
+    fact.scoped = true;
+    const f = this.frames[at] as Frame;
+    f.imports ??= new Map();
+    for (const n of fact.names) f.imports.set(n.local, { import: index, imported: n.imported });
+    if (fact.namespace) f.imports.set(fact.namespace, { import: index, imported: "*" });
   }
 
   // An assignment to a name that may exist already. A declared type stands;
@@ -201,6 +241,11 @@ class Ctx {
           call.local = fn;
           break;
         }
+        const bound = f.imports?.get(call.name);
+        if (bound) {
+          call.bound = bound;
+          break;
+        }
         if (f.locals?.has(call.name)) {
           // A module-level variable hides only names it is not also defined as.
           if (i > 0 || !topNames.has(call.name)) call.shadowed = true;
@@ -247,6 +292,10 @@ const JS_TYPES = new Set([
   "jsx_opening_element",
   "jsx_self_closing_element",
   "for_in_statement",
+  "for_statement",
+  "statement_block",
+  "switch_body",
+  "catch_clause",
 ]);
 
 function jsTypeRef(annotation: Node | null): TypeRef | null {
@@ -306,6 +355,8 @@ function jsReceiver(ctx: Ctx, object: Node): Receiver {
     return type ? { kind: "type", type, path } : { kind: "other" };
   }
   if (base.type === "identifier") {
+    const bound = ctx.bound(base.text);
+    if (bound) return { kind: "name", name: base.text, path, nesting: null, bound };
     const type = ctx.local(base.text);
     if (type?.elem) return { kind: "other" };
     if (type) return { kind: "type", type, path };
@@ -493,10 +544,10 @@ function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): L
 }
 
 // `const x = require("./m")` and `const { a, b: c } = require("./m")`, and the
-// same with `await import("./m")`. Like a require, a dynamic import inside a
-// function binds its names for the whole file. Without `await` the value is
-// a promise, not the module, so it is not an import.
-function jsRequire(ctx: Ctx, node: Node, nameNode: Node, value: Node): boolean {
+// same with `await import("./m")`. Inside a function or a block the names
+// belong to that scope (`block`: a `let` or `const`). Without `await` the
+// value is a promise, not the module, so it is not an import.
+function jsRequire(ctx: Ctx, node: Node, nameNode: Node, value: Node, block: boolean): boolean {
   const awaited = value.type === "await_expression";
   const call = awaited ? value.firstNamedChild : value;
   if (call?.type !== "call_expression") return false;
@@ -513,10 +564,10 @@ function jsRequire(ctx: Ctx, node: Node, nameNode: Node, value: Node): boolean {
       if (p.type === "shorthand_property_identifier_pattern") fact.names.push({ imported: p.text, local: p.text });
       else if (key && val?.type === "identifier") fact.names.push({ imported: key.text, local: val.text });
       // A default value or a nested pattern: a local whose value is not known.
-      else for (const name of patternNames(p)) ctx.setLocal(name, null);
+      else for (const name of patternNames(p)) ctx.setLocal(name, null, block);
     }
   }
-  ctx.imports.push(fact);
+  ctx.addImport(fact, block);
   return true;
 }
 
@@ -624,11 +675,15 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         const name = node.childForFieldName("name");
         const value = node.childForFieldName("value");
         if (!name) return;
-        if (value && jsRequire(ctx, node, name, value)) return false;
+        // `let` and `const` belong to their block, `var` to its function.
+        const block = node.parent?.type !== "variable_declaration";
+        // The walk goes on into the declarator either way: a default value
+        // such as `{ a = fallback() }` holds calls of its own.
+        if (value && jsRequire(ctx, node, name, value, block)) return;
         if (name.type !== "identifier") {
-          // `const { a } = x`, `const [b] = y`: each name is a local of this
+          // `const { a } = x`, `const [b] = y`: each name is a local of its
           // scope and hides a definition of the same name outside it.
-          for (const n of patternNames(name)) ctx.setLocal(n, null);
+          for (const n of patternNames(name)) ctx.setLocal(n, null, block);
           return;
         }
         const isFn = value && ["arrow_function", "function_expression", "function", "generator_function"].includes(value.type);
@@ -644,8 +699,17 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           ctx.declareFn(name.text, def);
           return ctx.push({ def, cls: null, locals: null });
         }
-        ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value));
+        ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value), block);
         return;
+      }
+      case "statement_block":
+      case "switch_body":
+      case "for_statement":
+        return ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+      case "catch_clause": {
+        const leave = ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+        for (const n of patternNames(node.childForFieldName("parameter"))) ctx.setLocal(n, null, true);
+        return leave;
       }
       case "interface_declaration":
       case "type_alias_declaration":
@@ -689,13 +753,20 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         return;
       }
       case "for_in_statement": {
-        // for (const op of ops): op is an element of ops.
+        // for (const op of ops): op is an element of ops. A `let` or
+        // `const` loop variable belongs to the loop, a `var` to its function;
+        // with neither, the loop assigns a name declared elsewhere.
         const left = node.childForFieldName("left");
         const right = node.childForFieldName("right");
-        if (left?.type !== "identifier" || !node.children.some((c) => c.type === "of")) return;
-        const t = right?.type === "identifier" ? ctx.local(right.text) : null;
-        ctx.setLocal(left.text, t?.elem ? { ...t, elem: false } : null);
-        return;
+        const t = right?.type === "identifier" && node.children.some((c) => c.type === "of") ? ctx.local(right.text) : null;
+        const type = left?.type === "identifier" && t?.elem ? { ...t, elem: false } : null;
+        const kind = node.children.find((c) => c.type === "var" || c.type === "let" || c.type === "const")?.type;
+        const leave = ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+        for (const n of patternNames(left)) {
+          if (kind === undefined) ctx.assign(n, type);
+          else ctx.setLocal(n, type, kind !== "var");
+        }
+        return leave;
       }
       case "jsx_opening_element":
       case "jsx_self_closing_element": {
@@ -780,6 +851,8 @@ function pyReceiver(ctx: Ctx, object: Node): Receiver {
   }
   if (base.type !== "identifier") return { kind: "other" };
   if ((base.text === "self" || base.text === "cls") && ctx.cls()) return { kind: "self", path };
+  const bound = ctx.bound(base.text);
+  if (bound) return { kind: "name", name: base.text, path, nesting: null, bound };
   const type = ctx.local(base.text);
   if (type?.elem) return { kind: "other" };
   if (type) return { kind: "type", type, path };
@@ -808,7 +881,7 @@ function extractPython(tree: Tree): FileFacts {
             fact.namespace = n.childForFieldName("alias")?.text ?? null;
             fact.alias = true;
           } else continue;
-          ctx.imports.push(fact);
+          ctx.addImport(fact);
         }
         return false;
       }
@@ -825,7 +898,7 @@ function extractPython(tree: Tree): FileFacts {
           }
         }
         if (node.namedChildren.some((c) => c.type === "wildcard_import")) fact.star = true;
-        ctx.imports.push(fact);
+        ctx.addImport(fact);
         return false;
       }
       case "class_definition": {

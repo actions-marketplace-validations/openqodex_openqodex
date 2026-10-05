@@ -36,13 +36,19 @@ export type DefFact = {
   static?: boolean; // methods called on the class itself: JS `static`, Ruby `def self.x`
 };
 
+// A name bound by an import made inside a function or a block, in that
+// scope only: the import (an index into FileFacts.imports) and the name it
+// imports, "*" for the whole module.
+export type BoundImport = { import: number; imported: string };
+
 // What stands before the dot of a call.
 export type Receiver =
   | { kind: "none" } // a bare call: f()
   | { kind: "self"; path: string[] } // this, self, cls (path: this.a.b)
   | { kind: "super" }
   | { kind: "type"; type: TypeRef; path: string[] } // a local whose type a constructor or an annotation gives
-  | { kind: "name"; name: string; path: string[]; nesting: string | null } // an identifier: maybe a module, a package or a class
+  // An identifier: maybe a module, a package or a class; `bound` when a scoped import gives it.
+  | { kind: "name"; name: string; path: string[]; nesting: string | null; bound?: BoundImport }
   | { kind: "other" };
 
 export type CallFact = {
@@ -59,6 +65,8 @@ export type CallFact = {
   // variable of that name hides every outer definition.
   local?: number;
   shadowed?: boolean;
+  bound?: BoundImport; // a bare call to a name a scoped import binds
+
   static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
 };
 
@@ -73,6 +81,9 @@ export type ImportFact = {
   typeOnly: boolean;
   relative?: boolean; // Ruby require_relative
   alias?: boolean; // Python `import a.b as c`
+  // Made inside a function or a block (`await import()`, a require, a Python
+  // import in a function): it binds no name for the whole file, only through `bound`.
+  scoped?: boolean;
 };
 
 export type FileFacts = {
