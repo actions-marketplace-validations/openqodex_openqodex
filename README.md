@@ -52,7 +52,7 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 - Thirteen built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
 - A push gate for Claude Code and Codex, and an optional git pre-push hook. Both look for a review of exactly what is pushed; neither scans or reviews by itself. They warn by default and block only when `.openqodex.yaml` sets `review.block_on_severity`.
-- A GitHub Action and a pre-commit hook that run the scanners only (`openqodex scan`). They are not a review.
+- A GitHub Action that runs the full review on a pull request when the workflow gives it an Anthropic API key, and the scanners only (`openqodex scan`) without one. A pre-commit hook that runs the scanners only; it is not a review.
 - `npx openqodex demo` builds a small repo with planted bugs and scans it.
 
 ## What it does not do yet

@@ -12,6 +12,8 @@ The review runs in a reviewer process OpenQodex starts on your machine: Claude C
 
 When neither Claude Code nor Codex can be the reviewer, the coding agent you are in reviews the change itself, on the model that agent already uses.
 
+In the GitHub Action's review mode, which runs only when the workflow sets `ANTHROPIC_API_KEY` on the step or asks for `review: required`, the reviewer is Claude Code on the runner. It sends the pull request's change, as the brief and the files it reads, to Anthropic's API under the repository's own key. The reviewer's web tools are off there.
+
 ## Every network use
 
 OpenQodex and the built-in scanners send no code anywhere. They use the network for these things only:
@@ -26,7 +28,7 @@ OpenQodex and the built-in scanners send no code anywhere. They use the network 
 
 `--offline` skips osv-scanner and semgrep and turns scanner downloads and the version check off.
 
-The plugins, the GitHub Action and the pre-commit hook fetch the `openqodex` package from npm to run it.
+The plugins, the GitHub Action and the pre-commit hook fetch the `openqodex` package from npm to run it. In its review mode the Action also installs Claude Code from npm, unless the runner already has the pinned version.
 
 The GitHub Action uploads its findings to code scanning in your own repository on GitHub: each finding's message, file path and line numbers, as a SARIF file. Set `upload-sarif: false` in the workflow to turn that off.
 

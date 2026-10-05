@@ -10,7 +10,7 @@ For machines. Kept for the pre-commit hook and the GitHub Action, which call it,
 openqodex scan [--base <ref>] [--uncommitted] [--only <list>] [--skip <list>] [--block-on-severity <severity>]
 ```
 
-Runs the scanners on the change and prints their findings, labelled as scanner data. No model is involved and nothing is checked: it is not a review. The pre-commit hook and the GitHub Action run this command. `--block-on-severity` sets the severity that makes it exit 1, and wins over `review.block_on_severity` in the config.
+Runs the scanners on the change and prints their findings, labelled as scanner data. No model is involved and nothing is checked: it is not a review. The pre-commit hook runs this command, and so does the GitHub Action when it has no key for the review or no reviewer could start. `--block-on-severity` sets the severity that makes it exit 1, and wins over `review.block_on_severity` in the config.
 
 ## review --agent and review --finalize
 

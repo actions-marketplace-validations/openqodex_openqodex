@@ -43,7 +43,7 @@ import {
   writeLatest,
   writeReportFiles,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, Hunk, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, TraceEntry, WholeRepo } from "@openqodex/core";
+import type { Change, ChangeScope, Config, Hunk, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, Severity, TraceEntry, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles } from "./agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, lfsPaths, placeSettings, removeTargetCheckout } from "./checkout.js";
@@ -51,7 +51,7 @@ import type { Checkout } from "./checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
-import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses } from "./pipeline.js";
+import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses, writeReportCopies } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
 import { writeHomeReceipt } from "./receipts.js";
@@ -98,6 +98,16 @@ export type ReviewOptions = {
   drivers?: ReviewerDriver[];
   // Files to review as they were before `init` wrote them (getChange overlay).
   overlay?: { path: string; content: string | null }[];
+  // --block-on-severity: wins over review.block_on_severity in the config, as for scan.
+  blockOn?: Severity;
+  // --instructions: the owners' instructions from this file instead of the
+  // repository's .openqodex/custom-instructions.md (the Action passes the
+  // base branch's copy, so a pull request cannot supply its own).
+  instructions?: string;
+  // --report-dir: report.md, report.json and report.sarif of this run, also
+  // written to this folder, so a caller takes this run's report and never
+  // one a branch planted under .openqodex/.
+  reportDir?: string;
 };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -551,7 +561,9 @@ function fallbackCommand(o: ReviewOptions): string {
 export async function runReview(o: ReviewOptions): Promise<number> {
   if (process.env[DEPTH_ENV]) throw new OpenQodexError("openqodex review cannot run inside an openqodex reviewer");
   const say = progress(o.flags);
-  const { repoRoot, config } = await loadRepo(o.flags);
+  const loaded = await loadRepo(o.flags);
+  const repoRoot = loaded.repoRoot;
+  const config: Config = o.blockOn === undefined ? loaded.config : { ...loaded.config, blockOnSeverity: o.blockOn };
   const owner = checkoutOwner(repoRoot);
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
   announceRepoFiles(repoRoot);
@@ -608,7 +620,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const redaction = redactSnapshot(prep.snapshot.tree, p.secrets);
     if (redaction.redacted > 0) say(`Redacted secrets in ${redaction.redacted} ${redaction.redacted === 1 ? "file" : "files"} of the snapshot`);
     if (redaction.removed.length > 0) warn(`Left out of the review, too large to check for secrets: ${redaction.removed.join(", ")}`);
-    const instructions = ownersInstructions(repoRoot, p.secrets);
+    const instructions = ownersInstructions(repoRoot, p.secrets, o.instructions);
     let lenses: SelectedLens[];
     let impact: ImpactSummary;
     let brief: { text: string; diffFiles: Set<string> };
@@ -714,11 +726,13 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     };
     if (completion.status !== "complete") report.verdict = "incomplete";
 
+    const files = reportFiles(report);
     writeReportFiles(repoRoot, dir, {
-      ...reportFiles(report),
+      ...files,
       "submission.json": `${JSON.stringify(redactStored(talk.submission, p.secrets), null, 2)}\n`,
       "trace.json": `${JSON.stringify(redactStored(talk.trace, p.secrets), null, 2)}\n`,
     }, PRIVATE);
+    if (o.reportDir !== undefined) writeReportCopies(o.reportDir, repoRoot, files);
     const receipt: Latest = {
       dir: relative(repoRoot, dir),
       change_id: change.id,
