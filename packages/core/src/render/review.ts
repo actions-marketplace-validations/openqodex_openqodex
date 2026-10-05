@@ -4,7 +4,7 @@
 // their order are the same in both; only the markup differs.
 import pc from "picocolors";
 import type { Report, ReportFinding, ReviewerRecord } from "../types.js";
-import { SEVERITIES_DESC, candidateLocation, coverageLine, display, location, severityBreakdown, verdictLine } from "./common.js";
+import { SEVERITIES_DESC, candidateLocation, coverageLine, display, escapeMarkdown, location, severityBreakdown, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 
 type Line =
@@ -106,11 +106,9 @@ function lines(report: Report): Line[] {
 // Text for markdown that cannot make structure. The reviewer read a change
 // that may be hostile, and paths come from the repository, so every string
 // first becomes one line with no control character (`display`), then every
-// character markdown or HTML gives meaning to is escaped: no heading, list,
-// link, image, HTML tag, table cell, code span, fence or emphasis can start
-// inside it. A reader of the rendered page sees the same words.
+// character markdown or HTML gives meaning to is escaped (`escapeMarkdown`).
 export function markdownText(text: string): string {
-  return display(text).replace(/[\\`*_[\]()!<>#|~]/g, (c) => `\\${c}`);
+  return escapeMarkdown(display(text));
 }
 
 export function renderReview(report: Report, opts: { format: "terminal" | "markdown"; color?: boolean }): string {

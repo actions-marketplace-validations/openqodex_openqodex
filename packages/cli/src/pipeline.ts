@@ -1,11 +1,12 @@
 // The scan pipeline every command shares: find the repo, load the config,
 // work out the change, run the scanners on it. Progress goes to stderr.
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   DIFF_CAP_BYTES,
   STATE_DIR,
+  DEFAULT_CONFIG,
   findRepoRoot,
   getChange,
   isRepoState,
@@ -27,7 +28,7 @@ import type { Graph } from "@openqodex/graph";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
 import { instructionsTemplate } from "./agents/repo-folder.js";
 import { EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
-import { readInstructions } from "./instructions.js";
+import { readInstructions, readInstructionsAt } from "./instructions.js";
 import { noteScan } from "./feedback.js";
 import type { GlobalFlags } from "./flags.js";
 
@@ -57,8 +58,12 @@ export type PipelineResult = {
   secrets: string[];
 };
 
-export async function loadRepo(flags: GlobalFlags): Promise<{ repoRoot: string; config: Config }> {
+// `checkoutSettings` false (`--report-dir`): without `--config` the built-in
+// defaults, never the repository's own file, so nothing under .openqodex/
+// in the checkout is read.
+export async function loadRepo(flags: GlobalFlags, checkoutSettings = true): Promise<{ repoRoot: string; config: Config }> {
   const repoRoot = await findRepoRoot(flags.cwd);
+  if (!checkoutSettings && flags.config === undefined) return { repoRoot, config: structuredClone(DEFAULT_CONFIG) };
   const loaded = loadConfig(repoRoot, flags.config);
   for (const w of loaded.warnings) warn(`openqodex: ${w}`);
   return { repoRoot, config: loaded.config };
@@ -69,8 +74,9 @@ export async function runPipeline(args: {
   flags: GlobalFlags;
   only?: ScannerSource[];
   skip?: ScannerSource[];
+  checkoutSettings?: boolean;
 }): Promise<PipelineResult> {
-  const { repoRoot, config } = await loadRepo(args.flags);
+  const { repoRoot, config } = await loadRepo(args.flags, args.checkoutSettings);
   const change = await getChange({ repoRoot, scope: args.scope, exclude: config.exclude, defaultBase: config.defaultBase });
   return scanChange({ ...args, repoRoot, config, change });
 }
@@ -238,26 +244,36 @@ export function emitReport(report: Report, flags: GlobalFlags, repoRoot: string)
           : report.completion
             ? renderReview(report, { format: "terminal", color })
             : renderTerminal(report, { color });
-  if (flags.output !== undefined) {
-    // A temp file beside it, then a rename: an existing entry, a symbolic
-    // link included, is replaced and never written through.
-    const out = resolve(flags.output);
-    // Into the repo state: through the repo state writer, never through a link.
-    const state = isRepoState(repoRoot, out);
-    if (state !== null) {
-      writeRepoFile(repoRoot, state, text);
-      return;
-    }
-    const tmp = join(dirname(out), `.${basename(out)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-    try {
-      writeFileSync(tmp, text, { flag: "wx" });
-      renameSync(tmp, out);
-    } finally {
-      rmSync(tmp, { force: true });
-    }
-  } else {
-    process.stdout.write(text);
+  if (flags.output !== undefined) writeOutFile(resolve(flags.output), repoRoot, text);
+  else process.stdout.write(text);
+}
+
+// A temp file beside it, then a rename: an existing entry, a symbolic link
+// included, is replaced and never written through. Into the repo state:
+// through the repo state writer, never through a link.
+function writeOutFile(out: string, repoRoot: string, text: string, mode?: number): void {
+  const state = isRepoState(repoRoot, out);
+  if (state !== null) {
+    writeRepoFile(repoRoot, state, text, { mode });
+    return;
   }
+  const tmp = join(dirname(out), `.${basename(out)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
+  try {
+    writeFileSync(tmp, text, { flag: "wx", mode });
+    renameSync(tmp, out);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+// `--report-dir <folder>` of scan and review: the run's files, written to a
+// folder the caller names instead of .openqodex/reviews/, readable by their
+// owner only. The GitHub Action names a new folder of its own, so it never
+// takes a report that a branch committed under .openqodex/ for this run's.
+export function writeReportCopies(folder: string, repoRoot: string, files: Record<string, string>): void {
+  const dir = resolve(folder);
+  if (isRepoState(repoRoot, dir) === null) mkdirSync(dir, { recursive: true });
+  for (const [name, text] of Object.entries(files)) writeOutFile(join(dir, name), repoRoot, text, 0o600);
 }
 
 export function exitFor(report: Report): number {
@@ -271,10 +287,11 @@ export function instructionsHash(text: string): string | null {
   return text === "" ? null : createHash("sha256").update(text).digest("hex");
 }
 
-// The owners' instructions as the brief takes them, and their hash. The
+// The owners' instructions as the brief takes them, and their hash: from the
+// repository's file, or from the file `review --instructions` names. The
 // untouched template says nothing about this repo: no block for it.
-export function ownersInstructions(repoRoot: string, secrets: string[]): { text: string; hash: string | null } {
-  const raw = readInstructions(repoRoot);
+export function ownersInstructions(repoRoot: string, secrets: string[], path?: string): { text: string; hash: string | null } {
+  const raw = path === undefined ? readInstructions(repoRoot) : readInstructionsAt(repoRoot, path);
   return { text: raw === "" || raw === instructionsTemplate() ? "" : redactSecrets(raw, secrets), hash: instructionsHash(raw) };
 }
 

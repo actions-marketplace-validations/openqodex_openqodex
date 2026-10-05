@@ -37,7 +37,14 @@ const run: {
   pending: Problem | null;
   scanners: ScannerRunSummary[] | null;
   repoRoot: string | null;
-} = { pending: null, scanners: null, repoRoot: null };
+  outsideRepo: boolean;
+} = { pending: null, scanners: null, repoRoot: null, outsideRepo: false };
+
+// `--report-dir`: the run keeps nothing under .openqodex/ in the checkout,
+// so a problem report shown in it is saved in the OpenQodex home instead.
+export function keepRunStateOutOfRepo(): void {
+  run.outsideRepo = true;
+}
 
 // A custom scanner's name comes from the repo's config, so the issue never
 // shows it.
@@ -238,6 +245,7 @@ async function lastReportPlace(cwd: string): Promise<LastPlace> {
       return { repoRoot: null, path: join(openqodexHomeDir(), LAST_REPORT) };
     }
   }
+  if (run.outsideRepo) return { repoRoot: null, path: join(openqodexHomeDir(), LAST_REPORT) };
   return { repoRoot: run.repoRoot, path: join(run.repoRoot, STATE_DIR, LAST_REPORT) };
 }
 

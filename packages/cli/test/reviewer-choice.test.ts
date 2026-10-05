@@ -24,7 +24,10 @@
 //     trace check.
 //  7. A config value that is neither a known reviewer nor on or off is
 //     silently ignored.
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+// 12. `--reviewer-web off` (the GitHub Action passes it) loses to the user
+//     config, or needs the file edited: a config written as a flow mapping
+//     breaks, and a run that dies leaves the file changed.
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -232,6 +235,20 @@ describe("web tools", () => {
     expect(await review([claude])).toBe(0);
     expect(claude.starts).toEqual([{ web: true }]);
     expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
+  });
+
+  it("12, R26. --reviewer-web off wins over reviewer_web: on in a user config written as a flow mapping, and the file stays as it was", async () => {
+    const text = "{reviewer: auto, reviewer_web: on}\n";
+    userConfig(text);
+    const claude = fake();
+    const { global } = parseFlags(["--cwd", repo(), "--no-color", "--format", "json"], {});
+    expect(await runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", timeoutMs: 60_000, drivers: [claude], web: false })).toBe(0);
+    expect(claude.starts).toEqual([{ web: false }]);
+    expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe(text);
+    // Without the flag the same file turns the web tools on.
+    const own = fake();
+    expect(await review([own])).toBe(0);
+    expect(own.starts).toEqual([{ web: true }]);
   });
 
   it("5. with reviewer_web: off, a web tool call makes the run incomplete", async () => {
