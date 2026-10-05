@@ -1,4 +1,4 @@
-name: "OpenQodex Scan: SAST, Secret Scanning and Lint for Pull Requests"
+name: "OpenQodex AI Code Review: SAST, Secret Scanning and Lint for Pull Requests"
 description: "AI code review and scanners for pull requests: SAST, secrets, dependencies, lint. Review needs your Anthropic key."
 author: OpenQodex
 branding:
