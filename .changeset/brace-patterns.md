@@ -8,4 +8,4 @@ A review no longer ends incomplete when the reviewer reads or searches a name wi
 
 A review no longer ends incomplete when the reviewer reads a file named with `$` or `%`, such as Remix's `app/routes/posts.$slug.tsx`, that exists in the change; a path like `$HOME/.ssh/id_rsa` that names no such file still ends it.
 
-A Grep file filter that Claude Code splits at a space or comma, or one that starts with `!`, now ends the review when any piece of it points outside the change.
+The check of what the reviewer read now reads each call as Claude Code does: a Grep file filter split at a space or comma, a filter that starts with `!`, or a path with spaces around it ends the review when any reading points outside the change, and on a disk that keeps case, a folder whose name differs from the change's copy only in case counts as outside.

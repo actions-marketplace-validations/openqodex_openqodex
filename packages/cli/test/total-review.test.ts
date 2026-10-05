@@ -64,20 +64,26 @@
 //     nested one, two dots formed by joining a list to its neighbour, an
 //     escape that hides a path, unbalanced braces or more alternatives than
 //     the bound let the run complete.
-// 31. Two dots inside a name (`[...slug]`) end the review; or a `..` step, or
-//     a two-character segment a wildcard could turn into `..`, completes.
+// 31. Two dots inside a name (`[...slug]`) or a wildcard segment
+//     (`locales/??`) end the review; or a `..` step completes.
 // 32. A read of a file named with `$` or `%` that exists in the snapshot
 //     ends the review; or such a path that names no file there completes.
 // 33. A reading of ours is looser than Claude Code's or ripgrep's: a Grep
 //     file glob Claude Code splits at a space or comma, a leading `!`, a
 //     brace inside a bracket class, or an absolute pattern Claude Code roots
 //     above the snapshot completes; or the stricter Windows reading fails an
-//     escaped bracket on macOS and Linux.
+//     escaped bracket on macOS and Linux. A path or a search folder Claude
+//     Code trims to one outside completes. A pattern with too many
+//     characters or pieces to check is expanded anyway, or makes the check
+//     throw; or empty pieces Claude Code drops count toward the bound.
+// 34. On a volume that keeps case, a folder named like the snapshot in other
+//     case is taken for the snapshot; or on one that ignores case, the
+//     snapshot named in other case ends the review.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { DEPTH_ENV, killGroup, spawnGroup } from "../src/reviewers/driver.js";
@@ -365,7 +371,7 @@ async function expectOutside(call: ToolCall): Promise<void> {
   const report = JSON.parse(out) as Report;
   expect(report.completion?.status).toBe("incomplete");
   const input = call.input as Record<string, string>;
-  expect(report.completion?.outside_reads).toEqual([input.file_path ?? (call.tool === "Grep" ? input.glob : input.pattern)]);
+  expect(report.completion?.outside_reads).toEqual([input.file_path ?? input.path ?? (call.tool === "Grep" ? input.glob : input.pattern)]);
 }
 
 describe("30. brace lists in a file pattern", () => {
@@ -390,6 +396,7 @@ describe("30. brace lists in a file pattern", () => {
     ["a list that is never closed", grep("{packages/cli/src/**,scripts/*.mjs")],
     ["a close with no open", grep("packages/cli/src/**}")],
     ["a pattern of a million alternatives, past the bound, which must not be expanded", glob("{a,b,c,d}/".repeat(10))],
+    ["a pattern whose alternatives would hold more characters than the bound, which must not be expanded", glob(`{${Array.from({ length: 256 }, (_, i) => `d${i}`).join(",")}}/${"x".repeat(4096)}`)],
     ["a list nested deeper than the stack can follow", glob(`${"{".repeat(100_000)}a${"}".repeat(100_000)}`)],
   ];
   for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
@@ -400,16 +407,13 @@ describe("31. two dots inside a name", () => {
     ["a Next.js catch-all folder in a Glob pattern", glob("app/[...slug]/page.tsx")],
     ["a Next.js catch-all folder in a Grep file glob", grep("**/[...slug]/**")],
     ["a dotfile pattern, whose .* never matches the parent folder", glob("**/.*")],
+    ["a two-letter locale folder, whose ?? never matches the parent folder", glob("locales/??/*.json")],
   ];
   for (const [name, call] of inside) it(`${name} keeps the run complete`, () => expectInside(() => call));
   it("a read of a file whose name starts with two dots keeps the run complete", () => expectInside((s) => readOf(join(s, "..env.example"))));
   const outside: [string, ToolCall][] = [
     ["two parent steps after a folder", glob("a/../../x")],
     ["a parent step between backslashes", glob("a\\..\\x")],
-    ["a dot and a one-character wildcard", glob(".?/x")],
-    ["a one-character wildcard and a dot", glob("?./x")],
-    ["two one-character wildcards", glob("??/x")],
-    ["a dot and a class that holds a dot", glob(".[.]/x")],
   ];
   for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
 });
@@ -448,8 +452,23 @@ describe("33. no reading of ours is looser than Claude Code's or ripgrep's", () 
     ["a negated pattern that climbs out", grep("!../secrets/*")],
     ["a negated absolute pattern", glob("!/etc/*")],
     ["a brace inside a bracket class, which ripgrep reads as a plain character", glob("*.[{]ts")],
+    ["a Grep folder with spaces around it, which Claude Code trims to an absolute folder", { tool: "Grep", input: { pattern: "key", path: " /etc " }, ok: true, read: null }],
+    ["a read with a space before ~/, which Claude Code trims to the home folder", readOf(" ~/.ssh/id_rsa")],
+    ["a Grep file glob of more pieces than the bound", grep("a,".repeat(200_000))],
   ];
   for (const [name, call] of outside) it(`${name} makes the run incomplete`, () => expectOutside(call));
+  it("a Grep file glob of 200,000 commas is too large to check and does not crash the check", () => expectOutside(grep(",".repeat(200_000))));
+  it("a Grep file glob with many empty pieces, which Claude Code drops before the bound, keeps the run complete", () => expectInside(() => grep(`${",".repeat(1000)}*.sql`)));
+  // The checkout writes links as plain files; this guards the check on its
+  // own, should a link ever reach the snapshot.
+  it("an absolute pattern whose search folder Claude Code trims to a link out of the snapshot makes the run incomplete", async () => {
+    const answer: Answer = (text, snapshotDir) => {
+      symlinkSync(tmpdir(), join(snapshotDir, "out"));
+      return { finalText: submission(text), calls: [glob(`${snapshotDir}/out   /*`)] };
+    };
+    expect(await review(repo(), fake([answer]))).toBe(2);
+    expect((JSON.parse(out) as Report).completion?.status).toBe("incomplete");
+  });
   it("an absolute pattern whose list starts above the snapshot, where Claude Code roots the search, makes the run incomplete", async () => {
     const answer: Answer = (text, snapshotDir) => {
       const base = basename(snapshotDir);
@@ -457,6 +476,51 @@ describe("33. no reading of ours is looser than Claude Code's or ripgrep's", () 
     };
     expect(await review(repo(), fake([answer]))).toBe(2);
     expect((JSON.parse(out) as Report).completion?.status).toBe("incomplete");
+  });
+});
+
+describe("34. case in a path is compared as the snapshot's volume compares it", () => {
+  // A read of a folder next to the snapshot whose name differs only in case.
+  const twin: Answer = (text, snapshotDir) => {
+    const other = join(dirname(snapshotDir), basename(snapshotDir).toUpperCase());
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "x.sql"), SQL);
+    return { finalText: submission(text), calls: [readOf(join(other, "x.sql"))] };
+  };
+  // A case-sensitive volume: a disk image on macOS, the temp folder elsewhere.
+  let volume = "";
+  let image = "";
+  beforeAll(() => {
+    const dir = mkdtempSync(join(tmpdir(), "oq-case-"));
+    volume = dir;
+    if (process.platform !== "darwin") return;
+    image = join(dir, "case.dmg");
+    volume = join(dir, "mnt");
+    for (const args of [
+      ["create", "-quiet", "-size", "20m", "-fs", "Case-sensitive APFS", "-volname", "oqcase", image],
+      ["attach", "-quiet", "-nobrowse", "-mountpoint", volume, image],
+    ]) {
+      const r = spawnSync("hdiutil", args, { encoding: "utf8" });
+      if (r.status !== 0) throw new Error(`hdiutil ${args[0]}: ${r.stderr}`);
+    }
+  }, 120_000);
+  afterAll(() => {
+    if (image !== "") spawnSync("hdiutil", ["detach", "-force", volume]);
+  });
+  it("on a volume that keeps case, a folder named like the snapshot in other case makes the run incomplete", async () => {
+    const home = join(volume, "home");
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    vi.stubEnv("OPENQODEX_HOME", home);
+    expect(await review(repo(), fake([twin]))).toBe(2);
+    expect((JSON.parse(out) as Report).completion?.status).toBe("incomplete");
+  });
+  it.runIf(process.platform === "darwin")("on a volume that ignores case, the snapshot named in other case keeps the run complete", async () => {
+    const answer: Answer = (text, snapshotDir) => {
+      const file = join(dirname(snapshotDir), basename(snapshotDir).toUpperCase(), "db/x.sql");
+      return { finalText: submission(text), calls: [{ tool: "Read", input: { file_path: file }, ok: true, read: { path: file, start: 1, lines: 2 } }] };
+    };
+    expect(await review(repo(), fake([answer]))).toBe(0);
+    expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
   });
 });
 

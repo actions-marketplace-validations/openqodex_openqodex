@@ -2,13 +2,13 @@
 // script, never by the driver, whether each call stayed inside the snapshot.
 // It fails closed: a call whose input cannot be read, a path that cannot be
 // placed (a NUL, a `~user`), a path holding `$` or `%` that names no file in
-// the snapshot, or any path-bearing field that leaves the snapshot marks the
-// whole call as outside. The agent's own permission rules are the boundary;
-// this check is the alarm that fails the run when the trace shows the
-// boundary was not where it should be.
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+// the snapshot, a pattern too large to check, or any path-bearing field that
+// leaves the snapshot marks the whole call as outside. The agent's own
+// permission rules are the boundary; this check is the alarm that fails the
+// run when the trace shows the boundary was not where it should be.
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { TraceEntry } from "@openqodex/core";
 
 // What a driver saw for one tool call: its name, its input as the agent sent
@@ -21,8 +21,6 @@ export type ToolCall = { tool: string; input: unknown; ok: boolean; read: { path
 const PATH_FIELDS = ["file_path", "path", "notebook_path", "cwd", "directory"];
 const PATTERN_FIELDS = ["pattern", "glob"];
 const GREP_PATTERN_FIELDS = ["glob"];
-
-const FOLD_CASE = process.platform === "darwin" || process.platform === "win32";
 
 // The real path of `abs`: the deepest part that exists, resolved through
 // links, with the rest appended.
@@ -44,27 +42,58 @@ function realDeep(abs: string): string {
   return rest.length > 0 ? join(real, ...rest) : real;
 }
 
+// Whether the volume that holds the snapshot compares names without case,
+// asked once per snapshot. The evidence: the snapshot's name with its case
+// flipped (`tree` as `TREE`) is the same folder, same device and inode. A
+// platform says nothing: macOS and Windows volumes can keep case. When the
+// evidence cannot be read, names compare exactly, the stricter answer.
+const caseFolding = new Map<string, boolean>();
+function foldsCase(snapshot: string): boolean {
+  const known = caseFolding.get(snapshot);
+  if (known !== undefined) return known;
+  const name = basename(snapshot);
+  const flipped = [...name].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join("");
+  let folds = false;
+  if (flipped !== name) {
+    try {
+      const own = statSync(snapshot, { bigint: true });
+      const other = statSync(join(dirname(snapshot), flipped), { bigint: true });
+      folds = own.dev === other.dev && own.ino === other.ino;
+    } catch {
+      // no folder by the flipped name, or unreadable: exact
+    }
+  }
+  caseFolding.set(snapshot, folds);
+  return folds;
+}
+
 // True when `path` is `root` or below it. A name that starts with two dots
 // (`..env`) is below; only a `..` step climbs.
-function within(root: string, path: string): boolean {
-  const a = FOLD_CASE ? root.toLowerCase() : root;
-  const b = FOLD_CASE ? path.toLowerCase() : path;
-  const rel = relative(a, b);
+function within(root: string, path: string, fold: boolean): boolean {
+  const rel = fold ? relative(root.toLowerCase(), path.toLowerCase()) : relative(root, path);
   return rel === "" || (!isAbsolute(rel) && !rel.split(sep).includes(".."));
 }
 
-// The most alternatives a file pattern's brace lists may expand to before the
-// check gives up and marks the call outside: `{a,b}` ten times over is 1024.
+// Bounds on the work one file pattern may cost before the check gives up
+// and marks the call outside: the alternatives its brace lists expand to
+// (`{a,b}` ten times over is 1024), the characters across all of them, and
+// the pieces Claude Code would split a Grep file glob into.
 const MAX_PATTERN_ALTERNATIVES = 256;
+const MAX_PATTERN_CHARS = 65_536;
+const MAX_GLOB_PIECES = 256;
 
-// How our reading of a file pattern compares with the real one. Claude Code
-// 2.1.289 (read in its binary) sends both tools through ripgrep: Grep's
-// `glob` goes to `rg --glob` after Claude Code splits it at spaces, and at
-// commas in a piece without both braces; Glob's pattern goes to `rg --files
-// --glob`, searched from the folder before its first `*?[{` when it is
-// absolute. ripgrep (14.1.1 checked on this Mac) only filters what it walks
-// under that folder. Each place the two readings could differ, and why ours
-// is the same or stricter:
+// How our reading of a tool call compares with the real one. Claude Code
+// 2.1.289 (read in its binary) reads every path field through its
+// `expandPath`: trimmed of white space, `~` and `~/` as the home folder, and
+// on Windows `/c/x` as `C:\x`; the folder an absolute Glob pattern is
+// searched from goes through it too. It sends both tools through ripgrep:
+// Grep's `glob` goes to `rg --glob` after Claude Code splits it at spaces,
+// and at commas in a piece without both braces, dropping empty pieces;
+// Glob's pattern goes to `rg --files --glob`, searched from the folder before
+// its first `*?[{` when it is absolute. ripgrep (14.1.1 checked on this Mac)
+// only filters what it walks under that folder. Each place the two readings
+// could differ, and why ours is the same or stricter:
+// - A path as written and as `expandPath` reads it: we check both.
 // - Escapes: ripgrep reads `\x` as `x`. We check every reading both with its
 //   escapes removed and as written, with `\` taken as a separator.
 // - A brace inside a bracket class (`[{]`): a character to ripgrep, a list to
@@ -80,73 +109,73 @@ const MAX_PATTERN_ALTERNATIVES = 256;
 //   drive's root on Windows, a name in the snapshot on macOS and Linux.
 // - The folder Claude Code searches from: we check the whole pattern, braces
 //   unexpanded, as well as each alternative.
+// - Wildcards: a wildcard never climbs. ripgrep and node's glob match the
+//   names a folder listing yields, and a listing never holds `..`, so only a
+//   literal `..` step leaves a folder (`locales/??` and `.*` stay below). The
+//   folder Claude Code searches from is the part before the first wildcard,
+//   so it holds none, and a `..` in it is a literal step.
+
+// Alternatives and the characters across them.
+type Expansion = { alts: string[]; chars: number };
+
+// Every alternative of `a` followed by every alternative of `b`, or null when
+// the result would pass a bound; nothing is built past one.
+function product(a: Expansion, b: Expansion): Expansion | null {
+  const count = a.alts.length * b.alts.length;
+  const chars = a.chars * b.alts.length + b.chars * a.alts.length;
+  if (count > MAX_PATTERN_ALTERNATIVES || chars > MAX_PATTERN_CHARS) return null;
+  return { alts: a.alts.flatMap((s) => b.alts.map((t) => s + t)), chars };
+}
 
 // Every alternative a file pattern's brace lists name, nested lists included:
 // `{src,lib/{a,b}}/*.ts` is `src/*.ts`, `lib/a/*.ts` and `lib/b/*.ts`. A
 // backslash escapes the next character and is kept in the alternative. Null
-// when the braces do not balance or the alternatives would number more than
-// MAX_PATTERN_ALTERNATIVES.
+// when the braces do not balance or the expansion would pass a bound.
 function alternatives(pattern: string): string[] | null {
   let i = 0;
   // One alternative's text up to a `,` or `}` of the list it is in, or to the
-  // end of the pattern at the top level, where a `,` is plain text.
-  const sequence = (inList: boolean): string[] | null => {
-    let out = [""];
+  // end of the pattern at the top level, where a `,` is plain text. Plain
+  // text is gathered in `run` and joined to every alternative at once.
+  const sequence = (inList: boolean): Expansion | null => {
+    let out: Expansion | null = { alts: [""], chars: 0 };
+    let run = "";
+    const flush = (): Expansion | null => {
+      out = out === null ? null : product(out, { alts: [run], chars: run.length });
+      run = "";
+      return out;
+    };
     while (i < pattern.length) {
       const c = pattern[i]!;
       if (c === "\\") {
-        const escaped = pattern.slice(i, i + 2);
-        out = out.map((s) => s + escaped);
+        run += pattern.slice(i, i + 2);
         i += 2;
       } else if (c === "{") {
         i++;
-        const listed = list();
-        if (listed === null || out.length * listed.length > MAX_PATTERN_ALTERNATIVES) return null;
-        out = out.flatMap((s) => listed.map((l) => s + l));
+        const listed = flush() === null ? null : list();
+        out = listed === null || out === null ? null : product(out, listed);
+        if (out === null) return null;
       } else if (c === "}" || (c === "," && inList)) {
-        return inList ? out : null;
+        return inList ? flush() : null;
       } else {
-        out = out.map((s) => s + c);
+        run += c;
         i++;
       }
+      if (out === null || out.chars + run.length * out.alts.length > MAX_PATTERN_CHARS) return null;
     }
-    return inList ? null : out;
+    return inList ? null : flush();
   };
   // The alternatives of one list, from after its `{` to after its `}`.
-  const list = (): string[] | null => {
-    const all: string[] = [];
+  const list = (): Expansion | null => {
+    const all: Expansion = { alts: [], chars: 0 };
     for (;;) {
       const part = sequence(true);
-      if (part === null) return null;
-      all.push(...part);
-      if (all.length > MAX_PATTERN_ALTERNATIVES) return null;
+      if (part === null || all.alts.length + part.alts.length > MAX_PATTERN_ALTERNATIVES || all.chars + part.chars > MAX_PATTERN_CHARS) return null;
+      for (const alt of part.alts) all.alts.push(alt);
+      all.chars += part.chars;
       if (pattern[i++] === "}") return all;
     }
   };
-  return sequence(false);
-}
-
-// True for a path segment that is `..`, or that is two units each able to
-// match a dot (`.?`, `?.`, `??`, `.[.]`). A wildcard never climbs: ripgrep
-// and node's glob match the names a folder listing yields, and a listing
-// never holds `..`, so only a literal `..` step leaves a folder. The
-// two-unit forms are outside anyway, the safe side, since a pattern rarely
-// needs one. A segment with `*` is not: `*`, `.*` and `*.*` are everyday
-// patterns. Every bracket class counts as able to match a dot (`[!a]` and
-// `[--/]` do); `[...slug]` is one class, so one unit.
-function parentStep(segment: string): boolean {
-  let units = 0;
-  for (let i = 0; i < segment.length; i++) {
-    const c = segment[i]!;
-    if (c === "*") return false;
-    // A class: `]` right after `[` or `[!` is one of its members.
-    const from = segment[i + 1] === "!" || segment[i + 1] === "^" ? i + 2 : i + 1;
-    const close = c === "[" ? segment.indexOf("]", from + 1) : -1;
-    if (close !== -1) i = close;
-    else if (c !== "." && c !== "?") return false;
-    if (++units > 2) return false;
-  }
-  return units === 2;
+  return sequence(false)?.alts ?? null;
 }
 
 // The folder one reading of a pattern is rooted in, outside when it may
@@ -156,7 +185,7 @@ function parentStep(segment: string): boolean {
 // `/a/snap*/x` is rooted at `/a/`, since `snap*` also matches `snapshot-2`.
 function readingRoot(reading: string): string | null {
   const outside = "/";
-  if (reading.split(/[\\/]/).some(parentStep) || reading.startsWith("~")) return outside;
+  if (reading.split(/[\\/]/).includes("..") || reading.startsWith("~")) return outside;
   if (!(reading.startsWith("/") || reading.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(reading))) return null;
   const cut = reading.search(/[*?[{]/);
   if (cut === -1) return reading;
@@ -165,30 +194,38 @@ function readingRoot(reading: string): string | null {
 }
 
 // The texts a file pattern is matched as: the whole, and for Grep's `glob`
-// each piece Claude Code hands ripgrep; each with and without a leading `!`.
-function texts(value: string, grepGlob: boolean): string[] {
-  const all = [value];
-  if (grepGlob) for (const piece of value.split(/\s+/)) all.push(...(piece.includes("{") && piece.includes("}") ? [piece] : piece.split(",")));
-  return [...new Set(all.flatMap((t) => (t.startsWith("!") ? [t, t.slice(1)] : [t])))];
+// each non-empty piece Claude Code hands ripgrep; each with and without a
+// leading `!`. Null past MAX_GLOB_PIECES pieces.
+function texts(value: string, grepGlob: boolean): string[] | null {
+  const all = new Set([value]);
+  if (grepGlob) {
+    let pieces = 0;
+    for (const word of value.split(/\s+/)) {
+      for (const piece of word.includes("{") && word.includes("}") ? [word] : word.split(",")) {
+        if (piece === "") continue;
+        if (++pieces > MAX_GLOB_PIECES) return null;
+        all.add(piece);
+      }
+    }
+  }
+  const plain: string[] = [];
+  for (const text of all) if (text.startsWith("!")) plain.push(text.slice(1));
+  for (const text of plain) all.add(text);
+  return [...all];
 }
 
 // The folders a file pattern is rooted in: one for each reading that is
 // absolute or may reach out. The readings of a text are the text itself and
 // each alternative of its brace lists, each as written and with its escapes
 // removed (`\/etc` is `/etc` to ripgrep). Empty when every reading is
-// relative. Outside when braces do not balance, or there are too many
-// alternatives, or lists nested too deep, to check.
+// relative. Outside when braces do not balance or a bound is passed.
 function patternRoots(value: string, grepGlob: boolean): string[] {
   const outside = ["/"];
+  const all = texts(value, grepGlob);
+  if (all === null) return outside;
   const roots = new Set<string>();
-  for (const text of texts(value, grepGlob)) {
-    let alts: string[] | null;
-    try {
-      alts = alternatives(text);
-    } catch {
-      // lists nested deeper than the stack can follow
-      alts = null;
-    }
+  for (const text of all) {
+    const alts = alternatives(text);
     if (alts === null) return outside;
     for (const reading of [text, ...alts]) {
       for (const form of [reading, reading.replace(/\\(.)/gs, "$1")]) {
@@ -200,26 +237,44 @@ function patternRoots(value: string, grepGlob: boolean): string[] {
   return [...roots];
 }
 
-// A raw path as written, joined to the snapshot, `~/` read as the home
-// folder; null when it cannot be placed: a NUL, or `~user`.
-function literal(snapshot: string, raw: string): string | null {
-  if (raw.includes("\0")) return null;
-  if (raw === "~" || raw.startsWith("~/")) return join(homedir(), raw.slice(1));
-  return raw.startsWith("~") ? null : resolve(snapshot, raw);
+// The paths a raw path may name: as written, and as Claude Code's
+// `expandPath` reads it (trimmed; on Windows `/c/x` is `C:\x`).
+function pathReadings(raw: string): string[] {
+  const trimmed = raw.trim();
+  const all = new Set([raw, trimmed]);
+  const drive = /^\/([A-Za-z])\//.exec(trimmed);
+  if (process.platform === "win32" && drive) all.add(`${drive[1]}:\\${trimmed.slice(3)}`);
+  return [...all];
 }
 
-// Each raw path placed: its real form, or null when it cannot be placed.
-function place(snapshot: string, raw: string): string | null {
-  const abs = literal(snapshot, raw);
+// The folders a pattern root may name: as written, and as the folder Claude
+// Code searches from, which drops the root's last separator before
+// `expandPath` trims it (`/snap/link   /` is searched as `/snap/link`).
+function rootReadings(root: string): string[] {
+  const bare = root.length > 1 && /[\\/]$/.test(root) ? root.slice(0, -1) : root;
+  return [...new Set([...pathReadings(root), ...pathReadings(bare)])];
+}
+
+// A path as written, joined to the snapshot, `~/` read as the home folder;
+// null when it cannot be placed: a NUL, or `~user`.
+function literal(snapshot: string, path: string): string | null {
+  if (path.includes("\0")) return null;
+  if (path === "~" || path.startsWith("~/")) return join(homedir(), path.slice(1));
+  return path.startsWith("~") ? null : resolve(snapshot, path);
+}
+
+// A path placed: its real form, or null when it cannot be placed.
+function place(snapshot: string, path: string): string | null {
+  const abs = literal(snapshot, path);
   return abs === null ? null : realDeep(abs);
 }
 
 // A path holding `$` or `%` may be a variable the agent expanded (`$HOME`,
 // `%USERPROFILE%`) or a real name (Remix's `posts.$slug.tsx`, `100%.md`).
 // It is taken as the name only when that name exists.
-function named(snapshot: string, raw: string): boolean {
-  if (!raw.includes("$") && !raw.includes("%")) return true;
-  const abs = literal(snapshot, raw);
+function named(snapshot: string, path: string): boolean {
+  if (!path.includes("$") && !path.includes("%")) return true;
+  const abs = literal(snapshot, path);
   if (abs === null) return false;
   try {
     lstatSync(abs);
@@ -236,6 +291,8 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
   } catch {
     // compared as given
   }
+  const fold = foldsCase(snapshot);
+  const inside = (path: string | null) => path !== null && within(snapshot, path, fold);
   const range: [number, number] | null = call.read && call.read.lines > 0 ? [call.read.start, call.read.start + call.read.lines - 1] : null;
   const input = call.input;
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -253,9 +310,15 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
   for (const k of call.tool === "Grep" ? GREP_PATTERN_FIELDS : PATTERN_FIELDS) {
     if (fields[k] === undefined || fields[k] === null) continue;
     if (typeof fields[k] !== "string") return { tool: call.tool, path: `(a ${k} that is not text)`, inside: false, range: null, ok: true };
-    const found = patternRoots(fields[k] as string, call.tool === "Grep");
+    let found: string[];
+    try {
+      found = patternRoots(fields[k] as string, call.tool === "Grep");
+    } catch {
+      // anything the analysis could not finish, lists nested deeper than the stack can follow among them
+      found = ["/"];
+    }
     // Named by the pattern itself in the trace, so the record says what was asked.
-    if (found.some((root) => !within(snapshot, place(snapshot, root) ?? "/"))) return { tool: call.tool, path: fields[k] as string, inside: false, range: null, ok: call.ok };
+    if (found.some((root) => rootReadings(root).some((r) => !inside(place(snapshot, r))))) return { tool: call.tool, path: fields[k] as string, inside: false, range: null, ok: call.ok };
     roots.push(...found);
   }
   if (call.read) paths.push(call.read.path);
@@ -263,11 +326,10 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
     return { tool: call.tool, path: "(a read with no file_path)", inside: false, range: null, ok: true };
   }
   for (const raw of paths) {
-    const real = place(snapshot, raw);
-    if (real === null || !within(snapshot, real) || !named(snapshot, raw)) return { tool: call.tool, path: raw, inside: false, range, ok: call.ok };
+    if (pathReadings(raw).some((r) => !inside(place(snapshot, r)) || !named(snapshot, r))) return { tool: call.tool, path: raw, inside: false, range, ok: call.ok };
   }
   const first = paths[0] ?? roots[0] ?? null;
   const real = first === null ? null : place(snapshot, call.read?.path ?? first);
-  const rel = real === null ? null : relative(FOLD_CASE ? snapshot.toLowerCase() : snapshot, FOLD_CASE ? real.toLowerCase() : real) === "" ? "." : real.slice(snapshot.length + 1);
+  const rel = real === null ? null : (fold ? relative(snapshot.toLowerCase(), real.toLowerCase()) : relative(snapshot, real)) === "" ? "." : real.slice(snapshot.length + 1);
   return { tool: call.tool, path: rel, inside: true, range, ok: call.ok };
 }
