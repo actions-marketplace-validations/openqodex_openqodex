@@ -64,6 +64,8 @@
 //      it only silences findings in its own file, which the filter hides.
 //  32. A file over 5 MB is not read, though bandit and the others scan it;
 //      or a file semgrep skips for its size still raises a semgrep candidate.
+//  33. A file under semgrep's size limit loses its semgrep candidate because
+//      its text, decoded, is longer than the file (invalid UTF-8).
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -724,6 +726,20 @@ describe("suppression comments the change adds", () => {
     });
     expect(scan.candidates.map((c) => c.token)).toEqual(["bandit:openqodex.suppression-added"]);
   }, 20_000);
+
+  it("measures semgrep's size limit on the file, not on its decoded text (33)", async () => {
+    const dir = repo({});
+    // 400,000 bytes that are not UTF-8 decode to 1,200,000 bytes of U+FFFD.
+    fs.writeFileSync(path.join(dir, "data.py"), Buffer.concat([Buffer.from("x = 1  # nosemgrep\n# "), Buffer.alloc(400_000, 0xff), Buffer.from("\n")]));
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["data.py"],
+      coverage: new Map([["data.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => c.token)).toEqual(["semgrep:openqodex.suppression-added"]);
+  });
 
   it("names the marker and the scanner, never the line's text (29)", async () => {
     const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
