@@ -262,16 +262,22 @@ last_line() {
   { grep -v '^[[:space:]]*$' "$1" || true; } | tail -n 1 | tr -d '\000-\037\177' | sed -e 's/%/%25/g' -e 's/::*/:/g' | cut -c 1-300
 }
 
-# A line for a workflow command: the same rules as last_line.
+# A line for a workflow command: the same rules as last_line. GNU sed and
+# cut end their output with a newline and the BSD ones do not, so the text is
+# captured and printed again: the result is the same on Linux and macOS.
 command_text() {
-  printf '%s' "$1" | tr -d '\000-\037\177' | sed -e 's/%/%25/g' -e 's/::*/:/g' | cut -c 1-300
+  local out
+  out="$(printf '%s' "$1" | tr -d '\000-\037\177' | sed -e 's/%/%25/g' -e 's/::*/:/g' | cut -c 1-300)"
+  printf '%s' "$out"
 }
 
 # A line for the job summary: one line, every character markdown or HTML
 # gives meaning to escaped (the characters the review report escapes), so
 # text from the pull request makes no structure.
 summary_text() {
-  printf '%s' "$1" | tr -d '\000-\037\177' | sed -e 's/[]\`*_[()!<>#|~\\]/\\&/g' | cut -c 1-600
+  local out
+  out="$(printf '%s' "$1" | tr -d '\000-\037\177' | sed -e 's/[]\`*_[()!<>#|~\\]/\\&/g' | cut -c 1-600)"
+  printf '%s' "$out"
 }
 
 # The config and the review's custom instructions, always as files in this
