@@ -15,6 +15,12 @@
 // 5. The brief of review --agent does not list the suppression candidate.
 // 6. A key on the line of an added gitleaks:allow reaches the terminal or a
 //    report file.
+// Added after the security check of the first version:
+// 7. A review.severity_threshold above minor hides them from the terminal,
+//    report.md, report.json or report.sarif of a scan.
+// 8. --only or --skip of the scanner they name leaves them out, although the
+//    comment still silences that scanner in every other run; or
+//    scanners.disable, the repository's own choice, does not.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -89,6 +95,34 @@ describe("block_on_severity and the minor findings of a scan", () => {
     const major = cli(changed("review:\n  block_on_severity: major\n"), ["scan", "--no-install", "--format", "json"]);
     expect(major.status, major.stderr).toBe(0);
     expect(where(JSON.parse(major.stdout) as Json)).toEqual(EXPECTED);
+  });
+});
+
+describe("what can leave them out of a scan", () => {
+  it("a severity_threshold above minor hides neither from any output format (7)", () => {
+    const s = changed("review:\n  severity_threshold: major\n");
+    const json = cli(s, ["scan", "--no-install", "--format", "json"]);
+    expect(json.status, json.stderr).toBe(0);
+    expect(where(JSON.parse(json.stdout) as Json)).toEqual(EXPECTED);
+    const terminal = cli(s, ["scan", "--no-install"]);
+    const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex", "latest-scan.json"), "utf8")) as { dir: string };
+    const read = (name: string) => readFileSync(join(s.repo, latest.dir, name), "utf8");
+    const outputs = { terminal: terminal.stdout, "report.md": read("report.md"), "report.json": read("report.json"), "report.sarif": read("report.sarif") };
+    for (const [name, text] of Object.entries(outputs)) {
+      expect(text, name).toContain("openqodex.suppression-added");
+      expect(text, name).toContain("settings-file");
+      expect(text, name).toContain("app/config.py");
+    }
+  });
+
+  it("--only and --skip of their scanner keep them; scanners.disable leaves them out (8)", () => {
+    for (const flags of [["--only", "sqllint"], ["--skip", "bandit,gitleaks"]]) {
+      const r = cli(changed(), ["scan", "--no-install", "--format", "json", ...flags]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(where(JSON.parse(r.stdout) as Json), flags.join(" ")).toEqual(EXPECTED);
+    }
+    const disabled = cli(changed("scanners:\n  disable: [bandit]\n"), ["scan", "--no-install", "--format", "json"]);
+    expect(where(JSON.parse(disabled.stdout) as Json)).toEqual(EXPECTED.filter((f) => !f.startsWith("bandit:")));
   });
 });
 

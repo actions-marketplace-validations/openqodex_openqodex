@@ -26,8 +26,12 @@
 // 14. review.severity_threshold hides a finding at or above
 //     block_on_severity, so a blocked verdict names nothing; hides a
 //     not-reviewed candidate; or loses count of what it hid.
+// 15. An added suppression comment or a changed scanner settings file falls
+//     under review.severity_threshold and leaves the report: in a scan, where
+//     it counts as minor, or raised by the reviewer at a low severity in
+//     either submission version.
 import { describe, expect, it } from "vitest";
-import { finalizeReview, scanReport } from "./finalize.js";
+import { checkSubmission, finalizeReview, scanReport, SETTINGS_RULE, SUPPRESSION_RULE } from "./finalize.js";
 import {
   KEY_CANDIDATE,
   LINT_CANDIDATE,
@@ -41,7 +45,7 @@ import {
   makeSubmission,
 } from "./test-fixtures.js";
 import { OpenQodexError } from "./types.js";
-import type { Config } from "./types.js";
+import type { Candidate, Config } from "./types.js";
 
 function run(submission: unknown, over: { config?: Partial<Config> } = {}) {
   const change = makeChange();
@@ -431,5 +435,91 @@ describe("severity_threshold", () => {
     const scan = scanReport({ change: makeChange(), scan: makeScan(), config: makeConfig({ severityThreshold: "major" }) });
     expect(scan.findings.map((f) => f.source)).toEqual([SQL_CANDIDATE.token, KEY_CANDIDATE.token]);
     expect(scan.below_threshold).toBe(1);
+  });
+});
+
+describe("a change that silences a scanner is never hidden by the threshold (15)", () => {
+  const suppression: Candidate = {
+    ...LINT_CANDIDATE,
+    id: "c4",
+    token: `bandit:${SUPPRESSION_RULE}`,
+    source: "bandit",
+    ruleId: SUPPRESSION_RULE,
+    lineStart: 2,
+    lineEnd: 2,
+    severity: "medium",
+    reviewSeverity: "minor",
+    message: "This change adds # nosec, which stops bandit reporting what it covers; check that it hides no real problem",
+  };
+  const settings: Candidate = {
+    ...LINT_CANDIDATE,
+    id: "c5",
+    token: `ruff:${SETTINGS_RULE}`,
+    source: "ruff",
+    ruleId: SETTINGS_RULE,
+    filePath: "app/search.py",
+    lineStart: 14,
+    lineEnd: 14,
+    severity: "high",
+    reviewSeverity: "major",
+    message: "This change edits a scanner settings file; findings of ruff may be hidden by it",
+  };
+  const scanWithOwn = makeScan({ candidates: [SQL_CANDIDATE, suppression, settings] });
+  const raise = (c: Candidate) =>
+    finding({ severity: "nitpick", category: "maintainability", title: "Silences a scanner", file_path: c.filePath, line_number: c.lineStart, line_end: c.lineStart, source: c.token, candidate: c.id });
+
+  it("lists both in a scan, as minor, whatever the threshold, and blocks at minor", () => {
+    const report = scanReport({ change: makeChange(), scan: scanWithOwn, config: makeConfig({ severityThreshold: "critical" }) });
+    expect(report.findings.map((f) => [f.source, f.severity])).toEqual([
+      [suppression.token, "minor"],
+      [settings.token, "minor"],
+    ]);
+    expect(report.below_threshold).toBe(1);
+    expect(report.verdict).toBe("passed");
+    for (const only of [suppression, settings]) {
+      const blocked = scanReport({ change: makeChange(), scan: makeScan({ candidates: [only] }), config: makeConfig({ blockOnSeverity: "minor" }) });
+      expect(blocked.verdict, only.token).toBe("blocked");
+      const passed = scanReport({ change: makeChange(), scan: makeScan({ candidates: [only] }), config: makeConfig({ blockOnSeverity: "major" }) });
+      expect(passed.verdict, only.token).toBe("passed");
+    }
+  });
+
+  it("lists them when the reviewer raises them below the threshold (version 1)", () => {
+    const change = makeChange();
+    const report = finalizeReview({
+      change,
+      scan: scanWithOwn,
+      manifest: makeManifest(change),
+      config: makeConfig({ severityThreshold: "critical" }),
+      submission: makeSubmission({ findings: [raise(suppression), raise(settings)], dropped: [{ candidate: "c1", reason: "parameterised elsewhere" }] }),
+    });
+    expect(report.findings.map((f) => f.candidate)).toEqual(["c4", "c5"]);
+    expect(report.below_threshold).toBe(0);
+  });
+
+  it("lists them when the reviewer raises them below the threshold (version 2)", () => {
+    const change = makeChange();
+    const prose = { problem: "The comment makes the scanner skip this line.", consequence: "A real problem here would not be reported.", fix: "Remove the comment or fix the code it hides." };
+    const v2 = (c: Candidate) => {
+      const { description: _d, suggested_change: _s, ...rest } = raise(c) as Record<string, unknown>;
+      return { ...rest, ...prose };
+    };
+    const r = checkSubmission({
+      change,
+      scan: scanWithOwn,
+      manifest: makeManifest(change),
+      config: makeConfig({ severityThreshold: "critical" }),
+      submission: {
+        version: 2,
+        change_id: change.shortId,
+        summary: "Checked.",
+        findings: [v2(suppression), v2(settings)],
+        dropped: [{ candidate: "c1", reason: "Parameterised elsewhere.", file_path: "app/search.py", line_number: 14 }],
+      },
+      lineCount: (path) => (path === "app/search.py" ? 40 : path === "app/settings.py" ? 3 : null),
+    });
+    if (!r.ok) throw new Error(r.errors.join("\n"));
+    expect(r.report.findings.map((f) => f.candidate)).toEqual(["c4", "c5"]);
+    expect(r.report.below_threshold).toBe(0);
   });
 });

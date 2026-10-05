@@ -59,7 +59,10 @@ function skipString(s: string, i: number, close: string, escapes: boolean, multi
 }
 
 // Python: `#` comments; '...' and "..." strings, and their triple-quoted
-// forms, which span lines. A prefix (r, b, f, u) is just letters before them.
+// forms, which span lines. A prefix (r, b, u) is just letters before them.
+// An f-string (or t-string) holds code in its `{...}` fields, and from
+// Python 3.12 a field may span lines and hold a comment, which ruff and a
+// bandit on 3.12 read.
 function pythonComments(s: string): Comment[] {
   const out: Comment[] = [];
   let i = 0;
@@ -70,8 +73,10 @@ function pythonComments(s: string): Comment[] {
       out.push(comment);
       i += comment.text.length;
     } else if (c === '"' || c === "'") {
-      const triple = c.repeat(3);
-      i = s.startsWith(triple, i) ? skipString(s, i + 3, triple, true, true) : skipString(s, i + 1, c, true, false);
+      const close = s.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      const prefix = /(?:^|[^\w])([A-Za-z]{1,2})$/.exec(s.slice(Math.max(0, i - 3), i))?.[1] ?? "";
+      const body = i + close.length;
+      i = /^[rRbBuU]?[fFtT][rR]?$/.test(prefix) ? skipFString(s, body, close, out) : skipString(s, body, close, true, close.length === 3);
     } else if (c === "\\") {
       i += 2;
     } else {
@@ -81,11 +86,63 @@ function pythonComments(s: string): Comment[] {
   return out;
 }
 
+// The offset past an f-string whose body starts at `i`. Comments in its
+// fields go to `out`.
+function skipFString(s: string, i: number, close: string, out: Comment[]): number {
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "\\") {
+      i += 2;
+    } else if (close.length === 1 && c === "\n") {
+      return i;
+    } else if (s.startsWith(close, i)) {
+      return i + close.length;
+    } else if (c === "{" && s[i + 1] === "{") {
+      i += 2;
+    } else if (c === "{") {
+      i = skipField(s, i + 1, out);
+    } else {
+      i++;
+    }
+  }
+  return s.length;
+}
+
+// The offset past an f-string field whose code starts at `i`: the
+// expression, where `#` opens a comment, then the conversion and format
+// spec after a top-level `!` or `:`, where `#` is text (`{n:#x}`).
+function skipField(s: string, i: number, out: Comment[]): number {
+  let depth = 0;
+  let spec = false;
+  while (i < s.length) {
+    const c = s[i] as string;
+    if (c === "}" && depth === 0) return i + 1;
+    if (spec) {
+      i = c === "{" ? skipField(s, i + 1, out) : i + 1;
+    } else if (c === "#") {
+      const comment = lineComment(s, i);
+      out.push(comment);
+      i += comment.text.length;
+    } else if (c === '"' || c === "'") {
+      const close = s.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      i = skipString(s, i + close.length, close, true, close.length === 3);
+    } else {
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth--;
+      else if (depth === 0 && (c === ":" || (c === "!" && s[i + 1] !== "="))) spec = true;
+      i++;
+    }
+  }
+  return s.length;
+}
+
 const HEREDOC_WORD = /^(["']?)([A-Za-z_][\w-]*)\1/;
 
 // `indent`: what may come before the closing word on its line (shell and
-// Dockerfile `<<-`: tabs; Ruby `<<~` and `<<-`: any blanks).
-type Heredoc = { word: string; indent: "none" | "tabs" | "blanks" };
+// Dockerfile `<<-`: tabs; Ruby `<<~` and `<<-`: any blanks). `expands`: a
+// shell heredoc whose word is not quoted runs the $( ) and backticks in its
+// body.
+type Heredoc = { word: string; indent: "none" | "tabs" | "blanks"; expands?: boolean };
 
 const INDENT = { none: /^/, tabs: /^\t*/, blanks: /^[\t ]*/ } as const;
 
@@ -112,29 +169,41 @@ function heredocAt(s: string, i: number): { heredoc: Heredoc; next: number } | n
   const dash = s[j] === "-";
   if (dash) j++;
   while (s[j] === " " || s[j] === "\t") j++;
-  if (s[j] === "\\") j++;
+  const escaped = s[j] === "\\";
+  if (escaped) j++;
   const m = HEREDOC_WORD.exec(s.slice(j, j + 200));
   if (!m) return null;
-  return { heredoc: { word: m[2] as string, indent: dash ? "tabs" : "none" }, next: j + m[0].length };
+  const expands = !escaped && m[1] === "";
+  return { heredoc: { word: m[2] as string, indent: dash ? "tabs" : "none", expands }, next: j + m[0].length };
 }
 
 // Shell: a `#` that starts a word (at a line start, after a blank or an
 // operator) opens a comment; `$#`, `${#x}` and `a#b` do not. Single quotes
-// have no escapes; double quotes and $'...' do; all three span lines.
-// Heredoc bodies are data.
+// have no escapes; double quotes and $'...' do; all three span lines. Code
+// inside $( ) and backticks is code again, also inside double quotes and
+// in the body of a heredoc whose word is not quoted; shellcheck reads its
+// comments. The rest of a heredoc body is data.
 function shellComments(s: string): Comment[] {
   const out: Comment[] = [];
+  shellCode(s, 0, null, out);
+  return out;
+}
+
+// Reads shell code from `i`. With `close`, the code of a $( ) or of
+// backticks: returns the offset past its closing `)` or backtick.
+function shellCode(s: string, i: number, close: ")" | "`" | null, out: Comment[]): number {
   let pending: Heredoc[] = [];
-  let i = 0;
+  let depth = 0;
   while (i < s.length) {
-    const c = s[i];
+    const c = s[i] as string;
+    if (c === close && depth === 0) return i + 1;
     if (c === "\n") {
       i++;
       if (pending.length > 0) {
-        i = skipHeredocs(s, i, pending);
+        i = shellHeredocs(s, i, pending, out);
         pending = [];
       }
-    } else if (c === "#" && (i === 0 || /[\s;&|()<>]/.test(s[i - 1] as string))) {
+    } else if (c === "#" && (i === 0 || /[\s;&|()<>`]/.test(s[i - 1] as string))) {
       const comment = lineComment(s, i);
       out.push(comment);
       i += comment.text.length;
@@ -144,21 +213,61 @@ function shellComments(s: string): Comment[] {
       i = skipString(s, i + 1, "'", false, true);
     } else if (c === "$" && s[i + 1] === "'") {
       i = skipString(s, i + 2, "'", true, true);
+    } else if (c === "$" && s[i + 1] === "(") {
+      i = shellCode(s, i + 2, ")", out);
+    } else if (c === "`") {
+      i = shellCode(s, i + 1, "`", out);
     } else if (c === '"') {
-      i = skipString(s, i + 1, '"', true, true);
-    } else if (c === "<") {
-      const h = heredocAt(s, i);
-      if (h) {
-        pending.push(h.heredoc);
-        i = h.next;
-      } else {
-        i++;
-      }
+      i = shellDouble(s, i + 1, out);
+    } else if (c === "<" && heredocAt(s, i)) {
+      const h = heredocAt(s, i) as { heredoc: Heredoc; next: number };
+      pending.push(h.heredoc);
+      i = h.next;
     } else {
+      if (close === ")" && c === "(") depth++;
+      if (close === ")" && c === ")") depth--;
       i++;
     }
   }
-  return out;
+  return i;
+}
+
+// The offset past a double-quoted shell string whose body starts at `i`.
+function shellDouble(s: string, i: number, out: Comment[]): number {
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "\\") i += 2;
+    else if (c === '"') return i + 1;
+    else if (c === "$" && s[i + 1] === "(") i = shellCode(s, i + 2, ")", out);
+    else if (c === "`") i = shellCode(s, i + 1, "`", out);
+    else i++;
+  }
+  return s.length;
+}
+
+// The offset after the bodies of the heredocs opened on the line that just
+// ended. In one whose word is not quoted, $( ) and backticks hold code.
+function shellHeredocs(s: string, i: number, pending: Heredoc[], out: Comment[]): number {
+  for (const h of pending) {
+    while (i < s.length) {
+      const end = lineEnd(s, i);
+      let line = s.slice(i, end);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      if (line.replace(INDENT[h.indent], "") === h.word) {
+        i = end + 1;
+        break;
+      }
+      let j = i;
+      while (h.expands && j < s.length && s[j] !== "\n") {
+        if (s[j] === "\\") j += 2;
+        else if (s[j] === "$" && s[j + 1] === "(") j = shellCode(s, j + 2, ")", out);
+        else if (s[j] === "`") j = shellCode(s, j + 1, "`", out);
+        else j++;
+      }
+      i = Math.max(j, end) + 1;
+    }
+  }
+  return Math.min(i, s.length);
 }
 
 // Dockerfile: a comment is a line whose first character that is not a blank
@@ -235,6 +344,10 @@ function skipTemplate(s: string, i: number): { next: number; opened: boolean } {
   return { next: s.length, opened: false };
 }
 
+// Words whose `( ... )` ends a statement head, so a `/` after it starts a
+// regular expression: `if (a) /x/.test(b)`.
+const JS_HEAD_WORDS = new Set(["if", "while", "for", "with"]);
+
 // JavaScript, TypeScript and Go: `//` and `/* */` comments. Both have
 // one-line '...' and "..." strings (a rune in Go). A backtick opens a raw
 // string in Go and a template literal in JavaScript, whose `${...}` holds
@@ -244,9 +357,12 @@ function slashComments(s: string, dialect: "js" | "go"): Comment[] {
   const out: Comment[] = [];
   // The brace depth inside each open `${...}` of a template literal.
   const templates: number[] = [];
+  // For each open `(`: whether it follows if, while, for or with.
+  const parens: boolean[] = [];
   let prev = "";
   let word = "";
-  let i = 0;
+  // A `#!` line at the very start is not code.
+  let i = s.startsWith("#!") ? lineEnd(s, 0) : 0;
   const openTemplate = (from: number) => {
     const t = skipTemplate(s, from);
     if (t.opened) templates.push(0);
@@ -291,10 +407,17 @@ function slashComments(s: string, dialect: "js" | "go"): Comment[] {
     } else if (c === "}" && templates.length > 0 && templates[templates.length - 1] === 0) {
       templates.pop();
       openTemplate(i + 1);
+    } else if ((c === "+" || c === "-") && s[i + 1] === c) {
+      // A postfix ++ or -- ends an operand (`a++ / b`); a prefix one does not.
+      prev = prev === "a" || prev === ")" || prev === "]" ? "a" : c;
+      word = "";
+      i += 2;
     } else {
       const top = templates.length - 1;
       if (top >= 0 && (c === "{" || c === "}")) templates[top] = (templates[top] ?? 0) + (c === "{" ? 1 : -1);
-      prev = c;
+      if (c === "(") parens.push(JS_HEAD_WORDS.has(word));
+      // The `)` closing an if, while, for or with head is followed by a statement.
+      prev = c === ")" && parens.pop() === true ? "(" : c;
       word = "";
       i++;
     }
@@ -420,7 +543,9 @@ function rubyComments(s: string): Comment[] {
         prev = "a";
       }
       word = "";
-    } else if (c === "/" && regexMayStart(prev, word, RUBY_REGEX_WORDS)) {
+    } else if (c === "/" && (regexMayStart(prev, word, RUBY_REGEX_WORDS) || (word !== "" && /\s/.test(s[i - 1] ?? "") && !/[\s=]/.test(s[i + 1] ?? " ")))) {
+      // A method name, a blank, then `/` and no blank (`split /,/`) starts a
+      // regular expression argument, as Ruby reads it.
       i = skipRegex(s, i + 1);
       prev = "a";
       word = "";

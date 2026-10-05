@@ -50,8 +50,10 @@
 //  25. A marker in a file its scanner does not check yields a candidate.
 //  26. A scanner finding on the same line swallows a suppression or a
 //      settings candidate in the cross-scanner dedup.
-//  27. A scanner left out with only, skip or scanners.disable still gets a
-//      suppression candidate.
+//  27. A scanner left out with only or skip for one run loses its suppression
+//      and settings candidates, though the comment or the file still
+//      silences it in every other run; or a scanner switched off with
+//      scanners.disable keeps them.
 //  28. A whole-repository run, which has no added lines, yields one.
 //  29. The candidate's message carries text from the line, such as a secret.
 
@@ -648,24 +650,28 @@ describe("suppression comments the change adds", () => {
     ]);
   });
 
-  it("leaves out the scanners only, skip and scanners.disable leave out (27)", async () => {
-    const dir = repo({ "app.py": "x = 1  # nosec  # noqa\n" });
+  it("keeps them through only and skip, and leaves out a scanner scanners.disable switches off (27)", async () => {
+    const dir = repo({ "app.py": "x = 1  # nosec  # noqa\n", ".gitleaksignore": "x\n" });
     const tokens = async (over: { only?: BuiltinScanner[]; skip?: BuiltinScanner[]; disabledScanners?: BuiltinScanner[] }) => {
       const { scan } = await runScanners({
         repoDir: dir,
-        changedPaths: ["app.py"],
-        coverage: new Map([["app.py", lines(1)]]),
+        changedPaths: ["app.py", ".gitleaksignore"],
+        coverage: new Map([
+          ["app.py", lines(1)],
+          [".gitleaksignore", lines(1)],
+        ]),
         config: config({ disabledScanners: over.disabledScanners ?? [] }),
         resolveTool: notInstalled(),
         only: over.only,
         skip: over.skip,
       });
-      return scan.candidates.map((c) => c.token);
+      return scan.candidates.map((c) => c.token).sort();
     };
-    expect(await tokens({})).toEqual(["ruff:openqodex.suppression-added", "bandit:openqodex.suppression-added"]);
-    expect(await tokens({ skip: ["bandit"] })).toEqual(["ruff:openqodex.suppression-added"]);
-    expect(await tokens({ disabledScanners: ["ruff"] })).toEqual(["bandit:openqodex.suppression-added"]);
-    expect(await tokens({ only: ["sqllint"] })).toEqual([]);
+    const all = ["bandit:openqodex.suppression-added", "gitleaks:settings-file", "ruff:openqodex.suppression-added"];
+    expect(await tokens({})).toEqual(all);
+    expect(await tokens({ skip: ["bandit", "gitleaks"] })).toEqual(all);
+    expect(await tokens({ only: ["sqllint"] })).toEqual(all);
+    expect(await tokens({ disabledScanners: ["ruff", "gitleaks"] })).toEqual(["bandit:openqodex.suppression-added"]);
   });
 
   it("raises nothing in a whole-repository run (28)", async () => {

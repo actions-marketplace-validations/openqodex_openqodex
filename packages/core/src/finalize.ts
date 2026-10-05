@@ -237,10 +237,19 @@ function redactAll<T>(value: T, clean: (text: string) => string): T {
 
 // review.severity_threshold: a finding below it is counted, not listed. A
 // finding at or above block_on_severity is always listed, whatever the
-// threshold, so a blocked verdict always names what blocked it.
-function shown(f: ReportFinding, config: Config): boolean {
+// threshold, so a blocked verdict always names what blocked it. So is one
+// that cites a candidate in `own` (an added suppression comment, a changed
+// settings file): the scanner it silences shows nothing there, so hiding
+// it too would leave the change with no trace in the report.
+function shown(f: ReportFinding, config: Config, own: ReadonlySet<string>): boolean {
+  if (f.candidate !== null && own.has(f.candidate)) return true;
   if (atOrAbove(f.severity, config.severityThreshold)) return true;
   return config.blockOnSeverity !== null && atOrAbove(f.severity, config.blockOnSeverity);
+}
+
+// The ids of the candidates OpenQodex raises about the change itself.
+function ownIds(scan: ScanResult): Set<string> {
+  return new Set(scan.candidates.filter(isOwnCandidate).map((c) => c.id));
 }
 
 function verdictFor(threshold: Severity | null, severities: Severity[]): Verdict {
@@ -315,7 +324,8 @@ export function finalizeReview(args: {
     .map((c) => ({ candidate: c, reason: droppedIds.get(c.id) ?? "" }));
 
   const deduped = dedup(findings);
-  const kept = deduped.filter((f) => shown(f, config));
+  const own = ownIds(scan);
+  const kept = deduped.filter((f) => shown(f, config, own));
   const verdict = verdictFor(config.blockOnSeverity, [
     ...kept.map((f) => f.severity),
     ...notReviewed.map((c) => c.reviewSeverity),
@@ -547,7 +557,8 @@ export function checkSubmission(args: {
   }
   const droppedBy = new Map(sub.dropped.map((d) => [d.candidate, d]));
   const deduped = dedup(findings);
-  const kept = deduped.filter((f) => shown(f, config));
+  const own = ownIds(scan);
+  const kept = deduped.filter((f) => shown(f, config, own));
   const report: Report = {
     version: 1,
     kind: "review",
@@ -623,7 +634,8 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
   const live = scan.candidates
     .filter((c) => !disabled(c.token, config))
     .map((c): ReportFinding => (isOwnCandidate(c) ? { ...candidateFinding(c), severity: "minor" } : candidateFinding(c)));
-  const findings = live.filter((f) => shown(f, config));
+  const own = ownIds(scan);
+  const findings = live.filter((f) => shown(f, config, own));
   const report: Report = {
     version: 1,
     kind: "scan",

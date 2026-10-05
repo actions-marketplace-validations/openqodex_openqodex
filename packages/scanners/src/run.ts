@@ -111,7 +111,11 @@ export async function runScanners(args: {
     return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
   });
   if (coverage) {
-    const wanted = (s: BuiltinScanner) => selected(s) && !args.config.disabledScanners.includes(s);
+    // A changed settings file and an added suppression comment silence their
+    // scanner in every later run, so --only and --skip, which pick scanners
+    // for this run, keep them. scanners.disable, the repository's choice that
+    // the scanner never runs here, leaves them out with it.
+    const wanted = (s: BuiltinScanner) => !args.config.disabledScanners.includes(s);
     merged.push(
       ...(await settingsFindings({
         repoDir: args.repoDir,
