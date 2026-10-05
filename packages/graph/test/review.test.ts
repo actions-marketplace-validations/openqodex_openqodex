@@ -17,6 +17,10 @@
 // 14. A name bound by destructuring (`const { a } = x`, `[a] = x`, a
 //     parameter `{ a }`) does not hide a definition of the same name, so a
 //     call to it gets a certain edge to that definition.
+// 15. A name an import binds and the same scope then assigns (`f = lambda: 0`)
+//     still links to the import.
+// 16. A function assigned with `var` inside a block is visible only in the
+//     block, so a call to it after the block links to the module's function.
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -148,6 +152,27 @@ describe("certain edges", () => {
     const g = await build(repo(files));
     expect(callSites(g, symbol(g, "a.ts", "target"))).toEqual([at(files, "a.ts", "TOP")]);
     expect(g.misses).toEqual([]);
+  });
+
+  it("drops an import as evidence once the same scope assigns the name (15)", async () => {
+    const files = {
+      "b.py": "def f():\n    return 1\n",
+      "a.py": "def run():\n    from .b import f\n    f = lambda: 0\n    return f()  # REASSIGNED\n",
+      "b.ts": "export function f(): number {\n  return 1;\n}\n",
+      "a.ts": 'export async function run(): Promise<number> {\n  let { f } = await import("./b.js");\n  f = () => 0;\n  return f(); // REASSIGNED\n}\n',
+    };
+    const g = await build(repo(files));
+    expect(callSites(g, symbol(g, "b.py", "f"))).toEqual([]);
+    expect(callSites(g, symbol(g, "b.ts", "f"))).toEqual([]);
+  });
+
+  it("keeps a function assigned with var inside a block visible in its whole function (16)", async () => {
+    const files = {
+      "a.ts": "export function f(): number {\n  return 1;\n}\n\nexport function run(): number {\n  {\n    var f = () => 2;\n  }\n  return f(); // VAR\n}\n",
+    };
+    const g = await build(repo(files));
+    expect(callSites(g, symbol(g, "a.ts", "f"))).toEqual([]);
+    expect(callSites(g, symbol(g, "a.ts", "f", "run"))).toEqual([at(files, "a.ts", "VAR")]);
   });
 
   it("resolves an import through the export table, never to a private definition of the same name (5)", async () => {

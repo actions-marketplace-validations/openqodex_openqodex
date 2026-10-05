@@ -13,6 +13,8 @@
 // 9. A named pipe in place of a cache entry blocks the build forever.
 // 7. A function the change removes is not reported, or its surviving
 //    callers are lost because the old side is not parsed.
+// 10. A deeply nested file takes time and memory that grow with the square
+//     of its depth (each call kept a copy of every scope around it).
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
@@ -94,6 +96,19 @@ describe("budget", () => {
 
     const block = renderImpactBlock(detectImpact(g, { files: [], coverage: new Map() }));
     expect(block.split("\n")[2]).toMatch(/^The graph is partial: the 0\.001 s budget ran out/);
+  });
+
+  it("reads 20,000 nested blocks in well under a second, leaving calls past the depth bound unresolved (10)", async () => {
+    const n = 20_000;
+    const root = repo({ "deep.ts": `export function f() {}\n${"{ f(); ".repeat(n)}${"}".repeat(n)}\n` });
+    const started = performance.now();
+    const g = await buildGraph({ repoRoot: root, cacheDir: cacheOf(root), budgetMs: 60_000 });
+    const ms = performance.now() - started;
+    const bound = g.edges.reduce((k, e) => k + e.sites.length, 0);
+    expect(bound).toBeGreaterThan(0);
+    expect(bound).toBeLessThan(n);
+    expect(bound + g.status.unresolvedSites).toBe(n);
+    expect(ms).toBeLessThan(1000);
   });
 
   it("caps the number of files and parses the changed files first", async () => {

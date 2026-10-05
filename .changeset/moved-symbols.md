@@ -7,4 +7,6 @@ A call to a function loaded with `await import()` inside another function is now
 A name an import binds inside a function (`await import()`, `require`, or a Python import) now counts only in that function, so a call elsewhere in the file that is broken stays reported.
 A name bound by destructuring, such as `const { a } = x` or a parameter `{ a }`, now hides a function of the same name, so its calls are no longer traced to that function.
 A `let` or `const` declared in a block, a loop or a catch clause now hides a function of the same name only inside that block.
+A method call on an object made from a class or a function that an import inside a function loaded is traced again, and so is a call on a name that the function declares later, such as one a closure uses before the declaration.
+A file with thousands of nested blocks no longer slows the code graph down: calls nested more than 256 scopes deep are left unresolved.
 A file that git sees as renamed is now checked: a caller that still imports the old path is reported as "removed, still called".
