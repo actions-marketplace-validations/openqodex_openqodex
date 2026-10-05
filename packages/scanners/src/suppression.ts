@@ -58,16 +58,16 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
       { name: "# isort: off", pattern: /^(?<at>#\s*(?:ruff:\s*)?isort:\s*off)\s*$/dg },
     ],
   },
-  // A comment `# shellcheck` with a disable= key, or extended-analysis=false,
-  // among its keys (src/ShellCheck/Parser.hs, readAnnotation).
+  // A comment `# shellcheck` then a blank, with a disable= key, or
+  // extended-analysis=false, among its keys (src/ShellCheck/Parser.hs,
+  // readAnnotation). shellcheck needs no blank between keys
+  // (`source='x'disable=1`), so any `disable=` after the prefix counts: a
+  // superset of what it obeys, found in one pass with no nested repetition.
   shellcheck: {
     family: "shell",
     markers: [
-      { name: "# shellcheck disable=", pattern: /^(?<at>#[ \t]*shellcheck)[ \t]+(?:[A-Za-z-]+=(?:'[^'\n]*'|"[^"\n]*"|\S+)[ \t]+)*disable=/dg },
-      {
-        name: "# shellcheck extended-analysis=false",
-        pattern: /^(?<at>#[ \t]*shellcheck)[ \t]+(?:[A-Za-z-]+=(?:'[^'\n]*'|"[^"\n]*"|\S+)[ \t]+)*extended-analysis=["']?false/dg,
-      },
+      { name: "# shellcheck disable=", pattern: /^(?<at>#[ \t]*shellcheck)[ \t][^\n]*?disable=/dg },
+      { name: "# shellcheck extended-analysis=false", pattern: /^(?<at>#[ \t]*shellcheck)[ \t][^\n]*?extended-analysis=["']?false/dg },
     ],
   },
   // A comment line `# hadolint ignore=`, `# hadolint global ignore=` or
@@ -136,15 +136,19 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
   };
 
   // The end of the line holding the first Go `package` clause outside a
-  // comment; the whole file when there is none.
+  // comment; the whole file when there is none. The comments are in file
+  // order, so one pointer walks them beside the package lines.
   let headerEnd: number | null = null;
   const pastHeader = (unit: Comment): boolean => {
     if (headerEnd === null) {
       headerEnd = text.length;
       const spans = unitsOf("go");
+      let k = 0;
       for (const m of text.matchAll(/^[ \t]*package\b/gm)) {
         const at = m.index + m[0].length - "package".length;
-        if (spans.some((c) => c.start <= at && at < c.start + c.text.length)) continue;
+        while (k < spans.length && (spans[k] as Comment).start + (spans[k] as Comment).text.length <= at) k++;
+        const span = spans[k];
+        if (span !== undefined && span.start <= at) continue;
         const end = text.indexOf("\n", at);
         headerEnd = end < 0 ? text.length : end;
         break;
