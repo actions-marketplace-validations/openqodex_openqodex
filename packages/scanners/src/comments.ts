@@ -3,9 +3,18 @@
 // bandit, the same text inside a string does not. One small tokenizer per
 // comment family, never a parser: each skips the strings of its languages
 // (one-line, multi-line and heredoc bodies) and returns every comment with
-// its offset. Known limits: JSX text, Ruby and JavaScript regular
-// expressions in unusual places, and a shell `<<` inside arithmetic can
-// be read wrongly; each errs on a rare line, never on a whole file.
+// its offset.
+//
+// Three rules keep a reader from hiding a marker it should see:
+// - An opener left open at the end of the file (a string, a heredoc, a
+//   template, a raw string, a block comment) is read as code, so whatever
+//   follows it is still read. A false candidate costs a reviewer one drop;
+//   a missed one hides a finding.
+// - Each kind of closer is searched for to the end of the file at most once:
+//   when it is not found from one point, no later opener of that kind is
+//   searched for again (`Reader.open`). This keeps every reader linear.
+// - Nesting deeper than MAX_DEPTH ($( ) in $( ), f-string fields, Ruby #{ })
+//   is read as plain code instead of recursing.
 
 export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go";
 
@@ -15,18 +24,55 @@ export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go";
 export type Comment = { start: number; text: string };
 
 export function comments(text: string, family: Family): Comment[] {
+  const r = new Reader(text);
   switch (family) {
     case "python":
-      return pythonComments(text);
+      pythonComments(r);
+      break;
     case "shell":
-      return shellComments(text);
+      shellCode(r, 0, null, 0);
+      break;
     case "dockerfile":
-      return dockerfileComments(text);
+      dockerfileComments(r);
+      break;
     case "ruby":
-      return rubyComments(text);
+      rubyComments(r);
+      break;
     case "js":
     case "go":
-      return slashComments(text, family);
+      slashComments(r, family);
+      break;
+  }
+  return r.out;
+}
+
+const MAX_DEPTH = 64;
+
+class Reader {
+  readonly out: Comment[] = [];
+  // For each kind of closer, the earliest offset from which a search for it
+  // reached the end of the file.
+  private readonly unclosed = new Map<string, number>();
+  constructor(readonly s: string) {}
+
+  // Runs `find` (a search for a closer from `from`, returning the offset past
+  // it or -1 at the end of the file) unless a search of the same `kind`
+  // already failed from an earlier offset. -1 means the opener is left open:
+  // the caller reads it as code. A memo that is wrong only ever makes an
+  // opener read as code, which can add a candidate, never hide one.
+  open(kind: string, from: number, find: () => number): number {
+    const failed = this.unclosed.get(kind);
+    if (failed !== undefined && from >= failed) return -1;
+    const end = find();
+    if (end < 0 && (failed === undefined || from < failed)) this.unclosed.set(kind, from);
+    return end;
+  }
+
+  lineComment(i: number): number {
+    const end = lineEnd(this.s, i);
+    const text = this.s.slice(i, end);
+    this.out.push({ start: i, text: text.endsWith("\r") ? text.slice(0, -1) : text });
+    return end;
   }
 }
 
@@ -35,15 +81,10 @@ function lineEnd(s: string, i: number): number {
   return n < 0 ? s.length : n;
 }
 
-function lineComment(s: string, i: number): Comment {
-  const end = lineEnd(s, i);
-  const text = s.slice(i, end);
-  return { start: i, text: text.endsWith("\r") ? text.slice(0, -1) : text };
-}
-
 // The offset just past the closing `close` of a string whose body starts at
-// `i`. `escapes`: a backslash hides the next character. Without `multiline`
-// an unclosed string ends at the line end, as the languages' lexers end it.
+// `i`. `escapes`: a backslash hides the next character. A one-line string
+// (not `multiline`) ends at the line end, as the languages' lexers end it. A
+// multi-line one with no closer returns -1.
 function skipString(s: string, i: number, close: string, escapes: boolean, multiline: boolean): number {
   while (i < s.length) {
     const c = s[i];
@@ -55,7 +96,7 @@ function skipString(s: string, i: number, close: string, escapes: boolean, multi
     if (s.startsWith(close, i)) return i + close.length;
     i++;
   }
-  return s.length;
+  return multiline ? -1 : s.length;
 }
 
 // Python: `#` comments; '...' and "..." strings, and their triple-quoted
@@ -63,32 +104,32 @@ function skipString(s: string, i: number, close: string, escapes: boolean, multi
 // An f-string (or t-string) holds code in its `{...}` fields, and from
 // Python 3.12 a field may span lines and hold a comment, which ruff and a
 // bandit on 3.12 read.
-function pythonComments(s: string): Comment[] {
-  const out: Comment[] = [];
+function pythonComments(r: Reader): void {
+  const s = r.s;
   let i = 0;
   while (i < s.length) {
-    const c = s[i];
+    const c = s[i] as string;
     if (c === "#") {
-      const comment = lineComment(s, i);
-      out.push(comment);
-      i += comment.text.length;
+      i = r.lineComment(i);
     } else if (c === '"' || c === "'") {
       const close = s.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
       const prefix = /(?:^|[^\w])([A-Za-z]{1,2})$/.exec(s.slice(Math.max(0, i - 3), i))?.[1] ?? "";
       const body = i + close.length;
-      i = /^[rRbBuU]?[fFtT][rR]?$/.test(prefix) ? skipFString(s, body, close, out) : skipString(s, body, close, true, close.length === 3);
+      const fstring = /^[rRbBuU]?[fFtT][rR]?$/.test(prefix);
+      const end = r.open(`${fstring ? "f" : ""}${close}`, i, () => (fstring ? skipFString(r, body, close, 0) : skipString(s, body, close, true, close.length === 3)));
+      i = end < 0 ? i + 1 : end;
     } else if (c === "\\") {
       i += 2;
     } else {
       i++;
     }
   }
-  return out;
 }
 
-// The offset past an f-string whose body starts at `i`. Comments in its
-// fields go to `out`.
-function skipFString(s: string, i: number, close: string, out: Comment[]): number {
+// The offset past an f-string whose body starts at `i`, or -1 when a
+// triple-quoted one has no closer. Comments in its fields go to the reader.
+function skipFString(r: Reader, i: number, close: string, depth: number): number {
+  const s = r.s;
   while (i < s.length) {
     const c = s[i];
     if (c === "\\") {
@@ -99,204 +140,240 @@ function skipFString(s: string, i: number, close: string, out: Comment[]): numbe
       return i + close.length;
     } else if (c === "{" && s[i + 1] === "{") {
       i += 2;
-    } else if (c === "{") {
-      i = skipField(s, i + 1, out);
+    } else if (c === "{" && depth < MAX_DEPTH) {
+      i = skipField(r, i + 1, depth + 1);
     } else {
       i++;
     }
   }
-  return s.length;
+  return close.length === 1 ? s.length : -1;
 }
 
 // The offset past an f-string field whose code starts at `i`: the
 // expression, where `#` opens a comment, then the conversion and format
-// spec after a top-level `!` or `:`, where `#` is text (`{n:#x}`).
-function skipField(s: string, i: number, out: Comment[]): number {
-  let depth = 0;
+// spec after a top-level `!` or `:`, where `#` is text (`{n:#x}`). A field
+// with no `}` stops at the end of the file.
+function skipField(r: Reader, i: number, depth: number): number {
+  const s = r.s;
+  let nesting = 0;
   let spec = false;
   while (i < s.length) {
     const c = s[i] as string;
-    if (c === "}" && depth === 0) return i + 1;
+    if (c === "}" && nesting === 0) return i + 1;
     if (spec) {
-      i = c === "{" ? skipField(s, i + 1, out) : i + 1;
+      i = c === "{" && depth < MAX_DEPTH ? skipField(r, i + 1, depth + 1) : i + 1;
     } else if (c === "#") {
-      const comment = lineComment(s, i);
-      out.push(comment);
-      i += comment.text.length;
+      i = r.lineComment(i);
     } else if (c === '"' || c === "'") {
       const close = s.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
-      i = skipString(s, i + close.length, close, true, close.length === 3);
+      const end = r.open(close, i, () => skipString(s, i + close.length, close, true, close.length === 3));
+      i = end < 0 ? i + 1 : end;
     } else {
-      if ("([{".includes(c)) depth++;
-      else if (")]}".includes(c)) depth--;
-      else if (depth === 0 && (c === ":" || (c === "!" && s[i + 1] !== "="))) spec = true;
+      if ("([{".includes(c)) nesting++;
+      else if (")]}".includes(c)) nesting--;
+      else if (nesting === 0 && (c === ":" || (c === "!" && s[i + 1] !== "="))) spec = true;
       i++;
     }
   }
   return s.length;
 }
-
-const HEREDOC_WORD = /^(["']?)([A-Za-z_][\w-]*)\1/;
 
 // `indent`: what may come before the closing word on its line (shell and
 // Dockerfile `<<-`: tabs; Ruby `<<~` and `<<-`: any blanks). `expands`: a
 // shell heredoc whose word is not quoted runs the $( ) and backticks in its
 // body.
-type Heredoc = { word: string; indent: "none" | "tabs" | "blanks"; expands?: boolean };
+type Heredoc = { word: string; indent: "none" | "tabs" | "blanks"; expands: boolean };
 
 const INDENT = { none: /^/, tabs: /^\t*/, blanks: /^[\t ]*/ } as const;
 
-// The offset after the bodies of the heredocs opened on the line that just
-// ended, read in order: each runs to a line that is exactly its word.
-function skipHeredocs(s: string, i: number, pending: Heredoc[]): number {
+// The offset after the bodies of the heredocs opened on the line that ended
+// just before `i`, read in order: each runs to a line that is exactly its
+// word. -1 when one has no such line: the caller reads the bodies as code.
+// `body` reads one body line of an expanding heredoc.
+function skipHeredocs(r: Reader, i: number, pending: Heredoc[], body?: (from: number, to: number) => void): number {
+  const s = r.s;
   for (const h of pending) {
-    while (i < s.length) {
-      const end = lineEnd(s, i);
-      let line = s.slice(i, end);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      i = end + 1;
-      if (line.replace(INDENT[h.indent], "") === h.word) break;
-    }
+    const end = r.open(`heredoc\0${h.indent}\0${h.word}`, i, () => {
+      let j = i;
+      while (j < s.length) {
+        const eol = lineEnd(s, j);
+        let line = s.slice(j, eol);
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (line.replace(INDENT[h.indent], "") === h.word) return eol + 1;
+        j = eol + 1;
+      }
+      return -1;
+    });
+    if (end < 0) return -1;
+    if (h.expands && body) body(i, end);
+    i = end;
   }
   return Math.min(i, s.length);
 }
 
-// The heredoc a `<<` at `i` opens in shell or a Dockerfile, or null for
-// `<<<` or no word.
-function heredocAt(s: string, i: number): { heredoc: Heredoc; next: number } | null {
+// The end word of a shell heredoc at `j`, after `<<` or `<<-` and its
+// blanks, read as the shell reads a word: up to an unquoted blank or
+// operator, with quotes and backslashes removed. A quoted word turns off
+// expansion in the body. Null for an empty word.
+function shellWord(s: string, j: number): { word: string; quoted: boolean; next: number } | null {
+  let word = "";
+  let quoted = false;
+  while (j < s.length && !/[\s;&|()<>]/.test(s[j] as string)) {
+    const c = s[j] as string;
+    if (c === "\\") {
+      quoted = true;
+      word += s[j + 1] ?? "";
+      j += 2;
+    } else if (c === "'" || c === '"') {
+      const close = s.indexOf(c, j + 1);
+      const eol = lineEnd(s, j);
+      if (close < 0 || close > eol) return null;
+      quoted = true;
+      word += s.slice(j + 1, close);
+      j = close + 1;
+    } else {
+      word += c;
+      j++;
+    }
+  }
+  return word === "" ? null : { word, quoted, next: j };
+}
+
+// The heredoc a `<<` at `i` opens in shell, or null for `<<<` or no word.
+function shellHeredoc(s: string, i: number): { heredoc: Heredoc; next: number } | null {
   if (!s.startsWith("<<", i) || s[i + 2] === "<") return null;
   let j = i + 2;
   const dash = s[j] === "-";
   if (dash) j++;
   while (s[j] === " " || s[j] === "\t") j++;
-  const escaped = s[j] === "\\";
-  if (escaped) j++;
-  const m = HEREDOC_WORD.exec(s.slice(j, j + 200));
-  if (!m) return null;
-  const expands = !escaped && m[1] === "";
-  return { heredoc: { word: m[2] as string, indent: dash ? "tabs" : "none", expands }, next: j + m[0].length };
+  // A word that starts with a digit is far more often a shift in $(( ))
+  // than a heredoc; reading it as code can only add a candidate.
+  if (!/[A-Za-z_'"\\]/.test(s[j] ?? "")) return null;
+  const w = shellWord(s, j);
+  if (!w) return null;
+  return { heredoc: { word: w.word, indent: dash ? "tabs" : "none", expands: !w.quoted }, next: w.next };
 }
 
-// Shell: a `#` that starts a word (at a line start, after a blank or an
-// operator) opens a comment; `$#`, `${#x}` and `a#b` do not. Single quotes
-// have no escapes; double quotes and $'...' do; all three span lines. Code
-// inside $( ) and backticks is code again, also inside double quotes and
-// in the body of a heredoc whose word is not quoted; shellcheck reads its
-// comments. The rest of a heredoc body is data.
-function shellComments(s: string): Comment[] {
-  const out: Comment[] = [];
-  shellCode(s, 0, null, out);
-  return out;
-}
-
-// Reads shell code from `i`. With `close`, the code of a $( ) or of
-// backticks: returns the offset past its closing `)` or backtick.
-function shellCode(s: string, i: number, close: ")" | "`" | null, out: Comment[]): number {
+// Shell code from `i`: a `#` that starts a word (at a line start, after a
+// blank or an operator) opens a comment; `$#`, `${#x}` and `a#b` do not.
+// Single quotes have no escapes; double quotes and $'...' do; all three span
+// lines. Code inside $( ) and backticks is code again, also inside double
+// quotes and in the body of a heredoc whose word is not quoted; shellcheck
+// reads its comments. The rest of a heredoc body is data. With `close`, the
+// code of a $( ) or of backticks: returns the offset past its closing `)` or
+// backtick, or the end of the file.
+function shellCode(r: Reader, i: number, close: ")" | "`" | null, depth: number): number {
+  const s = r.s;
   let pending: Heredoc[] = [];
-  let depth = 0;
+  let nesting = 0;
   while (i < s.length) {
     const c = s[i] as string;
-    if (c === close && depth === 0) return i + 1;
+    if (c === close && nesting === 0) return i + 1;
     if (c === "\n") {
       i++;
       if (pending.length > 0) {
-        i = shellHeredocs(s, i, pending, out);
+        const end = skipHeredocs(r, i, pending, (from, to) => shellExpansions(r, from, to, depth));
+        if (end >= 0) i = end;
         pending = [];
       }
     } else if (c === "#" && (i === 0 || /[\s;&|()<>`]/.test(s[i - 1] as string))) {
-      const comment = lineComment(s, i);
-      out.push(comment);
-      i += comment.text.length;
+      i = r.lineComment(i);
     } else if (c === "\\") {
       i += 2;
     } else if (c === "'") {
-      i = skipString(s, i + 1, "'", false, true);
+      const end = r.open("'", i, () => skipString(s, i + 1, "'", false, true));
+      i = end < 0 ? i + 1 : end;
     } else if (c === "$" && s[i + 1] === "'") {
-      i = skipString(s, i + 2, "'", true, true);
-    } else if (c === "$" && s[i + 1] === "(") {
-      i = shellCode(s, i + 2, ")", out);
-    } else if (c === "`") {
-      i = shellCode(s, i + 1, "`", out);
+      const end = r.open("$'", i, () => skipString(s, i + 2, "'", true, true));
+      i = end < 0 ? i + 2 : end;
+    } else if (c === "$" && s[i + 1] === "(" && depth < MAX_DEPTH) {
+      i = shellCode(r, i + 2, ")", depth + 1);
+    } else if (c === "`" && close !== "`" && depth < MAX_DEPTH) {
+      i = shellCode(r, i + 1, "`", depth + 1);
     } else if (c === '"') {
-      i = shellDouble(s, i + 1, out);
-    } else if (c === "<" && heredocAt(s, i)) {
-      const h = heredocAt(s, i) as { heredoc: Heredoc; next: number };
+      const end = r.open('"', i, () => shellDouble(r, i + 1, depth));
+      i = end < 0 ? i + 1 : end;
+    } else if (c === "<" && shellHeredoc(s, i)) {
+      const h = shellHeredoc(s, i) as { heredoc: Heredoc; next: number };
       pending.push(h.heredoc);
       i = h.next;
     } else {
-      if (close === ")" && c === "(") depth++;
-      if (close === ")" && c === ")") depth--;
+      if (close === ")" && c === "(") nesting++;
+      if (close === ")" && c === ")") nesting--;
       i++;
     }
   }
   return i;
 }
 
-// The offset past a double-quoted shell string whose body starts at `i`.
-function shellDouble(s: string, i: number, out: Comment[]): number {
+// The offset past a double-quoted shell string whose body starts at `i`, or
+// -1 with no closing quote.
+function shellDouble(r: Reader, i: number, depth: number): number {
+  const s = r.s;
   while (i < s.length) {
     const c = s[i];
     if (c === "\\") i += 2;
     else if (c === '"') return i + 1;
-    else if (c === "$" && s[i + 1] === "(") i = shellCode(s, i + 2, ")", out);
-    else if (c === "`") i = shellCode(s, i + 1, "`", out);
+    else if (c === "$" && s[i + 1] === "(" && depth < MAX_DEPTH) i = shellCode(r, i + 2, ")", depth + 1);
+    else if (c === "`" && depth < MAX_DEPTH) i = shellCode(r, i + 1, "`", depth + 1);
     else i++;
   }
-  return s.length;
+  return -1;
 }
 
-// The offset after the bodies of the heredocs opened on the line that just
-// ended. In one whose word is not quoted, $( ) and backticks hold code.
-function shellHeredocs(s: string, i: number, pending: Heredoc[], out: Comment[]): number {
-  for (const h of pending) {
-    while (i < s.length) {
-      const end = lineEnd(s, i);
-      let line = s.slice(i, end);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      if (line.replace(INDENT[h.indent], "") === h.word) {
-        i = end + 1;
-        break;
-      }
-      let j = i;
-      while (h.expands && j < s.length && s[j] !== "\n") {
-        if (s[j] === "\\") j += 2;
-        else if (s[j] === "$" && s[j + 1] === "(") j = shellCode(s, j + 2, ")", out);
-        else if (s[j] === "`") j = shellCode(s, j + 1, "`", out);
-        else j++;
-      }
-      i = Math.max(j, end) + 1;
-    }
+// Reads the $( ) and backticks in the body of an expanding heredoc, from
+// `from` to `to`; the rest of the body is data.
+function shellExpansions(r: Reader, from: number, to: number, depth: number): void {
+  const s = r.s;
+  let j = from;
+  while (j < to) {
+    if (s[j] === "\\") j += 2;
+    else if (s[j] === "$" && s[j + 1] === "(" && depth < MAX_DEPTH) j = shellCode(r, j + 2, ")", depth + 1);
+    else if (s[j] === "`" && depth < MAX_DEPTH) j = shellCode(r, j + 1, "`", depth + 1);
+    else j++;
   }
-  return Math.min(i, s.length);
 }
+
+// The Dockerfile instructions that take a heredoc (BuildKit).
+const HEREDOC_INSTRUCTIONS = new Set(["RUN", "COPY", "ADD"]);
 
 // Dockerfile: a comment is a line whose first character that is not a blank
-// is `#`; a `#` later in an instruction belongs to the instruction. Heredoc
-// bodies (RUN <<EOF) are data.
-function dockerfileComments(s: string): Comment[] {
-  const out: Comment[] = [];
+// is `#`; a `#` later in an instruction belongs to the instruction. A heredoc
+// opens only in RUN, COPY and ADD, in a word that starts with `<<` (after an
+// optional file number), as BuildKit reads it; its body starts after the
+// instruction's last continued line and is data.
+function dockerfileComments(r: Reader): void {
+  const s = r.s;
+  let keyword = "";
+  let continued = false;
   let pending: Heredoc[] = [];
   let i = 0;
   while (i < s.length) {
-    if (pending.length > 0) {
-      i = skipHeredocs(s, i, pending);
-      pending = [];
+    const start = i;
+    const end = lineEnd(s, i);
+    const line = s.slice(i, end).replace(/\r$/, "");
+    const indent = line.length - line.trimStart().length;
+    i = end + 1;
+    if (line[indent] === "#") {
+      r.lineComment(start + indent);
       continue;
     }
-    const end = lineEnd(s, i);
-    const line = s.slice(i, end);
-    const indent = line.length - line.trimStart().length;
-    if (line[indent] === "#") {
-      out.push(lineComment(s, i + indent));
-    } else {
-      for (let j = line.indexOf("<<"); j >= 0; j = line.indexOf("<<", j + 2)) {
-        const h = heredocAt(line, j);
-        if (h) pending.push(h.heredoc);
+    if (line.trim() === "") continue;
+    if (!continued) keyword = (/^\s*([A-Za-z]+)/.exec(line)?.[1] ?? "").toUpperCase();
+    continued = /\\\s*$/.test(line);
+    if (HEREDOC_INSTRUCTIONS.has(keyword) && !/^\s*[A-Za-z]+\s+\[/.test(line)) {
+      for (const m of line.matchAll(/(?:^|\s)\d*<<(-?)(\S+)/g)) {
+        if ((m[2] as string).startsWith("<")) continue;
+        const word = (m[2] as string).replace(/["'\\]/g, "");
+        if (word !== "") pending.push({ word, indent: m[1] === "-" ? "tabs" : "none", expands: false });
       }
     }
-    i = end + 1;
+    if (!continued && pending.length > 0) {
+      const after = skipHeredocs(r, i, pending);
+      if (after >= 0) i = after;
+      pending = [];
+    }
   }
-  return out;
 }
 
 // Words after which a `/` starts a regular expression.
@@ -328,8 +405,9 @@ function skipRegex(s: string, i: number): number {
   return i;
 }
 
-// The offset after a template literal's text, from `i`: past the closing
-// backtick (`opened` false) or past a `${` (`opened` true).
+// After a template literal's text from `i`: the offset past the closing
+// backtick (`opened` false) or past a `${` (`opened` true), or -1 with
+// neither before the end of the file.
 function skipTemplate(s: string, i: number): { next: number; opened: boolean } {
   while (i < s.length) {
     const c = s[i];
@@ -341,7 +419,7 @@ function skipTemplate(s: string, i: number): { next: number; opened: boolean } {
     if (c === "$" && s[i + 1] === "{") return { next: i + 2, opened: true };
     i++;
   }
-  return { next: s.length, opened: false };
+  return { next: -1, opened: false };
 }
 
 // Words whose `( ... )` ends a statement head, so a `/` after it starts a
@@ -353,8 +431,8 @@ const JS_HEAD_WORDS = new Set(["if", "while", "for", "with"]);
 // string in Go and a template literal in JavaScript, whose `${...}` holds
 // code again (with its own strings and comments). JavaScript also has
 // regular expression literals.
-function slashComments(s: string, dialect: "js" | "go"): Comment[] {
-  const out: Comment[] = [];
+function slashComments(r: Reader, dialect: "js" | "go"): void {
+  const s = r.s;
   // The brace depth inside each open `${...}` of a template literal.
   const templates: number[] = [];
   // For each open `(`: whether it follows if, while, for or with.
@@ -363,11 +441,18 @@ function slashComments(s: string, dialect: "js" | "go"): Comment[] {
   let word = "";
   // A `#!` line at the very start is not code.
   let i = s.startsWith("#!") ? lineEnd(s, 0) : 0;
-  const openTemplate = (from: number) => {
-    const t = skipTemplate(s, from);
-    if (t.opened) templates.push(0);
-    i = t.next;
-    prev = t.opened ? "{" : "a";
+  // Reads a template's text from `from`; with no end, the backtick or `}`
+  // before `from` is read as code.
+  const template = (from: number) => {
+    let opened = false;
+    const end = r.open("`", from, () => {
+      const t = skipTemplate(s, from);
+      opened = t.opened;
+      return t.next;
+    });
+    if (end >= 0 && opened) templates.push(0);
+    i = end < 0 ? from : end;
+    prev = end >= 0 && opened ? "{" : "a";
     word = "";
   };
   while (i < s.length) {
@@ -375,25 +460,30 @@ function slashComments(s: string, dialect: "js" | "go"): Comment[] {
     if (/\s/.test(c)) {
       i++;
     } else if (s.startsWith("//", i)) {
-      const comment = lineComment(s, i);
-      out.push(comment);
-      i += comment.text.length;
+      i = r.lineComment(i);
     } else if (s.startsWith("/*", i)) {
-      const close = s.indexOf("*/", i + 2);
-      const end = close < 0 ? s.length : close + 2;
-      out.push({ start: i, text: s.slice(i, end) });
-      i = end;
+      const end = r.open("*/", i, () => {
+        const close = s.indexOf("*/", i + 2);
+        return close < 0 ? -1 : close + 2;
+      });
+      if (end < 0) {
+        i += 2;
+      } else {
+        r.out.push({ start: i, text: s.slice(i, end) });
+        i = end;
+      }
     } else if (c === '"' || c === "'") {
       i = skipString(s, i + 1, c, true, false);
       prev = "a";
       word = "";
     } else if (c === "`") {
       if (dialect === "go") {
-        i = skipString(s, i + 1, "`", false, true);
+        const end = r.open("`", i, () => skipString(s, i + 1, "`", false, true));
+        i = end < 0 ? i + 1 : end;
         prev = "a";
         word = "";
       } else {
-        openTemplate(i + 1);
+        template(i + 1);
       }
     } else if (c === "/" && dialect === "js" && regexMayStart(prev, word, JS_REGEX_WORDS)) {
       i = skipRegex(s, i + 1);
@@ -406,7 +496,7 @@ function slashComments(s: string, dialect: "js" | "go"): Comment[] {
       i += m[0].length;
     } else if (c === "}" && templates.length > 0 && templates[templates.length - 1] === 0) {
       templates.pop();
-      openTemplate(i + 1);
+      template(i + 1);
     } else if ((c === "+" || c === "-") && s[i + 1] === c) {
       // A postfix ++ or -- ends an operand (`a++ / b`); a prefix one does not.
       prev = prev === "a" || prev === ")" || prev === "]" ? "a" : c;
@@ -422,35 +512,36 @@ function slashComments(s: string, dialect: "js" | "go"): Comment[] {
       i++;
     }
   }
-  return out;
 }
 
 const PAIRS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">" };
 
 // The offset past a %-literal (%q(...), %w[...], %r{...}) whose delimiter is
-// at `i`, counting nested brackets of the same kind.
+// at `i`, counting nested brackets of the same kind; -1 with no closer.
 function skipPercent(s: string, i: number): number {
   const open = s[i] as string;
   const close = PAIRS[open] ?? open;
-  let depth = 0;
+  let nesting = 0;
   for (let j = i + 1; j < s.length; j++) {
     const c = s[j];
     if (c === "\\") {
       j++;
-    } else if (c === close && open !== close && depth > 0) {
-      depth--;
+    } else if (c === close && open !== close && nesting > 0) {
+      nesting--;
     } else if (c === close) {
       return j + 1;
     } else if (c === open && open !== close) {
-      depth++;
+      nesting++;
     }
   }
-  return s.length;
+  return -1;
 }
 
 // The offset past a Ruby double-quoted or backtick string whose body starts
-// at `i`. Its `#{...}` holds code, which may hold its own strings.
-function skipRubyString(s: string, i: number, close: string): number {
+// at `i`, or -1 with no closer. Its `#{...}` holds code, which may hold its
+// own strings.
+function skipRubyString(r: Reader, i: number, close: string, depth: number): number {
+  const s = r.s;
   while (i < s.length) {
     const c = s[i];
     if (c === "\\") {
@@ -458,14 +549,19 @@ function skipRubyString(s: string, i: number, close: string): number {
     } else if (c === close) {
       return i + 1;
     } else if (c === "#" && s[i + 1] === "{") {
-      let depth = 1;
+      let nesting = 1;
       i += 2;
-      while (i < s.length && depth > 0) {
-        const d = s[i];
-        if (d === '"' || d === "'" || d === "`") i = d === "'" ? skipString(s, i + 1, "'", true, true) : skipRubyString(s, i + 1, d);
-        else {
-          if (d === "{") depth++;
-          else if (d === "}") depth--;
+      while (i < s.length && nesting > 0) {
+        const d = s[i] as string;
+        if ((d === '"' || d === "`") && depth < MAX_DEPTH) {
+          const end = skipRubyString(r, i + 1, d, depth + 1);
+          i = end < 0 ? s.length : end;
+        } else if (d === "'") {
+          const end = skipString(s, i + 1, "'", true, true);
+          i = end < 0 ? s.length : end;
+        } else {
+          if (d === "{") nesting++;
+          else if (d === "}") nesting--;
           i++;
         }
       }
@@ -473,72 +569,80 @@ function skipRubyString(s: string, i: number, close: string): number {
       i++;
     }
   }
-  return s.length;
+  return -1;
 }
 
-const RUBY_HEREDOC = /^<<([~-]?)(["'`]?)([A-Za-z_]\w*)\2/;
+const RUBY_HEREDOC = /^<<([~-]?)(?:(["'`])([^"'`\n]+)\2|([A-Za-z_]\w*))/;
+
+// The offset past the `=end` line of an =begin block whose line starts at
+// `i`, or -1 with none.
+function skipEmbedded(s: string, i: number): number {
+  for (let j = s.indexOf("\n=end", i); j >= 0; j = s.indexOf("\n=end", j + 1)) {
+    const next = s[j + 5];
+    if (next === undefined || /\s/.test(next)) return lineEnd(s, j + 1);
+  }
+  return -1;
+}
 
 // Ruby: `#` comments and =begin/=end blocks. Strings: '...', "..." and
 // backticks (with #{...}), %-literals, heredocs (<<~ID, <<-ID, <<ID with an
 // upper-case or quoted ID; their bodies are data), ?x character literals and
 // regular expression literals where an operand may start.
-function rubyComments(s: string): Comment[] {
-  const out: Comment[] = [];
+function rubyComments(r: Reader): void {
+  const s = r.s;
   let pending: Heredoc[] = [];
   let prev = "";
   let word = "";
   let i = 0;
+  const literal = (end: number, opener: number) => {
+    i = end < 0 ? opener : end;
+    prev = "a";
+    word = "";
+  };
   while (i < s.length) {
     const c = s[i] as string;
     const lineStart = i === 0 || s[i - 1] === "\n";
     if (c === "\n") {
       i++;
       if (pending.length > 0) {
-        i = skipHeredocs(s, i, pending);
+        const end = skipHeredocs(r, i, pending);
+        if (end >= 0) i = end;
         pending = [];
       }
     } else if (lineStart && /^=begin(\s|$)/.test(s.slice(i, i + 7))) {
-      const m = /^=end(?:\s|$)/m.exec(s.slice(i));
-      const end = m ? i + m.index + lineEnd(s.slice(i + m.index), 0) : s.length;
-      out.push({ start: i, text: s.slice(i, end) });
-      i = end;
+      const end = r.open("=end", i, () => skipEmbedded(s, i));
+      if (end < 0) {
+        i = r.lineComment(i);
+      } else {
+        r.out.push({ start: i, text: s.slice(i, end) });
+        i = end;
+      }
     } else if (/\s/.test(c)) {
       i++;
     } else if (c === "#") {
-      const comment = lineComment(s, i);
-      out.push(comment);
-      i += comment.text.length;
+      i = r.lineComment(i);
     } else if (c === "\\") {
       i += 2;
     } else if (c === "'") {
-      i = skipString(s, i + 1, "'", true, true);
-      prev = "a";
-      word = "";
+      literal(r.open("'", i, () => skipString(s, i + 1, "'", true, true)), i + 1);
     } else if (c === '"' || c === "`") {
-      i = skipRubyString(s, i + 1, c);
-      prev = "a";
-      word = "";
+      literal(r.open(c, i, () => skipRubyString(r, i + 1, c, 0)), i + 1);
     } else if (c === "$" && /["'`]/.test(s[i + 1] ?? "")) {
-      i += 2;
-      prev = "a";
-      word = "";
+      literal(i + 2, i + 2);
     } else if (c === "?" && prev !== "a" && /\S/.test(s[i + 1] ?? " ") && !/\w/.test(s[i + 2] ?? "")) {
-      i += 2;
-      prev = "a";
-      word = "";
+      literal(i + 2, i + 2);
     } else if (c === "%" && /^%[qQwWiIrsx]?[^\w\s]/.test(s.slice(i, i + 3)) && (prev !== "a" || /[qQwWiIrsx]/.test(s[i + 1] as string))) {
       const at = /[qQwWiIrsx]/.test(s[i + 1] as string) ? i + 2 : i + 1;
-      i = skipPercent(s, at);
-      prev = "a";
-      word = "";
+      literal(r.open(`%${s[at]}`, i, () => skipPercent(s, at)), i + 1);
     } else if (c === "<" && RUBY_HEREDOC.test(s.slice(i, i + 200))) {
       const m = RUBY_HEREDOC.exec(s.slice(i, i + 200)) as RegExpExecArray;
-      const [, flag, quote, id] = m as unknown as [string, string, string, string];
-      if (flag === "" && quote === "" && !/^[A-Z]/.test(id)) {
+      const flag = m[1] as string;
+      const id = (m[3] ?? m[4]) as string;
+      if (flag === "" && m[2] === undefined && !/^[A-Z]/.test(id)) {
         prev = "<";
         i += 2;
       } else {
-        pending.push({ word: id, indent: flag === "" ? "none" : "blanks" });
+        pending.push({ word: id, indent: flag === "" ? "none" : "blanks", expands: false });
         i += m[0].length;
         prev = "a";
       }
@@ -546,9 +650,7 @@ function rubyComments(s: string): Comment[] {
     } else if (c === "/" && (regexMayStart(prev, word, RUBY_REGEX_WORDS) || (word !== "" && /\s/.test(s[i - 1] ?? "") && !/[\s=]/.test(s[i + 1] ?? " ")))) {
       // A method name, a blank, then `/` and no blank (`split /,/`) starts a
       // regular expression argument, as Ruby reads it.
-      i = skipRegex(s, i + 1);
-      prev = "a";
-      word = "";
+      literal(skipRegex(s, i + 1), i + 1);
     } else if (/\w/.test(c)) {
       const m = /^\w+[?!]?/.exec(s.slice(i, i + 256)) as RegExpExecArray;
       word = /^\d/.test(m[0]) ? "" : m[0];
@@ -560,5 +662,4 @@ function rubyComments(s: string): Comment[] {
       i++;
     }
   }
-  return out;
 }

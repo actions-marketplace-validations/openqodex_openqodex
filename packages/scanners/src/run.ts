@@ -44,6 +44,7 @@ import type { SettingsFile } from "./adapters/index.js";
 import { readRepoFile } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
+import { SEMGREP_MAX_TARGET_BYTES } from "./adapters/semgrep.js";
 import { findMarkers, SUPPRESSION_MARKERS } from "./suppression.js";
 
 // A custom scanner prepared by the custom module. `skipped` is set when the
@@ -131,11 +132,17 @@ export async function runScanners(args: {
 
   // Fixture, mock and snapshot files hold throwaway data shaped like the
   // real thing; hits there are noise unless the developer asks for them.
+  // A changed settings file is never dropped: one in a fixture folder can
+  // govern code outside it (a root ruff.toml can `extend` it), so it can hide
+  // findings the report shows. A suppression comment goes through the filter
+  // like a hit: it only silences findings in its own file, and the filter
+  // hides those findings too.
   let postFixture = merged;
   let fixturesDropped = 0;
   if (!args.config.includeFixtures) {
-    const dropped = dropFixtureFindings(merged);
-    postFixture = dropped.kept;
+    const settings = merged.filter((f) => f.ruleId === SETTINGS_RULE && isOwnCandidate(f));
+    const dropped = dropFixtureFindings(merged.filter((f) => !settings.includes(f)));
+    postFixture = [...dropped.kept, ...settings];
     fixturesDropped = dropped.droppedCount;
   }
 
@@ -270,9 +277,10 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
   return out;
 }
 
-// The largest file read for suppression comments: the size above which a
-// review leaves a file out.
-const SUPPRESSION_MAX_BYTES = 5 * 1024 * 1024;
+// The largest file read for suppression comments. The scanners with markers
+// set no size limit of their own except semgrep, so this is only a memory
+// guard, far above any hand-written source file. The readers are linear.
+const SUPPRESSION_MAX_BYTES = 64 * 1024 * 1024;
 
 // One candidate per suppression comment on a line the change added, such as
 // `# nosec`, from the scanner it silences, with rule SUPPRESSION_RULE. Only
@@ -290,7 +298,7 @@ async function suppressionFindings(args: {
   for (const filePath of args.changedPaths) {
     const added = args.coverage.get(filePath);
     if (added === undefined || added.size === 0) continue;
-    const scanners = ADAPTERS.filter(
+    let scanners = ADAPTERS.filter(
       (a) => SUPPRESSION_MARKERS[a.source] !== undefined && args.wanted(a.source) && a.wants([filePath], args.repoDir),
     ).map((a) => a.source);
     if (scanners.length === 0) continue;
@@ -301,6 +309,8 @@ async function suppressionFindings(args: {
       // Gone, not a regular file in the repo, or over the size cap.
       continue;
     }
+    // semgrep skips a file over its own limit, as the adapter runs it.
+    if (Buffer.byteLength(text, "utf8") > SEMGREP_MAX_TARGET_BYTES) scanners = scanners.filter((s) => s !== "semgrep");
     for (const hit of findMarkers(text, scanners)) {
       if (!added.has(hit.line)) continue;
       out.push({

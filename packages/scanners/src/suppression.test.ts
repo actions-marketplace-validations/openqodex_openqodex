@@ -33,6 +33,17 @@
 //      directive inside "$( )", backticks or a heredoc's $( ); a comment in a
 //      Python 3.12 f-string field; a JavaScript or Ruby regular expression
 //      taken for a division, which then opens a string.
+// Added after the code review of the second version:
+//  11. A hostile line makes a pattern or a reader take more than linear time
+//      and hang the run on a small file.
+//  12. shellcheck keys written with no blank between them are not read:
+//      `source='/dev/null'disable=SC2086`.
+//  13. A heredoc's end word is read short (`<<EOF.JSON` as EOF), so the end
+//      line is never found and the rest of the file is taken for its body.
+//  14. A Dockerfile heredoc opens where BuildKit opens none (`ENV X=<<EOF`),
+//      and swallows a later `# hadolint ignore=`.
+//  15. A string, heredoc, template, raw string or block comment left open
+//      at the end of the file hides every marker after its opener.
 
 import { describe, expect, it } from "vitest";
 import type { BuiltinScanner } from "@openqodex/core";
@@ -350,6 +361,124 @@ describe("never narrower than the scanner", () => {
     );
     expect(lines("rubocop", text)).toEqual([1, 2, 4]);
   });
+});
+
+describe("keys and heredoc words read as the scanners read them", () => {
+  it("shellcheck: keys with no blank between them (12)", () => {
+    // shellcheck 0.10.0 obeys this disable (checked against the binary).
+    const text = src("echo start", "# shellcheck source='/dev/null'disable=SC2086", "echo $A", "# shellcheck disable=2086source=/dev/null", "echo $B");
+    expect(lines("shellcheck", text)).toEqual([2, 4]);
+  });
+
+  it("shell: the whole end word of a heredoc, quoted, escaped or with a dot (13)", () => {
+    // shellcheck 0.10.0 ends each of these heredocs at the line shown.
+    const text = src(
+      "cat <<EOF.JSON",
+      "# shellcheck disable=SC2086",
+      "EOF.JSON",
+      "# shellcheck disable=SC2086",
+      'cat <<"X Y"',
+      "# shellcheck disable=SC2086",
+      "X Y",
+      "# shellcheck disable=SC2086",
+      "cat <<-\\END",
+      "\t# shellcheck disable=SC2086",
+      "\tEND",
+      "# shellcheck disable=SC2086",
+    );
+    expect(lines("shellcheck", text)).toEqual([4, 8, 12]);
+  });
+
+  it("Dockerfile: a heredoc opens only in RUN, COPY and ADD, at the start of a word (14)", () => {
+    // hadolint 2.15.1 obeys line 3 (checked against the binary).
+    const text = src(
+      "FROM debian:12",
+      "ENV MARKER=<<EOF",
+      "# hadolint ignore=DL3008",
+      "RUN cat<<EOF",
+      "# hadolint ignore=DL3009",
+      "COPY <<EOF /etc/x",
+      "# hadolint ignore=DL3010",
+      "EOF",
+      "run echo <<'END' \\",
+      "  && true",
+      "# hadolint ignore=DL3011",
+      "END",
+      "# hadolint ignore=DL3012",
+    );
+    expect(lines("hadolint", text)).toEqual([3, 5, 13]);
+  });
+});
+
+describe("an opener left open at the end of the file hides nothing after it (15)", () => {
+  it("python: a triple-quoted string and a triple-quoted f-string", () => {
+    expect(lines("bandit", src("x = '''", "y = 1  # nosec"))).toEqual([2]);
+    expect(lines("bandit", src('x = f"""{a}', "y = 1  # nosec"))).toEqual([2]);
+  });
+
+  it("shell: a heredoc, a single-quoted and a double-quoted string, a $( )", () => {
+    for (const opener of ["cat <<EOF", "echo 'abc", 'echo "abc', "x=$(echo"]) {
+      expect(lines("shellcheck", src("echo start", opener, "# shellcheck disable=SC2086", "echo $A")), opener).toEqual([3]);
+    }
+  });
+
+  it("Dockerfile: a heredoc", () => {
+    expect(lines("hadolint", src("FROM debian:12", "RUN <<EOF", "# hadolint ignore=DL3008", "RUN true"))).toEqual([3]);
+  });
+
+  it("ruby: a heredoc, a double-quoted string, a %-literal and an =begin block", () => {
+    for (const opener of ["s = <<~SQL", 's = "abc #{x}', "t = %q(abc", "=begin"]) {
+      expect(lines("rubocop", src(opener, "x = 1 # rubocop:disable Lint/Foo")), opener).toEqual([2]);
+    }
+  });
+
+  it("javascript: a template literal and a block comment", () => {
+    for (const opener of ["const t = `abc ${x}", "/* note"]) {
+      expect(lines("oxlint", src(opener, "debugger; // eslint-disable-line")), opener).toEqual([2]);
+    }
+  });
+
+  it("go: a raw string and a block comment", () => {
+    for (const opener of ["q := `abc", "/* note"]) {
+      expect(lines("golangci", src(opener, "x := f() //nolint")), opener).toEqual([2]);
+    }
+  });
+});
+
+describe("linear time on hostile input (11)", () => {
+  // Each input is large enough that a pattern or reader with quadratic or
+  // exponential work takes minutes; a linear one takes milliseconds.
+  const N = 100_000;
+  const fast = (scanner: BuiltinScanner, text: string) => {
+    const started = performance.now();
+    findMarkers(text, [scanner]);
+    return performance.now() - started;
+  };
+  const cases: [BuiltinScanner, string, string][] = [
+    ["shellcheck", "a directive with many keys, then a bad one", `# shellcheck ${"source='x' ".repeat(2000)}! disable=SC2086\n`],
+    ["shellcheck", "a directive with many keys and no disable", `# shellcheck ${"source='x' ".repeat(N / 10)}!\n# shellcheck ${"extended-analysis=".repeat(N / 10)}\n`],
+    ["shellcheck", "openers left open", `echo start\n${"'\"`$(<<EOF\n".repeat(N / 10)}`],
+    ["shellcheck", "deep $( )", `x=${"$(".repeat(N)}\n`],
+    ["semgrep", "a long line", `${"nose".repeat(N)}\n`],
+    ["gitleaks", "a long line", `${"gitleaks:allo".repeat(N / 4)}\n`],
+    ["bandit", "blanks after #", `#${" ".repeat(N)}x\n${"# ".repeat(N)}\n`],
+    ["ruff", "blanks after # and isort", `#${" ".repeat(N)}x\n${"isort: ".repeat(N / 4)}\n`],
+    ["bandit", "openers left open", `${"'''\"\"\"f'''{".repeat(N / 10)}\n`],
+    ["bandit", "deep f-string fields", `x = f"${"{a:".repeat(N)}\n`],
+    ["hadolint", "heredocs left open", `FROM a\n${"RUN <<EOF\n".repeat(N / 10)}`],
+    ["hadolint", "blanks after #", `#${" ".repeat(N)}hadolint\n`],
+    ["oxlint", "openers left open", `${"`/*(".repeat(N / 4)}\n`],
+    ["oxlint", "blanks after //", `//${" ".repeat(N)}x\n`],
+    ["golangci", "openers left open and package lines in comments", `${"/*\npackage x\n*/\n".repeat(N / 10)}${"`".repeat(N / 10)}\n`],
+    ["golangci", "blanks before #nosec", `/*\n${" ".repeat(N)}x\n*/\n`],
+    ["rubocop", "openers left open", `${'=begin\n"#{%q(<<~A\n'.repeat(N / 10)}`],
+    ["rubocop", "blanks in a directive", `#${" ".repeat(N)}rubocop${" ".repeat(N)}:x\n`],
+  ];
+  for (const [scanner, what, text] of cases) {
+    it(`${scanner}: ${what}`, () => {
+      expect(fast(scanner, text)).toBeLessThan(1000);
+    });
+  }
 });
 
 describe("lines and names", () => {

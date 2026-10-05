@@ -56,6 +56,14 @@
 //      scanners.disable keeps them.
 //  28. A whole-repository run, which has no added lines, yields one.
 //  29. The candidate's message carries text from the line, such as a secret.
+// Added after the code review of the second version:
+//  30. The fixture filter drops a changed settings file in a fixture folder,
+//      though a config outside it can extend that file and hide findings
+//      the report shows (ruff's extend, checked with ruff 0.8.4).
+//  31. A suppression comment in a fixture file survives the fixture filter;
+//      it only silences findings in its own file, which the filter hides.
+//  32. A file over 5 MB is not read, though bandit and the others scan it;
+//      or a file semgrep skips for its size still raises a semgrep candidate.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -684,6 +692,38 @@ describe("suppression comments the change adds", () => {
     });
     expect(scan.candidates).toEqual([]);
   });
+
+  it("keeps a changed settings file in a fixture folder, and drops a suppression comment in a fixture file (30, 31)", async () => {
+    const dir = repo({ "fixtures/ruff.toml": "[lint]\nignore = [\"E401\"]\n", "testdata/app.py": "x = 1  # nosec\n" });
+    const tokens = async (includeFixtures: boolean) => {
+      const { scan } = await runScanners({
+        repoDir: dir,
+        changedPaths: ["fixtures/ruff.toml", "testdata/app.py"],
+        coverage: new Map([
+          ["fixtures/ruff.toml", lines(1, 2)],
+          ["testdata/app.py", lines(1)],
+        ]),
+        config: config({ includeFixtures }),
+        resolveTool: notInstalled(),
+      });
+      return scan.candidates.map((c) => `${c.token} ${c.filePath}`).sort();
+    };
+    expect(await tokens(false)).toEqual(["ruff:settings-file fixtures/ruff.toml"]);
+    expect(await tokens(true)).toEqual(["bandit:openqodex.suppression-added testdata/app.py", "ruff:settings-file fixtures/ruff.toml"]);
+  });
+
+  it("reads a file over 5 MB, and skips semgrep's marker in a file semgrep skips for its size (32)", async () => {
+    const big = `x = 1  # nosec nosemgrep\n${"# pad\n".repeat(1_000_000)}`;
+    const dir = repo({ "big.py": big });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["big.py"],
+      coverage: new Map([["big.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => c.token)).toEqual(["bandit:openqodex.suppression-added"]);
+  }, 20_000);
 
   it("names the marker and the scanner, never the line's text (29)", async () => {
     const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
