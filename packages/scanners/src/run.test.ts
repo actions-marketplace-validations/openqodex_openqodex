@@ -42,6 +42,20 @@
 //      its registry rule packs.
 //  21. A .sql path that is a symlink to /dev/zero or a FIFO hangs the run;
 //      one that leads out of the repo is read; an oversized one is read.
+// Added for suppression comments a change adds:
+//  23. An added suppression comment yields no candidate when its scanner is
+//      not installed, or the candidate names the wrong scanner, rule, line
+//      or severity.
+//  24. A marker on a line the change did not add yields a candidate.
+//  25. A marker in a file its scanner does not check yields a candidate.
+//  26. A scanner finding on the same line swallows a suppression or a
+//      settings candidate in the cross-scanner dedup.
+//  27. A scanner left out with only or skip for one run loses its suppression
+//      and settings candidates, though the comment or the file still
+//      silences it in every other run; or a scanner switched off with
+//      scanners.disable keeps them.
+//  28. A whole-repository run, which has no added lines, yields one.
+//  29. The candidate's message carries text from the line, such as a secret.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -561,6 +575,130 @@ describe("dedup across scanners only", () => {
       ],
     });
     expect(scan.candidates.map((c) => c.token)).toEqual(["custom:a:sql-injection", "custom:a:command-injection"]);
+  });
+});
+
+describe("suppression comments the change adds", () => {
+  const PY = "import os\nsubprocess.call(cmd, shell=True)  # nosec\n";
+
+  it("raises one candidate per added marker while its scanner is not installed (23)", async () => {
+    const dir = repo({ "app.py": PY });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app.py"],
+      coverage: new Map([["app.py", lines(1, 2)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => [c.token, c.filePath, c.lineStart, c.lineEnd, c.reviewSeverity])).toEqual([
+      ["bandit:openqodex.suppression-added", "app.py", 2, 2, "minor"],
+    ]);
+    expect(scan.scanners.find((s) => s.scanner === "bandit")).toMatchObject({ status: "not_installed", keptCount: 1 });
+  });
+
+  it("raises nothing for a marker on a line the change did not add (24)", async () => {
+    const dir = repo({ "app.py": PY });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app.py"],
+      coverage: new Map([["app.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates).toEqual([]);
+  });
+
+  it("raises nothing for a marker in a file its scanner does not check (25)", async () => {
+    const dir = repo({
+      "deploy.sh": "echo $A  # nosec  # noqa\n",
+      "app.py": "# shellcheck disable=SC2086\n# hadolint ignore=DL3008\nx = 1  // nolint\n",
+    });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["deploy.sh", "app.py"],
+      coverage: new Map([
+        ["deploy.sh", lines(1)],
+        ["app.py", lines(1, 2, 3)],
+      ]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates).toEqual([]);
+  });
+
+  it("keeps a suppression and a settings candidate beside another scanner's secret on the same line (26)", async () => {
+    // Built at run time so this file holds no secret-shaped literal.
+    const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
+    const dir = repo({ "app/config.py": `KEY = "${secret}"  # gitleaks:allow\n`, ".gitleaksignore": "app/config.py:stripe-access-token:1\n" });
+    const at = (filePath: string) => finding({ source: "custom:keys", ruleId: "hardcoded-secret", filePath, severity: "high" });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app/config.py", ".gitleaksignore"],
+      coverage: new Map([
+        ["app/config.py", lines(1)],
+        [".gitleaksignore", lines(1)],
+      ]),
+      config: config(),
+      resolveTool: notInstalled(),
+      custom: [custom({ source: "custom:keys", run: async () => ({ findings: [at("app/config.py"), at(".gitleaksignore")], error: null, version: null }) })],
+    });
+    expect(scan.candidates.map((c) => `${c.token} ${c.filePath}:${c.lineStart}`).sort()).toEqual([
+      "custom:keys:hardcoded-secret .gitleaksignore:1",
+      "custom:keys:hardcoded-secret app/config.py:1",
+      "gitleaks:openqodex.suppression-added app/config.py:1",
+      "gitleaks:settings-file .gitleaksignore:1",
+    ]);
+  });
+
+  it("keeps them through only and skip, and leaves out a scanner scanners.disable switches off (27)", async () => {
+    const dir = repo({ "app.py": "x = 1  # nosec  # noqa\n", ".gitleaksignore": "x\n" });
+    const tokens = async (over: { only?: BuiltinScanner[]; skip?: BuiltinScanner[]; disabledScanners?: BuiltinScanner[] }) => {
+      const { scan } = await runScanners({
+        repoDir: dir,
+        changedPaths: ["app.py", ".gitleaksignore"],
+        coverage: new Map([
+          ["app.py", lines(1)],
+          [".gitleaksignore", lines(1)],
+        ]),
+        config: config({ disabledScanners: over.disabledScanners ?? [] }),
+        resolveTool: notInstalled(),
+        only: over.only,
+        skip: over.skip,
+      });
+      return scan.candidates.map((c) => c.token).sort();
+    };
+    const all = ["bandit:openqodex.suppression-added", "gitleaks:settings-file", "ruff:openqodex.suppression-added"];
+    expect(await tokens({})).toEqual(all);
+    expect(await tokens({ skip: ["bandit", "gitleaks"] })).toEqual(all);
+    expect(await tokens({ only: ["sqllint"] })).toEqual(all);
+    expect(await tokens({ disabledScanners: ["ruff", "gitleaks"] })).toEqual(["bandit:openqodex.suppression-added"]);
+  });
+
+  it("raises nothing in a whole-repository run (28)", async () => {
+    const dir = repo({ "app.py": PY });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app.py"],
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates).toEqual([]);
+  });
+
+  it("names the marker and the scanner, never the line's text (29)", async () => {
+    const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
+    const dir = repo({ "app/config.py": `KEY = "${secret}"  # gitleaks:allow\n` });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app/config.py"],
+      coverage: new Map([["app/config.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => c.message)).toEqual([
+      "This change adds gitleaks:allow, which stops gitleaks reporting what it covers; check that it hides no real problem",
+    ]);
+    expect(JSON.stringify(scan)).not.toContain(secret);
   });
 });
 

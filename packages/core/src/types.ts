@@ -449,9 +449,6 @@ export type Report = {
   // "skipped" or "failed" says why there is nothing in it.
   impact: ImpactSummary | null;
   not_reviewed_paths: string[]; // Change.notReviewed
-  // scan only: changed files a scanner reads as its own settings or ignore
-  // list, which can hide its findings. Shown, never counted. Absent when none.
-  settings_changes?: ReportFinding[];
   stats: { files: number; additions: number; deletions: number };
   // A review run by `review` itself: its completion record. Absent in a scan
   // and in a review from the two-step protocol (a legacy review).
