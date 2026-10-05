@@ -7,7 +7,7 @@
     "email": "siddhant@qodex.ai",
     "url": "https://qodex.ai"
   },
-  "homepage": "https://github.com/openqodex/openqodex",
+  "homepage": "https://qodex.ai/openqodex",
   "repository": "https://github.com/openqodex/openqodex",
   "license": "Apache-2.0",
   "keywords": [
@@ -34,7 +34,7 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/openqodex/openqodex",
+    "websiteURL": "https://qodex.ai/openqodex",
     "privacyPolicyURL": "https://github.com/openqodex/openqodex/blob/main/docs/privacy.md",
     "defaultPrompt": [
       "Review my change with openqodex before I push",
