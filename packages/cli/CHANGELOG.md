@@ -1,5 +1,26 @@
 # openqodex
 
+## 0.8.0
+
+### Minor Changes
+
+- [#52](https://github.com/openqodex/openqodex/pull/52) [`aff7254`](https://github.com/openqodex/openqodex/commit/aff72548d1bd91466218d37d90778d71174e5165) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - A suppression comment the change adds, such as `# nosec`, `# noqa`, `nosemgrep`, `gitleaks:allow`, `# shellcheck disable=`, `# hadolint ignore=`, `//nolint`, `# rubocop:disable` or `eslint-disable`, is now a candidate of the scanner it silences, rule `openqodex.suppression-added`. The reviewer keeps or drops it. The same text inside a string does not count, except for semgrep and gitleaks, which obey it anywhere on the line. `scanners` lists every comment and where it counts.
+
+  `scan`, the pre-commit hook and the GitHub Action now count an added suppression comment and a changed scanner settings or ignore file as a minor finding, so `block_on_severity: minor` blocks on them. `review.severity_threshold` never hides them, and neither `--only`, `--skip` nor the fixture filter leaves out a changed settings file any more, since a root config can extend one in a fixture folder. The report no longer has a separate "This change edits a scanner settings file" list, and `report.json` no longer has `settings_changes`.
+
+  A scanner's finding on the same line no longer hides one of these candidates, for example semgrep's secret finding beside an added `gitleaks:allow`.
+
+### Patch Changes
+
+- [#52](https://github.com/openqodex/openqodex/pull/52) [`4764f0e`](https://github.com/openqodex/openqodex/commit/4764f0e8f2d45dd6dfbb79402b8e8d12a30507e2) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The blast radius no longer reports a function that moved to another file as "removed, still called". It lists it as "moved to" its new file, and a move does not raise the risk.
+  A call to a function loaded with `await import()` inside another function is now traced to that function. Before, it counted as a call to a removed function of the same name in the caller's own file.
+  A name an import binds inside a function (`await import()`, `require`, or a Python import) now counts only in that function, so a call elsewhere in the file that is broken stays reported.
+  A name bound by destructuring, such as `const { a } = x`, a parameter `{ a }`, an assignment `({ a } = x)` or Python `a, b = pair`, now hides a function or an import of the same name, so its calls are no longer traced there.
+  A `let` or `const` declared in a block, a loop or a catch clause now hides a function of the same name only inside that block.
+  A method call on an object made from a class or a function that an import inside a function loaded is traced again, also after the code assigns that class name something else. A call on a name that the function declares later, such as one a closure uses before the declaration, follows that declaration, not an outer variable of the same name.
+  A file with thousands of nested blocks no longer slows the code graph down: calls nested more than 256 scopes deep are left unresolved.
+  A file that git sees as renamed is now checked: a caller that still imports the old path is reported as "removed, still called".
+
 ## 0.7.1
 
 ### Patch Changes
