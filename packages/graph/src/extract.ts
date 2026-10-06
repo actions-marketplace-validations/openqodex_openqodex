@@ -9,7 +9,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 6;
+export const EXTRACTOR_VERSION = 7;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -21,6 +21,35 @@ type Frame = {
   // a nested function land here; `var` and parameters skip it.
   block?: boolean;
 };
+
+// A frame once pushed: linked to the one around it, with what every lookup
+// from inside it needs worked out once, so nothing copies or scans the chain.
+type Scope = Frame & {
+  parent: Scope | null;
+  depth: number; // 0 for the module
+  caller: number; // the nearest enclosing definition, -1 for the top level
+  clsScope: Scope | null; // the nearest class or module frame
+  inFunction: boolean; // a function frame stands between here and the module
+  decl: Scope; // where a `let`, a `const` or a nested function lands: the nearest scope
+  fnDecl: Scope; // where a `var`, a parameter or a Python name lands: the nearest that is not a block
+};
+
+// Scopes deeper than this are not read: a call there is left unresolved, and
+// no lookup walks further out, so deeply nested input stays linear.
+const MAX_SCOPE_DEPTH = 256;
+
+// The scope a type name was read in, kept on its TypeRef under a symbol:
+// copies made with `{ ...t }` keep it and JSON leaves it out. Ctx.facts()
+// turns it into `bound` once every scope has been read. The reading scope is
+// the extraction's own state; extraction is synchronous, one file at a time.
+const READ_IN = Symbol("readIn");
+type Stamped = TypeRef & { [READ_IN]?: Scope };
+let readingScope: Scope | null = null;
+
+function typeRef(t: TypeRef): TypeRef {
+  if (readingScope) (t as Stamped)[READ_IN] = readingScope;
+  return t;
+}
 
 type Leave = () => void;
 
@@ -71,107 +100,111 @@ class Ctx {
   exportsLocal: { local: string; exported: string }[] = [];
   defaultExport: string | null = null;
   goPackage: string | null = null;
-  frames: Frame[] = [{ def: -1, cls: null, locals: new Map() }];
-  // Bare calls with the scopes around them, bound when the walk ends: a
-  // scope's names are known only once all of it has been read (hoisting in
-  // JavaScript, any assignment makes a Python name local).
-  private bare: { call: CallFact; frames: Frame[] }[] = [];
+  top: Scope;
+  // Calls whose names are bound when the walk ends, each with a reference to
+  // its scope: a scope's names are known only once all of it has been read
+  // (hoisting in JavaScript, any assignment makes a Python name local).
+  private pending: { call: CallFact; scope: Scope }[] = [];
 
-  constructor(readonly lang: Lang) {}
+  constructor(readonly lang: Lang) {
+    const root = { def: -1, cls: null, locals: new Map(), parent: null, depth: 0, caller: -1, clsScope: null, inFunction: false } as unknown as Scope;
+    root.decl = root;
+    root.fnDecl = root;
+    this.top = root;
+    readingScope = root;
+  }
 
   push(frame: Frame): Leave {
-    this.frames.push(frame);
+    const parent = this.top;
+    const s = frame as Scope;
+    s.parent = parent;
+    s.depth = parent.depth + 1;
+    s.caller = frame.def >= 0 ? frame.def : parent.caller;
+    s.clsScope = frame.cls !== null ? s : parent.clsScope;
+    s.inFunction = parent.inFunction || !(frame.block === true || (frame.cls !== null && frame.locals === null));
+    s.decl = frame.locals ? s : parent.decl;
+    s.fnDecl = frame.locals && !frame.block ? s : parent.fnDecl;
+    this.top = s;
+    readingScope = s;
     return () => {
-      this.frames.pop();
+      this.top = parent;
+      readingScope = parent;
     };
   }
 
   caller(): number {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const def = (this.frames[i] as Frame).def;
-      if (def >= 0) return def;
-    }
-    return -1;
+    return this.top.caller;
   }
 
   // The innermost class or module frame, with its definition.
-  cls(): Frame | null {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const f = this.frames[i] as Frame;
-      if (f.cls !== null) return f;
-    }
-    return null;
+  cls(): Scope | null {
+    return this.top.clsScope;
   }
 
   // True when no function frame stands between here and the module. A block
   // at the top of the module (an `if`, a `try`) keeps its definitions top level.
   atModuleLevel(): boolean {
-    return this.frames.every((f, i) => i === 0 || f.block === true || (f.cls !== null && f.locals === null));
+    return !this.top.inFunction;
+  }
+
+  // The first scope from `from` outwards that knows `name` as a nested
+  // definition, a scoped import or a local; null when none does, or when
+  // the answer lies more than MAX_SCOPE_DEPTH scopes out.
+  lookup(from: Scope, name: string): Scope | null {
+    let s: Scope | null = from;
+    for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
+      if (s.fns?.has(name) || s.imports?.has(name) || s.locals?.has(name)) return s;
+    }
+    return null;
   }
 
   // The type of a local, null for a local of unknown type, undefined when
   // the nearest scope that knows the name does not hold it as a local.
   local(name: string): TypeRef | null | undefined {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const f = this.frames[i] as Frame;
-      if (f.imports?.has(name)) return undefined;
-      if (f.locals?.has(name)) return f.locals.get(name);
-    }
-    return undefined;
+    const at = this.lookup(this.top, name);
+    if (!at || at.fns?.has(name) || at.imports?.has(name)) return undefined;
+    return at.locals?.get(name) ?? null;
   }
 
-  // The scoped import a name stands for, when the nearest scope that knows
-  // the name got it from one.
-  bound(name: string): BoundImport | undefined {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const f = this.frames[i] as Frame;
-      if (f.fns?.has(name) || f.locals?.has(name)) return undefined;
-      const b = f.imports?.get(name);
-      if (b) return b;
-    }
-    return undefined;
-  }
-
-  // The frame a declaration lands in: the innermost scope, or with
-  // `block` false (`var`, a parameter, Python) the innermost one that is not
-  // a JavaScript block. 0 is the module.
-  private scope(block: boolean): number {
-    for (let i = this.frames.length - 1; i > 0; i--) {
-      const f = this.frames[i] as Frame;
-      if (f.locals && (block || !f.block)) return i;
-    }
-    return 0;
-  }
-
-  // A declaration: the name is new in its scope.
+  // A declaration: the name is new in its scope (`block`: a `let` or
+  // `const`, else the function's scope), and no longer an import there.
   setLocal(name: string, type: TypeRef | null, block = false): void {
-    (this.frames[this.scope(block)] as Frame).locals?.set(name, type);
+    const at = block ? this.top.decl : this.top.fnDecl;
+    at.imports?.delete(name);
+    at.locals?.set(name, type);
   }
 
   // An import. At the top of the module its names are the file's; made
   // inside a function or a block, they belong to that scope only, so a call
   // elsewhere in the file never resolves through them.
   addImport(fact: ImportFact, block = false): void {
-    const at = this.scope(block);
+    const at = block ? this.top.decl : this.top.fnDecl;
     const index = this.imports.length;
     this.imports.push(fact);
-    if (at === 0) return;
+    if (at.depth === 0) return;
     fact.scoped = true;
-    const f = this.frames[at] as Frame;
-    f.imports ??= new Map();
-    for (const n of fact.names) f.imports.set(n.local, { import: index, imported: n.imported });
-    if (fact.namespace) f.imports.set(fact.namespace, { import: index, imported: "*" });
+    at.imports ??= new Map();
+    for (const n of fact.names) at.imports.set(n.local, { import: index, imported: n.imported });
+    if (fact.namespace) at.imports.set(fact.namespace, { import: index, imported: "*" });
   }
 
   // An assignment to a name that may exist already. A declared type stands;
   // otherwise the receiver evidence survives only when the new value has the
-  // same type, since either value may reach a later call.
+  // same type, since either value may reach a later call. A name an import
+  // bound and the code then assigns is a local of unknown value: the import
+  // is no longer evidence for any call to it.
   // `innermost`: Python, where assigning in a function makes a new local.
   assign(name: string, type: TypeRef | null, innermost = false): void {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const locals = (this.frames[i] as Frame).locals;
-      if (innermost && !locals) continue;
-      if (innermost && !locals?.has(name)) break;
+    let s: Scope | null = this.top;
+    for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
+      if (innermost && !s.locals) continue;
+      if (s.imports?.has(name)) {
+        s.imports.delete(name);
+        s.locals?.set(name, null);
+        return;
+      }
+      if (innermost && !s.locals?.has(name)) break;
+      const locals = s.locals;
       if (locals?.has(name)) {
         const old = locals.get(name) ?? null;
         if (old?.declared) return;
@@ -183,16 +216,14 @@ class Ctx {
     this.setLocal(name, type);
   }
 
-  // A nested definition is visible by name in the scope that declares it.
-  declareFn(name: string, def: number): void {
-    for (let i = this.frames.length - 1; i >= 1; i--) {
-      const f = this.frames[i] as Frame;
-      if (f.locals) {
-        f.fns ??= new Map();
-        f.fns.set(name, def);
-        return;
-      }
-    }
+  // A nested definition is visible by name in the scope that declares it:
+  // its block for a function declaration or a `let` or `const`, the whole
+  // function for a `var` (`block` false).
+  declareFn(name: string, def: number, block = true): void {
+    const at = block ? this.top.decl : this.top.fnDecl;
+    if (at.depth === 0) return;
+    at.fns ??= new Map();
+    at.fns.set(name, def);
   }
 
   // The enclosing definition, as an owner for a nested one.
@@ -228,32 +259,61 @@ class Ctx {
     const callerDef = call.caller >= 0 ? this.defs[call.caller] : undefined;
     if (callerDef?.static || callerDef?.kind === "class" || callerDef?.kind === "module") call.static = true;
     this.calls.push(call);
-    if (recv.kind === "none" && this.lang !== "ruby") this.bare.push({ call, frames: this.frames.slice() });
+    if (this.lang === "ruby") return;
+    // Past the depth bound the scopes around a call are not read: the safe
+    // reading is a call nothing binds, never one bound past a scope that hides it.
+    if (this.top.depth > MAX_SCOPE_DEPTH) {
+      call.recv = { kind: "other" };
+      if (recv.kind === "none") call.shadowed = true;
+      return;
+    }
+    // A Go receiver name is decided where it is read: no Go name is hoisted.
+    if (recv.kind === "none" || (recv.kind === "name" && this.lang !== "go")) this.pending.push({ call, scope: this.top });
   }
 
   facts(): FileFacts {
+    readingScope = null;
     const topNames = new Set(this.defs.filter((d) => d.topLevel).map((d) => d.name));
-    for (const { call, frames } of this.bare) {
-      for (let i = frames.length - 1; i >= 0; i--) {
-        const f = frames[i] as Frame;
-        const fn = f.fns?.get(call.name);
-        if (fn !== undefined) {
-          call.local = fn;
-          break;
-        }
-        const bound = f.imports?.get(call.name);
-        if (bound) {
-          call.bound = bound;
-          break;
-        }
-        if (f.locals?.has(call.name)) {
-          // A module-level variable hides only names it is not also defined as.
-          if (i > 0 || !topNames.has(call.name)) call.shadowed = true;
-          break;
+    for (const { call, scope } of this.pending) {
+      const r = call.recv;
+      const name = r.kind === "none" ? call.name : r.kind === "name" ? r.name : null;
+      const at = name === null ? null : this.lookup(scope, name);
+      if (name === null || !at) continue;
+      const fn = at.fns?.get(name);
+      const bound = at.imports?.get(name);
+      // A module-level variable hides only names it is not also defined as.
+      const hides = at.depth > 0 || !topNames.has(name);
+      if (r.kind === "none") {
+        if (fn !== undefined) call.local = fn;
+        else if (bound) call.bound = bound;
+        else if (hides) call.shadowed = true;
+      } else if (r.kind === "name" && fn === undefined) {
+        // A receiver read before its scope declared the name: the
+        // declaration decides it, as for a bare call.
+        if (bound) r.bound = bound;
+        else if (hides) {
+          const t = at.locals?.get(name) ?? null;
+          call.recv = t && !t.elem ? { kind: "type", type: t, path: r.path } : { kind: "other" };
         }
       }
     }
-    this.bare = [];
+    this.pending = [];
+    // Each type name binds through the scope it was read in.
+    const bindType = (t: TypeRef | null | undefined) => {
+      const at = t ? (t as Stamped)[READ_IN] : undefined;
+      if (!t || !at) return;
+      delete (t as Stamped)[READ_IN];
+      const head = t.qualifier ? (t.qualifier.split(".")[0] as string) : t.name;
+      const found = this.lookup(at, head);
+      const bound = found && !found.fns?.has(head) ? found.imports?.get(head) : undefined;
+      if (bound) t.bound = bound;
+    };
+    for (const d of this.defs) {
+      d.bases.forEach(bindType);
+      Object.values(d.fields).forEach(bindType);
+      d.results?.forEach(bindType);
+    }
+    for (const c of this.calls) if (c.recv.kind === "type") bindType(c.recv.type);
     return {
       lang: this.lang,
       defs: this.defs,
@@ -323,11 +383,11 @@ function jsTypeRef(annotation: Node | null): TypeRef | null {
   }
   if (!t) return null;
   const { line, column } = pos(t);
-  if (t.type === "type_identifier" || t.type === "identifier") return { name: t.text, qualifier: null, line, column };
+  if (t.type === "type_identifier" || t.type === "identifier") return typeRef({ name: t.text, qualifier: null, line, column });
   if (t.type === "nested_type_identifier" || t.type === "member_expression") {
     const name = t.childForFieldName("name") ?? t.childForFieldName("property");
     const module = t.childForFieldName("module") ?? t.childForFieldName("object");
-    if (name && module) return { name: name.text, qualifier: module.text, line, column };
+    if (name && module) return typeRef({ name: name.text, qualifier: module.text, line, column });
   }
   return null;
 }
@@ -355,8 +415,7 @@ function jsReceiver(ctx: Ctx, object: Node): Receiver {
     return type ? { kind: "type", type, path } : { kind: "other" };
   }
   if (base.type === "identifier") {
-    const bound = ctx.bound(base.text);
-    if (bound) return { kind: "name", name: base.text, path, nesting: null, bound };
+    // A name that is not a local here is decided when the walk ends (Ctx.facts).
     const type = ctx.local(base.text);
     if (type?.elem) return { kind: "other" };
     if (type) return { kind: "type", type, path };
@@ -584,11 +643,11 @@ function callType(value: Node | null): TypeRef | null {
   if (v?.type === "await_expression") v = v.firstNamedChild;
   if (v?.type !== "call_expression") return null;
   const fn = v.childForFieldName("function");
-  if (fn?.type === "identifier") return { name: fn.text, qualifier: null, ...pos(fn), result: 0 };
+  if (fn?.type === "identifier") return typeRef({ name: fn.text, qualifier: null, ...pos(fn), result: 0 });
   if (fn?.type === "member_expression" && fn.childForFieldName("object")?.type === "identifier") {
     const prop = fn.childForFieldName("property");
     const object = fn.childForFieldName("object") as Node;
-    if (prop) return { name: prop.text, qualifier: object.text, ...pos(fn), result: 0 };
+    if (prop) return typeRef({ name: prop.text, qualifier: object.text, ...pos(fn), result: 0 });
   }
   return null;
 }
@@ -696,7 +755,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         if (isFn && ctx.caller() >= 0) {
           // const inner = () => ... inside a function: a definition of that scope.
           const def = ctx.addDef(node, name, "function", { owner: ctx.ownerName(), results: jsResults(value as Node) });
-          ctx.declareFn(name.text, def);
+          ctx.declareFn(name.text, def, block);
           return ctx.push({ def, cls: null, locals: null });
         }
         ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value), block);
@@ -818,15 +877,15 @@ function pyTypeRef(node: Node | null): TypeRef | null {
     return null;
   }
   const { line, column } = pos(t);
-  if (t.type === "identifier") return { name: t.text, qualifier: null, line, column };
+  if (t.type === "identifier") return typeRef({ name: t.text, qualifier: null, line, column });
   if (t.type === "attribute") {
     const attr = t.childForFieldName("attribute");
     const object = t.childForFieldName("object");
-    if (attr && object) return { name: attr.text, qualifier: object.text, line, column };
+    if (attr && object) return typeRef({ name: attr.text, qualifier: object.text, line, column });
   }
   if (t.type === "string") {
     const text = stringContent(t);
-    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) return { name: text, qualifier: null, line, column };
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) return typeRef({ name: text, qualifier: null, line, column });
   }
   return null;
 }
@@ -851,8 +910,6 @@ function pyReceiver(ctx: Ctx, object: Node): Receiver {
   }
   if (base.type !== "identifier") return { kind: "other" };
   if ((base.text === "self" || base.text === "cls") && ctx.cls()) return { kind: "self", path };
-  const bound = ctx.bound(base.text);
-  if (bound) return { kind: "name", name: base.text, path, nesting: null, bound };
   const type = ctx.local(base.text);
   if (type?.elem) return { kind: "other" };
   if (type) return { kind: "type", type, path };
@@ -918,7 +975,7 @@ function extractPython(tree: Tree): FileFacts {
       case "function_definition": {
         const name = node.childForFieldName("name");
         const span = node.parent?.type === "decorated_definition" ? node.parent : node;
-        const inner = ctx.frames[ctx.frames.length - 1] as Frame;
+        const inner = ctx.top;
         const isMethod = inner.cls !== null && inner.locals === null;
         const locals = new Map<string, TypeRef | null>();
         for (const p of node.childForFieldName("parameters")?.namedChildren ?? []) {
@@ -967,7 +1024,7 @@ function extractPython(tree: Tree): FileFacts {
         const right = node.childForFieldName("right");
         const annotation = declared(pyTypeRef(node.childForFieldName("type")));
         const type = annotation ?? pyCallType(right);
-        const inner = ctx.frames[ctx.frames.length - 1] as Frame;
+        const inner = ctx.top;
         if (left?.type === "identifier") {
           if (inner.cls !== null && inner.locals === null) {
             if (type) (ctx.defs[inner.def] as DefFact).fields[left.text] = type;

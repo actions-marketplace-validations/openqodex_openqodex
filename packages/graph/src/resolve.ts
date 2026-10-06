@@ -453,13 +453,15 @@ export function resolveGraph(input: ResolveInput): Resolved {
   const typeKey = (file: string, family: Family, t: TypeRef, depth = 0): string | null => {
     if (t.elem || depth > MAX_DEPTH) return null;
     if (family === "ruby") return rbConst(t.name, t.qualifier);
+    // The head name, through the scoped import that binds it where the type was read.
+    const head = (name: string) => (t.bound ? boundValue(file, name, t.bound) : resolveLocal(file, name));
     let v: Value | null;
     if (t.qualifier) {
       const parts = t.qualifier.split(".");
-      v = resolveLocal(file, parts[0] as string);
+      v = head(parts[0] as string);
       for (const p of parts.slice(1)) v = attr(v, p);
       v = v && v.v !== "sym" ? attr(v, t.name) : null;
-    } else v = resolveLocal(file, t.name);
+    } else v = head(t.name);
     if (v?.v !== "sym" || v.ids.length !== 1) return null;
     const cls = classOfId.get(v.ids[0] as string);
     if (cls) return cls;

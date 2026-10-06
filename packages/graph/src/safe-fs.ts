@@ -124,7 +124,12 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 const optBool = (v: unknown) => v === undefined || typeof v === "boolean";
 const isList = (v: unknown, each: (x: unknown) => boolean, max = MAX_ITEMS): boolean => Array.isArray(v) && v.length <= max && v.every(each);
 
-function isTypeRef(v: unknown): boolean {
+// A scoped import binding: absent, or an import of this file by index.
+function optBound(b: unknown, imports: number): boolean {
+  return b === undefined || (isObj(b) && isInt(b.import) && (b.import as number) >= 0 && (b.import as number) < imports && isStr(b.imported));
+}
+
+function isTypeRef(v: unknown, imports: number): boolean {
   return (
     isObj(v) &&
     isStr(v.name) &&
@@ -133,13 +138,9 @@ function isTypeRef(v: unknown): boolean {
     isInt(v.column) &&
     (v.result === undefined || isInt(v.result)) &&
     optBool(v.elem) &&
-    optBool(v.declared)
+    optBool(v.declared) &&
+    optBound(v.bound, imports)
   );
-}
-
-// A scoped import binding: absent, or an import of this file by index.
-function optBound(b: unknown, imports: number): boolean {
-  return b === undefined || (isObj(b) && isInt(b.import) && (b.import as number) >= 0 && (b.import as number) < imports && isStr(b.imported));
 }
 
 function isReceiver(v: unknown, imports: number): boolean {
@@ -153,7 +154,7 @@ function isReceiver(v: unknown, imports: number): boolean {
     case "self":
       return path(v.path);
     case "type":
-      return isTypeRef(v.type) && path(v.path);
+      return isTypeRef(v.type, imports) && path(v.path);
     case "name":
       return isStr(v.name) && path(v.path) && (v.nesting === null || isStr(v.nesting)) && optBound(v.bound, imports);
     default:
@@ -164,7 +165,8 @@ function isReceiver(v: unknown, imports: number): boolean {
 const KINDS = new Set(["function", "method", "class", "module", "type"]);
 const LANGS = new Set(["typescript", "tsx", "javascript", "python", "go", "ruby"]);
 
-function isDef(v: unknown): boolean {
+function isDef(v: unknown, imports: number): boolean {
+  const isType = (t: unknown) => isTypeRef(t, imports);
   return (
     isObj(v) &&
     isStr(v.name) &&
@@ -175,20 +177,20 @@ function isDef(v: unknown): boolean {
     isInt(v.endLine) &&
     typeof v.exported === "boolean" &&
     typeof v.topLevel === "boolean" &&
-    isList(v.bases, isTypeRef, 1024) &&
+    isList(v.bases, isType, 1024) &&
     isObj(v.fields) &&
     Object.keys(v.fields).length <= 4096 &&
-    Object.values(v.fields).every(isTypeRef) &&
-    (v.results === undefined || isList(v.results, (r) => r === null || isTypeRef(r), 64)) &&
+    Object.values(v.fields).every(isType) &&
+    (v.results === undefined || isList(v.results, (r) => r === null || isType(r), 64)) &&
     optBool(v.static)
   );
 }
 
 export function isFileFacts(v: unknown): v is FileFacts {
   if (!isObj(v) || !LANGS.has(v.lang as string)) return false;
-  if (!isList(v.defs, isDef)) return false;
-  const defs = (v.defs as unknown[]).length;
   const imports = Array.isArray(v.imports) ? v.imports.length : 0;
+  if (!isList(v.defs, (d) => isDef(d, imports))) return false;
+  const defs = (v.defs as unknown[]).length;
   const isCall = (c: unknown) =>
     isObj(c) &&
     isStr(c.name) &&

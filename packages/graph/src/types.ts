@@ -19,7 +19,9 @@ export function familyOf(lang: Lang): Family {
 // position of its results (Go has several). `elem`: a slice, array, map or
 // list of the type; a loop over it or an index into it yields the type.
 // `declared`: from a type annotation, so a reassignment cannot change it.
-export type TypeRef = { name: string; qualifier: string | null; line: number; column: number; result?: number; elem?: boolean; declared?: boolean };
+// `bound`: the head name (`name`, or the first part of `qualifier`) is
+// bound by a scoped import where the type was read.
+export type TypeRef = { name: string; qualifier: string | null; line: number; column: number; result?: number; elem?: boolean; declared?: boolean; bound?: BoundImport };
 
 export type DefFact = {
   name: string;

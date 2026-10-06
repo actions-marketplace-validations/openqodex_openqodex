@@ -26,6 +26,12 @@
 //     read, so its call to the removed symbol is lost.
 // 12. The Python form of 9: `from .b import f` inside one function binds `f`
 //     for the whole module.
+// 13. A receiver whose type a scoped import gives (`new Svc()`, a factory's
+//     declared result, a qualified annotation `b.Svc`) loses its type, so a
+//     call to a removed method is lost.
+// 14. A receiver named before its scope declares it (`const run = () =>
+//     m.f(); const m = require("./b")`) is not bound to that declaration, so
+//     a call to a removed function is lost.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -275,5 +281,35 @@ describe("moved symbols", () => {
     expect(f.movedTo).toBeUndefined();
     expect(stillCalled(impact, f.id)).toEqual([at(change, "pkg/a.py", "BROKEN")]);
     expect(callSites(g, symbol(g, "pkg/b.py", "f"))).toEqual([at(change, "pkg/a.py", "LOADED")]);
+  });
+
+  it("types a receiver through a scoped import: a constructor, a factory result and a qualified annotation (13)", async () => {
+    const svcJs = (withF: boolean) => `class Svc {\n${withF ? "  f() {\n    return 1;\n  }\n\n" : ""}  g() {\n    return 2;\n  }\n}\n\nmodule.exports = { Svc };\n`;
+    const madeTs = (withF: boolean) =>
+      `export class Made {\n${withF ? "  f(): number {\n    return 1;\n  }\n\n" : ""}  g(): number {\n    return 2;\n  }\n}\n\nexport function make(): Made {\n  return new Made();\n}\n`;
+    const svcPy = (withF: boolean) => `class Svc:\n${withF ? "    def f(self):\n        return 1\n\n" : ""}    def g(self):\n        return 2\n`;
+    const user = {
+      "src/a.js": 'function run() {\n  const { Svc } = require("./svc");\n  const s = new Svc();\n  return s.f(); // CTOR\n}\n\nmodule.exports = { run };\n',
+      "src/b.ts": 'export async function viaFactory(): Promise<number> {\n  const { make } = await import("./made.js");\n  const s = make();\n  return s.f(); // FACTORY\n}\n',
+      "pkg/__init__.py": "",
+      "pkg/a.py": "def run():\n    from . import b\n    s: b.Svc = b.Svc()\n    return s.f()  # QUALIFIED\n",
+    };
+    const base = { ...user, "src/svc.js": svcJs(true), "src/made.ts": madeTs(true), "pkg/b.py": svcPy(true) };
+    const { impact } = await review(base, { "src/svc.js": svcJs(false), "src/made.ts": madeTs(false), "pkg/b.py": svcPy(false) });
+    const sites = (file: string) => {
+      const s = impact.symbols.find((x) => impact.removed.includes(x.id) && x.file === file && x.name === "f") as ImpactSymbol;
+      return stillCalled(impact, s.id);
+    };
+    expect(sites("src/svc.js")).toEqual([at(user, "src/a.js", "CTOR")]);
+    expect(sites("src/made.ts")).toEqual([at(user, "src/b.ts", "FACTORY")]);
+    expect(sites("pkg/b.py")).toEqual([at(user, "pkg/a.py", "QUALIFIED")]);
+  });
+
+  it("binds a receiver named before its scope declares it to that declaration (14)", async () => {
+    const lib = (withF: boolean) => `${withF ? "function f() {\n  return 1;\n}\n\n" : ""}function g() {\n  return 2;\n}\n\nmodule.exports = { ${withF ? "f, " : ""}g };\n`;
+    const user = { "src/a.js": 'function run() {\n  const invoke = () => m.f(); // EARLY\n  const m = require("./b");\n  return invoke();\n}\n\nmodule.exports = { run };\n' };
+    const { impact } = await review({ ...user, "src/b.js": lib(true) }, { "src/b.js": lib(false) });
+    const f = removedNamed(impact, "f");
+    expect(stillCalled(impact, f.id)).toEqual([at(user, "src/a.js", "EARLY")]);
   });
 });
