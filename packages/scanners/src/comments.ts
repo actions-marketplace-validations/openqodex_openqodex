@@ -59,9 +59,10 @@ class Reader {
   private readonly unclosed = new Map<string, number>();
   // The offset of every line start, built once.
   private starts: number[] | null = null;
-  // For each heredoc indent rule: each line's text with that indent removed
-  // (lines up to MAX_WORD long) to the starts of the lines that read so.
-  private readonly lines = new Map<Heredoc["indent"], Map<string, number[]>>();
+  // For each heredoc end rule (indent, trailing blanks): each line's text
+  // read by that rule (lines up to MAX_WORD long) to the starts of the
+  // lines that read so.
+  private readonly lines = new Map<string, Map<string, number[]>>();
   constructor(readonly s: string) {}
 
   private lineStarts(): number[] {
@@ -93,11 +94,14 @@ class Reader {
   }
 
   // The offset past the first line at or after `from` that reads `word` once
-  // `indent` is removed, or -1 with none. The lines are indexed once per
-  // indent rule, so each heredoc costs one lookup.
-  closer(indent: Heredoc["indent"], word: string, from: number): number {
+  // `h.indent` is removed (and, with `h.trailing`, trailing blanks), or -1
+  // with none. The lines are indexed once per rule, so each heredoc costs
+  // one lookup.
+  closer(h: Heredoc, from: number): number {
+    const word = h.word;
     if (word.length > MAX_WORD) return -1;
-    let index = this.lines.get(indent);
+    const rule = `${h.indent}\0${h.trailing}`;
+    let index = this.lines.get(rule);
     if (index === undefined) {
       index = new Map();
       const starts = this.lineStarts();
@@ -105,13 +109,14 @@ class Reader {
         const end = this.s.indexOf("\n", start);
         let line = this.s.slice(start, end < 0 ? this.s.length : end);
         if (line.endsWith("\r")) line = line.slice(0, -1);
-        const key = line.replace(INDENT[indent], "");
+        let key = line.replace(INDENT[h.indent], "");
+        if (h.trailing) key = key.replace(/[ \t]+$/, "");
         if (key.length > MAX_WORD) continue;
         const at = index.get(key);
         if (at) at.push(start);
         else index.set(key, [start]);
       }
-      this.lines.set(indent, index);
+      this.lines.set(rule, index);
     }
     const at = index.get(word);
     if (at === undefined) return -1;
@@ -255,59 +260,67 @@ function skipField(r: Reader, i: number, depth: number): number {
 }
 
 // `indent`: what may come before the closing word on its line (shell and
-// Dockerfile `<<-`: tabs; Ruby `<<~` and `<<-`: any blanks). `expands`: a
-// shell heredoc whose word is not quoted runs the $( ) and backticks in its
-// body.
-type Heredoc = { word: string; indent: "none" | "tabs" | "blanks"; expands: boolean };
+// Dockerfile `<<-`: tabs; Ruby `<<~` and `<<-`: any blanks). `trailing`:
+// blanks may follow it (shellcheck accepts them). `expands`: a shell heredoc
+// whose word is not quoted runs the $( ) and backticks in its body.
+type Heredoc = { word: string; indent: "none" | "tabs" | "blanks"; trailing: boolean; expands: boolean };
 
 const INDENT = { none: /^/, tabs: /^\t*/, blanks: /^[\t ]*/ } as const;
 
 // The offset after the bodies of the heredocs opened on the line that ended
 // just before `i`, read in order: each runs to a line that is exactly its
 // word. -1 when one has no such line: the caller reads the bodies as code.
-// `body` reads one body line of an expanding heredoc.
-function skipHeredocs(r: Reader, i: number, pending: Heredoc[], body?: (from: number, to: number) => void): number {
+// `body` reads the body of an expanding heredoc and returns how far it read;
+// when its code ran past the body's end line, the caller continues from
+// there, so no later level reads that text again.
+function skipHeredocs(r: Reader, i: number, pending: Heredoc[], body?: (from: number, to: number) => number): number {
   for (const h of pending) {
-    const end = r.closer(h.indent, h.word, i);
+    const end = r.closer(h, i);
     if (end < 0) return -1;
-    if (h.expands && body) body(i, end);
+    if (h.expands && body) {
+      const reached = body(i, end);
+      if (reached > end) return Math.min(reached, r.s.length);
+    }
     i = end;
   }
   return Math.min(i, r.s.length);
 }
 
 // The end word of a shell heredoc at `j`, after `<<` or `<<-` and its
-// blanks, read as the shell reads a word: up to an unquoted blank or
-// operator, with quotes and backslashes removed, never past the line end
-// `eol`. A quoted word turns off expansion in the body. Null for an empty
-// word, an unclosed quote or a word longer than MAX_WORD.
+// blanks, as shellcheck reads it (its `unquote`): the word runs to an
+// unquoted blank or operator, never past the line end `eol`, with `\"`,
+// `\\`, `\$` and a backslashed backtick escaped inside double quotes. A word
+// wrapped in one pair of matching quotes gives its inner text as written,
+// escapes kept (`"E\"OF"` ends at `E\"OF`); any other word with a backslash
+// loses every backslash; the rest is taken as written (`E"O"F`). A quoted
+// word turns off expansion in the body. Null for an empty word, an unclosed
+// quote or a word longer than MAX_WORD.
 function shellWord(s: string, j: number, eol: number): { word: string; quoted: boolean; next: number } | null {
-  const parts: string[] = [];
-  let size = 0;
-  let quoted = false;
+  const start = j;
   while (j < eol && !/[\s;&|()<>]/.test(s[j] as string)) {
     const c = s[j] as string;
-    let part: string;
     if (c === "\\") {
-      quoted = true;
-      part = s[j + 1] ?? "";
       j += 2;
-    } else if (c === "'" || c === '"') {
-      const rest = s.slice(j + 1, eol);
-      const close = rest.indexOf(c);
+    } else if (c === "'") {
+      const close = s.slice(j + 1, eol).indexOf("'");
       if (close < 0) return null;
-      quoted = true;
-      part = rest.slice(0, close);
       j += close + 2;
+    } else if (c === '"') {
+      j++;
+      while (j < eol && s[j] !== '"') j += s[j] === "\\" && /["\\$`]/.test(s[j + 1] ?? "") ? 2 : 1;
+      if (j >= eol) return null;
+      j++;
     } else {
-      part = c;
       j++;
     }
-    size += part.length;
-    if (size > MAX_WORD) return null;
-    parts.push(part);
+    if (j - start > MAX_WORD + 2) return null;
   }
-  return size === 0 ? null : { word: parts.join(""), quoted, next: j };
+  const raw = s.slice(start, Math.min(j, eol));
+  if (raw === "") return null;
+  const first = raw[0] as string;
+  if (raw.length >= 2 && (first === '"' || first === "'") && raw.endsWith(first)) return { word: raw.slice(1, -1), quoted: true, next: j };
+  if (raw.includes("\\")) return { word: raw.replace(/\\/g, ""), quoted: true, next: j };
+  return { word: raw, quoted: false, next: j };
 }
 
 // The heredoc a `<<` at `i` opens in shell, or null for `<<<` or no word.
@@ -323,7 +336,7 @@ function shellHeredoc(r: Reader, i: number): { heredoc: Heredoc; next: number } 
   if (!/[A-Za-z_'"\\]/.test(s[j] ?? "")) return null;
   const w = shellWord(s, j, r.eol(j));
   if (!w) return null;
-  return { heredoc: { word: w.word, indent: dash ? "tabs" : "none", expands: !w.quoted }, next: w.next };
+  return { heredoc: { word: w.word, indent: dash ? "tabs" : "none", trailing: true, expands: !w.quoted }, next: w.next };
 }
 
 // Shell code from `i`: a `#` that starts a word (at a line start, after a
@@ -405,8 +418,9 @@ function shellDouble(r: Reader, i: number, depth: number): number {
 }
 
 // Reads the $( ) and backticks in the body of an expanding heredoc, from
-// `from` to `to`; the rest of the body is data.
-function shellExpansions(r: Reader, from: number, to: number, depth: number): void {
+// `from` to `to`; the rest of the body is data. Returns how far it read,
+// which is past `to` when a $( ) or backticks ran past the body.
+function shellExpansions(r: Reader, from: number, to: number, depth: number): number {
   const s = r.s;
   let j = from;
   while (j < to) {
@@ -415,6 +429,7 @@ function shellExpansions(r: Reader, from: number, to: number, depth: number): vo
     else if (s[j] === "`" && depth < MAX_DEPTH) j = shellCode(r, j + 1, "`", depth + 1);
     else j++;
   }
+  return j;
 }
 
 // The Dockerfile instructions that take a heredoc (BuildKit).
@@ -448,7 +463,7 @@ function dockerfileComments(r: Reader): void {
       for (const m of line.matchAll(/(?:^|\s)\d*<<(-?)(\S+)/g)) {
         if ((m[2] as string).startsWith("<")) continue;
         const word = (m[2] as string).replace(/["'\\]/g, "");
-        if (word !== "") pending.push({ word, indent: m[1] === "-" ? "tabs" : "none", expands: false });
+        if (word !== "") pending.push({ word, indent: m[1] === "-" ? "tabs" : "none", trailing: false, expands: false });
       }
     }
     if (!continued && pending.length > 0) {
@@ -729,7 +744,7 @@ function rubyComments(r: Reader): void {
         prev = "<";
         i += 2;
       } else {
-        pending.push({ word: id, indent: flag === "" ? "none" : "blanks", expands: false });
+        pending.push({ word: id, indent: flag === "" ? "none" : "blanks", trailing: false, expands: false });
         i += m[0].length;
         prev = "a";
       }

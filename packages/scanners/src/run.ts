@@ -107,7 +107,7 @@ export async function runScanners(args: {
   // path is rebased onto the repo root first.
   const inScope = new Set(args.changedPaths);
   const coverage = args.coverage;
-  const merged = outcomes.flatMap((o) => {
+  let merged = outcomes.flatMap((o) => {
     const rebased = toRunDirRelative(o.findings, args.repoDir);
     return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
   });
@@ -117,16 +117,18 @@ export async function runScanners(args: {
     // for this run, keep them. scanners.disable, the repository's choice that
     // the scanner never runs here, leaves them out with it.
     const wanted = (s: BuiltinScanner) => !args.config.disabledScanners.includes(s);
-    merged.push(
-      ...(await settingsFindings({
+    // concat, not push(...): a spread of many thousands of candidates as
+    // arguments overflows the call stack.
+    merged = merged.concat(
+      await settingsFindings({
         repoDir: args.repoDir,
         changedPaths: args.changedPaths,
         coverage,
         deletionPoints: args.deletionPoints,
         baseText: args.baseText,
         wanted,
-      })),
-      ...(await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted })),
+      }),
+      await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted }),
     );
   }
 
@@ -140,8 +142,8 @@ export async function runScanners(args: {
   let postFixture = merged;
   let fixturesDropped = 0;
   if (!args.config.includeFixtures) {
-    const settings = merged.filter((f) => f.ruleId === SETTINGS_RULE && isOwnCandidate(f));
-    const dropped = dropFixtureFindings(merged.filter((f) => !settings.includes(f)));
+    const settings = new Set(merged.filter((f) => f.ruleId === SETTINGS_RULE && isOwnCandidate(f)));
+    const dropped = dropFixtureFindings(merged.filter((f) => !settings.has(f)));
     postFixture = [...dropped.kept, ...settings];
     fixturesDropped = dropped.droppedCount;
   }
@@ -260,8 +262,11 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
       const entry = files.find((f) => (f.anyFolder ? f.path === name : f.path === filePath));
       if (entry === undefined) continue;
       if (entry.ruffTable && !(await touchesRuffTable(args, filePath))) continue;
-      const lines = args.coverage.get(filePath);
-      const line = lines && lines.size > 0 ? Math.min(...lines) : 1;
+      // A loop, not Math.min(...lines): a file can have more changed lines
+      // than a call can take as arguments.
+      let line = Infinity;
+      for (const n of args.coverage.get(filePath) ?? []) if (n < line) line = n;
+      if (line === Infinity) line = 1;
       out.push({
         source,
         ruleId: SETTINGS_RULE,
