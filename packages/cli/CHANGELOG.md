@@ -1,5 +1,14 @@
 # openqodex
 
+## 0.8.1
+
+### Patch Changes
+
+- [#54](https://github.com/openqodex/openqodex/pull/54) [`8c9041a`](https://github.com/openqodex/openqodex/commit/8c9041a2467f7c6b345ddeefb62618bc21138c12) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - A new docs page, `claude-code-review`, on code review in Claude Code.
+
+- [#55](https://github.com/openqodex/openqodex/pull/55) [`0d9bcbe`](https://github.com/openqodex/openqodex/commit/0d9bcbe94db2088423657b1eb0e452a7e9206111) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The README, the docs, the Claude Code plugin's README, `openqodex --help` and the CLI's messages now name `.openqodex/config.yaml` as the config file. A root `.openqodex.yaml` is still read when `.openqodex/config.yaml` does not exist.
+  `openqodex --help`, the docs index and the Claude Code marketplace entry now describe OpenQodex as it works today: AI code review before you push, from your coding agent or your terminal, with the scanners and a separate reviewer.
+
 ## 0.8.0
 
 ### Minor Changes
