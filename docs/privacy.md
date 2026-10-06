@@ -34,7 +34,7 @@ The GitHub Action uploads its findings to code scanning in your own repository o
 
 ## Custom scanners
 
-A custom scanner named in `.openqodex.yaml` is a command that runs on your machine with your permissions. It never runs until you approve that exact entry with `openqodex trust`, and an edited entry needs a new approval. After approval, a custom scanner does whatever its own command does, including any network use. OpenQodex does not control it.
+A custom scanner named in `.openqodex/config.yaml` is a command that runs on your machine with your permissions. It never runs until you approve that exact entry with `openqodex trust`, and an edited entry needs a new approval. After approval, a custom scanner does whatever its own command does, including any network use. OpenQodex does not control it.
 
 ## What stays on your machine
 

@@ -29,7 +29,7 @@ A repository with no commits checks every file with `scan`; `review` needs a fir
 `scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init`, `hook` and `update` accept none of them.
 
 - `--cwd <dir>`: find the repository from `<dir>`. A relative `--output` path still resolves from the folder you ran the command in.
-- `--config <path>`: read this config file instead of `.openqodex.yaml` at the repo root.
+- `--config <path>`: read this config file instead of the repo's `.openqodex/config.yaml`.
 - `--format <terminal|markdown|json|sarif>`: the report format. The default is `terminal`. Only `scan` and `review` use it.
 - `--output <file>`: write the report to `<file>` instead of stdout. Only `scan` and `review` use it.
 - `--no-color`: no colour. `NO_COLOR` set in the environment does the same.
@@ -134,7 +134,7 @@ Installs OpenQodex into your coding agents, then reviews. After the install, ins
 openqodex trust [--yes] [--list] [--revoke <name>]
 ```
 
-Approves the custom scanners in `.openqodex.yaml`. For each new or changed entry, it downloads the release asset. It shows what will run and asks yes or no.
+Approves the custom scanners in `.openqodex/config.yaml`. For each new or changed entry, it downloads the release asset. It shows what will run and asks yes or no.
 
 - `--yes`: approve every pending entry without asking. Use it only for entries you have read.
 - `--list`: print each custom scanner and its state: trusted, not approved, or changed since approval.

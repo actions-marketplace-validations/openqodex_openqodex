@@ -10,7 +10,7 @@ Not through the built-in scanners. Their network use is listed in `security`: sc
 
 ## Will it block my push?
 
-Not by default. Without `review.block_on_severity` in `.openqodex.yaml`, OpenQodex only warns. Set that key to block pushes at a severity. `OPENQODEX_SKIP=1` lets one push through.
+Not by default. Without `review.block_on_severity` in `.openqodex/config.yaml`, OpenQodex only warns. Set that key to block pushes at a severity. `OPENQODEX_SKIP=1` lets one push through.
 
 ## Why did a scanner not run?
 
@@ -35,7 +35,7 @@ List globs under `review.paths.exclude`. A `**/` prefix does not match a file at
 
 ## Can I use a scanner that is not built in?
 
-Yes, by its GitHub link. Add two lines to `.openqodex.yaml` and approve the entry with `openqodex trust`. `custom-scanners` explains how.
+Yes, by its GitHub link. Add two lines to `.openqodex/config.yaml` and approve the entry with `openqodex trust`. `custom-scanners` explains how.
 
 ## Does it change my repository?
 

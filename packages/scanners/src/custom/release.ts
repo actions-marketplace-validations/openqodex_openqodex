@@ -46,7 +46,7 @@ function refusal(what: string, names: string[], hint: string): OpenQodexError {
 // platform's name tokens; it must match a whole asset name exactly once.
 export function pickAsset(names: string[], platform: Platform, opts: { pattern: string | null; version: string }): string {
   const { os, arch } = splitPlatform(platform);
-  const hint = `Name the asset in .openqodex.yaml with a line such as: install: { asset: "<name with {version}, {os}, {arch}>" }`;
+  const hint = `Name the asset in .openqodex/config.yaml with a line such as: install: { asset: "<name with {version}, {os}, {arch}>" }`;
   if (opts.pattern !== null) {
     const source = opts.pattern
       .split(/(\{version\}|\{os\}|\{arch\})/)

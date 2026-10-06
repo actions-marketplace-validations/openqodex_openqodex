@@ -713,7 +713,7 @@ export function runMatches(
 // The config and the instructions are the ones the brief was made with.
 function checkBinding(repoRoot: string, config: Config, manifest: RunManifest): void {
   if (manifest.config_hash !== configHash(config)) {
-    throw new OpenQodexError("the config changed since the brief (.openqodex.yaml or --config); run openqodex review --agent again");
+    throw new OpenQodexError("the config changed since the brief (.openqodex/config.yaml or --config); run openqodex review --agent again");
   }
   // A run from before the field existed has no hash to compare.
   if (manifest.instructions_hash !== undefined) {

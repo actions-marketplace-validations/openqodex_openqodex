@@ -6,7 +6,7 @@ A custom scanner is an arbitrary command that runs on your machine with your per
 
 ## Add one
 
-Two lines in `.openqodex.yaml` at the root of your repository:
+Two lines in your repository's `.openqodex/config.yaml`:
 
 ```yaml
 scanners:
