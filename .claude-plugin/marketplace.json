@@ -2,13 +2,13 @@
   "name": "openqodex",
   "owner": { "name": "Qodex" },
   "metadata": {
-    "description": "OpenQodex: open source code review that runs inside your coding agent before you push."
+    "description": "OpenQodex: open source AI code review before you push, from Claude Code or your terminal."
   },
   "plugins": [
     {
       "name": "openqodex",
       "source": "./plugins/claude-code",
-      "description": "Code review before you push, run by Claude Code on its own model."
+      "description": "Code review before you push: the scanners and a separate Claude Code reviewer on your own login."
     }
   ]
 }

@@ -1,6 +1,6 @@
 # Working in this repo
 
-OpenQodex is open source code review that runs inside your coding agent, before you push. This file tells a coding agent how the repo is built and tested.
+OpenQodex is open source AI code review for Claude Code and Codex. It runs before you push, from your coding agent or your terminal. This file tells a coding agent how the repo is built and tested.
 
 ## Setup
 

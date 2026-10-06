@@ -6,7 +6,7 @@ This page says what OpenQodex runs, what it sends where, and what it writes. Rep
 
 - The `openqodex` CLI, on your Node.
 - The built-in scanners that fit the change, from `~/.openqodex/tools/`. Each is pinned to one version. A built-in scanner is never taken from your `PATH`.
-- Custom scanners from `.openqodex.yaml` that you approved with `openqodex trust`.
+- Custom scanners from `.openqodex/config.yaml` that you approved with `openqodex trust`.
 - git, from your `PATH`.
 
 OpenQodex starts every program with an argument list, never through a shell. Scanners get a small set of environment variables: `PATH`, `HOME`, `TMPDIR`, `LANG`, the `LC_` variables, the proxy variables, and what the scanner itself needs. Your other variables, such as API keys, are not passed on.

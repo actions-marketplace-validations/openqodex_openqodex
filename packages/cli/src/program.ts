@@ -18,7 +18,7 @@ const commands: Record<string, { summary: string; usage?: string; hidden?: true;
     load: () => import("./commands/review.js"),
   },
   update: { summary: "Update OpenQodex now, roll back, or turn updates off", load: () => import("./commands/update.js") },
-  trust: { summary: "Approve a custom scanner from .openqodex.yaml", load: () => import("./commands/trust.js") },
+  trust: { summary: "Approve a custom scanner from .openqodex/config.yaml", load: () => import("./commands/trust.js") },
   scan: { summary: "Run the scanners on the current change", hidden: true, load: () => import("./commands/scan.js") },
   doctor: { summary: "Show which scanners are installed", hidden: true, load: () => import("./commands/doctor.js") },
   hook: { summary: "Run as a git hook", hidden: true, load: () => import("./commands/hook.js") },
@@ -52,7 +52,7 @@ function reportError(error: unknown, command: string, args: string[]): number {
 
 export async function main(argv: string[]): Promise<void> {
   const program = new Command("openqodex")
-    .description("Open source code review that runs inside your coding agent, before you push.")
+    .description("Open source AI code review for Claude Code and Codex, before you push.")
     .version(__OPENQODEX_VERSION__, "-v, --version", "Print the version")
     .exitOverride();
 

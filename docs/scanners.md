@@ -142,7 +142,7 @@ The comments are found by a small reader per comment family, not a full parser. 
 
 ## golangci-lint
 
-- Version: 2.12.2. Its name in `.openqodex.yaml` is `golangci`.
+- Version: 2.12.2. Its name in `.openqodex/config.yaml` is `golangci`.
 - Runs when: a `.go` file changed. It checks the packages that hold the changed files.
 - Needs: Go on your `PATH`. 14.4 MB on Apple Silicon, 15.0 MB on Linux x64.
 - Uses OpenQodex's own settings, with gosec switched on. A `.golangci.yml` in the repo is not loaded. It never rewrites `go.mod` or `go.sum`.
@@ -177,6 +177,6 @@ The comments are found by a small reader per comment family, not a full parser. 
 
 ## Choosing scanners
 
-- `scanners.disable` in `.openqodex.yaml` switches built-in scanners off.
+- `scanners.disable` in `.openqodex/config.yaml` switches built-in scanners off.
 - `--only` and `--skip` on `scan` and `review` pick scanners for one run.
 - `custom-scanners` explains how to add any other scanner.

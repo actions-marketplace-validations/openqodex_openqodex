@@ -352,7 +352,7 @@ async function runBuiltin(
   const started = Date.now();
   const source = adapter.source;
   if (args.config.disabledScanners.includes(source)) {
-    return skippedOutcome(source, "disabled", "disabled in .openqodex.yaml", started);
+    return skippedOutcome(source, "disabled", "disabled in .openqodex/config.yaml", started);
   }
   if (!adapter.wants(args.changedPaths, args.repoDir)) {
     return skippedOutcome(source, "no_matching_files", null, started);

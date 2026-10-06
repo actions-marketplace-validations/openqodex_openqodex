@@ -1,6 +1,6 @@
 # OpenQodex docs
 
-OpenQodex is open source code review that runs inside your coding agent, before you push.
+OpenQodex is open source AI code review for Claude Code and Codex. It runs before you push, from your coding agent or your terminal.
 
 These pages ship inside the npm package. `npx openqodex guide <topic>` prints one in your terminal, offline. The topic is the file name without `.md`.
 
@@ -19,7 +19,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 
 - `quickstart`: install OpenQodex and run the first review.
 - `cli`: every command, flag and exit code.
-- `config`: every key of `.openqodex.yaml`.
+- `config`: every key of `.openqodex/config.yaml`.
 - `scanners`: the thirteen built-in scanners.
 - `custom-scanners`: add any scanner by its GitHub link.
 - `agents`: what `init` writes for each coding agent.

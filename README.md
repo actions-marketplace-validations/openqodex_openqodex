@@ -52,7 +52,7 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 - Thirteen built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
 - A suppression comment the change adds, such as `# nosec`, and a changed scanner settings file are shown, since the scanner then stays silent: the reviewer checks each one, and a scan counts it as a minor finding.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
-- A push gate for Claude Code and Codex, and an optional git pre-push hook. Both look for a review of exactly what is pushed; neither scans or reviews by itself. They warn by default and block only when `.openqodex.yaml` sets `review.block_on_severity`.
+- A push gate for Claude Code and Codex, and an optional git pre-push hook. Both look for a review of exactly what is pushed; neither scans or reviews by itself. They warn by default and block only when `.openqodex/config.yaml` sets `review.block_on_severity`.
 - A GitHub Action that runs the full review on a pull request when the workflow gives it an Anthropic API key, and the scanners only (`openqodex scan`) without one. A pre-commit hook that runs the scanners only; it is not a review.
 - `npx openqodex demo` builds a small repo with planted bugs and scans it.
 
@@ -105,7 +105,7 @@ brakeman's licence is the Brakeman Public Use License, which is not an open sour
 
 ## Add any scanner
 
-Add a scanner by its GitHub link in `.openqodex.yaml` at the root of your repo:
+Add a scanner by its GitHub link in your repo's `.openqodex/config.yaml`:
 
 ```yaml
 scanners:

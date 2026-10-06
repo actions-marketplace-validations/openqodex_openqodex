@@ -50,14 +50,14 @@ export async function run(args: string[]): Promise<number> {
 
   const rows = trustState(repoRoot, config);
   if (bools.has("--list")) {
-    if (rows.length === 0) process.stdout.write("No custom scanners in .openqodex.yaml.\n");
+    if (rows.length === 0) process.stdout.write("No custom scanners in .openqodex/config.yaml.\n");
     for (const r of rows) process.stdout.write(`${r.entry.name}  ${r.entry.source}  ${STATE_WORDS[r.state]}\n`);
     return EXIT_OK;
   }
 
   const pending = rows.filter((r) => r.state !== "trusted");
   if (pending.length === 0) {
-    process.stderr.write(rows.length === 0 ? "No custom scanners in .openqodex.yaml.\n" : "Every custom scanner is approved.\n");
+    process.stderr.write(rows.length === 0 ? "No custom scanners in .openqodex/config.yaml.\n" : "Every custom scanner is approved.\n");
     return EXIT_OK;
   }
   const yes = bools.has("--yes");
