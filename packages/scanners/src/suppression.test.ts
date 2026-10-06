@@ -44,6 +44,13 @@
 //      and swallows a later `# hadolint ignore=`.
 //  15. A string, heredoc, template, raw string or block comment left open
 //      at the end of the file hides every marker after its opener.
+// Added after the second code review:
+//  16. 1 MB of generated input takes a second or more: thousands of distinct
+//      heredoc words left open, a heredoc word made of 100,000 quote pairs,
+//      many unclosed openers of each kind, one very long line, deep nesting.
+//  17. A construct read wrongly hides a later real comment: an f-string
+//      field whose format spec is never closed; in Ruby, `x /y` read as a
+//      regular expression; in JavaScript, `} / 2` read as one.
 
 import { describe, expect, it } from "vitest";
 import type { BuiltinScanner } from "@openqodex/core";
@@ -445,6 +452,21 @@ describe("an opener left open at the end of the file hides nothing after it (15)
   });
 });
 
+describe("a construct read wrongly hides no later comment (17)", () => {
+  it("python: an f-string field whose format spec is never closed", () => {
+    expect(lines("bandit", src('x = f"{a:>10"', "y = 1  # nosec"))).toEqual([2]);
+    expect(lines("bandit", src('x = f"""{a:', "y = 1  # nosec"))).toEqual([2]);
+  });
+
+  it("ruby: a local variable, a blank and a slash, read as a regular expression", () => {
+    expect(lines("rubocop", src("half = total /2 # rubocop:disable Lint/Foo"))).toEqual([1]);
+  });
+
+  it("javascript: a division after a closing brace, read as a regular expression", () => {
+    expect(lines("oxlint", src("x = {a: 1}.a } / 2; // eslint-disable-line"))).toEqual([1]);
+  });
+});
+
 describe("linear time on hostile input (11)", () => {
   // Each input is large enough that a pattern or reader with quadratic or
   // exponential work takes minutes; a linear one takes milliseconds.
@@ -473,6 +495,55 @@ describe("linear time on hostile input (11)", () => {
     ["golangci", "blanks before #nosec", `/*\n${" ".repeat(N)}x\n*/\n`],
     ["rubocop", "openers left open", `${'=begin\n"#{%q(<<~A\n'.repeat(N / 10)}`],
     ["rubocop", "blanks in a directive", `#${" ".repeat(N)}rubocop${" ".repeat(N)}:x\n`],
+  ];
+  for (const [scanner, what, text] of cases) {
+    it(`${scanner}: ${what}`, () => {
+      expect(fast(scanner, text)).toBeLessThan(1000);
+    });
+  }
+});
+
+describe("linear time on 1 MB of generated input, per reader family (16)", () => {
+  const MB = 1024 * 1024;
+  // `unit` repeated to about 1 MB; `(k) => string` gives each repeat its own text.
+  const fill = (unit: string | ((k: number) => string)) => {
+    const parts: string[] = [];
+    let size = 0;
+    for (let k = 0; size < MB; k++) {
+      const part = typeof unit === "string" ? unit : unit(k);
+      parts.push(part);
+      size += part.length;
+    }
+    return parts.join("");
+  };
+  const fast = (scanner: BuiltinScanner, text: string) => {
+    const started = performance.now();
+    findMarkers(text, [scanner]);
+    return performance.now() - started;
+  };
+  const cases: [BuiltinScanner, string, string][] = [
+    ["semgrep", "one very long line", fill("x nose ")],
+    ["bandit", "many unclosed openers of each kind", fill((k) => [`a = '''${k}\n`, `b = """${k}\n`, `c = f'''{${k}\n`, `d = f"{e:${k}\n`, `g = '${k}\n`][k % 5] as string)],
+    ["bandit", "one very long line", `x = ${fill("'a' + f\"{b}\" + ")}1  # nosec\n`],
+    ["bandit", "deep nesting", `x = f"${fill("{a:")}"\n`],
+    ["shellcheck", "many unclosed openers of each kind", fill((k) => [`echo '${k}\n`, `echo "${k}\n`, `echo $'${k}\n`, `x=$(echo ${k}\n`, `y=\`echo ${k}\n`][k % 5] as string)],
+    ["shellcheck", "many distinct heredoc words", fill((k) => `cat <<E${k}\n`)],
+    ["shellcheck", "one very long line", `cat <<${fill('""')}\nEOF\n`],
+    ["shellcheck", "one very long line of heredocs", `cat ${fill('<<"a" ')}\n`],
+    ["shellcheck", "deep nesting", `x="${fill("$(\"")}"\n`],
+    ["hadolint", "many distinct heredoc words", `FROM a\n${fill((k) => `RUN <<E${k}\n`)}`],
+    ["hadolint", "one very long line", `FROM a\nRUN ${fill("<<a ")}\n`],
+    ["hadolint", "deep nesting", `FROM a\n${fill("RUN a \\\n")}`],
+    ["rubocop", "many unclosed openers of each kind", fill((k) => [`a = "${k}\n`, `b = '${k}\n`, `c = %q(${k}\n`, `=begin ${k}\n`, `d = "#{${k}\n`][k % 5] as string)],
+    ["rubocop", "many distinct heredoc words", fill((k) => `x = <<~E${k}\n`)],
+    ["rubocop", "one very long line", `x = ${fill('"a" + ')}1 # rubocop:disable Lint/Foo\n`],
+    ["rubocop", "deep nesting", `x = ${fill('"#{')}\n`],
+    ["oxlint", "many unclosed openers of each kind", fill((k) => [`a = \`${k}\n`, `/* ${k}\n`, `b = "${k}\n`, `c = /${k}\n`, `d = \`\${${k}\n`][k % 5] as string)],
+    ["oxlint", "one very long line", `x = ${fill("a / b / ")}1; // eslint-disable-line\n`],
+    ["oxlint", "deep nesting", `x = ${fill("`${")}\n`],
+    ["golangci", "many unclosed openers of each kind", fill((k) => [`a := \`${k}\n`, `/* ${k}\n`, `b := "${k}\n`][k % 3] as string)],
+    ["golangci", "one very long line", `x := ${fill('"a" + ')}1 //nolint\n`],
+    ["golangci", "deep nesting and package lines in comments", fill("/*\npackage x\n*/\n")],
   ];
   for (const [scanner, what, text] of cases) {
     it(`${scanner}: ${what}`, () => {

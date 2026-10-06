@@ -67,7 +67,7 @@ Where OpenQodex is wider than the scanner, it errs towards a candidate the revie
 
 actionlint, brakeman, osv-scanner and sqllint have no inline comment. actionlint ([usage](https://github.com/rhysd/actionlint/blob/v1.7.7/docs/usage.md)) and osv-scanner ([configuration](https://google.github.io/osv-scanner/configuration/)) skip findings only through their settings files; brakeman ([ignoring false positives](https://brakemanscanner.org/docs/ignoring_false_positives/)) only through its ignore file.
 
-The comments are found by a small reader per comment family, not a full parser. On a rare line it can still read less than the scanner: in Ruby, `a /b` where `a` is a local variable is read as the start of a regular expression, as Ruby reads it when `a` is a method, and a comment after it on that line is missed; in JavaScript, a `/` right after an object literal `}` is read the same way; in shell, a `case` pattern inside `$( )` can end it early. An unchanged comment that silences lines the change adds, such as an `eslint-disable-next-line` above a new line or a file-level `# ruff: noqa`, raises nothing.
+The comments are found by a small reader per comment family, not a full parser. Where it cannot tell a regular expression from a division (Ruby `total /2`, JavaScript `} / 2`), it also reads a comment that starts in the skipped text. On a rare line it can still read less than the scanner: in shell, a `case` pattern inside `$( )` ends it early; in Ruby, `buf <<"x"` that appends a string is read as a heredoc. An unchanged comment that silences lines the change adds, such as an `eslint-disable-next-line` above a new line or a file-level `# ruff: noqa`, raises nothing.
 
 ## semgrep
 

@@ -41,7 +41,7 @@ import type {
 } from "@openqodex/core";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import type { SettingsFile } from "./adapters/index.js";
-import { readRepoFile } from "./adapters/read.js";
+import { readRepoFile, repoFileOrReason } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
 import { SEMGREP_MAX_TARGET_BYTES } from "./adapters/semgrep.js";
@@ -303,14 +303,20 @@ async function suppressionFindings(args: {
     ).map((a) => a.source);
     if (scanners.length === 0) continue;
     let text: string;
+    let size: number;
     try {
+      const checked = await repoFileOrReason(args.repoDir, filePath, SUPPRESSION_MAX_BYTES);
+      if ("reason" in checked) continue;
+      size = checked.size;
       text = await readRepoFile(args.repoDir, filePath, SUPPRESSION_MAX_BYTES);
     } catch {
       // Gone, not a regular file in the repo, or over the size cap.
       continue;
     }
-    // semgrep skips a file over its own limit, as the adapter runs it.
-    if (Buffer.byteLength(text, "utf8") > SEMGREP_MAX_TARGET_BYTES) scanners = scanners.filter((s) => s !== "semgrep");
+    // semgrep skips a file over its own limit, as the adapter runs it. The
+    // limit is on the file's bytes, which invalid UTF-8 makes shorter than
+    // its decoded text.
+    if (size > SEMGREP_MAX_TARGET_BYTES) scanners = scanners.filter((s) => s !== "semgrep");
     for (const hit of findMarkers(text, scanners)) {
       if (!added.has(hit.line)) continue;
       out.push({
