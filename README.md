@@ -53,7 +53,7 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 - A suppression comment the change adds, such as `# nosec`, and a changed scanner settings file are shown, since the scanner then stays silent: the reviewer checks each one, and a scan counts it as a minor finding.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
 - A push gate for Claude Code and Codex, and an optional git pre-push hook. Both look for a review of exactly what is pushed; neither scans or reviews by itself. They warn by default and block only when `.openqodex.yaml` sets `review.block_on_severity`.
-- A GitHub Action and a pre-commit hook that run the scanners only (`openqodex scan`). They are not a review.
+- A GitHub Action that runs the full review on a pull request when the workflow gives it an Anthropic API key, and the scanners only (`openqodex scan`) without one. A pre-commit hook that runs the scanners only; it is not a review.
 - `npx openqodex demo` builds a small repo with planted bugs and scans it.
 
 ## What it does not do yet

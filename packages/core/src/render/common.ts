@@ -16,6 +16,14 @@ export function display(text: string): string {
   return text.replace(/\s+/g, " ").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }
 
+// Every character markdown or HTML gives meaning to, escaped with a
+// backslash: no heading, list, link, image, HTML tag, table cell, code span,
+// fence or emphasis can start inside the text. A reader of the rendered page
+// sees the same words.
+export function escapeMarkdown(text: string): string {
+  return text.replace(/[\\`*_[\]()!<>#|~]/g, (c) => `\\${c}`);
+}
+
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }

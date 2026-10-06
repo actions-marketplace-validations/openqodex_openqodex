@@ -30,6 +30,7 @@ import {
   readLatest,
   readRepoFile,
   repoStat,
+  SEVERITIES,
   STATE_DIR,
   selectLenses,
   writeLatest,
@@ -37,7 +38,7 @@ import {
   writeReportFiles,
   writeScan,
 } from "@openqodex/core";
-import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, WholeRepo } from "@openqodex/core";
+import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, Severity, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles } from "../agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, checkoutsDir, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
@@ -82,10 +83,16 @@ const RUN_AGAIN = "run openqodex review --agent first";
 // "target" for a branch or a pull request, whose commits are in the manifest).
 type RunFile = { version: 1; scope: ChangeScope | "all" | "target" };
 
+// Flags of the review openqodex runs itself only. The GitHub Action passes
+// the last four: a gate the change's own config cannot weaken, the base
+// branch's instructions, a folder of its own for this run's report, and the
+// reviewer's web tools off whatever the runner's user config says.
+const OWN_REVIEW_FLAGS = ["--reviewer", "--timeout", "--block-on-severity", "--instructions", "--report-dir", "--reviewer-web"];
+
 export async function run(args: string[]): Promise<number> {
   const { global, bools, values, positionals } = parseFlags(args, {
     bools: [...SCOPE_BOOLS, "--agent", "--finalize", ALL, NO_GRAPH, HANDED_OFF],
-    values: [...SCOPE_VALUES, "--only", "--skip", "--run", "--reviewer", "--timeout"],
+    values: [...SCOPE_VALUES, "--only", "--skip", "--run", ...OWN_REVIEW_FLAGS],
     positionals: 1,
   });
   const agent = bools.has("--agent");
@@ -93,9 +100,16 @@ export async function run(args: string[]): Promise<number> {
   const noGraph = bools.has(NO_GRAPH);
   if (agent && finalize) throw new OpenQodexError("--agent and --finalize cannot be used together");
   if (values.has("--run") && !finalize) throw new OpenQodexError("--run names the run to finalize and needs --finalize");
-  if ((values.has("--reviewer") || values.has("--timeout")) && (agent || finalize)) {
-    throw new OpenQodexError("--reviewer and --timeout are for the review openqodex runs itself, not --agent or --finalize");
+  const own = OWN_REVIEW_FLAGS.filter((f) => values.has(f));
+  if (own.length > 0 && (agent || finalize)) {
+    throw new OpenQodexError(`${own.join(" and ")} ${own.length === 1 ? "is" : "are"} for the review openqodex runs itself, not --agent or --finalize`);
   }
+  const blockOn = values.get("--block-on-severity");
+  if (blockOn !== undefined && !(SEVERITIES as readonly string[]).includes(blockOn)) {
+    throw new OpenQodexError(`--block-on-severity must be one of ${SEVERITIES.join(", ")}, not ${blockOn}`);
+  }
+  const web = values.get("--reviewer-web");
+  if (web !== undefined && web !== "on" && web !== "off") throw new OpenQodexError(`--reviewer-web must be on or off, not ${web}`);
   const target = finalize ? undefined : positionals[0];
   if (target !== undefined && bools.has(ALL)) {
     throw new OpenQodexError("--all reviews the whole repository and takes no branch or pull request");
@@ -126,6 +140,10 @@ export async function run(args: string[]): Promise<number> {
       noGraph,
       reviewer: values.get("--reviewer"),
       timeoutMs: timeoutSeconds(values.get("--timeout")) * 1000,
+      blockOn: blockOn as Severity | undefined,
+      instructions: values.get("--instructions"),
+      reportDir: values.get("--report-dir"),
+      web: web === undefined ? undefined : web === "on",
     });
   }
   if (target !== undefined) {

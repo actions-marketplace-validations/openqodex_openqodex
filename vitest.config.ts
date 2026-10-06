@@ -10,5 +10,7 @@ export default defineConfig({
     // Many tests start the real CLI and git several times; a busy CI runner
     // takes more than the 5 second default for those.
     testTimeout: 30_000,
+    // A setup step that makes a disk image or a git repo also needs room there.
+    hookTimeout: 60_000,
   },
 });

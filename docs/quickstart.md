@@ -87,7 +87,7 @@ Run the review yourself:
 npx openqodex review
 ```
 
-`openqodex scan` runs the scanners only and prints their findings unchecked. It is the check the pre-commit hook and the GitHub Action run; it is not a review.
+`openqodex scan` runs the scanners only and prints their findings unchecked. It is the check the pre-commit hook runs, and the GitHub Action without an Anthropic API key; it is not a review.
 
 ## First run
 

@@ -1,5 +1,5 @@
 import type { Report, ReportFinding } from "../types.js";
-import { SEVERITIES_DESC, candidateLocation, coverageLine, location, sourceLabel, verdictLine } from "./common.js";
+import { SEVERITIES_DESC, candidateLocation, coverageLine, escapeMarkdown, location, sourceLabel, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 
 const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai";
@@ -11,12 +11,11 @@ const LINE_BREAK = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/g;
 // oxlint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0008\u000e-\u001f\u007f-\u0084\u0086-\u009f]/g;
 
-// One table cell: pipes escaped, every line ending a <br>.
+// One table cell: every character markdown or HTML gives meaning to escaped,
+// as in the review report, so a scanner's message or reason makes no link,
+// image or tag; then every line ending a <br>.
 function cell(text: string): string {
-  return text
-    .replace(CONTROL, "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\|/g, "\\|")
+  return escapeMarkdown(text.replace(CONTROL, ""))
     .replace(LINE_BREAK, "<br>")
     .replace(/\t/g, " ")
     .trim();
@@ -105,7 +104,7 @@ export function renderMarkdown(report: Report): string {
     for (const p of report.not_reviewed_paths) out.push(`- ${code(p)}`);
   }
 
-  out.push("", "## Scanners", "", coverageLine(report.scanners));
+  out.push("", "## Scanners", "", cell(coverageLine(report.scanners)));
   if (report.scanners.length > 0) {
     out.push(
       "",
@@ -116,7 +115,7 @@ export function renderMarkdown(report: Report): string {
     );
     for (const s of report.scanners) {
       out.push(
-        `| ${s.scanner} | ${s.status.replace(/_/g, " ")} | ${s.version ?? ""} | ${s.rawCount} | ${s.keptCount} | ${(s.durationMs / 1000).toFixed(1)} s | ${cell(s.reason ?? "")} |`,
+        `| ${cell(s.scanner)} | ${s.status.replace(/_/g, " ")} | ${cell(s.version ?? "")} | ${s.rawCount} | ${s.keptCount} | ${(s.durationMs / 1000).toFixed(1)} s | ${cell(s.reason ?? "")} |`,
       );
     }
     out.push("", "</details>");
