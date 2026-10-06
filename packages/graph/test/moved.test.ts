@@ -32,6 +32,12 @@
 // 14. A receiver named before its scope declares it (`const run = () =>
 //     m.f(); const m = require("./b")`) is not bound to that declaration, so
 //     a call to a removed function is lost.
+// 15. A receiver typed by an outer local wins over the inner declaration the
+//     scope makes later, so a call to the inner object's removed method links
+//     to the outer object's method instead.
+// 16. Assigning a new value to an imported class after an object was built
+//     from it erases where the object came from, so a call to its removed
+//     method is lost.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -311,5 +317,24 @@ describe("moved symbols", () => {
     const { impact } = await review({ ...user, "src/b.js": lib(true) }, { "src/b.js": lib(false) });
     const f = removedNamed(impact, "f");
     expect(stillCalled(impact, f.id)).toEqual([at(user, "src/a.js", "EARLY")]);
+  });
+
+  it("types a receiver by the declaration its own scope makes later, not by an outer local of the same name (15)", async () => {
+    const file = (withBf: boolean) =>
+      `class A {\n  f(): number {\n    return 1;\n  }\n}\n\nclass B {\n${withBf ? "  f(): number {\n    return 2;\n  }\n\n" : ""}  g(): number {\n    return 3;\n  }\n}\n\nconst s = new A();\n\nexport function run(): number {\n  const invoke = () => s.f(); // LATER\n  const s = new B();\n  return invoke();\n}\n`;
+    const { g, impact } = await review({ "src/a.ts": file(true) }, { "src/a.ts": file(false) });
+    const bf = impact.symbols.find((s) => impact.removed.includes(s.id) && s.name === "f") as ImpactSymbol;
+    expect(bf.id).toContain("#B.f@");
+    expect(stillCalled(impact, bf.id)).toEqual([at({ "src/a.ts": file(false) }, "src/a.ts", "LATER")]);
+    expect(callSites(g, symbol(g, "src/a.ts", "f", "A"))).toEqual([]);
+  });
+
+  it("keeps where an object came from when the class it was built from is assigned a new value later (16)", async () => {
+    const lib = (withF: boolean) => `class Svc {\n${withF ? "  f() {\n    return 1;\n  }\n\n" : ""}  g() {\n    return 2;\n  }\n}\n\nmodule.exports = { Svc };\n`;
+    const user = {
+      "src/a.js": 'function run(replacement) {\n  let { Svc } = require("./b");\n  const s = new Svc();\n  Svc = replacement;\n  return s.f(); // BUILT\n}\n\nmodule.exports = { run };\n',
+    };
+    const { impact } = await review({ ...user, "src/b.js": lib(true) }, { "src/b.js": lib(false) });
+    expect(stillCalled(impact, removedNamed(impact, "f").id)).toEqual([at(user, "src/a.js", "BUILT")]);
   });
 });

@@ -9,7 +9,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 7;
+export const EXTRACTOR_VERSION = 8;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -42,14 +42,54 @@ const MAX_SCOPE_DEPTH = 256;
 // copies made with `{ ...t }` keep it and JSON leaves it out. Ctx.facts()
 // turns it into `bound` once every scope has been read. The reading scope is
 // the extraction's own state; extraction is synchronous, one file at a time.
+// The binding the head name had when the type was read is kept too: an
+// object built from an imported class stays that class's object after the
+// code assigns the name something else.
 const READ_IN = Symbol("readIn");
-type Stamped = TypeRef & { [READ_IN]?: Scope };
+const READ_AS = Symbol("readAs");
+type Stamped = TypeRef & { [READ_IN]?: Scope; [READ_AS]?: { at: Scope; bound: BoundImport } };
 let readingScope: Scope | null = null;
 
 function typeRef(t: TypeRef): TypeRef {
-  if (readingScope) (t as Stamped)[READ_IN] = readingScope;
+  if (!readingScope) return t;
+  const s = t as Stamped;
+  s[READ_IN] = readingScope;
+  const head = t.qualifier ? (t.qualifier.split(".")[0] as string) : t.name;
+  const at = lookupIn(readingScope, head);
+  const bound = at && !at.fns?.has(head) ? at.imports?.get(head) : undefined;
+  if (at && bound) s[READ_AS] = { at, bound };
   return t;
 }
+
+// The first scope from `from` outwards that knows `name` as a nested
+// definition, a scoped import or a local; null when none does, or when the
+// answer lies more than MAX_SCOPE_DEPTH scopes out.
+function lookupIn(from: Scope, name: string): Scope | null {
+  let s: Scope | null = from;
+  for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
+    if (s.fns?.has(name) || s.imports?.has(name) || s.locals?.has(name)) return s;
+  }
+  return null;
+}
+
+// An identifier before a dot, as the scope `at` (the nearest that knows the
+// name) holds it: a local's type, a scoped import, or a name the resolver
+// looks up in the file. `topNames` set: the walk is over, and a module-level
+// variable hides only names it is not also defined as.
+function receiverIn(at: Scope | null, name: string, path: string[], topNames: ReadonlySet<string> | null): Receiver {
+  const named: Receiver = { kind: "name", name, path, nesting: null };
+  if (!at || at.fns?.has(name)) return named;
+  const bound = at.imports?.get(name);
+  if (bound) return topNames ? { kind: "name", name, path, nesting: null, bound } : named;
+  if (topNames && at.depth === 0 && topNames.has(name)) return named;
+  const t = at.locals?.get(name) ?? null;
+  return t && !t.elem ? { kind: "type", type: t, path } : { kind: "other" };
+}
+
+// An identifier receiver is tagged with what was read where, until Ctx.addCall takes it.
+const IDENT = Symbol("ident");
+type Ident = { name: string; at: Scope | null; path: string[] };
+type Tagged = Receiver & { [IDENT]?: Ident };
 
 type Leave = () => void;
 
@@ -104,7 +144,7 @@ class Ctx {
   // Calls whose names are bound when the walk ends, each with a reference to
   // its scope: a scope's names are known only once all of it has been read
   // (hoisting in JavaScript, any assignment makes a Python name local).
-  private pending: { call: CallFact; scope: Scope }[] = [];
+  private pending: { call: CallFact; scope: Scope; ident: Ident | undefined }[] = [];
 
   constructor(readonly lang: Lang) {
     const root = { def: -1, cls: null, locals: new Map(), parent: null, depth: 0, caller: -1, clsScope: null, inFunction: false } as unknown as Scope;
@@ -147,15 +187,8 @@ class Ctx {
     return !this.top.inFunction;
   }
 
-  // The first scope from `from` outwards that knows `name` as a nested
-  // definition, a scoped import or a local; null when none does, or when
-  // the answer lies more than MAX_SCOPE_DEPTH scopes out.
   lookup(from: Scope, name: string): Scope | null {
-    let s: Scope | null = from;
-    for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
-      if (s.fns?.has(name) || s.imports?.has(name) || s.locals?.has(name)) return s;
-    }
-    return null;
+    return lookupIn(from, name);
   }
 
   // The type of a local, null for a local of unknown type, undefined when
@@ -164,6 +197,17 @@ class Ctx {
     const at = this.lookup(this.top, name);
     if (!at || at.fns?.has(name) || at.imports?.has(name)) return undefined;
     return at.locals?.get(name) ?? null;
+  }
+
+  // An identifier before a dot, read at this point of the walk: a local's
+  // type here keeps the flow of assignments so far. Ctx.facts() reads the
+  // name again once every scope is complete: a nearer scope that declares
+  // it later wins, and an import is decided only then.
+  identReceiver(name: string, path: string[]): Receiver {
+    const at = this.lookup(this.top, name);
+    const recv = receiverIn(at, name, path, null) as Tagged;
+    recv[IDENT] = { name, at, path };
+    return recv;
   }
 
   // A declaration: the name is new in its scope (`block`: a `let` or
@@ -259,6 +303,8 @@ class Ctx {
     const callerDef = call.caller >= 0 ? this.defs[call.caller] : undefined;
     if (callerDef?.static || callerDef?.kind === "class" || callerDef?.kind === "module") call.static = true;
     this.calls.push(call);
+    const ident = (recv as Tagged)[IDENT];
+    if (ident) delete (recv as Tagged)[IDENT];
     if (this.lang === "ruby") return;
     // Past the depth bound the scopes around a call are not read: the safe
     // reading is a call nothing binds, never one bound past a scope that hides it.
@@ -267,46 +313,48 @@ class Ctx {
       if (recv.kind === "none") call.shadowed = true;
       return;
     }
-    // A Go receiver name is decided where it is read: no Go name is hoisted.
-    if (recv.kind === "none" || (recv.kind === "name" && this.lang !== "go")) this.pending.push({ call, scope: this.top });
+    // A Go receiver name is decided where it is read (identReceiver is not
+    // used for Go): no Go name is hoisted.
+    if (recv.kind === "none" || ident) this.pending.push({ call, scope: this.top, ident });
   }
 
   facts(): FileFacts {
     readingScope = null;
     const topNames = new Set(this.defs.filter((d) => d.topLevel).map((d) => d.name));
-    for (const { call, scope } of this.pending) {
-      const r = call.recv;
-      const name = r.kind === "none" ? call.name : r.kind === "name" ? r.name : null;
-      const at = name === null ? null : this.lookup(scope, name);
-      if (name === null || !at) continue;
-      const fn = at.fns?.get(name);
-      const bound = at.imports?.get(name);
-      // A module-level variable hides only names it is not also defined as.
-      const hides = at.depth > 0 || !topNames.has(name);
-      if (r.kind === "none") {
-        if (fn !== undefined) call.local = fn;
-        else if (bound) call.bound = bound;
-        else if (hides) call.shadowed = true;
-      } else if (r.kind === "name" && fn === undefined) {
-        // A receiver read before its scope declared the name: the
-        // declaration decides it, as for a bare call.
-        if (bound) r.bound = bound;
-        else if (hides) {
-          const t = at.locals?.get(name) ?? null;
-          call.recv = t && !t.elem ? { kind: "type", type: t, path: r.path } : { kind: "other" };
-        }
+    for (const { call, scope, ident } of this.pending) {
+      if (ident) {
+        // The name read again with every scope complete. The same scope
+        // answering keeps the type the walk had at the call; a nearer scope
+        // that declared the name later decides instead.
+        const at = this.lookup(scope, ident.name);
+        if (at !== ident.at || call.recv.kind === "name") call.recv = receiverIn(at, ident.name, ident.path, topNames);
+        continue;
       }
+      const at = this.lookup(scope, call.name);
+      if (!at) continue;
+      const fn = at.fns?.get(call.name);
+      const bound = at.imports?.get(call.name);
+      if (fn !== undefined) call.local = fn;
+      else if (bound) call.bound = bound;
+      // A module-level variable hides only names it is not also defined as.
+      else if (at.depth > 0 || !topNames.has(call.name)) call.shadowed = true;
     }
     this.pending = [];
-    // Each type name binds through the scope it was read in.
+    // Each type name binds through the scope it was read in: what that scope
+    // holds now, or the import it held when the type was read if the code
+    // assigned the name something else after.
     const bindType = (t: TypeRef | null | undefined) => {
-      const at = t ? (t as Stamped)[READ_IN] : undefined;
-      if (!t || !at) return;
-      delete (t as Stamped)[READ_IN];
-      const head = t.qualifier ? (t.qualifier.split(".")[0] as string) : t.name;
+      const s = t as Stamped | null | undefined;
+      const at = s?.[READ_IN];
+      if (!s || !at) return;
+      const readAs = s[READ_AS];
+      delete s[READ_IN];
+      delete s[READ_AS];
+      const head = s.qualifier ? (s.qualifier.split(".")[0] as string) : s.name;
       const found = this.lookup(at, head);
-      const bound = found && !found.fns?.has(head) ? found.imports?.get(head) : undefined;
-      if (bound) t.bound = bound;
+      let bound = found && !found.fns?.has(head) ? found.imports?.get(head) : undefined;
+      if (!bound && readAs && found === readAs.at) bound = readAs.bound;
+      if (bound) s.bound = bound;
     };
     for (const d of this.defs) {
       d.bases.forEach(bindType);
@@ -415,12 +463,7 @@ function jsReceiver(ctx: Ctx, object: Node): Receiver {
     return type ? { kind: "type", type, path } : { kind: "other" };
   }
   if (base.type === "identifier") {
-    // A name that is not a local here is decided when the walk ends (Ctx.facts).
-    const type = ctx.local(base.text);
-    if (type?.elem) return { kind: "other" };
-    if (type) return { kind: "type", type, path };
-    if (type === null) return { kind: "other" }; // a local of unknown type
-    return { kind: "name", name: base.text, path, nesting: null };
+    return ctx.identReceiver(base.text, path);
   }
   return { kind: "other" };
 }
@@ -469,7 +512,9 @@ function jsParams(ctx: Ctx, fn: Node, locals: Map<string, TypeRef | null>): void
   }
 }
 
-// The names a destructuring pattern binds: `{ a, b: c, d = 1, ...e }`, `[f, [g] = h]`.
+// The names a destructuring pattern binds: `{ a, b: c, d = 1, ...e }`,
+// `[f, [g] = h]`, Python `a, (b, *c)`. A target that is not a name (`x.y`,
+// `x[0]`) binds nothing.
 function patternNames(node: Node | null, out: string[] = []): string[] {
   if (!node) return out;
   switch (node.type) {
@@ -487,6 +532,10 @@ function patternNames(node: Node | null, out: string[] = []): string[] {
     case "object_pattern":
     case "array_pattern":
     case "rest_pattern":
+    case "pattern_list":
+    case "tuple_pattern":
+    case "list_pattern":
+    case "list_splat_pattern":
       for (const c of node.namedChildren) patternNames(c, out);
       break;
   }
@@ -800,6 +849,11 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           ctx.assign(left.text, type ?? callType(right));
           return;
         }
+        // `({ f } = deps)`, `[a, b] = list`: each name gets a value whose type is not known.
+        if (left?.type === "object_pattern" || left?.type === "array_pattern") {
+          for (const n of patternNames(left)) ctx.assign(n, null);
+          return;
+        }
         if (left?.type === "member_expression") {
           const exported = jsCommonExport(ctx, node, left, right);
           if (exported) return typeof exported === "function" ? exported : undefined;
@@ -910,11 +964,7 @@ function pyReceiver(ctx: Ctx, object: Node): Receiver {
   }
   if (base.type !== "identifier") return { kind: "other" };
   if ((base.text === "self" || base.text === "cls") && ctx.cls()) return { kind: "self", path };
-  const type = ctx.local(base.text);
-  if (type?.elem) return { kind: "other" };
-  if (type) return { kind: "type", type, path };
-  if (type === null) return { kind: "other" };
-  return { kind: "name", name: base.text, path, nesting: null };
+  return ctx.identReceiver(base.text, path);
 }
 
 function pyCallType(value: Node | null): TypeRef | null {
@@ -1014,7 +1064,11 @@ function extractPython(tree: Tree): FileFacts {
       case "for_statement": {
         const left = node.childForFieldName("left");
         const right = node.childForFieldName("right");
-        if (left?.type !== "identifier") return;
+        if (left?.type !== "identifier") {
+          // `for a, b in pairs`: each name is a local whose type is not known.
+          for (const n of patternNames(left)) ctx.setLocal(n, null);
+          return;
+        }
         const t = right?.type === "identifier" ? ctx.local(right.text) : null;
         ctx.setLocal(left.text, t?.elem ? { ...t, elem: false } : null);
         return;
@@ -1030,6 +1084,9 @@ function extractPython(tree: Tree): FileFacts {
             if (type) (ctx.defs[inner.def] as DefFact).fields[left.text] = type;
           } else if (annotation) ctx.setLocal(left.text, annotation);
           else ctx.assign(left.text, type, true);
+        } else if (left?.type === "pattern_list" || left?.type === "tuple_pattern" || left?.type === "list_pattern") {
+          // `a, b = pair`: each name is assigned a value whose type is not known.
+          if (!(inner.cls !== null && inner.locals === null)) for (const n of patternNames(left)) ctx.assign(n, null, true);
         } else if (left?.type === "attribute" && left.childForFieldName("object")?.text === "self") {
           const attr = left.childForFieldName("attribute");
           const cls = ctx.cls();
