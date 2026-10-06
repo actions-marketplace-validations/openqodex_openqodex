@@ -51,6 +51,14 @@
 //  17. A construct read wrongly hides a later real comment: an f-string
 //      field whose format spec is never closed; in Ruby, `x /y` read as a
 //      regular expression; in JavaScript, `} / 2` read as one.
+// Added after the third code review:
+//  18. A $( ) left open in each of many heredoc bodies makes each nested
+//      read run to the end of the file and the next level read it again:
+//      exponential work.
+//  19. A shell heredoc end word is read other than the way shellcheck reads
+//      it, so the body runs on and an apostrophe in it swallows a later
+//      directive: `<<"E\"OF"` ends at `E\"OF`, `<<E"O"F` at `E"O"F`, and
+//      an end line may carry trailing blanks.
 
 import { describe, expect, it } from "vitest";
 import type { BuiltinScanner } from "@openqodex/core";
@@ -396,6 +404,20 @@ describe("keys and heredoc words read as the scanners read them", () => {
     expect(lines("shellcheck", text)).toEqual([4, 8, 12]);
   });
 
+  it("shell: the end word and end line as shellcheck reads them (19)", () => {
+    // shellcheck 0.10.0 ends each heredoc at the line shown and obeys the
+    // directive after it (checked against the binary).
+    for (const [opener, end] of [
+      ['cat <<"E\\"OF"', 'E\\"OF'],
+      ["cat <<'E\\\"OF'", 'E\\"OF'],
+      ['cat <<E"O"F', 'E"O"F'],
+      ["cat <<EOF", "EOF  "],
+    ] as const) {
+      const text = src("echo start", opener, "it's here", end, "# shellcheck disable=SC2086", "echo $A", "echo 'done'");
+      expect(lines("shellcheck", text), opener).toEqual([5]);
+    }
+  });
+
   it("Dockerfile: a heredoc opens only in RUN, COPY and ADD, at the start of a word (14)", () => {
     // hadolint 2.15.1 obeys line 3 (checked against the binary).
     const text = src(
@@ -531,6 +553,8 @@ describe("linear time on 1 MB of generated input, per reader family (16)", () =>
     ["shellcheck", "one very long line", `cat <<${fill('""')}\nEOF\n`],
     ["shellcheck", "one very long line of heredocs", `cat ${fill('<<"a" ')}\n`],
     ["shellcheck", "deep nesting", `x="${fill("$(\"")}"\n`],
+    ["shellcheck", "a $( ) left open in every heredoc body (18)", fill("cat <<E\n$(echo\nE\n")],
+    ["shellcheck", "backticks left open in every heredoc body (18)", fill("cat <<E\n`echo\nE\n")],
     ["hadolint", "many distinct heredoc words", `FROM a\n${fill((k) => `RUN <<E${k}\n`)}`],
     ["hadolint", "one very long line", `FROM a\nRUN ${fill("<<a ")}\n`],
     ["hadolint", "deep nesting", `FROM a\n${fill("RUN a \\\n")}`],

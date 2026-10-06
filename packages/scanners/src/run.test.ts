@@ -66,6 +66,11 @@
 //      or a file semgrep skips for its size still raises a semgrep candidate.
 //  33. A file under semgrep's size limit loses its semgrep candidate because
 //      its text, decoded, is longer than the file (invalid UTF-8).
+//  34. Keeping changed settings files out of the fixture filter takes time
+//      that grows with the square of their number; or many thousands of
+//      such candidates overflow the call stack and the scan throws.
+//  35. A settings file with many thousands of changed lines overflows the
+//      call stack while its first changed line is found.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -739,6 +744,48 @@ describe("suppression comments the change adds", () => {
       resolveTool: notInstalled(),
     });
     expect(scan.candidates.map((c) => c.token)).toEqual(["semgrep:openqodex.suppression-added"]);
+  });
+
+  it("keeps changed settings files out of the fixture filter in linear time (34)", async () => {
+    // As many scanner findings as settings candidates, so each finding is
+    // checked against every settings candidate when the check is a list scan.
+    const dir = repo({});
+    const time = async (n: number) => {
+      const changed = Array.from({ length: n }, (_, k) => `d${k}/ruff.toml`);
+      const hits = changed.map((p) => finding({ source: "custom:many", ruleId: "hit", filePath: p, lineStart: 1, lineEnd: 1 }));
+      const started = performance.now();
+      const { scan } = await runScanners({
+        repoDir: dir,
+        changedPaths: changed,
+        coverage: new Map(changed.map((p) => [p, lines(1)])),
+        config: config({ disabledScanners: ["semgrep", "gitleaks"] }),
+        resolveTool: notInstalled(),
+        only: ["ruff", "custom:many"],
+        custom: [custom({ source: "custom:many", run: async () => ({ findings: hits, error: null, version: null }) })],
+      });
+      expect(scan.candidates).toHaveLength(2 * n);
+      return performance.now() - started;
+    };
+    await time(20_000);
+    const small = await time(25_000);
+    const large = await time(200_000);
+    // Eight times the input: linear work takes about eight times as long,
+    // square work about sixty-four times.
+    expect(large / small).toBeLessThan(24);
+  }, 300_000);
+
+  it("raises the settings candidate of a file with 200,000 changed lines on its first one (35)", async () => {
+    const dir = repo({});
+    const many = new Set(Array.from({ length: 200_000 }, (_, k) => 200_000 - k));
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: [".gitleaksignore"],
+      coverage: new Map([[".gitleaksignore", many]]),
+      config: config(),
+      resolveTool: notInstalled(),
+      only: ["gitleaks"],
+    });
+    expect(scan.candidates.map((c) => `${c.token} ${c.lineStart}`)).toEqual(["gitleaks:settings-file 1"]);
   });
 
   it("names the marker and the scanner, never the line's text (29)", async () => {
