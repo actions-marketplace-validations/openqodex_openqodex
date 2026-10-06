@@ -17,11 +17,13 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   fingerprintSecrets,
+  isOwnCandidate,
   mapScannerSeverity,
   matchesGlob,
   REDACTED,
   redactSecrets,
   SETTINGS_RULE,
+  SUPPRESSION_RULE,
 } from "@openqodex/core";
 import type {
   AdapterResult,
@@ -39,9 +41,11 @@ import type {
 } from "@openqodex/core";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import type { SettingsFile } from "./adapters/index.js";
-import { readRepoFile } from "./adapters/read.js";
+import { readRepoFile, repoFileOrReason } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
+import { SEMGREP_MAX_TARGET_BYTES } from "./adapters/semgrep.js";
+import { findMarkers, SUPPRESSION_MARKERS } from "./suppression.js";
 
 // A custom scanner prepared by the custom module. `skipped` is set when the
 // entry must not run (untrusted, changed since approval); the runner then
@@ -103,30 +107,44 @@ export async function runScanners(args: {
   // path is rebased onto the repo root first.
   const inScope = new Set(args.changedPaths);
   const coverage = args.coverage;
-  const merged = outcomes.flatMap((o) => {
+  let merged = outcomes.flatMap((o) => {
     const rebased = toRunDirRelative(o.findings, args.repoDir);
     return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
   });
   if (coverage) {
-    merged.push(
-      ...(await settingsFindings({
+    // A changed settings file and an added suppression comment silence their
+    // scanner in every later run, so --only and --skip, which pick scanners
+    // for this run, keep them. scanners.disable, the repository's choice that
+    // the scanner never runs here, leaves them out with it.
+    const wanted = (s: BuiltinScanner) => !args.config.disabledScanners.includes(s);
+    // concat, not push(...): a spread of many thousands of candidates as
+    // arguments overflows the call stack.
+    merged = merged.concat(
+      await settingsFindings({
         repoDir: args.repoDir,
         changedPaths: args.changedPaths,
         coverage,
         deletionPoints: args.deletionPoints,
         baseText: args.baseText,
-        wanted: (s) => selected(s) && !args.config.disabledScanners.includes(s),
-      })),
+        wanted,
+      }),
+      await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted }),
     );
   }
 
   // Fixture, mock and snapshot files hold throwaway data shaped like the
   // real thing; hits there are noise unless the developer asks for them.
+  // A changed settings file is never dropped: one in a fixture folder can
+  // govern code outside it (a root ruff.toml can `extend` it), so it can hide
+  // findings the report shows. A suppression comment goes through the filter
+  // like a hit: it only silences findings in its own file, and the filter
+  // hides those findings too.
   let postFixture = merged;
   let fixturesDropped = 0;
   if (!args.config.includeFixtures) {
-    const dropped = dropFixtureFindings(merged);
-    postFixture = dropped.kept;
+    const settings = new Set(merged.filter((f) => f.ruleId === SETTINGS_RULE && isOwnCandidate(f)));
+    const dropped = dropFixtureFindings(merged.filter((f) => !settings.has(f)));
+    postFixture = [...dropped.kept, ...settings];
     fixturesDropped = dropped.droppedCount;
   }
 
@@ -234,7 +252,7 @@ type SettingsArgs = {
 // One candidate per changed file that a scanner really reads as its settings
 // or ignore list, from that scanner, on the file's first changed line, with
 // rule `settings-file`. Raised whether or not the scanner ran. A review's
-// reviewer clears it or raises it; a scan shows it as a note, never counted.
+// reviewer clears it or raises it; a scan counts it as minor.
 async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
   const out: StaticFinding[] = [];
   for (const [source, files] of Object.entries(SETTINGS_FILES) as [BuiltinScanner, readonly SettingsFile[]][]) {
@@ -244,8 +262,11 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
       const entry = files.find((f) => (f.anyFolder ? f.path === name : f.path === filePath));
       if (entry === undefined) continue;
       if (entry.ruffTable && !(await touchesRuffTable(args, filePath))) continue;
-      const lines = args.coverage.get(filePath);
-      const line = lines && lines.size > 0 ? Math.min(...lines) : 1;
+      // A loop, not Math.min(...lines): a file can have more changed lines
+      // than a call can take as arguments.
+      let line = Infinity;
+      for (const n of args.coverage.get(filePath) ?? []) if (n < line) line = n;
+      if (line === Infinity) line = 1;
       out.push({
         source,
         ruleId: SETTINGS_RULE,
@@ -254,6 +275,63 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
         lineEnd: line,
         severity: "high",
         message: `This change edits a scanner settings file; findings of ${source} may be hidden by it`,
+        reference: null,
+      });
+    }
+  }
+  return out;
+}
+
+// The largest file read for suppression comments. The scanners with markers
+// set no size limit of their own except semgrep, so this is only a memory
+// guard, far above any hand-written source file. The readers are linear.
+const SUPPRESSION_MAX_BYTES = 64 * 1024 * 1024;
+
+// One candidate per suppression comment on a line the change added, such as
+// `# nosec`, from the scanner it silences, with rule SUPPRESSION_RULE. Only
+// in a file that scanner checks, and whether or not it ran: the
+// scanner obeys the comment, so its own output never shows what it hides.
+// The message names the marker and the scanner, never the line, which can
+// hold a secret no scanner reported.
+async function suppressionFindings(args: {
+  repoDir: string;
+  changedPaths: string[];
+  coverage: DiffCoverage;
+  wanted: (s: BuiltinScanner) => boolean;
+}): Promise<StaticFinding[]> {
+  const out: StaticFinding[] = [];
+  for (const filePath of args.changedPaths) {
+    const added = args.coverage.get(filePath);
+    if (added === undefined || added.size === 0) continue;
+    let scanners = ADAPTERS.filter(
+      (a) => SUPPRESSION_MARKERS[a.source] !== undefined && args.wanted(a.source) && a.wants([filePath], args.repoDir),
+    ).map((a) => a.source);
+    if (scanners.length === 0) continue;
+    let text: string;
+    let size: number;
+    try {
+      const checked = await repoFileOrReason(args.repoDir, filePath, SUPPRESSION_MAX_BYTES);
+      if ("reason" in checked) continue;
+      size = checked.size;
+      text = await readRepoFile(args.repoDir, filePath, SUPPRESSION_MAX_BYTES);
+    } catch {
+      // Gone, not a regular file in the repo, or over the size cap.
+      continue;
+    }
+    // semgrep skips a file over its own limit, as the adapter runs it. The
+    // limit is on the file's bytes, which invalid UTF-8 makes shorter than
+    // its decoded text.
+    if (size > SEMGREP_MAX_TARGET_BYTES) scanners = scanners.filter((s) => s !== "semgrep");
+    for (const hit of findMarkers(text, scanners)) {
+      if (!added.has(hit.line)) continue;
+      out.push({
+        source: hit.scanner,
+        ruleId: SUPPRESSION_RULE,
+        filePath,
+        lineStart: hit.line,
+        lineEnd: hit.line,
+        severity: "medium",
+        message: `This change adds ${hit.name}, which stops ${hit.scanner} reporting what it covers; check that it hides no real problem`,
         reference: null,
       });
     }
@@ -504,7 +582,12 @@ function severityRank(s: ScannerSeverity): number {
 // pattern-based on the rule id; coverage focuses on the categories
 // where semgrep overlaps gitleaks (secret) or where multiple semgrep
 // rules commonly co-fire on one line (injection, auth).
+//
+// A candidate OpenQodex raises about the change itself (a changed settings
+// file, an added suppression comment) is not a scanner hit: it has a class
+// of its own, so a scanner's finding on the same line never swallows it.
 export function ruleClassFor(f: StaticFinding): string {
+  if (isOwnCandidate(f)) return `${f.source}:${f.ruleId}`;
   if (f.source === "gitleaks") return "secret";
   const id = f.ruleId.toLowerCase();
   if (/secret|credential|api[-_]?key|access[-_]?key|password|token/.test(id)) {

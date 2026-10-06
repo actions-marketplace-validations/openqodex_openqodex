@@ -230,6 +230,11 @@ export type ImpactSymbol = {
   startLine: number;
   endLine: number;
   snapshot: "base" | "current"; // "base" for a symbol that the change removed
+  // On a removed symbol the change moved: its definition now. Set only when
+  // exactly one file of the change gained a definition of the same kind,
+  // owner and name (or git saw the file renamed), and no call site still
+  // reaches the old place. A move with a rename reads as removed.
+  movedTo?: { id: string; file: string; line: number };
 };
 
 export type ImpactSite = {
@@ -270,7 +275,7 @@ export type ImpactSummary = {
   };
   symbols: ImpactSymbol[];
   touched: string[]; // symbol ids whose span overlaps a changed line
-  removed: string[]; // symbol ids present in the base version of a changed file and gone now
+  removed: string[]; // symbol ids present in the base version of a changed file and gone now; a moved one has `movedTo`
   callers: ImpactPath[];
   callees: ImpactPath[];
   importers: ImpactEdge[]; // files that import a changed file
@@ -444,9 +449,6 @@ export type Report = {
   // "skipped" or "failed" says why there is nothing in it.
   impact: ImpactSummary | null;
   not_reviewed_paths: string[]; // Change.notReviewed
-  // scan only: changed files a scanner reads as its own settings or ignore
-  // list, which can hide its findings. Shown, never counted. Absent when none.
-  settings_changes?: ReportFinding[];
   stats: { files: number; additions: number; deletions: number };
   // A review run by `review` itself: its completion record. Absent in a scan
   // and in a review from the two-step protocol (a legacy review).

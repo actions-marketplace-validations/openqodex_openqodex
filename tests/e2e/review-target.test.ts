@@ -590,16 +590,14 @@ describe("review <target> in a partial clone", () => {
 
 describe("a changed scanner settings file", () => {
   // Each case starts from a fresh clone, so earlier edits never leak into the next.
-  type Scan = { status: number | null; report: Report & { settings_changes?: { file_path: string; source: string | null }[] } };
+  type Scan = { status: number | null; report: Report };
   const scan = (label: string, dir: string): Scan => {
     const out = run(label, dir, ["scan", "--only", "gitleaks,ruff", "--no-install", "--format", "json"]);
     if (out.status === 2) throw new Error(out.stderr);
     return { status: out.status, report: JSON.parse(out.stdout) as Scan["report"] };
   };
-  const settingsTokens = (s: Scan) => [
-    ...s.report.findings.filter((f) => f.source?.endsWith(":settings-file")),
-    ...(s.report.settings_changes ?? []),
-  ].map((f) => `${f.source} ${f.file_path}`);
+  const settingsTokens = (s: Scan) =>
+    s.report.findings.filter((f) => f.source?.endsWith(":settings-file")).map((f) => `${f.source} ${f.file_path}`);
   const fresh = () => {
     const dir = repos().dev;
     writeConfig(dir, "review:\n  block_on_severity: major\n");
@@ -618,13 +616,17 @@ describe("a changed scanner settings file", () => {
     expect(s.report.verdict).toBe("passed");
     expect(settingsTokens(s)).toEqual([]);
   });
-  it("a root .gitleaksignore in a scan is a note that never blocks", () => {
+  it("a root .gitleaksignore in a scan counts as a minor finding, which blocks only at block_on_severity minor", () => {
     const dir = fresh();
     write(dir, ".gitleaksignore", "app/keys.py:stripe-access-token:1\n");
-    const s = scan("settings-scan-note", dir);
+    const s = scan("settings-scan-minor", dir);
     expect(s.status).toBe(0);
-    expect(s.report.findings.filter((f) => f.source?.endsWith(":settings-file"))).toEqual([]);
-    expect((s.report.settings_changes ?? []).map((f) => f.file_path)).toEqual([".gitleaksignore"]);
+    expect(s.report.findings.map((f) => `${f.source} ${f.file_path}:${f.line_number} ${f.severity}`)).toEqual(["gitleaks:settings-file .gitleaksignore:1 minor"]);
+    expect(s.report).not.toHaveProperty("settings_changes");
+    writeConfig(dir, "review:\n  block_on_severity: minor\n");
+    const blocked = scan("settings-scan-block-minor", dir);
+    expect(blocked.status).toBe(1);
+    expect(blocked.report.verdict).toBe("blocked");
   });
   it("a change to the [tool.ruff] table of pyproject.toml raises the ruff note", () => {
     const dir = fresh();

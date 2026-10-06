@@ -8,7 +8,7 @@
 // for every call, so resolution stays linear in the number of call sites.
 import { dirname, posix } from "node:path";
 import type { ImpactKind } from "@openqodex/core";
-import type { CallFact, DefFact, Family, FileFacts, GraphEdge, GraphNode, GraphSite, Miss, TypeRef } from "./types.js";
+import type { BoundImport, CallFact, DefFact, Family, FileFacts, GraphEdge, GraphNode, GraphSite, Miss, TypeRef } from "./types.js";
 import { familyOf } from "./types.js";
 
 const MAX_DEPTH = 8; // re-export and base-class chains
@@ -297,6 +297,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
       if (target !== null && target !== "ext") targets.push({ target, line: imp.line, column: imp.column });
       if (family === "ruby") continue;
       if (imp.reexport) continue; // re-exports bind nothing locally
+      if (imp.scoped) continue; // binds only in its own scope, through CallFact.bound
       if (imp.star) {
         b.stars.push(target);
         continue;
@@ -370,6 +371,27 @@ export function resolveGraph(input: ResolveInput): Resolved {
     return ids ? { v: "sym", ids } : { v: "miss", target: `go:${dir}`, name };
   };
 
+  const bindingValue = (file: string, family: Family, name: string, b: Binding, depth: number): Value | null => {
+    if (b.kind === "pyns") return { v: "pymod", from: file, dotted: b.dotted };
+    if (b.target === "ext") return { v: "ext" };
+    if (b.target === null) return { v: "miss", target: file, name };
+    if (b.kind === "ns") return family === "go" ? { v: "pkg", dir: b.target } : { v: "mod", file: b.target };
+    return lookupExport(b.target, b.imported, depth + 1);
+  };
+
+  // What a name a scoped import binds means: the same as a file-wide import
+  // of it would, for the one scope the import was made in.
+  const boundValue = (file: string, name: string, ref: BoundImport): Value | null => {
+    const f = facts.get(file);
+    const imp = f?.imports[ref.import];
+    if (!f || !imp) return null;
+    const family = familyOf(f.lang);
+    if (family === "python" && ref.imported === "*") return { v: "pymod", from: file, dotted: imp.alias ? imp.spec : (imp.namespace ?? imp.spec) };
+    const target = family === "python" ? pySpec(file, imp.spec) : family === "js" ? jsSpec(file, imp.spec) : null;
+    const b: Binding = ref.imported === "*" ? { kind: "ns", target } : { kind: "named", target, imported: ref.imported };
+    return bindingValue(file, family, name, b, 0);
+  };
+
   // What a bare name means in a file.
   const resolveLocal = (file: string, name: string, depth = 0): Value | null => {
     const f = facts.get(file);
@@ -383,13 +405,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
       if (top) return { v: "sym", ids: top };
     }
     const b = bindings(file).names.get(name);
-    if (b) {
-      if (b.kind === "pyns") return { v: "pymod", from: file, dotted: b.dotted };
-      if (b.target === "ext") return { v: "ext" };
-      if (b.target === null) return { v: "miss", target: file, name };
-      if (b.kind === "ns") return family === "go" ? { v: "pkg", dir: b.target } : { v: "mod", file: b.target };
-      return lookupExport(b.target, b.imported, depth + 1);
-    }
+    if (b) return bindingValue(file, family, name, b, depth);
     for (const star of bindings(file).stars) {
       if (star === null || star === "ext") continue;
       const hit = lookupExport(star, name, depth + 1);
@@ -437,13 +453,15 @@ export function resolveGraph(input: ResolveInput): Resolved {
   const typeKey = (file: string, family: Family, t: TypeRef, depth = 0): string | null => {
     if (t.elem || depth > MAX_DEPTH) return null;
     if (family === "ruby") return rbConst(t.name, t.qualifier);
+    // The head name, through the scoped import that binds it where the type was read.
+    const head = (name: string) => (t.bound ? boundValue(file, name, t.bound) : resolveLocal(file, name));
     let v: Value | null;
     if (t.qualifier) {
       const parts = t.qualifier.split(".");
-      v = resolveLocal(file, parts[0] as string);
+      v = head(parts[0] as string);
       for (const p of parts.slice(1)) v = attr(v, p);
       v = v && v.v !== "sym" ? attr(v, t.name) : null;
-    } else v = resolveLocal(file, t.name);
+    } else v = head(t.name);
     if (v?.v !== "sym" || v.ids.length !== 1) return null;
     const cls = classOfId.get(v.ids[0] as string);
     if (cls) return cls;
@@ -568,6 +586,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
           const ids = [symbolId(file, facts.get(file)?.defs[call.local] as DefFact)];
           return { ids, confidence: "high", evidence: "binding" };
         }
+        if (call.bound) return fromValue(boundValue(file, call.name, call.bound), "binding");
         if (call.shadowed) return "unresolved";
         const v = resolveLocal(file, call.name);
         if (!v) {
@@ -602,7 +621,7 @@ export function resolveGraph(input: ResolveInput): Resolved {
           const key = rbConst(r.name, r.nesting);
           return key ? onClass(key, call.name, "s", "autoload") : "ignore";
         }
-        let v = resolveLocal(file, r.name);
+        let v = r.bound ? boundValue(file, r.name, r.bound) : resolveLocal(file, r.name);
         if (!v) return BUILTINS[family].has(r.name) ? "ignore" : "unresolved";
         // A path through a module or package; a field of a class value is not followed.
         for (const p of r.path) v = v?.v === "sym" ? null : attr(v, p);

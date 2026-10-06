@@ -10,10 +10,11 @@
 //    product more than once or in a scan report.
 // 8. An incomplete review renders as an ordinary SARIF run with no results,
 //    which a code scanning view reads as clean.
+// 9. The blast radius line counts a symbol the change moved as removed.
 import { describe, expect, it } from "vitest";
 import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
-import type { CompletionRecord, Config, Report } from "../types.js";
+import type { CompletionRecord, Config, ImpactSummary, Report } from "../types.js";
 import { renderJson, renderMarkdown, renderSarif, renderTerminal } from "./index.js";
 
 function review(submission = makeSubmission(), config: Partial<Config> = {}): Report {
@@ -81,7 +82,40 @@ describe("renderTerminal", () => {
     const clean = { ...report, not_reviewed: [] };
     expect(renderTerminal(clean, { color: false }).split("\n")[0]).toBe("Passed: no findings");
   });
+
+  it("9. counts a symbol the change moved apart from one it removed in the blast radius line", () => {
+    const base = { kind: "function" as const, startLine: 1, endLine: 3, snapshot: "base" as const };
+    const impact = emptyImpactFixture();
+    impact.risk = "low";
+    impact.touched = ["b.ts#t@1:1"];
+    impact.removed = ["base:a.ts#gone@1:17", "base:a.ts#place@5:17"];
+    impact.symbols = [
+      { id: "b.ts#t@1:1", file: "b.ts", name: "t", kind: "function", startLine: 1, endLine: 2, snapshot: "current" },
+      { ...base, id: "base:a.ts#gone@1:17", file: "a.ts", name: "gone" },
+      { ...base, id: "base:a.ts#place@5:17", file: "a.ts", name: "place", movedTo: { id: "c.ts#place@1:17", file: "c.ts", line: 1 } },
+    ];
+    const out = renderTerminal({ ...review(), impact }, { color: false });
+    expect(out).toContain("Blast radius: risk low (1 symbol touched, 1 removed, 1 moved, 0 callers in 0 files)");
+  });
 });
+
+function emptyImpactFixture(): ImpactSummary {
+  return {
+    version: 1,
+    status: "ok",
+    reasons: [],
+    risk: "none",
+    build: { durationMs: 1, cacheHits: 0, eligibleFiles: 3, parsedFiles: 3, omittedFiles: 0, unresolvedSites: 0 },
+    symbols: [],
+    touched: [],
+    removed: [],
+    callers: [],
+    callees: [],
+    importers: [],
+    hubs: [],
+    truncated: { walk: false, inline: false, omittedSites: null },
+  };
+}
 
 describe("renderMarkdown", () => {
   it("renders the findings table with escaped pipes and one closing line", () => {

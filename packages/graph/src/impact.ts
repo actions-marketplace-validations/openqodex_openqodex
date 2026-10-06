@@ -128,8 +128,11 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
   touched.forEach(note);
 
   // Removed: in the base version of a changed file and gone now; callers are
-  // the current call sites whose evidence still points at them.
+  // the current call sites whose evidence still points at them. A move the
+  // build found stands only when no such call site is left: one that still
+  // reaches the old place is broken, so the symbol reads as removed.
   const removed: string[] = [];
+  let moved = 0;
   const missesByName = new Map<string, Miss[]>();
   for (const m of graph.misses) {
     const list = missesByName.get(m.name);
@@ -140,7 +143,6 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
   for (const f of change.files) {
     for (const node of graph.removed.get(f.path) ?? []) {
       removed.push(node.id);
-      symbols.set(node.id, toSymbol(node));
       const targets = missTargets(node, f.path);
       const byFrom = new Map<string, GraphEdge>();
       for (const m of missesByName.get(node.name) ?? []) {
@@ -149,7 +151,13 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
         if (!e) byFrom.set(m.from, (e = { from: m.from, to: node.id, kind: "calls", confidence: "high", sites: [] }));
         e.sites.push(m.site);
       }
+      const symbol = toSymbol(node);
       if (byFrom.size > 0) removedEdges.set(node.id, [...byFrom.values()]);
+      else if (node.movedTo) {
+        symbol.movedTo = { ...node.movedTo };
+        moved++;
+      }
+      symbols.set(node.id, symbol);
     }
   }
 
@@ -238,7 +246,8 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     version: 1,
     status: s.status,
     reasons: s.reasons,
-    risk: riskFor(touched.length + removed.length, callerIds.size, removedStillCalled),
+    // A move is no change of its own: the lines added at the new place make its new definition a touched symbol.
+    risk: riskFor(touched.length + removed.length - moved, callerIds.size, removedStillCalled),
     build: {
       durationMs: s.durationMs,
       cacheHits: s.cacheHits,

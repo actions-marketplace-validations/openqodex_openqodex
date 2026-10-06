@@ -13,7 +13,7 @@ import { grammarVersion, parserFor } from "./parser.js";
 import type { FileInput, TsPaths } from "./resolve.js";
 import { resolveGraph, symbolId } from "./resolve.js";
 import { RepoReader, isFileFacts, readNoFollow, safeCacheDir, writeExclusive } from "./safe-fs.js";
-import type { FileFacts, Graph, GraphEdge, GraphNode, Lang } from "./types.js";
+import type { DefFact, FileFacts, Graph, GraphEdge, GraphNode, Lang } from "./types.js";
 
 export const DEFAULT_BUDGET_MS = 10_000;
 export const DEFAULT_MAX_FILES = 4000;
@@ -346,13 +346,44 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     const goModules = readGoModules(reader, all);
     const resolved = resolveGraph({ files: inputs, known, tsPaths: readTsPaths(reader, new Set(all)), goModules });
 
-    // Symbols in the base version of a changed file and gone now.
+    // Definitions the change added to a file: every one in an added file,
+    // and in any other changed file those its base version did not have. A
+    // file whose base version was not read gained nothing that can be known.
+    const keyOf = (n: GraphNode) => `${n.kind}\0${ownerOf(n.id)}\0${n.name}`;
+    const baseKey = (d: DefFact) => `${d.kind}\0${d.owner ?? ""}\0${d.name}`;
+    const gained = new Map<string, GraphNode[]>();
+    for (const f of args.base?.files ?? []) {
+      const defs = f.status === "deleted" ? undefined : resolved.defsByFile.get(f.path);
+      const base = baseDefs.get(f.path);
+      if (!defs || (f.status !== "added" && !base)) continue;
+      const had = new Set(base?.facts.defs.map(baseKey));
+      for (const n of defs) {
+        if (had.has(keyOf(n))) continue;
+        const list = gained.get(keyOf(n));
+        if (list) list.push(n);
+        else gained.set(keyOf(n), [n]);
+      }
+    }
+
+    // Symbols in the base version of a changed file and gone from it now. A
+    // file git renamed is gone from its old path as a whole: a symbol still
+    // defined at the new path moved with it. Any other gone symbol moved when
+    // exactly one file of the change gained a definition of the same kind,
+    // owner and name. impact.ts drops the move while a call site still
+    // reaches the old place.
     const removed = new Map<string, GraphNode[]>();
     for (const [path, base] of baseDefs) {
-      const now = new Set((resolved.defsByFile.get(path) ?? []).map((n) => `${n.kind}\0${ownerOf(n.id)}\0${n.name}`));
+      const renamed = base.file !== path;
+      const now = new Map<string, GraphNode>();
+      for (const n of resolved.defsByFile.get(path) ?? []) if (!now.has(keyOf(n))) now.set(keyOf(n), n);
       const gone: GraphNode[] = [];
       for (const d of base.facts.defs) {
-        if (now.has(`${d.kind}\0${d.owner ?? ""}\0${d.name}`)) continue;
+        let to = now.get(baseKey(d));
+        if (to && !renamed) continue;
+        if (!to) {
+          const elsewhere = (gained.get(baseKey(d)) ?? []).filter((n) => n.file !== path);
+          if (new Set(elsewhere.map((n) => n.file)).size === 1) to = elsewhere[0];
+        }
         gone.push({
           id: `base:${symbolId(base.file, d)}`,
           file: base.file,
@@ -363,6 +394,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
           snapshot: "base",
           exported: d.exported,
           lang: base.facts.lang,
+          ...(to ? { movedTo: { id: to.id, file: to.file, line: to.startLine } } : {}),
         });
       }
       if (gone.length > 0) removed.set(path, gone);

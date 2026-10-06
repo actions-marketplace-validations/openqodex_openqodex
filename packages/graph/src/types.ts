@@ -19,7 +19,9 @@ export function familyOf(lang: Lang): Family {
 // position of its results (Go has several). `elem`: a slice, array, map or
 // list of the type; a loop over it or an index into it yields the type.
 // `declared`: from a type annotation, so a reassignment cannot change it.
-export type TypeRef = { name: string; qualifier: string | null; line: number; column: number; result?: number; elem?: boolean; declared?: boolean };
+// `bound`: the head name (`name`, or the first part of `qualifier`) is
+// bound by a scoped import where the type was read.
+export type TypeRef = { name: string; qualifier: string | null; line: number; column: number; result?: number; elem?: boolean; declared?: boolean; bound?: BoundImport };
 
 export type DefFact = {
   name: string;
@@ -36,13 +38,19 @@ export type DefFact = {
   static?: boolean; // methods called on the class itself: JS `static`, Ruby `def self.x`
 };
 
+// A name bound by an import made inside a function or a block, in that
+// scope only: the import (an index into FileFacts.imports) and the name it
+// imports, "*" for the whole module.
+export type BoundImport = { import: number; imported: string };
+
 // What stands before the dot of a call.
 export type Receiver =
   | { kind: "none" } // a bare call: f()
   | { kind: "self"; path: string[] } // this, self, cls (path: this.a.b)
   | { kind: "super" }
   | { kind: "type"; type: TypeRef; path: string[] } // a local whose type a constructor or an annotation gives
-  | { kind: "name"; name: string; path: string[]; nesting: string | null } // an identifier: maybe a module, a package or a class
+  // An identifier: maybe a module, a package or a class; `bound` when a scoped import gives it.
+  | { kind: "name"; name: string; path: string[]; nesting: string | null; bound?: BoundImport }
   | { kind: "other" };
 
 export type CallFact = {
@@ -59,6 +67,8 @@ export type CallFact = {
   // variable of that name hides every outer definition.
   local?: number;
   shadowed?: boolean;
+  bound?: BoundImport; // a bare call to a name a scoped import binds
+
   static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
 };
 
@@ -73,6 +83,9 @@ export type ImportFact = {
   typeOnly: boolean;
   relative?: boolean; // Ruby require_relative
   alias?: boolean; // Python `import a.b as c`
+  // Made inside a function or a block (`await import()`, a require, a Python
+  // import in a function): it binds no name for the whole file, only through `bound`.
+  scoped?: boolean;
 };
 
 export type FileFacts = {
@@ -125,7 +138,7 @@ export type Graph = {
   out: Map<string, GraphEdge[]>;
   importers: Map<string, GraphEdge[]>; // target file or Go package folder to its import edges
   defsByFile: Map<string, GraphNode[]>; // current symbols per file
-  removed: Map<string, GraphNode[]>; // per changed file: symbols in the base version and gone now
+  removed: Map<string, GraphNode[]>; // per changed file: symbols in the base version and gone now; `movedTo` on a move the build found
   misses: Miss[];
   status: GraphStatus;
 };

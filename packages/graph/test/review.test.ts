@@ -14,6 +14,17 @@
 // 11. A changed file left out by the size cap reports all its symbols as removed.
 // 12. Base versions are parsed past the file cap without saying so.
 // 13. A recursive call site is dropped from the graph.
+// 14. A name bound by destructuring (`const { a } = x`, `[a] = x`, a
+//     parameter `{ a }`) does not hide a definition of the same name, so a
+//     call to it gets a certain edge to that definition.
+// 15. A name an import binds and the same scope then assigns (`f = lambda: 0`)
+//     still links to the import.
+// 16. A function assigned with `var` inside a block is visible only in the
+//     block, so a call to it after the block links to the module's function.
+// 17. A destructuring assignment (`({ f } = deps)`, `[f] = list`, Python
+//     `f, other = pair` and `for f, other in pairs`) is not read as an
+//     assignment, so a call to the name links to an import or a definition
+//     the assignment replaced.
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -116,6 +127,82 @@ describe("certain edges", () => {
     expect(callSites(g, symbol(g, "a.ts", "helper", "outer"))).toEqual([at(files, "a.ts", "NESTED")]);
     expect(callSites(g, symbol(g, "b.py", "target"))).toEqual([at(files, "b.py", "PYTOP")]);
     expect(callSites(g, symbol(g, "c.go", "Target"))).toEqual([at(files, "c.go", "GOTOP")]);
+  });
+
+  it("lets a name bound by destructuring, in a declaration or a parameter, hide a definition of the same name (14)", async () => {
+    const files = {
+      "a.ts": [
+        "export function target() {}",
+        "export function viaObject(deps: { target: () => void }) {",
+        "  const { target } = deps;",
+        "  target(); // OBJECT",
+        "}",
+        "export function viaRenamed(deps: { run: () => void }) {",
+        "  const { run: target } = deps;",
+        "  target(); // RENAMED",
+        "}",
+        "export function viaArray(list: (() => void)[]) {",
+        "  const [target] = list;",
+        "  target(); // ARRAY",
+        "}",
+        "export function viaParam({ target }: { target: () => void }) {",
+        "  target(); // PARAM",
+        "}",
+        "export function own() {",
+        "  target(); // TOP",
+        "}",
+      ].join("\n"),
+    };
+    const g = await build(repo(files));
+    expect(callSites(g, symbol(g, "a.ts", "target"))).toEqual([at(files, "a.ts", "TOP")]);
+    expect(g.misses).toEqual([]);
+  });
+
+  it("drops an import as evidence once the same scope assigns the name (15)", async () => {
+    const files = {
+      "b.py": "def f():\n    return 1\n",
+      "a.py": "def run():\n    from .b import f\n    f = lambda: 0\n    return f()  # REASSIGNED\n",
+      "b.ts": "export function f(): number {\n  return 1;\n}\n",
+      "a.ts": 'export async function run(): Promise<number> {\n  let { f } = await import("./b.js");\n  f = () => 0;\n  return f(); // REASSIGNED\n}\n',
+    };
+    const g = await build(repo(files));
+    expect(callSites(g, symbol(g, "b.py", "f"))).toEqual([]);
+    expect(callSites(g, symbol(g, "b.ts", "f"))).toEqual([]);
+  });
+
+  it("keeps a function assigned with var inside a block visible in its whole function (16)", async () => {
+    const files = {
+      "a.ts": "export function f(): number {\n  return 1;\n}\n\nexport function run(): number {\n  {\n    var f = () => 2;\n  }\n  return f(); // VAR\n}\n",
+    };
+    const g = await build(repo(files));
+    expect(callSites(g, symbol(g, "a.ts", "f"))).toEqual([]);
+    expect(callSites(g, symbol(g, "a.ts", "f", "run"))).toEqual([at(files, "a.ts", "VAR")]);
+  });
+
+  it("reads a destructuring assignment as an assignment to each name it binds (17)", async () => {
+    const files = {
+      "b.ts": "export function f(): number {\n  return 1;\n}\n",
+      "a.ts": [
+        "export async function viaObject(deps: { f: () => number }): Promise<number> {",
+        '  let { f } = await import("./b.js");',
+        "  ({ f } = deps);",
+        "  return f(); // OBJECT",
+        "}",
+        "",
+        "export async function viaArray(list: (() => number)[]): Promise<number> {",
+        '  let { f } = await import("./b.js");',
+        "  [f] = list;",
+        "  return f(); // ARRAY",
+        "}",
+        "",
+      ].join("\n"),
+      "b.py": "def f():\n    return 1\n",
+      "a.py": "def target():\n    return 1\n\n\ndef unpack(pair):\n    from .b import f\n    f, other = pair\n    return f()  # PYIMPORT\n\n\ndef shadow(pair):\n    target, other = pair\n    return target()  # PYUNPACK\n\n\ndef loop(pairs):\n    for target, other in pairs:\n        target()  # PYFOR\n",
+    };
+    const g = await build(repo(files));
+    expect(callSites(g, symbol(g, "b.ts", "f"))).toEqual([]);
+    expect(callSites(g, symbol(g, "b.py", "f"))).toEqual([]);
+    expect(callSites(g, symbol(g, "a.py", "target"))).toEqual([]);
   });
 
   it("resolves an import through the export table, never to a private definition of the same name (5)", async () => {

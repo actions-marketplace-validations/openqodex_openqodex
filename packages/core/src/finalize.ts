@@ -237,10 +237,19 @@ function redactAll<T>(value: T, clean: (text: string) => string): T {
 
 // review.severity_threshold: a finding below it is counted, not listed. A
 // finding at or above block_on_severity is always listed, whatever the
-// threshold, so a blocked verdict always names what blocked it.
-function shown(f: ReportFinding, config: Config): boolean {
+// threshold, so a blocked verdict always names what blocked it. So is one
+// that cites a candidate in `own` (an added suppression comment, a changed
+// settings file): the scanner it silences shows nothing there, so hiding
+// it too would leave the change with no trace in the report.
+function shown(f: ReportFinding, config: Config, own: ReadonlySet<string>): boolean {
+  if (f.candidate !== null && own.has(f.candidate)) return true;
   if (atOrAbove(f.severity, config.severityThreshold)) return true;
   return config.blockOnSeverity !== null && atOrAbove(f.severity, config.blockOnSeverity);
+}
+
+// The ids of the candidates OpenQodex raises about the change itself.
+function ownIds(scan: ScanResult): Set<string> {
+  return new Set(scan.candidates.filter(isOwnCandidate).map((c) => c.id));
 }
 
 function verdictFor(threshold: Severity | null, severities: Severity[]): Verdict {
@@ -315,7 +324,8 @@ export function finalizeReview(args: {
     .map((c) => ({ candidate: c, reason: droppedIds.get(c.id) ?? "" }));
 
   const deduped = dedup(findings);
-  const kept = deduped.filter((f) => shown(f, config));
+  const own = ownIds(scan);
+  const kept = deduped.filter((f) => shown(f, config, own));
   const verdict = verdictFor(config.blockOnSeverity, [
     ...kept.map((f) => f.severity),
     ...notReviewed.map((c) => c.reviewSeverity),
@@ -547,7 +557,8 @@ export function checkSubmission(args: {
   }
   const droppedBy = new Map(sub.dropped.map((d) => [d.candidate, d]));
   const deduped = dedup(findings);
-  const kept = deduped.filter((f) => shown(f, config));
+  const own = ownIds(scan);
+  const kept = deduped.filter((f) => shown(f, config, own));
   const report: Report = {
     version: 1,
     kind: "review",
@@ -602,17 +613,29 @@ function candidateFinding(c: Candidate): ReportFinding {
 }
 
 // The rule of the candidate a scanner raises for a changed file it reads as
-// its own settings or ignore list. In a scan nobody clears it, so it is a
-// note beside the findings and never counts; in a review it is a candidate.
+// its own settings or ignore list.
 export const SETTINGS_RULE = "settings-file";
+
+// The rule of the candidate a scanner raises for a suppression comment the
+// change adds, such as `# nosec`, which makes that scanner skip the line.
+export const SUPPRESSION_RULE = "openqodex.suppression-added";
+
+// True for a candidate OpenQodex raises about the change itself rather than
+// a scanner's hit: a changed settings file or an added suppression comment.
+// The scanner still obeys either one. In a review the reviewer keeps or drops
+// it like any candidate; in a scan nobody can, so it counts as minor.
+export function isOwnCandidate(f: { source: ScannerSource; ruleId: string }): boolean {
+  return !f.source.startsWith("custom:") && (f.ruleId === SETTINGS_RULE || f.ruleId === SUPPRESSION_RULE);
+}
 
 export function scanReport(args: { change: Change; scan: ScanResult; config: Config }): Report {
   const { change, scan, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
-  const enabled = scan.candidates.filter((c) => !disabled(c.token, config));
-  const settings = enabled.filter((c) => c.ruleId === SETTINGS_RULE).map((c) => candidateFinding(c));
-  const live = enabled.filter((c) => c.ruleId !== SETTINGS_RULE).map((c) => candidateFinding(c));
-  const findings = live.filter((f) => shown(f, config));
+  const live = scan.candidates
+    .filter((c) => !disabled(c.token, config))
+    .map((c): ReportFinding => (isOwnCandidate(c) ? { ...candidateFinding(c), severity: "minor" } : candidateFinding(c)));
+  const own = ownIds(scan);
+  const findings = live.filter((f) => shown(f, config, own));
   const report: Report = {
     version: 1,
     kind: "scan",
@@ -635,7 +658,6 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
     scanners: scan.scanners,
     not_reviewed_paths: change.notReviewed,
     stats: change.stats,
-    ...(settings.length > 0 ? { settings_changes: settings } : {}),
   };
   return redactAll(report, clean);
 }

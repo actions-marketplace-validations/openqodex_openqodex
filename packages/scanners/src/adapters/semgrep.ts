@@ -18,7 +18,8 @@ const SEMGREP_TIMEOUT_MS = 60_000;
 // run against a single file. With many files and many rules, the
 // per-file budget is still bounded by SEMGREP_TIMEOUT_MS above.
 const SEMGREP_PER_RULE_TIMEOUT_SEC = 30;
-const SEMGREP_MAX_TARGET_BYTES = 1_000_000;
+// semgrep skips a larger file, so a suppression comment in one hides nothing.
+export const SEMGREP_MAX_TARGET_BYTES = 1_000_000;
 const SEMGREP_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
 
 const RULE_PACKS = ["p/default", "p/security-audit", "p/secrets"];

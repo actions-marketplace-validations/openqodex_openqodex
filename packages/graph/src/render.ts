@@ -50,8 +50,11 @@ export function renderImpactBlock(impact: ImpactSummary): string {
   out.push("", INSTRUCTION);
   const callerIds = new Set(impact.callers.map((p) => (p.edges[p.edges.length - 1] as ImpactEdge).from));
   const callerFiles = new Set(impact.callers.flatMap((p) => (p.edges[p.edges.length - 1] as ImpactEdge).sites.map((s) => s.file)));
+  const moved = impact.removed.filter((id) => sym.get(id)?.movedTo);
+  const removed = impact.removed.filter((id) => !sym.get(id)?.movedTo);
   const parts = [n(impact.touched.length, "symbol") + " touched"];
-  if (impact.removed.length > 0) parts.push(`${impact.removed.length} removed`);
+  if (removed.length > 0) parts.push(`${removed.length} removed`);
+  if (moved.length > 0) parts.push(`${moved.length} moved`);
   parts.push(`${n(callerIds.size, "caller")} in ${n(callerFiles.size, "file")}`);
   out.push("", `Risk: ${impact.risk ?? "none"} (${parts.join(", ")})`);
 
@@ -63,20 +66,28 @@ export function renderImpactBlock(impact: ImpactSummary): string {
     }
     if (impact.touched.length > MAX_TOUCHED) out.push(`- and ${impact.touched.length - MAX_TOUCHED} more`);
   }
-  if (impact.removed.length > 0) {
+  if (removed.length > 0) {
     const called = new Map<string, number>();
     for (const p of impact.callers) {
       const first = p.edges[0] as ImpactEdge;
-      if (p.edges.length === 1 && impact.removed.includes(p.seed)) called.set(p.seed, (called.get(p.seed) ?? 0) + first.sites.length);
+      if (p.edges.length === 1 && removed.includes(p.seed)) called.set(p.seed, (called.get(p.seed) ?? 0) + first.sites.length);
     }
     out.push("", "Removed by this change (from the base version):");
-    for (const id of impact.removed.slice(0, MAX_TOUCHED)) {
+    for (const id of removed.slice(0, MAX_TOUCHED)) {
       const s = sym.get(id);
       if (!s) continue;
       const c = called.get(id) ?? 0;
       out.push(`- ${where(s)} \`${s.name}\` (${s.kind})${c > 0 ? `, still called from ${n(c, "site")}` : ""}`);
     }
-    if (impact.removed.length > MAX_TOUCHED) out.push(`- and ${impact.removed.length - MAX_TOUCHED} more`);
+    if (removed.length > MAX_TOUCHED) out.push(`- and ${removed.length - MAX_TOUCHED} more`);
+  }
+  if (moved.length > 0) {
+    out.push("", "Moved to another file by this change:");
+    for (const id of moved.slice(0, MAX_TOUCHED)) {
+      const s = sym.get(id);
+      if (s?.movedTo) out.push(`- ${where(s)} \`${s.name}\` (${s.kind}), moved to ${s.movedTo.file}:${s.movedTo.line}`);
+    }
+    if (moved.length > MAX_TOUCHED) out.push(`- and ${moved.length - MAX_TOUCHED} more`);
   }
 
   if (impact.callers.length > 0) {

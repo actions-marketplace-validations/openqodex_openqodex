@@ -6,17 +6,90 @@
 // The node types and fields below are the tree-sitter grammars' own; the
 // patterns were written here against the pinned grammar files.
 import type { Node, Tree } from "web-tree-sitter";
-import type { CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
+import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 4;
+export const EXTRACTOR_VERSION = 8;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
   cls: string | null; // set on a class or module frame: its qualified name
   locals: Map<string, TypeRef | null> | null; // null: no scope of its own
   fns?: Map<string, number>; // definitions declared in this scope, by name
+  imports?: Map<string, BoundImport>; // names an import made in this scope binds
+  // A JavaScript block (`{ }`, a loop, a catch clause): `let`, `const` and
+  // a nested function land here; `var` and parameters skip it.
+  block?: boolean;
 };
+
+// A frame once pushed: linked to the one around it, with what every lookup
+// from inside it needs worked out once, so nothing copies or scans the chain.
+type Scope = Frame & {
+  parent: Scope | null;
+  depth: number; // 0 for the module
+  caller: number; // the nearest enclosing definition, -1 for the top level
+  clsScope: Scope | null; // the nearest class or module frame
+  inFunction: boolean; // a function frame stands between here and the module
+  decl: Scope; // where a `let`, a `const` or a nested function lands: the nearest scope
+  fnDecl: Scope; // where a `var`, a parameter or a Python name lands: the nearest that is not a block
+};
+
+// Scopes deeper than this are not read: a call there is left unresolved, and
+// no lookup walks further out, so deeply nested input stays linear.
+const MAX_SCOPE_DEPTH = 256;
+
+// The scope a type name was read in, kept on its TypeRef under a symbol:
+// copies made with `{ ...t }` keep it and JSON leaves it out. Ctx.facts()
+// turns it into `bound` once every scope has been read. The reading scope is
+// the extraction's own state; extraction is synchronous, one file at a time.
+// The binding the head name had when the type was read is kept too: an
+// object built from an imported class stays that class's object after the
+// code assigns the name something else.
+const READ_IN = Symbol("readIn");
+const READ_AS = Symbol("readAs");
+type Stamped = TypeRef & { [READ_IN]?: Scope; [READ_AS]?: { at: Scope; bound: BoundImport } };
+let readingScope: Scope | null = null;
+
+function typeRef(t: TypeRef): TypeRef {
+  if (!readingScope) return t;
+  const s = t as Stamped;
+  s[READ_IN] = readingScope;
+  const head = t.qualifier ? (t.qualifier.split(".")[0] as string) : t.name;
+  const at = lookupIn(readingScope, head);
+  const bound = at && !at.fns?.has(head) ? at.imports?.get(head) : undefined;
+  if (at && bound) s[READ_AS] = { at, bound };
+  return t;
+}
+
+// The first scope from `from` outwards that knows `name` as a nested
+// definition, a scoped import or a local; null when none does, or when the
+// answer lies more than MAX_SCOPE_DEPTH scopes out.
+function lookupIn(from: Scope, name: string): Scope | null {
+  let s: Scope | null = from;
+  for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
+    if (s.fns?.has(name) || s.imports?.has(name) || s.locals?.has(name)) return s;
+  }
+  return null;
+}
+
+// An identifier before a dot, as the scope `at` (the nearest that knows the
+// name) holds it: a local's type, a scoped import, or a name the resolver
+// looks up in the file. `topNames` set: the walk is over, and a module-level
+// variable hides only names it is not also defined as.
+function receiverIn(at: Scope | null, name: string, path: string[], topNames: ReadonlySet<string> | null): Receiver {
+  const named: Receiver = { kind: "name", name, path, nesting: null };
+  if (!at || at.fns?.has(name)) return named;
+  const bound = at.imports?.get(name);
+  if (bound) return topNames ? { kind: "name", name, path, nesting: null, bound } : named;
+  if (topNames && at.depth === 0 && topNames.has(name)) return named;
+  const t = at.locals?.get(name) ?? null;
+  return t && !t.elem ? { kind: "type", type: t, path } : { kind: "other" };
+}
+
+// An identifier receiver is tagged with what was read where, until Ctx.addCall takes it.
+const IDENT = Symbol("ident");
+type Ident = { name: string; at: Scope | null; path: string[] };
+type Tagged = Receiver & { [IDENT]?: Ident };
 
 type Leave = () => void;
 
@@ -67,71 +140,115 @@ class Ctx {
   exportsLocal: { local: string; exported: string }[] = [];
   defaultExport: string | null = null;
   goPackage: string | null = null;
-  frames: Frame[] = [{ def: -1, cls: null, locals: new Map() }];
-  // Bare calls with the scopes around them, bound when the walk ends: a
-  // scope's names are known only once all of it has been read (hoisting in
-  // JavaScript, any assignment makes a Python name local).
-  private bare: { call: CallFact; frames: Frame[] }[] = [];
+  top: Scope;
+  // Calls whose names are bound when the walk ends, each with a reference to
+  // its scope: a scope's names are known only once all of it has been read
+  // (hoisting in JavaScript, any assignment makes a Python name local).
+  private pending: { call: CallFact; scope: Scope; ident: Ident | undefined }[] = [];
 
-  constructor(readonly lang: Lang) {}
+  constructor(readonly lang: Lang) {
+    const root = { def: -1, cls: null, locals: new Map(), parent: null, depth: 0, caller: -1, clsScope: null, inFunction: false } as unknown as Scope;
+    root.decl = root;
+    root.fnDecl = root;
+    this.top = root;
+    readingScope = root;
+  }
 
   push(frame: Frame): Leave {
-    this.frames.push(frame);
+    const parent = this.top;
+    const s = frame as Scope;
+    s.parent = parent;
+    s.depth = parent.depth + 1;
+    s.caller = frame.def >= 0 ? frame.def : parent.caller;
+    s.clsScope = frame.cls !== null ? s : parent.clsScope;
+    s.inFunction = parent.inFunction || !(frame.block === true || (frame.cls !== null && frame.locals === null));
+    s.decl = frame.locals ? s : parent.decl;
+    s.fnDecl = frame.locals && !frame.block ? s : parent.fnDecl;
+    this.top = s;
+    readingScope = s;
     return () => {
-      this.frames.pop();
+      this.top = parent;
+      readingScope = parent;
     };
   }
 
   caller(): number {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const def = (this.frames[i] as Frame).def;
-      if (def >= 0) return def;
-    }
-    return -1;
+    return this.top.caller;
   }
 
   // The innermost class or module frame, with its definition.
-  cls(): Frame | null {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const f = this.frames[i] as Frame;
-      if (f.cls !== null) return f;
-    }
-    return null;
+  cls(): Scope | null {
+    return this.top.clsScope;
   }
 
-  // True when no function frame stands between here and the module.
+  // True when no function frame stands between here and the module. A block
+  // at the top of the module (an `if`, a `try`) keeps its definitions top level.
   atModuleLevel(): boolean {
-    return this.frames.every((f, i) => i === 0 || (f.cls !== null && f.locals === null));
+    return !this.top.inFunction;
   }
 
+  lookup(from: Scope, name: string): Scope | null {
+    return lookupIn(from, name);
+  }
+
+  // The type of a local, null for a local of unknown type, undefined when
+  // the nearest scope that knows the name does not hold it as a local.
   local(name: string): TypeRef | null | undefined {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const locals = (this.frames[i] as Frame).locals;
-      if (locals?.has(name)) return locals.get(name);
-    }
-    return undefined;
+    const at = this.lookup(this.top, name);
+    if (!at || at.fns?.has(name) || at.imports?.has(name)) return undefined;
+    return at.locals?.get(name) ?? null;
   }
 
-  // A declaration: the name is new in the innermost scope.
-  setLocal(name: string, type: TypeRef | null): void {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const locals = (this.frames[i] as Frame).locals;
-      if (locals) {
-        locals.set(name, type);
-        return;
-      }
-    }
+  // An identifier before a dot, read at this point of the walk: a local's
+  // type here keeps the flow of assignments so far. Ctx.facts() reads the
+  // name again once every scope is complete: a nearer scope that declares
+  // it later wins, and an import is decided only then.
+  identReceiver(name: string, path: string[]): Receiver {
+    const at = this.lookup(this.top, name);
+    const recv = receiverIn(at, name, path, null) as Tagged;
+    recv[IDENT] = { name, at, path };
+    return recv;
+  }
+
+  // A declaration: the name is new in its scope (`block`: a `let` or
+  // `const`, else the function's scope), and no longer an import there.
+  setLocal(name: string, type: TypeRef | null, block = false): void {
+    const at = block ? this.top.decl : this.top.fnDecl;
+    at.imports?.delete(name);
+    at.locals?.set(name, type);
+  }
+
+  // An import. At the top of the module its names are the file's; made
+  // inside a function or a block, they belong to that scope only, so a call
+  // elsewhere in the file never resolves through them.
+  addImport(fact: ImportFact, block = false): void {
+    const at = block ? this.top.decl : this.top.fnDecl;
+    const index = this.imports.length;
+    this.imports.push(fact);
+    if (at.depth === 0) return;
+    fact.scoped = true;
+    at.imports ??= new Map();
+    for (const n of fact.names) at.imports.set(n.local, { import: index, imported: n.imported });
+    if (fact.namespace) at.imports.set(fact.namespace, { import: index, imported: "*" });
   }
 
   // An assignment to a name that may exist already. A declared type stands;
   // otherwise the receiver evidence survives only when the new value has the
-  // same type, since either value may reach a later call.
+  // same type, since either value may reach a later call. A name an import
+  // bound and the code then assigns is a local of unknown value: the import
+  // is no longer evidence for any call to it.
   // `innermost`: Python, where assigning in a function makes a new local.
   assign(name: string, type: TypeRef | null, innermost = false): void {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const locals = (this.frames[i] as Frame).locals;
-      if (innermost && !locals) continue;
-      if (innermost && !locals?.has(name)) break;
+    let s: Scope | null = this.top;
+    for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
+      if (innermost && !s.locals) continue;
+      if (s.imports?.has(name)) {
+        s.imports.delete(name);
+        s.locals?.set(name, null);
+        return;
+      }
+      if (innermost && !s.locals?.has(name)) break;
+      const locals = s.locals;
       if (locals?.has(name)) {
         const old = locals.get(name) ?? null;
         if (old?.declared) return;
@@ -143,16 +260,14 @@ class Ctx {
     this.setLocal(name, type);
   }
 
-  // A nested definition is visible by name in the scope that declares it.
-  declareFn(name: string, def: number): void {
-    for (let i = this.frames.length - 1; i >= 1; i--) {
-      const f = this.frames[i] as Frame;
-      if (f.locals) {
-        f.fns ??= new Map();
-        f.fns.set(name, def);
-        return;
-      }
-    }
+  // A nested definition is visible by name in the scope that declares it:
+  // its block for a function declaration or a `let` or `const`, the whole
+  // function for a `var` (`block` false).
+  declareFn(name: string, def: number, block = true): void {
+    const at = block ? this.top.decl : this.top.fnDecl;
+    if (at.depth === 0) return;
+    at.fns ??= new Map();
+    at.fns.set(name, def);
   }
 
   // The enclosing definition, as an owner for a nested one.
@@ -188,27 +303,65 @@ class Ctx {
     const callerDef = call.caller >= 0 ? this.defs[call.caller] : undefined;
     if (callerDef?.static || callerDef?.kind === "class" || callerDef?.kind === "module") call.static = true;
     this.calls.push(call);
-    if (recv.kind === "none" && this.lang !== "ruby") this.bare.push({ call, frames: this.frames.slice() });
+    const ident = (recv as Tagged)[IDENT];
+    if (ident) delete (recv as Tagged)[IDENT];
+    if (this.lang === "ruby") return;
+    // Past the depth bound the scopes around a call are not read: the safe
+    // reading is a call nothing binds, never one bound past a scope that hides it.
+    if (this.top.depth > MAX_SCOPE_DEPTH) {
+      call.recv = { kind: "other" };
+      if (recv.kind === "none") call.shadowed = true;
+      return;
+    }
+    // A Go receiver name is decided where it is read (identReceiver is not
+    // used for Go): no Go name is hoisted.
+    if (recv.kind === "none" || ident) this.pending.push({ call, scope: this.top, ident });
   }
 
   facts(): FileFacts {
+    readingScope = null;
     const topNames = new Set(this.defs.filter((d) => d.topLevel).map((d) => d.name));
-    for (const { call, frames } of this.bare) {
-      for (let i = frames.length - 1; i >= 0; i--) {
-        const f = frames[i] as Frame;
-        const fn = f.fns?.get(call.name);
-        if (fn !== undefined) {
-          call.local = fn;
-          break;
-        }
-        if (f.locals?.has(call.name)) {
-          // A module-level variable hides only names it is not also defined as.
-          if (i > 0 || !topNames.has(call.name)) call.shadowed = true;
-          break;
-        }
+    for (const { call, scope, ident } of this.pending) {
+      if (ident) {
+        // The name read again with every scope complete. The same scope
+        // answering keeps the type the walk had at the call; a nearer scope
+        // that declared the name later decides instead.
+        const at = this.lookup(scope, ident.name);
+        if (at !== ident.at || call.recv.kind === "name") call.recv = receiverIn(at, ident.name, ident.path, topNames);
+        continue;
       }
+      const at = this.lookup(scope, call.name);
+      if (!at) continue;
+      const fn = at.fns?.get(call.name);
+      const bound = at.imports?.get(call.name);
+      if (fn !== undefined) call.local = fn;
+      else if (bound) call.bound = bound;
+      // A module-level variable hides only names it is not also defined as.
+      else if (at.depth > 0 || !topNames.has(call.name)) call.shadowed = true;
     }
-    this.bare = [];
+    this.pending = [];
+    // Each type name binds through the scope it was read in: what that scope
+    // holds now, or the import it held when the type was read if the code
+    // assigned the name something else after.
+    const bindType = (t: TypeRef | null | undefined) => {
+      const s = t as Stamped | null | undefined;
+      const at = s?.[READ_IN];
+      if (!s || !at) return;
+      const readAs = s[READ_AS];
+      delete s[READ_IN];
+      delete s[READ_AS];
+      const head = s.qualifier ? (s.qualifier.split(".")[0] as string) : s.name;
+      const found = this.lookup(at, head);
+      let bound = found && !found.fns?.has(head) ? found.imports?.get(head) : undefined;
+      if (!bound && readAs && found === readAs.at) bound = readAs.bound;
+      if (bound) s.bound = bound;
+    };
+    for (const d of this.defs) {
+      d.bases.forEach(bindType);
+      Object.values(d.fields).forEach(bindType);
+      d.results?.forEach(bindType);
+    }
+    for (const c of this.calls) if (c.recv.kind === "type") bindType(c.recv.type);
     return {
       lang: this.lang,
       defs: this.defs,
@@ -247,6 +400,10 @@ const JS_TYPES = new Set([
   "jsx_opening_element",
   "jsx_self_closing_element",
   "for_in_statement",
+  "for_statement",
+  "statement_block",
+  "switch_body",
+  "catch_clause",
 ]);
 
 function jsTypeRef(annotation: Node | null): TypeRef | null {
@@ -274,11 +431,11 @@ function jsTypeRef(annotation: Node | null): TypeRef | null {
   }
   if (!t) return null;
   const { line, column } = pos(t);
-  if (t.type === "type_identifier" || t.type === "identifier") return { name: t.text, qualifier: null, line, column };
+  if (t.type === "type_identifier" || t.type === "identifier") return typeRef({ name: t.text, qualifier: null, line, column });
   if (t.type === "nested_type_identifier" || t.type === "member_expression") {
     const name = t.childForFieldName("name") ?? t.childForFieldName("property");
     const module = t.childForFieldName("module") ?? t.childForFieldName("object");
-    if (name && module) return { name: name.text, qualifier: module.text, line, column };
+    if (name && module) return typeRef({ name: name.text, qualifier: module.text, line, column });
   }
   return null;
 }
@@ -306,11 +463,7 @@ function jsReceiver(ctx: Ctx, object: Node): Receiver {
     return type ? { kind: "type", type, path } : { kind: "other" };
   }
   if (base.type === "identifier") {
-    const type = ctx.local(base.text);
-    if (type?.elem) return { kind: "other" };
-    if (type) return { kind: "type", type, path };
-    if (type === null) return { kind: "other" }; // a local of unknown type
-    return { kind: "name", name: base.text, path, nesting: null };
+    return ctx.identReceiver(base.text, path);
   }
   return { kind: "other" };
 }
@@ -352,9 +505,41 @@ function jsParams(ctx: Ctx, fn: Node, locals: Map<string, TypeRef | null>): void
       locals.set(p.text, null);
       continue;
     }
+    // TypeScript wraps each parameter and names its pattern; JavaScript does not.
     const pattern = p.childForFieldName("pattern");
     if (pattern?.type === "identifier") locals.set(pattern.text, declared(jsTypeRef(p.childForFieldName("type"))));
+    else for (const name of patternNames(pattern ?? p)) locals.set(name, null);
   }
+}
+
+// The names a destructuring pattern binds: `{ a, b: c, d = 1, ...e }`,
+// `[f, [g] = h]`, Python `a, (b, *c)`. A target that is not a name (`x.y`,
+// `x[0]`) binds nothing.
+function patternNames(node: Node | null, out: string[] = []): string[] {
+  if (!node) return out;
+  switch (node.type) {
+    case "identifier":
+    case "shorthand_property_identifier_pattern":
+      out.push(node.text);
+      break;
+    case "pair_pattern":
+      patternNames(node.childForFieldName("value"), out);
+      break;
+    case "assignment_pattern":
+    case "object_assignment_pattern":
+      patternNames(node.childForFieldName("left"), out);
+      break;
+    case "object_pattern":
+    case "array_pattern":
+    case "rest_pattern":
+    case "pattern_list":
+    case "tuple_pattern":
+    case "list_pattern":
+    case "list_splat_pattern":
+      for (const c of node.namedChildren) patternNames(c, out);
+      break;
+  }
+  return out;
 }
 
 function isExportedDecl(node: Node): boolean {
@@ -466,24 +651,31 @@ function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): L
   return false;
 }
 
-// `const x = require("./m")` and `const { a, b: c } = require("./m")`.
-function jsRequire(ctx: Ctx, node: Node, nameNode: Node, value: Node): boolean {
-  if (value.type !== "call_expression" || value.childForFieldName("function")?.text !== "require") return false;
-  const arg = value.childForFieldName("arguments")?.firstNamedChild;
+// `const x = require("./m")` and `const { a, b: c } = require("./m")`, and the
+// same with `await import("./m")`. Inside a function or a block the names
+// belong to that scope (`block`: a `let` or `const`). Without `await` the
+// value is a promise, not the module, so it is not an import.
+function jsRequire(ctx: Ctx, node: Node, nameNode: Node, value: Node, block: boolean): boolean {
+  const awaited = value.type === "await_expression";
+  const call = awaited ? value.firstNamedChild : value;
+  if (call?.type !== "call_expression") return false;
+  const fn = call.childForFieldName("function");
+  if (awaited ? fn?.type !== "import" : fn?.text !== "require") return false;
+  const arg = call.childForFieldName("arguments")?.firstNamedChild;
   if (arg?.type !== "string") return false;
   const fact: ImportFact = { spec: stringContent(arg), ...pos(node), names: [], namespace: null, star: false, reexport: false, typeOnly: false };
   if (nameNode.type === "identifier") fact.namespace = nameNode.text;
   else if (nameNode.type === "object_pattern") {
     for (const p of nameNode.namedChildren) {
+      const key = p.type === "pair_pattern" ? p.childForFieldName("key") : null;
+      const val = p.type === "pair_pattern" ? p.childForFieldName("value") : null;
       if (p.type === "shorthand_property_identifier_pattern") fact.names.push({ imported: p.text, local: p.text });
-      else if (p.type === "pair_pattern") {
-        const key = p.childForFieldName("key");
-        const val = p.childForFieldName("value");
-        if (key && val?.type === "identifier") fact.names.push({ imported: key.text, local: val.text });
-      }
+      else if (key && val?.type === "identifier") fact.names.push({ imported: key.text, local: val.text });
+      // A default value or a nested pattern: a local whose value is not known.
+      else for (const name of patternNames(p)) ctx.setLocal(name, null, block);
     }
   }
-  ctx.imports.push(fact);
+  ctx.addImport(fact, block);
   return true;
 }
 
@@ -500,11 +692,11 @@ function callType(value: Node | null): TypeRef | null {
   if (v?.type === "await_expression") v = v.firstNamedChild;
   if (v?.type !== "call_expression") return null;
   const fn = v.childForFieldName("function");
-  if (fn?.type === "identifier") return { name: fn.text, qualifier: null, ...pos(fn), result: 0 };
+  if (fn?.type === "identifier") return typeRef({ name: fn.text, qualifier: null, ...pos(fn), result: 0 });
   if (fn?.type === "member_expression" && fn.childForFieldName("object")?.type === "identifier") {
     const prop = fn.childForFieldName("property");
     const object = fn.childForFieldName("object") as Node;
-    if (prop) return { name: prop.text, qualifier: object.text, ...pos(fn), result: 0 };
+    if (prop) return typeRef({ name: prop.text, qualifier: object.text, ...pos(fn), result: 0 });
   }
   return null;
 }
@@ -591,8 +783,17 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         const name = node.childForFieldName("name");
         const value = node.childForFieldName("value");
         if (!name) return;
-        if (value && jsRequire(ctx, node, name, value)) return false;
-        if (name.type !== "identifier") return;
+        // `let` and `const` belong to their block, `var` to its function.
+        const block = node.parent?.type !== "variable_declaration";
+        // The walk goes on into the declarator either way: a default value
+        // such as `{ a = fallback() }` holds calls of its own.
+        if (value && jsRequire(ctx, node, name, value, block)) return;
+        if (name.type !== "identifier") {
+          // `const { a } = x`, `const [b] = y`: each name is a local of its
+          // scope and hides a definition of the same name outside it.
+          for (const n of patternNames(name)) ctx.setLocal(n, null, block);
+          return;
+        }
         const isFn = value && ["arrow_function", "function_expression", "function", "generator_function"].includes(value.type);
         const parent = node.parent;
         const moduleLevel = (parent?.parent?.type === "program" || parent?.parent?.type === "export_statement") && ctx.atModuleLevel();
@@ -603,11 +804,20 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         if (isFn && ctx.caller() >= 0) {
           // const inner = () => ... inside a function: a definition of that scope.
           const def = ctx.addDef(node, name, "function", { owner: ctx.ownerName(), results: jsResults(value as Node) });
-          ctx.declareFn(name.text, def);
+          ctx.declareFn(name.text, def, block);
           return ctx.push({ def, cls: null, locals: null });
         }
-        ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value));
+        ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value), block);
         return;
+      }
+      case "statement_block":
+      case "switch_body":
+      case "for_statement":
+        return ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+      case "catch_clause": {
+        const leave = ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+        for (const n of patternNames(node.childForFieldName("parameter"))) ctx.setLocal(n, null, true);
+        return leave;
       }
       case "interface_declaration":
       case "type_alias_declaration":
@@ -639,6 +849,11 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           ctx.assign(left.text, type ?? callType(right));
           return;
         }
+        // `({ f } = deps)`, `[a, b] = list`: each name gets a value whose type is not known.
+        if (left?.type === "object_pattern" || left?.type === "array_pattern") {
+          for (const n of patternNames(left)) ctx.assign(n, null);
+          return;
+        }
         if (left?.type === "member_expression") {
           const exported = jsCommonExport(ctx, node, left, right);
           if (exported) return typeof exported === "function" ? exported : undefined;
@@ -651,13 +866,20 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         return;
       }
       case "for_in_statement": {
-        // for (const op of ops): op is an element of ops.
+        // for (const op of ops): op is an element of ops. A `let` or
+        // `const` loop variable belongs to the loop, a `var` to its function;
+        // with neither, the loop assigns a name declared elsewhere.
         const left = node.childForFieldName("left");
         const right = node.childForFieldName("right");
-        if (left?.type !== "identifier" || !node.children.some((c) => c.type === "of")) return;
-        const t = right?.type === "identifier" ? ctx.local(right.text) : null;
-        ctx.setLocal(left.text, t?.elem ? { ...t, elem: false } : null);
-        return;
+        const t = right?.type === "identifier" && node.children.some((c) => c.type === "of") ? ctx.local(right.text) : null;
+        const type = left?.type === "identifier" && t?.elem ? { ...t, elem: false } : null;
+        const kind = node.children.find((c) => c.type === "var" || c.type === "let" || c.type === "const")?.type;
+        const leave = ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+        for (const n of patternNames(left)) {
+          if (kind === undefined) ctx.assign(n, type);
+          else ctx.setLocal(n, type, kind !== "var");
+        }
+        return leave;
       }
       case "jsx_opening_element":
       case "jsx_self_closing_element": {
@@ -709,15 +931,15 @@ function pyTypeRef(node: Node | null): TypeRef | null {
     return null;
   }
   const { line, column } = pos(t);
-  if (t.type === "identifier") return { name: t.text, qualifier: null, line, column };
+  if (t.type === "identifier") return typeRef({ name: t.text, qualifier: null, line, column });
   if (t.type === "attribute") {
     const attr = t.childForFieldName("attribute");
     const object = t.childForFieldName("object");
-    if (attr && object) return { name: attr.text, qualifier: object.text, line, column };
+    if (attr && object) return typeRef({ name: attr.text, qualifier: object.text, line, column });
   }
   if (t.type === "string") {
     const text = stringContent(t);
-    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) return { name: text, qualifier: null, line, column };
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) return typeRef({ name: text, qualifier: null, line, column });
   }
   return null;
 }
@@ -742,11 +964,7 @@ function pyReceiver(ctx: Ctx, object: Node): Receiver {
   }
   if (base.type !== "identifier") return { kind: "other" };
   if ((base.text === "self" || base.text === "cls") && ctx.cls()) return { kind: "self", path };
-  const type = ctx.local(base.text);
-  if (type?.elem) return { kind: "other" };
-  if (type) return { kind: "type", type, path };
-  if (type === null) return { kind: "other" };
-  return { kind: "name", name: base.text, path, nesting: null };
+  return ctx.identReceiver(base.text, path);
 }
 
 function pyCallType(value: Node | null): TypeRef | null {
@@ -770,7 +988,7 @@ function extractPython(tree: Tree): FileFacts {
             fact.namespace = n.childForFieldName("alias")?.text ?? null;
             fact.alias = true;
           } else continue;
-          ctx.imports.push(fact);
+          ctx.addImport(fact);
         }
         return false;
       }
@@ -787,7 +1005,7 @@ function extractPython(tree: Tree): FileFacts {
           }
         }
         if (node.namedChildren.some((c) => c.type === "wildcard_import")) fact.star = true;
-        ctx.imports.push(fact);
+        ctx.addImport(fact);
         return false;
       }
       case "class_definition": {
@@ -807,7 +1025,7 @@ function extractPython(tree: Tree): FileFacts {
       case "function_definition": {
         const name = node.childForFieldName("name");
         const span = node.parent?.type === "decorated_definition" ? node.parent : node;
-        const inner = ctx.frames[ctx.frames.length - 1] as Frame;
+        const inner = ctx.top;
         const isMethod = inner.cls !== null && inner.locals === null;
         const locals = new Map<string, TypeRef | null>();
         for (const p of node.childForFieldName("parameters")?.namedChildren ?? []) {
@@ -846,7 +1064,11 @@ function extractPython(tree: Tree): FileFacts {
       case "for_statement": {
         const left = node.childForFieldName("left");
         const right = node.childForFieldName("right");
-        if (left?.type !== "identifier") return;
+        if (left?.type !== "identifier") {
+          // `for a, b in pairs`: each name is a local whose type is not known.
+          for (const n of patternNames(left)) ctx.setLocal(n, null);
+          return;
+        }
         const t = right?.type === "identifier" ? ctx.local(right.text) : null;
         ctx.setLocal(left.text, t?.elem ? { ...t, elem: false } : null);
         return;
@@ -856,12 +1078,15 @@ function extractPython(tree: Tree): FileFacts {
         const right = node.childForFieldName("right");
         const annotation = declared(pyTypeRef(node.childForFieldName("type")));
         const type = annotation ?? pyCallType(right);
-        const inner = ctx.frames[ctx.frames.length - 1] as Frame;
+        const inner = ctx.top;
         if (left?.type === "identifier") {
           if (inner.cls !== null && inner.locals === null) {
             if (type) (ctx.defs[inner.def] as DefFact).fields[left.text] = type;
           } else if (annotation) ctx.setLocal(left.text, annotation);
           else ctx.assign(left.text, type, true);
+        } else if (left?.type === "pattern_list" || left?.type === "tuple_pattern" || left?.type === "list_pattern") {
+          // `a, b = pair`: each name is assigned a value whose type is not known.
+          if (!(inner.cls !== null && inner.locals === null)) for (const n of patternNames(left)) ctx.assign(n, null, true);
         } else if (left?.type === "attribute" && left.childForFieldName("object")?.text === "self") {
           const attr = left.childForFieldName("attribute");
           const cls = ctx.cls();

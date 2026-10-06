@@ -146,7 +146,7 @@ A report counts only with the exit code that goes with it: 0 or 1 for a complete
 
 A blocking finding fails the job whatever `fail-on-tool-error` says. An incomplete or unavailable review fails the job only under `fail-on-tool-error: true` or `review: required`.
 
-The scan exits 1 only when `block-on-severity` or the config's `review.block_on_severity` is set and a finding on a changed line meets it. Without either, the job never fails on findings. A scan that fails for its own reasons, for example on a config file it cannot read, exits 2; a scan killed by a signal or ending with any other code counts as exit 2 too. The same holds when the scanner install fails. The job then shows a warning annotation titled "OpenQodex did not run" with the last line OpenQodex printed (control characters and colon runs removed), writes the same line to the job summary with every markdown and HTML character escaped, and sets `status` to `tool-failed`. It does not fail unless `fail-on-tool-error` is `true`.
+The scan exits 1 only when `block-on-severity` or the config's `review.block_on_severity` is set and a finding on a changed line meets it. Without either, the job never fails on findings. A suppression comment the change adds, such as `# nosec`, and a changed scanner settings file each count as a minor finding, since nobody reviews them here; `scanners` lists the comments. A scan that fails for its own reasons, for example on a config file it cannot read, exits 2; a scan killed by a signal or ending with any other code counts as exit 2 too. The same holds when the scanner install fails. The job then shows a warning annotation titled "OpenQodex did not run" with the last line OpenQodex printed (control characters and colon runs removed), writes the same line to the job summary with every markdown and HTML character escaped, and sets `status` to `tool-failed`. It does not fail unless `fail-on-tool-error` is `true`.
 
 ## What the review mode sends, and the limits of the key's protection
 
@@ -178,4 +178,4 @@ Then install the pre-push hook:
 pre-commit install --hook-type pre-push
 ```
 
-The hook runs `npx -y openqodex@<version> scan` on the commits not yet pushed plus the working tree. It stops the push only when the scan exits 1. A scan that fails for its own reasons never stops the push. The hook needs Node 22, npx and `sh` on your machine.
+The hook runs `npx -y openqodex@<version> scan` on the commits not yet pushed plus the working tree. It stops the push only when the scan exits 1. As in the Action, an added suppression comment and a changed scanner settings file count as minor findings. A scan that fails for its own reasons never stops the push. The hook needs Node 22, npx and `sh` on your machine.

@@ -42,6 +42,35 @@
 //      its registry rule packs.
 //  21. A .sql path that is a symlink to /dev/zero or a FIFO hangs the run;
 //      one that leads out of the repo is read; an oversized one is read.
+// Added for suppression comments a change adds:
+//  23. An added suppression comment yields no candidate when its scanner is
+//      not installed, or the candidate names the wrong scanner, rule, line
+//      or severity.
+//  24. A marker on a line the change did not add yields a candidate.
+//  25. A marker in a file its scanner does not check yields a candidate.
+//  26. A scanner finding on the same line swallows a suppression or a
+//      settings candidate in the cross-scanner dedup.
+//  27. A scanner left out with only or skip for one run loses its suppression
+//      and settings candidates, though the comment or the file still
+//      silences it in every other run; or a scanner switched off with
+//      scanners.disable keeps them.
+//  28. A whole-repository run, which has no added lines, yields one.
+//  29. The candidate's message carries text from the line, such as a secret.
+// Added after the code review of the second version:
+//  30. The fixture filter drops a changed settings file in a fixture folder,
+//      though a config outside it can extend that file and hide findings
+//      the report shows (ruff's extend, checked with ruff 0.8.4).
+//  31. A suppression comment in a fixture file survives the fixture filter;
+//      it only silences findings in its own file, which the filter hides.
+//  32. A file over 5 MB is not read, though bandit and the others scan it;
+//      or a file semgrep skips for its size still raises a semgrep candidate.
+//  33. A file under semgrep's size limit loses its semgrep candidate because
+//      its text, decoded, is longer than the file (invalid UTF-8).
+//  34. Keeping changed settings files out of the fixture filter takes time
+//      that grows with the square of their number; or many thousands of
+//      such candidates overflow the call stack and the scan throws.
+//  35. A settings file with many thousands of changed lines overflows the
+//      call stack while its first changed line is found.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -561,6 +590,218 @@ describe("dedup across scanners only", () => {
       ],
     });
     expect(scan.candidates.map((c) => c.token)).toEqual(["custom:a:sql-injection", "custom:a:command-injection"]);
+  });
+});
+
+describe("suppression comments the change adds", () => {
+  const PY = "import os\nsubprocess.call(cmd, shell=True)  # nosec\n";
+
+  it("raises one candidate per added marker while its scanner is not installed (23)", async () => {
+    const dir = repo({ "app.py": PY });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app.py"],
+      coverage: new Map([["app.py", lines(1, 2)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => [c.token, c.filePath, c.lineStart, c.lineEnd, c.reviewSeverity])).toEqual([
+      ["bandit:openqodex.suppression-added", "app.py", 2, 2, "minor"],
+    ]);
+    expect(scan.scanners.find((s) => s.scanner === "bandit")).toMatchObject({ status: "not_installed", keptCount: 1 });
+  });
+
+  it("raises nothing for a marker on a line the change did not add (24)", async () => {
+    const dir = repo({ "app.py": PY });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app.py"],
+      coverage: new Map([["app.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates).toEqual([]);
+  });
+
+  it("raises nothing for a marker in a file its scanner does not check (25)", async () => {
+    const dir = repo({
+      "deploy.sh": "echo $A  # nosec  # noqa\n",
+      "app.py": "# shellcheck disable=SC2086\n# hadolint ignore=DL3008\nx = 1  // nolint\n",
+    });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["deploy.sh", "app.py"],
+      coverage: new Map([
+        ["deploy.sh", lines(1)],
+        ["app.py", lines(1, 2, 3)],
+      ]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates).toEqual([]);
+  });
+
+  it("keeps a suppression and a settings candidate beside another scanner's secret on the same line (26)", async () => {
+    // Built at run time so this file holds no secret-shaped literal.
+    const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
+    const dir = repo({ "app/config.py": `KEY = "${secret}"  # gitleaks:allow\n`, ".gitleaksignore": "app/config.py:stripe-access-token:1\n" });
+    const at = (filePath: string) => finding({ source: "custom:keys", ruleId: "hardcoded-secret", filePath, severity: "high" });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app/config.py", ".gitleaksignore"],
+      coverage: new Map([
+        ["app/config.py", lines(1)],
+        [".gitleaksignore", lines(1)],
+      ]),
+      config: config(),
+      resolveTool: notInstalled(),
+      custom: [custom({ source: "custom:keys", run: async () => ({ findings: [at("app/config.py"), at(".gitleaksignore")], error: null, version: null }) })],
+    });
+    expect(scan.candidates.map((c) => `${c.token} ${c.filePath}:${c.lineStart}`).sort()).toEqual([
+      "custom:keys:hardcoded-secret .gitleaksignore:1",
+      "custom:keys:hardcoded-secret app/config.py:1",
+      "gitleaks:openqodex.suppression-added app/config.py:1",
+      "gitleaks:settings-file .gitleaksignore:1",
+    ]);
+  });
+
+  it("keeps them through only and skip, and leaves out a scanner scanners.disable switches off (27)", async () => {
+    const dir = repo({ "app.py": "x = 1  # nosec  # noqa\n", ".gitleaksignore": "x\n" });
+    const tokens = async (over: { only?: BuiltinScanner[]; skip?: BuiltinScanner[]; disabledScanners?: BuiltinScanner[] }) => {
+      const { scan } = await runScanners({
+        repoDir: dir,
+        changedPaths: ["app.py", ".gitleaksignore"],
+        coverage: new Map([
+          ["app.py", lines(1)],
+          [".gitleaksignore", lines(1)],
+        ]),
+        config: config({ disabledScanners: over.disabledScanners ?? [] }),
+        resolveTool: notInstalled(),
+        only: over.only,
+        skip: over.skip,
+      });
+      return scan.candidates.map((c) => c.token).sort();
+    };
+    const all = ["bandit:openqodex.suppression-added", "gitleaks:settings-file", "ruff:openqodex.suppression-added"];
+    expect(await tokens({})).toEqual(all);
+    expect(await tokens({ skip: ["bandit", "gitleaks"] })).toEqual(all);
+    expect(await tokens({ only: ["sqllint"] })).toEqual(all);
+    expect(await tokens({ disabledScanners: ["ruff", "gitleaks"] })).toEqual(["bandit:openqodex.suppression-added"]);
+  });
+
+  it("raises nothing in a whole-repository run (28)", async () => {
+    const dir = repo({ "app.py": PY });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app.py"],
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates).toEqual([]);
+  });
+
+  it("keeps a changed settings file in a fixture folder, and drops a suppression comment in a fixture file (30, 31)", async () => {
+    const dir = repo({ "fixtures/ruff.toml": "[lint]\nignore = [\"E401\"]\n", "testdata/app.py": "x = 1  # nosec\n" });
+    const tokens = async (includeFixtures: boolean) => {
+      const { scan } = await runScanners({
+        repoDir: dir,
+        changedPaths: ["fixtures/ruff.toml", "testdata/app.py"],
+        coverage: new Map([
+          ["fixtures/ruff.toml", lines(1, 2)],
+          ["testdata/app.py", lines(1)],
+        ]),
+        config: config({ includeFixtures }),
+        resolveTool: notInstalled(),
+      });
+      return scan.candidates.map((c) => `${c.token} ${c.filePath}`).sort();
+    };
+    expect(await tokens(false)).toEqual(["ruff:settings-file fixtures/ruff.toml"]);
+    expect(await tokens(true)).toEqual(["bandit:openqodex.suppression-added testdata/app.py", "ruff:settings-file fixtures/ruff.toml"]);
+  });
+
+  it("reads a file over 5 MB, and skips semgrep's marker in a file semgrep skips for its size (32)", async () => {
+    const big = `x = 1  # nosec nosemgrep\n${"# pad\n".repeat(1_000_000)}`;
+    const dir = repo({ "big.py": big });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["big.py"],
+      coverage: new Map([["big.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => c.token)).toEqual(["bandit:openqodex.suppression-added"]);
+  }, 20_000);
+
+  it("measures semgrep's size limit on the file, not on its decoded text (33)", async () => {
+    const dir = repo({});
+    // 400,000 bytes that are not UTF-8 decode to 1,200,000 bytes of U+FFFD.
+    fs.writeFileSync(path.join(dir, "data.py"), Buffer.concat([Buffer.from("x = 1  # nosemgrep\n# "), Buffer.alloc(400_000, 0xff), Buffer.from("\n")]));
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["data.py"],
+      coverage: new Map([["data.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => c.token)).toEqual(["semgrep:openqodex.suppression-added"]);
+  });
+
+  it("keeps changed settings files out of the fixture filter in linear time (34)", async () => {
+    // As many scanner findings as settings candidates, so each finding is
+    // checked against every settings candidate when the check is a list scan.
+    const dir = repo({});
+    const time = async (n: number) => {
+      const changed = Array.from({ length: n }, (_, k) => `d${k}/ruff.toml`);
+      const hits = changed.map((p) => finding({ source: "custom:many", ruleId: "hit", filePath: p, lineStart: 1, lineEnd: 1 }));
+      const started = performance.now();
+      const { scan } = await runScanners({
+        repoDir: dir,
+        changedPaths: changed,
+        coverage: new Map(changed.map((p) => [p, lines(1)])),
+        config: config({ disabledScanners: ["semgrep", "gitleaks"] }),
+        resolveTool: notInstalled(),
+        only: ["ruff", "custom:many"],
+        custom: [custom({ source: "custom:many", run: async () => ({ findings: hits, error: null, version: null }) })],
+      });
+      expect(scan.candidates).toHaveLength(2 * n);
+      return performance.now() - started;
+    };
+    await time(20_000);
+    const small = await time(25_000);
+    const large = await time(200_000);
+    // Eight times the input: linear work takes about eight times as long,
+    // square work about sixty-four times.
+    expect(large / small).toBeLessThan(24);
+  }, 300_000);
+
+  it("raises the settings candidate of a file with 200,000 changed lines on its first one (35)", async () => {
+    const dir = repo({});
+    const many = new Set(Array.from({ length: 200_000 }, (_, k) => 200_000 - k));
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: [".gitleaksignore"],
+      coverage: new Map([[".gitleaksignore", many]]),
+      config: config(),
+      resolveTool: notInstalled(),
+      only: ["gitleaks"],
+    });
+    expect(scan.candidates.map((c) => `${c.token} ${c.lineStart}`)).toEqual(["gitleaks:settings-file 1"]);
+  });
+
+  it("names the marker and the scanner, never the line's text (29)", async () => {
+    const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
+    const dir = repo({ "app/config.py": `KEY = "${secret}"  # gitleaks:allow\n` });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["app/config.py"],
+      coverage: new Map([["app/config.py", lines(1)]]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    expect(scan.candidates.map((c) => c.message)).toEqual([
+      "This change adds gitleaks:allow, which stops gitleaks reporting what it covers; check that it hides no real problem",
+    ]);
+    expect(JSON.stringify(scan)).not.toContain(secret);
   });
 });
 
