@@ -1,6 +1,7 @@
 # OpenQodex docs
 
 - [Agents](agents.md)
+- [Code review in Claude Code](claude-code-review.md)
 - [Commands](cli.md)
 - [Configuration](config.md)
 - [Custom scanners](custom-scanners.md)

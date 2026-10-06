@@ -18,6 +18,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 ## Pages
 
 - `quickstart`: install OpenQodex and run the first review.
+- `claude-code-review`: code review in Claude Code, from install to report.
 - `cli`: every command, flag and exit code.
 - `config`: every key of `.openqodex.yaml`.
 - `scanners`: the thirteen built-in scanners.

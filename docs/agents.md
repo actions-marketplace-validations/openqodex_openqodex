@@ -108,6 +108,8 @@ A skill, rule or permission rule an earlier `init` wrote, such as the full-text 
 
 Neither the skill `init` writes nor `guide skill` carries the sentence that tells an agent to prefer `~/.openqodex/bin/openqodex`: in user scope the launcher already runs every command, and in project scope the skill keeps the version the team committed.
 
+`claude-code-review` walks through a review in Claude Code: install, the reviewer, the push gate and the report.
+
 ## Codex CLI
 
 | What | User scope | Project scope |
