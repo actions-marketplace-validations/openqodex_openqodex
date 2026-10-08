@@ -92,6 +92,14 @@ The comparison first lists anything that differs besides the build: every review
 
 `score.mjs` exits 0 when it scored, 1 when the comparison shows a regression, and 2 when a folder cannot be scored. The exit code is information. Do not gate a release on it alone: a person reads the regression and the reviews behind it.
 
+`--against` reads the older run's specs from that run's own `cases/` folder. The scorer refuses specs that lack the words each plant now needs, so `--against` cannot compare a run made before the words existed, such as `2026-10-08-752b77f`. Score such a run alone with the newer run's specs, then read the two summaries side by side:
+
+```
+node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>/cases
+```
+
+This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` into the old run's folder and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
+
 ## The wording pass
 
 ```
