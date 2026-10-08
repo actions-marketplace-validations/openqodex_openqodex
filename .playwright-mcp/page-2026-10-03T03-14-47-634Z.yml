@@ -1,0 +1,26 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: claude · checkout-api · main
+        - generic [ref=e6]: Opus 5.5
+      - generic [ref=e7]: "╭──────────────────────────────────────────────╮ │ ✻ Welcome to Claude Code! │ │ │ │ /help for help, /status for your setup │ │ │ │ cwd: ~/code/checkout-api │ ╰──────────────────────────────────────────────╯"
+      - generic [ref=e10]:
+        - generic [ref=e11]: ">"
+        - generic [ref=e13]:
+          - generic [ref=e14]: "? for shortcuts"
+          - generic [ref=e15]: ⏵⏵ accept edits on (shift+tab to cycle)
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: openqodex watch · reviews every commit
+        - generic [ref=e19]: 31 checks · graph
+      - generic [ref=e20]: watching ~/code/checkout-api for commitslast review 08:41:03 commit 3b7f0c1 passed · 0 findings · 9.2s
+  - generic [ref=e22]: openqodex
+  - generic:
+    - generic:
+      - generic: openqodex
+      - generic: Every commit reviewed on your machine, in the background, on the model you already use.
+      - generic:
+        - code: npx openqodex init
+      - generic: github.com/openqodex/openqodex
+  - generic [ref=e24]: Type anything to type the script · Enter sends · Tab hurries · Esc restarts

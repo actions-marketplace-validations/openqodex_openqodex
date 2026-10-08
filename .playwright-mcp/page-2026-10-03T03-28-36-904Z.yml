@@ -1,0 +1,36 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e2]:
+    - generic [ref=f5e3]:
+      - generic [ref=f5e4]: ">"
+      - text: infra
+    - generic [ref=f5e5]:
+      - generic [ref=f5e6]: ">"
+      - text: worker
+    - generic [ref=f5e7]:
+      - generic [ref=f5e8]: ">"
+      - text: checkout-api
+      - generic [ref=f5e9]: ×
+    - generic [ref=f5e10]:
+      - generic [ref=f5e11]: ">"
+      - text: storefront
+  - generic [ref=f5e13]:
+    - generic [ref=f5e14]:
+      - generic [ref=f5e15]: ●
+      - generic [ref=f5e16]: Cart totals now round at the line level. 12 tests pass. Pushed as 3b7f0c1.
+    - generic [ref=f5e17]:
+      - generic [ref=f5e18]: ●
+      - generic [ref=f5e19]: "Background agent \"Review 3b7f0c1 with openqodex\" completed: passed · 0 findings · 9.2s"
+  - generic [ref=f5e20]:
+    - generic [ref=f5e21]: checkout-api
+    - generic [ref=f5e23]: ❯
+    - generic [ref=f5e26]:
+      - generic [ref=f5e27]: ▶▶ auto mode on
+      - generic [ref=f5e28]: (shift+tab to cycle)
+  - generic [ref=f5e29]: openqodex
+  - generic:
+    - generic:
+      - generic: openqodex
+      - generic: Code review inside your agent, while you work.
+      - generic:
+        - code: npx openqodex init
+  - generic [ref=f5e31]: Type anything to type the script · Enter sends · Tab hurries · Esc restarts · ?captions=0 hides the strip

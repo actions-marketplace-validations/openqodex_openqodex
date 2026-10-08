@@ -1,0 +1,40 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e2]:
+    - generic [ref=f3e3]:
+      - generic [ref=f3e4]: ">"
+      - text: infra
+    - generic [ref=f3e5]:
+      - generic [ref=f3e6]: ">"
+      - text: worker
+    - generic [ref=f3e7]:
+      - generic [ref=f3e8]: ">"
+      - text: checkout-api
+      - generic [ref=f3e9]: ×
+    - generic [ref=f3e10]:
+      - generic [ref=f3e11]: ">"
+      - text: storefront
+  - generic [ref=f3e13]:
+    - generic [ref=f3e14]:
+      - generic [ref=f3e15]: ✻
+      - generic [ref=f3e16]: Brewed for 1m 12s · done 9:11 AM
+    - generic [ref=f3e17]:
+      - generic [ref=f3e18]: ●
+      - generic [ref=f3e19]: Cart totals now round at the line level. 12 tests pass. Pushed as 3b7f0c1.
+    - generic [ref=f3e20]:
+      - generic [ref=f3e21]: ●
+      - generic [ref=f3e22]: "Background agent \"Review 3b7f0c1 with openqodex\" completed: passed · 0 findings · 9.2s"
+  - generic [ref=f3e23]:
+    - generic [ref=f3e24]: checkout-api
+    - generic [ref=f3e26]: ❯
+    - generic [ref=f3e29]:
+      - generic [ref=f3e30]: ▶▶ auto mode on
+      - generic [ref=f3e31]: (shift+tab to cycle)
+  - generic [ref=f3e32]: openqodex
+  - generic:
+    - generic:
+      - generic: openqodex
+      - generic: Every commit reviewed on your machine, in the background, on the model you already use.
+      - generic:
+        - code: npx openqodex init
+      - generic: github.com/openqodex/openqodex
+  - generic [ref=f3e34]: Type anything to type the script · Enter sends · Tab hurries · Esc restarts · ?captions=0 hides the strip
