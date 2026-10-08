@@ -131,6 +131,7 @@ What it showed:
 - Most misses are minor Dockerfile issues in the demo repository (an unpinned `apt-get install`, `ADD` for a local file, the pip cache): the scanners raised each one, and the reviewer dropped them as harmless in most reviews.
 - Three spec errors in this run's cases were found by reading the reviews, and are fixed for the next run (this run keeps its own copies): the Rails reviewer found the admin check missing from `destroy` at the `destroy` action, a place the spec did not list (2 reviews); the Next.js change drops the base page's search form by accident, a real bug the reviewer reported 5 times, each counted false; and `permit!` sat behind the admin check, so the plant was weak and was never reported (0 of 6). The case now plants it in a self-service profile update. Every false finding in the table comes from the first two errors.
 - The reviewer also asked for tests about once per review (32 and 31 findings); these are counted apart, as the scoring rules above say.
+- The wording pass (`judge.json`, judged by `claude-sonnet-5`, which never blocks) read the 203 findings that found a planted bug. Graph off and on: the problem sentence was plain in 86% and 90% and correct in 97% and 98%; the consequence plain in 86% and 85%, correct in 97% and 92%; the fix plain in 91% and 95%, correct in 97% and 98%. The judge's answer for 8 findings did not parse.
 
 ## Claims cite a run
 
