@@ -21,11 +21,16 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const table = JSON.parse(readFileSync(join(root, "packages", "scanners", "toolchain.json"), "utf8"));
 const locks = join(root, "packages", "scanners", "locks");
+// The most a registry answer (PyPI or RubyGems metadata) may hold; past it the
+// answer is given up, connection and all.
+export const MAX_METADATA_BYTES = 16 * 1024 * 1024;
+const MAX_GEM_BYTES = 64 * 1024 * 1024;
+const MAX_UV_BYTES = 200 * 1024 * 1024;
+const readTable = () => JSON.parse(readFileSync(join(root, "packages", "scanners", "toolchain.json"), "utf8"));
 const PLATFORMS = {
   "darwin-arm64": "aarch64-apple-darwin",
   "darwin-x64": "x86_64-apple-darwin",
@@ -33,12 +38,6 @@ const PLATFORMS = {
   "linux-arm64": "aarch64-unknown-linux-gnu",
 };
 
-const wanted = process.argv.slice(2);
-const tools = Object.entries(table.tools).filter(([name, r]) => (r.method === "uv" || r.method === "gem") && (wanted.length === 0 || wanted.includes(name)));
-if (wanted.length > 0 && tools.length !== wanted.length) {
-  process.stderr.write(`usage: node scripts/lock-scanners.mjs [${Object.entries(table.tools).filter(([, r]) => r.method === "uv" || r.method === "gem").map(([n]) => n).join("|")}]...\n`);
-  process.exit(2);
-}
 
 function uvLock(uv, recipe, triple, file) {
   const dir = mkdtempSync(join(tmpdir(), "openqodex-lock-"));
@@ -58,7 +57,7 @@ function uvLock(uv, recipe, triple, file) {
 // The uv the table pins, for this machine: its GitHub release asset,
 // downloaded (redirects only to GitHub's asset hosts) and checked against the
 // pinned sha256 before it is unpacked. Returns the path of the binary.
-async function pinnedUv() {
+async function pinnedUv(table) {
   const platform = { "darwin:arm64": "darwin-arm64", "darwin:x64": "darwin-x64", "linux:x64": "linux-x64", "linux:arm64": "linux-arm64" }[`${process.platform}:${process.arch}`];
   const asset = platform ? table.tools.uv?.assets?.[platform] : null;
   if (!asset) throw new Error("no pinned uv for this machine; name one with UV=<file>");
@@ -70,7 +69,7 @@ async function pinnedUv() {
     const response = await fetch(url, { redirect: "manual" });
     if (response.status >= 300 && response.status < 400) url = new URL(response.headers.get("location") ?? "", url).href;
     else if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-    else bytes = await readCapped(response, url, 200 * 1024 * 1024);
+    else bytes = await readCapped(response, url, MAX_UV_BYTES);
   }
   if (bytes === null) throw new Error(`${asset.url}: too many redirects`);
   const actual = createHash("sha256").update(bytes).digest("hex");
@@ -103,13 +102,18 @@ async function readCapped(response, url, maxBytes) {
   }
 }
 
-// RubyGems answers, never through a redirect: a moved source is not followed.
-async function json(url) {
+// A registry answer, read within MAX_METADATA_BYTES and then parsed, never
+// through a redirect: a moved source is not followed.
+export async function fetchMetadata(url, maxBytes = MAX_METADATA_BYTES) {
   const response = await fetch(url, { redirect: "manual" });
-  if (response.status >= 300 && response.status < 400) throw new Error(`${url}: answered with a redirect; a moved source is not followed`);
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`${url}: answered with a redirect; a moved source is not followed`);
+  }
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  return response.json();
+  return JSON.parse((await readCapped(response, url, maxBytes)).toString("utf8"));
 }
+const json = (url) => fetchMetadata(url);
 
 // The sha256 of a gem, computed from the downloaded .gem itself, which must
 // equal the sha256 RubyGems publishes for it.
@@ -118,7 +122,7 @@ async function checkGem(gem, version, published) {
   const response = await fetch(url, { redirect: "manual" });
   if (response.status >= 300 && response.status < 400) throw new Error(`${url}: answered with a redirect; a moved source is not followed`);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  const actual = createHash("sha256").update(await readCapped(response, url, 64 * 1024 * 1024)).digest("hex");
+  const actual = createHash("sha256").update(await readCapped(response, url, MAX_GEM_BYTES)).digest("hex");
   if (actual !== published) throw new Error(`${gem} ${version}: the .gem has sha256 ${actual}, RubyGems publishes ${published}`);
 }
 
@@ -171,7 +175,7 @@ async function gemLock(name, recipe) {
   const depsOf = async (gem, version) => {
     const key = `${gem}@${version}`;
     if (!deps.has(key)) {
-      const info = await json(`https://rubygems.org/api/v2/rubygems/${encodeURIComponent(gem)}/versions/${version}.json`);
+      const info = await json(`https://rubygems.org/api/v2/rubygems/${encodeURIComponent(gem)}/versions/${version}.json?platform=ruby`);
       deps.set(key, (info.dependencies?.runtime ?? []).map((d) => ({ name: d.name, requirement: d.requirements })));
     }
     return deps.get(key);
@@ -222,15 +226,28 @@ async function gemLock(name, recipe) {
   return [`# ${recipe.gems.join(" ")} for Ruby ${ruby} or newer, made by scripts/lock-scanners.mjs`, ...lines, ""].join("\n");
 }
 
-mkdirSync(locks, { recursive: true });
-const uv = tools.some(([, r]) => r.method === "uv") ? (process.env.UV ?? (await pinnedUv())) : null;
-for (const [name, recipe] of tools) {
-  const text = recipe.method === "uv" ? null : await gemLock(name, recipe);
-  for (const [platform, triple] of Object.entries(PLATFORMS)) {
-    const file = join(locks, `${name}-${platform}.txt`);
-    if (recipe.method === "uv") uvLock(uv, recipe, triple, file);
-    else writeFileSync(file, text);
-    const packages = readFileSync(file, "utf8").split("\n").filter((l) => l !== "" && !l.startsWith(" ") && !l.startsWith("#")).length;
-    process.stdout.write(`${name} ${platform}: ${packages} packages\n`);
+async function main(wanted) {
+  const table = readTable();
+  const tools = Object.entries(table.tools).filter(([name, r]) => (r.method === "uv" || r.method === "gem") && (wanted.length === 0 || wanted.includes(name)));
+  if (wanted.length > 0 && tools.length !== wanted.length) {
+    process.stderr.write(`usage: node scripts/lock-scanners.mjs [${Object.entries(table.tools).filter(([, r]) => r.method === "uv" || r.method === "gem").map(([n]) => n).join("|")}]...\n`);
+    return 2;
   }
+  mkdirSync(locks, { recursive: true });
+  const uv = tools.some(([, r]) => r.method === "uv") ? (process.env.UV ?? (await pinnedUv(table))) : null;
+  for (const [name, recipe] of tools) {
+    const text = recipe.method === "uv" ? null : await gemLock(name, recipe);
+    for (const [platform, triple] of Object.entries(PLATFORMS)) {
+      const file = join(locks, `${name}-${platform}.txt`);
+      if (recipe.method === "uv") uvLock(uv, recipe, triple, file);
+      else writeFileSync(file, text);
+      const packages = readFileSync(file, "utf8").split("\n").filter((l) => l !== "" && !l.startsWith(" ") && !l.startsWith("#")).length;
+      process.stdout.write(`${name} ${platform}: ${packages} packages\n`);
+    }
+  }
+  return 0;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await main(process.argv.slice(2));
 }

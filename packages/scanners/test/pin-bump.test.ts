@@ -30,6 +30,14 @@
 //  12. With --locks (the job that opens the pull request), a PyPI pin starts
 //      uv, or takes lock files whose sha256 differs from the one the gate
 //      job recorded, or that name a hash PyPI does not publish.
+// Added after the second code review:
+//  13. A lock is taken whose packages are not exactly the dependency tree of
+//      the pinned tool, as the registry declares it for that platform and
+//      Python: an extra package with a real hash, a missing dependency, or a
+//      dependency at a version its requirement rules out. PyPI and RubyGems.
+//  14. A lock that pins one package twice, or whose hash lines run into the
+//      next requirement, is taken, or the file written is the raw text and
+//      not the checked structure.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -122,21 +130,51 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(200).end(name.endsWith("_checksums.txt") && release.checksums ? release.checksums(names) : release.bytes(name));
     return;
   }
+  const day = (n: number) => new Date(Date.now() - n * DAY).toISOString();
   const pypi = /^\/pypi\/([^/]+)\/(?:([^/]+)\/)?json$/.exec(url.pathname);
   if (pypi) {
     const [, name, version] = pypi as unknown as [string, string, string | undefined];
-    const day = (n: number) => new Date(Date.now() - n * DAY).toISOString();
     if (version === undefined) {
       res.writeHead(200).end(JSON.stringify({ releases: { "1.0.0": [{ upload_time_iso_8601: day(90) }], "2.0.0": [{ upload_time_iso_8601: day(30) }] } }));
     } else {
-      res.writeHead(200).end(JSON.stringify({ urls: [{ digests: { sha256: sha(`${name}-${version}.whl`) } }] }));
+      const requires = PYPI_REQUIRES[`${name}==${version}`] ?? null;
+      res.writeHead(200).end(JSON.stringify({ info: { requires_dist: requires }, urls: [{ digests: { sha256: sha(`${name}-${version}.whl`) } }] }));
     }
+    return;
+  }
+  const versions = /^\/api\/v1\/versions\/([^/]+)\.json$/.exec(url.pathname);
+  if (versions) {
+    res.writeHead(200).end(JSON.stringify([
+      { number: "2.0.0", platform: "ruby", prerelease: false, created_at: day(30), ruby_version: ">= 3.0.0" },
+      { number: "1.0.0", platform: "ruby", prerelease: false, created_at: day(90), ruby_version: ">= 3.0.0" },
+    ]));
+    return;
+  }
+  const gem = /^\/api\/v2\/rubygems\/([^/]+)\/versions\/([^/]+)\.json$/.exec(url.pathname);
+  if (gem) {
+    const [, name, version] = gem as unknown as [string, string, string];
+    res.writeHead(200).end(JSON.stringify({ sha: sha(`${name}-${version}.gem`), dependencies: { runtime: GEM_REQUIRES[`${name}@${version}`] ?? [] } }));
     return;
   }
   res.writeHead(404).end();
 }
 
 let sent = 0;
+
+// The registries' declared dependencies, as PyPI's requires_dist and
+// RubyGems' runtime dependencies give them.
+const PYPI_REQUIRES: Record<string, string[] | null> = {
+  "pydemo==2.0.0": ["dep>=1.0", 'winonly ; sys_platform == "win32"', 'speedup[fast]>=2 ; extra == "speed"'],
+  "dep==1.2": ['leaf==3.0 ; python_version >= "3.8"'],
+  "dep==0.9": ['leaf==3.0 ; python_version >= "3.8"'],
+};
+const GEM_REQUIRES: Record<string, { name: string; requirements: string }[]> = {
+  "rbdemo@2.0.0": [{ name: "rdep", requirements: "~> 1.2" }],
+};
+
+const uvBlock = (name: string, version: string) => `${name}==${version} \\\n    --hash=sha256:${sha(`${name}-${version}.whl`)}\n`;
+const gemLine = (name: string, version: string) => `${name} ${version} sha256:${sha(`${name}-${version}.gem`)}\n`;
+const GEM_HEADER = "# rbdemo:2.0.0 for Ruby 3.0 or newer, made by scripts/lock-scanners.mjs\n";
 
 async function listen(): Promise<string> {
   const server = createServer(handle);
@@ -309,7 +347,7 @@ describe("what the code review found in pin-bump", () => {
       const given = mkdtempSync(join(tmpdir(), "oq-locks-"));
       return { root, table, before, given };
     };
-    const lock = (hash: string) => `dep==1.2 \\\n    --hash=sha256:${sha("dep-1.2.whl")}\npydemo==2.0.0 \\\n    --hash=sha256:${hash}\n`;
+    const lock = (hash: string) => `${uvBlock("dep", "1.2")}${uvBlock("leaf", "3.0")}pydemo==2.0.0 \\\n    --hash=sha256:${hash}\n`;
     const write = (given: string, text: string) => {
       for (const p of Object.keys(PLATFORMS)) writeFileSync(join(given, `pydemo-${p}.txt`), text);
     };
@@ -340,5 +378,97 @@ describe("what the code review found in pin-bump", () => {
       expect(readFileSync(bad.table, "utf8")).toBe(bad.before);
       expect(files(bad.root)).toEqual(["packages/scanners/toolchain.json"]);
     }
+  });
+});
+
+// A repo with one registry pin at 1.0.0, and a folder of lock files for it.
+function registryRoot(tool: string, recipe: Record<string, unknown>) {
+  const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-reg-"));
+  mkdirSync(join(root, "packages", "scanners", "locks"), { recursive: true });
+  mkdirSync(join(root, ".changeset"));
+  const table = join(root, "packages", "scanners", "toolchain.json");
+  const before = `${JSON.stringify({ schema: 1, tools: { [tool]: recipe } }, null, 2)}\n`;
+  writeFileSync(table, before);
+  const given = mkdtempSync(join(tmpdir(), "oq-locks-"));
+  return { root, table, before, given };
+}
+
+async function applyWithLocks(tool: string, recipe: Record<string, unknown>, text: string) {
+  const r = registryRoot(tool, recipe);
+  for (const p of Object.keys(PLATFORMS)) writeFileSync(join(r.given, `${tool}-${p}.txt`), text);
+  const h = createHash("sha256");
+  for (const p of Object.keys(PLATFORMS).sort()) h.update(`${tool}-${p}.txt\0`).update(readFileSync(join(r.given, `${tool}-${p}.txt`))).update("\0");
+  const out = await bump(r.root, ["--apply", tool, "--locks", r.given, "--locks-sha256", h.digest("hex")], { rubygems: origin });
+  return { ...r, out };
+}
+
+const PY = { version: "1.0.0", method: "uv", package: "pydemo", python: "3.11", binary: "pydemo" };
+const RB = { version: "1.0.0", method: "gem", gems: ["rbdemo:1.0.0"], needs: "ruby>=3.0", binary: "rbdemo" };
+
+describe("a lock is exactly the pinned tool's dependency tree (13)", () => {
+  it("takes a PyPI lock that holds the tree, markers and requirement versions included", async () => {
+    const text = `${uvBlock("dep", "1.2")}${uvBlock("leaf", "3.0")}${uvBlock("pydemo", "2.0.0")}`;
+    const r = await applyWithLocks("pydemo", PY, text);
+    expect(r.out.code, r.out.stderr).toBe(0);
+    expect(readFileSync(join(r.root, "packages", "scanners", "locks", "pydemo-linux-x64.txt"), "utf8")).toBe(text);
+  });
+
+  const pypiBad: [string, string, RegExp][] = [
+    ["an extra package with a hash PyPI publishes", `${uvBlock("dep", "1.2")}${uvBlock("django", "5.0")}${uvBlock("leaf", "3.0")}${uvBlock("pydemo", "2.0.0")}`, /not in the dependency tree|django/],
+    ["a missing dependency", `${uvBlock("dep", "1.2")}${uvBlock("pydemo", "2.0.0")}`, /leaf/],
+    ["a dependency at a version its requirement rules out", `${uvBlock("dep", "0.9")}${uvBlock("leaf", "3.0")}${uvBlock("pydemo", "2.0.0")}`, /dep/],
+  ];
+  for (const [name, text, reason] of pypiBad) {
+    it(`refuses a PyPI lock with ${name}`, async () => {
+      const r = await applyWithLocks("pydemo", PY, text);
+      expect(r.out.code, r.out.stderr).toBe(2);
+      expect(r.out.stderr).toMatch(reason);
+      expect(readFileSync(r.table, "utf8")).toBe(r.before);
+      expect(files(r.root)).toEqual(["packages/scanners/toolchain.json"]);
+    });
+  }
+
+  it("takes a RubyGems lock that holds the tree", async () => {
+    const text = `${GEM_HEADER}${gemLine("rbdemo", "2.0.0")}${gemLine("rdep", "1.2.5")}`;
+    const r = await applyWithLocks("rbdemo", RB, text);
+    expect(r.out.code, r.out.stderr).toBe(0);
+    expect(readFileSync(join(r.root, "packages", "scanners", "locks", "rbdemo-linux-x64.txt"), "utf8")).toBe(text);
+  });
+
+  const gemBad: [string, string][] = [
+    ["an extra gem", `${GEM_HEADER}${gemLine("rbdemo", "2.0.0")}${gemLine("rdep", "1.2.5")}${gemLine("zzz", "1.0")}`],
+    ["a missing dependency", `${GEM_HEADER}${gemLine("rbdemo", "2.0.0")}`],
+    ["a dependency at a version its requirement rules out", `${GEM_HEADER}${gemLine("rbdemo", "2.0.0")}${gemLine("rdep", "2.0.0")}`],
+  ];
+  for (const [name, text] of gemBad) {
+    it(`refuses a RubyGems lock with ${name}`, async () => {
+      const r = await applyWithLocks("rbdemo", RB, text);
+      expect(r.out.code, r.out.stderr).toBe(2);
+      expect(readFileSync(r.table, "utf8")).toBe(r.before);
+      expect(files(r.root)).toEqual(["packages/scanners/toolchain.json"]);
+    });
+  }
+});
+
+describe("a lock is read block by block and written from what was read (14)", () => {
+  const bad: [string, string][] = [
+    ["one package pinned twice", `${uvBlock("dep", "1.2")}${uvBlock("leaf", "3.0")}${uvBlock("pydemo", "2.0.0")}${uvBlock("Dep", "1.2")}`],
+    ["hash lines that run into the next requirement", `${uvBlock("dep", "1.2").replace(/\n$/, " \\\n")}${uvBlock("leaf", "3.0")}${uvBlock("pydemo", "2.0.0")}`],
+    ["a requirement with no hash", `dep==1.2\n${uvBlock("leaf", "3.0")}${uvBlock("pydemo", "2.0.0")}`],
+  ];
+  for (const [name, text] of bad) {
+    it(`refuses ${name}`, async () => {
+      const r = await applyWithLocks("pydemo", PY, text);
+      expect(r.out.code, r.out.stderr).toBe(2);
+      expect(readFileSync(r.table, "utf8")).toBe(r.before);
+    });
+  }
+
+  it("writes the checked structure, not the raw text", async () => {
+    // Blank lines between blocks read fine and are not written back.
+    const text = `${uvBlock("dep", "1.2")}\n${uvBlock("leaf", "3.0")}\n${uvBlock("pydemo", "2.0.0")}`;
+    const r = await applyWithLocks("pydemo", PY, text);
+    expect(r.out.code, r.out.stderr).toBe(0);
+    expect(readFileSync(join(r.root, "packages", "scanners", "locks", "pydemo-darwin-arm64.txt"), "utf8")).toBe(`${uvBlock("dep", "1.2")}${uvBlock("leaf", "3.0")}${uvBlock("pydemo", "2.0.0")}`);
   });
 });

@@ -47,6 +47,9 @@
 //      through a link.
 //  18. Grouping the files of a whole repository by their framework rules
 //      takes time that grows with the square of the file count.
+//  19. A quoted TOML key with dots in it (["tool.poetry.dependencies"]) is
+//      read as the nested Poetry table, or a dotted header with quoted parts
+//      or blanks around its dots ([tool."poetry".dependencies]) is not.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -341,6 +344,29 @@ describe("what the code review found in the readers", () => {
     expect(ox.get("")).toHaveLength(50_000);
     expect(rf.get("DJ")).toHaveLength(50_000);
     expect(rf.get("")).toHaveLength(50_000);
+  });
+});
+
+describe("TOML table names (19)", () => {
+  it("reads a quoted key as one name and a dotted name part by part", () => {
+    const dir = repo({
+      "a/pyproject.toml": '["tool.poetry.dependencies"]\ndjango = "^5.0"\n',
+      "a/x.py": "x\n",
+      "b/pyproject.toml": '[tool."poetry".dependencies]\ndjango = "^5.0"\n',
+      "b/x.py": "x\n",
+      "c/pyproject.toml": '[ tool . poetry . dependencies ]  # the app\nfastapi = "^0.110"\n',
+      "c/x.py": "x\n",
+      "d/pyproject.toml": '[tool.poetry.group."ci.extra".dependencies]\napache-airflow = "^2.9"\n',
+      "d/x.py": "x\n",
+      "e/pyproject.toml": "['tool.poetry'.dependencies]\ndjango = \"^5.0\"\n",
+      "e/x.py": "x\n",
+    });
+    const facts = repoFacts(dir);
+    expect(facts.project("a/x.py")).toMatchObject({ frameworks: [] });
+    expect(facts.project("b/x.py")).toMatchObject({ frameworks: ["django"] });
+    expect(facts.project("c/x.py")).toMatchObject({ frameworks: ["fastapi"] });
+    expect(facts.project("d/x.py")).toMatchObject({ frameworks: ["airflow"] });
+    expect(facts.project("e/x.py")).toMatchObject({ frameworks: [] });
   });
 });
 

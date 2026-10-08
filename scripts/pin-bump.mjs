@@ -55,12 +55,14 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkGemTree, checkPyTree, LockRefused, pyName, readGemLock, readUvLock, writeGemLock, writeUvLock } from "./lock-check.mjs";
 
 const MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PLATFORM_COUNT_LIMIT = 16;
 const MAX_REDIRECTS = 5;
 const MAX_ASSET_BYTES = 500 * 1024 * 1024;
-const MAX_JSON_BYTES = 32 * 1024 * 1024;
+// The most a registry or API answer may hold; past it the answer is given up.
+const MAX_METADATA_BYTES = 16 * 1024 * 1024;
 const MAX_LOCK_BYTES = 1024 * 1024;
 
 // The upstream origins and the asset size limit. Only an import (the tests)
@@ -134,7 +136,7 @@ async function get(url, maxBytes, headers = {}) {
 async function getJson(url, github) {
   const headers = { accept: "application/json" };
   if (github && process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  const { response, bytes } = await get(url, MAX_JSON_BYTES, headers);
+  const { response, bytes } = await get(url, MAX_METADATA_BYTES, headers);
   if (response.status >= 300 && response.status < 400) {
     throw new Refused(`${url} answered with a redirect to ${response.headers.get("location") ?? "nowhere"}; a renamed or moved source is not followed`);
   }
@@ -219,7 +221,7 @@ function lowestRuby(requirement) {
     const t = part.trim();
     if (!t.startsWith(">=")) continue;
     let v = t.slice(2).trim();
-    while (v.endsWith(".0")) v = v.slice(0, -2);
+    while (v.split(".").length > 2 && v.endsWith(".0")) v = v.slice(0, -2);
     return isRelease(v) ? v : null;
   }
   return null;
@@ -308,34 +310,12 @@ function lockDigest(folder, tool) {
   return hash.digest("hex");
 }
 
-// A uv lock read line by line: `name==version \` then `    --hash=sha256:<hex>`
-// lines. Any other line refuses it. Returns name==version -> hashes.
-function readUvLock(text, file) {
-  const pins = new Map();
-  let current = null;
-  for (const line of text.split("\n")) {
-    if (line === "") continue;
-    const pin = /^([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][0-9A-Za-z.+!]*) \\$/.exec(line);
-    if (pin) {
-      current = `${pin[1].toLowerCase().replace(/[-_.]+/g, "-")}==${pin[2]}`;
-      pins.set(current, []);
-      continue;
-    }
-    const hash = /^ {4}--hash=sha256:([0-9a-f]{64})( \\)?$/.exec(line);
-    if (hash && current !== null) {
-      pins.get(current).push(hash[1]);
-      continue;
-    }
-    throw new Refused(`${file}: not a lock line: ${line.slice(0, 80)}`);
-  }
-  for (const [pin, hashes] of pins) if (hashes.length === 0) throw new Refused(`${file}: ${pin} has no hash`);
-  return pins;
-}
-
 // The lock files given for a PyPI or RubyGems pin, checked before any is
-// used: the recorded sha256, the shape of every line, the recipe's own pins
-// in them, and every hash against what the registry publishes for that
-// exact version.
+// used (lock-check.mjs): the recorded sha256, then each file read block by
+// block, then its packages against the pinned tool's dependency tree for
+// that platform, as the registry declares it, with every hash or sha256 one
+// the registry publishes. Returns the files to write, made from what was
+// read, never the raw text.
 async function checkGivenLocks(tool, next, folder, recorded, up) {
   if (!/^[0-9a-f]{64}$/.test(recorded ?? "")) throw new Refused("--locks needs --locks-sha256 <hex>");
   const names = lockFiles(folder, tool);
@@ -349,47 +329,45 @@ async function checkGivenLocks(tool, next, folder, recorded, up) {
     if (!st.isFile() || st.size > MAX_LOCK_BYTES) throw new Refused(`${tool}: ${name} is not a lock file`);
   }
   if (lockDigest(folder, tool) !== recorded) throw new Refused(`${tool}: the lock files given do not have the sha256 the job that made them recorded`);
-  const texts = new Map(names.map((name) => [name, readFileSync(join(folder, name), "utf8")]));
-  const checked = new Map();
-  const pyName = (n) => n.toLowerCase().replace(/[-_.]+/g, "-");
-  for (const [name, text] of texts) {
-    if (next.method === "uv") {
-      const pins = readUvLock(text, name);
-      for (const want of [`${next.package}==${next.version}`, ...(next.with ?? [])]) {
-        const [n, v] = want.split("==");
-        if (!pins.has(`${pyName(n)}==${v}`)) throw new Refused(`${name}: does not pin ${want}`);
-      }
-      for (const [pin, hashes] of pins) {
-        if (!checked.has(pin)) {
-          const [n, v] = pin.split("==");
-          const info = await getJson(`${up.pypi}/pypi/${encodeURIComponent(n)}/${encodeURIComponent(v)}/json`, false);
-          checked.set(pin, new Set((info.urls ?? []).map((u) => u?.digests?.sha256).filter((h) => typeof h === "string")));
-        }
-        for (const h of hashes) if (!checked.get(pin).has(h)) throw new Refused(`${name}: PyPI publishes no file of ${pin} with sha256 ${h}`);
-      }
-    } else {
-      const gems = [];
-      for (const line of text.split("\n")) {
-        if (line === "" || line.startsWith("#")) continue;
-        const m = /^([A-Za-z0-9_.-]+) ([0-9][0-9.]*) sha256:([0-9a-f]{64})$/.exec(line);
-        if (!m) throw new Refused(`${name}: not a lock line: ${line.slice(0, 80)}`);
-        gems.push({ gem: m[1], version: m[2], sha: m[3] });
-      }
-      for (const spec of next.gems) {
-        const [g, v] = spec.split(":");
-        if (!gems.some((x) => x.gem === g && x.version === v)) throw new Refused(`${name}: does not pin ${spec}`);
-      }
-      for (const { gem, version, sha } of gems) {
-        const key = `${gem}@${version}`;
-        if (!checked.has(key)) {
-          const info = await getJson(`${up.rubygems}/api/v2/rubygems/${encodeURIComponent(gem)}/versions/${encodeURIComponent(version)}.json`, false);
-          checked.set(key, info.sha);
-        }
-        if (checked.get(key) !== sha) throw new Refused(`${name}: RubyGems publishes another sha256 for ${gem} ${version}`);
+  const cache = new Map();
+  const cached = (key, url) => {
+    if (!cache.has(key)) cache.set(key, getJson(url, false));
+    return cache.get(key);
+  };
+  const out = new Map();
+  try {
+    for (const name of names) {
+      const text = readFileSync(join(folder, name), "utf8");
+      const platform = name.slice(tool.length + 1, -".txt".length);
+      if (next.method === "uv") {
+        const blocks = readUvLock(text, name);
+        await checkPyTree({
+          blocks,
+          file: name,
+          recipe: next,
+          platform,
+          metadata: (n, v) => cached(`${pyName(n)}==${v}`, `${up.pypi}/pypi/${encodeURIComponent(n)}/${encodeURIComponent(v)}/json`),
+        });
+        out.set(name, writeUvLock(blocks));
+      } else {
+        const ruby = /^ruby>=([0-9.]+)$/.exec(next.needs ?? "")?.[1];
+        if (!ruby) throw new Refused(`${tool}: needs must name the lowest Ruby`);
+        const header = `# ${next.gems.join(" ")} for Ruby ${ruby} or newer, made by scripts/lock-scanners.mjs`;
+        const gems = readGemLock(text, name, header);
+        await checkGemTree({
+          gems,
+          file: name,
+          recipe: next,
+          metadata: (n, v) => cached(`${n}@${v}`, `${up.rubygems}/api/v2/rubygems/${encodeURIComponent(n)}/versions/${encodeURIComponent(v)}.json?platform=ruby`),
+        });
+        out.set(name, writeGemLock(header, gems));
       }
     }
+  } catch (error) {
+    if (error instanceof LockRefused) throw new Refused(error.message);
+    throw error;
   }
-  return texts;
+  return out;
 }
 
 async function apply(tool, table, up, now, given) {

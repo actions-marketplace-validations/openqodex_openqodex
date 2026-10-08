@@ -331,18 +331,64 @@ function requirementsDeps(text: string | null): string[] {
   return out;
 }
 
+const BARE_KEY = /[A-Za-z0-9_-]+/y;
+
 // A TOML table header (`[tool.poetry.dependencies]`, `[[x]]`, a comment
-// after it allowed): its name with quotes and blanks taken out, or null.
-function tableHeader(line: string): string | null {
+// after it allowed): its name, part by part, or null. A quoted part is one
+// part with its dots and blanks as they are: `["tool.poetry.dependencies"]`
+// is one name, not Poetry's table; `[tool."poetry".dependencies]` is three.
+// Blanks around the dots do not count. One pass along the line.
+function tableHeader(line: string): string[] | null {
   if (!line.startsWith("[")) return null;
   const double = line.startsWith("[[");
-  const inner = line.slice(double ? 2 : 1);
-  const close = inner.indexOf("]");
-  if (close === -1) return null;
-  const after = inner.slice(close + (double ? 2 : 1)).trim();
+  let i = double ? 2 : 1;
+  const parts: string[] = [];
+  const blanks = () => {
+    while (line[i] === " " || line[i] === "\t") i += 1;
+  };
+  for (;;) {
+    blanks();
+    const c = line[i];
+    if (c === '"') {
+      let out = "";
+      let j = i + 1;
+      while (j < line.length && line[j] !== '"') {
+        if (line[j] === "\\") {
+          out += line[j + 1] ?? "";
+          j += 2;
+        } else {
+          out += line[j];
+          j += 1;
+        }
+      }
+      if (j >= line.length) return null;
+      parts.push(out);
+      i = j + 1;
+    } else if (c === "'") {
+      const j = line.indexOf("'", i + 1);
+      if (j === -1) return null;
+      parts.push(line.slice(i + 1, j));
+      i = j + 1;
+    } else {
+      BARE_KEY.lastIndex = i;
+      const m = BARE_KEY.exec(line);
+      if (!m) return null;
+      parts.push(m[0]);
+      i += m[0].length;
+    }
+    blanks();
+    if (line[i] !== ".") break;
+    i += 1;
+  }
+  const close = double ? "]]" : "]";
+  if (!line.startsWith(close, i)) return null;
+  const after = line.slice(i + close.length).trim();
   if (after !== "" && !after.startsWith("#")) return null;
-  return inner.slice(0, close).replace(/["'\s]/g, "");
+  return parts;
 }
+
+// Whether a table name is exactly these parts.
+const tableIs = (table: string[], ...parts: string[]): boolean => table.length === parts.length && parts.every((p, i) => table[i] === p);
 
 // A `key = value` line: the key (quoted or not) and the value after the `=`.
 function keyValue(line: string): { key: string; value: string } | null {
@@ -371,7 +417,7 @@ function pyprojectDeps(text: string | null): string[] {
       if (name !== null) out.push(name);
     }
   };
-  let table = "";
+  let table: string[] = [];
   let inArray = false;
   let depth = { braces: 0 };
   for (const raw of lines(text)) {
@@ -390,7 +436,7 @@ function pyprojectDeps(text: string | null): string[] {
     const kv = keyValue(line);
     if (kv === null) continue;
     const depsArray =
-      (table === "project" && kv.key === "dependencies") || table === "project.optional-dependencies" || table === "dependency-groups";
+      (tableIs(table, "project") && kv.key === "dependencies") || tableIs(table, "project", "optional-dependencies") || tableIs(table, "dependency-groups");
     if (depsArray && kv.value.startsWith("[")) {
       depth = { braces: 0 };
       const part = arrayPart(kv.value.slice(1), depth);
@@ -405,10 +451,9 @@ function pyprojectDeps(text: string | null): string[] {
   return out;
 }
 
-function isPoetryDeps(table: string): boolean {
-  if (table === "tool.poetry.dependencies" || table === "tool.poetry.dev-dependencies") return true;
-  const parts = table.split(".");
-  return parts.length === 5 && parts[0] === "tool" && parts[1] === "poetry" && parts[2] === "group" && parts[4] === "dependencies";
+function isPoetryDeps(table: string[]): boolean {
+  if (tableIs(table, "tool", "poetry", "dependencies") || tableIs(table, "tool", "poetry", "dev-dependencies")) return true;
+  return table.length === 5 && table[0] === "tool" && table[1] === "poetry" && table[2] === "group" && table[4] === "dependencies";
 }
 
 // The quoted strings on one line of a TOML array, and whether the array
@@ -446,7 +491,7 @@ function arrayPart(line: string, depth = { braces: 0 }): { strings: string[]; cl
 function pipfileDeps(text: string | null): string[] {
   if (text === null) return [];
   const out: string[] = [];
-  let table = "";
+  let table: string[] = [];
   for (const raw of lines(text)) {
     const line = raw.trim();
     const header = tableHeader(line);
@@ -455,7 +500,7 @@ function pipfileDeps(text: string | null): string[] {
       continue;
     }
     const kv = keyValue(line);
-    if (kv && (table === "packages" || table === "dev-packages")) out.push(pyName(kv.key));
+    if (kv && (tableIs(table, "packages") || tableIs(table, "dev-packages"))) out.push(pyName(kv.key));
   }
   return out;
 }
