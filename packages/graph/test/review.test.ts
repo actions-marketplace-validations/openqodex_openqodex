@@ -30,7 +30,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
-import { buildGraph, detectImpact } from "../src/index.js";
+import { buildGraph, detectImpact, openStore } from "../src/index.js";
 import { at, callSites, commitAll, git, makeRepo, symbol, writeFiles } from "./helpers.js";
 
 const dirs: string[] = [];
@@ -43,7 +43,15 @@ function repo(files: Record<string, string>): string {
   return root;
 }
 const cacheOf = (root: string) => join(root, ".openqodex", "graph");
-const build = (root: string, extra: Partial<Parameters<typeof buildGraph>[0]> = {}) => buildGraph({ repoRoot: root, cacheDir: cacheOf(root), ...extra });
+// The repo's graph folder when it may be used, else none: a refused folder is never read or written.
+const build = async (root: string, extra: Partial<Parameters<typeof buildGraph>[0]> = {}) => {
+  const opened = await openStore(root);
+  return buildGraph({ repoRoot: root, store: opened.ok ? opened.store : null, ...extra });
+};
+const factsFiles = (root: string): string[] => {
+  const dir = join(cacheOf(root), "facts");
+  return readdirSync(dir).flatMap((sub) => readdirSync(join(dir, sub)).map((f) => join(dir, sub, f)));
+};
 
 describe("a hostile repo", () => {
   it("never writes or deletes through a cache folder that is a link (1)", async () => {
@@ -64,22 +72,21 @@ describe("a hostile repo", () => {
     const files = { "a.ts": "export function a() {}\n", "b.ts": 'import { a } from "./a";\nexport function b() {\n  a();\n}\n' };
     const root = repo(files);
     await build(root);
-    const entries = readdirSync(cacheOf(root));
     // Break every entry: valid JSON, a missing field.
-    for (const e of entries) {
-      const entry = JSON.parse(readFileSync(join(cacheOf(root), e), "utf8")) as { facts: Record<string, unknown> };
+    for (const e of factsFiles(root)) {
+      const entry = JSON.parse(readFileSync(e, "utf8")) as { facts: Record<string, unknown> };
       delete entry.facts.imports;
-      writeFileSync(join(cacheOf(root), e), JSON.stringify(entry));
+      writeFileSync(e, JSON.stringify(entry));
     }
     const repaired = await build(root);
     expect(repaired.status.parses).toBe(2);
     expect(callSites(repaired, symbol(repaired, "a.ts", "a"))).toEqual(["b.ts:3"]);
 
     // Forge a caller into an entry and commit the cache folder: it must not be read.
-    for (const e of readdirSync(cacheOf(root))) {
-      const entry = JSON.parse(readFileSync(join(cacheOf(root), e), "utf8")) as { facts: { calls: unknown[] } };
+    for (const e of factsFiles(root)) {
+      const entry = JSON.parse(readFileSync(e, "utf8")) as { facts: { calls: unknown[] } };
       entry.facts.calls = [];
-      writeFileSync(join(cacheOf(root), e), JSON.stringify(entry));
+      writeFileSync(e, JSON.stringify(entry));
     }
     git(root, "add", "-f", ".openqodex/graph");
     const forged = await build(root);

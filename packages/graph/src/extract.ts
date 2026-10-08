@@ -5,11 +5,14 @@
 //
 // The node types and fields below are the tree-sitter grammars' own; the
 // patterns were written here against the pinned grammar files.
+import { createHash } from "node:crypto";
 import type { Node, Tree } from "web-tree-sitter";
 import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 8;
+// 9: body hashes on definitions, computed-member calls as dynamic call
+// sites, and the line of each local export.
+export const EXTRACTOR_VERSION = 9;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -133,11 +136,23 @@ function stringContent(node: Node): string {
   return node.text.replace(/^['"`]|['"`]$/g, "");
 }
 
+// A short hash of a definition's text without its own name, its comments
+// and its whitespace: the same body under another name or in another file
+// hashes the same, so a removal and an addition can be paired as a move.
+function bodyHash(lang: Lang, node: Node, nameNode: Node): string {
+  const start = node.startIndex;
+  const text = node.text;
+  const inside = nameNode.startIndex >= start && nameNode.endIndex <= node.endIndex;
+  const cut = inside ? text.slice(0, nameNode.startIndex - start) + text.slice(nameNode.endIndex - start) : text;
+  const bare = (lang === "python" || lang === "ruby" ? cut.replace(/#[^\n]*/g, "") : cut.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "")).replace(/\s+/g, "");
+  return createHash("sha1").update(bare).digest("hex").slice(0, 16);
+}
+
 class Ctx {
   defs: DefFact[] = [];
   calls: CallFact[] = [];
   imports: ImportFact[] = [];
-  exportsLocal: { local: string; exported: string }[] = [];
+  exportsLocal: { local: string; exported: string; line?: number }[] = [];
   defaultExport: string | null = null;
   goPackage: string | null = null;
   top: Scope;
@@ -280,6 +295,10 @@ class Ctx {
 
   addDef(node: Node, nameNode: Node, kind: DefFact["kind"], fields: Partial<DefFact> = {}, spanNode: Node = node): number {
     const { column } = pos(nameNode);
+    // Only definitions at the top of the file or directly in a top-level
+    // class get a body hash: hashing every nested one would read deep code
+    // once per level.
+    const hash = this.top.depth <= 2 ? bodyHash(this.lang, spanNode, nameNode) : undefined;
     this.defs.push({
       name: nameNode.text,
       kind,
@@ -292,8 +311,16 @@ class Ctx {
       bases: [],
       fields: {},
       ...fields,
+      ...(hash ? { bodyHash: hash } : {}),
     });
     return this.defs.length - 1;
+  }
+
+  // A call whose callee is computed (`table[key]()`): no name to bind, so
+  // the resolver records it as a dynamic call site the graph cannot follow.
+  addDynamicCall(node: Node): void {
+    const { line, column } = pos(node);
+    this.calls.push({ name: "", line, column, caller: this.caller(), recv: { kind: "other" }, dynamic: true });
   }
 
   addCall(nameNode: Node, recv: Receiver, implicit = false): void {
@@ -473,6 +500,10 @@ function jsCallee(ctx: Ctx, fn: Node | null): void {
   if (fn.type === "instantiation_expression") return jsCallee(ctx, fn.childForFieldName("function"));
   if (fn.type === "await_expression") return jsCallee(ctx, fn.firstNamedChild);
   if (fn.type === "parenthesized_expression") return;
+  if (fn.type === "subscript_expression") {
+    ctx.addDynamicCall(fn);
+    return;
+  }
   if (fn.type === "identifier") {
     if (fn.text !== "require") ctx.addCall(fn, { kind: "none" });
     return;
@@ -604,7 +635,7 @@ function jsExport(ctx: Ctx, node: Node): void {
   for (const s of specs) {
     const name = s.childForFieldName("name");
     const alias = s.childForFieldName("alias");
-    if (name) ctx.exportsLocal.push({ local: name.text, exported: (alias ?? name).text });
+    if (name) ctx.exportsLocal.push({ local: name.text, exported: (alias ?? name).text, line: s.startPosition.row + 1 });
   }
   if (node.children.some((c) => c.type === "default")) {
     const decl = node.childForFieldName("declaration");
@@ -627,11 +658,11 @@ function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): L
   if (target === "module.exports") {
     if (right.type === "identifier") ctx.defaultExport = right.text;
     for (const p of right.type === "object" ? right.namedChildren : []) {
-      if (p.type === "shorthand_property_identifier") ctx.exportsLocal.push({ local: p.text, exported: p.text });
+      if (p.type === "shorthand_property_identifier") ctx.exportsLocal.push({ local: p.text, exported: p.text, line: p.startPosition.row + 1 });
       else if (p.type === "pair") {
         const key = p.childForFieldName("key");
         const value = p.childForFieldName("value");
-        if (key && value?.type === "identifier") ctx.exportsLocal.push({ local: value.text, exported: key.text });
+        if (key && value?.type === "identifier") ctx.exportsLocal.push({ local: value.text, exported: key.text, line: p.startPosition.row + 1 });
       }
     }
     return true;
@@ -640,7 +671,7 @@ function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): L
   if (!m) return false;
   const name = m[1] as string;
   if (right.type === "identifier") {
-    ctx.exportsLocal.push({ local: right.text, exported: name });
+    ctx.exportsLocal.push({ local: right.text, exported: name, line: node.startPosition.row + 1 });
     return true;
   }
   if (["arrow_function", "function_expression", "function"].includes(right.type)) {
@@ -1097,6 +1128,7 @@ function extractPython(tree: Tree): FileFacts {
       case "call": {
         const fn = node.childForFieldName("function");
         if (fn?.type === "identifier") ctx.addCall(fn, { kind: "none" });
+        else if (fn?.type === "subscript") ctx.addDynamicCall(fn);
         else if (fn?.type === "attribute") {
           const attr = fn.childForFieldName("attribute");
           const object = fn.childForFieldName("object");

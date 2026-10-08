@@ -6,7 +6,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { FileFacts } from "./types.js";
 
-function readOpen(fd: number, maxBytes: number): string | null {
+function readOpen(fd: number, maxBytes: number): Buffer | null {
   const st = fstatSync(fd);
   if (!st.isFile() || st.size > maxBytes) return null;
   const buf = Buffer.alloc(st.size);
@@ -16,11 +16,15 @@ function readOpen(fd: number, maxBytes: number): string | null {
     if (n === 0) break;
     off += n;
   }
-  return buf.subarray(0, off).toString("utf8");
+  return buf.subarray(0, off);
 }
 
 // A regular file at `abs`, opened without following a link; null otherwise.
 export function readNoFollow(abs: string, maxBytes: number): string | null {
+  return readBytesNoFollow(abs, maxBytes)?.toString("utf8") ?? null;
+}
+
+export function readBytesNoFollow(abs: string, maxBytes: number): Buffer | null {
   let fd: number;
   try {
     // Non-blocking, so a named pipe here cannot hold the open; readOpen then
@@ -63,10 +67,14 @@ export class RepoReader {
   }
 
   read(rel: string, maxBytes: number): string | null {
+    return this.readBytes(rel, maxBytes)?.toString("utf8") ?? null;
+  }
+
+  readBytes(rel: string, maxBytes: number): Buffer | null {
     if (isAbsolute(rel) || rel.split("/").some((p) => p === ".." || p === "")) return null;
     const cut = rel.lastIndexOf("/");
     if (!this.dirOk(cut === -1 ? "" : rel.slice(0, cut))) return null;
-    return readNoFollow(join(this.root, rel), maxBytes);
+    return readBytesNoFollow(join(this.root, rel), maxBytes);
   }
 }
 
@@ -182,7 +190,8 @@ function isDef(v: unknown, imports: number): boolean {
     Object.keys(v.fields).length <= 4096 &&
     Object.values(v.fields).every(isType) &&
     (v.results === undefined || isList(v.results, (r) => r === null || isType(r), 64)) &&
-    optBool(v.static)
+    optBool(v.static) &&
+    (v.bodyHash === undefined || (typeof v.bodyHash === "string" && /^[0-9a-f]{16}$/.test(v.bodyHash)))
   );
 }
 
@@ -202,6 +211,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
     optBool(c.implicit) &&
     optBool(c.shadowed) &&
     optBool(c.static) &&
+    optBool(c.dynamic) &&
     (c.local === undefined || (isInt(c.local) && (c.local as number) >= 0 && (c.local as number) < defs)) &&
     optBound(c.bound, imports);
   const isImport = (i: unknown) =>
@@ -220,7 +230,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
   return (
     isList(v.calls, isCall) &&
     isList(v.imports, isImport, 20_000) &&
-    isList(v.exportsLocal, (e) => isObj(e) && isStr(e.local) && isStr(e.exported), 20_000) &&
+    isList(v.exportsLocal, (e) => isObj(e) && isStr(e.local) && isStr(e.exported) && (e.line === undefined || isInt(e.line)), 20_000) &&
     (v.defaultExport === null || isStr(v.defaultExport)) &&
     (v.goPackage === null || isStr(v.goPackage))
   );

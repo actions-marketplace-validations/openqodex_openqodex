@@ -1,6 +1,8 @@
 // The code graph's own types. What the brief and the report see is
 // ImpactSummary in @openqodex/core; these are the pieces it is built from.
-import type { ImpactKind, ImpactSite, ImpactSymbol } from "@openqodex/core";
+import type { ImpactExportChange, ImpactKind, ImpactSite, ImpactSymbol } from "@openqodex/core";
+import type { ProjectModel } from "./discovery/projects.js";
+import type { Cause, Cut, Shape, Tier } from "./model/records.js";
 
 export type Lang = "typescript" | "tsx" | "javascript" | "python" | "go" | "ruby";
 // Calls bind only inside one family: a TypeScript file never calls Python.
@@ -36,6 +38,9 @@ export type DefFact = {
   fields: Record<string, TypeRef>; // classes and structs: field name to its declared or constructed type
   results?: (TypeRef | null)[]; // functions and methods: the declared result types
   static?: boolean; // methods called on the class itself: JS `static`, Ruby `def self.x`
+  // A hash of the definition without its name, comments and whitespace
+  // (top-level definitions and members of top-level classes only).
+  bodyHash?: string;
 };
 
 // A name bound by an import made inside a function or a block, in that
@@ -70,6 +75,8 @@ export type CallFact = {
   bound?: BoundImport; // a bare call to a name a scoped import binds
 
   static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
+  // A computed callee (`table[key]()`): no name to bind. `name` is empty.
+  dynamic?: boolean;
 };
 
 export type ImportFact = {
@@ -93,14 +100,14 @@ export type FileFacts = {
   defs: DefFact[];
   calls: CallFact[];
   imports: ImportFact[];
-  exportsLocal: { local: string; exported: string }[]; // `export { a as b }` without a source
+  exportsLocal: { local: string; exported: string; line?: number }[]; // `export { a as b }` without a source
   defaultExport: string | null; // the local name `export default` names
   goPackage: string | null;
 };
 
 // ---------- the graph ----------
 
-export type GraphNode = ImpactSymbol & { exported: boolean; lang: Lang | null };
+export type GraphNode = ImpactSymbol & { exported: boolean; lang: Lang | null; bodyHash?: string };
 
 export type GraphSite = ImpactSite;
 
@@ -108,7 +115,7 @@ export type GraphEdge = {
   from: string;
   to: string;
   kind: "calls" | "inherits" | "imports";
-  confidence: "high" | "low"; // high when any site is high
+  tier: Tier; // the strongest tier among its sites
   sites: GraphSite[];
 };
 
@@ -117,21 +124,48 @@ export type GraphEdge = {
 // callers are found here.
 export type Miss = { target: string; name: string; from: string; site: GraphSite };
 
+// A call site no rule could bind, kept small: the full Unknown record of
+// model/records.ts is made from it when an answer shows it. `scope`
+// "project": the call goes through a value (a parameter, a computed
+// member), so it could reach any function of its project.
+export type UnknownSite = {
+  file: string;
+  line: number;
+  column: number;
+  name: string; // "" for a computed callee
+  cause: Cause;
+  shape: Shape;
+  caller: string; // symbol id, or the file for top-level code
+  scope: "file" | "project";
+  note?: string;
+  candidates?: string[];
+};
+
+// An eligible file the graph did not read, and why.
+export type NotRead = { file: string; reason: "size" | "budget" | "parse-cap" | "memory" | "parse-error" | "unreadable" };
+
 export type GraphStatus = {
   status: "ok" | "partial";
   reason: string | null;
   reasons: string[];
-  filesParsed: number; // facts read from a parse or the cache
-  filesSkipped: number; // eligible but left out (size, budget, file cap)
+  filesParsed: number; // files in the graph: facts from a parse or the cache
+  filesSkipped: number; // eligible but left out (size, budget, parse cap, memory)
   durationMs: number;
   eligibleFiles: number;
   cacheHits: number;
   parses: number; // files actually parsed this build (cache misses)
-  unresolvedSites: number;
+  unresolvedSites: number; // call sites in the repository no rule bound
+  externalSites: number; // calls into declared dependencies and standard libraries
+  mode: "fresh" | "retained";
+  generation: string | null; // the build id the store published, null when not saved
+  predictedMs: number | null;
+  stages: Record<string, number>;
+  cuts: Cut[];
+  notRead: NotRead[];
 };
 
 export type Graph = {
-  repoRoot: string;
+  repoRoot: string; // the folder the files were read from
   nodes: Map<string, GraphNode>;
   edges: GraphEdge[];
   in: Map<string, GraphEdge[]>;
@@ -140,6 +174,14 @@ export type Graph = {
   defsByFile: Map<string, GraphNode[]>; // current symbols per file
   removed: Map<string, GraphNode[]>; // per changed file: symbols in the base version and gone now; `movedTo` on a move the build found
   misses: Miss[];
+  unknowns: UnknownSite[];
+  // In-repo unbound call sites per called name, and value calls per project
+  // folder: what makes a caller count a floor.
+  unknownNames: Map<string, number>;
+  valueCalls: Map<string, number>;
+  model: ProjectModel;
+  projectOf(file: string): string;
+  exportChanges: ImpactExportChange[]; // set when the build compared a base
   status: GraphStatus;
 };
 
