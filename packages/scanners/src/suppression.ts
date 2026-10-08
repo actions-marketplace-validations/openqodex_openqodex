@@ -27,6 +27,10 @@ type Marker = {
   // Only a comment that starts before the end of the line holding the Go
   // package clause: golangci-lint reads no comment after it for this marker.
   header?: true;
+  // The unit this marker is read in when it differs from its scanner's
+  // family: Checkov reads its skip comment in Terraform and its skip
+  // annotation as YAML.
+  family?: Unit;
 };
 
 // "line": the scanner obeys the marker anywhere on the line, in a comment,
@@ -166,8 +170,8 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
   for (const scanner of scanners) {
     const entry = SUPPRESSION_MARKERS[scanner];
     if (entry === undefined) continue;
-    for (const unit of unitsOf(entry.family)) {
-      for (const marker of entry.markers) {
+    for (const marker of entry.markers) {
+      for (const unit of unitsOf(marker.family ?? entry.family)) {
         if (marker.ownLine && text.slice(starts[lineOf(unit.start) - 1], unit.start).trim() !== "") continue;
         if (marker.header && pastHeader(unit)) continue;
         for (const m of unit.text.matchAll(marker.pattern)) {
