@@ -275,7 +275,13 @@ export async function buildGraphRun(p: PipelineResult, flags: GlobalFlags, noGra
   let lease: Lease | null = null;
   if (persist && graph.status.generation) {
     const { store } = await graphStore(p, persist);
-    lease = (await store?.lease({ id: graph.status.generation }, "review"))?.lease ?? null;
+    try {
+      lease = (await store?.lease({ id: graph.status.generation }, "review"))?.lease ?? null;
+    } catch (error) {
+      // The graph is in memory already; without the lease another process
+      // may collect the kept build meanwhile, which this review never reads.
+      warn(`openqodex: the code graph's build is not held for this review: ${((error as Error).message ?? String(error)).split("\n")[0]}`);
+    }
   }
   return { impact: redactStored(detectImpact(graph, p.change), p.secrets), graph, lease };
 }
