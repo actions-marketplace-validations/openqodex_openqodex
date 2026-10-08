@@ -11,8 +11,6 @@ import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { extname, join } from "node:path";
 import { safeGit } from "@openqodex/core";
-import { isModelInput } from "../discovery/inputs.js";
-import { LOCKFILE_BYTES } from "../discovery/manifests.js";
 import type { RepoReader } from "../safe-fs.js";
 import type { Lang } from "../types.js";
 
@@ -70,10 +68,6 @@ export type Inventory = {
   tooBig: string[]; // eligible files over the size cap
   unreadable: string[]; // eligible files that vanished or are not regular files
   readFromDisk: number; // files read here to hash them
-  // The files the project model may read (discovery/inputs.ts), each with
-  // its content id: git's blob id, or "unread" when it cannot be read
-  // within the lockfile cap. Sorted by path.
-  inputs: { path: string; id: string }[];
 };
 
 const split = (out: Buffer) => out.toString("utf8").split("\0").filter(Boolean);
@@ -98,14 +92,8 @@ export async function takeInventory(root: string, reader: RepoReader, opts: { ma
     if (!indexed.has(path) && mode && id) indexed.set(path, { mode, id });
   }
   const all = [...new Set([...indexed.keys(), ...split(others.stdout)])].filter((p) => opts.only === undefined || opts.only.has(p));
-  const out: Inventory = { all, entries: [], tooBig: [], unreadable: [], readFromDisk: 0, inputs: [] };
+  const out: Inventory = { all, entries: [], tooBig: [], unreadable: [], readFromDisk: 0 };
   for (const path of all) {
-    if (isModelInput(path)) {
-      const entry = indexed.get(path);
-      // A clean tracked file is named by its index entry; any other is read.
-      const bytes = entry && !dirty.has(path) ? null : reader.readBytes(path, LOCKFILE_BYTES);
-      out.inputs.push({ path, id: entry && !dirty.has(path) ? entry.id : bytes === null ? "unread" : blobId(bytes) });
-    }
     const lang = langOf(path);
     if (lang === null) continue;
     const entry = indexed.get(path);
@@ -139,7 +127,6 @@ export async function takeInventory(root: string, reader: RepoReader, opts: { ma
     out.readFromDisk++;
     out.entries.push({ path, lang, blob: blobId(bytes), bytes: bytes.length });
   }
-  out.inputs.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return out;
 }
 

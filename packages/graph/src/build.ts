@@ -27,6 +27,7 @@ import { exportChanges } from "./changes/exports.js";
 import type { ChangedFile } from "./changes/exports.js";
 import { goModule, LOCKFILE_BYTES, MANIFEST_BYTES } from "./discovery/manifests.js";
 import { discoverProjects } from "./discovery/projects.js";
+import { traceReads } from "./discovery/trace.js";
 import type { ProjectModel } from "./discovery/projects.js";
 import { EXTRACTOR_VERSION, extract } from "./extract.js";
 import { MODEL_VERSION } from "./model/records.js";
@@ -192,6 +193,14 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const order = [...inv.entries.filter((e) => firstSet.has(e.path)), ...inv.entries.filter((e) => !firstSet.has(e.path))];
   stage("inventory");
 
+  // ---------- projects ----------
+  // Read first, and traced: what the model read and looked for is part of
+  // what a kept index is matched by.
+  const traced = traceReads(reader);
+  const model = discoverProjects(inv.all, traced.reader, traced.look);
+  const goModules = readGoModules(traced.reader, inv.all);
+  stage("projects");
+
   // ---------- the mode ----------
   const meta = store ? asPredictMeta(store.readMeta()?.predict ?? null) : null;
   const cached = store ? order.reduce((n, e) => n + Number(store.hasFacts(factsKey(e.lang, e.blob))), 0) : 0;
@@ -200,16 +209,16 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const config = { budgetMs, maxFiles, maxFileBytes, maxHeapMb: Math.round(maxHeap / 1024 / 1024) };
   const versions = { model: MODEL_VERSION, extractor: EXTRACTOR_VERSION, resolver: RESOLVER_VERSION, policy: POLICY_VERSION };
   // What a kept index was resolved from, besides the source files: the
-  // graph's versions and index format, the files the project model reads
-  // (tsconfig chains, manifests and their exports, workspace files,
-  // lockfiles), the files left out and why, and the size cap that decides
-  // which are left out. The same digest means the same graph.
+  // graph's versions and index format, every file the project model read
+  // or looked for (tsconfig chains, manifests, workspace files, lockfiles,
+  // go.mod files), the files left out and why, and the size cap that
+  // decides which are left out. The same digest means the same graph.
   const digest = inventoryDigest(inv.entries, {
     versions,
     index: INDEX_FORMAT,
     only: args.only ?? null,
     maxFileBytes,
-    inputs: inv.inputs,
+    projects: traced.entries(),
     tooBig: [...inv.tooBig].sort(),
     unreadable: [...inv.unreadable].sort(),
   });
@@ -340,8 +349,6 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     stage("base");
 
     // ---------- projects and resolution ----------
-    const model = discoverProjects(inv.all, reader);
-    const goModules = readGoModules(reader, inv.all);
     const projectOf = (file: string) => projectFolder(model, goModules, file);
     const world = createWorld({ files: inputs, known, model, goModules, stop: overBudget });
     const resolved = world.resolveAll();

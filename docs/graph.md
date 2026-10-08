@@ -43,7 +43,7 @@ A step through inheritance is part of the proof: a method found on a base class 
 | `Gemfile` | nothing: requires of the gems it names read as misses | the build stays complete |
 | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock` | nothing: a binding through it is only less sure | the build stays complete |
 
-  A kept index is matched by the content of each of these files, so it is never reused once one of them changes.
+  A kept index is matched by every file the graph read or looked for while it worked out the projects, whatever its name (a tsconfig may extend `./configs/base`, with no extension), with its content, and by whether each file it looked for was there. It is never reused once one of them changes, appears or goes.
 
 ## What it cannot see
 

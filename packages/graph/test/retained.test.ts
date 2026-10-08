@@ -12,6 +12,12 @@
 //    old index, whose floors do not name it.
 // 6. Nothing changed at all, and the index is not loaded (the checks above
 //    would then pass for the wrong reason).
+// 7. A tsconfig extends a config with no extension (`./configs/base`),
+//    which TypeScript reads as written; a change to it loads the old index,
+//    because only names a filter knows count.
+// 8. A file the model looked for and did not find (`./configs/base` as
+//    written, while `configs/base.json` answered) appears and now wins, and
+//    the old index is loaded, because only files that were read count.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { buildGraph, openStore } from "../src/index.js";
@@ -118,5 +124,32 @@ describe("the retained index", () => {
     const second = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(loadedIndex(second)).toBe(true);
     expect(callSites(second, symbol(second, "lib/x.ts", "f"))).toEqual(callSites(first, symbol(first, "lib/x.ts", "f")));
+  });
+
+  it("is not loaded after an extensionless config a tsconfig extends changes (7)", async () => {
+    const base = (to: string) => `{ "compilerOptions": { "baseUrl": "..", "paths": { "@lib/*": ["${to}/*"] } } }\n`;
+    const root = makeRepo({ ...aliasFiles, "tsconfig.json": '{ "extends": "./configs/base" }\n', "configs/base": base("lib") });
+    repos.push(root);
+    const st = await storeOf(root);
+    const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    expect(callSites(first, symbol(first, "lib/x.ts", "f"))).toEqual(["src/use.ts:3"]);
+    writeFiles(root, { "configs/base": base("other") });
+    const second = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    expect(loadedIndex(second)).toBe(false);
+    expect(callSites(second, symbol(second, "other/x.ts", "f"))).toEqual(["src/use.ts:3"]);
+  });
+
+  it("is not loaded after a config the model looked for and did not find appears (8)", async () => {
+    const base = (to: string) => `{ "compilerOptions": { "baseUrl": "..", "paths": { "@lib/*": ["${to}/*"] } } }\n`;
+    const root = makeRepo({ ...aliasFiles, "tsconfig.json": '{ "extends": "./configs/base" }\n', "configs/base.json": base("lib") });
+    repos.push(root);
+    const st = await storeOf(root);
+    const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    expect(callSites(first, symbol(first, "lib/x.ts", "f"))).toEqual(["src/use.ts:3"]);
+    // TypeScript reads `./configs/base` as written before it adds .json.
+    writeFiles(root, { "configs/base": base("other") });
+    const second = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    expect(loadedIndex(second)).toBe(false);
+    expect(callSites(second, symbol(second, "other/x.ts", "f"))).toEqual(["src/use.ts:3"]);
   });
 });

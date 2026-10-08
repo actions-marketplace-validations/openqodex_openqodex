@@ -202,7 +202,7 @@ const TS_CHAIN = 5; // configs one tsconfig and its relative `extends` may read
 // What could not be read, parsed or followed is passed to `fail` as a
 // clause about `file` ("is not valid JSON"); what was read is kept. Null
 // only when `file` itself is not there.
-function readTsconfig(reader: RepoReader, file: string, known: ReadonlySet<string>, fail: (clause: string) => void): TsConfig | null {
+function readTsconfig(reader: RepoReader, file: string, known: { has(path: string): boolean }, fail: (clause: string) => void): TsConfig | null {
   const dir = dirOf(file);
   const out: TsConfig = {
     file,
@@ -340,8 +340,17 @@ function npmLock(text: string): Map<string, Linkage> | string {
 
 // Builds the model from every path git lists (`all`) and the reader of
 // the tree they are in.
-export function discoverProjects(all: readonly string[], reader: RepoReader): ProjectModel {
-  const known = new Set(all);
+// `look`, when given, hears of every path the model looks for in git's
+// list, found or not (the index digest records them; discovery/trace.ts).
+export function discoverProjects(all: readonly string[], reader: RepoReader, look?: (path: string, found: boolean) => void): ProjectModel {
+  const listed = new Set(all);
+  const known = {
+    has(path: string): boolean {
+      const found = listed.has(path);
+      look?.(path, found);
+      return found;
+    },
+  };
   const unreadable: MetadataGap[] = [];
   // A file the model needs that is over its cap (never read at all),
   // unreadable, not valid or cannot be followed is kept as a gap: what
