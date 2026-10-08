@@ -11,6 +11,6 @@ export type { GraphStore, GenerationManifest, Lease, OpenGeneration } from "./st
 export { DEFAULT_MAX_CACHE_MB } from "./store/types.js";
 export { FIVE_SECONDS_MS, DEFAULT_RATES } from "./runtime/predict.js";
 export { query, OPERATIONS, resolveTarget, edgeId } from "./query/engine.js";
-export type { Answer, Candidate, Item, Operation, Request, Session, Target } from "./query/engine.js";
+export type { Answer, Candidate, ChangesExtra, ErrorCode, Extra, Item, Operation, Request, Session, Target } from "./query/engine.js";
 export { graphOf } from "./session.js";
 export { writePacket, PACKET_DIR, PACKET_ROOT, PacketCollision, PacketLeak } from "./review/packet.js";
