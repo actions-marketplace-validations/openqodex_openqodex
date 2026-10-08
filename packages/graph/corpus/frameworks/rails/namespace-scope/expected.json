@@ -64,7 +64,7 @@
       }
     ],
     "brief": [
-      "| `GET /admin/users/:id` | `admin_user` | `config/routes.rb:3` | `admin/users#show` | handles `Admin::UsersController.show` (likely: Found by the controller path convention"
+      "| `GET /admin/users/:id` | `admin_user` | `config/routes.rb:3` | `admin/users#show` | handles `Admin::UsersController.show` (likely: found by the controller path convention"
     ]
   }
 }

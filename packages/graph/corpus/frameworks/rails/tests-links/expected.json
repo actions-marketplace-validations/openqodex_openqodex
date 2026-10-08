@@ -82,8 +82,8 @@
       }
     ],
     "brief": [
-      "| `posts_spec.rb` | `spec/requests/posts_spec.rb:9` | requests through route `GET /posts/:id` | `PostsController.show` | likely: The test requests a literal path that matches this route",
-      "| `PostsControllerTest` | `test/controllers/posts_controller_test.rb:3` | requests through route `GET /posts/:id` | `PostsController.show` | likely: A controller test calls show of PostsController by name",
+      "| `posts_spec.rb` | `spec/requests/posts_spec.rb:9` | requests through route `GET /posts/:id` | `PostsController.show` | likely: the test requests a literal path that matches this route",
+      "| `PostsControllerTest` | `test/controllers/posts_controller_test.rb:3` | requests through route `GET /posts/:id` | `PostsController.show` | likely: a controller test calls show of PostsController by name",
       "| `posts_controller_spec.rb` | `spec/controllers/posts_controller_spec.rb:3` | names the class of | `PostsController.show` | possible:",
       "(static links, not coverage)"
     ],

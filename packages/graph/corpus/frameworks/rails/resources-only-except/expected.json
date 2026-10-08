@@ -136,7 +136,7 @@
       }
     ],
     "brief": [
-      "| `POST /articles/:id/publish` | `publish_article` | `config/routes.rb:5` | `articles#publish` | handles `ArticlesController.publish` (likely: Found by the controller path convention"
+      "| `POST /articles/:id/publish` | `publish_article` | `config/routes.rb:5` | `articles#publish` | handles `ArticlesController.publish` (likely: found by the controller path convention"
     ]
   }
 }

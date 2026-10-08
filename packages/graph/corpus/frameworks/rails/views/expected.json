@@ -67,7 +67,7 @@
       }
     ],
     "brief": [
-      "| `PostsController.show` | `app/views/posts/detail.html.erb` | likely: The view is found by the app/views folder convention",
+      "| `PostsController.show` | `app/views/posts/detail.html.erb` | likely: the view is found by the app/views folder convention",
       "| `app/views/posts/detail.html.erb` | `PostsController.show` | `app/controllers/posts_controller.rb:"
     ]
   }

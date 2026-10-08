@@ -16,8 +16,11 @@ import type { FrameworkEdgeKind, Site } from "../plugin.js";
 import type { Lit, RailsFact, RouteFact } from "./facts.js";
 import { pluralize, singularize, underscore } from "./inflect.js";
 import type { App, RailsWorld } from "./world.js";
+import { relTo, under } from "./world.js";
 
 export const MAX_REGISTRATIONS = 10_000;
+// How many route files deep `draw(:name)` is followed.
+export const MAX_DRAW_DEPTH = 8;
 
 // A count of work units; when it runs out the step that drew on it stops
 // and says so once.
@@ -75,7 +78,8 @@ type Scope = {
   path: string;
   module: string | null;
   as: string | null;
-  controller: string | null;
+  controller: string | null; // as written, before the module is applied
+  action: string | null; // a scope's or defaults' action, for every route inside
   shallowPath: string;
   shallowPrefix: string | null;
   shallow: boolean;
@@ -130,6 +134,19 @@ const text = (l: Lit | undefined): string | null => (l && (l.t === "str" || l.t 
 // A value the plugin cannot read: computed, a constant or a call.
 const isDyn = (l: Lit | undefined) => l !== undefined && (l.t === "dyn" || l.t === "const" || l.t === "call");
 const listOf = (l: Lit | undefined): string[] | null => (l === undefined ? null : l.t === "list" ? l.v : l.t === "str" || l.t === "sym" ? [l.v] : null);
+// A key of a `defaults:` hash: `defaults: { controller: "pages" }`.
+const fromHash = (l: Lit | undefined, key: string): string | null => (l?.t === "hash" ? text(l.v[key]) : null);
+
+// Whether a file is a route table of the application: its config/routes.rb
+// or a file under its config/routes/. A draw block anywhere else (a test
+// that redraws the routes in its setup) is not the application's routes.
+function isRouteTable(app: App | null, file: string): boolean {
+  if (app) {
+    const rel = relTo(app.root, file);
+    return rel !== null && (rel === "config/routes.rb" || rel.startsWith("config/routes/"));
+  }
+  return file === "config/routes.rb" || file.endsWith("/config/routes.rb") || file.startsWith("config/routes/") || file.includes("/config/routes/");
+}
 
 export type Expansion = { drafts: Draft[]; gaps: RouteGap[]; tables: { file: string; site: Site; app: App }[] };
 
@@ -157,35 +174,52 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
   const used = new Map<string, Set<string>>(); // app to the route names taken
   let budgetGap = false;
 
-  for (const file of world.index.factFiles()) {
+  // The route calls of a file by draw block and parent, built once per file
+  // that is read as a route table; its depth caps are named as gaps then.
+  type FileCtx = { file: string; childrenOf: Map<string, RouteFact[]>; indexOf: Map<RouteFact, number> };
+  const contexts = new Map<string, FileCtx>();
+  const fileCtx = (file: string): FileCtx => {
+    const kept = contexts.get(file);
+    if (kept) return kept;
     const facts = world.facts(file);
-    const draws = facts.filter((f) => f.kind === "draw");
-    if (draws.length === 0) continue;
+    const ctx: FileCtx = { file, childrenOf: new Map(), indexOf: new Map() };
     const routes = facts.filter((f): f is RouteFact => f.kind === "route");
+    routes.forEach((r, i) => {
+      ctx.indexOf.set(r, i);
+      // A parent index that does not point back is a damaged cache: the fact is left out.
+      if (r.parent >= i) return;
+      const k = `${r.draw}:${r.parent}`;
+      (ctx.childrenOf.get(k) ?? ctx.childrenOf.set(k, []).get(k))?.push(r);
+    });
     for (const cap of facts) {
       if (cap.kind !== "route-cap") continue;
       out.gaps.push({ site: { file, line: cap.line, column: cap.column }, scope: { file }, cause: "fan-out-capped", affects: ["handles"], name: null, note: "route blocks nested deeper than eight levels are not read" });
     }
-    // The route calls of every draw block by their parent, built once per file.
-    const childrenOf = new Map<string, RouteFact[]>();
-    const indexOf = new Map<RouteFact, number>();
-    routes.forEach((r, i) => {
-      indexOf.set(r, i);
-      // A parent index that does not point back is a damaged cache: the fact is left out.
-      if (r.parent >= i) return;
-      const k = `${r.draw}:${r.parent}`;
-      (childrenOf.get(k) ?? childrenOf.set(k, []).get(k))?.push(r);
-    });
+    contexts.set(file, ctx);
+    return ctx;
+  };
+
+  for (const file of world.index.factFiles()) {
+    const draws = world.facts(file).filter((f) => f.kind === "draw");
+    if (draws.length === 0) continue;
+    let refused = false;
     draws.forEach((d, drawIndex) => {
       if (d.kind !== "draw") return;
       const app = drawApp(world, d.receiver, file);
+      if (!isRouteTable(app, file)) {
+        if (!refused) out.gaps.push({ site: { file, line: d.line, column: d.column }, scope: { file }, cause: "unsupported-rule", affects: ["handles"], name: null, note: "a routes draw block outside config/routes.rb and config/routes/ is not read as the application's routes" });
+        refused = true;
+        return;
+      }
       if (app) out.tables.push({ file, site: { file, line: d.line, column: d.column }, app });
       const key = app?.id ?? "-";
       if (!used.has(key)) used.set(key, new Set());
       const taken = used.get(key) as Set<string>;
-      const children = { get: (parent: number) => childrenOf.get(`${drawIndex}:${parent}`) };
-      const site = (f: RailsFact): Site => ({ file, line: f.line, column: f.column });
-      const gap = (f: RailsFact, cause: Cause, note: string, name: string | null = null, affects: FrameworkEdgeKind[] = ["handles"]) => out.gaps.push({ site: site(f), scope: { file }, cause, affects, name, note });
+      // The file being walked: the draw block's own, or a file it draws.
+      let cur = { ctx: fileCtx(file), draw: drawIndex, depth: 0 };
+      const children = { get: (parent: number) => cur.ctx.childrenOf.get(`${cur.draw}:${parent}`) };
+      const site = (f: RailsFact): Site => ({ file: cur.ctx.file, line: f.line, column: f.column });
+      const gap = (f: RailsFact, cause: Cause, note: string, name: string | null = null, affects: FrameworkEdgeKind[] = ["handles"]) => out.gaps.push({ site: site(f), scope: { file: cur.ctx.file }, cause, affects, name, note });
 
       let ordinal = 0;
       const emit = (f: RouteFact, d: Omit<Draft, "app" | "file" | "site" | "ordinal">): void => {
@@ -201,7 +235,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
           return;
         }
         counts.set(key, n + 1);
-        out.drafts.push({ app, file, site: site(f), ordinal: ordinal++, ...d });
+        out.drafts.push({ app, file: cur.ctx.file, site: site(f), ordinal: ordinal++, ...d });
       };
       // A name Rails would give the route: an explicit `as:` always; a
       // derived one only when it is valid and not taken.
@@ -221,7 +255,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
         for (const f of list ?? []) {
           if (budget.spent) return;
           ordinal = 0;
-          const kids = children.get(indexOf.get(f) as number);
+          const kids = children.get(cur.ctx.indexOf.get(f) as number);
           call(f, S, kids);
         }
       };
@@ -241,7 +275,6 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               path: joinPath(S.path, nsPath),
               module: nsModule ? joinModule(S.module, nsModule) : S.module,
               as: joinName(S.as, nsAs),
-              controller: null,
               shallowPath: joinPath(S.shallowPath, text(o.shallow_path) ?? nsPath),
               shallowPrefix: joinName(S.shallowPrefix, text(o.shallow_prefix) ?? nsAs),
               level: "default",
@@ -263,7 +296,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               if (t === null) dyn = "the scope path is computed";
               else path = `${path}/${t}`;
             }
-            if (isDyn(o.module) || isDyn(o.as) || isDyn(o.controller)) dyn = dyn ?? "a scope option is computed";
+            if (isDyn(o.module) || isDyn(o.as) || isDyn(o.controller) || isDyn(o.action)) dyn = dyn ?? "a scope option is computed";
             if (dyn) gap(f, "dynamic", `a computed scope: ${dyn}`);
             const mod = text(o.module);
             walk(kids, {
@@ -271,7 +304,8 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               path: joinPath(S.path, path),
               module: mod ? joinModule(S.module, mod) : S.module,
               as: joinName(S.as, text(o.as)),
-              controller: text(o.controller) ?? S.controller,
+              controller: text(o.controller) ?? fromHash(o.defaults, "controller") ?? S.controller,
+              action: text(o.action) ?? fromHash(o.defaults, "action") ?? S.action,
               shallowPath: text(o.shallow_path) ? joinPath(S.shallowPath, text(o.shallow_path) as string) : S.shallowPath,
               shallowPrefix: joinName(S.shallowPrefix, text(o.shallow_prefix)),
               shallow: o.shallow?.t === "bool" ? o.shallow.v : S.shallow,
@@ -309,8 +343,16 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               verb(f, S);
               return;
             }
+            if (f.call === "defaults") {
+              walk(kids, { ...S, controller: text(o.controller) ?? S.controller, action: text(o.action) ?? S.action });
+              return;
+            }
             if (TRANSPARENT.has(f.call)) {
               walk(kids, S);
+              return;
+            }
+            if (f.call === "draw") {
+              drawFile(f, S);
               return;
             }
             if (HELPER_ONLY.has(f.call)) return;
@@ -419,8 +461,10 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
           return { kind: "dynamic", note: "the route target is computed" };
         }
         if (isDyn(o.controller) || isDyn(o.action)) return { kind: "dynamic", note: "the route's controller or action is computed" };
-        const c = text(o.controller);
-        const a = text(o.action) ?? defaultAction;
+        // The route's own options win, then its `defaults:`, then the
+        // enclosing blocks, innermost first; the path names the action last.
+        const c = text(o.controller) ?? fromHash(o.defaults, "controller");
+        const a = text(o.action) ?? fromHash(o.defaults, "action") ?? S.action ?? defaultAction;
         let controller: string | null = null;
         if (c !== null) controller = qualify(c);
         else if (res && level !== "default") controller = res.controller;
@@ -498,6 +542,34 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
         });
       };
 
+      // `draw(:admin)`: Rails reads config/routes/admin.rb in the scope of the
+      // call; its route calls are at the top of that file.
+      const drawFile = (f: RouteFact, S: Scope): void => {
+        const name = text(f.args[0]);
+        if (name === null || !isWordPath(name) || name.startsWith("/")) {
+          gap(f, "dynamic", "a draw of a computed routes file");
+          return;
+        }
+        if (!app) {
+          gap(f, "unsupported-rule", `draw(:${name}) in routes no detected application owns is not followed`, name);
+          return;
+        }
+        const target = under(app.root, `config/routes/${name}.rb`);
+        if (!world.paths.has(target)) {
+          gap(f, "miss", `draw(:${name}) names ${target}, which does not exist`, name);
+          return;
+        }
+        if (cur.depth >= MAX_DRAW_DEPTH) {
+          gap(f, "fan-out-capped", `route files drawn more than ${MAX_DRAW_DEPTH} deep are not read`, name);
+          return;
+        }
+        const saved = cur;
+        cur = { ctx: fileCtx(target), draw: -1, depth: saved.depth + 1 };
+        out.tables.push({ file: target, site: { file: saved.ctx.file, line: f.line, column: f.column }, app });
+        walk(children.get(-1), S);
+        cur = saved;
+      };
+
       const mount = (f: RouteFact, S: Scope): void => {
         const o = f.opts;
         let target: string | null = null;
@@ -534,6 +606,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
         module: app?.kind === "engine" && app.isolate ? underscore(app.isolate) : null,
         as: null,
         controller: null,
+        action: null,
         shallowPath: "/",
         shallowPrefix: null,
         shallow: false,

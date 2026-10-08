@@ -29,14 +29,17 @@ export type Lit =
   | { t: "bool"; v: boolean }
   | { t: "nil" }
   | { t: "call"; v: string } // a bare method call: `redirect("/x")`
+  | { t: "hash"; v: Record<string, Lit> } // a hash literal with symbol keys, one level deep: `{ controller: "pages" }`
   | { t: "dyn" }; // anything else: computed
 
 // A `<receiver>.routes.draw do ... end` block.
 export type DrawFact = FrameworkFactBase & { kind: "draw"; receiver: string; endLine: number };
 
 // One call in a draw block. `draw` is the ordinal of the draw block in the
-// file, `parent` the index of the enclosing route call among the file's
-// route facts (-1 directly in the draw block). `opts` holds the symbol-keyed
+// file, or -1 for a route call at the top of a file (what a file under
+// config/routes/ holds, read only when a route file draws it with
+// `draw(:name)`); `parent` the index of the enclosing route call among the
+// file's route facts (-1 directly in the draw block or at the top). `opts` holds the symbol-keyed
 // options (`to:`, `only:`, `as:`); `pair` the first pair whose key is not a
 // symbol (`"status" => "health#show"`, `Blog::Engine => "/blog"`).
 export type RouteFact = FrameworkFactBase & {
@@ -183,8 +186,11 @@ export function helperName(id: string): string | null {
   }
   return id.slice(0, -cut);
 }
-// Where a route call is a statement of its block.
-const ROUTE_PARENTS = new Set(["body_statement", "block_body", "then", "else", "if_modifier", "unless_modifier", "begin"]);
+// Where a route call is a statement of its block (or of the file, for a
+// file a route file draws).
+const ROUTE_PARENTS = new Set(["program", "body_statement", "block_body", "then", "else", "if_modifier", "unless_modifier", "begin"]);
+// The route calls read at the top of a file: Rails' mapper methods.
+const ROUTE_DSL = new Set(["get", "post", "put", "patch", "delete", "match", "root", "resources", "resource", "namespace", "scope", "controller", "constraints", "defaults", "member", "collection", "shallow", "mount", "concern", "concerns", "draw", "direct", "resolve"]);
 
 // The cheap text test: a Ruby file with none of these words has nothing a
 // Rails rule reads and is skipped before its tree is walked. Plain
@@ -209,9 +215,21 @@ function stringValue(n: Node): string | null {
   return out;
 }
 
-export function litOf(n: Node | null | undefined): Lit {
+export function litOf(n: Node | null | undefined, depth = 0): Lit {
   if (!n) return { t: "dyn" };
   switch (n.type) {
+    case "hash": {
+      if (depth > 0) return { t: "dyn" };
+      const v: Record<string, Lit> = {};
+      for (const p of n.namedChildren) {
+        if (p.type !== "pair") return { t: "dyn" };
+        const k = p.childForFieldName("key");
+        const key = k?.type === "hash_key_symbol" ? k.text : k?.type === "simple_symbol" ? k.text.slice(1) : null;
+        if (key === null) return { t: "dyn" };
+        v[key] = litOf(p.childForFieldName("value"), depth + 1);
+      }
+      return { t: "hash", v };
+    }
     case "string": {
       const v = stringValue(n);
       return v === null ? { t: "dyn" } : { t: "str", v };
@@ -624,6 +642,15 @@ export function railsFacts(root: Node): RailsFact[] {
   const enter = (n: Node): false | (() => void) | void => {
     if (skip.has(n.id)) return false;
     switch (n.type) {
+      case "program": {
+        // Route calls at the top of the file: a route file may draw it.
+        for (const c of n.namedChildren) {
+          if (c.type !== "call" || c.childForFieldName("receiver")) continue;
+          const m = c.childForFieldName("method");
+          if (m && ROUTE_DSL.has(m.text)) walkRoutes(c, -1, -1, 0, 0);
+        }
+        return;
+      }
       case "class":
       case "module": {
         const nameNode = n.childForFieldName("name");
@@ -787,6 +814,8 @@ function isLit(v: unknown): v is Lit {
       return isStr(r.v);
     case "list":
       return isStrList(r.v);
+    case "hash":
+      return typeof r.v === "object" && r.v !== null && !Array.isArray(r.v) && Object.values(r.v).every((x) => isLit(x) && (x as Lit).t !== "hash");
     case "bool":
       return typeof r.v === "boolean";
     case "nil":

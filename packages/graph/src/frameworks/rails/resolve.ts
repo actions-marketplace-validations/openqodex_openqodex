@@ -47,16 +47,11 @@ const SIDEKIQ = new Set(["Sidekiq::Job", "Sidekiq::Worker"]);
 const CONTROLLER_TEST = new Set(["ActionController::TestCase"]);
 
 const strip = (n: string) => (n.startsWith("::") ? n.slice(2) : n);
-// A note as one sentence with a closing period, so notes the layer joins
-// read as separate sentences. A plain first word is capitalised; a first
-// word quoted from code (`has_one`, `posts#show`) is kept as written.
+// A note is one plain sentence that starts with a lower-case word (unless
+// it starts with a name) and has no closing period, like the rest of the graph.
 const sentence = (note: string) => {
   const t = note.trim();
-  const first = t.split(" ", 1)[0] ?? "";
-  let plain = first.length > 0;
-  for (const c of first) if (c < "a" || c > "z") plain = false;
-  const s = plain ? t.charAt(0).toUpperCase() + t.slice(1) : t;
-  return s.endsWith(".") ? s : `${s}.`;
+  return t.endsWith(".") ? t.slice(0, -1) : t;
 };
 const isTestBase = (base: string | null) => base !== null && (base.endsWith("TestCase") || base.endsWith("IntegrationTest") || strip(base) === "Minitest::Test");
 

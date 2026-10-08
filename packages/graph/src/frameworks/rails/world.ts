@@ -244,8 +244,8 @@ export class RailsWorld {
       }
       const base = cur.base;
       if (base === null || FRAMEWORK_BASES.has(strip(base))) {
-        const also = outside.length > 0 ? ` It also includes ${outside.join(", ")}, which is outside the repository.` : "";
-        return { status: "missing", note: `No ${name} method is defined in ${cls.name} or the classes it inherits from in the repository.${also}` };
+        const also = outside.length > 0 ? `; it also includes ${outside.join(", ")}, which is outside the repository` : "";
+        return { status: "missing", note: `${name} is not defined in ${cls.name} or the classes it inherits from in the repository${also}` };
       }
       const next = this.resolveConst(base, cur.def.owner ?? null, app);
       if (!next) return { status: "external", note: `${name} is not defined in ${cls.name}; its base ${strip(base)} is outside the repository and may define it.` };

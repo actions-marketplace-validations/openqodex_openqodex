@@ -164,9 +164,9 @@ describe("the Rails plugin on a small application", () => {
     const show = symbol(graph, SHOW, "show", "PostsController");
     const routes = layerOf(graph).routesReaching(show).routes.map((r) => [r.registration.methods.join("|"), r.registration.pattern, r.registration.name, r.hops, r.tier]);
     expect(routes).toEqual([["GET", "/posts/:id", "post", 0, "likely"]]);
-    expect(brief).toContain("| `GET /posts/:id` | `post` | `config/routes.rb:3` | `posts#show` | handles `PostsController.show` (likely: Found by the controller path convention");
-    expect(brief).toContain("| `PostsController.show` | `app/views/posts/show.html.erb` | likely: Rails renders app/views/posts/show when the action does not render another template. |");
-    expect(brief).toContain("| `posts_spec.rb` | `spec/requests/posts_spec.rb:5` | requests through route `GET /posts/:id` | `PostsController.show` | likely: The test requests a literal path that matches this route");
+    expect(brief).toContain("| `GET /posts/:id` | `post` | `config/routes.rb:3` | `posts#show` | handles `PostsController.show` (likely: found by the controller path convention");
+    expect(brief).toContain("| `PostsController.show` | `app/views/posts/show.html.erb` | likely: Rails renders app/views/posts/show when the action does not render another template |");
+    expect(brief).toContain("| `posts_spec.rb` | `spec/requests/posts_spec.rb:5` | requests through route `GET /posts/:id` | `PostsController.show` | likely: the test requests a literal path that matches this route");
     expect(brief).toContain("(static links, not coverage)");
     expect(brief).not.toMatch(/\bcover(s|age:)/);
   });
