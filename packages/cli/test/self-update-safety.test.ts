@@ -582,7 +582,8 @@ describe("16 and 17. what init writes into a repository", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(existsSync(join(s.repo, "CLAUDE.md"))).toBe(false);
     expect(r.stdout).toMatch(/CLAUDE\.md.*ignore/);
-    expect(r.stdout).toMatch(/Commit AGENTS\.md so/);
+    expect(r.stdout).toMatch(/Commit [^\n]*AGENTS\.md so/);
+    expect(r.stdout).not.toMatch(/Commit [^\n]*CLAUDE\.md/);
   });
 });
 

@@ -8,7 +8,7 @@
 // It ends with a review (init-review.ts) unless --no-review is given.
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, repoStat } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
 import { readText } from "../agents/files.js";
@@ -170,6 +170,9 @@ type Setup = {
   written: string[];
   // Each written path's text before init wrote it, null when it was not there.
   before: Map<string, string | null>;
+  // How the commands init prints start: the launcher by its full path, which
+  // works with nothing on PATH, or in project scope the pinned npx form.
+  runner: string;
 };
 
 function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
@@ -276,7 +279,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
   const recordBefore = serialize(record);
   const { targets, notes } = collectTargets(s);
   if (!s.flags.uninstall && s.agents.includes("cursor") && s.repoRoot !== null) {
-    notes.push("Cursor has no global instruction file: its rule in this repo carries the same section");
+    notes.push("Cursor has no global instruction file: its rule in this repo carries the review instructions");
   }
   const actions: Action[] = [];
   const runtimeActions = new Set<Action>();
@@ -367,7 +370,10 @@ async function runLocked(s: Setup): Promise<Outcome> {
   if (work.length === 0) {
     saveRecord(s.oqHome, record, recordBefore);
     out(s.flags.uninstall ? "Nothing to remove." : "Nothing to change: OpenQodex is already installed.");
-    if (!s.flags.uninstall) closingRepoLines(s, rootConfig);
+    if (!s.flags.uninstall) {
+      closingRepoLines(s, rootConfig);
+      out(`To undo: ${undoCommand(s)}`);
+    }
     return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: s.flags.uninstall ? "removed" : "unchanged" };
   }
   // One consent for the whole plan: --yes, else the answer in a terminal,
@@ -437,28 +443,55 @@ async function runLocked(s: Setup): Promise<Outcome> {
   }
 
   if (s.repoRoot !== null) await startScannerInstalls(s.repoRoot);
-  out(`OpenQodex is set up for ${s.agents.map((a) => AGENT_NAMES[a]).join(", ")}.`);
-  out('Say this to your agent: "review my change with openqodex". Each agent\'s instructions now say to run the review when a feature or fix is done.');
-  if (s.agents.includes("codex")) out("Codex: run /hooks once inside Codex and trust the new OpenQodex hook, or Codex will not run it.");
-  closingRepoLines(s, rootConfig);
-  const teamChanged = teamActions.filter((a) => a.apply && !failedPaths.has(a.path)).map((a) => relative(s.repoRoot!, a.path));
-  if (teamChanged.length > 0) {
-    out(`Changed ${teamChanged.join(" and ")}: a review section your teammates' agents follow before they push.`);
-    for (const line of commitLines(s.repoRoot!, teamChanged)) out(line);
+  out(`OpenQodex ${s.version} is installed for ${s.agents.map((a) => AGENT_NAMES[a]).join(", ")}.`);
+  // What was written, by whom it is for, as the plan grouped it.
+  const written = (list: Action[]): string[] => [...new Set(list.filter((a) => a.apply && !failedPaths.has(a.path)).map((a) => shown(s, a.path)))];
+  const forYou = written(mine);
+  if (forYou.length > 0) {
+    out("Written for you, on this machine only:");
+    for (const p of forYou) out(`  ${p}`);
+    if (s.repoRoot !== null && hookChoice === "pre-push") out("  Every push from this repo is now checked for a review through the git pre-push hook.");
+    out(`  To undo: ${undoCommand(s)}`);
   }
-  if (s.repoRoot !== null && hookChoice === "pre-push") out("Every push from this repo is now checked for a review through the git pre-push hook.");
-  out(`To undo: npx openqodex init --uninstall${s.flags.project ? " --project" : ""}`);
+  const forTeam = written(team);
+  if (forTeam.length > 0) {
+    out("Written for the team, in this repo:");
+    for (const p of forTeam) out(`  ${p}`);
+    const teamChanged = teamActions.filter((a) => a.apply && !failedPaths.has(a.path)).map((a) => relative(s.repoRoot!, a.path));
+    closingRepoLines(s, rootConfig, "  ", teamChanged);
+  }
+  if (forYou.length === 0) out(`To undo: ${undoCommand(s)}`);
+  if (s.repoRoot !== null && !s.flags.project) out(`To keep everything inside this repo instead, for the team to commit: ${s.runner} init --project`);
+  if (s.agents.includes("codex")) out("Codex: run /hooks once inside Codex and trust the new OpenQodex hook, or Codex will not run it.");
   return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "written" };
 }
 
-// Names the two team files in the repo and what to do with them.
-function closingRepoLines(s: Setup, rootConfig: boolean): void {
+// A path as the closing lines show it: inside the repo relative to it,
+// inside the home folder from ~, anything else as it is.
+function shown(s: Setup, path: string): string {
+  if (s.repoRoot !== null) {
+    const r = relative(s.repoRoot, path);
+    if (r !== "" && !r.startsWith("..") && !isAbsolute(r)) return r;
+  }
+  const h = relative(s.home, path);
+  return h !== "" && !h.startsWith("..") && !isAbsolute(h) ? `~/${h}` : path;
+}
+
+// The command that removes this install, written for the runner that works
+// on this machine: the launcher, or in project scope the pinned npx form.
+function undoCommand(s: Setup): string {
+  return `${s.runner} init --uninstall${s.flags.project ? " --project" : ""}`;
+}
+
+// Names the two team files in the repo, and `also` (the files that got the
+// team review section), and what to do with them.
+function closingRepoLines(s: Setup, rootConfig: boolean, indent = "", also: string[] = []): void {
   if (s.repoRoot === null) return;
   const repoRoot = s.repoRoot;
   const files = [`${STATE_DIR}/${FOLDER_CONFIG}`, `${STATE_DIR}/${INSTRUCTIONS_FILE}`].filter((f) => repoStat(repoRoot, f) !== null);
-  for (const line of commitLines(repoRoot, files)) out(line);
-  if (files.includes(`${STATE_DIR}/${INSTRUCTIONS_FILE}`)) out(INSTRUCTIONS_LINE);
-  if (rootConfig) out(ROOT_CONFIG_NOTE);
+  for (const line of commitLines(repoRoot, [...files, ...also])) out(`${indent}${line}`);
+  if (files.includes(`${STATE_DIR}/${INSTRUCTIONS_FILE}`)) out(`${indent}${INSTRUCTIONS_LINE}`);
+  if (rootConfig) out(`${indent}${ROOT_CONFIG_NOTE}`);
 }
 
 export async function run(args: string[]): Promise<number> {
@@ -504,6 +537,7 @@ export async function run(args: string[]): Promise<number> {
     version: __OPENQODEX_VERSION__,
     written: [],
     before: new Map(),
+    runner: flags.project ? `npx -y openqodex@${__OPENQODEX_VERSION__}` : launcherRunner(launcherPath(openqodexHomeDir())),
   };
   try {
     // A dry run writes nothing and takes no lock. Otherwise everything runs
@@ -520,8 +554,7 @@ export async function run(args: string[]): Promise<number> {
     // A declined or stopped install reviews nothing.
     const installed = outcome.ended === "written" || outcome.ended === "unchanged";
     if (outcome.code === EXIT_OK && installed && !flags.noReview && repoRoot !== null) {
-      const runner = flags.project ? `npx -y openqodex@${setup.version}` : launcherRunner(launcherPath(setup.oqHome));
-      await reviewAfterInit({ repoRoot, runner, interactive: interactive() && !flags.yes, initFiles: setup.before });
+      await reviewAfterInit({ repoRoot, runner: setup.runner, interactive: interactive() && !flags.yes, initFiles: setup.before });
     }
     return outcome.code;
   } catch (error) {

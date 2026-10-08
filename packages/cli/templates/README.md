@@ -8,7 +8,9 @@ Each file here is copied or merged by `openqodex init`. Three placeholders are f
 
 ## The instruction section
 
-`instructions-section.md` is the marked section (between `<!-- openqodex:start -->` and `<!-- openqodex:end -->`) that tells an agent to review with the openqodex skill when a feature or fix is done; OpenQodex starts its own reviewer process. `init` prints it before writing, records it, and `--uninstall` removes exactly that section. It goes into each agent's global instruction file in user scope, into the repo's `CLAUDE.md` and `AGENTS.md` in project scope, and inside the Cursor and Cline rules.
+`instructions-section.md` is the marked section (between `<!-- openqodex:start -->` and `<!-- openqodex:end -->`) that tells an agent to review with the openqodex skill when a feature or fix is done; OpenQodex starts its own reviewer process. `init` prints it before writing, records it, and `--uninstall` removes exactly that section. It goes into the repo's `CLAUDE.md` and `AGENTS.md` in project scope, and inside the Cursor and Cline rules.
+
+`global-section.md` is the one-line marked section for each agent's global instruction file in user scope (`CLAUDE.md` in Claude Code's folder, `AGENTS.md` in Codex's): "Before any push, review the change with the openqodex skill." The global file is read in every repository, so it holds the trigger only. It replaces the longer section an earlier `init` wrote there while that one is still as recorded.
 
 ## The team section
 
@@ -36,7 +38,7 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 |---|---|---|---|
 | Skill | `skills/openqodex/SKILL.md` | `~/.claude/skills/openqodex/SKILL.md` | `.claude/skills/openqodex/SKILL.md` |
 | Push gate hook | `claude-code/settings-hook.json`, merged | `~/.claude/settings.json` | `.claude/settings.json` |
-| Instructions | `instructions-section.md`, between its markers | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
+| Instructions | `global-section.md` in user scope, `instructions-section.md` in project scope, between their markers | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
 | Team section | `repo/team-section.md`, between its markers | `CLAUDE.md` in the repository, committed | none (the instruction section is there) |
 
 - Every user-scope path above is under `$CLAUDE_CONFIG_DIR` when it is set, the folder Claude Code then reads its settings from (https://code.claude.com/docs/en/settings); `~/.claude` otherwise. `src/agents/homes.ts` resolves it for detection and targets alike.
@@ -50,7 +52,7 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 | What | Template | User scope | Project scope |
 |---|---|---|---|
 | Skill | `skills/openqodex/SKILL.md` | see the note below | `.agents/skills/openqodex/SKILL.md` |
-| Instructions | `instructions-section.md`, between its markers | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `AGENTS.md` (replace the text between the markers, or append) |
+| Instructions | `global-section.md` in user scope, `instructions-section.md` in project scope, between their markers | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `AGENTS.md` (replace the text between the markers, or append) |
 | Team section | `repo/team-section.md`, between its markers | `AGENTS.md` in the repository, committed | none (the instruction section is there) |
 | Push gate hook | `codex/hooks.json`, merged | `$CODEX_HOME/hooks.json`, default `~/.codex/hooks.json` | `.codex/hooks.json` |
 

@@ -34,6 +34,11 @@
 //     developer's and which the team's, an agent's shell (no terminal) can
 //     never install without --yes, or a shell with no terminal and no agent
 //     writes something or stops without the plan and the flags to choose with.
+// 20. The global instruction files of every repo get the whole review
+//     procedure instead of one line; an install made by an earlier version
+//     keeps its long section; or init ends without saying what it wrote for
+//     the developer (with the undo) and for the team, and that --project
+//     keeps everything inside the repo.
 // 19. With no agent found, init stops with a flag list although a terminal
 //     could ask which agents to install into; or, with no terminal, it asks
 //     or installs instead of exiting 2 with that list.
@@ -398,6 +403,63 @@ describe("init, writes nothing when it should not", () => {
   });
 });
 
+// The section of `path` between the markers, markers left out.
+const START = "<!-- openqodex:start -->";
+function sectionOf(path: string): string[] {
+  const text = readFileSync(path, "utf8");
+  return text.slice(text.indexOf(START) + START.length, text.indexOf("<!-- openqodex:end -->")).trim().split("\n");
+}
+
+// The global section an earlier version wrote, as it recorded it.
+const OLD_SECTION = [
+  START,
+  "## Review with OpenQodex",
+  '- When a feature or fix is done, and before any push, review it with the openqodex skill: "review my change with openqodex".',
+  "- OpenQodex starts its own reviewer process for the review: the agent that wrote the code does not judge its own work.",
+  "- Do not push on a blocked verdict unless the developer says so after seeing the findings.",
+  "- The report is in `.openqodex/reviews/`.",
+  "<!-- openqodex:end -->",
+].join("\n");
+
+describe("20. the global section and what init says it wrote", () => {
+  it("writes one line into each agent's global instruction file", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code", "--agent", "codex"]).status).toBe(0);
+    for (const file of [join(s.home, ".claude/CLAUDE.md"), join(s.home, ".codex/AGENTS.md")]) {
+      expect(sectionOf(file)).toEqual(["Before any push, review the change with the openqodex skill."]);
+    }
+  });
+
+  it("replaces the long section an earlier version wrote and recorded", () => {
+    const s = sandbox();
+    const claudeMd = join(s.home, ".claude/CLAUDE.md");
+    mkdirSync(join(s.home, ".claude"), { recursive: true });
+    mkdirSync(s.oqHome, { recursive: true });
+    writeFileSync(claudeMd, `# Mine\n\n${OLD_SECTION}\n`);
+    writeFileSync(join(s.oqHome, "install.json"), JSON.stringify({ version: 1, sections: [{ path: claudeMd, text: OLD_SECTION, createdFile: false }] }));
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    expect(sectionOf(claudeMd)).toHaveLength(1);
+    expect(readFileSync(claudeMd, "utf8").startsWith("# Mine\n")).toBe(true);
+  });
+
+  it("ends by naming what it wrote for you, with the undo, and for the team, and init --project", () => {
+    const s = sandbox();
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    const end = r.stdout.slice(r.stdout.lastIndexOf("is installed for"));
+    const mine = end.indexOf("Written for you");
+    const team = end.indexOf("Written for the team");
+    expect(mine).toBeGreaterThan(-1);
+    expect(team).toBeGreaterThan(mine);
+    expect(end.slice(mine, team)).toContain("~/.claude/skills/openqodex/SKILL.md");
+    // The home path holds a space, so the launcher is written in single quotes.
+    expect(end.slice(mine, team)).toContain(`'${join(s.oqHome, "bin/openqodex")}' init --uninstall`);
+    expect(end.slice(team)).toContain(".openqodex/config.yaml");
+    expect(end.slice(team)).toContain("CLAUDE.md");
+    expect(end).toContain("init --project");
+  });
+});
+
 describe("19. init with no agent found", () => {
   it("in a terminal, offers the four agents and installs into the one chosen", () => {
     const s = sandbox();
@@ -518,7 +580,7 @@ describe("init, the hook question and the instruction section", () => {
     expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
     const installed = readFileSync(claudeMd, "utf8");
     expect(installed).toContain(SECTION_START);
-    expect(installed).toContain("its own reviewer process");
+    expect(installed).toContain("review the change with the openqodex skill");
     writeFileSync(claudeMd, `${installed}\nMore of mine.\n`);
 
     const r = cli(s, ["init", "--uninstall", "--yes"]);

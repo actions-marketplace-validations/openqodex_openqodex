@@ -38,15 +38,22 @@ function fill(text: string, version: string): string {
 }
 
 // The marked section that tells an agent to review with openqodex when a
-// feature or fix is done. The same text goes into every agent's global
-// instruction file, the project CLAUDE.md and AGENTS.md, and the Cursor and
-// Cline rules.
+// feature or fix is done. It goes into the project CLAUDE.md and AGENTS.md
+// and into the Cursor and Cline rules.
 export function instructionSection(): string {
   return template("instructions-section.md").trimEnd();
 }
 
+// The marked section for each agent's global instruction file: one line
+// that names the skill. The global file is read in every repository, so it
+// carries only the trigger; the skill holds the procedure, and a repo's own
+// team section says how that repo reviews.
+export function globalSection(): string {
+  return template("global-section.md").trimEnd();
+}
+
 function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
-  return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo };
+  return { kind: "md-section", agent, label, path, section: inRepo ? instructionSection() : globalSection(), inRepo };
 }
 
 // The hook group from a JSON template, with the command put in after

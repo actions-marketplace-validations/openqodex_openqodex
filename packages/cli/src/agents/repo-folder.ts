@@ -61,7 +61,8 @@ export function commitLines(repoRoot: string, paths: string[]): string[] {
     else if (ignored === true) lines.push(`${p} is ignored by git in this repo (a .gitignore or exclude rule), so it is not shared with your team.`);
   }
   const them = commit.length > 1 ? "them" : "it";
-  return [...(commit.length > 0 ? [`Commit ${commit.join(" and ")} so your team shares ${them}.`] : []), ...lines];
+  const named = commit.length > 1 ? `${commit.slice(0, -1).join(", ")} and ${commit[commit.length - 1]}` : commit.join("");
+  return [...(commit.length > 0 ? [`Commit ${named} so your team shares ${them}.`] : []), ...lines];
 }
 
 // What a scan or review tells the developer about files it just created.

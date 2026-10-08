@@ -29,8 +29,11 @@ npx openqodex init
 Inside a repository, `init` also:
 
 - adds the git pre-push hook, so every push from that repository is checked for a review, from an agent or by hand. `--hook none` leaves it out.
-- adds a short section to each agent's instruction file, such as `~/.claude/CLAUDE.md` for Claude Code: when a feature or fix is done, review it with openqodex. It prints the section before writing it.
+- adds one line to each agent's global instruction file, such as `~/.claude/CLAUDE.md` for Claude Code: before any push, review the change with the openqodex skill. It prints the line before writing it.
+- adds a review section to the repository's `CLAUDE.md` and `AGENTS.md`, so a teammate's agent reviews before it pushes too. `--no-repo` leaves it out.
 - creates `.openqodex/config.yaml` and `.openqodex/custom-instructions.md`. Commit both. Write in `custom-instructions.md` what a reviewer of your repository must know: conventions, what never to flag, what always to check. The review brief carries it word for word.
+
+After writing, `init` lists what it wrote for you, with the command that undoes it (`init --uninstall` through the launcher), and what it wrote for the team, to commit. `init --project` instead keeps everything inside the repository, for the team to commit.
 
 `init` also starts the scanner downloads that your repo needs, in the background. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
 

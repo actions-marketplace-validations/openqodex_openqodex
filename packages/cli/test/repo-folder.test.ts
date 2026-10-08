@@ -46,7 +46,7 @@ describe("the repo folder's team files", () => {
     const s = sandbox({ "README.md": "hello\n" });
     const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain(`Commit ${CONFIG} and ${INSTRUCTIONS}`);
+    expect(r.stdout).toContain(`Commit ${CONFIG}, ${INSTRUCTIONS}`);
     const editedConfig = `${read(s, CONFIG)}# ours\n`;
     writeFileSync(join(s.repo, CONFIG), editedConfig);
     writeFileSync(join(s.repo, INSTRUCTIONS), "Never flag the vendored code.\n");
@@ -96,7 +96,7 @@ describe("the repo folder's team files", () => {
     const s = sandbox({ "README.md": "hello\n", ".gitignore": ".openqodex/custom-instructions.md\n" });
     const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain(`Commit ${CONFIG} so your team shares it.`);
+    expect(r.stdout).toMatch(new RegExp(`Commit ${CONFIG.replaceAll(".", "\\.")}[ ,]`));
     expect(r.stdout).not.toMatch(/Commit [^\n]*custom-instructions/);
     expect(r.stdout).toContain(`${INSTRUCTIONS} ${IGNORED}`);
   });

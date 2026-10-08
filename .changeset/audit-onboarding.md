@@ -9,3 +9,5 @@
 - Inside Claude Code, Codex or Cursor with no terminal, `init` writes its plan without `--yes`. With no terminal and no agent it still exits 2, now after printing the plan and the flags that change it.
 - Answering no to "Write these files?" stops `init`: it writes nothing and starts no review. Before, the review after `init` still ran and created the `.openqodex` folder.
 - When `init` finds no coding agent and has a terminal, it asks which of Claude Code, Cursor, Codex CLI and Cline to install into. Without a terminal it still exits 2 with the `--agent` list.
+- The line `init` adds to each agent's global instruction file (such as `~/.claude/CLAUDE.md`) is now one sentence: "Before any push, review the change with the openqodex skill." The next `init` puts it in place of the longer section of earlier versions. Project scope and the Cursor and Cline rules keep the longer section.
+- After writing, `init` lists what it wrote for you, with the command that undoes it, and what it wrote for the team, to commit, and names `init --project`, which keeps everything inside the repository.
