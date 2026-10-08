@@ -128,7 +128,8 @@ export async function run(args: string[]): Promise<number> {
       if (change) {
         const impact = detectImpact(graph, change);
         const removed = impact.symbols.filter((s) => impact.removed.includes(s.id));
-        changes = { exports: impact.exports, removed: removed.filter((s) => !s.movedTo), moved: removed.filter((s) => s.movedTo) };
+        // Every consumer of each changed public name: the summary's cap is for the brief only.
+        changes = { exports: graph.exportChanges, removed: removed.filter((s) => !s.movedTo), moved: removed.filter((s) => s.movedTo) };
       }
       if (store && graph.status.generation) lease = (await store.lease({ id: graph.status.generation }, "cli"))?.lease ?? null;
     }
