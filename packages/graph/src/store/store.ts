@@ -42,7 +42,7 @@ import { isFileFacts } from "../safe-fs.js";
 import type { FileFacts } from "../types.js";
 import { collectLocked, REF_PREFIX, treeBytes, type CollectorContext } from "./gc.js";
 import { leaseFileName, type LeaseRecord } from "./leases.js";
-import { FolderLock, ownStart, type HeldLock } from "./lock.js";
+import { clearMalformed, FolderLock, ownStart, type HeldLock } from "./lock.js";
 import { notMineAlone, TrustRecord } from "./trust.js";
 import {
   BUILD_ID_PATTERN,
@@ -242,7 +242,7 @@ class Store implements GraphStore {
     readonly boundBytes: number,
   ) {
     this.dir = join(repoRoot, ...STATE);
-    this.lock = new FolderLock(guard, this.dir, (name) => this.readRel(name, LOCK_MAX_BYTES));
+    this.lock = new FolderLock(guard, this.dir, (name) => this.readRel(name, LOCK_MAX_BYTES), STATE.join("/"));
   }
 
   // ---------- reads ----------
@@ -738,9 +738,10 @@ function untrustedLayout(root: string): string | null {
 // under .openqodex/graph (a commit could ship forged facts or builds), when
 // the graph folder or a layout folder belongs to another user or other
 // users can write it (it is left as it is: closing it would make what was
-// planted look trusted), or when the record of builds cannot be kept in
-// OpenQodex's home `opts.home` (trust.ts). A graph folder only others can
-// read is closed to 0700.
+// planted look trusted), when the record of builds cannot be kept in
+// OpenQodex's home `opts.home` (trust.ts), or when a folder or a link that
+// is not safe to remove stands where the lock goes (lock.ts). A graph
+// folder only others can read is closed to 0700.
 export async function openStore(repoRoot: string, opts: { home: string; maxCacheMb?: number; now?: () => number }): Promise<StoreOpenResult> {
   const root = resolve(repoRoot);
   const refuse = (reason: string): StoreOpenResult => ({ ok: false, reason });
@@ -791,6 +792,10 @@ export async function openStore(repoRoot: string, opts: { home: string; maxCache
     if (after !== null) return refuse(after);
     // An older version made the folder 0755: what it holds quotes the code.
     guard.narrowFolder(dir, 0o700);
+    // A folder or a link where the lock goes would fail every publication:
+    // removed when safe, else the store is refused and the build says why.
+    const lock = clearMalformed(guard, dir, STATE.join("/"));
+    if (lock !== null) return refuse(lock);
   } catch (error) {
     return refuse(message(error));
   }

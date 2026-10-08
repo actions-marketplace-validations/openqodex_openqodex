@@ -7,6 +7,13 @@
 // process that started at another time (the pid was reused), or the lock is
 // older than 60 seconds. Waiting is a loop of awaited sleeps, so no timer is
 // left pending once the wait ends (the 2026-10-02 trap).
+//
+// The lock and the takeover marker are files only openqodex makes.
+// Anything else at their names (a folder, a link, a pipe) would make every
+// waiter wait its full time and fail, forever: such an entry is removed
+// when that is safe (not a link, this user's, older than the stale
+// window), and otherwise the lock is refused with one plain line, so the
+// build is kept in memory and says why (clearMalformed).
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
@@ -123,19 +130,49 @@ function removeIfSame(guard: Guard, path: string, ino: bigint): void {
   }
 }
 
+// Makes the lock's two names in the folder `dir` free or regular files:
+// anything else there is removed through the guard when it is not a link,
+// this user owns it and it is older than the lock's stale window. Returns
+// null when both names are usable, else why not, as one plain line naming
+// the entry by `shown` (the folder as the developer sees it).
+export function clearMalformed(guard: Guard, dir: string, shown: string): string | null {
+  for (const name of [LOCK_FILE, TAKEOVER_FILE]) {
+    const path = join(dir, name);
+    const st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+    if (st === undefined || st.isFile()) continue;
+    const what = st.isSymbolicLink() ? "a symbolic link" : st.isDirectory() ? "a folder" : "not a regular file";
+    const at = `${shown}/${name} is ${what} where openqodex keeps its lock file`;
+    if (st.isSymbolicLink()) return `${at}: remove the link`;
+    const uid = process.getuid?.();
+    if (uid !== undefined && Number(st.uid) !== uid) return `${at}, and another user owns it: remove it`;
+    if (Date.now() - Number(st.mtimeMs) <= LOCK_STALE_MS) return `${at}, made under a minute ago: remove it once nothing uses it`;
+    try {
+      guard.removeTree(path);
+    } catch (error) {
+      return `${at}, and it could not be removed (${error instanceof Error ? error.message : String(error)}): remove it`;
+    }
+  }
+  return null;
+}
+
 export class FolderLock {
   // `read` returns a small file of the folder, opened without following a
-  // link; null when it is not a regular file there.
+  // link; null when it is not a regular file there. `shown` names the
+  // folder in a refusal.
   constructor(
     private guard: Guard,
     private dir: string,
     private read: (name: string) => Buffer | null,
+    private shown: string,
   ) {}
 
   // Takes the lock, waiting up to `waitMs`; null when another live holder
-  // kept it all that time. Throws when the lock file cannot be made at all
-  // (a link in its place, a full disk).
+  // kept it all that time. Throws at once, with the reason, when the lock
+  // file cannot be made at all (a link or a folder in its place or in the
+  // takeover marker's that is not safe to remove, a full disk).
   async acquire(waitMs = LOCK_WAIT_MS): Promise<HeldLock | null> {
+    const malformed = clearMalformed(this.guard, this.dir, this.shown);
+    if (malformed !== null) throw new Error(malformed);
     const start = await ownStart();
     const path = join(this.dir, LOCK_FILE);
     const deadline = Date.now() + waitMs;
@@ -180,10 +217,20 @@ export class FolderLock {
     try {
       made = this.guard.write(marker, body, { exclusive: true });
     } catch {
+      // A link or a folder put there since acquire checked: the reason, at
+      // once, rather than a wait that can only end busy. Anything else is
+      // tried again on the next round.
+      const malformed = clearMalformed(this.guard, this.dir, this.shown);
+      if (malformed !== null) throw new Error(malformed);
       return;
     }
     if (!made) {
       const st = lstatSync(marker, { bigint: true, throwIfNoEntry: false });
+      if (st !== undefined && !st.isFile()) {
+        const malformed = clearMalformed(this.guard, this.dir, this.shown);
+        if (malformed !== null) throw new Error(malformed);
+        return;
+      }
       if (st?.isFile() && Date.now() - Number(st.mtimeMs) > TAKEOVER_STALE_MS) removeIfSame(this.guard, marker, st.ino);
       return;
     }

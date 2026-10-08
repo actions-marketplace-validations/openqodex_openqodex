@@ -75,6 +75,11 @@
 //     listed or leased: a copy of a valid build under a new id with its
 //     manifest written again for that id, a build edited under its own id
 //     with its checksums computed again, or a store using another home.
+// 25. A folder or a link named lock.takeover (beside a lock its holder
+//     left) or lock makes every publication wait its full 10 seconds and
+//     fail, forever; or one that is safe to remove (yours, not a link,
+//     past the stale window) is kept, or one that is not is removed, or the
+//     build does not say why it was not saved.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -728,6 +733,47 @@ describe("the folder lock", () => {
       expect(there(lock)).toBe(false);
     }
   });
+
+  it("25. a folder or a link named lock.takeover or lock ends in a finished build within seconds: an old folder of yours is removed and the build kept, a new folder or a link stays and the build runs in memory with the cause stated", async () => {
+    for (const name of ["lock.takeover", "lock"]) {
+      for (const kind of ["old folder", "new folder", "link"] as const) {
+        const label = `${name} as ${kind}`;
+        const root = repo();
+        const store = await storeOf(root);
+        ok(await store.publish(publishInput({ tag: "a" })));
+        // A lock its holder left behind: a waiter takes it over through lock.takeover.
+        if (name === "lock.takeover") writeFileSync(join(store.dir, "lock"), JSON.stringify({ pid: deadPid(), start: OTHER_START, time: Date.now() }), { mode: 0o600 });
+        const path = join(store.dir, name);
+        if (kind === "link") symlinkSync(outside(), path);
+        else {
+          mkdirSync(path);
+          writeFileSync(join(path, "left"), "x");
+          const t = Date.now() / 1000 - (kind === "old folder" ? 120 : 0);
+          utimesSync(path, t, t);
+        }
+        const started = Date.now();
+        // A store already open meets it when it publishes; a new one when it opens.
+        const published = await store.publish(publishInput({ tag: "b" }));
+        const reopened = await openStore(root, { home: HOME });
+        const g = await buildGraph({ repoRoot: root, store: reopened.ok ? reopened.store : null, storeRefused: reopened.ok ? undefined : reopened.reason });
+        expect(Date.now() - started, label).toBeLessThan(5000);
+        if (kind === "old folder") {
+          expect(published.ok, label).toBe(true);
+          expect(reopened.ok, label).toBe(true);
+          expect(g.status.generation, label).not.toBeNull();
+          expect(there(path), label).toBe(false);
+        } else {
+          const cause = `.openqodex/graph/${name} is ${kind === "link" ? "a symbolic link" : "a folder"} where openqodex keeps its lock file`;
+          expect(published, label).toMatchObject({ ok: false, error: "invalid" });
+          expect(!published.ok && published.reason, label).toContain(cause);
+          expect(!reopened.ok && reopened.reason, label).toContain(cause);
+          expect(g.status.generation, label).toBeNull();
+          expect(g.status.reasons[0], label).toContain(cause);
+          expect(there(path), label).toBe(true);
+        }
+      }
+    }
+  }, 120_000);
 
   it("16b. a live lock holds a publisher in another process for 10 seconds, then busy, and that process ends at once after", async () => {
     const root = repo();
