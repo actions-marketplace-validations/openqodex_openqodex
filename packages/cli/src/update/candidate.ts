@@ -24,8 +24,11 @@ const PACKAGE = "openqodex";
 
 type Version = [number, number, number];
 
-// Plain x.y.z only: a prerelease, build metadata or a leading zero does not parse.
-function parseVersion(text: unknown): Version | null {
+// Plain x.y.z only: a prerelease, build metadata, a leading zero or a part
+// too large to count does not parse. The user config's skip_version is read
+// with it too (state.ts), so a value the selection cannot use is never
+// taken as a threshold.
+export function parseVersion(text: unknown): Version | null {
   if (typeof text !== "string") return null;
   const m = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(text);
   if (!m) return null;

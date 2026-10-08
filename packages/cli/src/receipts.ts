@@ -63,10 +63,11 @@ export function homeReceiptPath(home: string, repoRoot: string, changeId: string
   return join(receiptsDir(home), repoId(repoRoot), `${changeId}.json`);
 }
 
-// Each named file written 0600 into <home>/<kind>/<repo id>/. A folder on
-// the way that is a link, or leads outside OpenQodex's home, is refused.
+// Each named file written 0600 into <home>/<kind>/<repo id>/. A link
+// anywhere on the way, the file itself included, is refused, and so is a
+// path that leads outside OpenQodex's home.
 function writeRecord(home: string, kind: string, repoRoot: string, names: string[], value: unknown): void {
-  const guard = homeGuard(home);
+  const guard = homeGuard(home, true);
   const dir = join(home, kind, repoId(repoRoot));
   const text = `${JSON.stringify(value, null, 2)}\n`;
   for (const name of names) guard.write(join(dir, name), text, { mode: 0o600, folderMode: 0o700, wider: closeWider(guard, home) });

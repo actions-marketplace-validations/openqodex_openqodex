@@ -15,19 +15,23 @@
 //     .openqodex files (core's writeRepoFile) are written directly, so a
 //     link put in place after a check decides where a release, a receipt or
 //     a report lands.
+//  5. A link inside ~/.openqodex/receipts, runs or runtime, the final file
+//     included (receipts/<repo>/latest.json -> ../../config.yaml), turns a
+//     receipt or a runtime write into a write of another file in the home.
 //  4. A receipt, or a report written where --output or --report-dir
 //     names, is created readable by other users, or in a folder made for it
 //     that they can open (core/test/private-modes.test.ts covers the repo's
 //     own .openqodex files).
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, statSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, statSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { cli, sandbox } from "./init-helpers.js";
 import { pruneRuntimes } from "../src/launcher.js";
-import { pruneHomeReceipts, writeHomeReceipt } from "../src/receipts.js";
+import { pruneHomeReceipts, writeHomeReceipt, writeHomeRun } from "../src/receipts.js";
+import { writeActive } from "../src/launcher.js";
 import { unpackRelease } from "../src/update/worker.js";
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
@@ -125,7 +129,7 @@ describe("3. the worker, the receipts and the repo files land only where they we
     writeFileSync(join(root, "pkg", "package", "package.json"), "{}\n");
     const archive = join(root, "pkg.tgz");
     expect(spawnSync("tar", ["-czf", archive, "-C", join(root, "pkg"), "package"]).status).toBe(0);
-    await expect(unpackRelease(home, "0.0.9", readFileSync(archive))).rejects.toThrow(/outside every folder openqodex writes to/);
+    await expect(unpackRelease(home, "0.0.9", readFileSync(archive), { agent: 1, config: 1 })).rejects.toThrow(/symbolic link|outside every folder openqodex writes to/);
     expect(readdirSync(outside)).toEqual([]);
     expect(existsSync(join(outside, "0.0.9.tmp-" + process.pid))).toBe(false);
   });
@@ -170,5 +174,46 @@ describe("4. a report written where the developer names is readable by them only
     expect(d.status, d.stderr).not.toBe(2);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     for (const f of readdirSync(dir)) expect(statSync(join(dir, f)).mode & 0o777, f).toBe(0o600);
+  });
+});
+
+describe("5. no link at all under receipts, runs and runtime", () => {
+  function home(): { root: string; home: string } {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-guard-")));
+    const home = join(root, "oq home");
+    mkdirSync(home);
+    writeFileSync(join(home, "config.yaml"), "update: off\n");
+    return { root, home };
+  }
+  const receipt = { version: 1, change_id: "c".repeat(64), kind: "complete", report: "r", base: { sha: "b", ref: "main" } };
+
+  it("a receipt whose file is a link to the user config is refused, and the config is left as it is", () => {
+    const { root, home: h } = home();
+    writeHomeReceipt(h, root, receipt as never);
+    const dir = join(h, "receipts", readdirSync(join(h, "receipts"))[0]!);
+    rmSync(join(dir, "latest.json"));
+    symlinkSync(join("..", "..", "config.yaml"), join(dir, "latest.json"));
+    expect(() => writeHomeReceipt(h, root, receipt as never)).toThrow(/link/);
+    expect(readFileSync(join(h, "config.yaml"), "utf8")).toBe("update: off\n");
+  });
+
+  it("a run record in a repo folder that is a link to another folder of the home is refused", () => {
+    const { root, home: h } = home();
+    mkdirSync(join(h, "runs"));
+    mkdirSync(join(h, "elsewhere"));
+    writeHomeRun(h, root, "20261008-000000-aaaaaaaaaaaa", { version: 1, change_id: "c".repeat(64), config_hash: "x", instructions_hash: null, manifest_sha256: "x", scan_sha256: "x", candidates_sha256: "x", run_sha256: "x", written_at: "now" });
+    const repoDir = join(h, "runs", readdirSync(join(h, "runs"))[0]!);
+    rmSync(repoDir, { recursive: true });
+    symlinkSync(join(h, "elsewhere"), repoDir);
+    expect(() => writeHomeRun(h, root, "20261008-000001-aaaaaaaaaaaa", { version: 1, change_id: "c".repeat(64), config_hash: "x", instructions_hash: null, manifest_sha256: "x", scan_sha256: "x", candidates_sha256: "x", run_sha256: "x", written_at: "now" })).toThrow(/link/);
+    expect(readdirSync(join(h, "elsewhere"))).toEqual([]);
+  });
+
+  it("runtime/current as a link to the user config is refused, and the config is left as it is", () => {
+    const { home: h } = home();
+    mkdirSync(join(h, "runtime"));
+    symlinkSync(join("..", "config.yaml"), join(h, "runtime", "current"));
+    expect(() => writeActive(h, { current: "9.9.9", previous: null })).toThrow(/link/);
+    expect(readFileSync(join(h, "config.yaml"), "utf8")).toBe("update: off\n");
   });
 });

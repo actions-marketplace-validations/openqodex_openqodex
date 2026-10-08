@@ -14,6 +14,10 @@
 //     init would refresh.
 //  5. update --status still names a release as waiting for a foreground
 //     update once that release, or a newer one, runs.
+//  8. A user-scope Cursor rule in a repository whose .cursor/rules is a link
+//     into the home is counted as stale, though init refuses to write it.
+//  9. With stale Cursor rules recorded in several repositories, the line says
+//     one init refreshes them, which no single init can.
 //  6. A notice of a change not yet released names a version chosen by hand,
 //     so when changesets gives the release another number it prints after
 //     the wrong update, or never.
@@ -22,7 +26,7 @@
 //     package's, so it never prints after the update to that release.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
@@ -138,5 +142,44 @@ describe("the notice of a change not yet released", () => {
     } finally {
       writeFileSync(source, original);
     }
+  });
+});
+
+describe("Cursor rules in repositories", () => {
+  // A user-scope init for Cursor in each repository: its rule goes there.
+  function installIn(s: Sandbox, repos: string[]): void {
+    for (const repo of repos) {
+      const r = spawnSync(process.execPath, [join(import.meta.dirname, "..", "dist", "bin.js"), "init", "--yes", "--hook", "none", "--no-repo", "--no-review", "--agent", "cursor"], { cwd: repo, env: env(s), encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+    }
+  }
+  function gitRepo(s: Sandbox, name: string): string {
+    const repo = join(s.root, name);
+    spawnSync("git", ["init", "-q", repo]);
+    return repo;
+  }
+
+  it("a rule behind a .cursor/rules link the repository holds is not counted: init would refuse it (failure 8)", () => {
+    const s = sandbox();
+    installIn(s, [s.repo]);
+    const rule = join(s.repo, ".cursor/rules/openqodex.mdc");
+    // The rules folder becomes a link into the home, holding the rule as an older init wrote it.
+    const into = join(s.home, "rules elsewhere");
+    mkdirSync(into, { recursive: true });
+    rmSync(join(s.repo, ".cursor/rules"), { recursive: true });
+    symlinkSync(into, join(s.repo, ".cursor/rules"));
+    asOlder(s, rule, "an older rule\n");
+    switchedFrom(s, "0.5.0");
+    expect(launch(s, ["guide", "config"]).stderr).not.toMatch(/from an older version/);
+  });
+
+  it("names each repository whose rule is stale and says to run init in each (failure 9)", () => {
+    const s = sandbox();
+    const other = gitRepo(s, "other repo");
+    installIn(s, [s.repo, other]);
+    for (const repo of [s.repo, other]) asOlder(s, join(repo, ".cursor/rules/openqodex.mdc"), "an older rule\n");
+    switchedFrom(s, "0.5.0");
+    const launcher = `'${join(s.oqHome, "bin/openqodex")}'`;
+    expect(launch(s, ["guide", "config"]).stderr).toContain(`2 files OpenQodex wrote are from an older version; run ${launcher} init in each of these repositories to refresh them: ${s.repo}, ${other}`);
   });
 });

@@ -14,6 +14,9 @@
 //  5. `update --off` or `--on` on a file of comments only drops the comments.
 //  6. A key OpenQodex itself writes (skip_version) is taken for unknown and
 //     pauses updates.
+//  7. A skip_version the update cannot read as a version (a part too large
+//     to count) passes the config check but is dropped when releases are
+//     chosen, so updates run with no threshold.
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -89,5 +92,11 @@ describe("one reader for the user config", () => {
     const r = launch(s, ["update", "--status"]);
     expect(r.stdout).toMatch(/^updates +on$/m);
     expect(`${r.stdout}${r.stderr}`).not.toMatch(/unknown key/);
+  });
+
+  it("a skip_version the update cannot read pauses automatic updates with the value named (failure 7)", () => {
+    const s = installed();
+    writeFileSync(config(s), "skip_version: 99999999999999999999.0.0\n");
+    expect(launch(s, ["update", "--status"]).stdout).toMatch(/^updates +paused: unknown value 99999999999999999999\.0\.0 for skip_version in .*config\.yaml/m);
   });
 });

@@ -10,6 +10,7 @@ import { parseDocument } from "yaml";
 import { readText, sha256 } from "../agents/files.js";
 import { homeGuard } from "../agents/guarded-fs.js";
 import { asMapping, readUserConfig, unknownKeys, userConfigPath } from "../user-config.js";
+import { parseVersion } from "./candidate.js";
 
 export { userConfigPath } from "../user-config.js";
 
@@ -84,8 +85,6 @@ export function updateState(home: string, change: Partial<UpdateState>): void {
 
 // ---------- the update keys of the user config (user-config.ts) ----------
 
-const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-
 // What the user config says about updating: `update` and `skip_version`, or
 // why the file stops automatic updates: it cannot be used or a value is not
 // understood (off), or it holds a key this version does not know (paused).
@@ -100,9 +99,11 @@ function readSwitch(home: string): Switch {
   else if (value === "off" || value === false) update = "off";
   else if (value !== undefined && value !== null) return { ok: false, why: `off: update in ${config.path} is neither on nor off` };
   if (update === "off") return { ok: true, update, skip: null };
+  // Read with the reader the selection uses, so a value it would drop
+  // (such as a part too large to count) never leaves updates unbounded.
   const skip = config.values.skip_version;
-  if (skip !== undefined && skip !== null && !(typeof skip === "string" && PLAIN_VERSION.test(skip))) {
-    return { ok: false, why: `off: skip_version in ${config.path} is not a version such as 0.9.0` };
+  if (skip !== undefined && skip !== null && parseVersion(skip) === null) {
+    return { ok: false, why: `paused: unknown value ${String(skip)} for skip_version in ${config.path}: not a version such as 0.9.0; fix it and automatic updates resume` };
   }
   // A key this version does not know may be a misspelled `update: off`, or
   // a setting of a newer version this one cannot honour.

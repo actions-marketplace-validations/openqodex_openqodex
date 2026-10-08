@@ -149,8 +149,12 @@ export class Guard {
   private roots: Root[] = [];
   private tree: Id | null = null;
   private exempt: Id[] = [];
+  // With `noLinks`, a link anywhere under a root, the final name included,
+  // is refused, not followed.
+  private noLinks: boolean;
 
-  constructor(r: Roots) {
+  constructor(r: Roots & { noLinks?: boolean }) {
+    this.noLinks = r.noLinks === true;
     const none = (): void => undefined;
     if (r.repoRoot !== null) {
       const w = walk(r.repoRoot, true, none, true);
@@ -180,6 +184,9 @@ export class Guard {
   }
 
   private refuseRepoLink = (chain: Step[], at: string): void => {
+    if (this.noLinks && this.roots.some((r) => chain.some((s) => same(s.id, r.anchor)))) {
+      throw new Error(`${at} is a symbolic link; openqodex writes no file there through a link`);
+    }
     if (this.tree === null) return;
     const ids = chain.map((s) => s.id);
     const w = ids.findIndex((id) => same(id, this.tree));
@@ -452,13 +459,18 @@ export class Guard {
 
 // A guard for OpenQodex's own home alone, for the writers that run outside
 // init (the update worker, `hook install`, the home receipts); one per home
-// in this process.
+// in this process. `strict`: no link at all under the home, the final file
+// included, for the folders only OpenQodex writes (receipts/, runs/,
+// runtime/): there a link is never the developer's, so a receipt written
+// through receipts/<repo>/latest.json -> ../../config.yaml cannot land on
+// another file of the home.
 const homeGuards = new Map<string, Guard>();
-export function homeGuard(home: string): Guard {
-  let g = homeGuards.get(home);
+export function homeGuard(home: string, strict = false): Guard {
+  const key = `${strict ? "strict" : "plain"}\0${home}`;
+  let g = homeGuards.get(key);
   if (g === undefined) {
-    g = new Guard({ repoRoot: null, gitFolders: [], roots: [home] });
-    homeGuards.set(home, g);
+    g = new Guard({ repoRoot: null, gitFolders: [], roots: [home], noLinks: strict });
+    homeGuards.set(key, g);
   }
   return g;
 }

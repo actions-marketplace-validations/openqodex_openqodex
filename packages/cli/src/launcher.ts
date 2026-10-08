@@ -66,9 +66,10 @@ export function readActive(home: string): Active {
 // Writes both lines by a temp file and a rename (guarded-fs.ts), so the
 // launcher never reads half a line and current and previous always change
 // together.
-export function writeActive(home: string, active: { current: string; previous: string | null }, guard: Guard = homeGuard(home)): void {
+// No link at all under runtime/, the record itself included (homeGuard strict).
+export function writeActive(home: string, active: { current: string; previous: string | null }): void {
   for (const v of [active.current, active.previous]) if (v !== null && !VERSION_TEXT.test(v)) throw new Error(`not a version: ${v}`);
-  guard.write(currentPath(home), `${active.current}\n${active.previous ?? ""}\n`, { mode: 0o644 });
+  homeGuard(home, true).write(currentPath(home), `${active.current}\n${active.previous ?? ""}\n`, { mode: 0o644 });
 }
 
 // The version the launcher runs now: line 1 when its runtime is there, else
@@ -271,7 +272,9 @@ export async function checkRuns(binJs: string, version: string): Promise<void> {
 // through the guard, checks it runs, then renames it into place. The target
 // is never replaced: when a folder appeared there in between, the rename
 // fails and nothing changes.
-async function installRuntime(version: string, home: string, guard: Guard): Promise<void> {
+// Through the strict home guard: no link at all under runtime/.
+async function installRuntime(version: string, home: string): Promise<void> {
+  const guard = homeGuard(home, true);
   const target = runtimeDir(version, home);
   const tmp = `${target}.tmp-${process.pid}`;
   guard.removeTree(tmp);
@@ -294,7 +297,7 @@ export function planRuntime(record: InstallRecord, version: string, home: string
   const launcher = launcherPath(home);
   const actions: Action[] = [];
   if (!existsSync(rt)) {
-    actions.push({ verb: "create", path: rt, note: "a copy of this openqodex that the hooks and the skill run", apply: () => installRuntime(version, home, guard) });
+    actions.push({ verb: "create", path: rt, note: "a copy of this openqodex that the hooks and the skill run", apply: () => installRuntime(version, home) });
   } else if (identicalTree(packageDir(), rt, PACKAGE_SKIP)) {
     actions.push({ verb: "skip", path: rt, note: "runtime already present" });
   } else {
@@ -313,7 +316,7 @@ export function planRuntime(record: InstallRecord, version: string, home: string
       verb: existsSync(pointer) ? "update" : "create",
       path: pointer,
       note: `points the launcher at ${version}`,
-      apply: () => writeActive(home, { current: version, previous }, guard),
+      apply: () => writeActive(home, { current: version, previous }),
     });
   }
 

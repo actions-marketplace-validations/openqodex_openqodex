@@ -137,7 +137,7 @@ function exited(p: ReturnType<typeof spawn>): Promise<{ code: number | null; out
 function activation(s: Sandbox, v: string, from: string, extra: Record<string, string> = {}) {
   const tmp = unpacked(s, v);
   const p = nodeChild(
-    `const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(v)}, from: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0, contract: ${JSON.stringify(CONTRACT)} }); process.stdout.write(JSON.stringify(r));`,
+    `const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(v)}, from: ${JSON.stringify(from)}, running: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0, contract: ${JSON.stringify(CONTRACT)} }); process.stdout.write(JSON.stringify(r));`,
     { ...laptop(s), H: s.oqHome, ...extra },
   );
   return { p, done: exited(p), tmp };
@@ -621,7 +621,7 @@ describe("19. a hostile release archive", () => {
   }
   async function unpack(tgz: string): Promise<{ out: string; home: string }> {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-hostile-")));
-    const p = nodeChild(`try { await m.unpackRelease(process.env.H, "9.9.9", (await import("node:fs")).readFileSync(process.env.T)); } catch (e) { process.stdout.write(String(e.message)); }`, { H: home, T: tgz });
+    const p = nodeChild(`try { await m.unpackRelease(process.env.H, "9.9.9", (await import("node:fs")).readFileSync(process.env.T), ${JSON.stringify(CONTRACT)}); } catch (e) { process.stdout.write(String(e.message)); }`, { H: home, T: tgz });
     return { out: (await exited(p)).out, home };
   }
   it("a member that is a link is refused", async () => {

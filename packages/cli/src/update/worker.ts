@@ -76,15 +76,17 @@ function newer(a: string, b: string): boolean {
   return false;
 }
 
-// Unpacks a verified tarball into <home>/runtime/<version>.tmp-<pid>/ and
-// checks that it starts and prints its version. Returns that temp folder;
-// the package is in its unpacked/package. activateUnpacked publishes it and
-// removes the temp folder. Every folder and file of its own goes through
-// the home guard (guarded-fs.ts): a runtime/ that leads outside OpenQodex's
-// home is refused before anything is written. tar unpacks inside the
-// folder the guard made.
-export async function unpackRelease(home: string, version: string, tarball: Buffer): Promise<string> {
-  const guard = homeGuard(home);
+// Unpacks a verified tarball into <home>/runtime/<version>.tmp-<pid>/,
+// compares the contract its package.json declares with `contract`, the one
+// the registry claimed, and only then checks that it starts and prints its
+// version: nothing of a release runs before that comparison. Returns that
+// temp folder; the package is in its unpacked/package. activateUnpacked
+// publishes it and removes the temp folder. Every folder and file of its
+// own goes through the strict home guard (guarded-fs.ts): no link at all
+// under runtime/, and nothing outside OpenQodex's home. tar unpacks inside
+// the folder the guard made.
+export async function unpackRelease(home: string, version: string, tarball: Buffer, contract: Contract | null): Promise<string> {
+  const guard = homeGuard(home, true);
   const tmp = `${runtimeDir(version, home)}.tmp-${process.pid}`;
   guard.removeTree(tmp);
   guard.makeFolder(tmp);
@@ -96,6 +98,8 @@ export async function unpackRelease(home: string, version: string, tarball: Buff
     // Refuses a member that is a link or escapes the folder. Nothing in the
     // package runs at install: the CLI is one bundled file with its assets.
     await extractArchive(archive, "tar.gz", unpacked);
+    const declared = unpackedContract(tmp);
+    if (!sameContract(declared, contract)) throw new Error(`its package.json declares contract ${contractText(declared)}, the registry ${contractText(contract)}`);
     const bin = join(unpacked, "package", "dist", "bin.js");
     if (!existsSync(bin)) throw new Error("the release has no dist/bin.js");
     await checkRuns(bin, version);
@@ -123,20 +127,28 @@ function unpackedContract(tmp: string): Contract | null {
 }
 
 // The commit step for a verified, unpacked release in `tmp` (unpackRelease),
-// started from the active version `from`. Always removes `tmp`. `contract`:
-// the contract the registry said the release declares; the release's own
-// package.json must declare the same, or it is skipped.
+// started from the active version `from` by a worker of version `running`.
+// Always removes `tmp`. `contract`: the contract the registry said the
+// release declares; the release's own package.json must declare the same,
+// or it is skipped. `keep`: the contract a daily worker keeps; absent for a
+// foreground update, which may cross one.
+//
+// Inside the boundary everything that decides the switch is read again: the
+// user config as a whole (updates on, skip_version), the active version,
+// which must still be both `from` and the worker's own, and the contract.
 export async function activateUnpacked(opts: {
   home: string;
   version: string;
   from: string;
+  running: string;
   tmp: string;
   env: NodeJS.ProcessEnv;
   wait: number;
   contract: Contract | null;
+  keep?: Contract | null;
 }): Promise<ActivateResult> {
   const { home, version, from, tmp, env } = opts;
-  const guard = homeGuard(home);
+  const guard = homeGuard(home, true);
   let result: ActivateResult;
   try {
     const declared = unpackedContract(tmp);
@@ -151,7 +163,13 @@ export async function activateUnpacked(opts: {
       if (!existsSync(launcherPath(home))) return { outcome: "gone", reason: "openqodex was uninstalled" };
       const active = activeVersion(home);
       if (active !== from) return { outcome: "refused", reason: `the active version is ${active ?? "unknown"}, not ${from}: another update, rollback or init ran` };
+      if (active !== opts.running) return { outcome: "refused", reason: `the active version is ${active}, not ${opts.running}, the version of this update: a rollback or another switch ran` };
       if (!newer(version, active)) return { outcome: "refused", reason: `${version} is not newer than the active ${active}` };
+      const skip = skipVersion(home);
+      if (skip !== null && !newer(version, skip)) return { outcome: "refused", reason: `skip_version is ${skip}, so ${version} is not installed` };
+      if (opts.keep !== undefined && !sameContract(opts.contract, opts.keep)) {
+        return { outcome: "refused", reason: `${version} changes ${contractChange(opts.contract, opts.keep)}; it waits for openqodex update` };
+      }
       const target = runtimeDir(version, home);
       if (existsSync(target)) {
         if (!identicalTree(join(tmp, "unpacked", "package"), target)) return { outcome: "skip", reason: `${target} holds a different copy of ${version}; it was left as it is` };
@@ -244,8 +262,14 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
   const running = test.as ?? __OPENQODEX_VERSION__;
   const from = activeVersion(home);
   if (from === null || !existsSync(launcherPath(home))) return { outcome: "failed", lines: ["No launcher install here; run npx openqodex init."] };
+  // A worker started by a command of another version than the active one
+  // (a rollback or a switch ran since) would choose with that version's
+  // contract against this record: it ends here, writing nothing. Its own
+  // version, never the test seam's.
+  const self = __OPENQODEX_VERSION__;
+  if (from !== self) return { outcome: "none", lines: [`The active version is ${from}, not ${self}, the version of this update; nothing was checked.`] };
   // What a crashed or killed worker left behind.
-  for (const tmp of tempRuntimes(home, false)) homeGuard(home).removeTree(tmp);
+  for (const tmp of tempRuntimes(home, false)) homeGuard(home, true).removeTree(tmp);
   await note(home, { checkedAt: new Date(now).toISOString() });
   await pauseAt(home, "before-metadata", env);
 
@@ -311,12 +335,12 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
     }
     let tmp: string;
     try {
-      tmp = await unpackRelease(home, c.version, tarball);
+      tmp = await unpackRelease(home, c.version, tarball, c.contract);
     } catch (error) {
       await skip(c.version, `it did not install: ${message(error)}`);
       continue;
     }
-    const result = await activateUnpacked({ home, version: c.version, from, tmp, env, wait, contract: c.contract });
+    const result = await activateUnpacked({ home, version: c.version, from, running: self, tmp, env, wait, contract: c.contract, ...(daily ? { keep } : {}) });
     if (result.outcome === "skip") {
       await skip(c.version, result.reason);
       continue;
