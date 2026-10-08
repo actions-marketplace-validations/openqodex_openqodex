@@ -10,6 +10,12 @@
 // a size cap, and past a count cap a file counts as unknown. Unknown never
 // switches a check off; it only keeps a framework's own scanner (brakeman)
 // and its rule switches from running.
+//
+// Linear time. These files come from the change, so a hostile one must not
+// hang the review: every reader below walks a line once, with string
+// methods or a single anchored character class, never a pattern whose
+// repetitions overlap (two blank runs side by side, a lazy run before a
+// blank run) and backtrack on a long line.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -51,12 +57,13 @@ const MANIFESTS = new Set([
   "build.gradle.kts",
   "composer.json",
 ]);
-const isManifest = (name: string): boolean => MANIFESTS.has(name) || /^requirements[^/]*\.txt$/.test(name);
+const isManifest = (name: string): boolean => MANIFESTS.has(name) || (name.startsWith("requirements") && name.endsWith(".txt"));
 
-// Limits: folders looked at for a manifest, the size of a manifest read,
-// files read for their first bytes, and how many bytes.
+// Limits: folders looked at for a manifest, the size of a manifest read (a
+// larger one is not read at all), files read for their first bytes, and
+// how many bytes.
 const MAX_FOLDERS = 20_000;
-const MAX_MANIFEST_BYTES = 1024 * 1024;
+export const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_CONTENT_READS = 5_000;
 const SHEBANG_BYTES = 256;
 const YAML_BYTES = 64 * 1024;
@@ -178,15 +185,36 @@ export function repoFacts(repoDir: string): RepoFacts {
 
 // `#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/env -S bash -e`: the shells
 // shellcheck checks. zsh and fish are not among them.
+const SHELLS = new Set(["sh", "bash", "dash", "ksh"]);
+const lastPart = (word: string): string => word.slice(word.lastIndexOf("/") + 1);
+
 function isShellScript(text: string): boolean {
-  return /^#!\s*(?:\S*\/env\s+(?:-S\s+)?)?(?:\S*\/)?(?:sh|bash|dash|ksh)(?:\s|$)/.test(text);
+  if (!text.startsWith("#!")) return false;
+  const end = text.indexOf("\n");
+  const words = (end === -1 ? text.slice(2) : text.slice(2, end)).split(/[ \t]+/).filter((w) => w !== "");
+  let i = 0;
+  if (lastPart(words[0] ?? "") === "env") {
+    i = 1;
+    while ((words[i] ?? "").startsWith("-")) i += 1;
+  }
+  return SHELLS.has(lastPart(words[i] ?? ""));
 }
 
 // A document with `apiVersion:` and `kind:` at the top level, in any of the
 // documents read. Nested keys (indented) and comments do not count.
 function isKubernetes(text: string): boolean {
-  for (const doc of text.split(/^---.*$/m)) {
-    if (/^apiVersion:\s*\S/m.test(doc) && /^kind:\s*\S/m.test(doc)) return true;
+  let api = false;
+  let kind = false;
+  const hasValue = (line: string, key: string) => line.startsWith(key) && line.slice(key.length).trim() !== "";
+  for (const line of text.split("\n")) {
+    if (line.startsWith("---")) {
+      api = false;
+      kind = false;
+      continue;
+    }
+    if (hasValue(line, "apiVersion:")) api = true;
+    if (hasValue(line, "kind:")) kind = true;
+    if (api && kind) return true;
   }
   return false;
 }
@@ -208,34 +236,108 @@ function packageJsonDeps(text: string | null): string[] {
   return out;
 }
 
-// `gem "rails", "~> 7.1"` lines; the Gemfile is never evaluated.
+const lines = (text: string): string[] => text.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+
+// A gem, Python or key name at the start of `text`: one anchored character
+// class, so a match is linear in its length.
+const NAME = /^[A-Za-z0-9_.-]+/;
+const nameAt = (text: string): string | null => NAME.exec(text)?.[0] ?? null;
+
+// `gem "rails", "~> 7.1"` and `gem("rails")` lines; the Gemfile is never
+// evaluated.
 function gemfileGems(text: string | null): string[] {
   if (text === null) return [];
-  return [...text.matchAll(/^\s*gem\s*\(?\s*["']([A-Za-z0-9_.-]+)["']/gm)].map((m) => m[1]!);
+  const out: string[] = [];
+  for (const line of lines(text)) {
+    const t = line.trimStart();
+    if (!t.startsWith("gem")) continue;
+    let rest = t.slice(3);
+    if (!(rest.startsWith(" ") || rest.startsWith("\t") || rest.startsWith("("))) continue;
+    rest = rest.trimStart();
+    if (rest.startsWith("(")) rest = rest.slice(1).trimStart();
+    const quote = rest[0];
+    if (quote !== '"' && quote !== "'") continue;
+    const name = nameAt(rest.slice(1));
+    if (name !== null && rest[1 + name.length] === quote) out.push(name);
+  }
+  return out;
 }
 
-// The gem names of a Gemfile.lock: its specs and its DEPENDENCIES.
+// The gem names of a Gemfile.lock: its specs (four spaces in) and its
+// DEPENDENCIES (two spaces in).
 function lockfileGems(text: string | null): string[] {
   if (text === null) return [];
-  return [...text.matchAll(/^ {2}(?: {2})?([A-Za-z0-9_.-]+)(?:[ !(]|$)/gm)].map((m) => m[1]!);
+  const out: string[] = [];
+  for (const line of lines(text)) {
+    const indent = line.startsWith("    ") ? 4 : line.startsWith("  ") ? 2 : 0;
+    if (indent === 0 || line[indent] === " ") continue;
+    const name = nameAt(line.slice(indent));
+    if (name === null) continue;
+    const next = line[indent + name.length];
+    if (next === undefined || next === " " || next === "!" || next === "(") out.push(name);
+  }
+  return out;
 }
 
 // A PEP 508 requirement's name: `Django[argon2] ~= 5.0` is django.
 function requirementName(spec: string): string | null {
-  const m = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(?:[<>=!~;@(]|$)/.exec(spec);
-  return m ? pyName(m[1]!) : null;
+  const t = spec.trimStart();
+  const name = /^[A-Za-z0-9][A-Za-z0-9._-]*/.exec(t)?.[0];
+  if (name === undefined) return null;
+  let rest = t.slice(name.length).trimStart();
+  if (rest.startsWith("[")) {
+    const close = rest.indexOf("]");
+    if (close === -1) return null;
+    rest = rest.slice(close + 1).trimStart();
+  }
+  return rest === "" || "<>=!~;@(".includes(rest[0]!) ? pyName(name) : null;
+}
+
+// The text of a line before a ` #` comment.
+function beforeComment(line: string): string {
+  for (let i = 1; i < line.length; i++) {
+    if (line[i] === "#" && (line[i - 1] === " " || line[i - 1] === "\t")) return line.slice(0, i);
+  }
+  return line;
 }
 
 function requirementsDeps(text: string | null): string[] {
   if (text === null) return [];
   const out: string[] = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/\s+#.*$/, "").trim();
+  for (const raw of lines(text)) {
+    const line = beforeComment(raw).trim();
     if (line === "" || line.startsWith("#") || line.startsWith("-")) continue;
     const name = requirementName(line);
     if (name !== null) out.push(name);
   }
   return out;
+}
+
+// A TOML table header (`[tool.poetry.dependencies]`, `[[x]]`, a comment
+// after it allowed): its name with quotes and blanks taken out, or null.
+function tableHeader(line: string): string | null {
+  if (!line.startsWith("[")) return null;
+  const double = line.startsWith("[[");
+  const inner = line.slice(double ? 2 : 1);
+  const close = inner.indexOf("]");
+  if (close === -1) return null;
+  const after = inner.slice(close + (double ? 2 : 1)).trim();
+  if (after !== "" && !after.startsWith("#")) return null;
+  return inner.slice(0, close).replace(/["'\s]/g, "");
+}
+
+// A `key = value` line: the key (quoted or not) and the value after the `=`.
+function keyValue(line: string): { key: string; value: string } | null {
+  const quote = line[0] === '"' || line[0] === "'" ? line[0] : "";
+  const key = nameAt(line.slice(quote.length));
+  if (key === null) return null;
+  let rest = line.slice(quote.length + key.length);
+  if (quote !== "") {
+    if (!rest.startsWith(quote)) return null;
+    rest = rest.slice(1);
+  }
+  rest = rest.trimStart();
+  return rest.startsWith("=") ? { key, value: rest.slice(1).trimStart() } : null;
 }
 
 // The quoted strings of a `dependencies = [...]` array (PEP 621, its
@@ -253,36 +355,40 @@ function pyprojectDeps(text: string | null): string[] {
   };
   let table = "";
   let inArray = false;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/^\s+/, "");
+  for (const raw of lines(text)) {
+    const line = raw.trimStart();
     if (inArray) {
       const part = arrayPart(line);
       add(part.strings);
       inArray = !part.closed;
       continue;
     }
-    const header = /^\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(line);
-    if (header) {
-      table = header[1]!.replace(/["'\s]/g, "");
+    const header = tableHeader(line);
+    if (header !== null) {
+      table = header;
       continue;
     }
-    const key = /^["']?([A-Za-z0-9_.-]+)["']?\s*=\s*(.*)$/.exec(line);
-    if (!key) continue;
-    const name = key[1]!;
-    const value = key[2]!;
+    const kv = keyValue(line);
+    if (kv === null) continue;
     const depsArray =
-      (table === "project" && name === "dependencies") || table === "project.optional-dependencies" || table === "dependency-groups";
-    if (depsArray && value.startsWith("[")) {
-      const part = arrayPart(value.slice(1));
+      (table === "project" && kv.key === "dependencies") || table === "project.optional-dependencies" || table === "dependency-groups";
+    if (depsArray && kv.value.startsWith("[")) {
+      const part = arrayPart(kv.value.slice(1));
       add(part.strings);
       inArray = !part.closed;
       continue;
     }
     // [tool.poetry.dependencies], [tool.poetry.dev-dependencies],
     // [tool.poetry.group.<name>.dependencies]
-    if (/^tool\.poetry(?:\.group\.[^.]+)?\.(?:dev-)?dependencies$/.test(table) && name !== "python") out.push(pyName(name));
+    if (isPoetryDeps(table) && kv.key !== "python") out.push(pyName(kv.key));
   }
   return out;
+}
+
+function isPoetryDeps(table: string): boolean {
+  if (table === "tool.poetry.dependencies" || table === "tool.poetry.dev-dependencies") return true;
+  const parts = table.split(".");
+  return parts.length === 5 && parts[0] === "tool" && parts[1] === "poetry" && parts[2] === "group" && parts[4] === "dependencies";
 }
 
 // The quoted strings on one line of a TOML array, and whether the array
@@ -316,15 +422,15 @@ function pipfileDeps(text: string | null): string[] {
   if (text === null) return [];
   const out: string[] = [];
   let table = "";
-  for (const raw of text.split(/\r?\n/)) {
+  for (const raw of lines(text)) {
     const line = raw.trim();
-    const header = /^\[([^\]]+)\]/.exec(line);
-    if (header) {
-      table = header[1]!.trim();
+    const header = tableHeader(line);
+    if (header !== null) {
+      table = header;
       continue;
     }
-    const key = /^["']?([A-Za-z0-9_.-]+)["']?\s*=/.exec(line);
-    if (key && (table === "packages" || table === "dev-packages")) out.push(pyName(key[1]!));
+    const kv = keyValue(line);
+    if (kv && (table === "packages" || table === "dev-packages")) out.push(pyName(kv.key));
   }
   return out;
 }

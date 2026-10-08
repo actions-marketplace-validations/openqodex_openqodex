@@ -30,6 +30,9 @@
 //  12. A Python dependency is missed in [project] dependencies, a poetry
 //      table or a requirements file; or a name in a description or an isort
 //      list counts as a dependency.
+//  13. A hostile manifest, script or YAML file from the repo (long runs of
+//      blanks with no closing quote, bracket or comment) makes a pattern
+//      backtrack without bound, so reading it hangs the review.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -37,7 +40,7 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "@openqodex/core";
 import type { Config } from "@openqodex/core";
-import { repoFacts } from "../src/detect.js";
+import { MAX_MANIFEST_BYTES, repoFacts } from "../src/detect.js";
 import { choiceLine, repoInventory, selectScanners } from "../src/select.js";
 
 const roots: string[] = [];
@@ -224,6 +227,39 @@ describe("manifests are data, read within limits", () => {
     const facts = repoFacts(dir);
     expect(facts.project("a/x.py")).toMatchObject({ frameworks: ["airflow"] });
     expect(facts.project("b/x.py")).toMatchObject({ frameworks: ["django"] });
+  });
+});
+
+describe("hostile files read in linear time (13)", () => {
+  // Just under the cap, so the whole file is read.
+  const N = MAX_MANIFEST_BYTES - 1024;
+  const blanks = (n: number) => " ".repeat(n);
+  const hostile: [string, Record<string, string>, string][] = [
+    ["package.json", { "package.json": `{"dependencies":{"react":"1"},"x":"${blanks(N / 2)}","y":${"[".repeat(N / 4)}` }, "a.ts"],
+    ["Gemfile", { Gemfile: `${"\n".repeat(N / 2)}gem${blanks(N / 2)}`, "config/application.rb": "x\n" }, "a.rb"],
+    ["Gemfile.lock", { "Gemfile.lock": `  ${"a".repeat(N / 2)}${blanks(N / 2)}`, "bin/rails": "x\n" }, "a.rb"],
+    ["pyproject.toml", { "pyproject.toml": `[a${blanks(N / 2)}x\n[project]\ndependencies = [\n"a${blanks(N / 2)}x"\n` }, "a.py"],
+    ["requirements.txt", { "requirements.txt": `a${blanks(N)}x\n` }, "a.py"],
+    ["Pipfile", { Pipfile: `[packages]\n"a${blanks(N)}x\n` }, "a.py"],
+  ];
+  for (const [kind, files, file] of hostile) {
+    it(`a hostile ${kind} of 1 MB is read in well under a second`, () => {
+      const dir = repo({ ...files, [file]: "x\n" }, false);
+      const started = performance.now();
+      const project = repoFacts(dir).project(file);
+      expect(performance.now() - started).toBeLessThan(500);
+      expect(project).toMatchObject({ root: "", frameworks: [] });
+    });
+  }
+
+  it("a hostile extensionless script or YAML file of 1 MB is classed in well under a second", () => {
+    const dir = repo({ "bin/run": `#!${"/env ".repeat(N / 5)}`, "k8s/a.yaml": `apiVersion:${blanks(N)}`, "k8s/b.yaml": `${"apiVersion:\n".repeat(N / 12)}` }, false);
+    const facts = repoFacts(dir);
+    const started = performance.now();
+    expect(facts.content("bin/run")).toBeNull();
+    expect(facts.content("k8s/a.yaml")).toBeNull();
+    expect(facts.content("k8s/b.yaml")).toBeNull();
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
 
