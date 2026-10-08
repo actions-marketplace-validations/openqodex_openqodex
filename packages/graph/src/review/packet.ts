@@ -5,8 +5,10 @@
 // folder is the tool's own: a repository that holds a path of that name
 // stops the review rather than being overwritten.
 //
-// Every caller the graph retained is on a page, past any display cut; an
-// unexplored frontier (the walk limit) is a gap, never a page. Every text
+// Every caller the graph retained is on a page, past any display cut, read
+// from the graph and never from the summary's cut lists; an unexplored
+// frontier (the walk limit) is a gap, never a page. A page that holds less
+// than the whole list says so and by how many. Every text
 // carries no secret the scanners found: every string inside every value is
 // redacted before it is serialized (a quote or a backslash in a secret would
 // change its spelling in JSON), every file name too, and every file is
@@ -17,7 +19,7 @@ import { redactSecrets } from "@openqodex/core";
 import type { ImpactSummary } from "@openqodex/core";
 import { showBlob } from "../capture/git.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION } from "../model/records.js";
-import { isTestPath, toImpactUnknown } from "../impact.js";
+import { callersOfRemoved, isTestPath, toImpactUnknown } from "../impact.js";
 import { symbolKey } from "../render.js";
 import type { Graph, GraphEdge } from "../types.js";
 
@@ -32,6 +34,8 @@ export class PacketCollision extends Error {}
 export class PacketLeak extends Error {}
 
 type Item = { from: string; fromName: string | null; to: string; kind: GraphEdge["kind"]; site: GraphEdge["sites"][number] };
+// What a page leaves out of its list: the count when known, null when not.
+type PageCut = { omitted: number | null; note: string } | null;
 
 export async function writePacket(args: {
   root: string; // the snapshot folder the reviewer reads
@@ -74,16 +78,18 @@ export async function writePacket(args: {
     files.push({ path, about: redact(about) });
   };
   const nameOf = (id: string) => graph.nodes.get(id)?.name ?? impact.symbols.find((s) => s.id === id)?.name ?? null;
-  const toItems = (edges: GraphEdge[], end: "from" | "to"): Item[] =>
+  const toItems = (edges: Pick<GraphEdge, "from" | "to" | "kind" | "sites">[], end: "from" | "to"): Item[] =>
     edges
       .flatMap((e) => e.sites.map((site) => ({ from: e.from, fromName: nameOf(end === "from" ? e.from : e.to), to: e.to, kind: e.kind, site })))
       .sort((a, b) => Number(isTestPath(a.site.file)) - Number(isTestPath(b.site.file)) || a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line);
   // A list split into pages of PAGE_ITEMS: <base>.json, then <base>.2.json, ...
-  const pages = (base: string, about: string, head: Record<string, unknown>, items: unknown[]) => {
+  // `total` counts the items on the pages, `totalExact` is true when they
+  // are the whole list, and `cut` says otherwise what is missing.
+  const pages = (base: string, about: string, head: Record<string, unknown>, items: unknown[], cut: PageCut = null) => {
     const count = Math.max(1, Math.ceil(items.length / PAGE_ITEMS));
     for (let p = 0; p < count; p++) {
       const path = p === 0 ? `${base}.json` : `${base}.${p + 1}.json`;
-      write(path, p === 0 ? about : `${about}, page ${p + 1}`, { ...head, total: items.length, totalExact: true, page: p + 1, pages: count, next: p + 1 < count ? `${base}.${p + 2}.json` : null, items: items.slice(p * PAGE_ITEMS, (p + 1) * PAGE_ITEMS) });
+      write(path, p === 0 ? about : `${about}, page ${p + 1}`, { ...head, total: items.length, totalExact: cut === null, cut, page: p + 1, pages: count, next: p + 1 < count ? `${base}.${p + 2}.json` : null, items: items.slice(p * PAGE_ITEMS, (p + 1) * PAGE_ITEMS) });
     }
   };
 
@@ -95,19 +101,32 @@ export async function writePacket(args: {
     moved: movedOrRemoved.filter((s) => s.movedTo),
   });
 
-  // Every caller of each touched and removed symbol, past the hub cut.
+  // Every caller of each touched and removed symbol, past the hub cut, from
+  // the graph: a removed symbol's callers are the call sites that still
+  // reach the place it was defined.
   const seeds = [...impact.touched, ...impact.removed];
+  const wanted = new Set(impact.removed);
   const removedEdges = new Map<string, GraphEdge[]>();
-  for (const p of impact.callers) {
-    if (p.edges.length !== 1 || !impact.removed.includes(p.seed)) continue;
-    const e = p.edges[0];
-    (removedEdges.get(p.seed) ?? removedEdges.set(p.seed, []).get(p.seed))?.push({ ...e, tier: e.sites[0]?.tier ?? "certain" });
-  }
+  for (const [path, nodes] of graph.removed) for (const node of nodes) if (wanted.has(node.id)) removedEdges.set(node.id, callersOfRemoved(graph, node, path));
   const floorOf = new Map(impact.unknown.seeds.map((s) => [s.seed, s]));
   for (const seed of seeds) {
-    const incoming = (removedEdges.get(seed) ?? graph.in.get(seed) ?? []).filter((e) => e.from !== seed);
     const f = floorOf.get(seed);
-    pages(`callers/${symbolKey(seed)}`, `every caller of \`${nameOf(seed) ?? seed}\``, { symbol: seed, name: nameOf(seed), floor: f?.floor ?? true, reasons: f?.reasons ?? [] }, toItems(incoming, "from"));
+    const base = `callers/${symbolKey(seed)}`;
+    const about = `every caller of \`${nameOf(seed) ?? seed}\``;
+    const head = { symbol: seed, name: nameOf(seed), floor: f?.floor ?? true, reasons: f?.reasons ?? [] };
+    const held = removedEdges.get(seed) ?? (graph.nodes.has(seed) ? (graph.in.get(seed) ?? []) : null);
+    if (held !== null) {
+      pages(base, about, head, toItems(held.filter((e) => e.from !== seed), "from"));
+      continue;
+    }
+    // A symbol this graph does not hold: only the first hop the summary
+    // kept is here, and a hub cut or the walk limit may have shortened it.
+    const kept = impact.callers.filter((p) => p.seed === seed && p.edges.length === 1).map((p) => p.edges[0]);
+    const listed = kept.reduce((n, e) => n + e.sites.length, 0);
+    const hub = impact.hubs.find((h) => h.symbol === seed);
+    const omitted = hub ? hub.sites - listed : impact.cuts.some((c) => c.by === "walk-limit") ? null : 0;
+    const cut = omitted === 0 ? null : { omitted, note: `the graph this packet was written from does not hold this symbol, so these are the call sites the summary kept${omitted === null ? "; the walk limit may have left out more, not counted" : ""}` };
+    pages(base, about, head, toItems(kept, "from"), cut);
   }
   // Every caller of each first-hop caller: the second hop past its cut.
   const firstHop = new Set(impact.callers.filter((p) => p.edges.length >= 1).map((p) => p.edges[0].from));

@@ -5,9 +5,11 @@
 //
 // Every cut the walk makes is recorded with what it left out (a hub keeps
 // its 20 nearest callers, the second hop keeps 20 per caller, the walk stops
-// at 200 symbols), and every seed says whether its caller list is a floor:
-// a call of the same name the graph could not bind, a call through a value
-// in its project, a file of its project not read, or a cut at it.
+// at 200 symbols, a public name keeps its first 200 consumers), and every
+// seed says whether its caller list is a floor: a call of the same name the
+// graph could not bind, a call through a value in its project, a file of its
+// project not read, or a cut at it. The review's packet reads the uncut
+// lists from the graph, never from this summary.
 import { dirname } from "node:path";
 import type { Change, ImpactCut, ImpactEdge, ImpactPath, ImpactSummary, ImpactSymbol, ImpactUnknown } from "@openqodex/core";
 import type { Graph, GraphEdge, GraphNode, HotSymbol, Miss, UnknownSite } from "./types.js";
@@ -118,6 +120,40 @@ export function toImpactUnknown(u: UnknownSite): ImpactUnknown {
   };
 }
 
+const missIndex = new WeakMap<Graph, Map<string, Miss[]>>();
+function missesNamed(graph: Graph, name: string): Miss[] {
+  let byName = missIndex.get(graph);
+  if (!byName) {
+    byName = new Map();
+    for (const m of graph.misses) {
+      const list = byName.get(m.name);
+      if (list) list.push(m);
+      else byName.set(m.name, [m]);
+    }
+    missIndex.set(graph, byName);
+  }
+  return byName.get(name) ?? [];
+}
+
+// Every call site that still reaches a removed symbol, one edge per caller:
+// a current call whose evidence points at the place the base version
+// defined it (its file under the old or new path, its Go package or its
+// class). Nothing is cut here. `path` is the changed file it was removed from.
+export function callersOfRemoved(graph: Graph, node: GraphNode, path: string): GraphEdge[] {
+  const targets = missTargets(node, path);
+  const byFrom = new Map<string, GraphEdge>();
+  for (const m of missesNamed(graph, node.name)) {
+    if (!targets.has(m.target)) continue;
+    let e = byFrom.get(m.from);
+    if (!e) {
+      e = { from: m.from, to: node.id, kind: "calls", tier: m.site.tier, sites: [] };
+      byFrom.set(m.from, e);
+    }
+    e.sites.push(m.site);
+  }
+  return [...byFrom.values()];
+}
+
 const budgetSets = new WeakMap<Graph, Set<string>>();
 function budgetFilesOf(graph: Graph): Set<string> {
   let set = budgetSets.get(graph);
@@ -189,30 +225,14 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
   // reaches the old place is broken, so the symbol reads as removed.
   const removed: string[] = [];
   let moved = 0;
-  const missesByName = new Map<string, Miss[]>();
-  for (const m of graph.misses) {
-    const list = missesByName.get(m.name);
-    if (list) list.push(m);
-    else missesByName.set(m.name, [m]);
-  }
   const removedEdges = new Map<string, GraphEdge[]>();
   for (const f of change.files) {
     for (const node of graph.removed.get(f.path) ?? []) {
       removed.push(node.id);
-      const targets = missTargets(node, f.path);
-      const byFrom = new Map<string, GraphEdge>();
-      for (const m of missesByName.get(node.name) ?? []) {
-        if (!targets.has(m.target)) continue;
-        let e = byFrom.get(m.from);
-        if (!e) {
-          e = { from: m.from, to: node.id, kind: "calls", tier: m.site.tier, sites: [] };
-          byFrom.set(m.from, e);
-        }
-        e.sites.push(m.site);
-      }
+      const edges = callersOfRemoved(graph, node, f.path);
       const symbol = toSymbol(node);
-      if (byFrom.size > 0) {
-        removedEdges.set(node.id, [...byFrom.values()]);
+      if (edges.length > 0) {
+        removedEdges.set(node.id, edges);
         delete symbol.movedTo;
       } else if (node.movedTo) moved++;
       symbols.set(node.id, symbol);

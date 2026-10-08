@@ -12,6 +12,10 @@
 // 6. A secret the scanners found on a changed line reaches a packet file:
 //    through a name, a note or a path the graph carries, spelled with JSON
 //    escapes (a quote or a backslash in it), or in a packet file's name.
+// 7. A removed symbol with more callers than the hub cut keeps gets a page
+//    rebuilt from the summary's cut list: short, and marked as complete.
+// 8. A symbol the graph handed to the packet does not hold gets a page
+//    that claims to be complete, with the brief's cut list or with zero.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -35,6 +39,27 @@ async function reviewed(before: Record<string, string>, after: Record<string, st
   const graph = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
   return { root, sha, change, graph, impact: detectImpact(graph, change) };
 }
+
+// Every page of a paged packet file, from its first page on.
+function readPages<T>(dir: string, first: string): T[] {
+  const out: T[] = [];
+  for (let at: string | null = first; at !== null; ) {
+    const page = JSON.parse(readFileSync(join(dir, at), "utf8")) as T & { next: string | null };
+    out.push(page);
+    at = page.next;
+  }
+  return out;
+}
+
+type Page<I> = { total: number; totalExact: boolean; cut: { omitted: number | null; note: string } | null; pages: number; items: I[] };
+
+// `core` called from 45 files, then removed by the change.
+const removedHubRepo = () => {
+  const files: Record<string, string> = { "src/core.ts": "export function core(): number {\n  return 1;\n}\nexport function keep(): number {\n  return 2;\n}\n" };
+  for (let i = 0; i < 45; i++) files[`src/c${i}.ts`] = `import { core } from "./core.js";\nexport function c${i}() {\n  return core();\n}\n`;
+  return files;
+};
+const coreRemoved = { "src/core.ts": "export function keep(): number {\n  return 2;\n}\n" };
 
 const hubRepo = () => {
   const files: Record<string, string> = { "src/core.ts": "export function core(): number {\n  return 1;\n}\n" };
@@ -121,5 +146,31 @@ describe("the review packet", () => {
         }
       }
     }
+  });
+
+  it("puts every caller of a removed hub on its pages, past the 20 the summary keeps (7)", async () => {
+    const r = await reviewed(removedHubRepo(), coreRemoved);
+    const seed = r.impact.removed[0] as string;
+    expect(r.impact.hubs.map((h) => h.symbol)).toEqual([seed]);
+    expect(r.impact.callers.filter((p) => p.seed === seed)).toHaveLength(20);
+    const packet = await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets: [] });
+    const pages = readPages<Page<{ site: { file: string } }>>(join(r.root, PACKET_DIR), `callers/${symbolKey(seed)}.json`);
+    expect(pages[0]).toMatchObject({ total: 45, totalExact: true, cut: null });
+    const items = pages.flatMap((p) => p.items);
+    expect(items).toHaveLength(45);
+    expect(new Set(items.map((i) => i.site.file)).size).toBe(45);
+    expect(renderImpactBlock({ ...r.impact, packet: packet.dir })).toContain("`core` (function), still called from 45 sites");
+  });
+
+  it("says a page is short, and by how many, for a removed symbol the graph it is given does not hold (8)", async () => {
+    const r = await reviewed(removedHubRepo(), coreRemoved);
+    const seed = r.impact.removed[0] as string;
+    // The same tree built with no base: it holds no removed symbol.
+    const plain = await buildGraph({ repoRoot: r.root, store: null });
+    expect(plain.removed.size).toBe(0);
+    await writePacket({ root: r.root, repoRoot: r.root, graph: plain, impact: r.impact, baseSha: r.change.baseSha, secrets: [] });
+    const pages = readPages<Page<unknown>>(join(r.root, PACKET_DIR), `callers/${symbolKey(seed)}.json`);
+    expect(pages[0]).toMatchObject({ total: 20, totalExact: false, cut: { omitted: 25 } });
+    expect(pages.flatMap((p) => p.items)).toHaveLength(20);
   });
 });

@@ -108,6 +108,8 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
       const first = p.edges[0] as ImpactEdge;
       if (p.edges.length === 1 && removed.includes(p.seed)) called.set(p.seed, (called.get(p.seed) ?? 0) + first.sites.length);
     }
+    // A hub's list was cut to its nearest callers; its count was taken before the cut.
+    for (const h of impact.hubs) if (removed.includes(h.symbol)) called.set(h.symbol, h.sites);
     out.push("", "Removed by this change (from the base version):");
     for (const id of removed.slice(0, MAX_TOUCHED)) {
       const s = sym.get(id);
