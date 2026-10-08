@@ -43,6 +43,10 @@
 // 14. Where a `file:` path leads is lost when the model is kept, so a build
 //    reopened from its kept model no longer binds what the fresh build
 //    bound.
+// 15. A manifest whose folder became a link (a developer linking a local
+//    checkout in) is explained by the file of that name outside the
+//    repository: missing there, the manifest is dropped with nothing said;
+//    over the cap there, the report gives that outside file's size.
 import { afterAll, describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -305,6 +309,27 @@ describe("a manifest or tsconfig the graph cannot read is said, never dropped", 
     expect(metadata(g)).toEqual([]);
     expect(g.status.status).toBe("ok");
     expect(callSites(g, symbol(g, "a/src/util.ts", "util"))).toEqual(["a/src/main.ts:3"]);
+  });
+
+  it("names a manifest whose folder became a link by that link, whatever the folder outside holds (15)", async () => {
+    const files = {
+      "package.json": workspaceRoot,
+      "packages/core/package.json": json({ name: "@x/core", main: "src/index.ts" }),
+      "packages/core/src/index.ts": "export function helper() {\n  return 1;\n}\n",
+    };
+    const note = "packages/core/package.json is under packages/core, a link, which the graph does not follow, so its package's name, dependencies and workspaces are not known";
+    // Outside: nothing of that name, then a package.json over the 1 MB cap.
+    for (const there of [{}, { "package.json": json({ name: "@x/core", description: "x".repeat(MiB) }) }]) {
+      const root = repo(files);
+      commitAll(root);
+      const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+      repos.push(outside);
+      writeFiles(outside, there);
+      rmSync(join(root, "packages/core"), { recursive: true });
+      symlinkSync(outside, join(root, "packages/core"));
+      const g = await buildGraph({ repoRoot: root, store: null });
+      expect(metadata(g)).toEqual([{ file: "packages/core/package.json", scope: "project", note }]);
+    }
   });
 
   it("reads a manifest over 1 MB as over its cap in the base version too, so changing it breaks no consumer (10)", async () => {

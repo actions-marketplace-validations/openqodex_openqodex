@@ -12,9 +12,11 @@
 // dropped quietly: it is kept as a gap (`unreadable`), which the resolver
 // turns into an unknown, the impact walk into a floor for the folder the
 // file governs, and the build into a partial status. Why a read was
-// refused is told from the file's own entry (lstat), never by following it.
-import { lstatSync } from "node:fs";
-import { join as joinPath, posix, resolve as resolvePath } from "node:path";
+// refused is told from the file's own entry and each folder above it,
+// looked at by identity (lstat) one name at a time, never by following a
+// link; a dependency declared by a `file:` or `link:` path is placed by the
+// same kind of walk.
+import { posix, resolve as resolvePath } from "node:path";
 import { FolderReader, type Id } from "@openqodex/core";
 import type { Relation } from "../model/records.js";
 import type { RepoReader } from "../safe-fs.js";
@@ -128,16 +130,37 @@ function get(reader: RepoReader, path: string, max: number): Got {
   }
   // A byte order mark is no part of the text (TypeScript, npm and Python read past it).
   if (text !== null) return { text: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text };
+  const why = whyUnread(reader.root, path, max);
+  return why === null ? null : { failed: why };
+}
+
+// Why the file `path` could not be read, told one name at a time from the
+// repository root by identity and never through a link, so nothing outside
+// the repository decides it. Null when nothing is there (removed since git
+// listed it), which is no failure.
+function whyUnread(root: string, path: string, max: number): string | null {
+  let folders: FolderReader;
   try {
-    const st = lstatSync(joinPath(reader.root, path));
-    if (st.isSymbolicLink()) return { failed: "is a link, which the graph does not follow" };
-    if (!st.isFile()) return { failed: "is not a regular file" };
-    if (st.size > max) return { failed: `is over ${max / (1024 * 1024)} MB` };
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    folders = new FolderReader(resolvePath(root));
+  } catch {
+    return "could not be read";
   }
-  return { failed: "could not be read" };
+  const names = path.split("/");
+  for (let i = 1; i <= names.length; i++) {
+    const looked = folders.entry(names.slice(0, i));
+    if (!looked.ok) return looked.why === "missing" ? null : "could not be read";
+    const st = looked.stat;
+    if (i < names.length) {
+      if (st.isSymbolicLink()) return `is under ${names.slice(0, i).join("/")}, a link, which the graph does not follow`;
+      // A file where a folder should be: nothing is there.
+      if (!st.isDirectory()) return null;
+      continue;
+    }
+    if (st.isSymbolicLink()) return "is a link, which the graph does not follow";
+    if (!st.isFile()) return "is not a regular file";
+    if (st.size > BigInt(max)) return `is over ${max / (1024 * 1024)} MB`;
+  }
+  return "could not be read";
 }
 
 const dirOf = (path: string): string => {
