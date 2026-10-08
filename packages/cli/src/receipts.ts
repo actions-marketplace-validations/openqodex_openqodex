@@ -104,27 +104,33 @@ export function writeHomeReceipt(home: string, repoRoot: string, receipt: GateRe
 
 // The last review of a repository run on this machine, of any kind (the
 // developer's change, a branch or pull request, the whole repository, a
-// two-step review): its run folder, absolute, and its change id. `openqodex
-// findings` reads that review's report.json, never the newest folder under
-// .openqodex/reviews/, which a branch can plant with any name.
+// two-step review): its run folder, absolute (`dir`, to read, and `shown`,
+// redacted, to print), its change id, and the sha256 of the report.json it
+// wrote. `openqodex findings` prints that report.json only while its text
+// still has that hash: the record vouches for the content, not only the
+// folder, which a branch can carry files into. It never reads the newest
+// folder under .openqodex/reviews/, which a branch can plant with any name.
 //
 //   <home>/last-review/<repo id>/last-review.json
-export type LastReview = { version: 1; dir: string; change_id: string; written_at: string };
+export type LastReview = { version: 2; dir: string; shown: string; change_id: string; report_sha256: string; written_at: string };
 
 const LAST_REVIEW_KIND = "last-review";
 const LAST_REVIEW = "last-review.json";
 // The record folders pruning keeps to 30 days.
 const PRUNED = ["receipts", "runs", LAST_REVIEW_KIND];
 
-export function writeHomeLastReview(home: string, repoRoot: string, dir: string, changeId: string): void {
-  const record: LastReview = { version: 1, dir, change_id: changeId, written_at: new Date().toISOString() };
+export function writeHomeLastReview(home: string, repoRoot: string, run: { dir: string; shown: string; changeId: string; reportSha256: string }): void {
+  const record: LastReview = { version: 2, dir: run.dir, shown: run.shown, change_id: run.changeId, report_sha256: run.reportSha256, written_at: new Date().toISOString() };
   writeRecord(home, LAST_REVIEW_KIND, repoRoot, [LAST_REVIEW], record);
 }
 
-export function readHomeLastReview(home: string, repoRoot: string): LastReview | null {
+// The record, or null when there is none. One in another shape (a record of
+// an earlier version, with no report hash) reads as `unverified`.
+export function readHomeLastReview(home: string, repoRoot: string): LastReview | "unverified" | null {
   const value = readRecord(join(home, LAST_REVIEW_KIND, repoId(repoRoot), LAST_REVIEW)) as Partial<LastReview> | null;
-  const ok = value !== null && value.version === 1 && typeof value.dir === "string" && typeof value.change_id === "string";
-  return ok ? (value as LastReview) : null;
+  if (value === null) return null;
+  const ok = value.version === 2 && typeof value.dir === "string" && typeof value.shown === "string" && typeof value.change_id === "string" && typeof value.report_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.report_sha256);
+  return ok ? (value as LastReview) : "unverified";
 }
 
 export function homeRunPath(home: string, repoRoot: string, runId: string): string {

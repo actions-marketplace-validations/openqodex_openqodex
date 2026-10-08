@@ -33,7 +33,7 @@ import {
   openReportDir,
   readLatest,
   readRepoFile,
-  renderHtml,
+  redactByFingerprint,
   repoStat,
   SEVERITIES,
   STATE_DIR,
@@ -66,7 +66,7 @@ import {
   nothingToReview,
   ownersInstructions,
   redactStored,
-  reportFiles,
+  reviewOutputs,
   progress,
   runPipeline,
   scanChange,
@@ -257,17 +257,21 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
     [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
   };
-  const display = displayJson(buildDisplay({ change: p.change, secrets: p.secrets }));
   writeReportFiles(p.repoRoot, dir, {
     ...bound,
     [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
     "brief.md": brief,
   });
-  // It quotes the code under review: readable by the developer only.
-  writeReportFiles(p.repoRoot, dir, { [DISPLAY_FILE]: display }, PRIVATE);
   // The run record in the developer's home: finalize issues a push receipt
-  // only for a run this machine scanned, with these files unchanged.
-  if (!target) recordRun(p.repoRoot, dir, manifest, bound, display);
+  // only for a run this machine scanned, with these files unchanged. It
+  // holds display.json's hash too, the only thing finalize trusts it by, so
+  // a target review, which has no record, saves no display.
+  if (!target) {
+    const display = displayJson(buildDisplay({ change: p.change, secrets: p.secrets }));
+    // It quotes the code under review: readable by the developer only.
+    writeReportFiles(p.repoRoot, dir, { [DISPLAY_FILE]: display }, PRIVATE);
+    recordRun(p.repoRoot, dir, manifest, bound, display);
+  }
   if (!target) {
     writeLatest(p.repoRoot, {
       dir: relative(p.repoRoot, dir),
@@ -625,13 +629,17 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     impact: whole ? null : readImpact(repoRoot, dir),
   };
 
-  writeReportFiles(repoRoot, dir, reportFiles(report));
-  const html = renderHtml({ report, display: savedDisplay(repoRoot, dir, change, target === undefined && whole === null), version: __OPENQODEX_VERSION__, reportMd: join(dir, "report.md") });
-  if (!writeReportHtml((files) => writeReportFiles(repoRoot, dir, files, PRIVATE), html)) {
+  // Every output from one redaction pass. The secrets are gone from memory
+  // by now; their saved fingerprints (scan.json, every line of a multi-line
+  // secret included) redact the report, the paths and anything else printed.
+  const out = reviewOutputs({ report, display: savedDisplay(repoRoot, dir, change), dir, redact: (text) => redactByFingerprint(text, scan.secretFingerprints), version: __OPENQODEX_VERSION__ });
+  const { "report.html": html, ...files } = out.files;
+  writeReportFiles(repoRoot, dir, files);
+  if (!writeReportHtml((f) => writeReportFiles(repoRoot, dir, f, PRIVATE), html!)) {
     await discard();
     return EXIT_TOOL_FAILED;
   }
-  const paths = { html: join(dir, "report.html"), md: join(dir, "report.md") };
+  const paths = out.paths;
   const receipt: Latest = {
     dir: relative(repoRoot, dir),
     change_id: change.id,
@@ -646,28 +654,30 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     // A legacy record in the developer's home, so the push hooks accept this
     // review as before; only for a run this machine scanned (recordRun).
     try {
-      if (runMatches(readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)), { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts })) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir), paths.html));
+      if (runMatches(readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)), { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts })) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(out.report, "legacy", relative(repoRoot, dir), paths.html));
       else warn("openqodex: this review is not recorded for the push hooks: its scan was not run by review --agent on this machine, or its files changed since; run openqodex review");
     } catch (error) {
       warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
     }
   }
   try {
-    writeHomeLastReview(openqodexHomeDir(), repoRoot, dir, change.id);
+    writeHomeLastReview(openqodexHomeDir(), repoRoot, { dir, shown: out.paths.md.slice(0, -"/report.md".length), changeId: change.id, reportSha256: out.reportSha256 });
   } catch (error) {
     warn(`openqodex: could not record this review for openqodex findings: ${(error as Error).message.split("\n")[0]}`);
   }
   await discard();
-  emitReview(report, flags, repoRoot, paths);
+  emitReview(out.report, flags, repoRoot, paths);
   return exitFor(report);
 }
 
 // The code report.html shows for a two-step review: display.json as review
-// --agent wrote it, used only when it is in the saved shape, was made for
-// this very change, and (for a run this machine scanned, `bound`) still has
-// the hash the run record holds. Otherwise the page shows the findings
-// without code, and one line says why. A whole-repository run saved none.
-function savedDisplay(repoRoot: string, dir: string, change: Change, bound: boolean): Display | null {
+// --agent wrote it, used only when this machine's record of the run holds
+// its hash and the text still has it, and it is in the saved shape for this
+// very change. A missing record, a record without the hash (a target review
+// keeps none), a changed file or another change: the page shows the
+// findings without code, and one line says why. A whole-repository run
+// saved none, and nothing is said.
+function savedDisplay(repoRoot: string, dir: string, change: Change): Display | null {
   let text: string | null;
   try {
     text = readRepoFile(repoRoot, join(dir, DISPLAY_FILE), DISPLAY_MAX_BYTES + 1);
@@ -675,16 +685,16 @@ function savedDisplay(repoRoot: string, dir: string, change: Change, bound: bool
     text = "";
   }
   if (text === null) return null;
-  let value: unknown = null;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    value = null;
+  const record = readHomeRun(openqodexHomeDir(), repoRoot, basename(dir));
+  let display: Display | null = null;
+  if (record?.display_sha256 !== undefined && record.display_sha256 === sha256Of(text)) {
+    try {
+      display = checkDisplay(JSON.parse(text) as unknown, change.id);
+    } catch {
+      display = null;
+    }
   }
-  const record = bound ? readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)) : null;
-  const same = record?.display_sha256 === undefined || record.display_sha256 === sha256Of(text);
-  const display = same ? checkDisplay(value, change.id) : null;
-  if (display === null) warn("openqodex: the saved code of this run does not match the change it was made for, so report.html shows the findings without the code");
+  if (display === null) warn("openqodex: report.html shows the findings without the code: the saved code of this run is not the one this machine's record of the run vouches for, or not for this change");
   return display;
 }
 

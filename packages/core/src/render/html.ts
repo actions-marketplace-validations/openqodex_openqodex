@@ -363,6 +363,40 @@ function diffTable(hunks: Hunk[], cardsByLine: Map<number, string[]>, droppedByL
   return out.join("\n");
 }
 
+// The shown lines a finding's range covers, marked with the severity of the
+// first finding that covers each (findings come highest severity first).
+// Only lines on the page are visited: a range of twenty million lines over
+// one shown line costs one step, and a line already marked is skipped
+// through `next`, so all ranges together cost the shown lines once.
+function flagger(lines: number[]): { flagged: Map<number, string>; range: (from: number, to: number, cls: string) => void } {
+  const flagged = new Map<number, string>();
+  const next = Array.from({ length: lines.length + 1 }, (_, i) => i);
+  const find = (i: number): number => {
+    let root = i;
+    while (next[root] !== root) root = next[root]!;
+    while (next[i] !== root) {
+      const up = next[i]!;
+      next[i] = root;
+      i = up;
+    }
+    return root;
+  };
+  const range = (from: number, to: number, cls: string): void => {
+    let lo = 0;
+    let hi = lines.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (lines[mid]! < from) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = find(lo); i < lines.length && lines[i]! <= to; i = find(i + 1)) {
+      flagged.set(lines[i]!, cls);
+      next[i] = i + 1;
+    }
+  };
+  return { flagged, range };
+}
+
 function fileSection(entry: Entry, index: number, findings: Numbered[], dropped: Dropped[], byCandidate: Map<string, number>): string {
   const path = entry.path;
   const hunks = entry.hunks;
@@ -373,18 +407,19 @@ function fileSection(entry: Entry, index: number, findings: Numbered[], dropped:
   const counts = hunks.length > 0 ? `<span class="file-counts"><span class="added">+${adds}</span> <span class="removed">-${dels}</span></span>` : "";
 
   const cardsByLine = new Map<number, string[]>();
-  const flagged = new Map<number, string>();
   const unanchored: string[] = [];
   const shown = new Set(hunks.flatMap((h) => h.rows).filter((r) => r.new !== null).map((r) => r.new as number));
+  const flag = flagger([...shown].sort((a, b) => a - b));
   for (const [n, f] of findings) {
     const anchor = f.line_end || f.line_number;
     if (shown.has(anchor)) {
       cardsByLine.set(anchor, [...(cardsByLine.get(anchor) ?? []), findingCard(f, n)]);
-      for (let line = f.line_number || anchor; line <= anchor; line++) if (!flagged.has(line)) flagged.set(line, sevClass(f.severity));
+      flag.range(f.line_number || anchor, anchor, sevClass(f.severity));
     } else {
       unanchored.push(findingCard(f, n));
     }
   }
+  const flagged = flag.flagged;
   const droppedByLine = new Map<number, Dropped[]>();
   const droppedUnanchored: Dropped[] = [];
   for (const d of dropped) {
@@ -780,7 +815,7 @@ export function renderHtml(input: HtmlInput): string {
     listed.add(path);
   }
   // A review of the whole repository lists only the files it cites.
-  const filesTotal = excerpt ? entries.length : Math.max(report.stats?.files ?? 0, entries.length);
+  const filesTotal = excerpt ? entries.length + (input.display?.omitted_files ?? 0) : Math.max(report.stats?.files ?? 0, entries.length);
 
   const sections = entries.map((e, i) => fileSection(e, i + 1, findingsByPath.get(e.path) ?? [], droppedByPath.get(e.path) ?? [], byCandidate)).join("\n");
   const body = `<div class="page">

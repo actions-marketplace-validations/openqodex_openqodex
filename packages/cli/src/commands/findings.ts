@@ -7,7 +7,10 @@
 //
 // The review is the one recorded in the developer's own OpenQodex home
 // (receipts.ts), never the newest folder under .openqodex/reviews/, which a
-// branch can carry with any name and any text. It only reads and prints.
+// branch can carry with any name and any text; and its report.json is
+// printed only while it is the very text the review wrote (the record holds
+// its sha256). It only reads and prints.
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { OpenQodexError, findRepoRoot, isRepoState, readFileBounded, readRepoFile, renderFindingDetails } from "@openqodex/core";
 import type { Report } from "@openqodex/core";
@@ -53,17 +56,23 @@ export async function run(args: string[]): Promise<number> {
   const repoRoot = await findRepoRoot(global.cwd);
   const last = readHomeLastReview(openqodexHomeDir(), repoRoot);
   if (last === null) throw new OpenQodexError("there is no review of this repository yet on this machine; run openqodex review first");
+  const unverified = "there is no verified review of this repository to print: ";
+  if (last === "unverified") throw new OpenQodexError(`${unverified}the record of the last review holds no hash of its report; run openqodex review again`);
+  // Only the exact report.json the review wrote: same bytes, same hash.
   const text = readReport(repoRoot, last.dir);
+  if (text === null || createHash("sha256").update(text, "utf8").digest("hex") !== last.report_sha256) {
+    throw new OpenQodexError(`${unverified}the report of the last review is gone or changed since it was written; run openqodex review again`);
+  }
   let report: Report | null = null;
   try {
-    report = text === null ? null : (JSON.parse(text) as Report);
+    report = JSON.parse(text) as Report;
   } catch {
     report = null;
   }
   if (report === null || report.kind !== "review" || report.change_id !== last.change_id || !Array.isArray(report.findings)) {
-    throw new OpenQodexError(`the report of the last review is gone or changed (${join(last.dir, "report.json")}); run openqodex review again`);
+    throw new OpenQodexError(`${unverified}the report of the last review is not in the shape openqodex writes; run openqodex review again`);
   }
   const numbers = numbersOf(positionals, report.findings.length);
-  process.stdout.write(`From the review in ${last.dir}\n\n${renderFindingDetails(report, numbers)}`);
+  process.stdout.write(`From the review in ${last.shown}\n\n${renderFindingDetails(report, numbers)}`);
   return EXIT_OK;
 }

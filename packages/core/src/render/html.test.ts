@@ -44,7 +44,7 @@ import { describe, expect, it } from "vitest";
 import { getChange } from "../change.js";
 import { makeChange, makeScan } from "../test-fixtures.js";
 import type { Change, CompletionRecord, Report, ReportFinding } from "../types.js";
-import { DISPLAY_MAX_ROWS, buildDisplay, checkDisplay } from "./display.js";
+import { DISPLAY_MAX_BYTES, DISPLAY_MAX_ROWS, buildDisplay, buildExcerptDisplay, checkDisplay, displayJson } from "./display.js";
 import type { Display, DisplayRow } from "./display.js";
 import { renderHtml } from "./html.js";
 import { renderReceipt, renderReview } from "./review.js";
@@ -232,6 +232,20 @@ describe("report.html", () => {
     for (const line of BODY) expect(shown.join("\n")).not.toContain(line);
   });
 
+  it("3. redacts the whole of a secret line at a hunk edge when a shorter secret overlaps it", async () => {
+    // The hunk's context holds only the last body line of the key, and a
+    // second secret the scanners matched is the end of that same line.
+    const last = BODY[2]!;
+    const body = `KEY = """${PEM}"""\n`;
+    const change = await changeOf({ "conf.py": [`${body}x = 1\ny = 2\nz = 3\n`, `${body}x = 1\ny = 20\nz = 3\n`] });
+    const display = buildDisplay({ change, secrets: [last.slice(20), PEM] });
+    const shown = display.files[0]?.hunks.flatMap((h) => h.rows).map((r) => r.text).join("\n") ?? "";
+    expect(shown).toContain("[redacted]");
+    expect(shown).not.toContain(last.slice(0, 12));
+    const html = renderHtml({ report: report(change, { findings: [] }), display, version: "0.0.0-test" });
+    expect(html).not.toContain(last.slice(0, 12));
+  });
+
   it("4. shows each finding once, right under the line it cites", () => {
     const change = fixtureChange();
     const html = page(report(change), change);
@@ -387,6 +401,66 @@ describe("the standard report", () => {
   });
 });
 
+// Bounds. Ways it could fail, written before the code:
+// 16. A finding's line range is walked line by line: a legacy finding that
+//     cites twenty million lines on a one-line diff takes seconds or the heap.
+// 17. A review of the whole repository reads every row of a huge file
+//     before it finds the file is past the display limit.
+// 18. File names alone take the saved display past its cap: 60,000 empty
+//     added files with long names give a display.json finalize cannot read.
+describe("bounds", () => {
+  const ms = (f: () => void): number => {
+    const t = performance.now();
+    f();
+    return performance.now() - t;
+  };
+
+  it("16. renders a legacy finding that cites twenty million lines on a one-line diff in well under a second, its one shown line flagged", () => {
+    // The one changed line is line 20,000,000; the finding cites lines 1 to it.
+    const text = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -20000000 +20000000 @@\n-old\n+new\n";
+    const change: Change = { ...fixtureChange(), files: [{ path: "a.txt", status: "modified", oldPath: null, binary: false }], diffs: [{ path: "a.txt", text }] };
+    const wide = agentFinding({ file_path: "a.txt", line_number: 1, line_end: 20_000_000, problem: undefined, consequence: undefined, fix: undefined });
+    let html = "";
+    expect(ms(() => (html = renderHtml({ report: report(change, { findings: [wide] }), display: buildDisplay({ change, secrets: [] }), version: "0.0.0-test" })))).toBeLessThan(1000);
+    expect(html.split('id="f1"').length - 1).toBe(1);
+    expect(html).toMatch(/<tr class="line line-add line-flagged sev-major"><td class="num num-old"><\/td><td class="num num-new" data-n="20000000">/);
+    expect(html).not.toMatch(/line-del line-flagged/);
+  });
+
+  it("17. leaves out a 2.5 million blank-line file of a whole-repository review at once, in well under a second, within the cap", () => {
+    let display: Display | null = null;
+    const blank = "\n".repeat(2_500_000);
+    expect(ms(() => (display = buildExcerptDisplay({ changeId: "x".repeat(64), cited: [{ file_path: "blank.txt", line_number: 1, line_end: 2_500_000 }], read: () => blank, secrets: [] })))).toBeLessThan(1000);
+    const d = display as unknown as Display;
+    expect(d.rows).toBe(0);
+    expect(d.files[0]?.hunks).toEqual([]);
+    expect(d.files[0]?.note).toMatch(/display limit/);
+    expect(Buffer.byteLength(displayJson(d))).toBeLessThan(DISPLAY_MAX_BYTES);
+  });
+
+  it("18. keeps the saved display of 60,000 empty added files within its cap, counting the files it leaves out, in well under a second", () => {
+    const n = 60_000;
+    const paths = Array.from({ length: n }, (_, i) => `assets/generated/${"deep/".repeat(30)}file-${String(i).padStart(6, "0")}.txt`);
+    const change: Change = {
+      ...fixtureChange(),
+      files: paths.map((path) => ({ path, status: "added" as const, oldPath: null, binary: false })),
+      diffs: paths.map((path) => ({ path, text: `diff --git a/${path} b/${path}\nnew file mode 100644\n` })),
+      stats: { files: n, additions: 0, deletions: 0 },
+    };
+    let text = "";
+    let d: Display | null = null;
+    expect(ms(() => (text = displayJson((d = buildDisplay({ change, secrets: [] })))))).toBeLessThan(1000);
+    expect(Buffer.byteLength(text)).toBeLessThan(DISPLAY_MAX_BYTES);
+    const display = d as unknown as Display;
+    expect(display.files.length + display.omitted_files).toBe(n);
+    expect(display.omitted_files).toBeGreaterThan(0);
+    expect(checkDisplay(JSON.parse(text), change.id)).not.toBeNull();
+    let html = "";
+    expect(ms(() => (html = renderHtml({ report: report(change, { findings: [] }), display, version: "0.0.0-test" })))).toBeLessThan(1000);
+    expect(html).toContain(`Diffs for ${(n - display.files.length).toLocaleString("en-US")} other changed files are not in this report.`);
+  });
+});
+
 // The designer's sample, in test/fixtures/report-html: a review of this
 // repository (sample-report.json, its blast radius cut to a slice), the diff
 // fixture the designer's reference renderer reads (sample-diff.json), and
@@ -419,7 +493,7 @@ function displayOf(diff: SampleDiff, changeId: string): Display {
       return { old_start: h.old_start, old_lines: rows.filter((r) => r.old !== null).length, new_start: h.new_start, new_lines: rows.filter((r) => r.new !== null).length, section: h.context ?? "", rows };
     }),
   }));
-  return { version: 1, change_id: changeId, kind: "change", files, rows: files.reduce((n, f) => n + f.hunks.reduce((k, h) => k + h.rows.length, 0), 0) };
+  return { version: 1, change_id: changeId, kind: "change", files, omitted_files: 0, rows: files.reduce((n, f) => n + f.hunks.reduce((k, h) => k + h.rows.length, 0), 0) };
 }
 
 const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"' };

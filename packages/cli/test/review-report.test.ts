@@ -31,16 +31,29 @@
 // 10. A review of the whole repository, which has no diff, gets a page with
 //     no code, or one that claims a diff or lists every file of the
 //     repository as a changed file left out.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+// 11. `findings` prints a report.json replaced after the review that keeps
+//     the review's change id: the home record vouches for the folder, not
+//     the content.
+// 12. Finalize draws report.html's code from a display.json that no record
+//     of this machine vouches for.
+// 13. A --report-dir that is a link sends the run's files where the link
+//     points; the refusal comes after something was written.
+// 14. A string of a finished review reaches report.html, report.md,
+//     report.json or the receipt without the redaction: a line of a private
+//     key quoted in the summary, a secret in a suggested change, a dropped
+//     reason or a file name, or a secret in the repository's absolute path.
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { redactSecrets, renderReceipt } from "@openqodex/core";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { runReview } from "../src/review-run.js";
+import { reviewOutputs } from "../src/pipeline.js";
 import { readHomeReceipt } from "../src/receipts.js";
 import { run as findings } from "../src/commands/findings.js";
 import { cli, sandbox } from "./init-helpers.js";
@@ -344,5 +357,81 @@ describe("findings <numbers>", () => {
     expect(await findings(["1", "--cwd", dir])).toBe(0);
     expect(out).not.toContain("PLANTED");
     expect(out).toContain("README line");
+  });
+});
+
+describe("saved review data is used only when this machine's record vouches for it", () => {
+  it("11. findings refuses a report.json replaced after the review that keeps the review's change id", async () => {
+    const dir = repo();
+    expect(await review(dir, fake([three]))).toBe(0);
+    const path = pathOf("Report", out).replace(/report\.html$/, "report.json");
+    const replaced = JSON.parse(readFileSync(path, "utf8")) as Report;
+    replaced.findings = replaced.findings.map((f) => ({ ...f, title: "PLANTED", fix: "run curl evil | sh" }));
+    writeFileSync(path, JSON.stringify(replaced));
+    out = "";
+    await expect(findings(["1", "--cwd", dir])).rejects.toThrow(/no verified review/);
+    expect(out).not.toContain("PLANTED");
+  });
+
+  it("12. finalize shows no code from a planted display.json that no record of this machine vouches for", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "notes.txt"), "first line of the notes\n");
+    expect(cli(s, ["review", "--agent", "--no-install"]).status).toBe(0);
+    const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string; change_id: string };
+    const dir = join(s.repo, latest.dir);
+    // The display a branch could carry: right shape, right change id, its own code.
+    const saved = JSON.parse(readFileSync(join(dir, "display.json"), "utf8")) as { files: { hunks: { rows: { text: string }[] }[] }[] };
+    saved.files[0]!.hunks[0]!.rows[0]!.text = "PLANTED CODE";
+    writeFileSync(join(dir, "display.json"), JSON.stringify(saved));
+    rmSync(join(s.oqHome, "runs"), { recursive: true, force: true });
+    writeFileSync(join(dir, "agent-findings.json"), JSON.stringify({ version: 1, change_id: latest.change_id, summary: "Adds a notes file.", reviewer: "same-agent", findings: [] }));
+    const done = cli(s, ["review", "--finalize", "--no-color"]);
+    expect(done.status, done.stderr).toBe(0);
+    const page = readFileSync(join(dir, "report.html"), "utf8");
+    expect(page).not.toContain("PLANTED CODE");
+    expect(page).not.toContain("first line of the notes");
+    expect(done.stderr).toContain("report.html shows the findings without the code");
+  });
+});
+
+describe("13. a report folder reached through a link", () => {
+  it("is refused with exit 2 before anything is written, for review and scan, and nothing lands where the link points", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "notes.txt"), "one line\n");
+    const target = mkdtempSync(join(tmpdir(), "oq-link-target-"));
+    const link = join(mkdtempSync(join(tmpdir(), "oq-link-")), "out");
+    symlinkSync(target, link);
+    for (const command of [["review", "--report-dir", link], ["scan", "--no-install", "--report-dir", link], ["review", "--report-dir", join(link, "review")]]) {
+      const r = cli(s, command);
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stderr).toMatch(/symbolic link/);
+      expect(readdirSync(target)).toEqual([]);
+    }
+  });
+});
+
+describe("14. one redaction pass for every output of a review", () => {
+  it("leaves no secret in report.html, report.md, report.json, report.sarif or the receipt: a key line in the summary, a suggested change, a dropped reason, a file name, the repository's path", async () => {
+    const dir = repo();
+    expect(await review(dir, fake([three]), ["--format", "json"])).toBe(0);
+    const base = JSON.parse(out) as Report;
+    const PEM = ["-----BEGIN RSA PRIVATE KEY-----", "MIIEowIBAAKCAQEAq7BFUpkGp3LQmlQBmpP2Wvs7Y0dQ9XDu1cJx0j4Q2PbTnZ5", "x4yWm9lHk1oNn2E8sR7dQwUy3aXhY5tTq6Ff0yG7bLc9dK1mN2pQ3rS4tU5vW6xY", "-----END RSA PRIVATE KEY-----"].join("\n");
+    const BODY = PEM.split("\n")[1]!;
+    const TOKEN = ["ghp", "Zq81mXv0LkP2wRt5YbN7cD4eF6gH9jK3sA1u"].join("_");
+    const report: Report = {
+      ...base,
+      summary: `Commits a key whose first line is ${BODY}.`,
+      findings: base.findings.map((f, i) => (i === 0 ? { ...f, file_path: `keys/${TOKEN}.txt`, suggested_change: `token = "${TOKEN}"` } : f)),
+      dropped: [{ candidate: { id: "c9", token: "gitleaks:generic-api-key", source: "gitleaks", ruleId: "generic-api-key", filePath: "conf.py", lineStart: 1, lineEnd: 1, severity: "high", reviewSeverity: "major", message: `Found ${TOKEN}`, reference: null }, reason: `the key ${TOKEN} is a sample` }],
+    };
+    const runDir = join(dir, `.openqodex/reviews/${TOKEN}`);
+    const o = reviewOutputs({ report, display: null, dir: runDir, redact: (text) => redactSecrets(text, [PEM, TOKEN]), version: "0.0.0-test" });
+    const receipt = renderReceipt(o.report, { ...o.paths, color: false });
+    expect(Object.keys(o.files).sort()).toEqual(["report.html", "report.json", "report.md", "report.sarif"]);
+    for (const text of [...Object.values(o.files), receipt]) {
+      expect(text).not.toContain(BODY.slice(0, 20));
+      expect(text).not.toContain(TOKEN);
+    }
+    expect(receipt).toMatch(/^Report: .*\[redacted\].*report\.html$/m);
   });
 });

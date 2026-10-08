@@ -1,14 +1,22 @@
 // The display model report.html is drawn from: each changed file of the
 // review with its hunks as rows, old and new line numbers kept apart. It is
 // built while the diff and the matched secrets are still in memory, so every
-// row is redacted before anything is written. Bounded: past DISPLAY_MAX_ROWS
-// rows, whole files are left out with a note, never part of a hunk.
+// row and name is redacted (redact.ts, the one redaction every output shares)
+// before anything is written.
+//
+// Bounded, so its serialised form (display.json) always fits
+// DISPLAY_MAX_BYTES and a page drawn from it stays quick to open: at most
+// DISPLAY_MAX_FILES files and FILES_BUDGET bytes of their names, the rest
+// counted in `omitted_files`; at most DISPLAY_MAX_ROWS rows and ROWS_BUDGET
+// bytes of them, a file past either keeping its name with a note. Every
+// bound is checked before the rows it would cost are made.
 //
 // The normal review renders it at once and keeps it only inside report.html.
 // The two-step review (`review --agent`, then `--finalize`) saves it as
-// display.json beside the brief, and finalize uses it only for the change it
-// was made for (checkDisplay).
-import { REDACTED, redactSecrets, redactSecretsKeepingLines } from "../redact.js";
+// display.json beside the brief; finalize uses it only when this machine's
+// record of the run still vouches for it (the CLI checks), and only for the
+// change it was made for (checkDisplay).
+import { REDACTED, redactSecrets, redactSecretsKeepingLines, secretTexts } from "../redact.js";
 import type { Change, ChangedFile } from "../types.js";
 
 export const DISPLAY_VERSION = 1;
@@ -16,13 +24,16 @@ export const DISPLAY_VERSION = 1;
 export const DISPLAY_MAX_ROWS = 50_000;
 // Characters of one row; a longer row is cut and marked.
 export const DISPLAY_MAX_ROW_CHARS = 5_000;
-// Bytes of display.json at most; past it, files are left out from the largest.
+// Files the display lists at most; the rest are counted, not listed.
+export const DISPLAY_MAX_FILES = 5_000;
+// Bytes of display.json at most.
 export const DISPLAY_MAX_BYTES = 8 * 1024 * 1024;
+// Of those, what the file names and their other fields may take, and what
+// the rows may take; the rest is room for the frame.
+const FILES_BUDGET = 1024 * 1024;
+const ROWS_BUDGET = DISPLAY_MAX_BYTES - FILES_BUDGET - 64 * 1024;
 // Lines shown above and below a finding in a whole-repository review.
 const EXCERPT_CONTEXT = 3;
-
-// Shorter matches are too likely to hit ordinary text (as in redact.ts).
-const MIN_SECRET_LENGTH = 6;
 
 export type DisplayRow = {
   kind: "context" | "add" | "del";
@@ -67,6 +78,8 @@ export type Display = {
   // the whole repository, which has no diff.
   kind: "change" | "excerpts";
   files: DisplayFile[];
+  // Files of the review past DISPLAY_MAX_FILES or FILES_BUDGET, not listed.
+  omitted_files: number;
   rows: number;
 };
 
@@ -123,31 +136,14 @@ export function parseHunks(text: string): DisplayHunk[] {
   return hunks;
 }
 
-function usableSecrets(secrets: string[]): string[] {
-  return [...new Set(secrets)].filter((s) => s.length >= MIN_SECRET_LENGTH);
-}
-
-// The pieces of a multi-line secret, one per line, long enough to be told
-// from ordinary text: a hunk can hold only some lines of a private key, and
-// each line of it is still redacted.
-function secretPieces(secrets: string[]): string[] {
-  const pieces = secrets.filter((s) => s.includes("\n")).flatMap((s) => s.split("\n").map((l) => l.replace(/\r$/, "").trim()));
-  return [...new Set(pieces)].filter((p) => p.length >= MIN_SECRET_LENGTH);
-}
-
-function redactPieces(text: string, pieces: string[]): string {
-  let out = text;
-  for (const p of pieces) if (out.includes(p)) out = out.split(p).join(REDACTED);
-  return out;
-}
-
 // Redacts one hunk's rows. Each side (old: context and removed rows; new:
 // context and added rows) is joined back into the text it was in the file,
 // so a secret over several lines is found whole, and redacted line by line
-// so every row keeps its number. Then any line of a multi-line secret left
-// in a row (one that only partly falls inside the hunk) is redacted, and a
-// row that still holds a secret is replaced whole.
-function redactHunk(hunk: DisplayHunk, secrets: string[], pieces: string[]): DisplayHunk {
+// so every row keeps its number; a line of a multi-line secret that only
+// partly falls inside the hunk is one of the texts redaction looks for too
+// (redact.ts). A row that still holds any of them is replaced whole.
+function redactHunk(hunk: DisplayHunk, secrets: string[], texts: string[]): DisplayHunk {
+  if (texts.length === 0) return hunk;
   const side = (keep: (r: DisplayRow) => boolean): Map<DisplayRow, string> => {
     const rows = hunk.rows.filter(keep);
     const red = redactSecretsKeepingLines(rows.map((r) => r.text).join("\n"), secrets).split("\n");
@@ -158,12 +154,11 @@ function redactHunk(hunk: DisplayHunk, secrets: string[], pieces: string[]): Dis
   const rows = hunk.rows.map((r) => {
     const fromNew = news.get(r);
     const fromOld = olds.get(r);
-    let text = fromNew !== undefined && fromNew !== r.text ? fromNew : (fromOld ?? fromNew ?? r.text);
-    text = redactPieces(text, pieces);
-    if (secrets.some((s) => text.includes(s))) text = REDACTED;
+    let text = redactSecrets(fromNew !== undefined && fromNew !== r.text ? fromNew : (fromOld ?? fromNew ?? r.text), secrets);
+    if (texts.some((s) => text.includes(s))) text = REDACTED;
     return { ...r, text };
   });
-  return { ...hunk, section: redactPieces(redactSecrets(hunk.section, secrets), pieces), rows };
+  return { ...hunk, section: redactSecrets(hunk.section, secrets), rows };
 }
 
 function cutRow(row: DisplayRow): DisplayRow {
@@ -178,113 +173,184 @@ function noteFor(f: ChangedFile, tooLarge: boolean): string | null {
   return null;
 }
 
-// The display of a change, from its per-file diffs, every row redacted.
+const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
+
+// The running totals every bound is checked against before anything is added.
+class Budget {
+  rows = 0;
+  rowBytes = 0;
+  fileBytes = 0;
+  listed = 0;
+  omitted = 0;
+
+  // Whether one more file of this size may be listed; when not, it is counted.
+  list(file: DisplayFile): boolean {
+    const bytes = this.listed >= DISPLAY_MAX_FILES ? 0 : jsonBytes(file) + 1;
+    if (this.listed >= DISPLAY_MAX_FILES || this.fileBytes + bytes > FILES_BUDGET) {
+      this.omitted++;
+      return false;
+    }
+    this.listed++;
+    this.fileBytes += bytes;
+    return true;
+  }
+
+  // Whether `count` more rows may be made, before they are made.
+  roomFor(count: number): boolean {
+    return this.rows + count <= DISPLAY_MAX_ROWS;
+  }
+
+  // Whether these rows fit the byte budget; when they do, they are counted.
+  take(hunks: DisplayHunk[], count: number): boolean {
+    const bytes = jsonBytes(hunks);
+    if (this.rowBytes + bytes > ROWS_BUDGET) return false;
+    this.rows += count;
+    this.rowBytes += bytes;
+    return true;
+  }
+}
+
+// The display of a change, from its per-file diffs, every row and name redacted.
 export function buildDisplay(args: { change: Change; secrets: string[] }): Display {
-  const { change } = args;
-  const secrets = usableSecrets(args.secrets);
-  const pieces = secretPieces(secrets);
-  const red = (s: string) => redactPieces(redactSecrets(s, secrets), pieces);
+  const { change, secrets } = args;
+  const texts = secretTexts(secrets);
+  const red = (s: string) => redactSecrets(s, secrets);
   const diffs = new Map((change.diffs ?? []).map((d) => [d.path, d.text]));
   const tooLarge = new Set(change.notReviewed);
-  let rows = 0;
-  const files = change.files.map((f): DisplayFile => {
+  const budget = new Budget();
+  const files: DisplayFile[] = [];
+  for (const f of change.files) {
+    const meta: DisplayFile = { path: red(f.path), old_path: f.oldPath === null ? null : red(f.oldPath), status: f.status, binary: f.binary, additions: null, deletions: null, hunks: [], note: LIMIT_NOTE };
+    // The name is listed first, with the longest note it can get, so the
+    // file bound holds whatever happens to its rows.
+    if (!budget.list(meta)) continue;
     const text = diffs.get(f.path);
-    const hunks = f.binary || text === undefined ? [] : parseHunks(text).map((h) => redactHunk(h, secrets, pieces));
-    const count = hunks.reduce((n, h) => n + h.rows.length, 0);
-    const base = { path: red(f.path), old_path: f.oldPath === null ? null : red(f.oldPath), status: f.status, binary: f.binary };
-    if (hunks.length === 0) return { ...base, additions: null, deletions: null, hunks: [], note: noteFor(f, tooLarge.has(f.path)) };
-    const all = hunks.flatMap((h) => h.rows);
+    const parsed = f.binary || text === undefined ? [] : parseHunks(text);
+    if (parsed.length === 0) {
+      files.push({ ...meta, note: noteFor(f, tooLarge.has(f.path)) });
+      continue;
+    }
+    const count = parsed.reduce((n, h) => n + h.rows.length, 0);
+    const all = parsed.flatMap((h) => h.rows);
     const sums = { additions: all.filter((r) => r.kind === "add").length, deletions: all.filter((r) => r.kind === "del").length };
-    if (rows + count > DISPLAY_MAX_ROWS) return { ...base, ...sums, hunks: [], note: LIMIT_NOTE };
-    rows += count;
-    return { ...base, ...sums, hunks: hunks.map((h) => ({ ...h, rows: h.rows.map(cutRow) })), note: null };
-  });
-  return { version: DISPLAY_VERSION, change_id: change.id, kind: "change", files, rows };
+    if (!budget.roomFor(count)) {
+      files.push({ ...meta, ...sums });
+      continue;
+    }
+    const hunks = parsed.map((h) => redactHunk(h, secrets, texts)).map((h) => ({ ...h, rows: h.rows.map(cutRow) }));
+    if (!budget.take(hunks, count)) {
+      files.push({ ...meta, ...sums });
+      continue;
+    }
+    files.push({ ...meta, ...sums, hunks, note: null });
+  }
+  return { version: DISPLAY_VERSION, change_id: change.id, kind: "change", files, omitted_files: budget.omitted, rows: budget.rows };
+}
+
+// The lines of `text`, counted by walking its line breaks, never by
+// splitting the lines out.
+function lineCount(text: string): number {
+  let n = 0;
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) n++;
+  return text.length > 0 && !text.endsWith("\n") ? n + 1 : n;
+}
+
+// Lines `from` to `to` (1-based, inclusive) of `text`, cut out one by one.
+function linesOf(text: string, from: number, to: number): string[] {
+  const out: string[] = [];
+  let start = 0;
+  for (let n = 1; n <= to && start <= text.length; n++) {
+    const end = text.indexOf("\n", start);
+    const stop = end === -1 ? text.length : end;
+    if (n >= from) out.push(text.slice(start, stop));
+    if (end === -1) break;
+    start = end + 1;
+  }
+  return out;
 }
 
 // The display of a review of the whole repository: a few lines around each
 // cited line, read through `read` (the redacted snapshot), redacted again.
+// The spans are merged and measured against the file's line count before
+// any row is made: a file past a bound is left out at once.
 export function buildExcerptDisplay(args: {
   changeId: string;
   cited: { file_path: string; line_number: number; line_end: number }[];
   read: (path: string) => string | null;
   secrets: string[];
 }): Display {
-  const secrets = usableSecrets(args.secrets);
-  const pieces = secretPieces(secrets);
+  const { secrets } = args;
+  const texts = secretTexts(secrets);
   const byFile = new Map<string, [number, number][]>();
   for (const c of args.cited) {
     const spans = byFile.get(c.file_path) ?? [];
     spans.push([Math.max(1, c.line_number - EXCERPT_CONTEXT), Math.max(c.line_number, c.line_end) + EXCERPT_CONTEXT]);
     byFile.set(c.file_path, spans);
   }
-  let rows = 0;
+  const budget = new Budget();
   const files: DisplayFile[] = [];
   for (const path of [...byFile.keys()].sort()) {
-    const base = { path: redactPieces(redactSecrets(path, secrets), pieces), old_path: null, status: "modified" as const, binary: false, additions: null, deletions: null };
+    const meta: DisplayFile = { path: redactSecrets(path, secrets), old_path: null, status: "modified", binary: false, additions: null, deletions: null, hunks: [], note: LIMIT_NOTE };
+    if (!budget.list(meta)) continue;
     const raw = args.read(path);
     if (raw === null) {
-      files.push({ ...base, hunks: [], note: "the file could not be read for this page" });
+      files.push({ ...meta, note: "the file could not be read for this page" });
       continue;
     }
-    const lines = redactSecretsKeepingLines(raw, secrets).split("\n");
-    if (lines.at(-1) === "") lines.pop();
-    // Overlapping or touching spans become one.
-    const spans = (byFile.get(path) ?? []).sort((a, b) => a[0] - b[0]);
+    const total = lineCount(raw);
+    // Overlapping or touching spans become one; each is cut at the file's end.
     const merged: [number, number][] = [];
-    for (const [s, e] of spans) {
+    for (const [s, e] of (byFile.get(path) ?? []).sort((a, b) => a[0] - b[0])) {
       const last = merged.at(-1);
       if (last && s <= last[1] + 1) last[1] = Math.max(last[1], e);
       else merged.push([s, e]);
     }
-    const hunks: DisplayHunk[] = merged
-      .map(([s, e]): DisplayHunk => {
-        const end = Math.min(e, lines.length);
-        const shown: DisplayRow[] = [];
-        for (let n = s; n <= end; n++) shown.push(cutRow({ kind: "context", old: null, new: n, text: redactPieces(lines[n - 1] ?? "", pieces) }));
-        return { old_start: 0, old_lines: 0, new_start: s, new_lines: shown.length, section: "", rows: shown };
-      })
-      .filter((h) => h.rows.length > 0);
-    const count = hunks.reduce((n, h) => n + h.rows.length, 0);
-    if (rows + count > DISPLAY_MAX_ROWS) {
-      files.push({ ...base, hunks: [], note: LIMIT_NOTE });
+    const spans = merged.map(([s, e]): [number, number] => [s, Math.min(e, total)]).filter(([s, e]) => s <= e);
+    const count = spans.reduce((n, [s, e]) => n + (e - s + 1), 0);
+    if (spans.length === 0) {
+      files.push({ ...meta, note: "the cited lines are past the end of the file" });
       continue;
     }
-    rows += count;
-    files.push({ ...base, hunks, note: hunks.length === 0 ? "the cited lines are past the end of the file" : null });
+    if (!budget.roomFor(count)) {
+      files.push(meta);
+      continue;
+    }
+    const hunks = spans.map(([s, e]): DisplayHunk => {
+      const lines = redactSecretsKeepingLines(linesOf(raw, s, e).join("\n"), secrets).split("\n");
+      const rows = lines.map((text, k): DisplayRow => {
+        const clean = redactSecrets(text, secrets);
+        return cutRow({ kind: "context", old: null, new: s + k, text: texts.some((t) => clean.includes(t)) ? REDACTED : clean });
+      });
+      return { old_start: 0, old_lines: 0, new_start: s, new_lines: rows.length, section: "", rows };
+    });
+    if (!budget.take(hunks, count)) {
+      files.push(meta);
+      continue;
+    }
+    files.push({ ...meta, hunks, note: null });
   }
-  return { version: DISPLAY_VERSION, change_id: args.changeId, kind: "excerpts", files, rows };
+  return { version: DISPLAY_VERSION, change_id: args.changeId, kind: "excerpts", files, omitted_files: budget.omitted, rows: budget.rows };
 }
 
-// display.json for the two-step review, within DISPLAY_MAX_BYTES: past it,
-// the files with the most rows lose their rows, with a note, until it fits.
+// display.json for the two-step review. The bounds keep it under
+// DISPLAY_MAX_BYTES; should it still be over, every file loses its rows.
 export function displayJson(display: Display): string {
-  let d = display;
-  let text = `${JSON.stringify(d)}\n`;
-  while (Buffer.byteLength(text, "utf8") > DISPLAY_MAX_BYTES) {
-    const largest = d.files.reduce((best, f, i) => (f.hunks.length > 0 && (best === -1 || rowsOf(f) > rowsOf(d.files[best] as DisplayFile)) ? i : best), -1);
-    if (largest === -1) break;
-    const dropped = rowsOf(d.files[largest] as DisplayFile);
-    d = { ...d, rows: d.rows - dropped, files: d.files.map((f, i) => (i === largest ? { ...f, hunks: [], note: LIMIT_NOTE } : f)) };
-    text = `${JSON.stringify(d)}\n`;
-  }
-  return text;
-}
-
-function rowsOf(f: DisplayFile): number {
-  return f.hunks.reduce((n, h) => n + h.rows.length, 0);
+  const text = `${JSON.stringify(display)}\n`;
+  if (Buffer.byteLength(text, "utf8") <= DISPLAY_MAX_BYTES) return text;
+  return `${JSON.stringify({ ...display, rows: 0, files: display.files.map((f) => ({ ...f, hunks: [], note: f.hunks.length > 0 ? LIMIT_NOTE : f.note })) })}\n`;
 }
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const isNumOrNull = (v: unknown) => v === null || isNum(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
 
-// A saved display, parsed, when it is in the saved shape and was made for
-// `changeId`; else null, and the page shows no code.
+// A saved display, parsed, when it is in the saved shape, within the bounds,
+// and was made for `changeId`; else null, and the page shows no code.
 export function checkDisplay(value: unknown, changeId: string): Display | null {
   if (value === null || typeof value !== "object") return null;
   const d = value as Partial<Display>;
-  if (d.version !== DISPLAY_VERSION || d.change_id !== changeId || (d.kind !== "change" && d.kind !== "excerpts") || !Array.isArray(d.files) || !isNum(d.rows)) return null;
+  if (d.version !== DISPLAY_VERSION || d.change_id !== changeId || (d.kind !== "change" && d.kind !== "excerpts") || !Array.isArray(d.files) || !isNum(d.rows) || !isNum(d.omitted_files)) return null;
+  if (d.files.length > DISPLAY_MAX_FILES) return null;
   let rows = 0;
   for (const f of d.files as unknown[]) {
     if (f === null || typeof f !== "object") return null;

@@ -1,10 +1,11 @@
 // The scan pipeline every command shares: find the repo, load the config,
 // work out the change, run the scanners on it. Progress goes to stderr.
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { closeSync, constants, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import {
   DIFF_CAP_BYTES,
+  OpenQodexError,
   STATE_DIR,
   DEFAULT_CONFIG,
   findRepoRoot,
@@ -13,6 +14,7 @@ import {
   loadConfig,
   loadLensCatalog,
   redactSecrets,
+  renderHtml,
   renderJson,
   renderMarkdown,
   renderReceipt,
@@ -23,10 +25,11 @@ import {
   selectLensesForDiff,
   writeRepoFile,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, HotSpot, ImpactSummary, Report, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
+import type { Change, ChangeScope, Config, Display, HotSpot, ImpactSummary, Report, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
 import { buildGraph, detectImpact, emptyImpact, hotSymbols, langOf } from "@openqodex/graph";
 import type { Graph } from "@openqodex/graph";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
+import { Guard } from "./agents/guarded-fs.js";
 import { instructionsTemplate } from "./agents/repo-folder.js";
 import { EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { readInstructions, readInstructionsAt } from "./instructions.js";
@@ -133,15 +136,47 @@ export async function scanChange<C extends Change>(args: {
 // in any other string too (a file name). Candidate ids and tokens are the
 // citations finalize matches on and are kept as they are.
 export function redactStored<T>(value: T, secrets: string[]): T {
+  return secrets.length === 0 ? value : redactWith(value, (text) => redactSecrets(text, secrets));
+}
+
+// Every string in `value` through `redact`, the same walk for every caller.
+export function redactWith<T>(value: T, redact: (text: string) => string): T {
   const walk = (v: unknown, key: string | null): unknown => {
-    if (typeof v === "string") return key === "id" || key === "token" ? v : redactSecrets(v, secrets);
+    if (typeof v === "string") return key === "id" || key === "token" ? v : redact(v);
     if (Array.isArray(v)) return v.map((x) => walk(x, null));
     if (v !== null && typeof v === "object") {
       return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
     }
     return v;
   };
-  return secrets.length === 0 ? value : (walk(value, null) as T);
+  return walk(value, null) as T;
+}
+
+export type ReviewOutputs = {
+  // The report every output is drawn from, after the redaction.
+  report: Report;
+  // report.html and report.md as the receipt prints them, after the redaction.
+  paths: { html: string; md: string };
+  // report.md, report.json, report.sarif and report.html, to write as they are.
+  files: Record<string, string>;
+  // sha256 of report.json's text, for the home record `findings` checks.
+  reportSha256: string;
+};
+
+// Every output of a finished review, from one redaction pass: every string
+// of the report (the summary, each finding with its file name and suggested
+// change, the dropped reasons and the scanners' messages) and the run
+// folder's paths go through `redact` once, and every file and the receipt
+// (renderReceipt over `report` and `paths`) are drawn from what came out.
+// `redact`: by the matched secrets in a review run here (redactSecrets), by
+// their saved fingerprints in a two-step finalize (redactByFingerprint);
+// both remove every line of a multi-line secret too. `display` is redacted
+// when it is built.
+export function reviewOutputs(args: { report: Report; display: Display | null; dir: string; redact: (text: string) => string; version: string }): ReviewOutputs {
+  const report = redactWith(args.report, args.redact);
+  const paths = { html: args.redact(join(args.dir, "report.html")), md: args.redact(join(args.dir, "report.md")) };
+  const files: Record<string, string> = { ...reportFiles(report), "report.html": renderHtml({ report, display: args.display, version: args.version, reportMd: paths.md }) };
+  return { report, paths, files, reportSha256: createHash("sha256").update(files["report.json"] as string, "utf8").digest("hex") };
 }
 
 // The graph for this run, or the summary saying why there is none. For the
@@ -306,10 +341,42 @@ function writeOutFile(out: string, repoRoot: string, text: string, mode?: number
 // folder the caller names instead of .openqodex/reviews/, readable by their
 // owner only. The GitHub Action names a new folder of its own, so it never
 // takes a report that a branch committed under .openqodex/ for this run's.
-export function writeReportCopies(folder: string, repoRoot: string, files: Record<string, string>): void {
+//
+// The folder must be reached through no symbolic link but the system's own:
+// each part of its path, from the root, is looked at without following it,
+// and a link owned by anyone but root stops the command before anything is
+// made or written (the system's own, such as /tmp and /var on macOS, are
+// root's). A link a repository or anyone else put there would send the
+// run's files where it points. The writer that comes back holds a guard
+// (agents/guarded-fs.ts) bound to the folder as it is now: every file is
+// written through a checked handle into that very folder, so a link swapped
+// in later is refused too.
+export function checkReportFolder(folder: string): string {
   const dir = resolve(folder);
-  if (isRepoState(repoRoot, dir) === null) mkdirSync(dir, { recursive: true });
-  for (const [name, text] of Object.entries(files)) writeOutFile(join(dir, name), repoRoot, text, 0o600);
+  let at = parse(dir).root;
+  for (const part of dir.slice(at.length).split(sep).filter((p) => p !== "")) {
+    at = join(at, part);
+    const st = lstatSync(at, { throwIfNoEntry: false });
+    if (st === undefined) break;
+    if (st.isSymbolicLink() && st.uid !== 0) throw new OpenQodexError(`--report-dir ${folder}: ${at} is a symbolic link; name a folder reached through no link`);
+    if (!st.isSymbolicLink() && !st.isDirectory()) throw new OpenQodexError(`--report-dir ${folder}: ${at} is not a folder`);
+  }
+  return dir;
+}
+
+export function reportFolderWriter(folder: string, repoRoot: string): (files: Record<string, string>) => void {
+  const dir = checkReportFolder(folder);
+  const guard = new Guard({ repoRoot, gitFolders: [], roots: [dir] });
+  return (files) => {
+    for (const [name, text] of Object.entries(files)) {
+      if (name !== basename(name) || name.startsWith(".")) throw new Error(`not a plain file name: ${name}`);
+      guard.write(join(dir, name), text, { mode: 0o600, setMode: true });
+    }
+  };
+}
+
+export function writeReportCopies(folder: string, repoRoot: string, files: Record<string, string>): void {
+  reportFolderWriter(folder, repoRoot)(files);
 }
 
 export function exitFor(report: Report): number {
