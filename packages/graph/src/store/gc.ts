@@ -59,6 +59,9 @@ export type CollectorContext = {
   // folder) when every folder from the repo root down to it is a real
   // folder; null otherwise.
   folder(rel: string): string | null;
+  // The names in such a folder, listed between two walks from the repo root
+  // that find the same folders; null otherwise.
+  list(rel: string): { dir: string; names: string[] } | null;
   // The manifest of a generation whose every file matches it; else null.
   load(id: BuildId): GenerationManifest | null;
   // A file under the graph folder, read without following a link.
@@ -98,17 +101,11 @@ export function treeBytes(abs: string, st = lstatQuiet(abs)): number {
 
 // What a verified folder holds, each entry by lstat.
 function entries(ctx: CollectorContext, rel: string): Entry[] {
-  const abs = ctx.folder(rel);
-  if (abs === null) return [];
-  let names: string[];
-  try {
-    names = readdirSync(abs);
-  } catch {
-    return [];
-  }
+  const listed = ctx.list(rel);
+  if (listed === null) return [];
   const out: Entry[] = [];
-  for (const name of names) {
-    const path = join(abs, name);
+  for (const name of listed.names) {
+    const path = join(listed.dir, name);
     const st = lstatQuiet(path);
     if (st !== null) out.push({ abs: path, name, bytes: treeBytes(path, st), mtimeMs: st.mtimeMs, folder: st.isDirectory() });
   }

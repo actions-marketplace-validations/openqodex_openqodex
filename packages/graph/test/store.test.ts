@@ -61,6 +61,10 @@
 //     while an older kept build's large index stays (measured on vscode:
 //     a 552 MB index kept, the facts of every file removed, and the next
 //     build parsed everything again).
+// 21. A store already open keeps reading and writing after .openqodex or
+//     .openqodex/graph is moved aside and a link to it is left at the old
+//     name: the folder it remembered is the same folder, now reached
+//     through a link.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -537,6 +541,38 @@ describe("links and tracked files", () => {
     expect(b.ok).toBe(false);
     expect(readFileSync(file, "utf8")).toBe(`${a}\n`);
     expect(ids(store)).toEqual([a]);
+  });
+
+  it("21. a parent folder moved aside with a link to it at its old name is refused by every read and write of a store already open", async () => {
+    for (const moved of [".openqodex", ".openqodex/graph"]) {
+      const root = repo();
+      const store = await storeOf(root);
+      const key = keyOf("chain");
+      expect(store.writeFacts(key, factsOf("chain"))).toBe("ok");
+      const a = ok(await store.publish(publishInput({ tag: "a", keys: [key] })));
+      await store.updateMeta(() => ({ rate: 1 }));
+      // Every read works before the move, so a refusal below is the link's doing.
+      expect(store.readFacts(key)).toEqual(factsOf("chain"));
+      expect(store.hasFacts(key)).toBe(true);
+      expect(ids(store)).toEqual([a]);
+      expect(store.readMeta()).toEqual({ rate: 1 });
+      const from = join(root, ...moved.split("/"));
+      const aside = `${from}-aside`;
+      renameSync(from, aside);
+      symlinkSync(aside, from);
+      const before = walk(aside).sort();
+      expect(store.readFacts(key), moved).toBeNull();
+      expect(store.hasFacts(key), moved).toBe(false);
+      expect(store.list(), moved).toEqual([]);
+      expect(store.open("current"), moved).toBeNull();
+      expect(store.open({ id: a }), moved).toBeNull();
+      expect(store.readMeta(), moved).toBeNull();
+      await expect(store.lease({ id: a }, "cli"), moved).rejects.toThrow(/symbolic link/);
+      expect(store.writeFacts(keyOf("new"), factsOf("new")), moved).toBe("refused");
+      expect((await store.publish(publishInput({ tag: "b" }))).ok, moved).toBe(false);
+      await expect(store.updateMeta(() => ({ rate: 2 })), moved).rejects.toThrow(/symbolic link/);
+      expect(walk(aside).sort(), moved).toEqual(before);
+    }
   });
 
   it("10. a file under .openqodex/graph that git tracks makes open refuse", async () => {

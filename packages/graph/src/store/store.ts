@@ -7,22 +7,26 @@
 //
 // Nothing here follows a link. Writes and removals go through the Guard
 // (packages/core/src/guarded-fs.ts), which decides by filesystem identity
-// and refuses a link anywhere in the work tree. Reads check every folder
-// from the repo root down with lstat, remember each folder by its device
-// and inode, and open the file without following a link, within a bound.
+// and refuses a link anywhere in the work tree. Reads go through core's
+// FolderReader, on every read, listing and lstat alike: it walks from the
+// repo root, known by its identity since the store opened, down to the
+// file one name at a time (each a real folder, never a link), opens the
+// file without following a link, within a bound, then walks again and
+// requires the same folders by device and inode and the opened file at
+// its name. No read is answered from a folder remembered from before.
 //
 // Facts and the files of a generation are written by a faster path than
 // Guard.write, measured on this Mac at 4.3 ms a file against 0.16 ms for
-// 2,000 facts files: the folder is verified through the guard once and
-// known by its identity after, each file is created exclusively without
-// following a link, renamed into place and checked to be the file written
-// in the folder verified, and nothing is synced to disk. Both are checked
-// on every read, so a file lost in a crash is a cache miss, never a wrong
-// answer.
+// 2,000 facts files: the folder is verified through the guard once, the
+// folders from the repo root down to it are walked again by identity
+// before each file is made and after it is renamed into place, each file
+// is created exclusively without following a link and checked to be the
+// file written, and nothing is synced to disk. Both are checked on every
+// read, so a file lost in a crash is a cache miss, never a wrong answer.
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, renameSync, unlinkSync, writeSync, type BigIntStats } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, renameSync, unlinkSync, writeSync, type BigIntStats } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { ensureStateDir, Guard, safeGit } from "@openqodex/core";
+import { ensureStateDir, FolderReader, Guard, safeGit } from "@openqodex/core";
 import { isFileFacts } from "../safe-fs.js";
 import type { FileFacts } from "../types.js";
 import { collectLocked, REF_PREFIX, treeBytes, type CollectorContext } from "./gc.js";
@@ -91,32 +95,13 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// A regular file at `abs`, opened without following a link and read whole
-// when it holds at most `maxBytes`; null otherwise.
-function readNoFollow(abs: string, maxBytes: number): Buffer | null {
-  let fd: number;
-  try {
-    // Non-blocking, so a named pipe here cannot hold the open.
-    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch {
-    return null;
-  }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || st.size > maxBytes) return null;
-    const data = Buffer.alloc(st.size);
-    let off = 0;
-    while (off < st.size) {
-      const n = readSync(fd, data, off, st.size - off, off);
-      if (n === 0) break;
-      off += n;
-    }
-    return off === st.size ? data : null;
-  } catch {
-    return null;
-  } finally {
-    closeSync(fd);
-  }
+function sameId(a: Id | undefined, b: Id | undefined): boolean {
+  return a !== undefined && b !== undefined && a.dev === b.dev && a.ino === b.ino;
+}
+
+// Two walks from the repo root that found the same folders.
+function sameChain(a: Id[] | null, b: Id[]): boolean {
+  return a !== null && a.length === b.length && a.every((id, i) => sameId(id, b[i]));
 }
 
 // ---------- build ids ----------
@@ -219,8 +204,7 @@ function inputProblem(input: PublishInput): string | null {
 
 // A file's size, modification time and inode, by lstat; null when it is
 // not a regular file. Any write to the file changes it.
-function stampOf(abs: string): string | null {
-  const st = lstatBig(abs);
+function stampOf(st: BigIntStats | null): string | null {
   return st?.isFile() ? `${st.size}:${st.mtimeNs}:${st.ino}` : null;
 }
 
@@ -231,14 +215,15 @@ class Store implements GraphStore {
   diskFull = false;
   private readonly lock: FolderLock;
   private readonly ids = new BuildIds();
-  // Folders known by identity: for reads, every folder from the repo root
-  // down was a real folder; for writes, the guard verified the folder.
-  private readIds = new Map<string, Id>();
+  // For writes: the folders the guard verified, by their path under the
+  // graph folder, each known by identity. A write still walks the folders
+  // from the repo root down to it on every file (writeFast).
   private writeIds = new Map<string, Id>();
 
   constructor(
     readonly repoRoot: string,
     private readonly guard: Guard,
+    private readonly reader: FolderReader,
     private readonly now: () => number,
     readonly boundBytes: number,
   ) {
@@ -248,34 +233,37 @@ class Store implements GraphStore {
 
   // ---------- reads ----------
 
-  // The folder `rel` under the graph folder ("" for the graph folder) as an
-  // absolute path, when every folder from the repo root down to it is a
-  // real folder; null otherwise.
-  private folderOk(rel: string): string | null {
-    const parts = rel === "" ? [] : rel.split("/");
-    const abs = join(this.dir, ...parts);
-    const known = this.readIds.get(rel);
-    if (known !== undefined && same(lstatBig(abs), known)) return abs;
-    let at = this.repoRoot;
-    let st: BigIntStats | null = null;
-    for (const part of [...STATE, ...parts]) {
-      at = join(at, part);
-      st = lstatBig(at);
-      // isDirectory is false for a link: lstat does not follow it.
-      if (st === null || !st.isDirectory()) return null;
-    }
-    if (this.readIds.size > 4096) this.readIds.clear();
-    this.readIds.set(rel, { dev: st!.dev, ino: st!.ino });
-    return abs;
+  // The names from the repo root down to `rel` under the graph folder
+  // ("/"-separated, "" for the graph folder itself).
+  private names(rel: string): string[] {
+    return rel === "" ? [...STATE] : [...STATE, ...rel.split("/")];
   }
 
-  // A file under the graph folder ("/"-separated), read without following
-  // a link anywhere from the repo root down; null when it is not a regular
-  // file there or is over `maxBytes`.
+  // The folder `rel` under the graph folder as an absolute path, when every
+  // folder from the repo root down to it is a real folder; null otherwise.
+  private folderOk(rel: string): string | null {
+    return this.reader.folder(this.names(rel));
+  }
+
+  // The names in the folder `rel`, listed between two walks from the repo
+  // root that find the same folders; null otherwise.
+  private listRel(rel: string): { dir: string; names: string[] } | null {
+    return this.reader.list(this.names(rel));
+  }
+
+  // A file under the graph folder, read without following a link anywhere
+  // from the repo root down; null when it is not a regular file there or is
+  // over `maxBytes`.
   private readRel(rel: string, maxBytes: number): Buffer | null {
-    const cut = rel.lastIndexOf("/");
-    const dir = this.folderOk(cut === -1 ? "" : rel.slice(0, cut));
-    return dir === null ? null : readNoFollow(join(dir, rel.slice(cut + 1)), maxBytes);
+    const read = this.reader.read(this.names(rel), maxBytes);
+    return read.ok ? read.data : null;
+  }
+
+  // The lstat of an entry under the graph folder, between two walks from
+  // the repo root that find the same folders; null otherwise.
+  private entryRel(rel: string): BigIntStats | null {
+    const entry = this.reader.entry(this.names(rel));
+    return entry.ok ? entry.stat : null;
   }
 
   // The build id a pointer file names; null when it names none.
@@ -298,9 +286,9 @@ class Store implements GraphStore {
     if (!isManifest(manifest, id)) return null;
     for (const [path, f] of Object.entries(manifest.files)) {
       // A file with the stamp it was published with is as published: no
-      // read. Any other is read and hashed; every read checks it again.
-      const abs = this.folderOk(`generations/${id}`);
-      if (f.stamp !== undefined && abs !== null && stampOf(join(abs, ...path.split("/"))) === f.stamp) continue;
+      // read, once the folders from the repo root down to it are checked.
+      // Any other is read and hashed; every read checks it again.
+      if (f.stamp !== undefined && stampOf(this.entryRel(`generations/${id}/${path}`)) === f.stamp) continue;
       const data = this.readRel(`generations/${id}/${path}`, f.bytes);
       if (data === null || data.length !== f.bytes || sha256(data) !== f.sha256) return null;
     }
@@ -356,32 +344,44 @@ class Store implements GraphStore {
 
   // ---------- writes ----------
 
-  // The folder `abs`, made through the guard (0700) when missing, known by
-  // the identity the guard verified: no link on the way.
-  private verifiedFolder(abs: string): Id {
-    const known = this.writeIds.get(abs);
-    if (known !== undefined && same(lstatBig(abs), known)) return known;
+  // The folders from the repo root down to `rel` under the graph folder, by
+  // identity. The last one is made through the guard (0700) when missing
+  // and verified by it once; every call walks the whole chain again from
+  // the repo root, so a folder above it swapped for a link is refused.
+  private verifiedFolder(rel: string): Id[] {
+    const names = this.names(rel);
+    const known = this.writeIds.get(rel);
+    if (known !== undefined) {
+      const chain = this.reader.ids(names);
+      if (chain !== null && sameId(chain[chain.length - 1], known)) return chain;
+    }
+    const abs = join(this.dir, ...rel.split("/"));
     if (lstatBig(abs) === null) {
       try {
         this.guard.makeFolder(abs);
       } catch (error) {
         if (isDiskFull(error)) throw error;
-        // made by another writer meanwhile, or refused: the check decides
+        // made by another writer meanwhile, or refused: the checks decide
       }
     }
     const w = this.guard.check(abs, false);
-    if (w.stat === null || !w.stat.isDirectory()) throw new Error(`${relative(this.repoRoot, abs)} is not a folder openqodex may write in`);
+    const chain = this.reader.ids(names);
+    if (w.stat === null || !w.stat.isDirectory() || chain === null || !sameId(chain[chain.length - 1], { dev: w.stat.dev, ino: w.stat.ino })) {
+      throw new Error(`${relative(this.repoRoot, abs)} is not a folder openqodex may write in`);
+    }
     if (this.writeIds.size > 4096) this.writeIds.clear();
-    const id = { dev: w.stat.dev, ino: w.stat.ino };
-    this.writeIds.set(abs, id);
-    return id;
+    this.writeIds.set(rel, chain[chain.length - 1]!);
+    return chain;
   }
 
-  // Writes `data` as `name` in the folder `dirAbs`: a temp file created
-  // exclusively without following a link (0600), renamed over the name;
-  // after it, the name must hold the file written, in the folder verified.
-  private writeFast(dirAbs: string, name: string, data: Buffer): void {
-    const folder = this.verifiedFolder(dirAbs);
+  // Writes `data` as `name` in the folder `rel` under the graph folder: a
+  // temp file created exclusively without following a link (0600), renamed
+  // over the name; after it, the name must hold the file written, and the
+  // folders from the repo root down must be the ones verified.
+  private writeFast(rel: string, name: string, data: Buffer): void {
+    const chain = this.verifiedFolder(rel);
+    const dirAbs = join(this.dir, ...rel.split("/"));
+    const held = (): boolean => sameChain(this.reader.ids(this.names(rel)), chain);
     const final = join(dirAbs, name);
     const tmp = join(dirAbs, `.${name}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
     let fd: number | null = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -389,12 +389,12 @@ class Store implements GraphStore {
     try {
       const st = fstatSync(fd, { bigint: true });
       written = { dev: st.dev, ino: st.ino };
-      if (!same(lstatBig(dirAbs), folder)) throw new Error(`${relative(this.repoRoot, dirAbs)} changed while openqodex was writing in it`);
+      if (!held() || !same(lstatBig(tmp), written)) throw new Error(`${relative(this.repoRoot, dirAbs)} changed while openqodex was writing in it`);
       for (let off = 0; off < data.length; ) off += writeSync(fd, data, off, data.length - off);
       closeSync(fd);
       fd = null;
       renameSync(tmp, final);
-      if (!same(lstatBig(final), written) || !same(lstatBig(dirAbs), folder)) {
+      if (!same(lstatBig(final), written) || !held()) {
         if (same(lstatBig(final), written)) unlinkSync(final);
         throw new Error(`${relative(this.repoRoot, final)} is not where openqodex wrote it; the write was undone`);
       }
@@ -430,8 +430,7 @@ class Store implements GraphStore {
 
   hasFacts(key: string): boolean {
     if (!FACTS_KEY_PATTERN.test(key)) return false;
-    const dir = this.folderOk(`facts/${key.slice(0, 2)}`);
-    return dir !== null && lstatBig(join(dir, `${key}.json`))?.isFile() === true;
+    return this.entryRel(this.factsPath(key))?.isFile() === true;
   }
 
   // Bytes under the folder, counted once and then kept up to date by the
@@ -447,7 +446,7 @@ class Store implements GraphStore {
     this.used ??= treeBytes(this.dir);
     if (this.used + data.length > this.boundBytes) return "over-budget";
     try {
-      this.writeFast(join(this.dir, "facts", key.slice(0, 2)), `${key}.json`, data);
+      this.writeFast(`facts/${key.slice(0, 2)}`, `${key}.json`, data);
       this.used += data.length;
       return "ok";
     } catch (error) {
@@ -460,15 +459,7 @@ class Store implements GraphStore {
   // ---------- generations ----------
 
   list(): GenerationManifest[] {
-    const dir = this.folderOk("generations");
-    if (dir === null) return [];
-    let names: string[];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return [];
-    }
-    return names
+    return (this.listRel("generations")?.names ?? [])
       .filter((n) => BUILD_ID_PATTERN.test(n))
       .sort()
       .reverse()
@@ -508,6 +499,7 @@ class Store implements GraphStore {
     return {
       repoRoot: this.repoRoot,
       folder: (rel) => this.folderOk(rel),
+      list: (rel) => this.listRel(rel),
       guard: this.guard,
       now: this.now,
       boundBytes: this.boundBytes,
@@ -529,6 +521,7 @@ class Store implements GraphStore {
     // After the build `current` names, even when this clock is behind.
     const current = this.pointer("current");
     const id = this.ids.next(Math.max(this.now(), current === null ? 0 : buildIdTime(current) + 1));
+    const rel = `generations/${id}`;
     const folder = join(this.dir, "generations", id);
     const files: [string, { bytes: number; sha256: string }][] = [];
     try {
@@ -536,15 +529,15 @@ class Store implements GraphStore {
       for (const [path, text] of Object.entries(input.files)) {
         const data = Buffer.from(text, "utf8");
         const cut = path.lastIndexOf("/");
-        this.writeFast(cut === -1 ? folder : join(folder, ...path.slice(0, cut).split("/")), path.slice(cut + 1), data);
-        const stamp = stampOf(join(folder, ...path.split("/")));
+        this.writeFast(cut === -1 ? rel : `${rel}/${path.slice(0, cut)}`, path.slice(cut + 1), data);
+        const stamp = stampOf(this.entryRel(`${rel}/${path}`));
         files.push([path, { bytes: data.length, sha256: sha256(data), ...(stamp !== null ? { stamp } : {}) }]);
       }
     } catch (error) {
       this.discard(folder);
       return this.failed(error);
     } finally {
-      this.forgetFolders(folder);
+      this.forgetFolders(rel);
     }
 
     let held: HeldLock | null;
@@ -598,8 +591,8 @@ class Store implements GraphStore {
     }
   }
 
-  private forgetFolders(folder: string): void {
-    for (const key of this.writeIds.keys()) if (key === folder || key.startsWith(`${folder}/`)) this.writeIds.delete(key);
+  private forgetFolders(rel: string): void {
+    for (const key of this.writeIds.keys()) if (key === rel || key.startsWith(`${rel}/`)) this.writeIds.delete(key);
   }
 
   private async locked<T>(fn: () => T | Promise<T>): Promise<T> {
@@ -728,7 +721,13 @@ export async function openStore(repoRoot: string, opts: { maxCacheMb?: number; n
   } catch (error) {
     return refuse(message(error));
   }
+  let reader: FolderReader;
+  try {
+    reader = new FolderReader(root);
+  } catch (error) {
+    return refuse(message(error));
+  }
   await ownStart();
   const mb = opts.maxCacheMb !== undefined && Number.isFinite(opts.maxCacheMb) && opts.maxCacheMb > 0 ? opts.maxCacheMb : DEFAULT_MAX_CACHE_MB;
-  return { ok: true, store: new Store(root, guard, opts.now ?? Date.now, Math.floor(mb * 1024 * 1024)) };
+  return { ok: true, store: new Store(root, guard, reader, opts.now ?? Date.now, Math.floor(mb * 1024 * 1024)) };
 }
