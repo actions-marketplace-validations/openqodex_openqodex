@@ -8,6 +8,7 @@ import type { RepoFacts } from "../detect.js";
 import { actionlint } from "./actionlint.js";
 import { bandit } from "./bandit.js";
 import { brakeman } from "./brakeman.js";
+import { cargoDeny } from "./cargo-deny.js";
 import { gitleaks } from "./gitleaks.js";
 import { golangci } from "./golangci.js";
 import { hadolint } from "./hadolint.js";
@@ -62,6 +63,9 @@ export const ADAPTERS: readonly Adapter[] = [
   sqllint,
   // Dependency vulnerabilities. No-op unless a lockfile changed.
   osvScanner,
+  // Rust dependency policy: RustSec advisories and crate sources. No-op
+  // unless a Cargo.lock changed.
+  cargoDeny,
   // GitHub Actions workflows under .github/workflows/.
   actionlint,
   // Dockerfiles.
@@ -112,4 +116,7 @@ export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFil
   "osv-scanner": [{ path: "osv-scanner.toml", anyFolder: true }],
   // actionlint finds .github from the repository root.
   actionlint: [{ path: ".github/actionlint.yaml" }, { path: ".github/actionlint.yml" }],
+  // cargo-deny looks from the project's folder upwards for its licence
+  // exceptions; OpenQodex runs no licence check, but a broken file stops it.
+  "cargo-deny": [{ path: "deny.exceptions.toml", anyFolder: true }, { path: ".deny.exceptions.toml", anyFolder: true }],
 };

@@ -1,0 +1,8 @@
+[package]
+name = "tiny"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+smallvec = "=1.6.0"
+ansi_term = "=0.12.1"

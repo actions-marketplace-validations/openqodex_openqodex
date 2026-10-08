@@ -1,0 +1,337 @@
+// cargo-deny adapter (Rust dependency policy): RustSec advisories
+// (vulnerabilities, unsound and unmaintained crates) and crate sources other
+// than crates.io, for each changed Cargo.lock. Three steps, each from a
+// temporary folder outside the repository:
+//
+// 1. `cargo-deny --manifest-path <project>/Cargo.toml --config <owned> fetch db`
+//    clones or updates the RustSec advisory database
+//    (github.com/rustsec/advisory-db) with the developer's git, into the
+//    OpenQodex home. The only network use.
+// 2. `cargo metadata --format-version 1 --frozen --manifest-path <...>`
+//    with the developer's toolchain named by its real files (the Cargo probe
+//    in toolchain/install.ts). Cargo reads its settings from the folder it
+//    starts in, so the repository's .cargo/config.toml (a rustc or a rustc
+//    wrapper, a source replacement) is never read, and a project's
+//    rust-toolchain.toml is never read either: no rustup proxy is started.
+//    --frozen and CARGO_NET_OFFLINE: nothing is downloaded and Cargo.lock is
+//    never rewritten. The crates must already be in the Cargo cache.
+//    cargo-deny would run this itself from the project's folder, where Cargo
+//    does read the project's settings, so OpenQodex runs it and hands over
+//    the result.
+// 3. `cargo-deny --frozen --manifest-path <...> --metadata-path <step 2>
+//    --workspace --config <owned> check --hide-inclusion-graph advisories
+//    sources`, offline, on the database from step 1.
+//
+// The config is OpenQodex's own: a repository's deny.toml can name advisory
+// database URLs and a database folder anywhere, so it is never loaded. Its
+// checks: advisories with yank checking off (the result would depend on each
+// machine's index cache, and cargo-deny would read the repository's
+// .cargo/config.toml to find it) and sources with cargo-deny's defaults (a
+// git dependency or a registry other than crates.io). Not licenses (with no
+// allow list every crate fails) and not bans (with no deny list it reports
+// only duplicate versions). cargo-deny still reads a deny.exceptions.toml
+// beside the project, which holds licence exceptions only; a broken one
+// stops it, so it is a settings file.
+//
+// cargo-deny names each crate by name, version and source, not by a line of
+// Cargo.lock; each finding is anchored to the crate's entry there, from its
+// name line to its version line, as osv-scanner anchors the same advisory.
+// All errors are captured into the result; the runner never throws on a
+// scanner failure.
+
+import { lstatSync, realpathSync } from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { homeGuard } from "@openqodex/core";
+import type { AdapterResult, ResolvedTool, ScannerSeverity, StaticFinding } from "@openqodex/core";
+import { describeFailure, execTool, isOffline, type ExecResult } from "../exec.js";
+import { openqodexHome } from "../toolchain/table.js";
+import type { Adapter } from "./index.js";
+import { withOwnedConfig } from "./owned-config.js";
+import { readRepoFile, repoFileOrReason } from "./read.js";
+import { suchAs } from "./words.js";
+
+// One deadline for every step of one run: the first clone of the database
+// takes the longest.
+const CARGO_DENY_TIMEOUT_MS = 180_000;
+const OUTPUT_MAX_BYTES = 64 * 1024 * 1024;
+const LOCK_MAX_BYTES = 16 * 1024 * 1024;
+const ADVISORY_DB = "https://github.com/rustsec/advisory-db";
+
+export const CARGO_DENY_OFFLINE_REASON = "offline, advisory database downloads are off";
+
+function offlineReason(): string | null {
+  return isOffline() ? CARGO_DENY_OFFLINE_REASON : null;
+}
+
+function isCargoLock(p: string): boolean {
+  return path.posix.basename(p) === "Cargo.lock";
+}
+
+// A TOML basic string.
+const tomlString = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+export function cargoDenyConfig(dbRoot: string): string {
+  return [
+    "[advisories]",
+    `db-path = ${tomlString(dbRoot)}`,
+    `db-urls = [${tomlString(ADVISORY_DB)}]`,
+    "disable-yank-checking = true",
+    "",
+    "[sources]",
+    'unknown-registry = "warn"',
+    'unknown-git = "warn"',
+    "",
+  ].join("\n");
+}
+
+// The plain reason a cargo metadata run failed. `folder` is the project's,
+// repo-relative ("" for the root).
+export function metadataFailure(stderr: string, folder: string): string {
+  const lock = folder === "" ? "Cargo.lock" : `${folder}/Cargo.lock`;
+  const where = folder === "" ? "the repository root" : `${folder}/`;
+  if (/--frozen was specified|--offline was specified|offline mode/.test(stderr)) {
+    const what = /failed to download [^\n]*/.exec(stderr)?.[0];
+    return `the crates of ${lock} are not all in your Cargo cache${what ? ` (${what.trim()})` : ""}; run \`cargo fetch\` in ${where} once`;
+  }
+  const lines = stderr.trim().split("\n").filter((l) => l.trim() !== "");
+  return `cargo metadata failed: ${(lines[0] ?? "no output").trim().slice(0, 240)}`;
+}
+
+// The OpenQodex folder that holds the advisory database, made through the
+// guarded writer when it is not there; its real path, since git compares
+// GIT_CEILING_DIRECTORIES with real paths.
+function databaseRoot(): string {
+  const home = openqodexHome();
+  const dir = path.join(home, "cache", "cargo-deny", "advisory-dbs");
+  if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
+    try {
+      homeGuard(home, true).makeFolder(dir);
+    } catch (err) {
+      // Another run made it in between.
+      if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw err;
+    }
+  }
+  return realpathSync(dir);
+}
+
+type Project = { lock: string; folder: string; manifest: string };
+
+export async function runCargoDeny(args: { repoDir: string; changedPaths: string[]; tool: ResolvedTool | null }): Promise<AdapterResult> {
+  const locks = args.changedPaths.filter(isCargoLock);
+  if (locks.length === 0) return { findings: [], error: null };
+  const skipped = offlineReason();
+  if (skipped) return { findings: [], error: null, skipped };
+  if (!args.tool) return { findings: [], error: "not installed" };
+  const tool = args.tool;
+  const cargo = tool.env.CARGO;
+  if (!cargo) return { findings: [], error: "needs Cargo (Rust)" };
+
+  const notes: string[] = [];
+  const projects: Project[] = [];
+  for (const lock of locks) {
+    const folder = path.posix.dirname(lock) === "." ? "" : path.posix.dirname(lock);
+    const rel = folder === "" ? "Cargo.toml" : `${folder}/Cargo.toml`;
+    const checked = await repoFileOrReason(args.repoDir, rel, LOCK_MAX_BYTES).catch(() => ({ reason: "missing" }));
+    if ("reason" in checked) {
+      notes.push(`no Cargo.toml beside ${lock}`);
+      continue;
+    }
+    projects.push({ lock, folder, manifest: checked.path });
+  }
+  if (projects.length === 0) return { findings: [], error: notes.join("; ") };
+
+  let dbRoot: string;
+  try {
+    dbRoot = databaseRoot();
+  } catch (err) {
+    return { findings: [], error: `cannot make the advisory database folder: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) };
+  }
+  // git never looks above the database folder for a repository, so a
+  // database folder left broken can never make it act on another one.
+  const env = { ...tool.env, GIT_CEILING_DIRECTORIES: dbRoot };
+  const deadline = Date.now() + CARGO_DENY_TIMEOUT_MS;
+  const left = () => Math.max(1, deadline - Date.now());
+  const step = (file: string, argv: string[], cwd: string): Promise<ExecResult> =>
+    execTool(file, argv, { cwd, timeoutMs: left(), maxBytes: OUTPUT_MAX_BYTES, env });
+
+  try {
+    const findings = await withOwnedConfig("deny.toml", cargoDenyConfig(dbRoot), async (configPath, work) => {
+      const common = ["--format", "json", "--color", "never"];
+      const fetched = await step(tool.path, [...common, "--manifest-path", projects[0]!.manifest, "--config", configPath, "fetch", "db"], work);
+      const fetchFailed = describeFailure("cargo-deny", fetched, CARGO_DENY_TIMEOUT_MS) ?? logError(fetched.stderr) ?? (fetched.exitCode === 0 ? null : `exit ${fetched.exitCode}`);
+      if (fetchFailed) throw new Error(`could not fetch the RustSec advisory database: ${fetchFailed}`);
+
+      const out: StaticFinding[] = [];
+      for (const [n, project] of projects.entries()) {
+        const metadata = await step(cargo, ["metadata", "--format-version", "1", "--frozen", "--manifest-path", project.manifest], work);
+        const metaFailed = describeFailure("cargo metadata", metadata, CARGO_DENY_TIMEOUT_MS);
+        if (metaFailed || metadata.exitCode !== 0) {
+          notes.push(metaFailed ?? metadataFailure(metadata.stderr, project.folder));
+          continue;
+        }
+        const metadataPath = path.join(work, `metadata-${n}.json`);
+        await fs.writeFile(metadataPath, metadata.stdout);
+        const checked = await step(
+          tool.path,
+          [...common, "--frozen", "--manifest-path", project.manifest, "--metadata-path", metadataPath, "--workspace", "--config", configPath, "check", "--hide-inclusion-graph", "advisories", "sources"],
+          work,
+        );
+        const checkFailed = describeFailure("cargo-deny", checked, CARGO_DENY_TIMEOUT_MS);
+        if (checkFailed) {
+          notes.push(checkFailed);
+          continue;
+        }
+        let lockText: string | null = null;
+        try {
+          lockText = await readRepoFile(args.repoDir, project.lock, LOCK_MAX_BYTES);
+        } catch {
+          // Unreadable: its findings land on line 1.
+        }
+        const parsed = parseCargoDenyOutput(checked.stderr, { lockPath: project.lock, lockText });
+        if (parsed.failure !== null) notes.push(`${project.lock}: ${parsed.failure}`);
+        out.push(...parsed.findings);
+      }
+      return out;
+    });
+    return { findings, error: notes.length > 0 ? notes.join("; ").slice(0, 300) : null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { findings: [], error: message.slice(0, 300) };
+  }
+}
+
+export const cargoDeny: Adapter = {
+  source: "cargo-deny",
+  files: (changedPaths) => changedPaths.filter(isCargoLock),
+  why: (files) => `Rust lockfiles, ${suchAs(files)}`,
+  skip: offlineReason,
+  run: (args) => runCargoDeny(args),
+};
+
+type Line = { type?: unknown; fields?: Record<string, unknown> };
+
+// cargo-deny's JSON output, one object per line on stderr.
+function jsonLines(stderr: string): Line[] {
+  const out: Line[] = [];
+  for (const raw of stderr.split("\n")) {
+    const line = raw.trim();
+    if (!line.startsWith("{")) continue;
+    try {
+      out.push(JSON.parse(line) as Line);
+    } catch {
+      // Not one of its lines.
+    }
+  }
+  return out;
+}
+
+// The first error cargo-deny logged, or null.
+function logError(stderr: string): string | null {
+  for (const line of jsonLines(stderr)) {
+    if (line.type === "log" && line.fields?.level === "ERROR") return String(line.fields.message ?? "").trim().slice(0, 240);
+  }
+  return null;
+}
+
+// The diagnostics kept, by code, with their severity. The rest (an index
+// failure, an ignore that matched nothing) are about the setup, not the
+// change.
+const KEPT: Record<string, ScannerSeverity> = {
+  vulnerability: "high",
+  unsound: "medium",
+  unmaintained: "low",
+  notice: "low",
+  yanked: "low",
+  "source-not-allowed": "medium",
+  "git-source-underspecified": "low",
+};
+
+// The crate's entry in Cargo.lock: from its name line to its version line.
+function entryRange(lockText: string | null, name: string, version: string, source: string): { start: number; end: number } {
+  if (lockText === null) return { start: 1, end: 1 };
+  const lines = lockText.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+  let found: { start: number; end: number } | null = null;
+  let block: { name?: number; version?: number; nameValue?: string; versionValue?: string; sourceValue?: string } = {};
+  const close = () => {
+    if (found !== null || block.name === undefined || block.version === undefined) return;
+    if (block.nameValue !== name || block.versionValue !== version) return;
+    if (source !== "" && block.sourceValue !== undefined && block.sourceValue !== source) return;
+    found = { start: Math.min(block.name, block.version) + 1, end: Math.max(block.name, block.version) + 1 };
+  };
+  const value = (line: string, key: string): string | null => {
+    const prefix = `${key} = "`;
+    return line.startsWith(prefix) && line.endsWith('"') ? line.slice(prefix.length, -1) : null;
+  };
+  for (const [i, line] of lines.entries()) {
+    if (line === "[[package]]") {
+      close();
+      block = {};
+      continue;
+    }
+    const n = value(line, "name");
+    if (n !== null) {
+      block.name = i;
+      block.nameValue = n;
+    }
+    const v = value(line, "version");
+    if (v !== null) {
+      block.version = i;
+      block.versionValue = v;
+    }
+    const s = value(line, "source");
+    if (s !== null) block.sourceValue = s;
+  }
+  close();
+  return found ?? { start: 1, end: 1 };
+}
+
+export function parseCargoDenyOutput(
+  stderr: string,
+  opts: { lockPath: string; lockText: string | null },
+): { findings: StaticFinding[]; failure: string | null } {
+  const lines = jsonLines(stderr);
+  const findings: StaticFinding[] = [];
+  let summary = false;
+  for (const line of lines) {
+    if (line.type === "summary") summary = true;
+    if (line.type !== "diagnostic" || !line.fields) continue;
+    const f = line.fields;
+    const code = typeof f.code === "string" ? f.code : "";
+    const severity = KEPT[code];
+    if (severity === undefined) continue;
+    const labels = Array.isArray(f.labels) ? (f.labels as { span?: unknown }[]) : [];
+    const span = typeof labels[0]?.span === "string" ? labels[0].span : "";
+    const [name = "", version = "", ...rest] = span.split(" ");
+    const source = rest.join(" ");
+    const range = entryRange(opts.lockText, name, version, source);
+    const advisory = f.advisory && typeof f.advisory === "object" ? (f.advisory as { id?: unknown; aliases?: unknown }) : null;
+    const id = typeof advisory?.id === "string" ? advisory.id : "";
+    const aliases = Array.isArray(advisory?.aliases) ? (advisory.aliases as unknown[]).filter((a): a is string => typeof a === "string") : [];
+    const notes = Array.isArray(f.notes) ? (f.notes as unknown[]).filter((n): n is string => typeof n === "string") : [];
+    const solution = notes.find((n) => n.startsWith("Solution: "));
+    const title = typeof f.message === "string" ? f.message.trim() : code;
+    const crate = name ? `${name} ${version}` : "a crate";
+    const message = id
+      ? `${crate}: ${id}${aliases.length > 0 ? ` (${aliases.slice(0, 3).join(", ")})` : ""}. ${title.replace(/\.?$/, ".")}${solution ? ` ${solution}` : ""}`
+      : `${crate}: ${title}${source ? ` (${source})` : ""}`;
+    findings.push({
+      source: "cargo-deny",
+      ruleId: id || code,
+      filePath: opts.lockPath,
+      lineStart: range.start,
+      lineEnd: range.end,
+      severity,
+      message: trimMessage(message),
+      reference: id ? `https://rustsec.org/advisories/${encodeURIComponent(id)}` : `https://embarkstudios.github.io/cargo-deny/checks/sources/diags.html#${code}`,
+    });
+  }
+  const failure = logError(stderr) ?? (summary ? null : "cargo-deny printed no result");
+  return { findings, failure };
+}
+
+function trimMessage(m: string): string {
+  const collapsed = m.replace(/\s+/g, " ").trim();
+  return collapsed.length > 500 ? collapsed.slice(0, 497) + "..." : collapsed;
+}
+
