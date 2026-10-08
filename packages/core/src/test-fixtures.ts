@@ -57,7 +57,7 @@ export function makeConfig(over: Partial<Config> = {}): Config {
     blockOnSeverity: null,
     severityThreshold: "info",
     defaultBase: null,
-    graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxCacheMb: 512, maxHeapMb: 2048 },
+    graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxCacheMb: 512, maxHeapMb: 1536 },
     exclude: [],
     disabledRules: [],
     includeFixtures: false,

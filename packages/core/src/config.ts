@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: Config = {
   includeFixtures: false,
   disabledScanners: [],
   custom: [],
-  graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxCacheMb: 512, maxHeapMb: 2048 },
+  graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxCacheMb: 512, maxHeapMb: 1536 },
 };
 
 // Every key of the file in order, with its default as YAML text and one line
@@ -101,7 +101,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   },
   {
     key: "graph.max_heap_mb",
-    default: "2048",
+    default: "1536",
     description: "The memory the code graph may use, in MB; files past it are left out and the graph says so.",
   },
 ];

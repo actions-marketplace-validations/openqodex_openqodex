@@ -46,7 +46,10 @@ export { langOf };
 export const DEFAULT_BUDGET_MS = 10_000;
 export const DEFAULT_MAX_FILES = 4000; // a cap on parses per build; cached facts are not counted
 export const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
-export const DEFAULT_MAX_HEAP_MB = 2048;
+// Measured: a whole vscode build (14,300 files) from cached facts needs about
+// 1 GB of heap (it fails under 900 MB) and 1.7 GB resident. The bound is
+// checked as files are admitted.
+export const DEFAULT_MAX_HEAP_MB = 1536;
 export const POLICY_VERSION = 1;
 
 

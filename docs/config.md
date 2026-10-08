@@ -29,7 +29,7 @@ An unknown key prints a warning and is ignored. A name in `scanners.disable` tha
 | `graph.max_files` | `4000` | New parses per build: files past this count wait for a later build. Facts already cached are not counted. |
 | `graph.max_file_bytes` | `524288` | Files larger than this, in bytes, are left out of the code graph. |
 | `graph.max_cache_mb` | `512` | The size bound of .openqodex/graph/, in MB; the oldest builds and facts no kept build names are removed first. |
-| `graph.max_heap_mb` | `2048` | The memory the code graph may use, in MB; files past it are left out and the graph says so. |
+| `graph.max_heap_mb` | `1536` | The memory the code graph may use, in MB; files past it are left out and the graph says so. |
 <!-- config-keys:end -->
 
 ## A full example
@@ -247,7 +247,7 @@ The brief lists a function, class or type the change deletes as removed, with ea
 - `graph.max_files`: the most files one build parses. Files whose facts are already in `.openqodex/graph/` do not count, so a large repository completes over a few reviews, or in one `openqodex graph build`. The default is `4000`.
 - `graph.max_file_bytes`: a file larger than this, in bytes, is left out of the graph. The default is `524288`.
 - `graph.max_cache_mb`: the size bound of `.openqodex/graph/`, in MB. The oldest builds and facts no kept build names are removed first; builds in use are never removed. The default is `512`.
-- `graph.max_heap_mb`: the memory the graph may take, in MB. Past it no more files are read, and the graph says how many it left out. The default is `2048`.
+- `graph.max_heap_mb`: the memory the graph may take, in MB. Past it no more files are read, and the graph says how many it left out. The default is `1536`: a whole build of a 14,000-file repository from cached facts needs about 1 GB.
 
 ## The user config, ~/.openqodex/config.yaml
 
