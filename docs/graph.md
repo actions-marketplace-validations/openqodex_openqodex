@@ -44,7 +44,7 @@ A call no rule can bind is kept as an unknown with its cause, never dropped:
 
 A caller list is a floor, and the brief says so with the reasons, when a call of the same name could not be bound, a call through a value in the symbol's project could reach it, a file of its project was not read, a file that imports it was not resolved, or a walk was cut at it. Zero callers on a floor never means unused.
 
-Every cut is recorded with what it left out: a symbol with more than 40 callers keeps its 20 nearest in the brief, the second hop keeps 20 callers of each caller, the walk stops at 200 symbols (what lies past that frontier is not counted), and the brief shows 60 call sites.
+Every cut is recorded with what it left out: a symbol with more than 40 callers keeps its 20 nearest in the brief, the second hop keeps 20 callers of each caller, the walk stops at 200 symbols (what lies past that frontier is not counted), the brief shows 60 call sites, and the walk of `export *` re-exports opens at most 4,096 files in one version of the code (names re-exported past that are not compared). Each barrel file is walked once, so two files that `export *` from each other end the walk where the cycle closes.
 
 Languages: TypeScript, TSX, JavaScript, Python, Go and Ruby. Files under `node_modules`, `dist`, `build`, `out`, `vendor` and the like, declaration files and minified files are left out.
 

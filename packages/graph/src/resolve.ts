@@ -22,12 +22,16 @@ import { dirname, posix } from "node:path";
 import type { ImpactKind } from "@openqodex/core";
 import type { ProjectModel } from "./discovery/projects.js";
 import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, nodeProjectOf, normalisePy, packageName } from "./discovery/projects.js";
-import type { Cause, EvidenceKind, Shape, Tier, Via } from "./model/records.js";
+import type { Cause, Cut, EvidenceKind, Shape, Tier, Via } from "./model/records.js";
 import { weakest } from "./model/records.js";
 import type { BoundImport, CallFact, DefFact, Family, FileFacts, GraphEdge, GraphNode, GraphSite, Miss, TypeRef, UnknownSite } from "./types.js";
 import { familyOf } from "./types.js";
 
 const MAX_DEPTH = 8; // re-export and base-class chains
+// Files the walk of `export *` may open in one world. Each file is walked
+// once (its names are kept), so this bounds only a walk through cycles or a
+// barrel chain longer than any real repository holds.
+export const EXPORT_WALK_STEPS = 4096;
 export const HUB_FILES = 8; // a name defined in more files never binds without evidence
 export const RESOLVER_VERSION = 2;
 
@@ -146,6 +150,8 @@ export type World = {
   importsOf(file: string): { target: string; reexport: boolean }[];
   // The node of an id or a stable key (the first of its overloads).
   node(idOrKey: string): GraphNode | null;
+  // The cuts the walk of `export *` made in this world (at most one).
+  walkCuts(): Cut[];
 };
 
 export function symbolId(file: string, d: Pick<DefFact, "owner" | "name" | "line" | "column">): string {
@@ -1166,6 +1172,78 @@ export function createWorld(input: ResolveInput): World {
     return out;
   };
 
+  // The names a JS module exports and the line that exports each: its own
+  // exports and named re-exports first, then every name an `export *`
+  // brings that is not already there (never "default"). Walked without
+  // recursion, each file once: a file's names are kept when its walk
+  // finished without meeting a file still being walked (a cycle) or the
+  // step budget, so a diamond of barrels costs one visit a file and a cycle
+  // ends where it closes.
+  const jsNames = new Map<string, Map<string, number | null>>();
+  let walkSteps = 0;
+  let walkCut: Cut | null = null;
+  type Frame = { file: string; names: Map<string, number | null>; stars: { file: string; line: number }[]; next: number; partial: boolean };
+  const ownJsNames = (file: string): Frame => {
+    const names = new Map<string, number | null>();
+    const stars: { file: string; line: number }[] = [];
+    const f = facts.get(file);
+    if (f) {
+      for (const d of f.defs) if (d.topLevel && d.exported) names.set(d.name, d.line);
+      for (const e of f.exportsLocal) names.set(e.exported, e.line ?? null);
+      if (f.defaultExport) names.set("default", null);
+      for (const imp of f.imports) {
+        if (!imp.reexport) continue;
+        for (const n of imp.names) names.set(n.local, imp.line);
+        if (imp.star) {
+          const mod = jsSpec(file, imp.line, imp.spec);
+          if (mod !== null && "file" in mod) stars.push({ file: mod.file, line: imp.line });
+        }
+      }
+    }
+    return { file, names, stars, next: 0, partial: false };
+  };
+  const exportedJsNames = (root: string): Map<string, number | null> => {
+    const kept = jsNames.get(root);
+    if (kept) return kept;
+    const merge = (into: Frame, from: Map<string, number | null>, line: number) => {
+      for (const [k] of from) if (!into.names.has(k) && k !== "default") into.names.set(k, line);
+    };
+    const open = new Set<string>([root]);
+    const stack: Frame[] = [ownJsNames(root)];
+    for (;;) {
+      const top = stack[stack.length - 1] as Frame;
+      if (top.next < top.stars.length) {
+        const star = top.stars[top.next++] as { file: string; line: number };
+        const done = jsNames.get(star.file);
+        if (done) merge(top, done, star.line);
+        else if (open.has(star.file)) top.partial = true;
+        else if (walkSteps >= EXPORT_WALK_STEPS) {
+          top.partial = true;
+          walkCut ??= {
+            by: "export-walk",
+            at: root,
+            omitted: null,
+            exact: false,
+            unit: "files",
+            note: `the walk of export * stopped after ${EXPORT_WALK_STEPS} files; names re-exported past it were not compared`,
+          };
+        } else {
+          walkSteps++;
+          open.add(star.file);
+          stack.push(ownJsNames(star.file));
+        }
+        continue;
+      }
+      stack.pop();
+      open.delete(top.file);
+      if (!top.partial) jsNames.set(top.file, top.names);
+      const parent = stack[stack.length - 1];
+      if (!parent) return top.names;
+      merge(parent, top.names, (parent.stars[parent.next - 1] as { line: number }).line);
+      if (top.partial) parent.partial = true;
+    }
+  };
+
   const surface = (file: string): Map<string, { target: ExportTarget | null; line: number | null }> => {
     const out = new Map<string, { target: ExportTarget | null; line: number | null }>();
     const f = facts.get(file);
@@ -1178,19 +1256,9 @@ export function createWorld(input: ResolveInput): World {
       if (v.v === "mod") return { keys: [v.file], ids: [v.file] };
       return null;
     };
-    const names = new Map<string, number | null>();
+    let names = new Map<string, number | null>();
     if (family === "js") {
-      for (const d of f.defs) if (d.topLevel && d.exported) names.set(d.name, d.line);
-      for (const e of f.exportsLocal) names.set(e.exported, e.line ?? null);
-      if (f.defaultExport) names.set("default", null);
-      for (const imp of f.imports) {
-        if (!imp.reexport) continue;
-        for (const n of imp.names) names.set(n.local, imp.line);
-        if (imp.star) {
-          const mod = jsSpec(file, imp.line, imp.spec);
-          if (mod !== null && "file" in mod) for (const [k] of surface(mod.file)) if (!names.has(k) && k !== "default") names.set(k, imp.line);
-        }
-      }
+      names = exportedJsNames(file);
     } else if (family === "python") {
       for (const d of f.defs) if (d.topLevel) names.set(d.name, d.line);
       for (const [k] of index.bindings(file).names) names.set(k, null);
@@ -1217,7 +1285,7 @@ export function createWorld(input: ResolveInput): World {
     return byKey.get(idOrKey) ?? null;
   };
 
-  return { resolveAll, trace, surface, importsOf, node };
+  return { resolveAll, trace, surface, importsOf, node, walkCuts: () => (walkCut ? [walkCut] : []) };
 }
 
 // The name an unaliased Go import is used by when its package is not in the

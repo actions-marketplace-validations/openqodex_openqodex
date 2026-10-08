@@ -360,6 +360,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
         world,
         // Removed and moved definitions are reported with the removed symbols, never again as public names.
         removedKeys: new Set([...removed.values()].flat().map((n) => stableKey(n.id.replace(/^base:/, "")))),
+        cuts,
       });
     } else if (args.base && args.base.files.length > 0) {
       reasons.push("the export surface was not compared: the budget ran out");
@@ -627,6 +628,7 @@ async function compareWorlds(c: {
   goModules: [string, string][];
   world: World;
   removedKeys: Set<string>;
+  cuts: Cut[]; // the walk of export * adds its cut here
 }): Promise<ImpactExportChange[]> {
   const changed = c.args.base?.files ?? [];
   const drop = new Set(changed.map((f) => f.path));
@@ -660,7 +662,7 @@ async function compareWorlds(c: {
     }
   }
   const baseWorld = createWorld({ files: baseInputs, known: baseKnown, model: baseModel, goModules: c.goModules });
-  return exportChanges({
+  const changes = exportChanges({
     current: c.world,
     base: baseWorld,
     changed,
@@ -673,6 +675,10 @@ async function compareWorlds(c: {
       return n ? { id: n.id, file: n.file, line: n.startLine } : null;
     },
   });
+  // One cut for the walk, from whichever world stopped first.
+  const walk = [...baseWorld.walkCuts(), ...c.world.walkCuts()][0];
+  if (walk) c.cuts.push(walk);
+  return changes;
 }
 
 export type { InventoryEntry };
