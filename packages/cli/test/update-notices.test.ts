@@ -12,6 +12,8 @@
 //     init keeps, is counted.
 //  4. doctor does not list the notices of the last update or the files
 //     init would refresh.
+//  5. update --status still names a release as waiting for a foreground
+//     update once that release, or a newer one, runs.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
@@ -88,5 +90,16 @@ describe("doctor after an update", () => {
     const r = launch(s, ["doctor"]);
     for (const n of noticesBetween("0.5.0", version)) expect(r.stdout).toContain(`notice       ${n.version}: ${n.text}`);
     expect(r.stdout).toMatch(/^ {2}agent files +1 OpenQodex wrote is from an older version; run .* init to refresh them$/m);
+  });
+});
+
+describe("a release left for a foreground update", () => {
+  it("is named by update --status while it is newer than the version that runs, and not after (failure 5)", () => {
+    const s = installed(["claude-code"]);
+    const held = (v: string) => writeFileSync(join(s.oqHome, "update.json"), `${JSON.stringify({ held: { version: v, change: "how agents run a review" } })}\n`);
+    held("99.0.0");
+    expect(launch(s, ["update", "--status"]).stdout).toMatch(/^waiting +99\.0\.0 changes how agents run a review; openqodex update installs it$/m);
+    held(version);
+    expect(launch(s, ["update", "--status"]).stdout).not.toMatch(/^waiting/m);
   });
 });

@@ -55,7 +55,10 @@ export function statusLines(home: string): string[] {
     `updates      ${allowed.why}`,
     `last error   ${state.lastError ?? "none"}`,
   ];
-  if (state.held !== null) lines.push(`waiting      ${state.held.version} changes ${state.held.change}; openqodex update installs it`);
+  // Named only while it is newer than what runs: a foreground update may have installed it since.
+  if (state.held !== null && compareVersions(state.held.version, __OPENQODEX_VERSION__) > 0) {
+    lines.push(`waiting      ${state.held.version} changes ${state.held.change}; openqodex update installs it`);
+  }
   const skip = skipVersion(home);
   if (skip !== null) lines.push(`skipped      ${skip} and every older release (skip_version in ${userConfigPath(home)})`);
   // The release notices of the last update: after the previous version, up to the current one.
