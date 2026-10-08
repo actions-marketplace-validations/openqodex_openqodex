@@ -39,6 +39,11 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 26. A file init writes outside the repository's rules follows a link the
+//     repository holds: an agent folder set inside the repository
+//     (CLAUDE_CONFIG_DIR) with a committed link, a link inside the repository
+//     on the way to a folder named from outside it, or a link swapped in
+//     between the plan and the write.
 // 25. init says --project keeps everything inside the repository, while the
 //     scanners, the record and any launcher stay under ~/.openqodex.
 // 24. init says every push from the repo is checked when it wrote no hook:
@@ -758,5 +763,41 @@ describe("16. init, custom agent homes", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain(join(config, "skills/openqodex/SKILL.md"));
     expect(r.stdout).toContain(join(codexHome, "hooks.json"));
+  });
+
+  it("26. an agent folder inside the repository gets the repository's link rule: a committed settings.json link to outside is refused", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "settings.json"), "{}\n");
+    mkdirSync(join(s.repo, ".claude"));
+    symlinkSync(join(outside, "settings.json"), join(s.repo, ".claude/settings.json"));
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { env: { CLAUDE_CONFIG_DIR: join(s.repo, ".claude") } });
+    expect(r.status).toBe(2);
+    expect(r.stdout + r.stderr).toContain("symbolic link inside the repository");
+    expect(readFileSync(join(outside, "settings.json"), "utf8")).toBe("{}\n");
+  });
+
+  it("26. a folder link the repository holds is refused on the way to an agent folder named from outside it", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    // The developer's own link, outside the repo, into a folder the repo holds as a link.
+    symlinkSync(outside, join(s.repo, "cfg"));
+    symlinkSync(join(s.repo, "cfg"), join(s.root, "via"));
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { env: { CLAUDE_CONFIG_DIR: join(s.root, "via") } });
+    expect(r.status).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("26. a link the repository swaps in after the plan is shown is refused at the write", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    const config = join(s.repo, ".claude");
+    const swap = `rm -rf '${config}' && ln -s '${outside}' '${config}'`;
+    const r = inTerminal(s, ["init", "--agent", "claude-code"], [["Write these files?", "\r", swap]], { env: { CLAUDE_CONFIG_DIR: config } });
+    expect(r.status, r.stdout).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
   });
 });

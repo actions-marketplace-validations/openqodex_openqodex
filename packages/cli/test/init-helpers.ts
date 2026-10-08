@@ -80,7 +80,7 @@ export function env(s: Sandbox, extra: Record<string, string> = {}): NodeJS.Proc
 // [text to wait for, keys to type] pairs, "\r" for Enter. stdout holds what
 // the terminal showed, colours taken out. `init` gets --no-review as in cli().
 const PTY = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "pty-run.py");
-export function inTerminal(s: Sandbox, args: string[], steps: [string, string][], opts: { env?: Record<string, string>; review?: boolean } = {}): SpawnSyncReturns<string> {
+export function inTerminal(s: Sandbox, args: string[], steps: ([string, string] | [string, string, string])[], opts: { env?: Record<string, string>; review?: boolean } = {}): SpawnSyncReturns<string> {
   const python = (process.env.PATH ?? "").split(delimiter).map((d) => join(d, "python3")).find((p) => existsSync(p));
   if (python === undefined) throw new Error("python3 is needed to run the CLI in a terminal");
   const argv = args[0] === "init" && !opts.review ? [...args, "--no-review"] : args;

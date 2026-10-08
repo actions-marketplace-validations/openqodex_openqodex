@@ -7,7 +7,7 @@ import { readdirSync, rmdirSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { removeRepoFile, writeRepoFile } from "@openqodex/core";
 import type { AgentId } from "./detect.js";
-import { assertNoSymlinkInRepo, readText, sha256, writeAtomic, writeBackup } from "./files.js";
+import { assertNoRepoLink, readText, sha256, writeAtomic, writeBackup } from "./files.js";
 import { canonical, type InstallRecord } from "./record.js";
 import type { Scope, Target } from "./targets.js";
 import { isShippedSkill, SECTION_END, SECTION_START } from "./targets.js";
@@ -27,7 +27,9 @@ export type Action = {
   apply?: () => void | Promise<void>;
 };
 
-export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null };
+// `gitFolders`: the repository's git folders, which hold no committed file,
+// so a link there is not the repository's (assertNoRepoLink).
+export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null; gitFolders: string[] };
 
 type Settings = {
   hooks?: { PreToolUse?: unknown[]; [k: string]: unknown };
@@ -161,8 +163,10 @@ export function ownedFile(record: InstallRecord, path: string, text: string | nu
   return rec !== undefined && text !== null && sha256(text) === rec.sha256;
 }
 
+// Every target, whatever its scope, is refused when its path runs through a
+// link the repository holds (assertNoRepoLink); init checks again at the write.
 function checkRepoPath(t: Target, ctx: Ctx): void {
-  if (t.inRepo && ctx.repoRoot !== null) assertNoSymlinkInRepo(ctx.repoRoot, t.path);
+  if (ctx.repoRoot !== null) assertNoRepoLink(ctx.repoRoot, ctx.gitFolders, t.path);
 }
 
 // A markdown file inside the repo is written and removed by the repo-state

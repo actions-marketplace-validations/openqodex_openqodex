@@ -141,6 +141,8 @@ In the repository, under `.openqodex/` only:
 - `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the reviewer's answer, the list of its tool calls and the reports. OpenQodex keeps the newest 20.
 - `latest.json`: points at the newest review, for you and older tools; the push gate does not trust it (see `receipts/` above). `latest-scan.json` points at the newest scan.
 
+`init` never writes a file through a symbolic link that lies in the repository's work tree, in either scope and for an agent folder set inside the repository with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` alike; it checks each path when it plans the file and again just before it writes. A link outside the repository, such as a dotfiles link of `~/.claude/settings.json`, is the developer's and is followed.
+
 OpenQodex never reads or writes `.openqodex/` or the root `.openqodex.yaml` through a symbolic link, at the file or at any folder above it inside the repository. A link there stops the command with one line naming it, or, for a run file such as `latest.json`, counts as no file. Only regular files are read there, each within a size limit, so a link or a device in their place cannot hang a run.
 
 The agent settings and skill files `init` writes are listed in `agents`.

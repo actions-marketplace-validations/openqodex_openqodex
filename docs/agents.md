@@ -87,6 +87,8 @@ The default is user scope. `init` writes into your home folder, so one install w
 
 `--project` writes the files into the repository instead, for a team to commit. Run it inside a git repository.
 
+In either scope, `init` never writes through a symbolic link that lies in the repository's work tree: a repository decides what its links point at. It walks each path as the system does, when it plans the file and again just before it writes, and refuses the file, with one line, when a link on the way lies in the repository. This holds for an agent folder you set inside the repository (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`) too. A link outside the repository is yours and is followed, such as a dotfiles link of `~/.claude/settings.json`.
+
 ## The launcher
 
 In user scope, the push gate hooks, the skill and the Cursor and Cline rules call a launcher, not npx. Every user-scope install gets it, with or without a hook. `init` copies the package to `~/.openqodex/runtime/<version>/` and checks the copy runs. It writes the version to the first line of `~/.openqodex/runtime/current`, then writes `~/.openqodex/bin/openqodex`, a small script that runs the copy that line names with your Node. When the line is missing, is not a version, or names a copy that is gone, the script runs the version `init` installed. The hooks and the skill's commands call that script by its full path, so they do not depend on npx or your `PATH`. A copy is never changed once written: when a folder of the same version with other contents is in the way, `init` stops and names it.

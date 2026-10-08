@@ -5,8 +5,10 @@
 #
 #   python3 pty-run.py '<steps>' <command> [args...]
 #
-# <steps> is a JSON list of [text, keys]: once `text` shows in the output
-# (colours taken out) after the previous step's match, `keys` is typed.
+# <steps> is a JSON list of [text, keys] or [text, keys, shell command]:
+# once `text` shows in the output (colours taken out) after the previous
+# step's match, the shell command runs (a test changes a file while the
+# prompt waits), then `keys` is typed.
 # Exits with the command's exit code; 124 when it ran past 60 seconds.
 import fcntl
 import json
@@ -15,6 +17,7 @@ import pty
 import re
 import select
 import struct
+import subprocess
 import sys
 import termios
 import time
@@ -51,6 +54,8 @@ while True:
         if at != -1:
             seen = at + len(steps[0][0])
             time.sleep(0.2)
+            if len(steps[0]) > 2:
+                subprocess.run(["sh", "-c", steps[0][2]], check=True)
             os.write(fd, steps[0][1].encode("utf8"))
             steps.pop(0)
 
