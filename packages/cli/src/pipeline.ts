@@ -6,7 +6,6 @@ import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import {
   DIFF_CAP_BYTES,
   OpenQodexError,
-  STATE_DIR,
   DEFAULT_CONFIG,
   closeWider,
   findRepoRoot,
