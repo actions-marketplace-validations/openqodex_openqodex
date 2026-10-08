@@ -19,9 +19,10 @@
 //    now belongs to another process (alive, other start time), keeps its
 //    generation; or a live reader past 24 hours, or a dead one under 24
 //    hours, loses its generation.
-// 7. quota-with-leases: over the size bound the collector removes leased or
-//    kept content, removes newer content before older, or fails the publish
-//    when protected content alone exceeds the bound instead of reporting it.
+// 7. quota-with-leases: over the size bound the collector removes leased
+//    content, the newest build or `current`, removes newer content before
+//    older, or fails the publish when protected content alone exceeds the
+//    bound instead of reporting it.
 // 8. disk-full: a full disk throws, moves `current`, leaves half a
 //    generation visible, or the facts writer keeps trying after the first
 //    failure.
@@ -56,6 +57,10 @@
 // 19. Listing the builds reads every file of every build (seconds once a
 //     build holds a 100 MB index), although a file left as it was published
 //     needs no new check before it is read.
+// 20. Over the size bound the facts the newest build names are removed
+//     while an older kept build's large index stays (measured on vscode:
+//     a 552 MB index kept, the facts of every file removed, and the next
+//     build parsed everything again).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -377,7 +382,7 @@ describe("leases", () => {
 });
 
 describe("size bound", () => {
-  it("7. over a 1 MB bound the oldest facts no build names go first, then facts no leased build names; leased and kept builds stay and the overrun is reported", async () => {
+  it("7. over a 1 MB bound the oldest facts no build names go first, then older builds no one holds, then facts no leased build names; leased builds stay and the overrun is reported", async () => {
     // Two hours on, so no fact counts as written by a build still running.
     // The facts are written under a larger bound (a writer holds the bound
     // as it writes); the 1 MB store then publishes and collects.
@@ -414,14 +419,17 @@ describe("size bound", () => {
     expect(keys.slice(5).some((k) => store.hasFacts(k))).toBe(false);
     expect(ids(store)).toEqual([bId, aId]);
 
-    // Released: the old build goes, then the facts only a kept, unleased build names; the kept build stays.
+    // Released: the old build goes, then the older build no one holds now
+    // (b, which c replaces as current); that is enough to be under the bound,
+    // so the facts it named stay for the next build.
     held.lease.release();
     const c = await store.publish(publishInput({ tag: "c", complete: false }));
     const cId = ok(c);
-    expect(c.ok && c.collected.removedGenerations).toEqual([aId]);
-    expect(keys.some((k) => store.hasFacts(k))).toBe(false);
-    expect(c.ok && c.overBudget?.protected).toEqual([bId, cId].sort());
-    expect(ids(store)).toEqual([cId, bId]);
+    expect(c.ok && c.collected.removedGenerations).toEqual([aId, bId]);
+    expect(c.ok && c.collected.bytesAfter).toBeLessThanOrEqual(1024 * 1024);
+    expect(keys.slice(0, 5).every((k) => store.hasFacts(k))).toBe(true);
+    expect(c.ok && c.overBudget).toBeNull();
+    expect(ids(store)).toEqual([cId]);
   });
 });
 
@@ -731,5 +739,27 @@ describe("listing", () => {
     // Changed in place, length kept: refused again.
     writeFileSync(projects, readFileSync(projects, "utf8").replace('"a"', '"z"'));
     expect(ids(store)).toEqual([]);
+  });
+});
+
+describe("the size bound and kept builds", () => {
+  it("20. removes an older kept build that no one holds before the facts the newest build names", async () => {
+    const root = repo();
+    const writer = await storeOf(root, { maxCacheMb: 64, now: later(2 * HOUR) });
+    const keys = Array.from({ length: 10 }, (_, i) => keyOf(`k${i}`));
+    const old = Date.now() / 1000 - 3 * 3600;
+    for (const [i, k] of keys.entries()) {
+      expect(writer.writeFacts(k, factsOf(`k${i}`, 50))).toBe("ok");
+      utimesSync(join(writer.dir, "facts", k.slice(0, 2), `${k}.json`), old + i, old + i);
+    }
+    // An older complete build with a large index, then a newer one naming the same facts.
+    const a = ok(await writer.publish(publishInput({ tag: "a", keys, files: { "index/big.jsonl": "z".repeat(1100 * 1024) } })));
+    const store = await storeOf(root, { maxCacheMb: 1, now: later(2 * HOUR) });
+    const b = await store.publish(publishInput({ tag: "b", keys }));
+    const bId = ok(b);
+    expect(b.ok && b.collected.removedGenerations).toEqual([a]);
+    expect(keys.every((k) => store.hasFacts(k))).toBe(true);
+    expect(b.ok && b.overBudget).toBeNull();
+    expect(ids(store)).toEqual([bId]);
   });
 });

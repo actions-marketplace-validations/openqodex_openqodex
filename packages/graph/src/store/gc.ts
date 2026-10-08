@@ -231,11 +231,38 @@ export async function collectLocked(ctx: CollectorContext, incoming: BuildId | n
     const pinned = new Set<string>();
     for (const id of [...leased, ...(incoming === null ? [] : [incoming])]) for (const k of inventories.get(id) ?? []) pinned.add(k);
     const live = facts.filter((f): f is Fact & { key: string } => f.key !== null && !f.gone).sort((a, b) => a.entry.mtimeMs - b.entry.mtimeMs);
-    const order = [...live.filter((f) => !named.has(f.key)), ...live.filter((f) => named.has(f.key) && !pinned.has(f.key))];
-    for (const f of order) {
+    const removeFacts = (which: (f: Fact & { key: string }) => boolean) => {
+      for (const f of live) {
+        if (total <= ctx.boundBytes) break;
+        if (f.gone || !which(f)) continue;
+        if (remove(f.entry)) {
+          f.gone = true;
+          removedFacts++;
+        }
+      }
+    };
+    // First the facts no kept build names; then the older kept builds no
+    // one holds (an index is rebuilt from facts, facts are parsed again),
+    // never the newest build or `current`; then the facts only those builds
+    // named; last the facts of kept builds no one holds.
+    removeFacts((f) => !named.has(f.key));
+    // `current` is held unless the incoming build replaces it (a newer id).
+    const replaced = current !== null && incoming !== null && incoming > current;
+    const holds = new Set<BuildId>([...leased, ...(incoming === null ? [] : [incoming]), ...(current !== null && !replaced ? [current] : [])]);
+    for (const id of [...kept].sort()) {
       if (total <= ctx.boundBytes) break;
-      if (remove(f.entry)) removedFacts++;
+      if (holds.has(id)) continue;
+      const g = generations.find((x) => x.name === id);
+      if (g && remove(g)) {
+        valid.delete(id);
+        removedGenerations.push(id);
+        kept.splice(kept.indexOf(id), 1);
+      }
     }
+    const stillNamed = new Set<string>();
+    for (const id of kept) for (const k of inventories.get(id) ?? []) stillNamed.add(k);
+    removeFacts((f) => !stillNamed.has(f.key));
+    removeFacts((f) => !pinned.has(f.key));
     if (total > ctx.boundBytes) overBudget = { boundBytes: ctx.boundBytes, totalBytes: total, protectedBytes: total, protected: kept.sort() };
   }
 
