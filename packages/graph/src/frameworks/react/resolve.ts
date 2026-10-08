@@ -34,8 +34,8 @@ export const MAX_CHAIN_DEPTH = 8;
 // Budgets for the whole build.
 export const MAX_FACTS_READ = 400_000; // facts of every file together
 export const MAX_LOOKUPS = 200_000; // names looked up through the index
-export const MAX_RENDER_EDGES = 50_000; // renders edges made
-export const MAX_TEST_LINKS = 20_000; // tests edges made
+export const MAX_RENDER_EDGES = 40_000; // renders edges made
+export const MAX_TEST_LINKS = 10_000; // tests edges made
 export const MAX_UNKNOWNS = 5000; // unknowns kept; past it one more says how many were left out
 
 type Spend = "facts" | "lookups" | "renders" | "tests";

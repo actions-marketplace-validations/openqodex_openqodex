@@ -52,12 +52,13 @@ export const MAX_FACTS_READ = 400_000; // facts of every file together
 export const MAX_LOOKUPS = 200_000; // names looked up through the index
 export const MAX_MOUNTS = 2000; // router mounts followed, every application together
 export const MAX_REGISTRATIONS = 10000; // registrations made, every application together
-export const MAX_MIDDLEWARE_EDGES = 100_000; // middleware edges made
+export const MAX_MIDDLEWARE_EDGES = 30_000; // middleware edges made
 export const MAX_TEST_REQUESTS = 2000; // supertest requests matched
+export const MAX_TEST_LINKS = 10_000; // tests edges made from requests
 export const MAX_MATCH_WORK = 4_000_000; // pattern-by-path steps
 export const MAX_UNKNOWNS = 5000; // unknowns kept; past it one more says how many were left out
 
-type Spend = "facts" | "lookups" | "mounts" | "registrations" | "middlewareEdges" | "requests" | "matchWork";
+type Spend = "facts" | "lookups" | "mounts" | "registrations" | "middlewareEdges" | "requests" | "testLinks" | "matchWork";
 const LIMIT: Record<Spend, number> = {
   facts: MAX_FACTS_READ,
   lookups: MAX_LOOKUPS,
@@ -65,6 +66,7 @@ const LIMIT: Record<Spend, number> = {
   registrations: MAX_REGISTRATIONS,
   middlewareEdges: MAX_MIDDLEWARE_EDGES,
   requests: MAX_TEST_REQUESTS,
+  testLinks: MAX_TEST_LINKS,
   matchWork: MAX_MATCH_WORK,
 };
 
@@ -136,8 +138,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   const apps: Detection[] = [];
 
   // ---------- the build's budgets ----------
-  const spent: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, matchWork: 0 };
-  const refused: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, matchWork: 0 };
+  const spent: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, testLinks: 0, matchWork: 0 };
+  const refused: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, testLinks: 0, matchWork: 0 };
   const take = (k: Spend, n = 1): boolean => {
     if (spent[k] + n > LIMIT[k]) {
       refused[k] += n;
@@ -724,7 +726,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
         unmatched++;
         break;
       }
-      if (!matchSegments(pattern, asked)) continue;
+      if (!matchSegments(pattern, asked) || !take("testLinks")) continue;
       edges.push({ from, to: reg.id, kind: "tests", plugin: PLUGIN, app: app.id, category: "route-request", evidence: { kind: "test-route-request", tier: "likely", site: r.site, via: null, premises: [reg.id], rule: rule("express-test-request"), note: `the test requests ${r.method} ${clean} from ${app.name}, which this route's pattern ${reg.pattern} matches` } });
     }
   }
@@ -747,6 +749,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   if (refused.registrations > 0) cut(["handles", "applies_middleware"], "fan-out-capped", null, `the walk stopped after ${MAX_REGISTRATIONS} registrations in this build; the routes past it are not listed`);
   if (refused.middlewareEdges > 0) cut(["applies_middleware"], "fan-out-capped", refused.middlewareEdges, `${refused.middlewareEdges} middleware edges were left out: the Express plugin keeps at most ${MAX_MIDDLEWARE_EDGES} in one build`);
   if (middlewareOmitted > 0) cut(["applies_middleware"], "fan-out-capped", middlewareOmitted, `${middlewareOmitted} middleware entries past ${MAX_MIDDLEWARE_CHAIN} in one chain were left out`);
+  if (refused.testLinks > 0) cut(["tests"], "fan-out-capped", refused.testLinks, `${refused.testLinks} test links were left out: the Express plugin keeps at most ${MAX_TEST_LINKS} in one build`);
   if (unmatched > 0) cut(["tests"], "budget", unmatched, `${unmatched} test requests were not matched to routes: the Express plugin matches at most ${MAX_TEST_REQUESTS} requests and ${MAX_MATCH_WORK} pattern steps in one build`);
   if (unknownsLeftOut > 0) unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects: ["handles", "mounts", "applies_middleware", "tests"], cause: "fan-out-capped", name: null, note: `${unknownsLeftOut} more unknowns past the first ${MAX_UNKNOWNS} were left out`, count: unknownsLeftOut, exact: true });
   const entities: Entity[] = registrations;
