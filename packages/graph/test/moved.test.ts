@@ -8,7 +8,9 @@
 // 3. A same-named definition in a file the change did not touch is taken for
 //    the destination.
 // 4. A name that two files of the change now define is called a move to one of them.
-// 5. A function moved and renamed is called a move (the stated limit: it reads as removed).
+// 5. A function moved and renamed with the same body reads as removed (it
+//    is a move under another name), or one renamed with a changed body is
+//    called a move.
 // 6. A file git sees as renamed hides a caller that still imports the old
 //    path, since its symbols were compared against the new path only.
 // 7. A declaration replaced by `export { f } from "./new.js"` is reported as
@@ -68,7 +70,7 @@ async function review(
     else writeFiles(root, { [path]: text });
   }
   const c = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
-  const g = await buildGraph({ repoRoot: root, cacheDir: join(root, ".openqodex", "graph"), files: c.changedPaths, base: { sha: c.baseSha, files: c.files } });
+  const g = await buildGraph({ repoRoot: root, store: null, files: c.changedPaths, base: { sha: c.baseSha, files: c.files } });
   const impact = detectImpact(g, c);
   return { root, g, impact, block: renderImpactBlock(impact) };
 }
@@ -147,20 +149,24 @@ describe("moved symbols", () => {
     expect(removedNamed(impact, "f").movedTo).toBeUndefined();
   });
 
-  it("reads a function moved and renamed as removed, the stated limit (5)", async () => {
+  it("reports a function moved and renamed with the same body as moved and renamed, and one with a changed body as removed (5)", async () => {
     const base = {
       "src/a.ts": "export function f(): number {\n  return 1;\n}\n\nexport function keep(): number {\n  return 2;\n}\n",
       "src/b.ts": 'import { f } from "./a.js";\n\nexport function b(): number {\n  return f();\n}\n',
     };
-    const change = {
+    const same = {
       "src/a.ts": "export function keep(): number {\n  return 2;\n}\n",
       "src/new.ts": "export function g(): number {\n  return 1;\n}\n",
       "src/b.ts": 'import { g } from "./new.js";\n\nexport function b(): number {\n  return g();\n}\n',
     };
-    const { impact } = await review(base, change);
-    const f = removedNamed(impact, "f");
-    expect(f.movedTo).toBeUndefined();
-    expect(stillCalled(impact, f.id)).toEqual([]);
+    const moved = await review(base, same);
+    const f = removedNamed(moved.impact, "f");
+    expect(f.movedTo).toEqual({ id: symbol(moved.g, "src/new.ts", "g"), file: "src/new.ts", line: 1, renamed: true });
+    expect(stillCalled(moved.impact, f.id)).toEqual([]);
+    expect(moved.block).toContain("moved and renamed to `g` at src/new.ts:1 (the same body)");
+
+    const changed = await review(base, { ...same, "src/new.ts": "export function g(): number {\n  return 7;\n}\n" });
+    expect(removedNamed(changed.impact, "f").movedTo).toBeUndefined();
   });
 
   it("checks the symbols of a file git sees as renamed: moved with the file, or still called through the old path (6)", async () => {
