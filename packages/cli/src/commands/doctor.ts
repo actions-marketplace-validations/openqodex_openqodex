@@ -41,8 +41,8 @@ type Report = {
   // What --install installs here: the scanners the repository calls for
   // that download a tool, or null for every scanner.
   downloads: string[] | null;
-  // sha256 of the pinned scanner table: with `downloads`, what a cache of
-  // the tools folder is keyed on.
+  // sha256 of the pinned scanner table and its lock files: with
+  // `downloads`, what a cache of the tools folder is keyed on.
   toolchain: string;
   custom: { name: string; source: string; trust: string }[];
   home: string;
@@ -147,10 +147,10 @@ export async function run(args: string[]): Promise<number> {
   }
 
   // Outside a repository, or with --all-scanners: every scanner, as before.
-  // A repository whose config does not load installs nothing: its
-  // scanners.disable is unknown.
-  const downloads = bools.has("--all-scanners") || repo === null ? null : choices === null ? [] : downloadsFor(choices);
-  if (bools.has("--install") && repo === null && !bools.has("--all-scanners")) {
+  // A --cwd that does not exist, or a repository whose config does not load
+  // (its scanners.disable is unknown), installs nothing.
+  const downloads = inputError ? [] : bools.has("--all-scanners") || repo === null ? null : choices === null ? [] : downloadsFor(choices);
+  if (bools.has("--install") && downloads === null && repo === null && !bools.has("--all-scanners")) {
     progress(global)("Not in a git repository: installing every scanner. Run it inside a repository to install only what that repository needs.");
   }
   const installed = bools.has("--install") ? await installTools(downloads, progress(global)) : null;
