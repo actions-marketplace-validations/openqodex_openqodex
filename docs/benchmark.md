@@ -39,6 +39,7 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `demo-polyglot` | Python, Flask, Docker, shell, a workflow, npm | the demo repository's twelve: a secret (critical; gitleaks, semgrep), SQL injection (critical; bandit, semgrep), four Dockerfile issues (minor; hadolint), the container left running as root (major; reasoning), a vulnerable lodash (major; osv-scanner), two shell bugs (shellcheck), workflow script injection (major; actionlint, semgrep), a pagination off-by-one (major; reasoning) |
 | `django-model-view` | Python, Django | a Decimal times a float (major), a field with no migration (major), an order readable by any user (critical), CSRF turned off on a POST (major); reasoning, semgrep for CSRF |
 | `express-admin-routes` | JavaScript, Express | a delete route without the admin check (critical), `forEach` with an async callback that is not awaited (major); reasoning |
+| `express-route-param` | JavaScript, Express | a handler that now reads `req.params.userId` while its route, registered in another file outside the diff, declares `:id`, so every lookup answers 404 (major; reasoning, graph) |
 | `flask-path-traversal` | Python, Flask | a download path built from a parameter (critical), the debug server on every interface (major); semgrep, bandit, reasoning |
 | `go-http-handler` | Go | SQL built with `Sprintf` (critical; semgrep, golangci-lint), a mutex left locked on an early return (major), a deferred close before the error check (major) |
 | `js-dynamic-dispatch-gap` | JavaScript | a handler made async while its caller, reached only through `table[action](id)`, uses the result as a string (major); the brief must say the graph could not bind that call |
@@ -49,7 +50,7 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `ts-removed-export` | TypeScript | a renamed export still imported by a file outside the change (major; reasoning, graph); nothing in the diff shows it |
 | `ts-workspace-caller-break` | TypeScript, pnpm workspace | `safeGit` changed from returning a string to returning an object, with callers in another package (major; reasoning, graph) |
 
-Thirty-seven planted bugs in all: 11 critical, 20 major, 6 minor.
+Thirty-eight planted bugs in all: 11 critical, 21 major, 6 minor.
 
 Each case is a folder under `benchmark/cases/<case>/`: `case.json` (the spec), `base/` (the base commit), `change/` (the files the change writes) and an optional `delete.txt`. `demo-polyglot` reads `examples/demo-repo` instead, and its secret is generated when the case is built, the same value every time, never committed. The repositories are built in a temporary folder; none is committed. `node benchmark/build.mjs <case>` builds one so you can read it.
 
@@ -61,7 +62,7 @@ From a clone, with Node 22, Claude Code installed and logged in:
 pnpm install
 node benchmark/build-cli.mjs           # pnpm build, and a record of the commit and tree it built from
 node benchmark/run.mjs --dry-run       # print the plan, run nothing
-node benchmark/run.mjs                 # 14 cases, graph off and on, 3 repeats: 84 reviews
+node benchmark/run.mjs                 # 15 cases, graph off and on, 3 repeats: 90 reviews
 node benchmark/score.mjs benchmark/results/<date>-<commit>
 ```
 
