@@ -9,6 +9,9 @@
 //    second hop's 21st) is on no page, so nobody can read it.
 // 4. A secret in a removed symbol's base body reaches the packet.
 // 5. The packet's index lists a file that was not written, or misses one.
+// 6. A secret the scanners found on a changed line reaches a packet file:
+//    through a name, a note or a path the graph carries, spelled with JSON
+//    escapes (a quote or a backslash in it), or in a packet file's name.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -42,7 +45,7 @@ const hubRepo = () => {
 describe("the review packet", () => {
   it("lives inside the snapshot and the brief names only paths in it (1)", async () => {
     const r = await reviewed(hubRepo(), { "src/core.ts": "export function core(): number {\n  return 2;\n}\n" });
-    const packet = await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, redact: (t) => t });
+    const packet = await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets: [] });
     expect(packet.dir).toBe(`${PACKET_DIR}/`);
     const block = renderImpactBlock({ ...r.impact, packet: packet.dir });
     expect(block).not.toContain("beside this brief");
@@ -56,14 +59,14 @@ describe("the review packet", () => {
     const r = await reviewed({ "a.ts": "export function a() {\n  return 1;\n}\n" }, { "a.ts": "export function a() {\n  return 2;\n}\n" });
     mkdirSync(join(r.root, ".openqodex-review"));
     writeFileSync(join(r.root, ".openqodex-review", "mine.txt"), "the repository's own file\n");
-    await expect(writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, redact: (t) => t })).rejects.toThrow(/\.openqodex-review/);
+    await expect(writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets: [] })).rejects.toThrow(/\.openqodex-review/);
     expect(readdirSync(join(r.root, ".openqodex-review"))).toEqual(["mine.txt"]);
   });
 
   it("puts every caller of a hub on a page, past the 20 the brief shows (3)", async () => {
     const r = await reviewed(hubRepo(), { "src/core.ts": "export function core(): number {\n  return 2;\n}\n" });
     expect(r.impact.hubs).toHaveLength(1);
-    await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, redact: (t) => t });
+    await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets: [] });
     const seed = r.impact.touched[0] as string;
     const page = JSON.parse(readFileSync(join(r.root, PACKET_DIR, "callers", `${symbolKey(seed)}.json`), "utf8")) as { total: number; items: { site: { file: string } }[] };
     expect(page.total).toBe(45);
@@ -76,21 +79,47 @@ describe("the review packet", () => {
       { "a.ts": `export function gone() {\n  return "${secret}";\n}\nexport function kept() {\n  return 1;\n}\n` },
       { "a.ts": "export function kept() {\n  return 1;\n}\n" },
     );
-    await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, redact: (t) => t.replaceAll(secret, "[REDACTED]") });
+    await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets: [secret] });
     const bases = readdirSync(join(r.root, PACKET_DIR, "base"));
     expect(bases).toHaveLength(1);
     const text = readFileSync(join(r.root, PACKET_DIR, "base", bases[0] as string), "utf8");
-    expect(text).toContain("[REDACTED]");
+    expect(text).toContain("[redacted]");
     expect(text).not.toContain(secret);
   });
 
   it("lists in index.md exactly the files it wrote (5)", async () => {
     const r = await reviewed(hubRepo(), { "src/core.ts": "export function core(): number {\n  return 2;\n}\n" });
-    const packet = await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, redact: (t) => t });
+    const packet = await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets: [] });
     const dir = join(r.root, PACKET_DIR);
     const listed = [...readFileSync(join(dir, "index.md"), "utf8").matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]).sort();
     const written = packet.files.filter((f) => f !== "index.md").sort();
     expect(listed).toEqual(written);
     for (const f of written) expect(existsSync(join(dir, f as string)), f).toBe(true);
+  });
+
+  it("carries no secret found on a changed line, in any file or file name (6)", async () => {
+    const named = `sk_live_${randomBytes(9).toString("hex")}`;
+    const escaped = "tok\\en_quoted_9876543";
+    const r = await reviewed(
+      { "a.ts": "export function plain() {\n  return 1;\n}\n" },
+      {
+        "a.ts": `import { x } from "${escaped}";\nexport function ${named}() {\n  return x();\n}\nexport function plain() {\n  return ${named}();\n}\n`,
+      },
+    );
+    const secrets = [named, escaped];
+    await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets });
+    const dir = join(r.root, PACKET_DIR);
+    const all = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? all(join(d, e.name)) : [join(d, e.name)]));
+    const files = all(dir);
+    expect(files.length).toBeGreaterThan(3);
+    for (const f of files) {
+      const text = readFileSync(f, "utf8");
+      for (const secret of secrets) {
+        for (const spelling of [secret, JSON.stringify(secret).slice(1, -1)]) {
+          expect(f.includes(spelling), f).toBe(false);
+          expect(text.includes(spelling), `${f} holds ${spelling}`).toBe(false);
+        }
+      }
+    }
   });
 });

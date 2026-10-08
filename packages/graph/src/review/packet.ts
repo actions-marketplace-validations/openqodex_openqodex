@@ -7,11 +7,15 @@
 //
 // Every caller the graph retained is on a page, past any display cut; an
 // unexplored frontier (the walk limit) is a gap, never a page. Every text
-// goes through `redact`, the review's secret redaction.
-import { mkdirSync, writeFileSync } from "node:fs";
+// carries no secret the scanners found: every string inside every value is
+// redacted before it is serialized (a quote or a backslash in a secret would
+// change its spelling in JSON), every file name too, and every file is
+// checked after it is written; a secret found there stops the review.
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { safeGit } from "@openqodex/core";
+import { redactSecrets } from "@openqodex/core";
 import type { ImpactSummary } from "@openqodex/core";
+import { showBlob } from "../capture/git.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION } from "../model/records.js";
 import { isTestPath, toImpactUnknown } from "../impact.js";
 import { symbolKey } from "../render.js";
@@ -22,8 +26,10 @@ export const PACKET_DIR = `${PACKET_ROOT}/graph`;
 const PAGE_ITEMS = 500;
 const MAX_UNKNOWNS = 5000;
 const MAX_BASE_LINES = 400;
+const MAX_BASE_BYTES = 1024 * 1024; // a base file larger than this gives no excerpt
 
 export class PacketCollision extends Error {}
+export class PacketLeak extends Error {}
 
 type Item = { from: string; fromName: string | null; to: string; kind: GraphEdge["kind"]; site: GraphEdge["sites"][number] };
 
@@ -33,9 +39,17 @@ export async function writePacket(args: {
   graph: Graph;
   impact: ImpactSummary;
   baseSha: string | null;
-  redact: (text: string) => string;
+  secrets: string[]; // what the scanners found in the change
 }): Promise<{ dir: string; files: string[] }> {
-  const { graph, impact, redact } = args;
+  const { graph, impact, secrets } = args;
+  const redact = (text: string) => redactSecrets(text, secrets);
+  // Every string of a value, object keys included, before JSON spells it.
+  const clean = (v: unknown): unknown => {
+    if (typeof v === "string") return redact(v);
+    if (Array.isArray(v)) return v.map(clean);
+    if (v !== null && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [redact(k), clean(x)]));
+    return v;
+  };
   try {
     mkdirSync(join(args.root, PACKET_ROOT), { mode: 0o700 });
   } catch (error) {
@@ -48,15 +62,16 @@ export async function writePacket(args: {
   mkdirSync(dir, { mode: 0o700 });
   const files: { path: string; about: string }[] = [];
   const made = new Set<string>();
-  const write = (path: string, about: string, value: unknown) => {
+  const write = (rawPath: string, about: string, value: unknown) => {
+    const path = redact(rawPath);
     const sub = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     if (sub !== "" && !made.has(sub)) {
       mkdirSync(join(dir, sub), { recursive: true, mode: 0o700 });
       made.add(sub);
     }
-    const text = typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`;
-    writeFileSync(join(dir, path), redact(text), { flag: "wx", mode: 0o600 });
-    files.push({ path, about });
+    const text = typeof value === "string" ? redact(value) : `${JSON.stringify(clean(value), null, 2)}\n`;
+    writeFileSync(join(dir, path), text, { flag: "wx", mode: 0o600 });
+    files.push({ path, about: redact(about) });
   };
   const nameOf = (id: string) => graph.nodes.get(id)?.name ?? impact.symbols.find((s) => s.id === id)?.name ?? null;
   const toItems = (edges: GraphEdge[], end: "from" | "to"): Item[] =>
@@ -139,9 +154,9 @@ export async function writePacket(args: {
   // The base version of each removed or moved symbol, as the base had it.
   if (args.baseSha) {
     for (const s of movedOrRemoved) {
-      const r = await safeGit(args.repoRoot, ["show", "--no-textconv", "--no-ext-diff", `${args.baseSha}:${s.file}`]);
-      if (r.code !== 0) continue;
-      const lines = r.stdout.toString("utf8").split("\n").slice(s.startLine - 1, Math.min(s.endLine, s.startLine - 1 + MAX_BASE_LINES));
+      const bytes = await showBlob(args.repoRoot, args.baseSha, s.file, MAX_BASE_BYTES);
+      if (bytes === null) continue;
+      const lines = bytes.toString("utf8").split("\n").slice(s.startLine - 1, Math.min(s.endLine, s.startLine - 1 + MAX_BASE_LINES));
       write(`base/${symbolKey(s.id)}.txt`, `the base version of \`${s.name}\` (${s.file}:${s.startLine}), from before the change`, `# base version of ${s.name}, ${s.file}:${s.startLine}-${s.endLine}; this is not the code under review\n${lines.join("\n")}\n`);
     }
   }
@@ -155,5 +170,19 @@ export async function writePacket(args: {
     "",
   ].join("\n");
   writeFileSync(join(dir, "index.md"), redact(index), { flag: "wx", mode: 0o600 });
+  // The check after the writes: no secret, in its own spelling or in JSON's,
+  // in any file or file name of the packet.
+  const spellings = [...new Set(secrets.filter((x) => x.length >= 6).flatMap((x) => [x, JSON.stringify(x).slice(1, -1)]))];
+  if (spellings.length > 0) {
+    const walk = (at: string, rel: string): void => {
+      for (const e of readdirSync(at, { withFileTypes: true })) {
+        const name = rel === "" ? e.name : `${rel}/${e.name}`;
+        if (spellings.some((x) => name.includes(x))) throw new PacketLeak(`a secret the scanners found is in the name of a graph file of the review (${redact(name)}); the review stops`);
+        if (e.isDirectory()) walk(join(at, e.name), name);
+        else if (spellings.some((x) => readFileSync(join(at, e.name), "utf8").includes(x))) throw new PacketLeak(`a secret the scanners found is in the graph file ${redact(name)}; the review stops`);
+      }
+    };
+    walk(dir, "");
+  }
   return { dir: `${PACKET_DIR}/`, files: [...files.map((f) => f.path), "index.md"] };
 }

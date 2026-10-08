@@ -48,7 +48,7 @@ import {
   writeReportFiles,
 } from "@openqodex/core";
 import type { Change, ChangeScope, Config, Hunk, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, Severity, TraceEntry, WholeRepo } from "@openqodex/core";
-import { PacketCollision, renderImpactBlock, writePacket } from "@openqodex/graph";
+import { PacketCollision, PacketLeak, renderImpactBlock, writePacket } from "@openqodex/graph";
 import type { Lease } from "@openqodex/graph";
 import { announceRepoFiles } from "./agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, lfsPaths, placeSettings, removeTargetCheckout } from "./checkout.js";
@@ -749,10 +749,10 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       // is hashed, so the reviewer reads them inside the folder it may read.
       if (run.graph) {
         try {
-          const packet = await writePacket({ root: prep.snapshot.tree, repoRoot, graph: run.graph, impact, baseSha: change.baseSha, redact: (text) => redactSecrets(text, p.secrets) });
+          const packet = await writePacket({ root: prep.snapshot.tree, repoRoot, graph: run.graph, impact, baseSha: change.baseSha, secrets: p.secrets });
           impact = { ...impact, packet: packet.dir };
         } catch (error) {
-          if (error instanceof PacketCollision) throw new OpenQodexError(error.message);
+          if (error instanceof PacketCollision || error instanceof PacketLeak) throw new OpenQodexError(error.message);
           throw error;
         }
       }
