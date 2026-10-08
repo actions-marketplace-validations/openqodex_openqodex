@@ -119,6 +119,40 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
     family: "js",
     markers: [{ name: "{kw}", pattern: /^\/[/*]\s*(?<at>(?<kw>(?:eslint|oxlint)-disable(?:-next-line|-line)?))(?=\s|\*\/|$)/dg }],
   },
+  // `# zizmor: ignore[` with one blank after the `#` and the colon
+  // (IGNORE_EXPR in crates/zizmor/src/finding/location.rs). Anywhere on the
+  // line: for the audits that locate a finding by its raw span
+  // (unredacted-secrets, obfuscation and four more), zizmor reads each line
+  // from its first `#`, so 1.30.1 obeys the marker inside a `run: |` body and
+  // a quoted value too. The closing `]` and what follows it are not checked,
+  // so this is wider than zizmor, never narrower.
+  zizmor: { family: "line", markers: [{ name: "# zizmor: ignore[...]", pattern: /(?<at># zizmor: ignore\[)/dg }] },
+  // A `--` or `/* */` comment whose text starts, after blanks, with
+  // squawk-ignore or squawk-ignore-file (crates/squawk_linter/src/ignore.rs,
+  // ignore_rule_info), or with squawk-disable-assume-in-transaction, which
+  // changes what squawk reports for the whole file. Case-sensitive. A bare
+  // `squawk-ignore` with no rule silences nothing in 2.66.0; it still counts.
+  squawk: {
+    family: "sql",
+    markers: [
+      { name: "-- {kw}", pattern: /^(?:--|\/\*)\s*(?<at>(?<kw>squawk-ignore(?:-file)?))/dg },
+      { name: "-- squawk-disable-assume-in-transaction", pattern: /^(?:--|\/\*)\s*(?<at>squawk-disable-assume-in-transaction)/dg },
+    ],
+  },
+  // SQLFluff reads `noqa` at the start of a comment, or after the comment's
+  // last `--` (sqlfluff/core/rules/noqa.py, _parse_noqa), lower case only.
+  // Which text is a comment depends on the dialect the repo names: `#`
+  // starts one in ansi and mysql, not in postgres, and strings differ too.
+  // So the marker counts anywhere on the line after `--`, `#` or `/*`, and
+  // at the start of a line, for a block comment whose `noqa` is on the line
+  // after its opener: wider than SQLFluff in every dialect.
+  sqlfluff: {
+    family: "line",
+    markers: [
+      { name: "-- noqa", pattern: /(?:--|#|\/\*)[ \t]*(?<at>noqa)/dg },
+      { name: "-- noqa", pattern: /^[ \t]*(?<at>noqa)/dg },
+    ],
+  },
 };
 
 export type MarkerHit = { scanner: BuiltinScanner; line: number; name: string };

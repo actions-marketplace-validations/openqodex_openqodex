@@ -1,0 +1,20 @@
+{
+  "name": "storefront",
+  "version": "1.4.0",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "test:visual": "playwright test visual/"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@percy/cli": "1.29.3",
+    "@playwright/test": "1.47.2",
+    "vite": "5.4.8",
+    "vitest": "2.1.2"
+  }
+}

@@ -18,6 +18,9 @@ import { ruff } from "./ruff.js";
 import { semgrep } from "./semgrep.js";
 import { shellcheck } from "./shellcheck.js";
 import { sqllint } from "./sql-lint.js";
+import { sqlfluff } from "./sqlfluff.js";
+import { squawk, SQUAWK_CONFIG } from "./squawk.js";
+import { zizmor, ZIZMOR_CONFIGS } from "./zizmor.js";
 
 export type Adapter = {
   source: BuiltinScanner;
@@ -58,10 +61,16 @@ export const ADAPTERS: readonly Adapter[] = [
   gitleaks,
   // In-process SQL / Postgres analyzer. No-op without changed .sql files.
   sqllint,
+  // Postgres migration safety: locks, rewrites, lost data.
+  squawk,
+  // SQL queries that return a wrong result or hold dead code.
+  sqlfluff,
   // Dependency vulnerabilities. No-op unless a lockfile changed.
   osvScanner,
   // GitHub Actions workflows under .github/workflows/.
   actionlint,
+  // GitHub workflow, action and Dependabot security.
+  zizmor,
   // Dockerfiles.
   hadolint,
   // .sh / .bash scripts.
@@ -107,4 +116,12 @@ export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFil
   "osv-scanner": [{ path: "osv-scanner.toml", anyFolder: true }],
   // actionlint finds .github from the repository root.
   actionlint: [{ path: ".github/actionlint.yaml" }, { path: ".github/actionlint.yml" }],
+  // zizmor.ts: the first of these at the repository root, passed by path.
+  zizmor: ZIZMOR_CONFIGS.map((path) => ({ path })),
+  // squawk.ts: the root .squawk.toml, passed by path.
+  squawk: [{ path: SQUAWK_CONFIG }],
+  // sqlfluff finds these from each file folder upwards. The [sqlfluff]
+  // sections of setup.cfg, tox.ini, pep8.ini and pyproject.toml are read too
+  // but not listed: run.ts checks a section only for ruff today.
+  sqlfluff: [{ path: ".sqlfluff", anyFolder: true }, { path: ".sqlfluffignore", anyFolder: true }],
 };
