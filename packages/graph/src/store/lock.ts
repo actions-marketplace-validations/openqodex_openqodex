@@ -149,6 +149,9 @@ export function clearMalformed(guard: Guard, dir: string, shown: string): string
     try {
       guard.removeTree(path);
     } catch (error) {
+      // Another process removing it at the same time: gone is as good.
+      const now = lstatSync(path, { throwIfNoEntry: false });
+      if (now === undefined || now.isFile()) continue;
       return `${at}, and it could not be removed (${error instanceof Error ? error.message : String(error)}): remove it`;
     }
   }
