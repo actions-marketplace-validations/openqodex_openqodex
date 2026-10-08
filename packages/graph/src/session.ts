@@ -13,7 +13,8 @@ export type Opened = { graph: Graph; manifest: GenerationManifest };
 
 export function graphOf(store: GraphStore, gen: OpenGeneration): Graph | null {
   const indexed = readIndex(gen);
-  if (indexed) return { ...indexed, repoRoot: store.repoRoot };
+  // The index was written before its build had an id: the manifest names it.
+  if (indexed) return { ...indexed, repoRoot: store.repoRoot, status: { ...indexed.status, generation: gen.manifest.id } };
   let inventory: { files: Record<string, { key: string; lang: string }> };
   let projects: { model: Record<string, unknown>; goModules: [string, string][] };
   let coverage: { notRead: NotRead[]; budgetFiles: string[] };

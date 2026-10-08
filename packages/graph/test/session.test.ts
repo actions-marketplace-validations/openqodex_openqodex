@@ -12,6 +12,9 @@
 // 5. A build that left out only files over the size cap (which the next
 //    build leaves out the same way) counts as incomplete, so in a
 //    repository with one large file no index is ever kept or loaded.
+// 6. A build kept as an index, reopened, does not say which build it is:
+//    the index was written before the build had its id, so an answer read
+//    from it names no build (`graph ... --generation <id>` included).
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readdirSync, rmSync, unlinkSync } from "node:fs";
@@ -115,5 +118,16 @@ describe("reopening a kept build", () => {
     const second = await buildGraph({ repoRoot: root, store: st, mode: "retained", maxFileBytes: 1024 });
     expect(Object.keys(second.status.stages)).toContain("load-index");
     expect(shape(second)).toEqual(shape(first));
+  });
+
+  it("says which build it is when reopened from its index (6)", async () => {
+    const root = makeRepo(files);
+    repos.push(root);
+    const st = await store(root);
+    const built = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    const id = built.status.generation as string;
+    const gen = st.open({ id });
+    expect(gen?.manifest.hasIndex).toBe(true);
+    expect((graphOf(st, gen!) as Graph).status.generation).toBe(id);
   });
 });
