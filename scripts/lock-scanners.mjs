@@ -11,10 +11,13 @@
 // platform, wheels only, for the recipe's Python. gem recipes (brakeman,
 // rubocop): the dependency tree resolved from the RubyGems API, each gem the
 // newest release that meets every requirement on it and runs on the recipe's
-// lowest Ruby; its sha256 is the one RubyGems publishes. Needs uv (on PATH, or
+// lowest Ruby; its sha256 is the one RubyGems publishes, checked against the
+// downloaded .gem. uv takes each wheel's sha256 from PyPI's index, and the
+// installer checks every download against it. Needs uv (on PATH, or
 // the file $UV names) and the network; reads nothing from any repository
 // under review.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -54,10 +57,23 @@ function uvLock(recipe, triple, file) {
 
 // ---------- gems ----------
 
+// RubyGems answers, never through a redirect: a moved source is not followed.
 async function json(url) {
-  const response = await fetch(url);
+  const response = await fetch(url, { redirect: "manual" });
+  if (response.status >= 300 && response.status < 400) throw new Error(`${url}: answered with a redirect; a moved source is not followed`);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
   return response.json();
+}
+
+// The sha256 of a gem, computed from the downloaded .gem itself, which must
+// equal the sha256 RubyGems publishes for it.
+async function checkGem(gem, version, published) {
+  const url = `https://rubygems.org/downloads/${encodeURIComponent(gem)}-${version}.gem`;
+  const response = await fetch(url, { redirect: "manual" });
+  if (response.status >= 300 && response.status < 400) throw new Error(`${url}: answered with a redirect; a moved source is not followed`);
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  const actual = createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");
+  if (actual !== published) throw new Error(`${gem} ${version}: the .gem has sha256 ${actual}, RubyGems publishes ${published}`);
 }
 
 // Gem::Version order for release versions: numeric segments compared as
@@ -155,6 +171,7 @@ async function gemLock(name, recipe) {
     }
     if (!changed) break;
   }
+  for (const [gem, r] of chosen) await checkGem(gem, r.number, r.sha);
   const lines = [...chosen].sort(([a], [b]) => (a < b ? -1 : 1)).map(([gem, r]) => `${gem} ${r.number} sha256:${r.sha}`);
   return [`# ${recipe.gems.join(" ")} for Ruby ${ruby} or newer, made by scripts/lock-scanners.mjs`, ...lines, ""].join("\n");
 }

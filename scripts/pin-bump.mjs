@@ -1,37 +1,61 @@
-// Pin freshness for the scanner table (packages/scanners/toolchain.json).
+// Pin freshness for the scanner table (packages/scanners/toolchain.json),
+// the table the installer trusts: what this writes is the product's supply
+// chain.
 //
-//   node scripts/pin-bump.mjs --report        the pin table: each scanner's
-//                                             pin, its newest release at
-//                                             least 7 days old, and whether
-//                                             a bump is due
+//   node scripts/pin-bump.mjs --report        each scanner's pin, its newest
+//                                             release at least 7 days old,
+//                                             and whether a bump is due
 //   node scripts/pin-bump.mjs --matrix        the scanners with a bump due,
 //                                             as a JSON list
-//   node scripts/pin-bump.mjs --apply <tool>  moves that scanner's pin to
-//                                             its newest release at least 7
-//                                             days old and writes a changeset
+//   node scripts/pin-bump.mjs --apply <tool>  moves that scanner's pin to its
+//                                             newest release at least 7 days
+//                                             old, and writes a changeset
 //
-// A GitHub release pin takes each asset's sha256 from the release (the
-// asset's digest), and scripts/refresh-toolchain.mjs --verify then downloads
-// every asset and checks it. A PyPI or RubyGems pin is re-locked with
-// scripts/lock-scanners.mjs, and a gem's lowest Ruby is read from the gem's
-// own metadata. A release younger than 7 days is never taken: a release
-// that turns out to be malicious is usually pulled within days. The monthly
-// workflow (.github/workflows/pin-bump.yml) opens one pull request per bump
-// and never merges it. GITHUB_TOKEN, when set, is sent to the GitHub API
+// What --apply trusts, and how:
+// - The source is the owner and repository (or registry package) already in
+//   the table, over HTTPS. An API answer that redirects is refused: GitHub
+//   redirects a renamed or transferred repository, which could swap the
+//   source. A release asset whose URL is outside that repository's
+//   releases is refused.
+// - A GitHub release asset is downloaded and its sha256 computed from its
+//   bytes. That sha256 must equal the one GitHub publishes for the asset and,
+//   when the project publishes a checksum file, the one in that file. A
+//   download may redirect only to GitHub's own asset host.
+// - A PyPI or RubyGems pin is re-locked by scripts/lock-scanners.mjs, which
+//   checks each gem's download against RubyGems' sha256; a gem's lowest Ruby
+//   comes from its own metadata.
+// - A release must be newer than the pin and at least 7 days old.
+// - It writes toolchain.json, the scanner's lock files and one changeset,
+//   and nothing else. Any refusal exits 2 with the reason and puts every
+//   file it touched back as it was.
+// The monthly workflow (.github/workflows/pin-bump.yml) opens one pull request
+// per bump; a person merges it. GITHUB_TOKEN, when set, goes to the GitHub API
 // only.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const tablePath = join(root, "packages", "scanners", "toolchain.json");
-const table = JSON.parse(readFileSync(tablePath, "utf8"));
+// The upstream origins. Only an import (the tests) can change them; nothing
+// in the environment does.
+const UPSTREAM = {
+  root: dirname(dirname(fileURLToPath(import.meta.url))),
+  api: "https://api.github.com",
+  web: "https://github.com",
+  // Where a release download may redirect: GitHub's own asset hosts.
+  assetOrigins: ["https://github.com", "https://release-assets.githubusercontent.com", "https://objects.githubusercontent.com"],
+  pypi: "https://pypi.org",
+  rubygems: "https://rubygems.org",
+};
 const MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const now = Date.now();
-const oldEnough = (date) => now - Date.parse(date) >= MIN_AGE_MS;
+const PLATFORM_COUNT_LIMIT = 16;
+const MAX_REDIRECTS = 5;
+const MAX_ASSET_BYTES = 500 * 1024 * 1024;
 
-const isRelease = (v) => /^\d+(\.\d+)*$/.test(v);
+class Refused extends Error {}
+
+const isRelease = (v) => typeof v === "string" && /^\d+(\.\d+)*$/.test(v);
 function compare(a, b) {
   const x = a.split(".").map(Number);
   const y = b.split(".").map(Number);
@@ -43,61 +67,104 @@ function compare(a, b) {
 }
 const newest = (list) => list.sort((a, b) => compare(b.version, a.version))[0] ?? null;
 
-// One retry for a connection that drops mid-answer; an HTTP error is final.
-async function json(url, github = false, retry = true) {
-  const headers = github && process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {};
-  try {
-    const response = await fetch(url, { headers });
-    if (!response.ok) throw Object.assign(new Error(`${url}: HTTP ${response.status}`), { final: true });
-    return await response.json();
-  } catch (error) {
-    if (!retry || error.final) throw error;
-    return json(url, github, false);
+// One GET, with one retry for a connection that drops, never following a
+// redirect itself. A failure names the URL and its cause.
+async function get(url, headers = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(url, { headers, redirect: "manual" });
+      return { response, bytes: response.status >= 300 && response.status < 400 ? null : Buffer.from(await response.arrayBuffer()) };
+    } catch (error) {
+      if (attempt > 0) {
+        const cause = error instanceof Error ? (error.cause?.code ?? error.cause?.message ?? error.message) : String(error);
+        throw new Refused(`${url}: ${cause}`);
+      }
+    }
   }
 }
 
-// The newest release at least 7 days old: { version, date, extra }.
-async function latest(tool, recipe) {
-  if (recipe.method === "github-release") {
-    // The tag's shape around the version: "v1.2.3", "1.2.3", "oxlint_v1.2.3".
-    const prefix = recipe.tag.slice(0, recipe.tag.length - recipe.version.length);
-    const releases = await json(`https://api.github.com/repos/${recipe.repo}/releases?per_page=100`, true);
-    const fit = releases
-      .filter((r) => !r.draft && !r.prerelease && r.tag_name.startsWith(prefix) && isRelease(r.tag_name.slice(prefix.length)) && oldEnough(r.published_at))
-      .map((r) => ({ version: r.tag_name.slice(prefix.length), date: r.published_at, extra: r }));
-    return newest(fit);
+// GET with no redirect at all: an API or registry answer.
+async function getJson(url, github) {
+  const headers = { accept: "application/json" };
+  if (github && process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const { response, bytes } = await get(url, headers);
+  if (response.status >= 300 && response.status < 400) {
+    throw new Refused(`${url} answered with a redirect to ${response.headers.get("location") ?? "nowhere"}; a renamed or moved source is not followed`);
   }
+  if (!response.ok) throw new Refused(`${url}: HTTP ${response.status}`);
+  return JSON.parse(bytes.toString("utf8"));
+}
+
+// The bytes of a release asset, following redirects only to the asset
+// origins.
+async function download(url, origins) {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const at = new URL(current);
+    if (!origins.includes(at.origin)) throw new Refused(`refusing to download from ${at.origin}: a redirect may lead only to ${origins.join(", ")}`);
+    const { response, bytes } = await get(current);
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) throw new Refused(`${current}: a redirect with no location`);
+      current = new URL(location, current).href;
+      continue;
+    }
+    if (!response.ok) throw new Refused(`${current}: HTTP ${response.status}`);
+    if (bytes.length > MAX_ASSET_BYTES) throw new Refused(`${url}: larger than ${MAX_ASSET_BYTES} bytes`);
+    return bytes;
+  }
+  throw new Refused(`${url}: more than ${MAX_REDIRECTS} redirects`);
+}
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+// The sha256 a checksum file gives a name: lines "<hex>  <name>" or
+// "<hex> *<name>", or, for a per-asset .sha256 file, the hex alone.
+function checksumFor(text, name, single) {
+  for (const line of text.split("\n")) {
+    const [hex = "", file = ""] = line.trim().split(/\s+/);
+    if (!/^[0-9a-f]{64}$/i.test(hex)) continue;
+    if (file.replace(/^\*/, "") === name || (single && file === "")) return hex.toLowerCase();
+  }
+  return null;
+}
+
+// The newest release of a GitHub project that is at least 7 days old.
+async function githubLatest(recipe, up, now) {
+  const prefix = recipe.tag.slice(0, recipe.tag.length - recipe.version.length);
+  const releases = await getJson(`${up.api}/repos/${recipe.repo}/releases?per_page=100`, true);
+  if (!Array.isArray(releases)) throw new Refused(`${recipe.repo}: the release list is not a list`);
+  const fit = releases
+    .filter((r) => !r.draft && !r.prerelease && typeof r.tag_name === "string" && r.tag_name.startsWith(prefix) && isRelease(r.tag_name.slice(prefix.length)))
+    .filter((r) => now - Date.parse(r.published_at) >= MIN_AGE_MS)
+    .map((r) => ({ version: r.tag_name.slice(prefix.length), date: r.published_at, release: r }));
+  return newest(fit);
+}
+
+async function latest(recipe, up, now) {
+  if (recipe.method === "github-release") return githubLatest(recipe, up, now);
   if (recipe.method === "uv") {
-    const info = await json(`https://pypi.org/pypi/${recipe.package}/json`);
-    const fit = Object.entries(info.releases)
-      .filter(([v, files]) => isRelease(v) && files.length > 0 && !files.every((f) => f.yanked))
+    const info = await getJson(`${up.pypi}/pypi/${encodeURIComponent(recipe.package)}/json`, false);
+    const fit = Object.entries(info.releases ?? {})
+      .filter(([v, files]) => isRelease(v) && Array.isArray(files) && files.length > 0 && !files.every((f) => f.yanked))
       .map(([v, files]) => ({ version: v, date: files.map((f) => f.upload_time_iso_8601).sort()[0] }))
-      .filter((r) => oldEnough(r.date));
+      .filter((r) => now - Date.parse(r.date) >= MIN_AGE_MS);
     return newest(fit);
   }
   // gem: every gem of the recipe moves to its own newest release.
   const moved = [];
   for (const spec of recipe.gems) {
     const [gem] = spec.split(":");
-    const all = await json(`https://rubygems.org/api/v1/versions/${encodeURIComponent(gem)}.json`);
-    const fit = all
-      .filter((r) => r.platform === "ruby" && !r.prerelease && isRelease(r.number) && oldEnough(r.created_at))
-      .map((r) => ({ version: r.number, date: r.created_at, ruby: r.ruby_version ?? ">= 0" }));
-    const best = newest(fit);
-    if (!best) throw new Error(`${tool}: ${gem} has no release at least 7 days old`);
+    const all = await getJson(`${up.rubygems}/api/v1/versions/${encodeURIComponent(gem)}.json`, false);
+    const best = newest(
+      all
+        .filter((r) => r.platform === "ruby" && !r.prerelease && isRelease(r.number) && now - Date.parse(r.created_at) >= MIN_AGE_MS)
+        .map((r) => ({ version: r.number, date: r.created_at, ruby: r.ruby_version ?? ">= 0" })),
+    );
+    if (!best) throw new Refused(`${gem} has no release at least 7 days old`);
     moved.push({ gem, ...best });
   }
-  return { version: moved[0].version, date: moved[0].date, extra: moved };
-}
-
-async function report() {
-  const rows = [];
-  for (const [tool, recipe] of Object.entries(table.tools)) {
-    const l = await latest(tool, recipe);
-    const due = l !== null && compare(l.version, recipe.version) > 0;
-    rows.push({ tool, pinned: recipe.version, latest: l?.version ?? "-", released: l?.date?.slice(0, 10) ?? "-", due });
-  }
-  return rows;
+  return { version: moved[0].version, date: moved[0].date, gems: moved };
 }
 
 // The lowest Ruby a gem's "ruby_version" requirement allows: ">= 3.0.0" is 3.0.
@@ -107,63 +174,142 @@ function lowestRuby(requirement) {
     if (!t.startsWith(">=")) continue;
     let v = t.slice(2).trim();
     while (v.endsWith(".0")) v = v.slice(0, -2);
-    return v;
+    return isRelease(v) ? v : null;
   }
   return null;
 }
 
-async function apply(tool) {
-  const recipe = table.tools[tool];
-  if (!recipe) throw new Error(`${tool} is not in the toolchain table`);
-  const l = await latest(tool, recipe);
-  if (l === null || compare(l.version, recipe.version) <= 0) {
-    process.stdout.write(`${tool}: ${recipe.version} is the newest release at least 7 days old\n`);
-    return null;
+// The new assets of a GitHub release pin, each checked as the top of this
+// file says.
+async function verifiedAssets(tool, recipe, found, up) {
+  const { release, version } = found;
+  const base = `${up.web}/${recipe.repo}/releases/download/${release.tag_name}/`;
+  const listed = new Map((release.assets ?? []).map((a) => [a.name, a]));
+  const fetchText = async (name) => {
+    const a = listed.get(name);
+    if (typeof a.browser_download_url !== "string" || a.browser_download_url !== `${base}${name}`) throw new Refused(`${tool}: ${name} is outside ${base}`);
+    return (await download(a.browser_download_url, up.assetOrigins)).toString("utf8");
+  };
+  // The project's checksum file for the whole release, when it has one.
+  const sumText = new Map();
+  for (const name of [...listed.keys()].filter((n) => /checksums?\.txt$|SHA256SUMS$|sha256sums\.txt$/i.test(n))) {
+    sumText.set(name, await fetchText(name));
   }
-  const from = recipe.version;
-  if (recipe.method === "github-release") {
-    const assets = new Map(l.extra.assets.map((a) => [a.name, a]));
-    for (const [platform, asset] of Object.entries(recipe.assets)) {
-      if (!asset) continue;
-      const name = asset.name.split(from).join(l.version);
-      const found = assets.get(name);
-      if (!found) throw new Error(`${tool} ${l.version}: no asset named ${name} for ${platform}; the names changed, pin it by hand`);
-      if (!/^sha256:[0-9a-f]{64}$/.test(found.digest ?? "")) throw new Error(`${tool} ${l.version}: ${name} has no sha256 digest; pin it by hand`);
-      recipe.assets[platform] = {
-        ...asset,
-        name,
-        url: found.browser_download_url,
-        sha256: found.digest.slice("sha256:".length),
-        binaryPath: asset.binaryPath.split(from).join(l.version),
-      };
+  const entries = Object.entries(recipe.assets);
+  if (entries.length > PLATFORM_COUNT_LIMIT) throw new Refused(`${tool}: too many platforms`);
+  const assets = {};
+  for (const [platform, asset] of entries) {
+    if (!asset) {
+      assets[platform] = asset;
+      continue;
     }
-    recipe.tag = l.extra.tag_name;
-  } else if (recipe.method === "gem") {
-    recipe.gems = l.extra.map((g) => `${g.gem}:${g.version}`);
-    const lowest = l.extra.map((g) => lowestRuby(g.ruby)).filter((v) => v !== null).sort(compare).pop();
-    if (lowest) recipe.needs = `ruby>=${lowest}`;
+    const name = asset.name.split(recipe.version).join(version);
+    const a = listed.get(name);
+    if (!a) throw new Refused(`${tool} ${version}: no asset named ${name} for ${platform}; the names changed, pin it by hand`);
+    if (typeof a.browser_download_url !== "string" || !a.browser_download_url.startsWith(base) || a.browser_download_url.slice(base.length) !== name) {
+      throw new Refused(`${tool} ${version}: ${name} is outside ${base}`);
+    }
+    const actual = sha256(await download(a.browser_download_url, up.assetOrigins));
+    const published = /^sha256:([0-9a-f]{64})$/.exec(a.digest ?? "")?.[1] ?? null;
+    if (published !== null && published !== actual) throw new Refused(`${tool} ${version}: ${name} has sha256 ${actual}, GitHub publishes ${published}`);
+    // The release's checksum file, or a checksum file of this asset alone
+    // (`<name>.sha256`, as ruff, uv and hadolint publish).
+    let inFile = null;
+    for (const text of sumText.values()) inFile ??= checksumFor(text, name, false);
+    const own = listed.has(`${name}.sha256`) ? await fetchText(`${name}.sha256`) : null;
+    if (own !== null) {
+      const fromOwn = checksumFor(own, name, true);
+      if (fromOwn === null) throw new Refused(`${tool} ${version}: ${name}.sha256 holds no sha256`);
+      if (inFile !== null && inFile !== fromOwn) throw new Refused(`${tool} ${version}: the checksum files disagree about ${name}`);
+      inFile = fromOwn;
+    }
+    if ((sumText.size > 0 || own !== null) && inFile === null) throw new Refused(`${tool} ${version}: the checksum file names no sha256 for ${name}`);
+    if (inFile !== null && inFile !== actual) throw new Refused(`${tool} ${version}: ${name} has sha256 ${actual}, the checksum file says ${inFile}`);
+    if (published === null && inFile === null) throw new Refused(`${tool} ${version}: GitHub and the project publish no sha256 for ${name}; pin it by hand`);
+    assets[platform] = { ...asset, name, url: a.browser_download_url, sha256: actual, binaryPath: asset.binaryPath.split(recipe.version).join(version) };
   }
-  recipe.version = l.version;
-  writeFileSync(tablePath, `${JSON.stringify(table, null, 2)}\n`);
-  if (recipe.method !== "github-release") execFileSync(process.execPath, [join(root, "scripts", "lock-scanners.mjs"), tool], { stdio: "inherit" });
-  writeFileSync(
-    join(root, ".changeset", `pin-${tool}-${l.version.replace(/\./g, "-")}.md`),
-    `---\n"openqodex": patch\n---\n\nThe built-in ${tool} scanner moves from ${from} to ${l.version}, released ${l.date.slice(0, 10)}.\n`,
-  );
-  process.stdout.write(`${tool}: ${from} -> ${l.version}\n`);
-  return l.version;
+  return assets;
 }
 
-const [mode, arg] = process.argv.slice(2);
-if (mode === "--report" && arg === undefined) {
-  const rows = await report();
-  process.stdout.write("| Scanner | Pinned | Newest 7 days old | Released | Bump due |\n|---|---|---|---|---|\n");
-  for (const r of rows) process.stdout.write(`| ${r.tool} | ${r.pinned} | ${r.latest} | ${r.released} | ${r.due ? "yes" : "no"} |\n`);
-} else if (mode === "--matrix" && arg === undefined) {
-  process.stdout.write(`${JSON.stringify((await report()).filter((r) => r.due).map((r) => r.tool))}\n`);
-} else if (mode === "--apply" && arg !== undefined) {
-  await apply(arg);
-} else {
-  process.stderr.write("usage: node scripts/pin-bump.mjs --report | --matrix | --apply <tool>\n");
-  process.exit(2);
+async function report(table, up, now) {
+  const rows = [];
+  for (const [tool, recipe] of Object.entries(table.tools)) {
+    const l = await latest(recipe, up, now);
+    const due = l !== null && compare(l.version, recipe.version) > 0;
+    rows.push({ tool, pinned: recipe.version, latest: l?.version ?? "-", released: l?.date?.slice(0, 10) ?? "-", due });
+  }
+  return rows;
+}
+
+async function apply(tool, table, up, now) {
+  const tablePath = join(up.root, "packages", "scanners", "toolchain.json");
+  const recipe = table.tools[tool];
+  if (!recipe) throw new Refused(`${tool} is not in the toolchain table`);
+  const found = await latest(recipe, up, now);
+  if (found === null || compare(found.version, recipe.version) <= 0 || now - Date.parse(found.date) < MIN_AGE_MS) {
+    process.stdout.write(`${tool}: ${recipe.version} is the newest release at least 7 days old\n`);
+    return;
+  }
+  const from = recipe.version;
+  const next = { ...recipe, version: found.version };
+  if (recipe.method === "github-release") {
+    next.assets = await verifiedAssets(tool, recipe, found, up);
+    next.tag = found.release.tag_name;
+  } else if (recipe.method === "gem") {
+    next.gems = found.gems.map((g) => `${g.gem}:${g.version}`);
+    const lowest = found.gems.map((g) => lowestRuby(g.ruby)).filter((v) => v !== null).sort(compare).pop();
+    if (lowest) next.needs = `ruby>=${lowest}`;
+  }
+
+  // Everything checked: write, and put every file back if a step after fails.
+  const locks = Object.keys(PLATFORM_TRIPLES).map((p) => join(up.root, "packages", "scanners", "locks", `${tool}-${p}.txt`));
+  const before = new Map([tablePath, ...locks].map((f) => [f, existsSync(f) ? readFileSync(f) : null]));
+  const changeset = join(up.root, ".changeset", `pin-${tool}-${found.version.split(".").join("-")}.md`);
+  try {
+    writeFileSync(tablePath, `${JSON.stringify({ ...table, tools: { ...table.tools, [tool]: next } }, null, 2)}\n`);
+    if (recipe.method !== "github-release") {
+      execFileSync(process.execPath, [join(up.root, "scripts", "lock-scanners.mjs"), tool], { stdio: "inherit" });
+    }
+    writeFileSync(changeset, `---\n"openqodex": patch\n---\n\nThe built-in ${tool} scanner moves from ${from} to ${found.version}, released ${found.date.slice(0, 10)}.\n`);
+  } catch (error) {
+    for (const [file, bytes] of before) {
+      if (bytes === null) rmSync(file, { force: true });
+      else writeFileSync(file, bytes);
+    }
+    rmSync(changeset, { force: true });
+    throw new Refused(`${tool}: ${error instanceof Error ? error.message : String(error)}; every file is back as it was`);
+  }
+  process.stdout.write(`${tool}: ${from} -> ${found.version}\n`);
+}
+
+const PLATFORM_TRIPLES = { "darwin-arm64": 1, "darwin-x64": 1, "linux-x64": 1, "linux-arm64": 1 };
+
+// The command line. Returns the exit code: 0 done or nothing due, 2 refused
+// or wrong usage.
+export async function run(argv, options = {}) {
+  const up = { ...UPSTREAM, ...options };
+  const now = Date.now();
+  try {
+    const table = JSON.parse(readFileSync(join(up.root, "packages", "scanners", "toolchain.json"), "utf8"));
+    const [mode, arg] = argv;
+    if (mode === "--report" && arg === undefined) {
+      process.stdout.write("| Scanner | Pinned | Newest 7 days old | Released | Bump due |\n|---|---|---|---|---|\n");
+      for (const r of await report(table, up, now)) process.stdout.write(`| ${r.tool} | ${r.pinned} | ${r.latest} | ${r.released} | ${r.due ? "yes" : "no"} |\n`);
+    } else if (mode === "--matrix" && arg === undefined) {
+      process.stdout.write(`${JSON.stringify((await report(table, up, now)).filter((r) => r.due).map((r) => r.tool))}\n`);
+    } else if (mode === "--apply" && arg !== undefined) {
+      await apply(arg, table, up, now);
+    } else {
+      process.stderr.write("usage: node scripts/pin-bump.mjs --report | --matrix | --apply <tool>\n");
+      return 2;
+    }
+    return 0;
+  } catch (error) {
+    process.stderr.write(`pin-bump: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 2;
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await run(process.argv.slice(2));
 }
