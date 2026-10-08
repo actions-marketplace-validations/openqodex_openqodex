@@ -1,0 +1,66 @@
+{
+  "id": "flask-path-traversal",
+  "guards": "a Flask download route that joins a request parameter into a file path, and a debug server opened to the network, are reported",
+  "amended": "Copied from ../cases/flask-path-traversal.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
+  "language": "python",
+  "framework": "flask",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "download-path-traversal",
+      "file": "files/app.py",
+      "lines": [
+        16,
+        20
+      ],
+      "anchor": {
+        "line": 17,
+        "text": "os.path.join(UPLOAD_DIR, name)"
+      },
+      "mentions": [
+        "travers",
+        "../",
+        "any file",
+        "arbitrary file",
+        "outside"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "The name from the query string is joined to the upload folder unchecked, so ../ or an absolute path reads any file the server can read. The fix is send_from_directory(UPLOAD_DIR, name), or resolving the path and checking it stays inside the folder."
+    },
+    {
+      "id": "debug-on-all-interfaces",
+      "file": "files/app.py",
+      "lines": [
+        24,
+        24
+      ],
+      "anchor": {
+        "line": 24,
+        "text": "debug=True"
+      },
+      "mentions": [
+        "debug",
+        "0.0.0.0",
+        "werkzeug",
+        "interface"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "bandit",
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "The development server now listens on every interface with debug on, so anyone on the network reaches the Werkzeug debugger, which runs code. The fix is to keep 127.0.0.1 and leave debug off."
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "857e2b75ee60",
+  "summary": "Renames formatPrice to formatMoney in src/money.ts and adds a currency argument backed by Intl.NumberFormat. invoiceLines now passes a currency that defaults to USD.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "src/money.ts",
+      "line_number": 3,
+      "line_end": 4,
+      "title": "Removed formatPrice still imported and called by cart",
+      "problem": "This change removes the formatPrice export from src/money.ts. src/cart.ts line 1 still imports formatPrice, and cartTotal calls it on line 8.",
+      "consequence": "The tsc build fails because src/cart.ts imports a missing export. Without the build, cartTotal throws at runtime and customers cannot see a cart total.",
+      "fix": "Update src/cart.ts to import formatMoney and call formatMoney(addTax(subtotal, taxRate), \"USD\"). Another option is to keep formatPrice as a wrapper that calls formatMoney.",
+      "suggested_change": "export function formatMoney(cents: number, currency: string): string {\n  return new Intl.NumberFormat(\"en-US\", { style: \"currency\", currency }).format(cents / 100);\n}\n\nexport function formatPrice(cents: number): string {\n  return formatMoney(cents, \"USD\");\n}",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "info",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/money.ts",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Changed money formatting has no covering test",
+      "problem": "formatMoney now uses Intl.NumberFormat, which adds thousands separators and moves the minus sign before the currency symbol. The repository has no test for formatMoney or invoiceLines.",
+      "consequence": "Nothing catches a regression in the amounts that invoices show to customers.",
+      "fix": "Add tests for formatMoney and invoiceLines. Cover large amounts, negative amounts and a non-USD currency.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

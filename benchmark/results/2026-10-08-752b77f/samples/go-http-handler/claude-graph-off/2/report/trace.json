@@ -1,0 +1,19 @@
+[
+  {
+    "tool": "Read",
+    "path": "internal/api/handler.go",
+    "inside": true,
+    "range": [
+      58,
+      87
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

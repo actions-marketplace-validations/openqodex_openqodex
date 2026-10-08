@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 09f3ac8900f8 against HEAD, 1 file, +17 -0
+Summary: Adds an admin route that deletes one user by id and a bulk purge route that deletes a list of user ids.
+1. Critical security: Delete user route lacks admin check (src/admin.js:11)
+2. Major bug: Purge deletions are never awaited (src/admin.js:22-25)
+3. Minor maintainability: New delete routes have no tests (src/admin.js:11-26)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

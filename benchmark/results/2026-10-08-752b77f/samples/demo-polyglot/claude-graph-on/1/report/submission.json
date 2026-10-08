@@ -1,0 +1,258 @@
+{
+  "version": 2,
+  "change_id": "10985528b336",
+  "summary": "Adds a search endpoint, a hardcoded payment key and a pagination change. It also loosens the Dockerfile, the deploy script and the CI workflow, and downgrades lodash.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/search.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Search query built from request input",
+      "problem": "The search_items handler puts the q request parameter straight into the SQL text with an f-string.",
+      "consequence": "Any caller of /search can inject SQL and read or change any data in items.db.",
+      "fix": "Pass q to cur.execute as a bound parameter.",
+      "suggested_change": "    cur.execute(\"SELECT id, name, price FROM items WHERE name = ?\", (q,))",
+      "source": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c5"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "app/server.py",
+      "line_number": 23,
+      "line_end": 23,
+      "title": "Pagination skips the first page",
+      "problem": "The list_items handler now computes the offset as page times PAGE_SIZE. Page 1 therefore starts at row 20.",
+      "consequence": "Clients never see the first 20 items, and every page is shifted by one.",
+      "fix": "Restore the offset to page minus one times PAGE_SIZE.",
+      "suggested_change": "    offset = (page - 1) * PAGE_SIZE",
+      "source": null
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": "app/config.py",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Payment API key committed to source",
+      "problem": "The new config module hardcodes a Stripe key in the repository.",
+      "consequence": "Anyone with repository access can use the key against the payment account.",
+      "fix": "Revoke the key and load it from an environment variable or secret store.",
+      "suggested_change": "STRIPE_KEY = os.environ[\"STRIPE_KEY\"]",
+      "source": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "candidate": "c2"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": ".github/workflows/ci.yml",
+      "line_number": 15,
+      "line_end": 15,
+      "title": "Pull request title interpolated into shell",
+      "problem": "The new step expands the pull request title directly inside the run script. A crafted title becomes shell commands.",
+      "consequence": "Any pull request author can run arbitrary commands on the CI runner.",
+      "fix": "Pass the title through an env variable and quote that variable in the script.",
+      "suggested_change": null,
+      "source": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection",
+      "candidate": "c1"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "package-lock.json",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "lodash downgraded to a vulnerable release",
+      "problem": "The change pins lodash back from 4.18.1 to 4.17.15. That release has known command injection and prototype pollution flaws.",
+      "consequence": "Front-end code that uses lodash becomes exposed to these known flaws again.",
+      "fix": "Keep lodash at 4.18.1 or later in package.json and package-lock.json.",
+      "suggested_change": null,
+      "source": "osv-scanner:GHSA-35jh-r3h4-6jhm",
+      "candidate": "c6"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "Dockerfile",
+      "line_number": 10,
+      "line_end": 10,
+      "title": "Container now runs as root",
+      "problem": "The change removes the app user and the USER 10001 line. The Flask server now runs as root.",
+      "consequence": "Any code execution bug in the app, such as the new SQL injection, gains root inside the container.",
+      "fix": "Restore the useradd step and the USER 10001 line before EXPOSE.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "Dockerfile",
+      "line_number": 1,
+      "line_end": 1,
+      "title": "Base image no longer pinned",
+      "problem": "The change replaces the pinned python 3.12.7 slim image with python:latest.",
+      "consequence": "Builds can silently switch Python versions and break the app without any code change.",
+      "fix": "Pin the base image to a specific release tag again.",
+      "suggested_change": "FROM python:3.12.7-slim-bookworm",
+      "source": "hadolint:DL3007",
+      "candidate": "c15"
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.7,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 7,
+      "line_end": 7,
+      "title": "Unquoted path in rm -rf",
+      "problem": "The deploy script now passes DEPLOY_DIR to rm -rf without quotes. The shell splits and globs the path.",
+      "consequence": "A DEPLOY_DIR value with spaces or glob characters makes the script delete the wrong paths.",
+      "fix": "Quote the variable and keep the non-empty guard.",
+      "suggested_change": "rm -rf \"${DEPLOY_DIR:?}/\"",
+      "source": "shellcheck:SC2086",
+      "candidate": "c23"
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Deploy loop parses ls output",
+      "problem": "The loop now iterates over unquoted ls output instead of a glob. It prints bare names and splits names on whitespace.",
+      "consequence": "The deploy log shows wrong entries for any file name with spaces.",
+      "fix": "Restore the glob loop over the deploy directory.",
+      "suggested_change": "for file in \"$DEPLOY_DIR\"/*; do",
+      "source": "shellcheck:SC2045",
+      "candidate": "c10"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "app/search.py",
+      "line_number": 9,
+      "line_end": 17,
+      "title": "Changed endpoints have no tests",
+      "problem": "The repository has no tests for the new search endpoint or the changed pagination in list_items.",
+      "consequence": "Regressions like the pagination offset bug reach users without any automated check catching them.",
+      "fix": "Add tests for /search and for the first page of /items.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "This duplicates the SQL injection finding raised for the same line.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c4",
+      "reason": "This duplicates the SQL injection finding raised for the same line.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c11",
+      "reason": "This duplicates the SQL injection finding on the execute call at line 14.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c12",
+      "reason": "This duplicates the SQL injection finding raised for the same line.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c20",
+      "reason": "This duplicates the SQL injection finding raised for the same line.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c8",
+      "reason": "This duplicates the shell injection finding raised for the same workflow step.",
+      "file_path": ".github/workflows/ci.yml",
+      "line_number": 15
+    },
+    {
+      "candidate": "c7",
+      "reason": "This is covered by the single lodash downgrade finding.",
+      "file_path": "package-lock.json",
+      "line_number": 11
+    },
+    {
+      "candidate": "c13",
+      "reason": "This is covered by the single lodash downgrade finding.",
+      "file_path": "package-lock.json",
+      "line_number": 11
+    },
+    {
+      "candidate": "c14",
+      "reason": "This is covered by the single lodash downgrade finding.",
+      "file_path": "package-lock.json",
+      "line_number": 11
+    },
+    {
+      "candidate": "c9",
+      "reason": "ADD of a local file behaves the same as COPY here, so this is style only.",
+      "file_path": "Dockerfile",
+      "line_number": 6
+    },
+    {
+      "candidate": "c16",
+      "reason": "Unpinned apt packages are image hygiene with no concrete failure in this change.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c17",
+      "reason": "The full python image already ships curl, so the install normally needs no prompt.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c18",
+      "reason": "The pip cache only enlarges the image and causes no functional problem.",
+      "file_path": "Dockerfile",
+      "line_number": 7
+    },
+    {
+      "candidate": "c21",
+      "reason": "Extra recommended packages only enlarge the image.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c22",
+      "reason": "Leftover apt lists only enlarge the image.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c19",
+      "reason": "The default expansion on line 5 replaces an empty or unset value, so DEPLOY_DIR is never empty.",
+      "file_path": "scripts/deploy.sh",
+      "line_number": 5
+    },
+    {
+      "candidate": "c24",
+      "reason": "This duplicates the finding on the ls loop at the same line.",
+      "file_path": "scripts/deploy.sh",
+      "line_number": 11
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+Passed with warnings: 5 findings (1 critical, 2 major, 2 minor)
+Change c856f8e5689f against HEAD, 3 files, +29 -0
+Summary: Adds a discount_code field and an apply_discount method to Order. Adds an order detail endpoint and a POST endpoint that redeems a discount code.
+1. Critical security: Order detail readable by any logged-in user (orders/views.py:18)
+2. Major bug: Decimal multiplied by float raises TypeError (orders/models.py:20)
+3. Major bug: New model field has no migration (orders/models.py:11)
+4. Minor security: CSRF protection removed from a session-authenticated POST (orders/views.py:22)
+5. Minor maintainability: New discount and view behaviour has no covering test (orders/models.py:16-22)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

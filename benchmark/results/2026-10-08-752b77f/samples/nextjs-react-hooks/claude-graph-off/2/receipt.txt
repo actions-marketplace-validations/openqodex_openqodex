@@ -1,0 +1,9 @@
+Passed with warnings: 4 findings (1 critical, 2 major, 1 minor)
+Change f40fe5221f97 against HEAD, 1 file, +23 -5
+Summary: Turns the search page into a client component. It reads q from the URL, fetches matching products and lists them under a heading that shows the query.
+1. Critical security: Reflected XSS through the search query heading (app/search/page.tsx:21)
+2. Major bug: Effect without dependencies refetches on every render (app/search/page.tsx:15-17)
+3. Major bug: Hooks called after a conditional early return (app/search/page.tsx:10-13)
+4. Minor bug: Search failure leaves an unhandled rejection (app/search/page.tsx:16)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

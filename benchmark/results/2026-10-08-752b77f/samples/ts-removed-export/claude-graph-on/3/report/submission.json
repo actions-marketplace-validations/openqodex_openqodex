@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "857e2b75ee60",
+  "summary": "Renames formatPrice to formatMoney with a currency argument and uses Intl.NumberFormat. invoiceLines now takes an optional currency that defaults to USD.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "src/money.ts",
+      "line_number": 3,
+      "line_end": 3,
+      "title": "Removed formatPrice still imported by cart",
+      "problem": "This change removes the formatPrice export from money.ts. The file src/cart.ts still imports formatPrice on line 1 and calls it on line 8.",
+      "consequence": "The TypeScript build fails on cart.ts, so the cart total cannot compile or render. Every customer checkout path that shows cartTotal breaks.",
+      "fix": "Update cartTotal in cart.ts to call formatMoney with a currency. Another option is to keep formatPrice as a wrapper that calls formatMoney with USD.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "info",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/money.ts",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Changed money formatting has no covering test",
+      "problem": "formatMoney now formats with Intl.NumberFormat, which adds thousands separators and supports other currencies. No test in the repository exercises formatMoney or invoiceLines.",
+      "consequence": "Developers will not notice regressions in invoice text or currency output. Removed exports such as formatPrice also go unnoticed.",
+      "fix": "Add tests for formatMoney and invoiceLines that cover USD, a non-USD currency and amounts above one thousand.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

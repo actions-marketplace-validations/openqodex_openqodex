@@ -1,0 +1,4473 @@
+{
+  "version": 1,
+  "model": "claude-sonnet-5",
+  "reviewerModel": "claude-opus-5-5",
+  "at": "2026-10-08T20:02:46.441Z",
+  "samples": [
+    {
+      "case": "demo-polyglot",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.1431026,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sql-injection",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence sentence packs two distinct actions (inject, then read/alter) into one sentence."
+          }
+        },
+        {
+          "bug": "pagination-off-by-one",
+          "title": "Pagination offset skips the first page",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence joins two independent clauses with 'and', giving two facts in one sentence."
+          }
+        },
+        {
+          "bug": "secret",
+          "title": "Stripe secret key committed to source",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Fix sentence bundles two separate actions (revoke, load) with 'and'."
+          }
+        },
+        {
+          "bug": "workflow-injection",
+          "title": "Pull request title interpolated into a shell step",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Fix sentence bundles two separate actions (pass, reference) with 'and'."
+          }
+        },
+        {
+          "bug": "vulnerable-lodash",
+          "title": "Lodash downgraded to a vulnerable release",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All sentences are simple and consistent with the downgrade/advisory truth."
+          }
+        },
+        {
+          "bug": "docker-root",
+          "title": "Container now runs as root",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence crams attacker action, root gain, and an example into one sentence."
+          }
+        },
+        {
+          "bug": "docker-latest-base",
+          "title": "Base image no longer pinned",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence joins two different verbs/facts (pick up, break) with 'and'."
+          }
+        },
+        {
+          "bug": "shell-rm-unquoted",
+          "title": "Unquoted path in recursive delete",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Fix sentence bundles two separate actions (quote, restore) with 'and'."
+          }
+        }
+      ]
+    },
+    {
+      "case": "demo-polyglot",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.1080486,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sql-injection",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted f-string/parameter truth and reads clearly."
+          }
+        },
+        {
+          "bug": "pagination-off-by-one",
+          "title": "Pagination offset skips the first page",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence sentence crams two separate observations into one sentence via 'and'."
+          }
+        },
+        {
+          "bug": "secret",
+          "title": "Stripe API key committed to source",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Hedged 'matches the format' phrasing doesn't contradict the truth; rest matches."
+          }
+        },
+        {
+          "bug": "vulnerable-lodash",
+          "title": "lodash downgraded to a vulnerable release",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": false
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem sentence adds an unverified 'command injection' flaw and an unexplained 'ReDoS' acronym not supported by the truth."
+          }
+        },
+        {
+          "bug": "docker-root",
+          "title": "Container now runs as root",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Straightforward restatement of the planted root-container bug and fix."
+          }
+        },
+        {
+          "bug": "docker-latest-base",
+          "title": "Base image no longer pinned",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Added size-growth detail doesn't contradict the pinned-tag truth."
+          }
+        },
+        {
+          "bug": "workflow-injection",
+          "title": "PR title expanded inside a shell step",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Read-only token detail is consistent with the shell-injection truth."
+          }
+        },
+        {
+          "bug": "shell-rm-unquoted",
+          "title": "Unquoted deploy directory in rm -rf",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Covers the quoting half of the planted bug without contradicting it."
+          }
+        },
+        {
+          "bug": "shell-ls-loop",
+          "title": "Deploy loop parses ls output",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Second problem sentence bundles two distinct observations ('prints bare names' and 'splits names with spaces')."
+          }
+        }
+      ]
+    },
+    {
+      "case": "demo-polyglot",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.1011786,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sql-injection",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the truth: f-string injection fixed by a bound parameter."
+          }
+        },
+        {
+          "bug": "secret",
+          "title": "Stripe secret key committed to source",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the truth on the committed key, exposure, and revoke-and-env fix."
+          }
+        },
+        {
+          "bug": "pagination-off-by-one",
+          "title": "Paging offset skips the first page",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the off-by-one offset bug and its fix."
+          }
+        },
+        {
+          "bug": "docker-root",
+          "title": "Container now runs as root",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correct on root-user bug; the search-injection example doesn't contradict the truth."
+          }
+        },
+        {
+          "bug": "vulnerable-lodash",
+          "title": "Lodash downgraded to a vulnerable release",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem sentence crams three unexplained vulnerability types into one sentence."
+          }
+        },
+        {
+          "bug": "workflow-injection",
+          "title": "Pull request title expanded into shell script",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "'Expression interpolation' is unexplained jargon; otherwise matches the truth."
+          }
+        },
+        {
+          "bug": "docker-apt-install",
+          "title": "Apt install runs without the yes flag",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": false
+            },
+            "note": "Fix only adds -y/--no-install-recommends, leaving unpinned versions and stale apt lists from the planted bug unaddressed."
+          }
+        },
+        {
+          "bug": "docker-latest-base",
+          "title": "Base image uses the floating latest tag",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly identifies the floating tag and the pin-it fix."
+          }
+        },
+        {
+          "bug": "shell-rm-unquoted",
+          "title": "Unquoted path in recursive delete",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Covers the quoting half accurately; fix also restores the empty-value guard as required."
+          }
+        },
+        {
+          "bug": "shell-ls-loop",
+          "title": "Deploy loop parses ls output",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the word-splitting bug and the glob fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "demo-polyglot",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.0750726,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sql-injection",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        },
+        {
+          "bug": "pagination-off-by-one",
+          "title": "Pagination skips the first page",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        },
+        {
+          "bug": "secret",
+          "title": "Payment API key committed to source",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        },
+        {
+          "bug": "workflow-injection",
+          "title": "Pull request title interpolated into shell",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        },
+        {
+          "bug": "vulnerable-lodash",
+          "title": "lodash downgraded to a vulnerable release",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": false
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem adds an unverified 'command injection' claim; truth only cites prototype pollution (CVE-2020-8203 among others)."
+          }
+        },
+        {
+          "bug": "docker-root",
+          "title": "Container now runs as root",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        },
+        {
+          "bug": "docker-latest-base",
+          "title": "Base image no longer pinned",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        },
+        {
+          "bug": "shell-rm-unquoted",
+          "title": "Unquoted path in rm -rf",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        },
+        {
+          "bug": "shell-ls-loop",
+          "title": "Deploy loop parses ls output",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth throughout."
+          }
+        }
+      ]
+    },
+    {
+      "case": "demo-polyglot",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.0704566,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sql-injection",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately and plainly describes the f-string SQL injection and the parameterized fix."
+          }
+        },
+        {
+          "bug": "secret",
+          "title": "Stripe secret key committed to source",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted hardcoded key truth and correct revoke-and-env fix."
+          }
+        },
+        {
+          "bug": "pagination-off-by-one",
+          "title": "Pagination offset skips the first page",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the off-by-one offset bug and its exact fix."
+          }
+        },
+        {
+          "bug": "vulnerable-lodash",
+          "title": "Lodash downgraded to a vulnerable release",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Lodash downgrade correctly identified; added command-injection mention isn't contradicted by the truth."
+          }
+        },
+        {
+          "bug": "docker-root",
+          "title": "Container now runs as root",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly ties removal of USER line to root execution and the restore fix."
+          }
+        },
+        {
+          "bug": "docker-latest-base",
+          "title": "Base image pinned to latest",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate description of the latest-tag pinning regression and fix."
+          }
+        },
+        {
+          "bug": "docker-apt-install",
+          "title": "Package install can stop at a confirmation prompt",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Covers the missing -y issue correctly though omits version pinning, which isn't contradictory."
+          }
+        },
+        {
+          "bug": "workflow-injection",
+          "title": "Pull request title expanded inside a shell command",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the shell-injection-via-PR-title bug and its env-variable fix."
+          }
+        },
+        {
+          "bug": "shell-rm-unquoted",
+          "title": "Unquoted deploy directory in rm -rf",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes unquoted rm -rf risk and the quoting/guard fix."
+          }
+        },
+        {
+          "bug": "shell-ls-loop",
+          "title": "Deploy loop parses ls output",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the ls-splitting bug and the glob restoration fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "demo-polyglot",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0428506,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sql-injection",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        },
+        {
+          "bug": "secret",
+          "title": "Stripe API key committed to source",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        },
+        {
+          "bug": "pagination-off-by-one",
+          "title": "Pagination offset skips the first page",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence crams two facts into one compound sentence."
+          }
+        },
+        {
+          "bug": "vulnerable-lodash",
+          "title": "Lodash downgraded to a vulnerable release",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": false
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem adds an unsupported 'command injection' claim not in the planted truth."
+          }
+        },
+        {
+          "bug": "docker-root",
+          "title": "Container now runs as root",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        },
+        {
+          "bug": "shell-rm-unquoted",
+          "title": "Unguarded recursive delete of deploy directory",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        },
+        {
+          "bug": "shell-ls-loop",
+          "title": "Deploy loop parses ls output",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Second problem sentence packs two facts together."
+          }
+        },
+        {
+          "bug": "workflow-injection",
+          "title": "Pull request title expanded inside shell script",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        },
+        {
+          "bug": "docker-latest-base",
+          "title": "Base image no longer pinned",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        }
+      ]
+    },
+    {
+      "case": "django-model-view",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0479186,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "order-detail-any-owner",
+          "title": "Order detail readable by any logged-in user",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth and reads plainly."
+          }
+        },
+        {
+          "bug": "decimal-times-float",
+          "title": "Decimal multiplied by float raises TypeError",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Fix is accurate but 'quantize' is unexplained jargon."
+          }
+        },
+        {
+          "bug": "missing-migration",
+          "title": "New model field has no migration",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth and reads plainly."
+          }
+        },
+        {
+          "bug": "csrf-exempt-redeem",
+          "title": "CSRF protection removed from a session-authenticated POST",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Fix correctly removes csrf_exempt but packs two facts into one sentence."
+          }
+        }
+      ]
+    },
+    {
+      "case": "django-model-view",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0859746,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "order-detail-any-owner",
+          "title": "Order detail readable by any logged-in user",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth: lookup by pk only, no owner filter, fix adds owner=request.user."
+          }
+        },
+        {
+          "bug": "decimal-times-float",
+          "title": "Decimal multiplied by float raises TypeError",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly identifies Decimal*float TypeError and the Decimal(\"0.9\")+rounding fix."
+          }
+        },
+        {
+          "bug": "missing-migration",
+          "title": "New model field has no migration",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the missing-migration bug and the correct migration fix."
+          }
+        },
+        {
+          "bug": "csrf-exempt-redeem",
+          "title": "CSRF protection removed from a session-authenticated POST",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted CSRF truth; the added 'limited impact' and 'send token' details don't contradict it."
+          }
+        }
+      ]
+    },
+    {
+      "case": "django-model-view",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.04999459999999999,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "order-detail-any-owner",
+          "title": "Order detail readable by any logged-in user",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the missing owner check and the correct fix in plain sentences."
+          }
+        },
+        {
+          "bug": "decimal-times-float",
+          "title": "Decimal multiplied by float raises TypeError",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Fix is correct but 'quantize' is unexplained jargon."
+          }
+        },
+        {
+          "bug": "missing-migration",
+          "title": "New model field has no migration",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Clearly and correctly describes the missing migration and its fix."
+          }
+        },
+        {
+          "bug": "csrf-exempt-redeem",
+          "title": "CSRF protection disabled on state-changing endpoint",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly identifies the CSRF exemption as the problem and its removal as the fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "django-model-view",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.059856599999999996,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "order-detail-any-owner",
+          "title": "Order detail readable by any logged-in user",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        },
+        {
+          "bug": "decimal-times-float",
+          "title": "Decimal multiplied by float raises TypeError",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        },
+        {
+          "bug": "missing-migration",
+          "title": "New model field has no migration",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        },
+        {
+          "bug": "csrf-exempt-redeem",
+          "title": "CSRF protection disabled on session-authenticated POST",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "The consequence crams two facts into one sentence and adds an unsupported 'impact is small today' judgment that downplays a risk the truth presents as already present."
+          }
+        }
+      ]
+    },
+    {
+      "case": "django-model-view",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.0135786,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "order-detail-any-owner",
+          "title": "Order detail readable by any logged-in user",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted truth and is plainly worded."
+          }
+        },
+        {
+          "bug": "decimal-times-float",
+          "title": "Decimal multiplied by float raises TypeError",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the Decimal/float TypeError and correct fix."
+          }
+        },
+        {
+          "bug": "missing-migration",
+          "title": "New model field has no migration",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly identifies missing migration and the fix."
+          }
+        },
+        {
+          "bug": "csrf-exempt-redeem",
+          "title": "CSRF protection disabled on session-authenticated POST",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the CSRF exemption issue and fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "django-model-view",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0302406,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "order-detail-any-owner",
+          "title": "Order detail lookup ignores the owner",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the truth and stays in plain, active sentences throughout."
+          }
+        },
+        {
+          "bug": "decimal-times-float",
+          "title": "Decimal multiplied by float raises TypeError",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the Decimal/float TypeError and the Decimal(\"0.9\") fix in plain terms."
+          }
+        },
+        {
+          "bug": "missing-migration",
+          "title": "New field has no migration",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately matches the missing-migration truth with simple sentences."
+          }
+        },
+        {
+          "bug": "csrf-exempt-redeem",
+          "title": "CSRF protection disabled on a session-authenticated POST",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem sentence names CsrfViewMiddleware without explaining it, hurting plainness though the facts are correct."
+          }
+        }
+      ]
+    },
+    {
+      "case": "express-admin-routes",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0334566,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "delete-without-admin",
+          "title": "Delete user route lacks admin check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        },
+        {
+          "bug": "foreach-async-not-awaited",
+          "title": "Purge deletions float outside the request",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Problem's second sentence and the fix each pack two facts into one sentence via 'so'/'then', but the content stays true to the planted bug and the fix would remove it."
+          }
+        }
+      ]
+    },
+    {
+      "case": "express-admin-routes",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0395626,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "delete-without-admin",
+          "title": "Delete user route lacks admin check",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem's second sentence packs two facts ('no shared auth middleware' and 'mounts it without auth') into one sentence, otherwise matches the planted truth."
+          }
+        },
+        {
+          "bug": "foreach-async-not-awaited",
+          "title": "Purge deletions are never awaited",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem and consequence each join multiple facts with 'so'/'and' into single sentences; the fix uses Promise.allSettled instead of Promise.all but still awaits the deletions and removes the planted bug."
+          }
+        }
+      ]
+    },
+    {
+      "case": "express-admin-routes",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0444266,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "delete-without-admin",
+          "title": "User delete route has no admin check",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem's second sentence packs two facts (no router-level guard, and mounted without auth) into one sentence."
+          }
+        },
+        {
+          "bug": "foreach-async-not-awaited",
+          "title": "Purge ignores the delete promises",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem and consequence each contain a compound sentence joining two facts with 'so'/'which'/'and'."
+          }
+        }
+      ]
+    },
+    {
+      "case": "express-admin-routes",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.0350086,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "delete-without-admin",
+          "title": "User delete route lacks the admin check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences align with the planted truth; the router-level middleware detail is an unverified but non-contradicting addition."
+          }
+        },
+        {
+          "bug": "foreach-async-not-awaited",
+          "title": "Purge drops the delete promises",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth; the 'count only successes' clause is an extra detail not in the truth but doesn't contradict it."
+          }
+        }
+      ]
+    },
+    {
+      "case": "express-admin-routes",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.0565446,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "delete-without-admin",
+          "title": "Delete user route lacks admin check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are simple, active, and match the planted truth."
+          }
+        },
+        {
+          "bug": "foreach-async-not-awaited",
+          "title": "Purge discards removeUser promises",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Consequence and fix each cram multiple facts into one dense chained sentence, but the claims themselves stay true to the planted bug and its removal."
+          }
+        }
+      ]
+    },
+    {
+      "case": "express-admin-routes",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0378926,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "delete-without-admin",
+          "title": "User delete route lacks the admin check",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem's second sentence joins two facts with 'and', hurting plainness, but all claims match the planted truth."
+          }
+        },
+        {
+          "bug": "foreach-async-not-awaited",
+          "title": "Purge drops removeUser promises",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Problem and consequence pack multiple facts into single compound sentences, and the fix sentence chains two actions with 'then', but all three are consistent with the planted truth and allSettled would fix the bug."
+          }
+        }
+      ]
+    },
+    {
+      "case": "flask-path-traversal",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0465266,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "download-path-traversal",
+          "title": "Arbitrary file read through download name",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are simple, one fact each, and match the planted path-traversal bug and its library-based fix."
+          }
+        },
+        {
+          "bug": "debug-on-all-interfaces",
+          "title": "Debug server exposed on all interfaces",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Problem and fix each cram two facts (debug mode + bind address) into one sentence via 'and', though both are factually correct."
+          }
+        }
+      ]
+    },
+    {
+      "case": "flask-path-traversal",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0106326,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "download-path-traversal",
+          "title": "Path traversal in download endpoint",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "fix sentence uses unexplained terms realpath/resolved but is otherwise correct"
+          }
+        },
+        {
+          "bug": "debug-on-all-interfaces",
+          "title": "Interactive debugger exposed on all interfaces",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "all clear and correct"
+          }
+        }
+      ]
+    },
+    {
+      "case": "flask-path-traversal",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0105146,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "download-path-traversal",
+          "title": "Path traversal in download endpoint",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "all three sentences are plain and match the planted truth"
+          }
+        },
+        {
+          "bug": "debug-on-all-interfaces",
+          "title": "Debug server exposed on all interfaces",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "all three sentences are plain and match the planted truth"
+          }
+        }
+      ]
+    },
+    {
+      "case": "flask-path-traversal",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.010510600000000002,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "download-path-traversal",
+          "title": "Path traversal in download endpoint",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted truth and is plainly worded."
+          }
+        },
+        {
+          "bug": "debug-on-all-interfaces",
+          "title": "Interactive debugger exposed on all interfaces",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted truth and is plainly worded."
+          }
+        }
+      ]
+    },
+    {
+      "case": "flask-path-traversal",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.023138600000000002,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "download-path-traversal",
+          "title": "Path traversal in download endpoint",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted path-traversal bug and its join/safe_join fix."
+          }
+        },
+        {
+          "bug": "debug-on-all-interfaces",
+          "title": "Debugger enabled on a network-facing server",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence's second sentence pulls in the unrelated traversal finding's PIN-leak claim, which the planted truth for this bug doesn't support."
+          }
+        }
+      ]
+    },
+    {
+      "case": "flask-path-traversal",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0104746,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "download-path-traversal",
+          "title": "Path traversal in download endpoint",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted truth and is plainly worded."
+          }
+        },
+        {
+          "bug": "debug-on-all-interfaces",
+          "title": "Debugger enabled on a server bound to all interfaces",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted truth and is plainly worded."
+          }
+        }
+      ]
+    },
+    {
+      "case": "go-http-handler",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.025966600000000003,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sprintf-sql",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted SQL-injection bug and its parameterized-query fix."
+          }
+        },
+        {
+          "bug": "mutex-held-on-return",
+          "title": "Mutex left locked on missing key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": false
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem says the early return is for an 'empty' key, but the truth says it's for a 'missing' key, a different condition."
+          }
+        },
+        {
+          "bug": "defer-close-before-err",
+          "title": "Response body closed before error check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted nil-pointer-panic bug and the reorder-defer fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "go-http-handler",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0377386,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sprintf-sql",
+          "title": "Search query built from the name parameter",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted SQL-injection bug and its parameter-binding fix."
+          }
+        },
+        {
+          "bug": "mutex-held-on-return",
+          "title": "Mutex stays locked when the key is missing",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted deadlock bug and its two valid fixes."
+          }
+        },
+        {
+          "bug": "defer-close-before-err",
+          "title": "Response body closed before the error check",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem's second sentence packs two facts (resp is nil; evaluating it panics) into one sentence."
+          }
+        }
+      ]
+    },
+    {
+      "case": "go-http-handler",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.027856600000000002,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sprintf-sql",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences match the planted SQL-injection truth and its placeholder fix."
+          }
+        },
+        {
+          "bug": "mutex-held-on-return",
+          "title": "Mutex left locked on empty key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the unlocked-mutex truth; consequence adds plausible detail (goroutine/connection) without contradicting it."
+          }
+        },
+        {
+          "bug": "defer-close-before-err",
+          "title": "Response body closed before error check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the nil-deref-before-error-check truth and its fix of reordering the defer."
+          }
+        }
+      ]
+    },
+    {
+      "case": "go-http-handler",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.0313926,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sprintf-sql",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the SQL injection truth and stays plain throughout."
+          }
+        },
+        {
+          "bug": "mutex-held-on-return",
+          "title": "Mutex left locked on missing key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the unlock-on-missing-key truth and stays plain throughout."
+          }
+        },
+        {
+          "bug": "defer-close-before-err",
+          "title": "Response body closed before error check",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem uses the unexplained jargon word 'dereferences' instead of plainly saying it panics."
+          }
+        }
+      ]
+    },
+    {
+      "case": "go-http-handler",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.037974600000000004,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sprintf-sql",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted Sprintf/placeholder bug accurately and plainly."
+          }
+        },
+        {
+          "bug": "mutex-held-on-return",
+          "title": "Mutex left locked on missing key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted missing-unlock bug and offers the same two fixes."
+          }
+        },
+        {
+          "bug": "defer-close-before-err",
+          "title": "Response body closed before error check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted defer-before-err-check panic bug and its fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "go-http-handler",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.011416599999999999,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "sprintf-sql",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        },
+        {
+          "bug": "mutex-held-on-return",
+          "title": "Mutex left locked on missing key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted truth, both fix options given plainly."
+          }
+        },
+        {
+          "bug": "defer-close-before-err",
+          "title": "Response body closed before error check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and clear throughout."
+          }
+        }
+      ]
+    },
+    {
+      "case": "js-dynamic-dispatch-gap",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.026622600000000003,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "async-handler-sync-caller",
+          "title": "Async onSave returns a Promise to a synchronous caller",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence has a grammar slip ('makes res.end throws') and packs two facts (TypeError plus process crash) into one sentence."
+          }
+        }
+      ]
+    },
+    {
+      "case": "js-dynamic-dispatch-gap",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0089526,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "async-handler-sync-caller",
+          "title": "Async onSave breaks the synchronous dispatch caller",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences match the planted truth and are plainly worded."
+          }
+        }
+      ]
+    },
+    {
+      "case": "js-dynamic-dispatch-gap",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0260986,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "async-handler-sync-caller",
+          "title": "Async onSave breaks the synchronous dispatch caller",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem and consequence sentences each pack two facts together with 'but'/'so'/'and', violating one-fact-per-sentence, though all three sections stay true to the planted bug and fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "js-dynamic-dispatch-gap",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.0362446,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "async-handler-sync-caller",
+          "title": "Async onSave breaks the synchronous dispatch caller",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem and fix are accurate and plain; consequence is accurate but each sentence bundles two facts and leans on unexplained jargon like 'unhandled rejection'."
+          }
+        }
+      ]
+    },
+    {
+      "case": "js-dynamic-dispatch-gap",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.029132599999999998,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "async-handler-sync-caller",
+          "title": "Async onSave breaks the synchronous dispatch caller",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Consequence and fix each pack multiple facts into one compound sentence and use unexplained jargon like 'unhandled rejection', but all claims match the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "js-dynamic-dispatch-gap",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.019302600000000003,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "async-handler-sync-caller",
+          "title": "Async onSave breaks the synchronous dispatch caller",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the promise/res.end mismatch and the async/await fix with error handling."
+          }
+        }
+      ]
+    },
+    {
+      "case": "nextjs-react-hooks",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": null,
+      "parsed": false,
+      "findings": [
+        {
+          "bug": "query-as-html",
+          "title": "Search query rendered as raw HTML",
+          "verdict": null
+        },
+        {
+          "bug": "effect-without-deps",
+          "title": "Effect refetches on every render",
+          "verdict": null
+        },
+        {
+          "bug": "hook-after-early-return",
+          "title": "Hooks called after a conditional return",
+          "verdict": null
+        },
+        {
+          "bug": "list-without-key",
+          "title": "List items rendered without a key",
+          "verdict": null
+        }
+      ]
+    },
+    {
+      "case": "nextjs-react-hooks",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0292006,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "query-as-html",
+          "title": "Reflected XSS through the search query heading",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem sentence relies on unexplained jargon 'dangerouslySetInnerHTML'."
+          }
+        },
+        {
+          "bug": "effect-without-deps",
+          "title": "Effect without dependencies refetches on every render",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        },
+        {
+          "bug": "hook-after-early-return",
+          "title": "Hooks called after a conditional early return",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "nextjs-react-hooks",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0395946,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "effect-without-deps",
+          "title": "Effect without dependencies refetches forever",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence sentence crams two separate facts ('loads the API' and 'keeps re-rendering') into one sentence; fix omits the stale-answer part of the truth but doesn't contradict it."
+          }
+        },
+        {
+          "bug": "hook-after-early-return",
+          "title": "Hooks called after a conditional return",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences match the planted truth and stay simple."
+          }
+        },
+        {
+          "bug": "list-without-key",
+          "title": "List items rendered without a key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate and plain throughout."
+          }
+        }
+      ]
+    },
+    {
+      "case": "nextjs-react-hooks",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.044992599999999994,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "query-as-html",
+          "title": "Cross-site scripting through the search query in the heading",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted XSS bug and the escaping fix."
+          }
+        },
+        {
+          "bug": "hook-after-early-return",
+          "title": "Hooks called after a conditional early return",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the hook-count mismatch and its fix."
+          }
+        },
+        {
+          "bug": "effect-without-deps",
+          "title": "Effect without a dependency array refetches forever",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Fix gives the [query] dependency array, which removes the infinite-effect bug described, though it omits the stale-response note from the truth."
+          }
+        },
+        {
+          "bug": "list-without-key",
+          "title": "List items rendered without a key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the missing-key bug and the key={product.id} fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "nextjs-react-hooks",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": null,
+      "parsed": false,
+      "findings": [
+        {
+          "bug": "query-as-html",
+          "title": "URL query rendered as raw HTML",
+          "verdict": null
+        },
+        {
+          "bug": "effect-without-deps",
+          "title": "Effect refetches on every render",
+          "verdict": null
+        },
+        {
+          "bug": "hook-after-early-return",
+          "title": "Hooks called after a conditional return",
+          "verdict": null
+        },
+        {
+          "bug": "list-without-key",
+          "title": "List items lack a stable key",
+          "verdict": null
+        }
+      ]
+    },
+    {
+      "case": "nextjs-react-hooks",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0315526,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "query-as-html",
+          "title": "URL query rendered as raw HTML",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence uses the unexplained acronym 'XSS'."
+          }
+        },
+        {
+          "bug": "effect-without-deps",
+          "title": "Effect without dependency array refetches forever",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Fix is correct but omits the truth's stale-response handling."
+          }
+        },
+        {
+          "bug": "hook-after-early-return",
+          "title": "Hooks called after a conditional return",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All sentences match the planted truth plainly."
+          }
+        },
+        {
+          "bug": "list-without-key",
+          "title": "List items rendered without a key",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence uses unexplained jargon 'reconcile'."
+          }
+        }
+      ]
+    },
+    {
+      "case": "python-caller-break",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0236926,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "none-return-breaks-callers",
+          "title": "Callers crash on the new None return",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurate, concise, and matches the planted truth and its stated fix options."
+          }
+        },
+        {
+          "bug": "none-return-breaks-callers",
+          "title": "Receipt tax line breaks for unknown regions",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly scoped to tax_line/receipt.py and consistent with the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "python-caller-break",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0087586,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "none-return-breaks-callers",
+          "title": "None return breaks existing tax_for callers",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences match the planted truth and are clearly phrased."
+          }
+        }
+      ]
+    },
+    {
+      "case": "python-caller-break",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.020078600000000002,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "none-return-breaks-callers",
+          "title": "None return breaks both callers of tax_for",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": false
+            },
+            "note": "Consequence uses unexplained term 'RATES'; fix adds an unsupported third option contradicting the stated lack of caller handling."
+          }
+        }
+      ]
+    },
+    {
+      "case": "python-caller-break",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.0088206,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "none-return-breaks-callers",
+          "title": "None return breaks both tax_for callers",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences match the planted truth and are plainly worded."
+          }
+        }
+      ]
+    },
+    {
+      "case": "python-caller-break",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.008674600000000001,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "none-return-breaks-callers",
+          "title": "None return breaks both tax_for callers",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "python-caller-break",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0087866,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "none-return-breaks-callers",
+          "title": "None return breaks both tax_for callers",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "rails-controller-model",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0103246,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "where-interpolation",
+          "title": "Search term interpolated into SQL",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence overstates authentication scope and write access not established by the truth; truth only says arbitrary SQL execution via string interpolation in WHERE."
+          }
+        },
+        {
+          "bug": "welcome-on-every-save",
+          "title": "Welcome email sent on every save",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences match the planted truth and are plainly worded."
+          }
+        }
+      ]
+    },
+    {
+      "case": "rails-controller-model",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.023860600000000003,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "where-interpolation",
+          "title": "Search term interpolated into SQL",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches planted truth and fix exactly, plainly worded."
+          }
+        },
+        {
+          "bug": "destroy-skips-admin",
+          "title": "Destroy action exempt from admin check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the except-list bug and its exact fix."
+          }
+        },
+        {
+          "bug": "welcome-on-every-save",
+          "title": "Welcome email sent on every save",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly identifies after_save-on-update issue and the matching after_create_commit fix; pre-commit enqueue claim is consistent with that fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "rails-controller-model",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0325546,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "where-interpolation",
+          "title": "Search term interpolated into SQL",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted SQL injection and its parameterized/sanitized fix."
+          }
+        },
+        {
+          "bug": "destroy-skips-admin",
+          "title": "Destroy action skips the admin check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted admin-check bypass and its except-list fix."
+          }
+        },
+        {
+          "bug": "welcome-on-every-save",
+          "title": "Welcome email sent on every save",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Core claim (after_save fires on update) matches truth; rollback detail is a plausible but unverified extra claim, not contradicted."
+          }
+        }
+      ]
+    },
+    {
+      "case": "rails-controller-model",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.0454826,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "where-interpolation",
+          "title": "Search term interpolated into SQL",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three parts are simple, active, and match the planted SQL-injection bug and its bound-parameter fix."
+          }
+        },
+        {
+          "bug": "destroy-skips-admin",
+          "title": "Destroy action skips the admin check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Wording is plain; problem/consequence match the planted truth, and the fix's alternative (scope to current user) also removes the bug."
+          }
+        },
+        {
+          "bug": "welcome-on-every-save",
+          "title": "Welcome email sent on every save",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Plain, active sentences; correctly describes the repeated-email bug and the after_create_commit fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "rails-controller-model",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.049932599999999994,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "where-interpolation",
+          "title": "Search query built from request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Consequence and fix each pack two distinct actions into one sentence."
+          }
+        },
+        {
+          "bug": "destroy-skips-admin",
+          "title": "Destroy action exempt from admin check",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain, single-fact, and match the planted truth."
+          }
+        },
+        {
+          "bug": "welcome-on-every-save",
+          "title": "Welcome email sent on every save",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and accurately reflect the after_save truth and after_create_commit fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "rails-controller-model",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.010100600000000001,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "where-interpolation",
+          "title": "SQL injection in user search",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "all three sentences match the planted truth and are plainly worded"
+          }
+        },
+        {
+          "bug": "welcome-on-every-save",
+          "title": "Welcome email sent on every save",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "consequence wrongly limits the bug to admin-triggered updates, a claim the truth doesn't make"
+          }
+        }
+      ]
+    },
+    {
+      "case": "suppression-comments",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0367806,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "suppressed-eval",
+          "title": "Server evaluates request query string as JavaScript",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem and consequence are plain and accurate; fix matches the arithmetic-parser truth but doesn't mention dropping the suppression comments."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Shell command built from uploaded file name",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three are plain and consistent with the truth, though the fix adds a basename-restriction detail not in the planted truth and omits dropping the nosec comment."
+          }
+        }
+      ]
+    },
+    {
+      "case": "suppression-comments",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.034082600000000005,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "suppressed-eval",
+          "title": "Request query text evaluated as JavaScript",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted eval/suppression bug and its fix."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Upload name interpolated into a shell command",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correct per truth, but the second sentence stacks two facts with 'and'."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Upload name allows path traversal",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": false
+            },
+            "consequence": {
+              "plain": true,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": false
+            },
+            "note": "Describes path traversal, not the planted shell=True/nosec command-injection bug, so it contradicts the truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "suppression-comments",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0637666,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "suppressed-eval",
+          "title": "Remote code execution through eval of query parameter",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the eval/RCE truth and reads plainly throughout."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Shell command injection through upload name",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence adds an unverified path-traversal claim with unexplained jargon ('path traversal', 'THUMB_DIR') not supported by the planted truth."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Suppression comment hides the shell injection",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the nosec suppression hiding the shell injection and its fix."
+          }
+        },
+        {
+          "bug": "suppressed-eval",
+          "title": "Lint suppression hides eval of request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the eslint-disable suppression hiding the eval RCE and its fix."
+          }
+        },
+        {
+          "bug": "suppressed-eval",
+          "title": "Pattern scan suppression hides eval of request input",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Correctly describes the nosemgrep suppression hiding the eval RCE and its fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "suppression-comments",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.0751846,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "suppressed-eval",
+          "title": "Request query evaluated as JavaScript",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the eval vulnerability and a sound arithmetic-parser fix, though it never mentions removing the suppression comments."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Shell command built from upload name",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": false
+            },
+            "note": "Uses unexplained jargon ('interpolates', 'shell metacharacters'), invents an unsupported path-traversal claim, and the fix omits dropping the nosec suppression while adding an unverified basename requirement."
+          }
+        }
+      ]
+    },
+    {
+      "case": "suppression-comments",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.046278599999999996,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "suppressed-eval",
+          "title": "Request query string run through eval",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the eval/RCE truth accurately."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Upload name interpolated into a shell command",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": false
+            },
+            "fix": {
+              "plain": false,
+              "correct": true
+            },
+            "note": "Consequence's second sentence invents a path-traversal claim not in the planted truth, and the fix sentence ('Pass convert an argument list...') is grammatically broken."
+          }
+        }
+      ]
+    },
+    {
+      "case": "suppression-comments",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0283506,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "suppressed-eval",
+          "title": "Request query string passed to eval",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the planted truth and is phrased in short, plain sentences."
+          }
+        },
+        {
+          "bug": "nosec-shell-injection",
+          "title": "Upload name interpolated into a shell command",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Fix removes the shell=True vulnerability as required, though it omits dropping the nosec suppression mentioned in the truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-removed-export",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0167846,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "removed-export-still-imported",
+          "title": "Rename breaks remaining formatPrice caller",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth about the broken formatPrice import."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-removed-export",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0197966,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "removed-export-still-imported",
+          "title": "Removed export still imported by cart.ts",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "The consequence's second sentence uses an unnecessary conditional construction that hurts plainness."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-removed-export",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0089306,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "removed-export-still-imported",
+          "title": "Removed export still imported by cart.ts",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-removed-export",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.013778599999999998,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "removed-export-still-imported",
+          "title": "Removed formatPrice still used by cart",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-removed-export",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.009000600000000001,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "removed-export-still-imported",
+          "title": "Removed formatPrice still imported and called by cart",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are accurate and match the planted truth, stated plainly."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-removed-export",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0088386,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "removed-export-still-imported",
+          "title": "Removed formatPrice still imported by cart",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "All three sentences are plain and match the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-workspace-caller-break",
+      "config": "claude-graph-off",
+      "repeat": 1,
+      "costUsd": 0.0201986,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "safegit-return-shape",
+          "title": "safeGit return change breaks both CLI callers",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence crams three facts into one sentence, breaking the one-fact-per-sentence rule."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-workspace-caller-break",
+      "config": "claude-graph-off",
+      "repeat": 2,
+      "costUsd": 0.0483026,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "safegit-return-shape",
+          "title": "Callers still treat the safeGit result as a string",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Clear, file/line-specific wording that matches the planted truth and its fix."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-workspace-caller-break",
+      "config": "claude-graph-off",
+      "repeat": 3,
+      "costUsd": 0.0378886,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "safegit-return-shape",
+          "title": "Return type change breaks both CLI callers",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Accurately describes the type/throw change and both broken callers, with a fix matching the planted truth."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-workspace-caller-break",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "costUsd": 0.10985859999999999,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "safegit-return-shape",
+          "title": "safeGit return type change breaks both CLI callers",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Matches the truth throughout, but the problem and consequence sentences each pack more than one fact together."
+          }
+        },
+        {
+          "bug": "safegit-return-shape",
+          "title": "Removed throw on git failure breaks callers' error detection",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": false
+            },
+            "note": "Consequence describes a hypothetical after a partial future fix rather than today's actual crash, and the fix only adds a code check while ignoring the stdout/type-mismatch half of the truth, so it would not remove the planted bug."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-workspace-caller-break",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "costUsd": 0.060898600000000004,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "safegit-return-shape",
+          "title": "safeGit return type changed while callers still expect a string",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem sentence bundles two callers into one sentence; consequence invents a compile failure and an unsupported null-return claim that the truth's 'runtime break' doesn't support."
+          }
+        },
+        {
+          "bug": "safegit-return-shape",
+          "title": "Failed git commands no longer throw, so callers lose error detection",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": false,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence's last sentence packs two separate facts (branch name, changedFiles count) together, hurting plainness but not correctness."
+          }
+        }
+      ]
+    },
+    {
+      "case": "ts-workspace-caller-break",
+      "config": "claude-graph-on",
+      "repeat": 3,
+      "costUsd": 0.0662026,
+      "parsed": true,
+      "findings": [
+        {
+          "bug": "safegit-return-shape",
+          "title": "Return type change breaks both CLI callers",
+          "verdict": {
+            "problem": {
+              "plain": false,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": true
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Problem sentence crams two separate call-site facts (trim location and split location) into one sentence."
+          }
+        },
+        {
+          "bug": "safegit-return-shape",
+          "title": "Swallowed failure removes the not-a-repository signal",
+          "verdict": {
+            "problem": {
+              "plain": true,
+              "correct": true
+            },
+            "consequence": {
+              "plain": true,
+              "correct": false
+            },
+            "fix": {
+              "plain": true,
+              "correct": true
+            },
+            "note": "Consequence skips the real current TypeError crash and instead describes a hypothetical outcome of an incomplete future fix."
+          }
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "claude-graph-off": {
+      "findings": 101,
+      "unparsed": 4,
+      "costUsd": 1.349169,
+      "problem": {
+        "plain": {
+          "hit": 83,
+          "of": 97
+        },
+        "correct": {
+          "hit": 94,
+          "of": 97
+        }
+      },
+      "consequence": {
+        "plain": {
+          "hit": 83,
+          "of": 97
+        },
+        "correct": {
+          "hit": 94,
+          "of": 97
+        }
+      },
+      "fix": {
+        "plain": {
+          "hit": 88,
+          "of": 97
+        },
+        "correct": {
+          "hit": 94,
+          "of": 97
+        }
+      }
+    },
+    "claude-graph-on": {
+      "findings": 102,
+      "unparsed": 4,
+      "costUsd": 1.257823,
+      "problem": {
+        "plain": {
+          "hit": 88,
+          "of": 98
+        },
+        "correct": {
+          "hit": 96,
+          "of": 98
+        }
+      },
+      "consequence": {
+        "plain": {
+          "hit": 83,
+          "of": 98
+        },
+        "correct": {
+          "hit": 90,
+          "of": 98
+        }
+      },
+      "fix": {
+        "plain": {
+          "hit": 93,
+          "of": 98
+        },
+        "correct": {
+          "hit": 96,
+          "of": 98
+        }
+      }
+    }
+  }
+}

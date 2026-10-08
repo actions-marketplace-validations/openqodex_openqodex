@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "change_id": "32c939b7a434",
+  "summary": "Moves the unset-or-empty env check into a shared setting helper, names the default port and host, and adds tests for port and host. Both functions behave exactly as they did before.",
+  "findings": [],
+  "dropped": []
+}

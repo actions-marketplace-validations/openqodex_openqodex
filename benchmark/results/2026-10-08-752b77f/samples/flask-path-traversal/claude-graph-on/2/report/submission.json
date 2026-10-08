@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves a file named by a query parameter from UPLOAD_DIR. It also changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The download handler joins the name query parameter onto UPLOAD_DIR without any check. A name like ../../etc/passwd or an absolute path like /etc/passwd escapes UPLOAD_DIR.",
+      "consequence": "Any client can read any file the server process can read. This includes secrets, config files and source code.",
+      "fix": "Resolve the joined path and reject it unless it stays under UPLOAD_DIR. Alternatively, serve the file with flask.send_from_directory, which applies safe_join.",
+      "suggested_change": "    path = os.path.realpath(os.path.join(UPLOAD_DIR, name))\n    if not path.startswith(os.path.realpath(UPLOAD_DIR) + os.sep) or not os.path.isfile(path):\n        abort(404)\n    return send_file(path)",
+      "source": "lens:path-traversal-in-fs-access",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Debugger enabled on a network-facing server",
+      "problem": "The change turns on debug mode and also binds the server to all interfaces instead of 127.0.0.1. Together these settings expose the interactive Werkzeug debugger to the network.",
+      "consequence": "A remote user who triggers an error can reach the debugger console and may run arbitrary code. The traversal bug also helps an attacker gather the inputs needed to compute the debugger PIN.",
+      "fix": "Keep host at 127.0.0.1 and read debug from an environment variable that defaults to off.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000, debug=os.environ.get(\"FLASK_DEBUG\") == \"1\")",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 15,
+      "line_end": 20,
+      "title": "New download endpoint has no test",
+      "problem": "The change adds a download endpoint but no test file. No test checks the not-found path or rejects traversal input.",
+      "consequence": "A later regression in path checking would ship without anyone noticing.",
+      "fix": "Add tests for a valid file, a missing file and traversal names such as ../etc/passwd and /etc/passwd.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The all-interfaces bind is already covered by the debug finding on this line. It is risky mainly because it exposes the debugger.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c3",
+      "reason": "This duplicates the debug mode problem that the finding for c1 already raises on the same line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c4",
+      "reason": "This duplicates the all-interfaces bind that the finding for c1 already covers on the same line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

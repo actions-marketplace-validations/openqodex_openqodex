@@ -1,0 +1,49 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/router.js",
+    "inside": true,
+    "range": [
+      1,
+      9
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/handlers.js",
+    "inside": true,
+    "range": [
+      1,
+      16
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/main.js",
+    "inside": true,
+    "range": [
+      1,
+      13
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/store.js",
+    "inside": true,
+    "range": [
+      1,
+      3
+    ],
+    "ok": true
+  }
+]

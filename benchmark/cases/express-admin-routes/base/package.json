@@ -1,0 +1,12 @@
+{
+  "name": "admin-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "5.1.0"
+  },
+  "scripts": {
+    "start": "node src/server.js"
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "id": "rails-controller-model",
+  "guards": "a Rails change with SQL built from params, an admin check that skips destroy, mass assignment of every attribute and a callback that runs on every save is reviewed as Rails code",
+  "amended": "Copied from ../cases/rails-controller-model.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
+  "language": "ruby",
+  "framework": "rails",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "where-interpolation",
+      "file": "app/controllers/users_controller.rb",
+      "lines": [
+        6,
+        6
+      ],
+      "anchor": {
+        "line": 6,
+        "text": "users.where(\"email LIKE '%#{params[:q]}%'\")"
+      },
+      "mentions": [
+        "sql",
+        "inject",
+        "interpolat"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "brakeman",
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "params[:q] is put into the SQL string of where, so a caller can run any SQL. The fix is a bound value: where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\")."
+    },
+    {
+      "id": "destroy-skips-admin",
+      "file": "app/controllers/users_controller.rb",
+      "lines": [
+        2,
+        2
+      ],
+      "anchor": {
+        "line": 2,
+        "text": "except: [:index, :show, :destroy]"
+      },
+      "mentions": [
+        "admin",
+        "any user",
+        "anyone",
+        "any account",
+        "authoriz",
+        "permission"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "destroy is added to the actions that skip require_admin, so any user with a token can delete any user. The fix is to leave destroy out of except."
+    },
+    {
+      "id": "permit-all",
+      "file": "app/controllers/users_controller.rb",
+      "lines": [
+        16,
+        16
+      ],
+      "anchor": {
+        "line": 16,
+        "text": "permit!"
+      },
+      "mentions": [
+        "permit",
+        "mass assign",
+        "mass-assign",
+        "admin",
+        "attribute",
+        "escalat"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "brakeman",
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "permit! allows every attribute, so a request can set admin or api_token on a user. The fix is to permit the editable attributes by name, such as permit(:email)."
+    },
+    {
+      "id": "welcome-on-every-save",
+      "file": "app/models/user.rb",
+      "lines": [
+        4,
+        4
+      ],
+      "anchor": {
+        "line": 4,
+        "text": "after_save :send_welcome_email"
+      },
+      "mentions": [
+        "welcome",
+        "every save",
+        "every update",
+        "after_save",
+        "after_create"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "after_save runs on every update, so a user gets the welcome email again each time their record changes. The fix is after_create_commit."
+    }
+  ]
+}

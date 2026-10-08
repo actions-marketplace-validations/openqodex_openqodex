@@ -1,0 +1,22 @@
+{
+  "version": 3,
+  "change_id": "708d34803616c923cd9d24b87ddfecbe9b1bab242ea6d3ebbd39449296a0d34a",
+  "config_hash": "bb5a14e29e83019aee75407355284dc4e41382c99ceb8724b852c108e08210d3",
+  "created_at": "2026-10-08T19:35:21.299Z",
+  "lenses": [
+    {
+      "name": "async-floating-promise",
+      "confidenceFloor": 0.7
+    },
+    {
+      "name": "return-shape-contract-break",
+      "confidenceFloor": 0.7
+    },
+    {
+      "name": "secrets-logged-in-error-path",
+      "confidenceFloor": 0.7
+    }
+  ],
+  "instructions_hash": null,
+  "runtime_version": "0.9.0"
+}

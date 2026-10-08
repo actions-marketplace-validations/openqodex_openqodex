@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "eab11e18f84221226f4ce5843d6ea575229c250001f8772e88b45876b1772879",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d031f5ce5b090014879d0b133ee908da99132302"
+  },
+  "generated_at": "2026-10-08T19:43:00.176Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Makes onSave async so it writes a JSON snapshot of the in-memory store to data/notes.json after each save.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Async onSave breaks the synchronous dispatch caller",
+      "description": "onSave now returns a Promise, but dispatch in src/router.js:7 returns it without awaiting. The server handler in src/main.js:9 passes that Promise straight to res.end. Node's res.end throws a TypeError for a Promise chunk, so every POST /save request crashes the server process. The caller also never handles a writeFile rejection, so a failed write raises an unhandled rejection. Make dispatch async and have the request handler await it inside a try/catch. The handler should send an error status when the save fails.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null,
+      "notes": [],
+      "problem": "onSave now returns a Promise, but dispatch in src/router.js:7 returns it without awaiting. The server handler in src/main.js:9 passes that Promise straight to res.end.",
+      "consequence": "Node's res.end throws a TypeError for a Promise chunk, so every POST /save request crashes the server process. The caller also never handles a writeFile rejection, so a failed write raises an unhandled rejection.",
+      "fix": "Make dispatch async and have the request handler await it inside a try/catch. The handler should send an error status when the save fails."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "New snapshot write has no covering test",
+      "description": "The repository has no tests for onSave's new async behaviour or for the snapshot write. Without tests, nobody would notice regressions such as the broken res.end call before deployment. Add a test that calls dispatch with the save action, awaits it, and checks the response and the snapshot file.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The repository has no tests for onSave's new async behaviour or for the snapshot write.",
+      "consequence": "Without tests, nobody would notice regressions such as the broken res.end call before deployment.",
+      "fix": "Add a test that calls dispatch with the save action, awaits it, and checks the response and the snapshot file."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3737,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 33,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 23,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 5,
+    "deletions": 1
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 14255,
+      "started_at": "2026-10-08T19:42:43.245Z",
+      "ended_at": "2026-10-08T19:43:00.177Z",
+      "duration_ms": 16932,
+      "rounds": 1,
+      "usage": {
+        "turns": 7,
+        "input_tokens": 39972,
+        "output_tokens": 1413,
+        "cost_usd": 0.0822268
+      }
+    },
+    "snapshot": {
+      "change_id": "eab11e18f84221226f4ce5843d6ea575229c250001f8772e88b45876b1772879",
+      "tree": "62b33ef51b4e5ae2114be88c18885cbb7bbf4e6e",
+      "before": "7d7c7e56e5c252676da4951a8e643e9966f8d06e4405a8b39df1ec637d9dd2de",
+      "after": "7d7c7e56e5c252676da4951a8e643e9966f8d06e4405a8b39df1ec637d9dd2de"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "package.json",
+        "src/handlers.js",
+        "src/main.js",
+        "src/router.js"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

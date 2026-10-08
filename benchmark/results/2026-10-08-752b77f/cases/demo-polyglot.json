@@ -1,0 +1,283 @@
+{
+  "id": "demo-polyglot",
+  "guards": "the demo repository's planted bugs across Python, Docker, shell, a workflow and a lockfile are all reported, by scanners and by reading",
+  "language": "python",
+  "framework": "flask",
+  "base": "../../../examples/demo-repo/baseline",
+  "change": "../../../examples/demo-repo/planted",
+  "clean": false,
+  "generated": [
+    {
+      "file": "app/config.py",
+      "placeholder": "{{GENERATED_SECRET}}",
+      "kind": "stripe-live-key"
+    }
+  ],
+  "bugs": [
+    {
+      "id": "secret",
+      "file": "app/config.py",
+      "lines": [
+        2,
+        2
+      ],
+      "anchor": {
+        "line": 2,
+        "text": "STRIPE_KEY = \"sk_live_"
+      },
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "gitleaks",
+        "semgrep"
+      ],
+      "truth": "A live Stripe secret key is committed in the source. Anyone with the code can charge the account; the key must be revoked and read from the environment."
+    },
+    {
+      "id": "sql-injection",
+      "file": "app/search.py",
+      "lines": [
+        14,
+        14
+      ],
+      "anchor": {
+        "line": 14,
+        "text": "cur.execute(f\"SELECT"
+      },
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "bandit",
+        "semgrep"
+      ],
+      "truth": "The search term from the query string is put into the SQL text with an f-string, so a caller can run any SQL. The fix is a placeholder with the term passed as a parameter."
+    },
+    {
+      "id": "docker-latest-base",
+      "file": "Dockerfile",
+      "lines": [
+        1,
+        1
+      ],
+      "anchor": {
+        "line": 1,
+        "text": "FROM python:latest"
+      },
+      "kind": [
+        "maintainability",
+        "security",
+        "bug"
+      ],
+      "severity": "minor",
+      "found_by": [
+        "hadolint"
+      ],
+      "truth": "The base image is the moving latest tag, so a rebuild can pull a different Python. The fix is a pinned version tag, as the base had."
+    },
+    {
+      "id": "docker-apt-install",
+      "file": "Dockerfile",
+      "lines": [
+        3,
+        3
+      ],
+      "anchor": {
+        "line": 3,
+        "text": "apt-get install curl"
+      },
+      "kind": [
+        "maintainability",
+        "security",
+        "performance",
+        "bug"
+      ],
+      "severity": "minor",
+      "found_by": [
+        "hadolint"
+      ],
+      "truth": "apt-get install runs without -y, without pinned versions and without cleaning the package lists, so the build can stop at a prompt and the image keeps the lists. The fix is -y --no-install-recommends, pinned versions and removing /var/lib/apt/lists."
+    },
+    {
+      "id": "docker-add",
+      "file": "Dockerfile",
+      "lines": [
+        6,
+        6
+      ],
+      "anchor": {
+        "line": 6,
+        "text": "ADD requirements.txt"
+      },
+      "kind": [
+        "maintainability",
+        "security",
+        "bug"
+      ],
+      "severity": "minor",
+      "found_by": [
+        "hadolint"
+      ],
+      "truth": "ADD is used for a local file, where COPY says exactly what happens; ADD also fetches URLs and unpacks archives. The fix is COPY."
+    },
+    {
+      "id": "docker-pip-cache",
+      "file": "Dockerfile",
+      "lines": [
+        7,
+        7
+      ],
+      "anchor": {
+        "line": 7,
+        "text": "pip install -r requirements.txt"
+      },
+      "kind": [
+        "maintainability",
+        "performance"
+      ],
+      "severity": "minor",
+      "found_by": [
+        "hadolint"
+      ],
+      "truth": "pip install keeps its download cache in the image, which makes the image larger. The fix is --no-cache-dir, as the base had."
+    },
+    {
+      "id": "docker-root",
+      "file": "Dockerfile",
+      "lines": [
+        3,
+        11
+      ],
+      "anchor": {
+        "line": 11,
+        "text": "CMD [\"python\""
+      },
+      "mentions": [
+        "root"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "The change removes the useradd and USER lines, so the container now runs as root. The fix is to keep the unprivileged user."
+    },
+    {
+      "id": "vulnerable-lodash",
+      "file": "package-lock.json",
+      "lines": [
+        11,
+        17
+      ],
+      "anchor": {
+        "line": 11,
+        "text": "\"lodash\": \"4.17.15\""
+      },
+      "also": [
+        {
+          "file": "package.json",
+          "lines": [
+            7,
+            7
+          ]
+        }
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "osv-scanner"
+      ],
+      "truth": "lodash is downgraded to 4.17.15, which has known prototype pollution advisories (CVE-2020-8203 among them). The fix is to keep 4.18.1 or later."
+    },
+    {
+      "id": "shell-rm-unquoted",
+      "file": "scripts/deploy.sh",
+      "lines": [
+        7,
+        7
+      ],
+      "anchor": {
+        "line": 7,
+        "text": "rm -rf $DEPLOY_DIR/"
+      },
+      "kind": [
+        "bug",
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "shellcheck"
+      ],
+      "truth": "rm -rf on an unquoted variable with no empty check: an empty or spaced DEPLOY_DIR deletes the wrong folder, up to /. The fix is \"${DEPLOY_DIR:?}/\", as the base had."
+    },
+    {
+      "id": "shell-ls-loop",
+      "file": "scripts/deploy.sh",
+      "lines": [
+        11,
+        11
+      ],
+      "anchor": {
+        "line": 11,
+        "text": "for file in $(ls $DEPLOY_DIR)"
+      },
+      "kind": [
+        "bug",
+        "maintainability"
+      ],
+      "severity": "minor",
+      "found_by": [
+        "shellcheck"
+      ],
+      "truth": "The loop splits the output of ls on spaces, so a file name with a space becomes two names. The fix is a glob, as the base had."
+    },
+    {
+      "id": "workflow-injection",
+      "file": ".github/workflows/ci.yml",
+      "lines": [
+        14,
+        15
+      ],
+      "anchor": {
+        "line": 15,
+        "text": "github.event.pull_request.title"
+      },
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "actionlint",
+        "semgrep"
+      ],
+      "truth": "The pull request title is put straight into a shell command, so a title with shell syntax runs commands in CI. The fix is to pass it through an environment variable and quote it."
+    },
+    {
+      "id": "pagination-off-by-one",
+      "file": "app/server.py",
+      "lines": [
+        22,
+        23
+      ],
+      "anchor": {
+        "line": 23,
+        "text": "offset = page * PAGE_SIZE"
+      },
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "Page numbers start at 1, but the offset is page times the page size, so page 1 skips the first 20 items. The fix is (page - 1) * PAGE_SIZE, as the base had."
+    }
+  ]
+}

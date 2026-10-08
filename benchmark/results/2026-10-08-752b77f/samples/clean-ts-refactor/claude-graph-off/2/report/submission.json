@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "change_id": "32c939b7a434",
+  "summary": "Refactors port and host so both read env through a shared setting helper and named default constants. Adds node:test coverage for the defaults and for PORT validation.",
+  "findings": [],
+  "dropped": []
+}

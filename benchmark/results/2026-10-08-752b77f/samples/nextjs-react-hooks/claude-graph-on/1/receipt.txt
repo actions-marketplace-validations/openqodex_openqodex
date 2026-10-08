@@ -1,0 +1,12 @@
+Passed with warnings: 7 findings (1 critical, 3 major, 3 minor)
+Change f40fe5221f97 against HEAD, 1 file, +23 -5
+Summary: Turns the search page into a client component that reads q from the URL, fetches matching products and lists them under a results heading.
+1. Critical security: Cross-site scripting through the search query in the heading (app/search/page.tsx:21)
+2. Major bug: Hooks called after a conditional early return (app/search/page.tsx:10-13)
+3. Major bug: Effect without a dependency array refetches forever (app/search/page.tsx:15-17)
+4. Major bug: Search form removed with no replacement input (app/search/page.tsx:11)
+5. Minor bug: Search request failure is never handled (app/search/page.tsx:16)
+6. Minor bug: List items rendered without a key (app/search/page.tsx:24)
+7. Minor maintainability: New search page behaviour has no covering test (app/search/page.tsx:8-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

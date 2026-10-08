@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a thumbnail helper that shells out to ImageMagick convert, a docs URL setting, and a /calc endpoint that evaluates an arithmetic expression from the query string.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Server evaluates request query string as JavaScript",
+      "problem": "The /calc handler passes req.query.expr straight to eval. The added comments switch off the checks that would report it.",
+      "consequence": "Any caller can run arbitrary code inside the Node process. That caller can then read secrets, change data or take over the host.",
+      "fix": "Parse the expression with a restricted arithmetic evaluator such as expr-eval. Reject any input that contains characters other than digits, operators, parentheses and spaces.",
+      "suggested_change": "  const value = new Parser().evaluate(String(req.query.expr));",
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 8,
+      "line_end": 9,
+      "title": "Shell command built from uploaded file name",
+      "problem": "make_thumbnail puts upload_name, which comes from the upload form, into a shell command string. subprocess.run then runs that string through the shell.",
+      "consequence": "A user can upload a file named with shell metacharacters such as a semicolon. The shell then runs that user's commands on the server.",
+      "fix": "Pass an argument list to subprocess.run without shell=True. Also reduce upload_name to its base name so a crafted name cannot escape the upload and thumbnail folders.",
+      "suggested_change": "    name = os.path.basename(upload_name)\n    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "web/server.js",
+      "line_number": 10,
+      "line_end": 14,
+      "title": "New endpoint and thumbnail helper have no tests",
+      "problem": "This change adds the /calc endpoint and make_thumbnail. The repository has no test that runs either one.",
+      "consequence": "Nothing will catch an injection fix or a behaviour change that breaks them.",
+      "fix": "Add tests that call /calc with valid and hostile expressions. Add tests that call make_thumbnail with a name holding shell metacharacters.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "This comment hides the shell injection that the make_thumbnail finding already reports.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c4",
+      "reason": "This comment hides the same eval call that the /calc finding already reports.",
+      "file_path": "web/server.js",
+      "line_number": 11
+    },
+    {
+      "candidate": "c2",
+      "reason": "The noqa only allows a long constant documentation URL on that line. It hides no logic.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is harmless by itself. The make_thumbnail finding reports the unsafe call.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 1
+    }
+  ]
+}

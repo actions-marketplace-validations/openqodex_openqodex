@@ -1,0 +1,7 @@
+Reviewing the change against HEAD: 1 file, +23 -5
+Scanners: 3 ran, 10 had nothing to check, 2 candidates to check
+Code graph: 3 files in 0.1 s (4 parsed, 0 from cache, fresh)
+Reviewer: claude 2.1.294 started (process 14745); this takes one to three minutes
+Reviewer still working: 15 s
+Correction round 1 of 2: 1 problem, 0 unread changed ranges sent to the reviewer
+Reviewer still working: 30 s

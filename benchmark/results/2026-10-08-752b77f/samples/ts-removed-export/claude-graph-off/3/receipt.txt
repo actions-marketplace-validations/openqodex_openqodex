@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 minor)
+Change 857e2b75ee60 against HEAD, 2 files, +5 -5
+Summary: Renames formatPrice to formatMoney in src/money.ts so it formats amounts with Intl.NumberFormat in a chosen currency. Updates invoiceLines to take a currency argument that defaults to USD.
+1. Critical bug: Removed export still imported by cart.ts (src/money.ts:3-4)
+2. Minor maintainability: Changed money formatting has no covering test (src/money.ts:4)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

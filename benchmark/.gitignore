@@ -1,0 +1,2 @@
+# What benchmark/build-cli.mjs records about the local build; each machine has its own.
+.build/

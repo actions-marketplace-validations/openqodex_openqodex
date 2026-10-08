@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 9f4d6ef41c2c against HEAD, 1 file, +6 -3
+Summary: Changes tax_for so that it returns None for an unknown region instead of 0. Two shop callers still do arithmetic on its result, and nobody updated them.
+1. Critical bug: Callers crash on the new None return (pkgs/billing/src/billing/tax.py:8)
+2. Major bug: Receipt tax line breaks for unknown regions (pkgs/billing/src/billing/tax.py:4)
+3. Minor maintainability: No test covers the unknown-region branch (pkgs/billing/src/billing/tax.py:7-8)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

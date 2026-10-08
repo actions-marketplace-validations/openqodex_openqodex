@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "Changes safeGit to return a GitResult object with code, stdout and stderr instead of throwing on failure. Also exports the GitResult type from the core package.",
+  "findings": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "Return type change breaks both CLI callers",
+      "problem": "safeGit now returns a GitResult object instead of a stdout string and no longer throws. The callers in packages/cli/src/branch.ts:7 and packages/cli/src/status.ts:6 still call trim() and split() on the result.",
+      "consequence": "changedFiles throws a TypeError on every call, so the status command breaks. currentBranch catches its own TypeError and always returns null, even inside a repository.",
+      "fix": "Update both callers in this change to check result.code and read result.stdout. currentBranch should return null when code is not zero.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 11,
+      "line_end": 17,
+      "title": "Changed error behaviour has no covering test",
+      "problem": "safeGit now catches failures and returns an exit code instead of throwing. No test in the repository covers either path.",
+      "consequence": "Nothing would have caught the broken callers. Nothing will catch a later regression in the code mapping either.",
+      "fix": "Add tests for safeGit success and failure results. Add tests for currentBranch and changedFiles against the new shape.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}
