@@ -2,79 +2,45 @@
 // path component may be a symbolic link, files are opened without following
 // links, and every read is bounded.
 import { randomBytes } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { FolderReader } from "@openqodex/core";
 import type { FileFacts } from "./types.js";
 
-function readOpen(fd: number, maxBytes: number): Buffer | null {
-  const st = fstatSync(fd);
-  if (!st.isFile() || st.size > maxBytes) return null;
-  const buf = Buffer.alloc(st.size);
-  let off = 0;
-  while (off < st.size) {
-    const n = readSync(fd, buf, off, st.size - off, off);
-    if (n === 0) break;
-    off += n;
-  }
-  return buf.subarray(0, off);
-}
-
-// A regular file at `abs`, opened without following a link; null otherwise.
-export function readNoFollow(abs: string, maxBytes: number): string | null {
-  return readBytesNoFollow(abs, maxBytes)?.toString("utf8") ?? null;
-}
-
-export function readBytesNoFollow(abs: string, maxBytes: number): Buffer | null {
-  let fd: number;
-  try {
-    // Non-blocking, so a named pipe here cannot hold the open; readOpen then
-    // reads only a regular file.
-    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch {
-    return null;
-  }
-  try {
-    return readOpen(fd, maxBytes);
-  } catch {
-    return null;
-  } finally {
-    closeSync(fd);
-  }
-}
-
-// Repo-relative reads: every folder on the way must be a real folder.
+// Repo-relative reads, each decided by what the filesystem holds at the
+// moment of that read and by nothing kept from an earlier one. The root is
+// known by its identity (device and inode) from the moment the reader is
+// made. Every read walks from it one name at a time, each folder a real
+// folder (lstat: a link is not one), opens the file without following a
+// link and without blocking, then walks again and requires the same
+// folders by identity and the opened file at its name (FolderReader,
+// packages/core/src/guarded-fs.ts). A folder swapped for a link after one
+// read stops the next read.
 export class RepoReader {
-  private dirs = new Map<string, boolean>();
-  constructor(readonly root: string) {}
+  // Null when the root is not a folder: every read then gives null.
+  private readonly folders: FolderReader | null;
 
-  private dirOk(rel: string): boolean {
-    if (rel === "" || rel === ".") return true;
-    let ok = this.dirs.get(rel);
-    if (ok === undefined) {
-      const cut = rel.lastIndexOf("/");
-      ok = this.dirOk(cut === -1 ? "" : rel.slice(0, cut));
-      if (ok) {
-        try {
-          const st = lstatSync(join(this.root, rel));
-          ok = st.isDirectory() && !st.isSymbolicLink();
-        } catch {
-          ok = false;
-        }
-      }
-      this.dirs.set(rel, ok);
+  constructor(readonly root: string) {
+    let folders: FolderReader | null = null;
+    try {
+      folders = new FolderReader(resolve(root));
+    } catch {
+      // not a folder: nothing below it can be read
     }
-    return ok;
+    this.folders = folders;
   }
 
   read(rel: string, maxBytes: number): string | null {
     return this.readBytes(rel, maxBytes)?.toString("utf8") ?? null;
   }
 
+  // The regular file `rel` (a path from the root, `/` between names) when
+  // it holds at most `maxBytes`; null otherwise. An empty name, `.` or `..`
+  // anywhere in it is refused.
   readBytes(rel: string, maxBytes: number): Buffer | null {
-    if (isAbsolute(rel) || rel.split("/").some((p) => p === ".." || p === "")) return null;
-    const cut = rel.lastIndexOf("/");
-    if (!this.dirOk(cut === -1 ? "" : rel.slice(0, cut))) return null;
-    return readBytesNoFollow(join(this.root, rel), maxBytes);
+    if (this.folders === null || isAbsolute(rel)) return null;
+    const got = this.folders.read(rel.split("/"), maxBytes);
+    return got.ok ? got.data : null;
   }
 }
 
