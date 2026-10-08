@@ -22,7 +22,7 @@ import { page } from "./page.js";
 import { derivedOverrides, implementers, importCycles, impact, outline, packages, path, references, relationsOf } from "./relations.js";
 import { budgetOf, walk } from "./traverse.js";
 
-export { OPERATIONS, resolveTarget } from "./answer.js";
+export { OPERATIONS, parseTarget, resolveTarget } from "./answer.js";
 export type { Answer, Candidate, ChangesExtra, ErrorCode, Extra, Operation, Request, Session, Target } from "./answer.js";
 export type { Item } from "./traverse.js";
 export { edgeId } from "./ids.js";

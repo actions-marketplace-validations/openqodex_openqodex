@@ -1,6 +1,6 @@
 # Commands
 
-Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the four commands below: `init`, `review`, `update` and `trust`. The commands that hooks, the skill and the Action call (`scan`, `doctor`, `hook`, `guide`, `findings`, `demo`, `report`, `config`) still work; `plumbing` describes them.
+Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the five commands below: `init`, `review`, `update`, `trust` and `graph`. The commands that hooks, the skill, the Action and the agents call (`scan`, `doctor`, `hook`, `guide`, `findings`, `demo`, `report`, `config`, `mcp`) still work; `plumbing` describes them.
 
 ## Exit codes
 
@@ -26,7 +26,7 @@ A repository with no commits checks every file with `scan`; `review` needs a fir
 
 ## Shared flags
 
-`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init`, `hook` and `update` accept none of them.
+`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `graph` accepts only `--cwd`, `--config` and `--quiet`. `init`, `hook`, `update` and `mcp` accept none of them.
 
 - `--cwd <dir>`: find the repository from `<dir>`. A relative `--output` path still resolves from the folder you ran the command in.
 - `--config <path>`: read this config file instead of the repo's `.openqodex/config.yaml`.
@@ -182,6 +182,14 @@ The daily check installs only a release that keeps the agent contract and the co
 Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update writes no agent file and never writes inside a repository. The user-scope skill and rules ask the launcher for the procedure with `guide skill`, so that part follows the active version; the files themselves, and the Claude Code permission rules, stay as `init` wrote them until `init` runs again. A foreground `update`, `--rollback`, `--off` and `--on` wait up to 60 seconds while another `init`, uninstall or update runs, then exit 2 with one line. `update`, and the background check right after it switches versions, remove runtime copies older than 7 days, except the one `init` installed, the current one and the previous one.
 
 After an update the next command prints on stderr, once: `openqodex updated to X (was Y). Roll back: openqodex update --rollback`. Below it come the notices of every release after Y up to X, one line each: a release has one only when it changes what leaves your machine, what blocks a push or who reviews. Last, when files OpenQodex wrote for your agents are from an older version, it says how many and that `<launcher> init` refreshes them; init keeps every file you edited. The agent push hook does not print any of it. `update --status` and `doctor` print the notices of the last update and that count (`agent files`).
+
+## graph
+
+```
+openqodex graph <question> [<target>] [--json] [--limit <n>] [--cursor <c>] [--tokens <n>] [--budget-ms <ms>] [--generation <build id>] [--cwd <dir>]
+```
+
+Asks the code graph of the repository a question: `callers`, `callees`, `implementers`, `references`, `routes`, `tests`, `path`, `impact`, `importers`, `outline`, `packages`, `cycles`, `changes`, `unknowns`, `explain`, `search`, `symbol`, `status` and `capabilities`, and `build` builds or updates the graph. `openqodex graph help` lists them with their flags; `graph` explains each answer. Each question captures your work tree and builds or reuses the graph in `.openqodex/graph/`, or reads a kept build with `--generation`. It prints one fact per line, or the whole answer as JSON with `--json`. It exits 0 for any answer, a floor or a partial graph included, and 2 when the question could not be answered; never 1. The same questions reach an agent as MCP tools through `openqodex mcp`, which `init` registers (`agents`).
 
 ## Environment variables
 

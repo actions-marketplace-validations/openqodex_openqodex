@@ -154,6 +154,16 @@ export function resolveTarget(g: Graph, t: Target): GraphNode[] {
   return out;
 }
 
+// A target as a person or an agent writes it: `file:line`, or a name
+// (`name` or `Owner.name`) narrowed to `file` when one is given. The
+// command line and the MCP tools read targets with this one function.
+export function parseTarget(value: string | undefined, file?: string): Target {
+  if (value === undefined || value === "") return file ? { file } : {};
+  const m = /^(.+):(\d+)$/.exec(value);
+  if (m) return { file: m[1] as string, line: Number(m[2]) };
+  return { name: value, ...(file ? { file } : {}) };
+}
+
 // One symbol or file for a question about one point, or the answer that
 // says why there is none: not found, or several candidates and no silent pick.
 export function onePoint(s: Session, kind: Operation, t: Target | undefined): GraphNode | Answer {

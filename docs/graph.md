@@ -125,7 +125,7 @@ Every file passes through the review's secret redaction. A repository that holds
 
 ## The graph commands
 
-These commands are hidden from the menu and may change before 1.0. Each runs on a capture of your work tree, building or reusing the graph in `.openqodex/graph/`, or on a kept build with `--generation <id>`, which never builds. `build --full` builds fresh from facts even over the five-second line.
+`openqodex graph` asks the graph a question from the command line; `openqodex --help` lists it beside `init`, `review`, `update` and `trust`, and `openqodex graph help` lists the questions. Each question runs on a capture of your work tree, building or reusing the graph in `.openqodex/graph/`, or on a kept build with `--generation <id>`, which never builds and says when files changed since. `build --full` builds fresh from facts even over the five-second line. The command line, the MCP tools (below) and the review's walk answer through one query function, so one question about one build gets one answer.
 
 ```
 openqodex graph build [--full]
@@ -133,16 +133,89 @@ openqodex graph status
 openqodex graph capabilities
 openqodex graph search <text>
 openqodex graph symbol <name | file:line>
-openqodex graph callers <name | file:line> [--file <path>] [--tier certain,likely] [--depth 1..3]
-openqodex graph callees <name | file:line>
+openqodex graph callers <name | file:line> [--file <path>] [--depth 1..3] [--tier certain,likely]
+openqodex graph callees <name | file:line> [--depth 1..3]
+openqodex graph implementers <class | interface | Class.method> [--depth 1..8]
+openqodex graph references <name | file:line>
+openqodex graph routes [<handler>] [--text <part of a pattern>]
+openqodex graph tests <name | file:line>
+openqodex graph path <from> <to> [--edges calls,inherits,imports] [--depth 1..8]
+openqodex graph impact [<name | file:line>] [--base <ref>]
 openqodex graph importers <file>
+openqodex graph outline <file | folder>
+openqodex graph packages [--project <folder>]
+openqodex graph cycles [--level files | projects]
 openqodex graph changes [--base <ref>]
 openqodex graph unknowns [--file <path> | --name <name>]
 openqodex graph explain <edge id>
 ```
 
-`--json` prints the answer as it is: the items with their evidence and level, the true counts by level, search hits as leads that are never counted, whether the answer is a floor and why, how it was cut (with `--cursor` for the next page), and which build answered. A name that matches several definitions returns them all as candidates. Exit code 0 means an answer, partial or a floor included; 2 means the request could not be answered.
+A target is a name (`parse`, or `Parser.parse` for a method), or `file:line` for the innermost definition around that line; `--file` narrows a name to one file. A name that matches several definitions returns them all as candidates and answers nothing else.
+
+| Question | What it answers |
+| --- | --- |
+| `callers` | Who calls it, one hop by default and up to three, each call site with its evidence and level. |
+| `callees` | What it calls, and the calls inside it the graph could not bind (then the answer is a floor). |
+| `implementers` | For a class, every class that extends it, through every level of inheritance (three by default, up to eight). For `Class.method`, the methods of the same name on those classes, as likely: each names the inheritance it rests on, because the graph does not yet resolve method lookup order. Calls through interfaces and base types are not resolved yet, so a method's answer is a floor, and so is an interface's: `implements` clauses are not read yet. |
+| `references` | Who uses it as a value or a type. This build does not resolve such uses, so it answers `unsupported` and exits 2. |
+| `routes` | Which routes map to a handler. This build has no framework layer, so it answers `unsupported` and exits 2. |
+| `tests` | Which tests reach it. No test runner is read yet, so the calls that reach it in one or two hops from files named like tests (for example `*.test.ts`, `test_*.py`, `_test.go`, `_spec.rb`, or a file under `test/`, `tests/` or `spec/`) come back as leads, never counted, and the answer is a floor: a test that requests a route or reaches the code through a value makes no call here. No answer is coverage. |
+| `path` | The shortest chain from the first point to the second over calls and inheritance (or the relations `--edges` names), at most eight hops, each hop with its edge. When there is none that way, the chain from the second to the first. When neither is found, the answer is a floor if a call the graph could not bind in the code it searched, or a file it did not read, could hold one. Imports join files: with `--edges imports` alone, a symbol stands for its file. |
+| `impact` | The review's own walk: callers one and two hops out, callees, importers of the changed files and changed public names. With a target, as if its first line changed; with none, the change against its base, found as `review` finds it. |
+| `outline` | What a file defines, or every file under a folder, with each definition's kind, lines and call sites in and out. |
+| `packages` | Which projects import files of a project (a project is the folder of the nearest `package.json` or `go.mod`, or a Python source root, else the repository root), with the import lines; with no project, every project with what it depends on and what depends on it. |
+| `cycles` | Import cycles among files (the default) or among projects, each with the import lines that close it. |
+| `changes` | The public names the change removed or bound elsewhere, every place that used each one and what it binds now, and the removed and moved symbols. |
+| `unknowns` | What the graph could not see in a file or for a name, with causes. |
+| `explain` | Why an edge exists: its evidence, the import or line that proved it, and the edges it rests on. |
+| `status`, `capabilities` | How fresh and complete the graph is; what this installation can and cannot answer yet. |
+
+`--json` prints the answer as it is:
+
+- `items`: each with its edge id, its site, its evidence and its level.
+- `counts`: the true totals by level, past any page; null when they cannot be known.
+- `leads`: search hits and test leads, never counted.
+- `unknown`: `floor`, true when the list may be short, with the reasons and the causes.
+- `truncated`: how the answer was cut. `limit` is a page: `--cursor` takes the next one. `budget` with a cursor is the token cut. `budget` with no cursor is the time budget: the walk stopped and names the points it had not expanded, and what lies past them is not counted. `depth` stops at the depth asked, with the same list.
+- `graph`: the build that answered, its status and mode, and `freshness.laterEditsKnown`, true when files changed since that build.
+
+Each answer holds 50 items by default; `--limit` takes up to 500. `--tokens <n>` cuts the items to a rough token budget and never the counts. Each question may take 1 second, `--budget-ms` changes it, and the walk checks the time between steps. Exit code 0 means an answer: a floor, a partial graph and an ambiguous name included. 2 means the question could not be answered: a name the graph does not hold, a question this build cannot answer, a bad request or a failed build. A graph command never exits 1.
+
+Example, `openqodex graph callers formatDate` in a monorepo:
+
+```
+function formatDate at packages/core/src/dates.ts:4 (packages/core/src/dates.ts#formatDate@4:16)
+packages/web/src/page.ts:12 in render, likely: Bound through @acme/core's entry packages/core/dist/index.js, built from packages/core/src/index.ts; no tsconfig paths, project reference or active source condition maps @acme/core to its source. [e.WyJjYWxscy...]
+counts: 0 certain, 1 likely, 0 possible
+graph: build 0mv03sdlq0000-1lg4-cd232ef6, ok, fresh
+```
 
 ## Settings
 
 The `graph` keys of `.openqodex/config.yaml` are in `config`: `graph.enabled`, `graph.budget_ms`, `graph.max_files` (new parses per build), `graph.max_file_bytes`, `graph.max_cache_mb` and `graph.max_heap_mb`. `--no-graph` turns the graph off for one review.
+
+## The MCP server
+
+`openqodex mcp` serves the same questions to an agent as MCP tools (the Model Context Protocol, the way an agent calls a local tool server). `init` registers it with each agent it installs into (`agents`), and the agent starts it; you never run it by hand. It talks over standard input and output only: it opens no network port, and nothing it reads or answers leaves your machine. The agent sends the answers to its own model, as it does with any file it reads.
+
+There is one tool per question, each named `graph_<question>`: `graph_status`, `graph_capabilities`, `graph_search`, `graph_symbol`, `graph_callers`, `graph_callees`, `graph_importers`, `graph_implementers`, `graph_references`, `graph_routes`, `graph_tests`, `graph_path`, `graph_impact`, `graph_outline`, `graph_packages`, `graph_cycles`, `graph_changes`, `graph_unknowns` and `graph_explain`, and `graph_refresh`. A tool takes the target as `symbol` (a name, `Class.method` or `file:line`), `file` or `id`, and `limit`, `cursor`, `budget` (`items`, `tokens`, `ms`) and `generation` as the command line takes them. Each answers with the same JSON as `openqodex graph <question> --json`; an answer that could not be given (anything but an ambiguous name) is marked as a tool error. There is no tool that reads a file or searches text: the agent has its own.
+
+- One repository. The server answers for the git repository of the folder the agent starts it in, or of `--repo <folder>`. A question that names another repository (`repo`), a path outside the repository (absolute, or with a `..` part), or a build id that is not one is refused, and nothing is read for it. Started outside a repository, it answers every question with that refusal and the reason.
+- One build. Nothing is analysed until the first question. That question captures the work tree, builds or reuses the graph in `.openqodex/graph/` and holds the build with a lease; every later question is answered from that build, so a build a review or a command publishes meanwhile never changes the answers or removes the build. At most once a second a question checks the work tree, and `graph.freshness.laterEditsKnown` turns true when files changed since. `graph_refresh` captures again and moves to the new build; the old lease goes.
+- `graph_changes`, and `graph_impact` with no target, compare the work tree with its base. Each builds that comparison for the question and lets it go after; the held build stays.
+- A cancelled question stops its walk. A build in progress finishes and is kept for the next question. When the agent asks for progress, a build reports its lines as progress notifications.
+- When the agent disconnects, the server releases its lease and exits. A server that crashed leaves a lease that keeps its build from the collector for 24 hours at most.
+
+Example, `graph_callers` with `{ "symbol": "formatDate" }`, shortened:
+
+```
+{ "apiVersion": 1, "kind": "callers", "error": null,
+  "target": { "id": "packages/core/src/dates.ts#formatDate@4:16", "name": "formatDate", "kind": "function", "file": "packages/core/src/dates.ts", "line": 4, "project": "packages/core", "score": 1 },
+  "items": [ { "from": "packages/web/src/page.ts#render@10:16", "to": "packages/core/src/dates.ts#formatDate@4:16", "kind": "calls", "depth": 1,
+               "site": { "file": "packages/web/src/page.ts", "line": 12, "column": 10, "tier": "likely", "evidence": "workspace-package", "note": "Bound through @acme/core's entry ...", "rule": "workspace-dist-src", "via": { "file": "packages/web/src/page.ts", "line": 1, "spec": "@acme/core" } },
+               "edge": "e.WyJjYWxscy...", "fromName": "render", "toName": "formatDate" } ],
+  "counts": { "certain": 0, "likely": 1, "possible": 0 }, "leads": [],
+  "unknown": { "floor": false, "reasons": [], "causes": {}, "examples": [] },
+  "truncated": { "by": null, "omitted": 0, "omittedExact": true, "cursor": null },
+  "graph": { "generation": "0mv03sdlq0000-1lg4-cd232ef6", "status": "ok", "mode": "fresh", "freshness": { "laterEditsKnown": false }, ... } }
+```
