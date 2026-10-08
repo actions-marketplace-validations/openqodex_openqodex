@@ -16,7 +16,7 @@
 // - Nesting deeper than MAX_DEPTH ($( ) in $( ), f-string fields, Ruby #{ })
 //   is read as plain code instead of recursing.
 
-export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go";
+export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go" | "yaml";
 
 // `start` is the offset of the comment's opener in the file; `text` runs from
 // the opener to the end of the comment (the line end for a line comment,
@@ -41,6 +41,9 @@ export function comments(text: string, family: Family): Comment[] {
     case "js":
     case "go":
       slashComments(r, family);
+      break;
+    case "yaml":
+      yamlComments(r);
       break;
   }
   return r.out;
@@ -769,5 +772,196 @@ function rubyComments(r: Reader): void {
       word = "";
       i++;
     }
+  }
+}
+
+// YAML: `#` opens a comment at a line start or after a blank, outside a
+// quoted scalar and a block scalar's body. A quote opens a quoted scalar
+// only where a scalar starts: after the indentation and any `- `, `? ` or
+// `--- `, after a `: ` (or a colon at the line end), after an anchor or a
+// tag, and after `[`, `{` or `,` in a flow collection. Anywhere else it is
+// text of a plain scalar (`run: echo it's`). '...' doubles a quote to
+// escape it, "..." takes backslash escapes, and both may span lines. A
+// block scalar (`|` or `>` with its chomping and indentation indicators,
+// where a scalar starts) holds every following line that is blank or
+// indented deeper than the key or `-` that holds it.
+//
+// `masked`, when given, collects the spans that are not YAML code, in file
+// order: comments, the inside of a quoted value (a quoted key is code), and
+// block scalar bodies.
+function yamlComments(r: Reader, masked?: [number, number][]): void {
+  const s = r.s;
+  const blankOrEnd = (k: number): boolean => k >= s.length || s[k] === " " || s[k] === "\t" || s[k] === "\n" || s[k] === "\r";
+  const comment = (k: number): number => {
+    const end = r.lineComment(k);
+    masked?.push([k, end]);
+    return end;
+  };
+  let flow = 0;
+  let i = 0;
+  while (i < s.length) {
+    // `i` is at a line start.
+    let j = i;
+    while (s[j] === " ") j++;
+    // The column of the `-` that holds this line's value, when a sequence
+    // entry starts here, and of the key that follows it.
+    let entry = -1;
+    if (flow === 0) {
+      if (j === i && (s.startsWith("---", j) || s.startsWith("...", j)) && blankOrEnd(j + 3)) {
+        j += 3;
+        while (s[j] === " " || s[j] === "\t") j++;
+      }
+      while ((s[j] === "-" || s[j] === "?") && blankOrEnd(j + 1) && s[j + 1] !== "\n" && s[j + 1] !== "\r" && j + 1 < s.length) {
+        entry = j - i;
+        j++;
+        while (s[j] === " " || s[j] === "\t") j++;
+      }
+    }
+    const keyColumn = j - i;
+    let keyed = false;
+    let start = true;
+    let next = -1;
+    i = j;
+    while (i < s.length && s[i] !== "\n") {
+      const c = s[i] as string;
+      if (c === "#" && (i === 0 || s[i - 1] === " " || s[i - 1] === "\t" || s[i - 1] === "\n")) {
+        i = comment(i);
+        break;
+      }
+      if (c === " " || c === "\t" || c === "\r") {
+        i++;
+      } else if (start && (c === "'" || c === '"')) {
+        const from = i;
+        const end = r.open(c, i, () => (c === "'" ? skipSingleQuoted(s, from + 1) : skipString(s, from + 1, '"', true, true)));
+        start = false;
+        if (end < 0) {
+          i++;
+          continue;
+        }
+        let k = end;
+        while (s[k] === " " || s[k] === "\t") k++;
+        const key = s[k] === ":" && (blankOrEnd(k + 1) || (flow > 0 && ",]}".includes(s[k + 1] as string)));
+        if (!key) masked?.push([from + 1, end - 1]);
+        i = end;
+      } else if (start && flow === 0 && (c === "|" || c === ">")) {
+        const header = blockHeader(s, i);
+        if (header < 0) {
+          start = false;
+          i++;
+          continue;
+        }
+        let k = header;
+        while (s[k] === " " || s[k] === "\t") k++;
+        if (s[k] === "#") k = comment(k);
+        const parent = keyed ? keyColumn : entry;
+        next = skipBlockBody(s, lineEnd(s, k) + 1, parent);
+        masked?.push([Math.min(lineEnd(s, k) + 1, s.length), next]);
+        break;
+      } else if (start && (c === "&" || c === "!")) {
+        // An anchor or a tag: the scalar starts after it.
+        while (i < s.length && !blankOrEnd(i)) i++;
+      } else if (start && (c === "[" || c === "{")) {
+        flow++;
+        i++;
+      } else if (flow > 0 && (c === "]" || c === "}")) {
+        flow--;
+        start = false;
+        i++;
+      } else if (flow > 0 && c === ",") {
+        start = true;
+        i++;
+      } else if (c === ":" && (blankOrEnd(i + 1) || (flow > 0 && ",]}".includes(s[i + 1] as string)))) {
+        start = true;
+        keyed = true;
+        i++;
+      } else {
+        start = false;
+        i++;
+      }
+    }
+    i = next >= 0 ? next : i + 1;
+  }
+}
+
+// The offset past a single-quoted YAML scalar whose body starts at `i` (a
+// doubled quote is a quote), or -1 with no closer before the end of the file.
+function skipSingleQuoted(s: string, i: number): number {
+  for (;;) {
+    const k = s.indexOf("'", i);
+    if (k < 0) return -1;
+    if (s[k + 1] !== "'") return k + 1;
+    i = k + 2;
+  }
+}
+
+// The offset past a block scalar's indicators at `i` (`|` or `>`, then a
+// chomping indicator and an indentation digit in either order), or -1 when
+// what follows on the line is neither blanks nor a comment, so the `|` or
+// `>` is text.
+function blockHeader(s: string, i: number): number {
+  let k = i + 1;
+  const chomp = (c: string | undefined) => c === "+" || c === "-";
+  const digit = (c: string | undefined) => c !== undefined && c >= "1" && c <= "9";
+  if (chomp(s[k])) {
+    k++;
+    if (digit(s[k])) k++;
+  } else if (digit(s[k])) {
+    k++;
+    if (chomp(s[k])) k++;
+  }
+  let m = k;
+  while (s[m] === " " || s[m] === "\t") m++;
+  if (m >= s.length || s[m] === "\n" || s[m] === "\r") return k;
+  return s[m] === "#" && m > k ? k : -1;
+}
+
+// The offset of the first line at or after `i` that is not blank and is
+// indented no deeper than `parent` columns: the line after a block scalar's
+// body. Each line is looked at once.
+function skipBlockBody(s: string, i: number, parent: number): number {
+  while (i < s.length) {
+    let q = i;
+    while (s[q] === " ") q++;
+    const end = lineEnd(s, i);
+    let blank = true;
+    for (let t = q; t < end; t++) {
+      if (s[t] !== " " && s[t] !== "\t" && s[t] !== "\r") {
+        blank = false;
+        break;
+      }
+    }
+    if (!blank && q - i <= parent) return i;
+    i = end + 1;
+  }
+  return s.length;
+}
+
+// Each line of a YAML file as a Comment unit (its start, and its text
+// without a carriage return), with everything that is not YAML code turned
+// into blanks: comments, the inside of quoted values, block scalar bodies.
+// A suppression marker that a scanner obeys as a YAML key (kube-linter's
+// `ignore-check.kube-linter.io/<check>` annotation) is matched on these, so
+// the same text in a comment or a string is not.
+export function yamlCode(text: string): Comment[] {
+  const masked: [number, number][] = [];
+  yamlComments(new Reader(text), masked);
+  const parts: string[] = [];
+  let at = 0;
+  for (const [from, to] of masked) {
+    if (to <= at) continue;
+    const begin = Math.max(from, at);
+    parts.push(text.slice(at, begin), text.slice(begin, to).replace(/[^\n]/g, " "));
+    at = to;
+  }
+  parts.push(text.slice(at));
+  const code = parts.join("");
+  const out: Comment[] = [];
+  let start = 0;
+  for (;;) {
+    const end = code.indexOf("\n", start);
+    const line = code.slice(start, end < 0 ? code.length : end);
+    out.push({ start, text: line.endsWith("\r") ? line.slice(0, -1) : line });
+    if (end < 0) return out;
+    start = end + 1;
   }
 }

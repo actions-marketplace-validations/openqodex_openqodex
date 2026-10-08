@@ -11,7 +11,7 @@
 // its osv-scanner.toml, and sqllint has none.
 
 import type { BuiltinScanner } from "@openqodex/core";
-import { comments } from "./comments.js";
+import { comments, yamlCode } from "./comments.js";
 import type { Comment, Family } from "./comments.js";
 
 type Marker = {
@@ -30,8 +30,12 @@ type Marker = {
 };
 
 // "line": the scanner obeys the marker anywhere on the line, in a comment,
-// a string or code alike.
-type Entry = { family: Family | "line"; markers: Marker[] };
+// a string or code alike. "yaml-code": the scanner obeys it as YAML, such
+// as a key of an object's annotations, so it counts on each line's YAML code
+// (comments.ts, yamlCode) and never in a comment, a quoted value or a block
+// scalar's body.
+type Unit = Family | "line" | "yaml-code";
+type Entry = { family: Unit; markers: Marker[] };
 
 export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
   // nosem or nosemgrep in any case, anywhere on the line or on the line
@@ -125,11 +129,11 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
     }
     return lo + 1;
   };
-  const units = new Map<Family | "line", Comment[]>();
-  const unitsOf = (family: Family | "line"): Comment[] => {
+  const units = new Map<Unit, Comment[]>();
+  const unitsOf = (family: Unit): Comment[] => {
     let found = units.get(family);
     if (found === undefined) {
-      found = family === "line" ? starts.map((start) => lineAt(text, start)) : comments(text, family);
+      found = family === "line" ? starts.map((start) => lineAt(text, start)) : family === "yaml-code" ? yamlCode(text) : comments(text, family);
       units.set(family, found);
     }
     return found;
