@@ -114,6 +114,19 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
     family: "js",
     markers: [{ name: "{kw}", pattern: /^\/[/*]\s*(?<at>(?<kw>(?:eslint|oxlint)-disable(?:-next-line|-line)?))(?=\s|\*\/|$)/dg }],
   },
+  // An object annotation whose key is ignore-check.kube-linter.io/<check> or
+  // kube-linter.io/ignore-all (pkg/ignore/ignore.go): a YAML key, so it counts
+  // at a key position (after the indentation and any `- `, or after `{` or
+  // `,` in a flow map, quoted or not) and never in a comment or a value.
+  // kube-linter reads only the object's own metadata.annotations; a key
+  // anywhere else counts here too.
+  "kube-linter": {
+    family: "yaml-code",
+    markers: [
+      { name: "ignore-check.kube-linter.io annotation", pattern: /(?:^[ \t]*(?:-[ \t]+)*|[{,][ \t]*)["']?(?<at>ignore-check\.kube-linter\.io\/[^\s:"']+)["']?[ \t]*:(?=[ \t]|$)/dg },
+      { name: "kube-linter.io/ignore-all annotation", pattern: /(?:^[ \t]*(?:-[ \t]+)*|[{,][ \t]*)["']?(?<at>kube-linter\.io\/ignore-all)["']?[ \t]*:(?=[ \t]|$)/dg },
+    ],
+  },
 };
 
 export type MarkerHit = { scanner: BuiltinScanner; line: number; name: string };

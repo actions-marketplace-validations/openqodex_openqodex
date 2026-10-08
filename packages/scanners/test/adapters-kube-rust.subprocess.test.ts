@@ -84,6 +84,21 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
     expect(result.scan.candidates.filter((c) => c.source === "kube-linter")).toEqual([]);
   }, 300_000);
 
+  // kube-linter skips an object for a check its annotations name; the same
+  // text in a YAML comment changes nothing. OpenQodex raises the added
+  // annotation itself, since kube-linter then reports nothing there.
+  it("kube-linter obeys its ignore annotation, not the same text in a comment, and the annotation is raised", async () => {
+    const annotated = PRIVILEGED.replace("  name: web\n", '  name: web\n  annotations:\n    ignore-check.kube-linter.io/privileged-container: "needs the host"\n');
+    const commented = PRIVILEGED.replace("  name: web\n", "  name: web\n  # ignore-check.kube-linter.io/privileged-container: needs the host\n");
+    const result = await scan({ scanner: "kube-linter", rule: "", files: { "k8s/annotated.yaml": annotated, "k8s/commented.yaml": commented }, anchor: "" });
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    const found = result.scan.candidates.filter((c) => c.source === "kube-linter").map((c) => [c.filePath, c.ruleId, c.lineStart]);
+    expect(found).toContainEqual(["k8s/commented.yaml", "privileged-container", 20]);
+    expect(found).toContainEqual(["k8s/annotated.yaml", "openqodex.suppression-added", 6]);
+    expect(found.filter(([file, rule]) => file === "k8s/annotated.yaml" && rule === "privileged-container")).toEqual([]);
+    expect(found.filter(([file, rule]) => file === "k8s/commented.yaml" && rule === "openqodex.suppression-added")).toEqual([]);
+  }, 300_000);
+
   // A repo's .kube-linter.yaml can add a check on kube-linter's kubeconform
   // template, which downloads schemas from any URL it names and makes and
   // writes a cache folder wherever it says. OpenQodex passes its own config,
