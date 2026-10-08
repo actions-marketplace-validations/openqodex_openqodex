@@ -24,6 +24,8 @@
 // 17. A finalize handed to another version hands off again.
 // 18. An inherited OPENQODEX_FINALIZE_HANDOFF stops a legitimate handoff.
 // 19. finalize --run hands the older runtime both --run and a findings path.
+// 20. A release whose own package.json declares another contract than the
+//     registry said is activated: the gate would rest on unsigned metadata.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -37,6 +39,11 @@ const NEWER = "0.99.0";
 const NOTICE = /openqodex updated to/;
 const DAY = 24 * 60 * 60 * 1000;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// The contract this build declares, as the registry would report it.
+const CONTRACT = (() => {
+  const p = JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { openqodex: { agentContract: number; configFormat: number } };
+  return { agent: p.openqodex.agentContract, config: p.openqodex.configFormat };
+})();
 
 // The environment of a developer's laptop: no CI, no switch set.
 function laptop(s: Sandbox, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -156,16 +163,17 @@ describe("what the command prints and returns", () => {
 
 // A worker's last step for a second real runtime, in a child process that
 // imports this repo's worker module (bundle.ts): the copy is unpacked where
-// the worker unpacks, then activated through the commit boundary.
-async function activateCopy(s: Sandbox, to: string, from: string): Promise<void> {
+// the worker unpacks, then activated through the commit boundary. `said`:
+// the contract the registry would have said the release declares.
+async function activateCopy(s: Sandbox, to: string, from: string, said = CONTRACT, outcome = "activated"): Promise<void> {
   const tmp = join(s.oqHome, "runtime", `${to}.tmp-test`);
   const pkg = join(tmp, "unpacked", "package");
   cpSync(join(s.oqHome, "runtime", version), pkg, { recursive: true });
   const bin = join(pkg, "dist/bin.js");
   writeFileSync(bin, readFileSync(bin, "utf8").replaceAll(`"${version}"`, `"${to}"`));
-  const code = `const m = await import(${JSON.stringify(child)}); const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(to)}, from: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0 }); process.stdout.write(JSON.stringify(r));`;
+  const code = `const m = await import(${JSON.stringify(child)}); const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(to)}, from: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0, contract: ${JSON.stringify(said)} }); process.stdout.write(JSON.stringify(r));`;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...laptop(s), H: s.oqHome }, encoding: "utf8" });
-  expect(r.stdout, r.stderr).toMatch(/"outcome":"activated"/);
+  expect(r.stdout, r.stderr).toMatch(new RegExp(`"outcome":"${outcome}"`));
 }
 
 let child = "";
@@ -200,6 +208,15 @@ describe("runtimes kept by init", () => {
   it("init points the record at its own version with the earlier one as previous", () => {
     expect(readFileSync(join(s.oqHome, "runtime/current"), "utf8")).toBe(`${version}\n${NEWER}\n`);
   });
+});
+
+describe("the contract a release declares", () => {
+  it("a release whose own package.json declares another contract than the registry said is skipped, and the launcher stays (failure 20)", async () => {
+    const s = installed();
+    await activateCopy(s, NEWER, version, { agent: CONTRACT.agent + 1, config: CONTRACT.config }, "skip");
+    expect(current(s)).toBe(version);
+    expect(existsSync(join(s.oqHome, "runtime", NEWER))).toBe(false);
+  }, 120_000);
 });
 
 describe("rollback", () => {

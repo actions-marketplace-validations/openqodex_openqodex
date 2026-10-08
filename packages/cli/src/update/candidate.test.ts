@@ -19,9 +19,15 @@
 //      skipped.
 //  10. Two eligible versions do not come back highest first, so the caller
 //      would install an older one or could not fall back to the next.
+//  11. A release's declared contract (package.json "openqodex") is misread,
+//      or a release from before contracts reads as having one.
+//  12. The background worker installs a release that changes the agent
+//      contract or the config format, or does not leave the newest such
+//      release for a foreground update while it installs a lower one that
+//      keeps the contract.
 
 import { describe, expect, it } from "vitest";
-import { selectCandidates } from "./candidate.js";
+import { byContract, contractChange, selectCandidates } from "./candidate.js";
 
 const HOUR = 60 * 60 * 1000;
 const now = Date.parse("2026-10-10T12:00:00.000Z");
@@ -127,6 +133,44 @@ describe("selectCandidates", () => {
       integrity: release("0.10.0").dist.integrity,
       attestationsUrl: "https://registry.npmjs.org/-/npm/v1/attestations/openqodex@0.10.0",
       publishedAt: ago(48),
+      contract: null,
     });
+  });
+
+  it("reads the contract each release declares, and none for a release from before contracts (failure 11)", () => {
+    const m = metadata([
+      [release("0.3.0"), ago(48)],
+      [release("0.4.0", { openqodex: { agentContract: 2, configFormat: 1 } }), ago(48)],
+      [release("0.5.0", { openqodex: { agentContract: "2", configFormat: 1 } }), ago(48)],
+      [release("0.6.0", { openqodex: { agentContract: 0, configFormat: 1 } }), ago(48)],
+    ]);
+    const found = Object.fromEntries(selectCandidates(m, opts).map((c) => [c.version, c.contract]));
+    expect(found).toEqual({ "0.3.0": null, "0.4.0": { agent: 2, config: 1 }, "0.5.0": null, "0.6.0": null });
+  });
+});
+
+describe("byContract", () => {
+  const keep = { agent: 1, config: 1 };
+  const m = metadata([
+    [release("0.9.1", { openqodex: { agentContract: 1, configFormat: 1 } }), ago(72)],
+    [release("0.9.2", { openqodex: { agentContract: 1, configFormat: 1 } }), ago(48)],
+    [release("0.10.0", { openqodex: { agentContract: 2, configFormat: 1 } }), ago(48)],
+    [release("0.11.0", { openqodex: { agentContract: 2, configFormat: 2 } }), ago(30)],
+  ]);
+  const all = selectCandidates(m, { ...opts, current: "0.9.0" });
+
+  it("installs only releases with the contract kept, and leaves the newest other one for a foreground update (failure 12)", () => {
+    const { install, held } = byContract(all, keep);
+    expect(install.map((c) => c.version)).toEqual(["0.9.2", "0.9.1"]);
+    expect(held?.version).toBe("0.11.0");
+    expect(contractChange(held!.contract, keep)).toBe("how agents run a review and the config format");
+    expect(contractChange({ agent: 1, config: 2 }, keep)).toBe("the config format");
+  });
+
+  it("holds nothing back when every newer release keeps the contract, and holds back every release when none does (failure 12)", () => {
+    expect(byContract(all.filter((c) => c.contract?.agent === 1), keep).held).toBeNull();
+    const none = byContract(all, { agent: 3, config: 1 });
+    expect(none.install).toEqual([]);
+    expect(none.held?.version).toBe("0.11.0");
   });
 });

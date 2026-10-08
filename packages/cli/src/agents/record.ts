@@ -34,6 +34,10 @@ export type InstallRecord = {
   // Claude Code permission rules we added to a settings file's
   // permissions.allow; a rule that was there before is not listed.
   allowRules: { path: string; rule: string }[];
+  // The agentContract (src/contract.ts) of the init that last wrote files;
+  // absent in a record from before contracts. A version that reads it keeps
+  // it, and so does an older one, since every field is kept on load.
+  agentContract?: number;
 };
 
 export function emptyRecord(): InstallRecord {

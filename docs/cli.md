@@ -152,11 +152,13 @@ openqodex update [--now | --rollback | --off | --on | --status]
 
 Checks npm for a newer release and installs it now, in the foreground, the same way the daily check does. It works only for an install made with `npx openqodex init`: run through `~/.openqodex/bin/openqodex`, which hooks and the installed skill call. Run any other way (npx, a project-scope file), it exits 2 and says to run `npx openqodex init`.
 
-- No flag: install the newest release that is at least 24 hours old and whose build record verifies, then print what happened.
+- No flag: install the newest release that is at least 24 hours old and whose build record verifies, then print what happened. That may be a release that changes how agents run a review or the config format; it then says to run `init`, which refreshes the files OpenQodex wrote for your agents.
 - `--now`: also install a release younger than 24 hours. Verification is the same.
 - `--rollback`: turn updates off, then point the launcher back at the version that was active before the last update. It exits 2 and changes nothing when that version's copy is gone or when `update: off` cannot be written.
 - `--off`, `--on`: write `update: off` or `update: on` to `~/.openqodex/config.yaml`. `init --uninstall` removes that file when `update` created it and it is unchanged, and removes the update state.
 - `--status`: print the same update lines as `doctor`.
+
+The daily check installs only a release that keeps the agent contract and the config format of the version running: each release declares both in its `package.json`, and the release's own copy must declare what the registry said. A newer release that changes either is not installed in the background: the next command says so once, `update --status` names it, and `openqodex update` installs it. An install of 0.8.1 or older runs a check that does not read the contract, so its next update installs the newest release whatever it changes; from then on the check holds.
 
 Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update writes no agent file and never writes inside a repository: the user-scope skill asks the launcher for the procedure with `guide skill`, so it always matches the active version. A foreground `update`, `--rollback`, `--off` and `--on` wait up to 60 seconds while another `init`, uninstall or update runs, then exit 2 with one line. `update` also removes runtime copies older than 7 days, except the one `init` installed, the current one and the previous one.
 

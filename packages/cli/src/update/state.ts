@@ -22,14 +22,20 @@ export type UpdateState = {
   skipped: { version: string; reason: string; at: string }[];
   lastError: string | null;
   // One line for the next command run by `version` to print, then cleared.
-  notice: { version: string; text: string } | null;
+  // `from`: after a switch, the version it switched from, so the new one
+  // prints the release notices in between (the workers of earlier releases
+  // leave it out; their text still says "(was X)").
+  notice: { version: string; text: string; from?: string } | null;
+  // The newest release the background worker left for a foreground update,
+  // because it changes the agent contract or the config format.
+  held: { version: string; change: string } | null;
   // The sha256 of a config.yaml that `update` created, so uninstall removes
   // it only while it is unchanged.
   userConfig: string | null;
 };
 
 export function emptyState(): UpdateState {
-  return { checkedAt: null, latestSeen: null, skipped: [], lastError: null, notice: null, userConfig: null };
+  return { checkedAt: null, latestSeen: null, skipped: [], lastError: null, notice: null, held: null, userConfig: null };
 }
 
 export function statePath(home: string): string {
@@ -56,12 +62,17 @@ export function readState(home: string): UpdateState {
       )
     : [];
   const n = parsed.notice;
+  const h = parsed.held;
   return {
     checkedAt: str(parsed.checkedAt),
     latestSeen: str(parsed.latestSeen),
     skipped,
     lastError: str(parsed.lastError),
-    notice: isObject(n) && typeof n.version === "string" && typeof n.text === "string" ? { version: n.version, text: n.text } : null,
+    notice:
+      isObject(n) && typeof n.version === "string" && typeof n.text === "string"
+        ? { version: n.version, text: n.text, ...(typeof n.from === "string" ? { from: n.from } : {}) }
+        : null,
+    held: isObject(h) && typeof h.version === "string" && typeof h.change === "string" ? { version: h.version, change: h.change } : null,
     userConfig: str(parsed.userConfig),
   };
 }

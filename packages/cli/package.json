@@ -41,6 +41,10 @@
   "engines": {
     "node": ">=22"
   },
+  "openqodex": {
+    "agentContract": 1,
+    "configFormat": 1
+  },
   "bin": {
     "openqodex": "./dist/bin.js"
   },

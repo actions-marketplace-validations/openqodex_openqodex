@@ -15,7 +15,10 @@ import { bin, git, receipt, root, skipNetwork } from "./support.js";
 // its integrity and its Sigstore provenance, unpacks it, starts it, and
 // activates it through the commit boundary. The seam (honoured only with
 // OPENQODEX_E2E=1) only shortens the 24 hour age rule and pins the version
-// the worker chooses from; verification is never skipped. Released versions
+// the worker chooses from, and so the contract it keeps: 0.1.0 declares
+// none, so the daily worker installs the newest release that declares none
+// either and leaves any later one for a foreground update. Verification is
+// never skipped. Released versions
 // do not know this build's record format, so after the activation only the
 // record, the folder and `--version` are read, then this build rolls back.
 //
@@ -93,8 +96,13 @@ describe.skipIf(offline)("the self-update against the real registry", () => {
   let activatedMs = -1;
 
   beforeAll(async () => {
-    const meta = (await (await fetch("https://registry.npmjs.org/openqodex")).json()) as { "dist-tags": { latest: string } };
-    latest = meta["dist-tags"].latest;
+    const meta = (await (await fetch("https://registry.npmjs.org/openqodex")).json()) as { versions: Record<string, { openqodex?: unknown; deprecated?: unknown }> };
+    // The newest release that, like 0.1.0, declares no contract.
+    const plain = Object.entries(meta.versions)
+      .filter(([v, m]) => /^\d+\.\d+\.\d+$/.test(v) && m.openqodex === undefined && !m.deprecated)
+      .map(([v]) => v.split(".").map(Number))
+      .sort((a, b) => b[0]! - a[0]! || b[1]! - a[1]! || b[2]! - a[2]!);
+    latest = plain[0]!.join(".");
     b = box();
     oldBin = asOld(b);
     expect(launch(b, "before", ["--version"]).stdout.trim()).toBe(FROM);

@@ -6,13 +6,14 @@
 // switch is still wanted and publishes it: the runtime folder by a rename,
 // then the active record by a rename. A crash between the two leaves the old
 // version active and the new folder ready for the next run.
-import { existsSync, utimesSync } from "node:fs";
+import { existsSync, readFileSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { extractArchive, openqodexHome } from "@openqodex/scanners";
 import { BoundaryError, withBoundary } from "../agents/lock.js";
 import { homeGuard } from "../agents/guarded-fs.js";
-import { activeVersion, checkRuns, identicalTree, launcherPath, runtimeDir, tempRuntimes, writeActive } from "../launcher.js";
-import { MIN_AGE_MS, selectCandidates } from "./candidate.js";
+import { contractOf, contractText, runningContract, sameContract, type Contract } from "../contract.js";
+import { activeVersion, checkRuns, identicalTree, launcherPath, launcherRunner, runtimeDir, tempRuntimes, writeActive } from "../launcher.js";
+import { byContract, contractChange, MIN_AGE_MS, selectCandidates } from "./candidate.js";
 import { fetchAttestations, fetchMetadata, fetchTarball } from "./fetch.js";
 import { readState, updateState, updatesAllowed, type UpdateState } from "./state.js";
 import { verifyRelease } from "./verify.js";
@@ -32,6 +33,8 @@ const TRUST_DATA =
   /^the provenance signature does not verify: .*(no trusted certificate path found|key not found|Public key is not valid for timestamp|expected \d+ (SCTs|tlog entries|timestamps))/;
 
 export type WorkerResult = { outcome: "updated" | "none" | "busy" | "off" | "failed"; lines: string[] };
+
+class SkipError extends Error {}
 
 function message(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).split("\n")[0]!.slice(0, 300);
@@ -109,13 +112,37 @@ export async function unpackRelease(home: string, version: string, tarball: Buff
 // busy: another process holds the boundary. failed: the boundary or a write failed.
 export type ActivateResult = { outcome: "activated" | "refused" | "skip" | "gone" | "busy" | "failed"; reason: string };
 
+// The contract the unpacked package declares in its package.json: the
+// signed bytes, where the registry's metadata is only what npm says.
+function unpackedContract(tmp: string): Contract | null {
+  try {
+    return contractOf(JSON.parse(readFileSync(join(tmp, "unpacked", "package", "package.json"), "utf8")));
+  } catch {
+    return null;
+  }
+}
+
 // The commit step for a verified, unpacked release in `tmp` (unpackRelease),
-// started from the active version `from`. Always removes `tmp`.
-export async function activateUnpacked(opts: { home: string; version: string; from: string; tmp: string; env: NodeJS.ProcessEnv; wait: number }): Promise<ActivateResult> {
+// started from the active version `from`. Always removes `tmp`. `contract`:
+// the contract the registry said the release declares; the release's own
+// package.json must declare the same, or it is skipped.
+export async function activateUnpacked(opts: {
+  home: string;
+  version: string;
+  from: string;
+  tmp: string;
+  env: NodeJS.ProcessEnv;
+  wait: number;
+  contract: Contract | null;
+}): Promise<ActivateResult> {
   const { home, version, from, tmp, env } = opts;
   const guard = homeGuard(home);
   let result: ActivateResult;
   try {
+    const declared = unpackedContract(tmp);
+    if (!sameContract(declared, opts.contract)) {
+      throw new SkipError(`its package.json declares contract ${contractText(declared)}, the registry ${contractText(opts.contract)}`);
+    }
     await pauseAt(home, "before-boundary", env);
     result = await withBoundary(home, { wait: opts.wait }, async (): Promise<ActivateResult> => {
       await pauseAt(home, "in-boundary", env);
@@ -138,14 +165,15 @@ export async function activateUnpacked(opts: { home: string; version: string; fr
       // The commit. What follows is a cache: its failure changes no outcome.
       writeActive(home, { current: version, previous: active });
       try {
-        updateState(home, { lastError: null, notice: { version, text: `openqodex updated to ${version} (was ${active}). Roll back: openqodex update --rollback` } });
+        updateState(home, { lastError: null, notice: { version, from: active, text: `openqodex updated to ${version} (was ${active}). Roll back: openqodex update --rollback` } });
       } catch {
         // the notice is lost; the switch stands
       }
       return { outcome: "activated", reason: `Updated to ${version} (was ${active}).` };
     });
   } catch (error) {
-    result = { outcome: error instanceof BoundaryError && error.held ? "busy" : "failed", reason: message(error) };
+    if (error instanceof SkipError) result = { outcome: "skip", reason: error.message };
+    else result = { outcome: error instanceof BoundaryError && error.held ? "busy" : "failed", reason: message(error) };
   }
   try {
     guard.removeTree(tmp);
@@ -178,8 +206,12 @@ async function note(home: string, change: Partial<UpdateState>): Promise<void> {
 }
 
 // `daily`: started by a normal command; it checks only when no other worker
-// checked in the last 24 hours. `wait`: how long the commit step waits for
-// the boundary (0 for the daily worker, which tries again tomorrow).
+// checked in the last 24 hours, and installs only a release with the
+// running contract (src/contract.ts): one with another contract is
+// announced and left for a foreground `openqodex update`, which installs
+// the newest release whatever its contract. `wait`: how long the commit
+// step waits for the boundary (0 for the daily worker, which tries again
+// tomorrow).
 export async function runUpdateWorker(opts: { anyAge: boolean; daily?: boolean; wait: number }): Promise<WorkerResult> {
   const home = openqodexHome();
   const env = process.env;
@@ -193,7 +225,7 @@ export async function runUpdateWorker(opts: { anyAge: boolean; daily?: boolean; 
   const limit = setTimeout(() => process.exit(2), LIMIT_MS);
   limit.unref();
   try {
-    return await work(home, env, opts.anyAge, opts.wait);
+    return await work(home, env, opts.anyAge, opts.wait, opts.daily === true);
   } catch (error) {
     await note(home, { lastError: message(error) });
     return { outcome: "failed", lines: [`The update failed: ${message(error)}`] };
@@ -202,7 +234,7 @@ export async function runUpdateWorker(opts: { anyAge: boolean; daily?: boolean; 
   }
 }
 
-async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait: number): Promise<WorkerResult> {
+async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait: number, daily: boolean): Promise<WorkerResult> {
   const now = Date.now();
   const test = seam(env);
   const running = test.as ?? __OPENQODEX_VERSION__;
@@ -225,10 +257,22 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
   // selectCandidates applies the 24 hour rule itself; a shorter rule is
   // the same as asking it later.
   const minAge = anyAge ? 0 : (test.minAge ?? MIN_AGE_MS);
-  const candidates = selectCandidates(metadata, { current: running, now: now + (MIN_AGE_MS - minAge), nodeVersion: process.versions.node });
+  const all = selectCandidates(metadata, { current: running, now: now + (MIN_AGE_MS - minAge), nodeVersion: process.versions.node });
+  // The contract this install keeps: this build's, or under the test seam
+  // the one the registry says `running` declares.
+  const versions = (metadata as { versions?: Record<string, unknown> } | null)?.versions;
+  const keep = test.as !== null && versions?.[test.as] !== undefined ? contractOf(versions[test.as]) : runningContract();
+  const { install, held } = daily ? byContract(all, keep) : { install: all, held: null };
+  const heldLine = held === null ? null : `openqodex ${held.version} changes ${contractChange(held.contract, keep)}, so it was not installed in the background: run ${launcherRunner(launcherPath(home))} update to install it.`;
+  if (held !== null) {
+    const state = readState(home);
+    const fresh = state.held?.version !== held.version;
+    await note(home, { held: { version: held.version, change: contractChange(held.contract, keep) }, ...(fresh ? { notice: { version: running, text: heldLine! } } : {}) });
+  } else if (daily) await note(home, { held: null });
+  const candidates = install;
   if (candidates.length === 0) {
     await note(home, { lastError: null });
-    return { outcome: "none", lines: [`No newer release than ${running} to install.`] };
+    return { outcome: "none", lines: [...(heldLine === null ? [] : [heldLine]), `No newer release than ${running} to install${held === null ? "" : " in the background"}.`] };
   }
 
   const lines: string[] = [];
@@ -268,7 +312,7 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
       await skip(c.version, `it did not install: ${message(error)}`);
       continue;
     }
-    const result = await activateUnpacked({ home, version: c.version, from, tmp, env, wait });
+    const result = await activateUnpacked({ home, version: c.version, from, tmp, env, wait, contract: c.contract });
     if (result.outcome === "skip") {
       await skip(c.version, result.reason);
       continue;
@@ -283,7 +327,16 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
       if (result.outcome === "failed") await note(home, { lastError: result.reason });
       return { outcome: result.outcome === "failed" ? "failed" : "none", lines: [...lines, `Downloaded and verified ${c.version}, but did not switch to it: ${result.reason}`] };
     }
-    return { outcome: "updated", lines: [...lines, result.reason] };
+    const after: string[] = [];
+    if (!sameContract(c.contract, keep)) {
+      after.push(`${c.version} changes ${contractChange(c.contract, keep)}: run ${launcherRunner(launcherPath(home))} init to refresh the files OpenQodex wrote for your agents.`);
+    }
+    if (heldLine !== null) {
+      // The switch notice is for the new version; the held release goes with it.
+      const state = readState(home);
+      if (state.notice?.version === c.version) await note(home, { notice: { ...state.notice, text: `${state.notice.text}\n${heldLine}` } });
+    }
+    return { outcome: "updated", lines: [...lines, result.reason, ...after] };
   }
 
   // Every candidate failed. When each failed because the built-in trust

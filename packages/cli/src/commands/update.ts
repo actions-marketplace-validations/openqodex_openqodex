@@ -49,6 +49,7 @@ export function statusLines(home: string): string[] {
     `updates      ${allowed.why}`,
     `last error   ${state.lastError ?? "none"}`,
   ];
+  if (state.held !== null) lines.push(`waiting      ${state.held.version} changes ${state.held.change}; openqodex update installs it`);
   if (!launched) {
     const note = pinnedNote(state, __OPENQODEX_VERSION__);
     if (note !== null) lines.push(`note         ${note}`);

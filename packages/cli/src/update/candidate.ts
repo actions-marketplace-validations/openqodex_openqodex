@@ -1,6 +1,7 @@
 // Which published releases the self-update may install. The input is npm's
 // full metadata document for the package; anything in it that does not
 // parse makes that one version ineligible, never the whole list.
+import { contractOf, sameContract, type Contract } from "../contract.js";
 
 export type UpdateCandidate = {
   version: string;
@@ -8,6 +9,10 @@ export type UpdateCandidate = {
   integrity: string;
   attestationsUrl: string;
   publishedAt: string;
+  // The contract the release declares (src/contract.ts); null for a release
+  // from before contracts. The worker installs in the background only a
+  // release whose contract equals the running one's.
+  contract: Contract | null;
 };
 
 // A release younger than this is not installed: a window to notice and
@@ -114,8 +119,28 @@ export function selectCandidates(
         integrity: dist.integrity,
         attestationsUrl: attestations.url,
         publishedAt: published as string,
+        contract: contractOf(meta),
       },
     });
   }
   return found.sort((a, b) => compare(b.parsed, a.parsed)).map((f) => f.candidate);
+}
+
+// The releases the background worker may install, highest first: those
+// with the contract it keeps. And the highest newer release with another
+// contract, which waits for a foreground `openqodex update`; null when none
+// is newer than every release it may install.
+export function byContract(candidates: UpdateCandidate[], keep: Contract | null): { install: UpdateCandidate[]; held: UpdateCandidate | null } {
+  const install = candidates.filter((c) => sameContract(c.contract, keep));
+  const best = install[0] === undefined ? null : parseVersion(install[0].version);
+  const held = candidates.find((c) => !sameContract(c.contract, keep) && (best === null || compare(parseVersion(c.version)!, best) > 0)) ?? null;
+  return { install, held };
+}
+
+// What a release with contract `next` changes for an install that keeps `keep`.
+export function contractChange(next: Contract | null, keep: Contract | null): string {
+  const agent = next?.agent !== keep?.agent;
+  const config = next?.config !== keep?.config;
+  if (agent && config) return "how agents run a review and the config format";
+  return config ? "the config format" : "how agents run a review";
 }

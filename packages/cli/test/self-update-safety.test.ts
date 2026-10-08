@@ -30,9 +30,11 @@
 //     Claude Code reads as a wildcard.
 // 12. A full-text skill an earlier init wrote, still as written, is not
 //     replaced by the stub.
-// 13. The user-scope skill is the full procedure or lacks "Who reviews";
-//     `guide skill` prints the stub or a pinned npx line when started by the
-//     launcher; a user-scope Cursor or Cline rule keeps a pinned npx line.
+// 13. The user-scope skill is the full procedure or says who reviews (the
+//     procedure of a version, which an update would leave stale); `guide
+//     skill` prints the stub or a pinned npx line when started by the
+//     launcher; a user-scope Cursor or Cline rule keeps a pinned npx line or
+//     a review command.
 // 14. A review or guide line the stub, `guide skill` or a brief gives the
 //     agent still asks for permission in Claude Code; a rule has a wildcard
 //     after `review`; trust, report or doctor is allowed; or a rule the
@@ -69,6 +71,11 @@ const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), 
 const OLDER = "0.98.0";
 const NEWER = "0.99.0";
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// The contract this build declares, as the registry would report it.
+const CONTRACT = (() => {
+  const p = JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { openqodex: { agentContract: number; configFormat: number } };
+  return { agent: p.openqodex.agentContract, config: p.openqodex.configFormat };
+})();
 
 function laptop(s: Sandbox, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const e = env(s);
@@ -129,7 +136,7 @@ function exited(p: ReturnType<typeof spawn>): Promise<{ code: number | null; out
 function activation(s: Sandbox, v: string, from: string, extra: Record<string, string> = {}) {
   const tmp = unpacked(s, v);
   const p = nodeChild(
-    `const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(v)}, from: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0 }); process.stdout.write(JSON.stringify(r));`,
+    `const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(v)}, from: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0, contract: ${JSON.stringify(CONTRACT)} }); process.stdout.write(JSON.stringify(r));`,
     { ...laptop(s), H: s.oqHome, ...extra },
   );
   return { p, done: exited(p), tmp };
@@ -384,12 +391,12 @@ describe("12 and 13. the user-scope skill and the rules", () => {
     expect(readFileSync(skillPath(s), "utf8")).not.toContain("## Reviewing a branch or a pull request");
   });
 
-  it("the user-scope skill is a stub with who reviews, that sends the agent to guide skill (failure 13)", () => {
+  it("the user-scope skill is a stub with no procedure and no reviewer, that sends the agent to guide skill (failure 13)", () => {
     const s = installed(["claude-code", "codex", "cursor", "cline"]);
     for (const p of [".claude/skills", ".agents/skills", ".cursor/skills", ".cline/skills"]) {
       const text = readFileSync(join(s.home, p, "openqodex/SKILL.md"), "utf8");
       expect(text, p).toMatch(/^---\nname: openqodex\ndescription: /);
-      expect(text, p).toContain("## Who reviews");
+      expect(text, p).not.toContain("## Who reviews");
       expect(text, p).toContain(`'${join(s.oqHome, "bin/openqodex")}' guide skill`);
       expect(text, p).not.toContain("## Reviewing a branch or a pull request");
       expect(text, p).not.toMatch(/npx -y openqodex@/);
@@ -415,13 +422,13 @@ describe("12 and 13. the user-scope skill and the rules", () => {
     expect(r.stdout).not.toContain("When the file `~/.openqodex/bin/openqodex` exists");
   });
 
-  it("user-scope Cursor and Cline rules call the launcher, not a pinned npx line (failure 13)", () => {
+  it("user-scope Cursor and Cline rules send the agent to the launcher's guide skill, with no pinned npx line and no review command (failure 13)", () => {
     const s = installed(["cursor", "cline"]);
     const launcher = `'${join(s.oqHome, "bin/openqodex")}'`;
     for (const p of [join(s.repo, ".cursor/rules/openqodex.mdc"), join(s.home, "Documents/Cline/Rules/openqodex.md")]) {
       const text = readFileSync(p, "utf8");
       expect(text, p).not.toMatch(/npx -y openqodex@/);
-      expect(text, p).toContain(`${launcher} review\``);
+      expect(text, p).not.toContain(`${launcher} review`);
       expect(text, p).toContain(`${launcher} guide skill`);
     }
   });
@@ -668,7 +675,7 @@ describe("20 to 27. the third review", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(existsSync(join(s.oqHome, "bin/openqodex"))).toBe(true);
     const rule = readFileSync(join(other, ".cursor/rules/openqodex.mdc"), "utf8");
-    const command = /`('[^']+') review`/.exec(rule)?.[1];
+    const command = /`('[^']+') guide skill`/.exec(rule)?.[1];
     expect(command).toBe(`'${join(s.oqHome, "bin/openqodex")}'`);
     expect(spawnSync("sh", ["-c", `${command} --version`], { encoding: "utf8", env: env(s) }).stdout.trim()).toBe(version);
   }, 120_000);

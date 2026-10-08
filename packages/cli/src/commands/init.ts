@@ -20,6 +20,7 @@ import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { commitLines, INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, ROOT_CONFIG_NOTE } from "../agents/repo-folder.js";
 import { targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
+import { runningContract } from "../contract.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { hostAgent } from "../reviewers/driver.js";
 import { launcherPath, launcherRunner, launcherUsers, oldLocks, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks, staleRuntimes } from "../launcher.js";
@@ -443,6 +444,8 @@ async function runLocked(s: Setup): Promise<Outcome> {
   }
 
   const failedPaths = new Set<string>();
+  // The files below are written under this version's agent contract.
+  if (!s.flags.uninstall) record.agentContract = runningContract().agent;
   // Only a file git could stage is part of the change: never one in the git
   // folder (the pre-push hook, the exclude file), wherever that folder is.
   const gitFolders = s.gitFolders;
