@@ -415,7 +415,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
         s.flags.uninstall
           ? "openqodex init: no terminal to confirm in; run again with --yes\n"
           : "openqodex init: no terminal to confirm in, and no agent to act for; nothing was written.\n" +
-              "Run it again with --yes to write the plan above. To change the plan: --hook none (no git pre-push hook), --no-repo (no team review section), --project (everything inside the repo, for the team to commit), --agent <name> (only that agent).\n",
+              "Run it again with --yes to write the plan above. To change the plan: --hook none (no git pre-push hook), --no-repo (no team review section), --project (the agent files inside the repo, for the team to commit), --agent <name> (only that agent).\n",
       );
       return { code: EXIT_TOOL_FAILED, ended: "stopped" };
     }
@@ -490,7 +490,11 @@ async function runLocked(s: Setup): Promise<Outcome> {
     closingRepoLines(s, rootConfig, "  ", teamChanged);
   }
   if (forYou.length === 0) out(`To undo: ${undoCommand(s)}`);
-  if (s.repoRoot !== null && !s.flags.project) out(`To keep everything inside this repo instead, for the team to commit: ${s.runner} init --project`);
+  // --project moves the agent files only: the scanners, init's record and the
+  // launcher a git hook needs stay on this machine.
+  if (s.repoRoot !== null && !s.flags.project) {
+    out(`To put the agent files in this repo instead, for the team to commit: ${s.runner} init --project (the scanners and init's record stay in ~/.openqodex)`);
+  }
   if (s.agents.includes("codex")) out("Codex: run /hooks once inside Codex and trust the new OpenQodex hook, or Codex will not run it.");
   return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "written" };
 }

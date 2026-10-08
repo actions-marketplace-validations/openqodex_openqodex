@@ -39,6 +39,8 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 25. init says --project keeps everything inside the repository, while the
+//     scanners, the record and any launcher stay under ~/.openqodex.
 // 24. init says every push from the repo is checked when it wrote no hook:
 //     husky runs the repo's hooks, or a pre-push hook it did not write is in
 //     the way, and the developer is not told what to add.
@@ -467,6 +469,10 @@ describe("20. the global section and what init says it wrote", () => {
     expect(end.slice(team)).toContain(".openqodex/config.yaml");
     expect(end.slice(team)).toContain("CLAUDE.md");
     expect(end).toContain("init --project");
+    // 25. --project moves the agent files only: the scanners and init's own
+    // record stay on this machine, and the line must not say otherwise.
+    expect(end).not.toMatch(/keep everything inside/i);
+    expect(end).toMatch(/init --project[^\n]*~\/\.openqodex/);
   });
 });
 

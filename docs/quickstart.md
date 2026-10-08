@@ -39,7 +39,7 @@ Inside a repository, `init` also:
 - adds a review section to the repository's `CLAUDE.md` and `AGENTS.md`, so a teammate's agent reviews before it pushes too. `--no-repo` leaves it out.
 - creates `.openqodex/config.yaml` and `.openqodex/custom-instructions.md`. Commit both. Write in `custom-instructions.md` what a reviewer of your repository must know: conventions, what never to flag, what always to check. The review brief carries it word for word.
 
-After writing, `init` lists what it wrote for you, with the command that undoes it (`init --uninstall` through the launcher), and what it wrote for the team, to commit. `init --project` instead keeps everything inside the repository, for the team to commit.
+After writing, `init` lists what it wrote for you, with the command that undoes it (`init --uninstall` through the launcher), and what it wrote for the team, to commit. `init --project` instead puts the agent files inside the repository, for the team to commit; the scanners and the record of what `init` wrote stay in `~/.openqodex` on your machine.
 
 `init` also starts the scanner downloads that your repo needs, in the background: the ones its files call for, tracked or untracked, less any `scanners.disable` switches off. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
 
