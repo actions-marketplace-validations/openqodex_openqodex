@@ -2,7 +2,7 @@
 // sources are listed in templates/README.md; this file follows it exactly.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { assetPath } from "../assets.js";
 import type { AgentId } from "./detect.js";
 import { claudeHome, codexHome } from "./homes.js";
@@ -218,9 +218,11 @@ export function targetsFor(args: {
   const base = user ? home : repoRoot;
   if (base === null) return { targets, skipped: [`${agent}: run init --project inside a git repository`] };
   const at = (...p: string[]): string => join(base, ...p);
-  // In user scope, Claude Code's and Codex's own folders, as homes.ts finds them.
-  const claude = (...p: string[]): string => (user ? join(claudeHome(home), ...p) : at(".claude", ...p));
-  const codex = (...p: string[]): string => (user ? join(codexHome(home), ...p) : at(".codex", ...p));
+  // In user scope, Claude Code's and Codex's own folders, as homes.ts finds
+  // them, joined without folding `..`: the write check resolves the path the
+  // way the system does (real-path.ts).
+  const claude = (...p: string[]): string => (user ? [claudeHome(home), ...p].join(sep) : at(".claude", ...p));
+  const codex = (...p: string[]): string => (user ? [codexHome(home), ...p].join(sep) : at(".codex", ...p));
   const skillText = user ? skillStub(runner) : fill(renderSkill(runner), version);
   // A user-scope skill calls the launcher, so the launcher stays while it is installed.
   const skillTarget = (label: string, path: string): Target => ({ kind: "file", agent, label, path, content: skillText, inRepo: !user, usesLauncher: user, skillRunner: runner });

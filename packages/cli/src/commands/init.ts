@@ -11,7 +11,9 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
-import { assertNoRepoLink, readText } from "../agents/files.js";
+import { readText } from "../agents/files.js";
+import { checkWrite, type WriteRoots } from "../agents/real-path.js";
+import { claudeHome, codexHome } from "../agents/homes.js";
 import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoFiles, repoRootOf } from "../agents/git.js";
 import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
 import { withBoundary } from "../agents/lock.js";
@@ -125,7 +127,7 @@ function ignoredByGit(repoRoot: string, path: string): boolean {
 }
 
 function planTeam(s: Setup, record: InstallRecord): Action[] {
-  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, gitFolders: s.gitFolders };
+  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, write: s.write };
   try {
     const actions: Action[] = [];
     for (const t of teamTargets(s.repoRoot!, s.version)) {
@@ -179,9 +181,11 @@ type Setup = {
   // works with nothing on PATH, or in project scope the pinned npx form.
   runner: string;
   // The repository's git folders (none outside a repository): a file git
-  // could stage lies outside them, and a link inside them is not the
-  // repository's (assertNoRepoLink).
+  // could stage lies outside them.
   gitFolders: string[];
+  // Where init may write, and the repository whose links it never follows:
+  // every write is checked against it (real-path.ts).
+  write: WriteRoots;
 };
 
 function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
@@ -207,7 +211,7 @@ function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
 // Plans one agent's targets. A file that cannot be read, or a path through
 // a link the repository holds, stops that agent with the reason.
 async function planAgents(s: Setup, record: InstallRecord, targets: Target[]): Promise<Action[]> {
-  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, gitFolders: s.gitFolders };
+  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, write: s.write };
   const excludeFile = s.repoRoot !== null && !s.flags.project ? await gitPath(s.repoRoot, "info/exclude") : null;
   const actions: Action[] = [];
   for (const agent of s.agents) {
@@ -439,7 +443,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
         }
         // The path is walked again right before the write: a link the
         // repository put in place after the plan is refused here.
-        if (s.repoRoot !== null) assertNoRepoLink(s.repoRoot, gitFolders, a.path);
+        checkWrite(a.path, s.write);
         // The text before init's first write, so the review after init
         // takes the developer's own edits and not init's.
         if (s.repoRoot !== null && !s.before.has(a.path) && inWorkTree(s.repoRoot, gitFolders, a.path)) {
@@ -599,8 +603,11 @@ export async function run(args: string[]): Promise<number> {
     written: [],
     before: new Map(),
     runner: flags.project ? `npx -y openqodex@${__OPENQODEX_VERSION__}` : launcherRunner(launcherPath(openqodexHomeDir())),
-    gitFolders: repoRoot !== null ? await gitDirs(repoRoot) : [],
+    gitFolders: [],
+    write: { repoRoot, gitFolders: [], roots: [home, claudeHome(home), codexHome(home), openqodexHomeDir()] },
   };
+  setup.gitFolders = repoRoot !== null ? await gitDirs(repoRoot) : [];
+  setup.write.gitFolders = setup.gitFolders;
   try {
     // A dry run writes nothing and takes no lock. Otherwise everything runs
     // inside the commit boundary, so no update switches versions meanwhile.

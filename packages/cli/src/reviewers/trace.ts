@@ -50,7 +50,7 @@ function realDeep(abs: string): string {
 // cannot be read, or the name has no letter to flip, names compare exactly,
 // the stricter answer.
 const caseFolding = new Map<string, boolean>();
-function foldsCase(snapshot: string): boolean {
+export function foldsCase(snapshot: string): boolean {
   const known = caseFolding.get(snapshot);
   if (known !== undefined) return known;
   const name = basename(snapshot);
@@ -71,7 +71,7 @@ function foldsCase(snapshot: string): boolean {
 
 // True when `path` is `root` or below it. A name that starts with two dots
 // (`..env`) is below; only a `..` step climbs.
-function within(root: string, path: string, fold: boolean): boolean {
+export function within(root: string, path: string, fold: boolean): boolean {
   const rel = fold ? relative(root.toLowerCase(), path.toLowerCase()) : relative(root, path);
   return rel === "" || (!isAbsolute(rel) && !rel.split(sep).includes(".."));
 }

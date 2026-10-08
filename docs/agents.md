@@ -87,7 +87,7 @@ The default is user scope. `init` writes into your home folder, so one install w
 
 `--project` writes the files into the repository instead, for a team to commit. Run it inside a git repository.
 
-In either scope, `init` never writes through a symbolic link that lies in the repository's work tree: a repository decides what its links point at. It walks each path as the system does, when it plans the file and again just before it writes, and refuses the file, with one line, when a link on the way lies in the repository. This holds for an agent folder you set inside the repository (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`) too. A link outside the repository is yours and is followed, such as a dotfiles link of `~/.claude/settings.json`.
+In either scope, `init` decides each write from where the path really lands, never from its spelling. It walks the path as the system does, one name at a time, links followed and `.` and `..` taken after them. It refuses the file, with one line, when a link on the way lies in the repository's work tree, whatever the scope (an agent folder you set inside the repository with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` included), or when the path lands outside every folder `init` writes: the repository, its git folders, your home folder, the agents' own folders and `~/.openqodex`, compared by whole folder names, with case folded only where your disk folds it. A link outside the repository is yours and is followed, such as a dotfiles link of `~/.claude/settings.json` into a folder in your home. `init` writes to the place it resolved, and walks the path again right before the write lands.
 
 ## The launcher
 

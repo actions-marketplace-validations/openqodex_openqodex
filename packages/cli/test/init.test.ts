@@ -39,6 +39,12 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 27. A write decides from the path's spelling, not where it really lands:
+//     `.` and `..` folded before the links on the way are followed, a work
+//     tree name that starts with two dots taken for outside the repository,
+//     the repository spelled in another case on a volume that folds case, a
+//     sibling folder sharing a root's name prefix taken for inside it, or a
+//     path that lands outside every folder init may write.
 // 26. A file init writes outside the repository's rules follows a link the
 //     repository holds: an agent folder set inside the repository
 //     (CLAUDE_CONFIG_DIR) with a committed link, a link inside the repository
@@ -231,7 +237,8 @@ describe("init, settings files", () => {
 
   it("writes through a symlinked settings file and leaves the link a link", () => {
     const s = sandbox();
-    const dotfiles = join(s.root, "dotfiles");
+    // The developer's dotfiles, in the home folder: a folder init may write.
+    const dotfiles = join(s.home, "dotfiles");
     mkdirSync(dotfiles);
     writeFileSync(join(dotfiles, "settings.json"), '{"model":"x"}\n');
     mkdirSync(join(s.home, ".claude"), { recursive: true });
@@ -798,6 +805,105 @@ describe("16. init, custom agent homes", () => {
     const swap = `rm -rf '${config}' && ln -s '${outside}' '${config}'`;
     const r = inTerminal(s, ["init", "--agent", "claude-code"], [["Write these files?", "\r", swap]], { env: { CLAUDE_CONFIG_DIR: config } });
     expect(r.status, r.stdout).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+});
+
+describe("27. a write decides from where the path really lands, not from its spelling", () => {
+  // init with Claude Code's folder named by `config`: exit code, and what
+  // `outside` holds afterwards.
+  function initWith(s: Sandbox, config: string): ReturnType<typeof cli> {
+    return cli(s, ["init", "--yes", "--agent", "claude-code"], { env: { CLAUDE_CONFIG_DIR: config } });
+  }
+
+  it("a parent folder link in the repository that points outside is refused", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(s.repo, ".claude"));
+    expect(initWith(s, join(s.repo, ".claude")).status).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("a work-tree name that starts with two dots is inside the repository: its link is refused", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(s.repo, "..cfg"));
+    expect(initWith(s, `${s.repo}/..cfg`).status).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("a .. after a link the repository holds is taken after the link, as the system takes it", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(join(outside, "deep"), { recursive: true });
+    symlinkSync(join(outside, "deep"), join(s.repo, "lnk"));
+    // Spelled, this is the repo's own "evil"; the system lands in outside/evil.
+    expect(initWith(s, `${s.repo}/lnk/../evil`).status).toBe(2);
+    expect(readdirSync(outside)).toEqual(["deep"]);
+  });
+
+  it("a path whose . and .. segments resolve inside the home folder is written there", () => {
+    const s = sandbox();
+    mkdirSync(join(s.home, "x"));
+    const r = initWith(s, `${s.home}/./x/../.claude`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(s.home, ".claude/skills/openqodex/SKILL.md"))).toBe(true);
+  });
+
+  it("a path whose .. segments resolve outside every folder init may write is refused", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "settings.json"), "{}\n");
+    mkdirSync(join(s.home, ".claude"));
+    // From ~/.claude, ../../outside is the sandbox's outside folder.
+    symlinkSync("../../outside/settings.json", join(s.home, ".claude/settings.json"));
+    expect(initWith(s, join(s.home, ".claude")).status).toBe(2);
+    expect(readFileSync(join(outside, "settings.json"), "utf8")).toBe("{}\n");
+  });
+
+  it("a folder spelled with a doubled separator, a ./ and a trailing slash is the same folder, and a second run changes nothing", () => {
+    const s = sandbox();
+    const spelled = `${s.home}//./.claude/`;
+    expect(initWith(s, spelled).status).toBe(0);
+    expect(existsSync(join(s.home, ".claude/skills/openqodex/SKILL.md"))).toBe(true);
+    const before = snapshot(s);
+    const again = initWith(s, spelled);
+    expect(again.status, again.stderr).toBe(0);
+    expect(again.stdout).toContain("Nothing to change");
+    expect(snapshot(s)).toEqual(before);
+  });
+
+  it("an agent folder configured with .. in it is written where it resolves, the folder the agent reads", () => {
+    const s = sandbox();
+    const r = initWith(s, `${s.home}/../agent config`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(s.root, "agent config/skills/openqodex/SKILL.md"))).toBe(true);
+  });
+
+  it("a sibling of the home folder that shares its name prefix is outside it: a settings link there is refused", () => {
+    const s = sandbox();
+    const sibling = `${s.home}2`;
+    mkdirSync(sibling);
+    writeFileSync(join(sibling, "settings.json"), "{}\n");
+    mkdirSync(join(s.home, ".claude"));
+    symlinkSync(join(sibling, "settings.json"), join(s.home, ".claude/settings.json"));
+    expect(initWith(s, join(s.home, ".claude")).status).toBe(2);
+    expect(readFileSync(join(sibling, "settings.json"), "utf8")).toBe("{}\n");
+  });
+
+  it("the repository spelled in another case, on a volume that folds case, keeps the repository's rule", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(s.repo, ".claude"));
+    const flipped = join(s.root, "THE REPO");
+    // Folding or not, nothing may land outside: on a folding volume this is
+    // the repository and its link is refused; on an exact one it is a folder
+    // outside every root init may write.
+    expect(initWith(s, join(flipped, ".claude")).status).toBe(2);
     expect(readdirSync(outside)).toEqual([]);
   });
 });
