@@ -16,10 +16,10 @@ Not by default. Without `review.block_on_severity` in `.openqodex/config.yaml`, 
 
 The report lists every selected scanner with a status and a reason. The usual reasons:
 
-- The change holds no file it reads.
+- The change holds no file it reads. brakeman reads only a file in a Rails app: a folder whose `Gemfile` or `Gemfile.lock` names rails and that holds `config/application.rb` or `bin/rails`.
 - It is still downloading on first use. It joins the next run.
 - It needs Ruby or Go, which OpenQodex does not install.
-- The agent's sandbox cannot download it. Run `npx openqodex doctor --install` in your own terminal.
+- The agent's sandbox cannot download it. Run `npx openqodex doctor --install` in your own terminal, inside the repository.
 
 ## Why is a finding missing that the scanner reports on my whole repo?
 
@@ -43,7 +43,7 @@ The review writes only inside `.openqodex/`. Its `.gitignore` keeps the reports 
 
 ## Where are the reports?
 
-In `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest one.
+In `.openqodex/reviews/<time>-<id>/` in the repository: `report.html` to open in a browser, `report.md` to read as text, `report.json` and `report.sarif` for tools. A review prints the absolute paths of `report.html` and `report.md` when it ends. `.openqodex/latest.json` points at the newest one.
 
 ## Does it work on Windows?
 

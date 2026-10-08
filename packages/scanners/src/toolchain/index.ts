@@ -20,7 +20,7 @@ import { loadToolchain, openqodexHome, type Recipe } from "./table.js";
 
 export { downloadVerified, extractArchive, InstallError } from "./fetch.js";
 export { installTool, runInstallWorker } from "./install.js";
-export { openqodexHome } from "./table.js";
+export { openqodexHome, toolchainHash } from "./table.js";
 export type { Recipe, ReleaseAsset, Toolchain } from "./table.js";
 
 // Every builtin scanner, checked against the type so a new one is not missed.

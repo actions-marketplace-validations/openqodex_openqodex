@@ -8,13 +8,14 @@
 // the npm cache or PATH. A runtime folder is created once, by a rename, and
 // never replaced; switching versions is one rename of the record.
 import { execFile } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { openqodexHome } from "@openqodex/scanners";
 import { assetPath } from "./assets.js";
-import { readText, sha256, writeAtomic } from "./agents/files.js";
+import { readText, sha256 } from "./agents/files.js";
+import { homeGuard, type Guard } from "./agents/guarded-fs.js";
 import { ownedFile, type Action } from "./agents/plan.js";
 import type { InstallRecord } from "./agents/record.js";
 import { readState, statePath, userConfigPath } from "./update/state.js";
@@ -62,19 +63,13 @@ export function readActive(home: string): Active {
   return { current: VERSION_TEXT.test(first) ? first : null, previous: VERSION_TEXT.test(second) ? second : null };
 }
 
-// Writes both lines by a temp file and a rename, so the launcher never reads
-// half a line and current and previous always change together.
+// Writes both lines by a temp file and a rename (guarded-fs.ts), so the
+// launcher never reads half a line and current and previous always change
+// together.
+// No link at all under runtime/, the record itself included (homeGuard strict).
 export function writeActive(home: string, active: { current: string; previous: string | null }): void {
   for (const v of [active.current, active.previous]) if (v !== null && !VERSION_TEXT.test(v)) throw new Error(`not a version: ${v}`);
-  const path = currentPath(home);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  try {
-    writeFileSync(tmp, `${active.current}\n${active.previous ?? ""}\n`, { flag: "wx", mode: 0o644 });
-    renameSync(tmp, path);
-  } finally {
-    rmSync(tmp, { force: true });
-  }
+  homeGuard(home, true).write(currentPath(home), `${active.current}\n${active.previous ?? ""}\n`, { mode: 0o644 });
 }
 
 // The version the launcher runs now: line 1 when its runtime is there, else
@@ -106,6 +101,9 @@ export function launcherRunner(path: string): string {
 // Line 1 of the record is read with the shell's own `read`, never run or
 // expanded; line 2 is never read here. A line that breaks the version rule,
 // or names a runtime with no dist/bin.js, leaves the baked-in runtime in place.
+//
+// The node it bakes is stableNodePath's. When that node is gone, it runs the
+// node PATH names and says so in one line on stderr.
 export function launcherScript(nodePath: string, home: string, version: string): string {
   const repair = "run npx openqodex init again to repair it";
   return [
@@ -119,7 +117,11 @@ export function launcherScript(nodePath: string, home: string, version: string):
     'case "$current" in',
     '  [0-9]*) case "$current" in *[!0-9A-Za-z.+-]*) ;; *) [ -f "$runtimes/$current/dist/bin.js" ] && bin="$runtimes/$current/dist/bin.js" ;; esac ;;',
     "esac",
-    '[ -x "$node" ] || node=$(command -v node 2>/dev/null) || node=""',
+    'if [ ! -x "$node" ]; then',
+    '  baked=$node',
+    '  node=$(command -v node 2>/dev/null) || node=""',
+    '  [ -n "$node" ] && echo "openqodex: the node this launcher was set up with ($baked) is gone; using $node from PATH. Run $0 init to set it up again." >&2',
+    "fi",
     // The runtime knows it was started here, and from which file: only
     // then does it check for updates (see launcherStarted).
     'OPENQODEX_LAUNCHER="$bin"',
@@ -164,6 +166,42 @@ export function directRunner(entry: string | undefined = process.argv[1]): strin
   }
   if (file !== own || file.split(sep).includes("node_modules")) return npx;
   return `${launcherRunner(process.execPath)} ${launcherRunner(file)}`;
+}
+
+// The node path the launcher bakes. Homebrew keeps node in a versioned
+// folder, <prefix>/Cellar/node@22/22.23.3_1/bin/node, that its next upgrade
+// removes, and keeps <prefix>/opt/node@22 pointing at whichever version is
+// installed (Formula Cookbook, opt_prefix). So for a node in the Cellar the
+// launcher bakes the opt path, when that leads to this very node; any other
+// node is baked as it is. A version manager whose own path is versioned,
+// such as nvm, keeps the path it has.
+export function stableNodePath(execPath: string = process.execPath): string {
+  const m = /^(.*)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (m === null) return execPath;
+  const opt = join(m[1]!, "opt", m[2]!, "bin", "node");
+  try {
+    return realpathSync(opt) === realpathSync(execPath) ? opt : execPath;
+  } catch {
+    return execPath;
+  }
+}
+
+// One single-quoted value of the launcher script, as shQuote wrote it.
+function bakedValue(text: string, name: string): string | null {
+  const m = new RegExp(`^${name}=('(?:[^']|'\\\\'')*')$`, "m").exec(text);
+  return m === null ? null : m[1]!.slice(1, -1).replaceAll("'\\''", "'");
+}
+
+// True when the launcher OpenQodex wrote is in the form of an older version:
+// written again by this version with the same node and runtime, it would
+// differ. Only `init` writes it again.
+export function launcherFormatStale(home: string): boolean {
+  const text = readText(launcherPath(home));
+  if (text === null || !text.includes(LAUNCHER_MARKER)) return false;
+  const node = bakedValue(text, "node");
+  const version = bakedVersion(home);
+  if (node === null || version === null) return true;
+  return launcherScript(node, home, version) !== text;
 }
 
 // The version baked into the launcher script, from its bin= line; null when
@@ -230,20 +268,23 @@ export async function checkRuns(binJs: string, version: string): Promise<void> {
   if (stdout.trim() !== version) throw new Error(`the runtime copy printed "${stdout.trim()}" for --version, expected ${version}`);
 }
 
-// Copies the package to a temp folder beside the target, checks it runs,
-// then renames it into place. The target is never replaced: when a folder
-// appeared there in between, the rename fails and nothing changes.
+// Copies the package to a temp folder beside the target, file by file
+// through the guard, checks it runs, then renames it into place. The target
+// is never replaced: when a folder appeared there in between, the rename
+// fails and nothing changes.
+// Through the strict home guard: no link at all under runtime/.
 async function installRuntime(version: string, home: string): Promise<void> {
+  const guard = homeGuard(home, true);
   const target = runtimeDir(version, home);
   const tmp = `${target}.tmp-${process.pid}`;
-  rmSync(tmp, { recursive: true, force: true });
+  guard.removeTree(tmp);
   try {
-    cpSync(packageDir(), tmp, { recursive: true, filter: (src) => !(dirname(src) === packageDir() && PACKAGE_SKIP.includes(src.split(/[\\/]/).pop() ?? "")) });
+    guard.copyTree(packageDir(), tmp, PACKAGE_SKIP);
     await checkRuns(join(tmp, "dist", "bin.js"), version);
     if (existsSync(target)) throw new Error(`${target} appeared while init was running; nothing was replaced`);
-    renameSync(tmp, target);
+    guard.rename(tmp, target);
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    guard.removeTree(tmp);
   }
 }
 
@@ -251,7 +292,7 @@ async function installRuntime(version: string, home: string): Promise<void> {
 // existing runtime folder of this version is used only when it is identical
 // to this package; one that differs is refused, never replaced. The caller
 // holds the commit boundary.
-export function planRuntime(record: InstallRecord, version: string, home: string): Action[] {
+export function planRuntime(record: InstallRecord, version: string, home: string, guard: Guard = homeGuard(home)): Action[] {
   const rt = runtimeDir(version, home);
   const launcher = launcherPath(home);
   const actions: Action[] = [];
@@ -279,14 +320,14 @@ export function planRuntime(record: InstallRecord, version: string, home: string
     });
   }
 
-  const script = launcherScript(process.execPath, home, version);
+  const script = launcherScript(stableNodePath(), home, version);
   const before = readText(launcher);
   const remember = (): void => {
     record.files = record.files.filter((f) => f.path !== launcher);
     record.files.push({ path: launcher, sha256: createHash("sha256").update(script).digest("hex"), usesLauncher: false });
   };
   const write = (): void => {
-    writeAtomic(launcher, script, 0o755);
+    guard.write(launcher, script, { mode: 0o755 });
     remember();
   };
   if (before === script) {
@@ -358,21 +399,35 @@ export function tempRuntimes(home: string, all: boolean, now = Date.now()): stri
 export const KEEP_YOUNG_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Removes openqodex runtime folders older than 7 days, except the baked-in,
-// current and previous ones. Run by init and the foreground update, inside
-// the commit boundary; never by the worker. Never fails its caller.
-export function pruneRuntimes(home: string, now = Date.now()): void {
-  const active = readActive(home);
-  const keep = new Set([bakedVersion(home), active.current, active.previous].filter((v): v is string => v !== null));
-  for (const name of ourRuntimes(home)) {
-    if (keep.has(name)) continue;
-    const dir = runtimeDir(name, home);
+// current and previous ones. Run inside the commit boundary by init, the
+// foreground update and the worker right after a switch. Never fails its caller.
+// Each removal goes through the guard, which never follows a link and
+// refuses a folder that is not, by identity, under OpenQodex's home: a
+// runtime/ folder that is a link to somewhere else loses nothing there.
+export function pruneRuntimes(home: string, now = Date.now(), guard: Guard = homeGuard(home)): void {
+  for (const dir of staleRuntimes(home, now)) {
     try {
-      if (now - statSync(dir).mtimeMs < KEEP_YOUNG_MS) continue;
-      rmSync(dir, { recursive: true, force: true });
+      guard.removeTree(dir);
     } catch {
-      // tried again next time
+      // refused, or tried again next time
     }
   }
+}
+
+// The runtime folders pruneRuntimes would remove now.
+export function staleRuntimes(home: string, now = Date.now()): string[] {
+  const active = readActive(home);
+  const keep = new Set([bakedVersion(home), active.current, active.previous].filter((v): v is string => v !== null));
+  return ourRuntimes(home)
+    .filter((name) => !keep.has(name))
+    .map((name) => runtimeDir(name, home))
+    .filter((dir) => {
+      try {
+        return now - statSync(dir).mtimeMs >= KEEP_YOUNG_MS;
+      } catch {
+        return false;
+      }
+    });
 }
 
 // What still calls the launcher once this run is done: recorded agent hooks
@@ -388,7 +443,7 @@ export function launcherUsers(record: InstallRecord): string[] {
 // update files once nothing recorded calls the launcher. The caller holds
 // the commit boundary, so no worker switches versions meanwhile; a worker
 // that reaches the boundary afterwards finds no launcher and writes nothing.
-export function planRuntimeRemoval(record: InstallRecord, home: string, willStay: string[]): Action[] {
+export function planRuntimeRemoval(record: InstallRecord, home: string, willStay: string[], guard: Guard = homeGuard(home)): Action[] {
   const launcher = launcherPath(home);
   if (willStay.length > 0) {
     return [{ verb: "keep", path: launcher, note: `launcher and runtime kept: still called by ${willStay.join(", ")}` }];
@@ -408,12 +463,12 @@ export function planRuntimeRemoval(record: InstallRecord, home: string, willStay
       note: "runtime copy of openqodex",
       apply: () => {
         stillCalled();
-        rmSync(rt, { recursive: true, force: true });
+        guard.removeTree(rt);
       },
     });
   }
   for (const tmp of tempRuntimes(home, true)) {
-    actions.push({ verb: "remove", path: tmp, note: "an unfinished runtime copy", apply: () => rmSync(tmp, { recursive: true, force: true }) });
+    actions.push({ verb: "remove", path: tmp, note: "an unfinished runtime copy", apply: () => guard.removeTree(tmp) });
   }
   const pointer = currentPath(home);
   if (existsSync(pointer)) {
@@ -423,9 +478,9 @@ export function planRuntimeRemoval(record: InstallRecord, home: string, willStay
       note: "the launcher's record of the active runtime",
       apply: () => {
         stillCalled();
-        rmSync(pointer, { force: true });
+        guard.remove(pointer);
         try {
-          rmdirSync(dirname(pointer));
+          guard.removeEmptyFolder(dirname(pointer));
         } catch {
           // other files are there; they are not ours
         }
@@ -441,9 +496,9 @@ export function planRuntimeRemoval(record: InstallRecord, home: string, willStay
       guard: { path: launcher, before: text },
       apply: () => {
         stillCalled();
-        rmSync(launcher, { force: true });
+        guard.remove(launcher);
         try {
-          rmdirSync(dirname(launcher));
+          guard.removeEmptyFolder(dirname(launcher));
         } catch {
           // not empty
         }
@@ -453,29 +508,40 @@ export function planRuntimeRemoval(record: InstallRecord, home: string, willStay
   } else if (record.files.some((f) => f.path === launcher)) {
     record.files = record.files.filter((f) => f.path !== launcher);
   }
-  actions.push(...planUpdateFilesRemoval(home));
+  actions.push(...planUpdateFilesRemoval(home, guard));
   return actions;
 }
 
 // The update check's files go with the launcher: its state, and the user
 // config.yaml only when `update` created it and it is unchanged.
-function planUpdateFilesRemoval(home: string): Action[] {
+function planUpdateFilesRemoval(home: string, guard: Guard): Action[] {
   const actions: Action[] = [];
   const config = userConfigPath(home);
   const configText = readText(config);
   const state = readState(home);
   if (configText !== null && state.userConfig !== null && state.userConfig === sha256(configText)) {
-    actions.push({ verb: "remove", path: config, note: "the update switch openqodex update wrote", guard: { path: config, before: configText }, apply: () => rmSync(config, { force: true }) });
+    actions.push({ verb: "remove", path: config, note: "the update switch openqodex update wrote", guard: { path: config, before: configText }, apply: () => guard.remove(config) });
   }
   const path = statePath(home);
-  if (existsSync(path)) actions.push({ verb: "remove", path, note: "the update check's state", apply: () => rmSync(path, { force: true }) });
+  if (existsSync(path)) actions.push({ verb: "remove", path, note: "the update check's state", apply: () => guard.remove(path) });
   return actions;
 }
 
 // Lock files of versions before the commit boundary: never read now, and
 // removed by init and uninstall.
-export function removeOldLocks(home: string): void {
-  for (const name of ["install.lock", "update.lock", "update.json.lock"]) {
-    for (const path of [join(home, name), join(home, `${name}.takeover`)]) rmSync(path, { force: true });
+export function removeOldLocks(home: string, guard: Guard = homeGuard(home)): void {
+  for (const path of oldLocks(home)) {
+    try {
+      guard.remove(path);
+    } catch {
+      // refused (a folder, or not under OpenQodex's home): left as it is
+    }
   }
+}
+
+// The old lock files that are there now.
+export function oldLocks(home: string): string[] {
+  return ["install.lock", "update.lock", "update.json.lock"]
+    .flatMap((name) => [join(home, name), join(home, `${name}.takeover`)])
+    .filter((path) => lstatSync(path, { throwIfNoEntry: false }) !== undefined);
 }

@@ -2,6 +2,7 @@
 import { accessSync, constants, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { claudeHome, codexHome } from "./homes.js";
 
 export const AGENTS = ["claude-code", "cursor", "codex", "cline"] as const;
 export type AgentId = (typeof AGENTS)[number];
@@ -35,11 +36,13 @@ function clineExtension(home: string): boolean {
   }
 }
 
+// An agent counts when its program is on PATH or the folder it reads its
+// settings from exists: CLAUDE_CONFIG_DIR and CODEX_HOME when set (homes.ts).
 export function detectAgents(home: string = homedir()): AgentId[] {
   const found: AgentId[] = [];
-  if (onPath("claude") || existsSync(join(home, ".claude"))) found.push("claude-code");
+  if (onPath("claude") || existsSync(claudeHome(home))) found.push("claude-code");
   if (existsSync(join(home, ".cursor")) || existsSync("/Applications/Cursor.app")) found.push("cursor");
-  if (onPath("codex") || existsSync(join(home, ".codex"))) found.push("codex");
+  if (onPath("codex") || existsSync(codexHome(home))) found.push("codex");
   if (existsSync(join(home, ".cline")) || clineExtension(home)) found.push("cline");
   return found;
 }

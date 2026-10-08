@@ -42,6 +42,7 @@ import type {
 import { ARG_BUDGET_BYTES, describeFailure, execTool, splitArgs, stderrTail } from "../exec.js";
 import { openqodexHome } from "../toolchain/table.js";
 import type { Adapter } from "./index.js";
+import { suchAs } from "./words.js";
 
 // golangci-lint loads + type-checks each package, so give it more
 // headroom than the file-scoped linters. Shared across every module
@@ -243,7 +244,8 @@ export async function runGolangci(args: GolangciRunArgs): Promise<AdapterResult>
 
 export const golangci: Adapter = {
   source: "golangci",
-  wants: (changedPaths) => changedPaths.some(isGoPath),
+  files: (changedPaths) => changedPaths.filter(isGoPath),
+  why: (files) => `Go files, ${suchAs(files)}`,
   run: (args) => runGolangci(args),
 };
 

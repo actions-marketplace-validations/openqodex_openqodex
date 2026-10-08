@@ -3,6 +3,10 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { extractArchive } from "../../packages/scanners/src/toolchain/fetch.js";
+import { fetchAttestations, fetchTarball } from "../../packages/cli/src/update/fetch.js";
+import { verifyRelease } from "../../packages/cli/src/update/verify.js";
+import { verifiedRelease } from "../../scripts/self-update-check-lib.mjs";
 import { bin, git, receipt, root, skipNetwork } from "./support.js";
 
 // The whole update chain against the real npm registry, in a temp HOME.
@@ -15,7 +19,10 @@ import { bin, git, receipt, root, skipNetwork } from "./support.js";
 // its integrity and its Sigstore provenance, unpacks it, starts it, and
 // activates it through the commit boundary. The seam (honoured only with
 // OPENQODEX_E2E=1) only shortens the 24 hour age rule and pins the version
-// the worker chooses from; verification is never skipped. Released versions
+// the worker chooses from, and so the contract it keeps: 0.1.0 declares
+// none, so the daily worker installs the newest release that declares none
+// either and leaves any later one for a foreground update. Verification is
+// never skipped. Released versions
 // do not know this build's record format, so after the activation only the
 // record, the folder and `--version` are read, then this build rolls back.
 //
@@ -26,6 +33,9 @@ import { bin, git, receipt, root, skipNetwork } from "./support.js";
 //  c. Rollback after a real activation leaves the launcher on the new version.
 //  d. The seam works without OPENQODEX_E2E=1.
 //  e. With no release newer than the running one, something is installed.
+//  f. A rollback by this build to a runtime that cannot read skip_version
+//     (the real 0.7.1, checked as the updater checks a release) leaves
+//     updates on, so that runtime would install the release just left.
 
 const offline = skipNetwork("self-update");
 const version = (JSON.parse(readFileSync(join(root, "packages/cli/package.json"), "utf8")) as { version: string }).version;
@@ -37,7 +47,7 @@ type Box = { home: string; oqHome: string; repo: string };
 
 function laptop(b: Box, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const e: NodeJS.ProcessEnv = { ...process.env, HOME: b.home, OPENQODEX_HOME: b.oqHome };
-  for (const key of ["CI", "OPENQODEX_OFFLINE", "OPENQODEX_AUTO_UPDATE", "OPENQODEX_E2E", "OPENQODEX_UPDATE_AS", "OPENQODEX_UPDATE_MIN_AGE_MS", "OPENQODEX_LAUNCHER", "CODEX_HOME"]) delete e[key];
+  for (const key of ["CI", "OPENQODEX_OFFLINE", "OPENQODEX_AUTO_UPDATE", "OPENQODEX_E2E", "OPENQODEX_UPDATE_AS", "OPENQODEX_UPDATE_MIN_AGE_MS", "OPENQODEX_LAUNCHER", "CODEX_HOME", "CLAUDE_CONFIG_DIR"]) delete e[key];
   return { ...e, ...extra };
 }
 
@@ -93,8 +103,13 @@ describe.skipIf(offline)("the self-update against the real registry", () => {
   let activatedMs = -1;
 
   beforeAll(async () => {
-    const meta = (await (await fetch("https://registry.npmjs.org/openqodex")).json()) as { "dist-tags": { latest: string } };
-    latest = meta["dist-tags"].latest;
+    const meta = (await (await fetch("https://registry.npmjs.org/openqodex")).json()) as { versions: Record<string, { openqodex?: unknown; deprecated?: unknown }> };
+    // The newest release that, like 0.1.0, declares no contract.
+    const plain = Object.entries(meta.versions)
+      .filter(([v, m]) => /^\d+\.\d+\.\d+$/.test(v) && m.openqodex === undefined && !m.deprecated)
+      .map(([v]) => v.split(".").map(Number))
+      .sort((a, b) => b[0]! - a[0]! || b[1]! - a[1]! || b[2]! - a[2]!);
+    latest = plain[0]!.join(".");
     b = box();
     oldBin = asOld(b);
     expect(launch(b, "before", ["--version"]).stdout.trim()).toBe(FROM);
@@ -151,4 +166,20 @@ describe.skipIf(offline)("the self-update against the real registry", () => {
     expect(state(fresh).latestSeen).toMatch(/^\d+\.\d+\.\d+$/);
     expect(record(fresh)[0]).toBe(version);
   });
+
+  it("f. a rollback to the real 0.7.1, which cannot read skip_version, turns updates off instead", async () => {
+    const fresh = box();
+    const legacy = "0.7.1";
+    const meta = (await (await fetch("https://registry.npmjs.org/openqodex")).json()) as { versions: Record<string, unknown> };
+    const unpacked = realpathSync(mkdtempSync(join(tmpdir(), "oq-legacy-")));
+    await verifiedRelease(legacy, meta, unpacked, { fetchAttestations, fetchTarball, verifyRelease, extractArchive });
+    cpSync(join(unpacked, "package"), join(fresh.oqHome, "runtime", legacy), { recursive: true });
+    // This build active, the real 0.7.1 as the version before it.
+    writeFileSync(join(fresh.oqHome, "runtime/current"), `${version}\n${legacy}\n`);
+    const r = launch(fresh, "rollback-legacy", ["update", "--rollback"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(record(fresh)).toEqual([legacy, version]);
+    expect(readFileSync(join(fresh.oqHome, "config.yaml"), "utf8")).toMatch(/^update: off$/m);
+    expect(launch(fresh, "rollback-legacy-version", ["--version"]).stdout.trim()).toBe(legacy);
+  }, 300_000);
 });

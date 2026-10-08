@@ -1,6 +1,6 @@
 ---
 name: openqodex
-description: Code review for the current change, before it is pushed. One command runs the security, secret, dependency and lint scanners that fit the changed files, a separate reviewer that checks every scanner finding and is given every changed line, and prints the report. Use before every git push, when asked for a code review, a security scan, or to review changes, a diff or a pull request, and when a push was blocked or warned by OpenQodex.
+description: Code review for the current change, before it is pushed. One command runs the security, secret, dependency and lint scanners that fit the changed files, a separate reviewer that checks every scanner finding and is given every changed line, and prints a short receipt with the path of the full report. Use before every git push, when asked for a code review, a security scan, or to review changes, a diff or a pull request, and when a push was blocked or warned by OpenQodex.
 ---
 
 # OpenQodex: review the change before it is pushed
@@ -22,7 +22,7 @@ If `review` says "Full review unavailable" and prints a way to review with the a
 
 ## Procedure
 
-When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed.
+When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed. When it does not exist, this skill was installed alone, with no push check: before the first review, run `npx -y openqodex@0.8.1 init --yes --agent <host>` once from the repository, where `<host>` is the agent you are (`claude-code`, `codex`, `cursor` or `cline`). It installs OpenQodex for you, then reviews the change when a reviewer can start, so it can take five minutes: allow it up to ten, or run it in the background and wait for it to exit. When it prints `First review: finished`, the receipt above that line is the review's: show it as step 3 says, then go on from step 4.
 
 1. From the repository, run:
 
@@ -38,11 +38,21 @@ When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y op
 
 2. Wait for it. A review takes one to three minutes. Many agents stop a command after two minutes, so give it up to ten minutes, or run it in the background and wait until it exits. While the reviewer works, it prints a progress line every 15 seconds on stderr. Do not start it a second time while one runs.
 
-3. Show the developer the report it printed, exactly as printed. Do not reword it, shorten it or add findings of your own. The same report is saved as `report.md`; its path is on the last progress line.
+3. Show the developer the receipt it printed, as printed: the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. Do not reword it, shorten it or add findings of your own. Give them the `report.html` path: that page shows each changed file with each finding under its line of code.
 
-4. Act on the exit code:
+4. Ask the developer: "Fix all, or tell me which?" Do not change any code before they answer. If they already told you what to fix, for example "review and fix everything", do that without asking again.
+
+5. Fix only the findings they name. This prints those findings in full (where, the problem, why it matters, the fix and the source), by their numbers in the receipt:
+
+   ```
+   npx -y openqodex@0.8.1 findings 1,3
+   ```
+
+   `findings all` prints every finding. When the fixes are done, run the review again and show the developer the new receipt.
+
+6. Act on the exit code:
    - 0: the review is complete and nothing blocks the push.
-   - 1: the review is complete and its verdict is `blocked`. Do not push. Show the developer the findings; push only if they say so after seeing them.
+   - 1: the review is complete and its verdict is `blocked`. Do not push. Show the developer the receipt and ask which findings to fix; push only if they say so after seeing the findings.
    - 2: there is no complete review. The output says what is missing (for example "Full review unavailable" when no reviewer could start, or "Review incomplete" with the reasons). Tell the developer exactly that. Never present the scanner output as a review.
 
 ## Reviewing a branch or a pull request
@@ -58,34 +68,35 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 
 ## Rules
 
-- Never edit code during the review. Review first, show the report, then fix only what the developer asks you to fix.
+- Never edit code during the review. Review first, show the receipt, then fix only the findings the developer names (steps 3 to 5).
 - Never run `openqodex trust` without asking the developer first. It approves a custom scanner, which is a command that runs on their machine.
 - Never set `OPENQODEX_SKIP`. It is the developer's switch, not yours.
+- When OpenQodex prints that files it wrote for your agent are from an older version and that `init` refreshes them, tell the developer in one line and give them that `init` command. Run it only if they ask you to: it rewrites their agent files.
 - When the verdict is `blocked`, do not push unless the developer says so after seeing the findings.
 - When OpenQodex prints "OpenQodex had a problem. Nothing has been sent." with `1 create a GitHub issue` and `2 ignore`, tell the developer in one line what went wrong and give them the two choices. Never choose 1 yourself. If they say 1, run `npx -y openqodex@0.8.1 report --send-last` from the same folder. Anything else means 2: do nothing.
 
 ## Reading the report
 
-- The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest review. The reports never show in `git status`: `.openqodex/.gitignore` keeps them out. The two other files in that folder, `config.yaml` and `custom-instructions.md`, are the team's and are meant to be committed.
+- The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.html` to open in a browser (each changed file as a diff, each finding under its line, then coverage, the scanners and the blast radius), `report.md` to read as text, `report.json` and `report.sarif` for tools. The receipt gives the absolute paths of `report.html` and `report.md`. `.openqodex/latest.json` points at the newest review. The reports never show in `git status`: `.openqodex/.gitignore` keeps them out. The two other files in that folder, `config.yaml` and `custom-instructions.md`, are the team's and are meant to be committed.
 - The verdict is `passed` (with or without warnings) or `blocked`. It is `blocked` only when the repository's config (`.openqodex/config.yaml`, or `.openqodex.yaml` at the root) sets `block_on_severity` and a finding is at or above it. With no config, OpenQodex warns and never blocks.
 - A complete review means every stage ran, every scanner finding was checked and every changed line was put in front of the reviewer; anything not covered is named in the report. It does not mean nothing was missed: no review finds everything.
 - The coverage list says, for each scanner, whether it ran. A scanner that did not run has a one-line reason:
   - `no matching files`: nothing in the change is the kind of file it reads.
   - `installing`: it is being downloaded for the first time; it is included from the next run. Say so to the developer rather than waiting.
   - `not installed`: it could not be installed here; the reason says why.
-  - `needs Ruby 2.7+` or `needs Go`: brakeman and rubocop need Ruby, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
+  - `needs Ruby` or `needs Go`: brakeman needs Ruby 3.0 or newer, rubocop Ruby 2.7 or newer, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
   - `untrusted`: a custom scanner from the repo's config that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.8.1 trust`).
   - `failed`: the scanner ran and broke; the reason has its error. A scanner problem never changes the exit code.
 
 ## Inside a sandbox
 
-Some agents run commands in a sandbox that cannot reach the network or write outside the project. There the first run cannot download the scanners, and the reviewer may not reach its model. Tell the developer to run this once in their own terminal, outside the agent:
+Some agents run commands in a sandbox that cannot reach the network or write outside the project. There the first run cannot download the scanners, and the reviewer may not reach its model. Tell the developer to run this once in their own terminal, outside the agent, inside the repository:
 
 ```
 npx -y openqodex@0.8.1 doctor --install
 ```
 
-It downloads every scanner that fits the machine into `~/.openqodex/tools/`. If the review still says "Full review unavailable" inside the sandbox, the developer runs `npx -y openqodex@0.8.1 review` in their own terminal.
+It downloads the scanners this repository's files call for into `~/.openqodex/tools/` and prints why for each one; `--all-scanners` downloads every scanner. If the review still says "Full review unavailable" inside the sandbox, the developer runs `npx -y openqodex@0.8.1 review` in their own terminal.
 
 ## More
 

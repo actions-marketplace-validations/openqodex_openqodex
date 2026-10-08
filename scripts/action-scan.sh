@@ -14,7 +14,10 @@
 #   REVIEW              auto, off or required
 #   CLAUDE_CODE_VERSION the Claude Code version the review runs
 #   ANTHROPIC_API_KEY   the repository's key, set on the step from a secret
-#   RUNNER_TEMP, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY   set by the runner
+#   OPENQODEX_STEP      plan for the Action's first step: the cache key of
+#                       the scanner folder, nothing installed or scanned
+#   RUNNER_TEMP, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY, RUNNER_OS, RUNNER_ARCH
+#                       set by the runner
 # The key leaves the environment on the first line below. Only the review
 # command gets it back: doctor, the Claude Code install and a fallback scan
 # never see it, and nothing here prints it or writes it to a file.
@@ -241,7 +244,9 @@ else
   note="To run the full review in this job, set ANTHROPIC_API_KEY on this step from a repository secret; GitHub gives no secrets to a pull request from a fork."
 fi
 
-if [ "$mode" = "review" ]; then
+if [ "${OPENQODEX_STEP-}" = "plan" ]; then
+  :
+elif [ "$mode" = "review" ]; then
   if [ -n "$key" ]; then who="on the repository's Anthropic API key"; else who="on this runner's Claude Code login"; fi
   echo "OpenQodex review: this job runs the full review of the change, with Claude Code ${CLAUDE_CODE_VERSION} as the reviewer, ${who}.${no_base}"
 else
@@ -425,6 +430,40 @@ npx_openqodex() { (cd "$out_dir" && "$npx_bin" -y "openqodex@${OPENQODEX_VERSION
 # The one command that gets the key, in its environment only (never on a
 # command line, where other processes could read it).
 review_with_key() { (cd "$out_dir" && ANTHROPIC_API_KEY="$key" "$npx_bin" -y "openqodex@${OPENQODEX_VERSION}" "$@" --cwd "$repo_dir"); }
+
+# The plan step: the key the scanner folder is cached under, from the hash of
+# the pinned scanner table and the scanners this repository's files call for,
+# as doctor --install in the next step installs them, with the same config.
+# A release that pins nothing new keeps the key, so the cache is reused; a
+# TypeScript repository's key never holds brakeman. It prints the reason
+# line of each scanner, installs nothing and runs no scan. When doctor gives
+# no plan, the key falls back to the openqodex version.
+if [ "${OPENQODEX_STEP-}" = "plan" ]; then
+  plan_file="${out_dir}/plan.json"
+  set +e
+  npx_openqodex doctor --json "${config_args[@]}" > "$plan_file" 2> "${out_dir}/plan-stderr.txt"
+  set -e
+  plan="$("$node_bin" -e '
+const fs = require("fs");
+const crypto = require("crypto");
+let r;
+try { r = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch { process.exit(0); }
+if (!r || typeof r.toolchain !== "string" || !Array.isArray(r.downloads)) process.exit(0);
+const set = r.downloads.filter((x) => typeof x === "string").sort().join(",");
+const sha = (t) => crypto.createHash("sha256").update(t).digest("hex").slice(0, 16);
+const line = (x) => String(x).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").slice(0, 300);
+process.stdout.write(`${r.toolchain.slice(0, 16)}-${sha(set)}\n`);
+for (const c of r.selection || []) if (c && c.wanted) process.stdout.write(`${line(c.line)}\n`);
+' "$plan_file" || true)"
+  cache_part="$(printf '%s\n' "$plan" | head -n 1)"
+  if [[ ! "$cache_part" =~ ^[0-9a-f]{16}-[0-9a-f]{16}$ ]]; then cache_part="v${OPENQODEX_VERSION}"; fi
+  echo "cache-key=openqodex-tools-${RUNNER_OS-}-${RUNNER_ARCH-}-${cache_part}" >> "$GITHUB_OUTPUT"
+  echo "OpenQodex scanners this repository needs:"
+  echo "::stop-commands::${token}"
+  printf '%s\n' "$plan" | tail -n +2
+  printf '\n::%s::\n' "$token"
+  exit 0
+fi
 
 set +e
 forward "$err" npx_openqodex doctor --install "${config_args[@]}"

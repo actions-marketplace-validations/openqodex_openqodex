@@ -1,4 +1,5 @@
 // Checks the skill and the plugin manifests. A missing or wrong file fails the gate.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,21 @@ if (present(skill)) {
   }
   // The procedure is one command: the agent writes no findings file and runs no finalize step.
   if (/agent-findings\.json|--finalize|review --agent/.test(text)) errors.push(`${skill}: still describes the two-step protocol (a findings file, --agent or --finalize)`);
+  // init counts an exact copy of any text the skill shipped with as its own
+  // and replaces it (shippedSkillKeys in targets.ts computes the same two
+  // keys). A text missing from the list would be kept as the developer's
+  // and never update.
+  // The placeholders hold a NUL, as in targets.ts, so no file can spell one.
+  const V = "openqodex@\u0000version\u0000";
+  const R = "\u0000runner\u0000";
+  const key = (t) =>
+    createHash("sha256")
+      .update(t.replace(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g, V).replaceAll(`npx -y ${V}`, R))
+      .digest("hex");
+  const keys = [key(text), key(text.replace(/^When the file `~\/\.openqodex\/bin\/openqodex` exists[^\n]*\n\n/m, ""))];
+  const shipped = readJson("packages/cli/src/agents/shipped-skills.json");
+  const missing = keys.filter((k) => !shipped?.sha256?.includes(k));
+  if (missing.length) errors.push(`${skill}: its text is not in packages/cli/src/agents/shipped-skills.json; add ${missing.map((k) => `"${k}"`).join(" and ")} to the list`);
   if (!errors.length) console.log(`ok: ${skill}`);
 }
 
@@ -58,11 +74,19 @@ for (const copy of ["plugins/claude-code/assets/avatar-1024.png", "plugins/codex
     else console.log(`ok: ${copy} matches ${icon}`);
   }
 }
-for (const rel of [skill, ...pluginSkills, "plugins/claude-code/hooks/hooks.json", ".pre-commit-hooks.yaml"]) {
+for (const rel of [skill, ...pluginSkills, "plugins/claude-code/hooks/hooks.json", ".pre-commit-hooks.yaml", "README.md", "docs/quickstart.md"]) {
   if (!existsSync(join(root, rel))) continue;
   const pins = readFileSync(join(root, rel), "utf8").match(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g) ?? [];
   const wrong = [...new Set(pins)].filter((pin) => pin !== `openqodex@${version}`);
   if (wrong.length) errors.push(`${rel}: pins ${wrong.join(", ")} but the package is ${version}`);
+}
+
+// People and agents install the same way: the README, the quickstart and the
+// skill give agents one line, init with the agent named, never the skill
+// alone (which installs no push check).
+const agentLine = `npx -y openqodex@${version} init --yes --agent <host>`;
+for (const rel of [skill, "README.md", "docs/quickstart.md"]) {
+  if (existsSync(join(root, rel)) && !readFileSync(join(root, rel), "utf8").includes(agentLine)) errors.push(`${rel}: does not give agents the install line ${agentLine}`);
 }
 for (const pluginJson of [
   "plugins/claude-code/.claude-plugin/plugin.json",

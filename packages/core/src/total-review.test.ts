@@ -297,7 +297,7 @@ describe("the standard report", () => {
     const text = renderReview(completeReport(), { format: "terminal", color: false });
     for (const label of ["Where: app/search.py:14", "Problem: ", "Why it matters: ", "Fix: ", `Source: ${SQL_CANDIDATE.token}`]) expect(text).toContain(label);
     expect(text).toContain("The key is a documented local sample.");
-    expect(text).toMatch(/Files read: /);
+    expect(text).toMatch(/Files the reviewer opened: /);
     expect(text).toMatch(/Reviewer: claude 2\.1\.289, 72 s, 10 turns/);
     expect(text).not.toContain(KEY_CANDIDATE.message);
   });

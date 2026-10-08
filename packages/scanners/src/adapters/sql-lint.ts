@@ -17,6 +17,7 @@
 
 import type { AdapterResult, StaticFinding } from "@openqodex/core";
 import type { Adapter } from "./index.js";
+import { suchAs } from "./words.js";
 import { readRepoFile } from "./read.js";
 
 // A migration bigger than this is not read.
@@ -225,6 +226,7 @@ export async function runSqlLint(args: SqlLintRunArgs): Promise<AdapterResult> {
 // In-process: the runner never resolves a tool for it.
 export const sqllint: Adapter = {
   source: "sqllint",
-  wants: (changedPaths) => changedPaths.some(isSqlPath),
+  files: (changedPaths) => changedPaths.filter(isSqlPath),
+  why: (files) => `SQL files, ${suchAs(files)}`,
   run: (args) => runSqlLint(args),
 };

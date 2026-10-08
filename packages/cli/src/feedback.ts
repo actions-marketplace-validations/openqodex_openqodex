@@ -6,13 +6,13 @@
 // scanner statuses and the platform.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { STATE_DIR, findRepoRoot, readRepoFile, repoStat, writeRepoFile } from "@openqodex/core";
 import type { ScanResult, ScannerRunSummary } from "@openqodex/core";
-import { writeAtomic } from "./agents/files.js";
+import { homeGuard } from "./agents/guarded-fs.js";
 import { openqodexHomeDir } from "./launcher.js";
 
 const execFileAsync = promisify(execFile);
@@ -271,8 +271,7 @@ function saveLast({ repoRoot, path }: LastPlace, issue: Issue): boolean {
     const dir = dirname(path);
     if (lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) return false;
     if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) return false;
-    mkdirSync(dir, { recursive: true });
-    writeAtomic(path, text);
+    homeGuard(openqodexHomeDir()).write(path, text);
     return true;
   } catch {
     return false;

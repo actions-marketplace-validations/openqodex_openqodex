@@ -41,9 +41,9 @@ The script's check that a program does not lie inside the repository compares pa
 
 OpenQodex and the built-in scanners use the network for these things only:
 
-- Scanner downloads on first use. GitHub release files are checked against sha256 sums pinned in the package. semgrep and bandit come from PyPI through uv, with a Python 3.11 that uv downloads. oxlint comes from npm. brakeman and rubocop come from RubyGems. These package installs are pinned by version.
+- Scanner downloads on first use. GitHub release files are checked against sha256 sums pinned in the package. semgrep and bandit come from PyPI through uv, with a Python 3.11 that uv downloads, and brakeman and rubocop come from RubyGems. Each of these installs from a lock file in the package that names every package of its dependency tree at one version with its sha256, and each file is checked against that sha256 before it is installed. semgrep and bandit get exactly the packages of their lock, each from its wheel, so no build script runs. RubyGems takes the checked files, or a gem Ruby itself ships when that one meets the requirement. Which scanners download is worked out on your machine from your repository's files (see `scanners`); nothing is sent to work it out.
 - Semgrep rule packs. semgrep fetches `p/default`, `p/security-audit` and `p/secrets` from the Semgrep registry on each run. Its metrics are off. The rules are never bundled in the package.
-- The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code.
+- The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code. Its other lookups are switched off: no transitive resolution through deps.dev, no file hashes of vendored C and C++ code, no reachability analysis.
 - Custom scanners. `openqodex trust` reads the release from the GitHub API and downloads the asset. After approval, a custom scanner does whatever its own command does.
 - The problem report, only when you choose it. When OpenQodex fails, a scanner breaks, or you run `openqodex report`, it prints the GitHub issue it would create and two choices. Nothing is sent unless you press 1 or run `openqodex report --send-last`. Then, when the GitHub CLI `gh` is installed and signed in, `gh` creates the issue in `openqodex/openqodex` with your GitHub account. Otherwise OpenQodex opens GitHub's new-issue page in your browser, or prints its link, with the title and body filled in, and you submit it there. The issue holds the OpenQodex version, the command and its arguments with paths and secrets taken out, the part of OpenQodex that failed, a scrubbed error line, the scanner statuses and your platform (OS, CPU type, Node major version). It never holds code, file names, paths, repository names, config or secrets.
 - The daily version check, for an install made with `init`. See "Updates" below.
@@ -59,22 +59,23 @@ An install made with `npx openqodex init` runs through the launcher `~/.openqode
 
 What it sends: GET requests to `registry.npmjs.org` only, over https, with no body and no header but the user agent `openqodex/<version>`. First the openqodex package's release list. Then, for a newer release, its tarball and its attestations. Nothing about you, your code or your repository is sent. Every redirect must stay on `registry.npmjs.org`.
 
-What it installs: a release that is newer than the running one, in the same major version, at least 24 hours old, not deprecated, not a prerelease, and fit for your Node. Before any of its code runs:
+What it installs: a release that is newer than the running one, in the same major version, at least 24 hours old, not deprecated, not a prerelease, fit for your Node, newer than the `skip_version` a rollback left, and with the same agent contract and config format as the running one. A release that changes either waits for `openqodex update`. Before any of its code runs:
 
 - the tarball's sha512 must equal the registry's `dist.integrity`;
 - its SLSA provenance must verify in full with Sigstore: the certificate chain to the Fulcio roots, the certificate transparency entry, the transparency log entry and the signature;
 - the signing certificate must be issued to `https://github.com/openqodex/openqodex/.github/workflows/release.yml@refs/heads/main` by `https://token.actions.githubusercontent.com`, compared exactly;
-- the signed statement must name `pkg:npm/openqodex@<version>` with the downloaded tarball's sha512.
+- the signed statement must name `pkg:npm/openqodex@<version>` with the downloaded tarball's sha512;
+- the `package.json` in the tarball must declare the agent contract and config format the registry said it does.
 
 A stolen npm publish token is therefore not enough to reach your machine: the release must come out of this repository's release workflow on `main`. The 24 hour age is a window to deprecate a bad release before installs take it.
 
 The Sigstore trust data (Fulcio roots, log keys) ships inside each release, so verification makes no other network call. When Sigstore rotates a key that an old release does not know, that release cannot verify newer ones. It stays on its version and says once how to update by hand: `npx openqodex@latest init`.
 
-A verified release is unpacked into a temporary folder under `~/.openqodex/runtime/`. A link in the tarball, or a path that leaves the folder, stops it. No install script runs. The new copy must print its own version. Only then, holding the lock below, the updater checks again that updates are still on, that OpenQodex is still installed and that no other update, rollback or `init` changed the active version meanwhile. It then renames the copy to `~/.openqodex/runtime/<version>/` and switches `~/.openqodex/runtime/current` by a second rename. A version folder is never replaced: when one with other contents is already there, the release is skipped. An update writes no agent file and nothing inside a repository.
+A verified release is unpacked into a temporary folder under `~/.openqodex/runtime/`. A link in the tarball, or a path that leaves the folder, stops it. No install script runs. The new copy must print its own version. Only then, holding the lock below, the updater reads the user config again and checks that updates are still on, that `skip_version` does not exclude the release, that a background update keeps its contract, that OpenQodex is still installed, and that the active version is still both the one it started from and its own: an update started by a version a rollback has since left ends without writing. It then renames the copy to `~/.openqodex/runtime/<version>/` and switches `~/.openqodex/runtime/current` by a second rename. A version folder is never replaced: when one with other contents is already there, the release is skipped. An update writes no agent file and nothing inside a repository.
 
 The lock: while `init`, `init --uninstall`, `hook install`, `update --rollback`, `update --off`, `update --on` or an update's switch runs, OpenQodex briefly opens a listener on 127.0.0.1, on a port between 20000 and 32000 derived from the path of `~/.openqodex`, so that two of them never run at once; it accepts no data and answers nothing, and the operating system closes it when the process ends, however it ends. When the listener cannot be opened at all, those commands stop with one line saying why, and the daily check skips the switch. The port is predictable, so a local program that holds it stops install, uninstall and updates until it lets go; nothing is installed or changed while it is held. A command that waited 60 seconds for it names the port and the line that shows the holder (`lsof -nP -iTCP:<port> -sTCP:LISTEN`), and the daily check records the same as its last error, which `openqodex update --status` and `doctor` show.
 
-Updates are off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml`, `OPENQODEX_AUTO_UPDATE=0`, `--offline` or `OPENQODEX_OFFLINE=1`, and whenever `CI` is set. A run through `npx` or a project-scope file never checks.
+Updates are off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml`, `OPENQODEX_AUTO_UPDATE=0`, `--offline` or `OPENQODEX_OFFLINE=1`, and whenever `CI` is set. They pause while `~/.openqodex/config.yaml` holds a key OpenQodex does not know. A run through `npx` or a project-scope file never checks.
 
 OpenQodex sends no telemetry. See `telemetry`.
 
@@ -112,34 +113,52 @@ The run folder of a review holds the brief, the scan, the reviewer's answer and 
 
 ## Secrets
 
-When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. It keeps the length and sha256 of each secret, to redact any text the agent quotes.
+When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. Each line of a secret that spans several lines, such as a private key, counts as the secret too, wherever it appears alone. It keeps the length and sha256 of each secret and of each such line, to redact any text the agent quotes. Every output of a review (`report.html`, `report.md`, `report.json`, `report.sarif`, the receipt and the paths it prints) is drawn from one redacted copy of the report.
 
 gitleaks writes its raw report to a temporary file outside the repository. That file holds the matched secrets. OpenQodex deletes it when the run ends. No file OpenQodex keeps holds the secret.
 
 A secret is redacted only when a scanner matched it. When gitleaks did not run, the brief shows the change as it is.
 
+## The HTML report
+
+`report.html` quotes the code under review, the reviewer's text and the scanners' messages, any of which can be hostile. So:
+
+- It holds the changed lines with their old and new line numbers (for a review of the whole repository, a few lines around each cited line), every finding with its suggested change, the dropped scanner candidates, the coverage, the scanners and the blast radius. Nothing else from your machine.
+- Every secret a scanner matched is redacted before the page is written, on both sides of the diff, a secret over several lines (a private key) included, with every line number kept. A secret no scanner matched is shown, as in the brief.
+- Every string is escaped, and every anchor in the page is generated, never taken from a path. There is no script, no form, no frame and no inline style. The page's content policy allows only its own stylesheet, by its hash, and loads nothing: no font, image or other file. Opening it sends nothing anywhere. Its one outgoing link, in the closing line, sends no referrer.
+- It is written readable by you only, like every file of the run, and only on your disk. OpenQodex never opens a browser and never uploads it. In the GitHub Action it stays in the run folder on the runner; the Action uploads no HTML.
+- `review --agent` saves the same redacted lines as `display.json` beside the brief, readable by you only, so `review --finalize` can draw the page after the secrets are gone from memory. It records the sha256 of this file and of the run's other files, `scan.json` with the secrets' fingerprints among them, in `~/.openqodex/runs/`. Finalize checks them before it renders anything: a run file a branch carries, or one changed since, gives a page without code that `findings` and the push hooks do not count.
+- The page and `display.json` are bounded: at most 5,000 files are listed and the rest counted; at most 50,000 lines of code are shown, and a listed file past that keeps its name with a note.
+
 ## Where files are written
 
-In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
+In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it). The records below (`receipts/`, `runs/`, `last-review/`) are read only from a folder that lies, by identity, under `~/.openqodex/` with no link on the way, through a handle opened without following a link: a record folder or file that is a link counts as no record.
 
 - `tools/<scanner>/<version>/`: the scanners.
 - `tools/uv-python/`: the Python 3.11 for semgrep and bandit.
 - `cache/`: the download caches for uv and npm.
-- `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`. Updates add copies beside it; a copy is never changed after it is written. `init` and `openqodex update` remove copies older than 7 days, except the one `init` installed, the current one and the previous one.
+- `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`. Updates add copies beside it; a copy is never changed after it is written. `init`, `openqodex update` and the background check right after it switches remove copies older than 7 days, except the one `init` installed, the current one and the previous one.
 - `runtime/current`: the version the launcher runs, and on a second line the version a rollback goes back to.
 - `update.json`: the state of the version check, private to you.
-- `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews) and `reviewer_web` (the reviewer's web tools, on by default; `off` removes them).
+- `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews), `reviewer_web` (the reviewer's web tools, on by default; `off` removes them) and `skip_version` (the release a rollback left, never installed again).
 - `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
-- `receipts/<repo id>/`: one small record per reviewed change, readable by you only, written by `review` at the end of a run (and by `review --finalize` for the older two-step protocol, only for a run whose scan this machine ran). The push hooks decide from these records only. The files under the repository's `.openqodex/` are the readable report, never the proof: a branch can carry those files, so a record found only there counts as no review. The check inside your agent is a reminder about your current work: it does not know what a push sends. For a plain `git push` it asks whether your current work has a passing review; any other push command it cannot tell, and says so (a deny when `block_on_severity` is set). The git pre-push hook that `init` offers is the check that sees the exact commits a push sends, and `git push --no-verify` skips it. `init` and `openqodex update` remove records older than 30 days.
-- `runs/<repo id>/`: one record per `review --agent` run, readable by you only: the change and the hashes of the run files it wrote, so `review --finalize` can tell a run this machine scanned from one a branch carries. Removed with the receipts.
+- `receipts/<repo id>/`: one small record per reviewed change, readable by you only, written by `review` at the end of a run (and by `review --finalize` for the older two-step protocol, only for a run whose scan this machine ran). The push hooks decide from these records only. The files under the repository's `.openqodex/` are the readable report, never the proof: a branch can carry those files, so a record found only there counts as no review. The check inside your agent is a reminder about your current work: it does not know what a push sends. For a plain `git push` it asks whether your current work has a passing review; any other push command it cannot tell, and says so (a deny when `block_on_severity` is set). The git pre-push hook that `init` adds is the check that sees the exact commits a push sends, and `git push --no-verify` skips it. `init` and `openqodex update` remove records older than 30 days.
+- `runs/<repo id>/`: one record per `review --agent` run of any kind, readable by you only: the change and the hashes of the run files it wrote, so `review --finalize` can tell a run this machine scanned from one a branch carries. Removed with the receipts.
+- `last-review/<repo id>/`: the run folder, change and `report.json` sha256 of the last review of each repository run on this machine, readable by you only. `openqodex findings` prints that review's report only while it has that hash, never one a branch carries under `.openqodex/reviews/`. Removed with the receipts.
 - `trust.json`: your approvals of custom scanners.
 
 In the repository, under `.openqodex/` only:
 
 - `config.yaml` and `custom-instructions.md`: the team's config and instructions for the reviewer, created once and never touched after. They are meant to be committed.
 - `.gitignore`: keeps the run state below out of git, so after the first run `git status` shows only the two files above and the `.gitignore`.
-- `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the reviewer's answer, the list of its tool calls and the reports. OpenQodex keeps the newest 20.
+- `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the reviewer's answer, the list of its tool calls and the reports, `report.html` among them. OpenQodex keeps the newest 20.
 - `latest.json`: points at the newest review, for you and older tools; the push gate does not trust it (see `receipts/` above). `latest-scan.json` points at the newest scan.
+
+`init` decides each write from where the path really lands, never from its spelling: it walks the path as the system does, links followed and `.` and `..` taken after them. It refuses a link that lies in the repository's work tree, in either scope and for an agent folder set inside the repository with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` alike, and a path that lands outside the repository, its git folders, your home folder, the agents' own folders and `~/.openqodex`. Each folder is known by its identity on disk (device and inode), not by how its name is spelled. A write goes through the folder it checked: a temp file created only if nothing is there, written, synced and renamed, and afterwards the final name must hold that very file in that very folder, or the write is undone where it can be and fails. Node has no rename relative to an open folder, so that check after the rename is the closing one. Its own files in `~/.openqodex` (its record, the launcher, the runtime copies, receipts, the update's unpacking) and the files under the repository's `.openqodex/` are written and removed the same way, and a removal never follows a link.
+
+Under `~/.openqodex/receipts/`, `runs/`, `last-review/` and `runtime/`, which only OpenQodex writes, a symbolic link anywhere on the way, the file itself included, is refused rather than followed, so a receipt, a record or a runtime write cannot land on another file of your home.
+
+Every file OpenQodex creates that can quote your code or hold a review, a record or a setting is readable by you only (0600), and each folder it makes for one only you can open (0700). Each gets its mode when it is created, never by a change after. A file of yours that `init` edits in place, such as `~/.claude/settings.json` or a repository's `CLAUDE.md`, keeps its own mode. A report or receipt that other users could read, or the `.openqodex/`, `.openqodex/reviews/`, `--report-dir` or receipt folder it goes in, as an earlier version or run left them, is replaced or closed to you the next time OpenQodex writes there, and named once on stderr. A link outside the repository, such as a dotfiles link of `~/.claude/settings.json` into your home, is the developer's and is followed.
 
 OpenQodex never reads or writes `.openqodex/` or the root `.openqodex.yaml` through a symbolic link, at the file or at any folder above it inside the repository. A link there stops the command with one line naming it, or, for a run file such as `latest.json`, counts as no file. Only regular files are read there, each within a size limit, so a link or a device in their place cannot hang a run.
 

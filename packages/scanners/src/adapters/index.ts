@@ -1,7 +1,10 @@
-// The thirteen builtin scanners. Each adapter gates itself on the changed
-// files (`wants`), so the toolchain is never asked for a tool the change
-// does not need, and runs its tool from the resolved path (`run`).
+// The thirteen builtin scanners. Each adapter names the files of a change it
+// checks (`files`), so the toolchain is never asked for a tool the change
+// does not need, and runs its tool from the resolved path (`run`). The
+// selector (select.ts) asks every adapter the same questions for a review,
+// init, doctor and the GitHub Action.
 import type { AdapterResult, BuiltinScanner, DiffCoverage, ResolvedTool } from "@openqodex/core";
+import type { RepoFacts } from "../detect.js";
 import { actionlint } from "./actionlint.js";
 import { bandit } from "./bandit.js";
 import { brakeman } from "./brakeman.js";
@@ -18,8 +21,18 @@ import { sqllint } from "./sql-lint.js";
 
 export type Adapter = {
   source: BuiltinScanner;
-  // True when this scanner has something to check in the change.
-  wants(changedPaths: string[], repoDir: string): boolean;
+  // The paths of the change this scanner checks; none means it has nothing
+  // to check. `facts` says which project each path is in and what an
+  // extensionless file is.
+  files(changedPaths: string[], facts: RepoFacts): string[];
+  // Why it runs, in a few words, for the selection line: "Python files,
+  // such as app/views.py", or for brakeman "Rails app in backend/".
+  why(files: string[], facts: RepoFacts): string;
+  // The project folders that decide how it runs, for the selection record.
+  projects?(files: string[], facts: RepoFacts): string[];
+  // Why it does not run when `files` is empty, if more can be said than
+  // "nothing to check".
+  idle?(changedPaths: string[], facts: RepoFacts): string | null;
   // A reason this scanner must not run at all (for example dependency
   // lookups while offline), known before any tool is resolved.
   skip?(): string | null;
@@ -31,6 +44,7 @@ export type Adapter = {
     changedPaths: string[];
     tool: ResolvedTool | null;
     coverage?: DiffCoverage;
+    facts: RepoFacts;
   }): Promise<AdapterResult>;
 };
 
@@ -54,7 +68,7 @@ export const ADAPTERS: readonly Adapter[] = [
   shellcheck,
   // Python lint.
   ruff,
-  // Rails SAST: a changed Rails-relevant file in a repo with a Gemfile and app/.
+  // Rails SAST: a changed Rails-relevant file in a Rails app, run in that app.
   brakeman,
   // Ruby lint.
   rubocop,

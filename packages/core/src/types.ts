@@ -79,6 +79,10 @@ export type ScanResult = {
   scanners: ScannerRunSummary[];
   fixturesDropped: number;
   secretFingerprints: SecretFingerprint[];
+  // The projects the changed files belong to (the nearest folder holding a
+  // manifest, "" for the repo root) and the frameworks read from their
+  // dependency lists. Absent in a scan an older version saved.
+  projects?: { root: string; frameworks: string[] }[];
 };
 
 // What one adapter run returns to the runner. `secrets` are the raw matched
@@ -90,6 +94,10 @@ export type AdapterResult = {
   // Set when the adapter chose not to run (for example dependency lookups
   // while offline). The runner records status "disabled" with this reason.
   skipped?: string | null;
+  // Rules this run checked, as "<source>:<ruleId>" tokens, with the files it
+  // checked them on. A review pattern (lens) one of them covers stands down
+  // for those files.
+  checked?: { token: string; files: string[] }[];
 };
 
 // One row of `openqodex doctor`.

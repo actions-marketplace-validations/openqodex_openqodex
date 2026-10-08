@@ -6,16 +6,41 @@ Pinned versions do not make findings identical on every machine. semgrep fetches
 
 Every scanner reads the whole changed file. OpenQodex keeps only the findings on changed lines.
 
+## Which scanners run, and why
+
+One selector decides which scanners a set of files calls for, the same way for a review, a scan, `init`, `doctor --install` and the GitHub Action. A review and a scan ask it about the change. `init`, `doctor --install` and the Action ask it about every file of the repository (tracked files and untracked files git does not ignore), to download ahead what its reviews will need.
+
+The selector looks at, in this order:
+
+1. The config: a scanner in `scanners.disable` never runs or downloads, and a path in `review.paths.exclude` calls for nothing.
+2. The file's name: its extension or basename, as each scanner below lists.
+3. The file's project: the nearest folder, from the file's own up to the repository root, that holds a manifest (`package.json`, `Gemfile`, `Gemfile.lock`, `pyproject.toml`, `requirements*.txt`, `Pipfile`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle`, `build.gradle.kts` or `composer.json`). OpenQodex reads that project's dependency names from those files as text. It never runs, loads or evaluates them, reads only regular files inside the repository, never through a link, and none over 1 MB. A file in no project, or a project whose manifests say nothing, still gets every check its name calls for; it only gets no framework rules.
+4. For a file with no extension, its first line: a `#!` line that names sh, bash, dash or ksh makes it a shell script. OpenQodex reads at most the first 256 bytes of such a file.
+5. A reason the scanner must not run at all: `--offline` for semgrep and osv-scanner.
+
+What a project's dependencies switch on:
+
+| Project | Read from | What changes |
+|---|---|---|
+| React or React Native | `react`, `react-native` or `expo` in `package.json` | oxlint runs its react and jsx-a11y rules on the project's files |
+| Next.js | `next` in `package.json` | oxlint also runs its nextjs rules |
+| Django, FastAPI, Airflow | `django`, `fastapi` or `apache-airflow` in `pyproject.toml` (its dependency lists), a `requirements*.txt` or a `Pipfile` | ruff adds its `DJ`, `FAST` or `AIR` rules |
+| Rails | `rails` or `railties` in the folder's `Gemfile` or `Gemfile.lock`, and `config/application.rb` or `bin/rails` in that folder | brakeman runs, in that folder; rubocop loads its Rails cops |
+
+`init` prints one line per scanner it downloads, saying why, such as `brakeman: Rails app in backend/` or `oxlint: JavaScript or TypeScript files, such as web/app/page.tsx; React, accessibility and Next.js rules in web/`. `init --dry-run` prints the same lines and downloads nothing. `doctor` prints them under "This repository needs", and the Action prints them in its plan step. A scan records the projects of the changed files and their frameworks in `scan.json`.
+
 ## Where scanners come from
 
 Scanners download on first use into `~/.openqodex/tools/<scanner>/<version>/`. `OPENQODEX_HOME` moves that folder.
 
 - GitHub release files are checked against the sha256 pinned in the package before they are unpacked.
-- semgrep and bandit install from PyPI through uv, into one Python 3.11 that OpenQodex manages. uv comes from your `PATH` when present. Otherwise OpenQodex downloads a pinned uv.
-- oxlint installs from npm, with the npm that ships beside your Node. Package install scripts are switched off.
+- semgrep and bandit install from PyPI through uv, each into a Python 3.11 environment of its own, with one Python that OpenQodex manages. uv comes from your `PATH` when present. Otherwise OpenQodex downloads a pinned uv.
 - brakeman and rubocop install from RubyGems with your Ruby's `gem` command.
+- Each PyPI and RubyGems scanner installs from a lock file: `locks/<scanner>-<platform>.txt` in the package, with every package of the scanner's dependency tree at one version and with its sha256. Each file is checked against that sha256 before it is installed. semgrep and bandit get exactly the packages of their lock, each from its wheel, so no build script runs. RubyGems installs from the checked files, or keeps a gem Ruby itself ships when that one meets the requirement, and never fetches from the network. The install folder is `<version>-<the lock's sha256>`, so a lock whose pins moved installs afresh.
 
-A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. `openqodex doctor --install` installs every scanner and waits.
+A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. `openqodex doctor --install` installs the scanners the repository's files call for and waits; `--all-scanners` installs every scanner.
+
+Once a month a workflow in this repository (`.github/workflows/pin-bump.yml`) looks for a scanner release that is at least seven days old and newer than its pin. For each one it opens a pull request with the new pin, its sha256 or its new lock file, and the result of the gate run on it. A person merges it.
 
 Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
 
@@ -59,7 +84,7 @@ A comment counts where its scanner reads it, and the match is never narrower tha
 | ruff | `# noqa` in any case; `# ruff: noqa` and `# flake8: noqa`; `isort: skip`, `isort: skip_file`, `# isort: off` | anywhere in a Python comment; `# ruff: noqa` and `# flake8: noqa` on a line of their own | the 0.8.4 binary; [noqa.rs](https://github.com/astral-sh/ruff/blob/0.8.4/crates/ruff_linter/src/noqa.rs), [directives.rs](https://github.com/astral-sh/ruff/blob/0.8.4/crates/ruff_linter/src/directives.rs) |
 | shellcheck | `disable=` or `extended-analysis=false` anywhere after `# shellcheck` | a shell comment | the 0.10.0 binary; [Parser.hs](https://github.com/koalaman/shellcheck/blob/v0.10.0/src/ShellCheck/Parser.hs) |
 | hadolint | `# hadolint ignore=`, `# hadolint global ignore=`, `# hadolint stage ignore=` | a Dockerfile comment line, also inside a continued instruction | the 2.15.1 binary; [Pragma.hs](https://github.com/hadolint/hadolint/blob/v2.15.1/src/Hadolint/Pragma.hs) |
-| oxlint | `eslint-disable`, `oxlint-disable`, each also with `-line` or `-next-line` | the start of a `//` or `/* */` comment | the 1.71.0 binary; [disable_directives.rs](https://github.com/oxc-project/oxc/blob/oxlint_v1.71.0/crates/oxc_linter/src/disable_directives.rs) |
+| oxlint | `eslint-disable`, `oxlint-disable`, each also with `-line` or `-next-line` | the start of a `//` or `/* */` comment | the 1.86.0 binary; [disable_directives.rs](https://github.com/oxc-project/oxc/blob/oxlint_v1.86.0/crates/oxc_linter/src/disable_directives.rs) |
 | golangci | `//nolint`; a comment that says `code generated`, `do not edit` or `autogenerated file` in any case; gosec's `#nosec` and `//gosec:disable` | a `//` comment for `//nolint`; a comment before the `package` line for the generated-file words, which skip the whole file; the start of a comment line for `#nosec` | source only: [nolint_filter.go](https://github.com/golangci/golangci-lint/blob/v2.12.2/pkg/result/processors/nolint_filter.go), [exclusion_generated_file_matcher.go](https://github.com/golangci/golangci-lint/blob/v2.12.2/pkg/result/processors/exclusion_generated_file_matcher.go), [gosec analyzer.go](https://github.com/securego/gosec/blob/v2.26.1/analyzer.go) |
 | rubocop | `# rubocop:disable` and `# rubocop:todo` with a cop name or `all` | a Ruby comment, `=begin` blocks included | source only: [directive_comment.rb](https://github.com/rubocop/rubocop/blob/v1.69.2/lib/rubocop/directive_comment.rb) |
 
@@ -101,22 +126,25 @@ The comments are found by a small reader per comment family, not a full parser. 
 - Runs when: a `.py` or `.pyi` file changed.
 - Needs: nothing. 9.9 MB on Apple Silicon, 11.2 MB on Linux x64.
 - Reads the repo's own ruff settings. It runs with fixes and its cache switched off, so it changes no file.
+- In a Django, FastAPI or Airflow project it adds ruff's `DJ`, `FAST` or `AIR` rules with `--extend-select`, on top of the repo's own selection. ruff applies a command-line selection after the repo's settings, so an `ignore` there does not take these rules off again; a `# noqa`, `per-file-ignores` and `review.disabled_rules` (such as `ruff:DJ001`) do.
 - Sends: nothing.
 
 ## oxlint
 
-- Version: 1.71.0.
+- Version: 1.86.0.
 - Runs when: a `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts` or `.cts` file changed.
-- Needs: npm, which ships with Node. About 7.3 MB on Apple Silicon, 8.2 MB on Linux x64.
+- Needs: nothing. 5.3 MB on Apple Silicon, 6.1 MB on Linux x64.
 - Uses OpenQodex's own settings. A config file in the repo is not loaded.
+- In a React or React Native project it switches on oxlint's own react and jsx-a11y rules, and in a Next.js project its nextjs rules too. They are built into the binary. Where oxlint ran its react rules on every changed file, the review pattern for an incomplete `useEffect` dependency list is not handed to the reviewer: oxlint checks it (`react-hooks/exhaustive-deps`).
 - Sends: nothing.
 
 ## osv-scanner
 
-- Version: 1.9.2.
-- Runs when: one of these lockfiles changed: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `Cargo.lock`, `go.mod`, `go.sum`, `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `Gemfile.lock`, `composer.lock`, `pom.xml`, `gradle.lockfile`, `pubspec.lock`, `mix.lock`, `conan.lock`.
-- Needs: network access to osv.dev. 31.8 MB on Apple Silicon, 32.1 MB on Linux x64.
-- Sends: the names and versions of the dependencies in those lockfiles, to osv.dev. It never sends code.
+- Version: 2.6.0.
+- Runs when: one of these lockfiles changed: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, `uv.lock`, `pylock.toml`, a `.txt` file with `requirements` in its name, `Gemfile.lock`, `gems.locked`, `composer.lock`, `Cargo.lock`, `go.mod`, `pom.xml`, `gradle.lockfile`, `buildscript-gradle.lockfile`, `gradle/verification-metadata.xml`, `packages.lock.json`, `packages.config`, `<name>.deps.json`, `pubspec.lock`, `mix.lock`, `conan.lock`, `renv.lock`, `cabal.project.freeze`, `stack.yaml.lock`. Not `go.sum` or `package.json`: osv-scanner reads neither, and their change lands in `go.mod` or the lockfile beside them.
+- Needs: network access to osv.dev. 52.6 MB on Apple Silicon, 54.9 MB on Linux x64.
+- Sends: the names and versions of the dependencies in those lockfiles, to osv.dev. It never sends code. Its other lookups are switched off: no transitive resolution of a `pom.xml` through deps.dev (`--no-resolve`), no file hashes of vendored C and C++ code (`--experimental-disable-plugins directory`), no reachability analysis (`--no-call-analysis all`).
+- Advisories that osv-scanner groups as aliases of one another are one finding, under the group's first id.
 - `--offline` skips it. The report lists it as disabled.
 
 ## actionlint
@@ -136,7 +164,7 @@ The comments are found by a small reader per comment family, not a full parser. 
 ## shellcheck
 
 - Version: 0.10.0.
-- Runs when: a `.sh` or `.bash` file changed.
+- Runs when: a `.sh` or `.bash` file changed, or a file with no extension whose first line (`#!`) names sh, bash, dash or ksh, such as `bin/deploy` starting `#!/usr/bin/env bash`.
 - Needs: `xz` to unpack the download. 7.2 MB on Apple Silicon, 2.4 MB on Linux x64.
 - Sends: nothing.
 
@@ -153,8 +181,9 @@ The comments are found by a small reader per comment family, not a full parser. 
 ## brakeman
 
 - Version: 6.2.1.
-- Runs when: a Ruby or Rails file changed, and the repo has a `Gemfile` and an `app/` folder. The files are `.rb`, `.rake`, `.gemspec`, `.erb`, `.haml`, `.slim`, `Gemfile`, `Rakefile` and `config.ru`.
-- Needs: Ruby 2.7 or newer. It installs from RubyGems.
+- Runs when: a Ruby or Rails file changed inside a Rails app: a folder whose `Gemfile` or `Gemfile.lock` names `rails` or `railties` and that holds `config/application.rb` or `bin/rails`. The files are `.rb`, `.rake`, `.gemspec`, `.erb`, `.haml`, `.slim`, `Gemfile`, `Rakefile` and `config.ru`. A `Gemfile` and an `app/` folder alone prove nothing: a React Native app with Expo Router has both.
+- Runs in the Rails app's folder, wherever it sits in the repository, once per app the change touches. Its paths are rebased onto the repository root.
+- Needs: Ruby 3.0 or newer. It installs from RubyGems.
 - Uses OpenQodex's own settings. The repo's brakeman config is not loaded.
 - Sends: nothing.
 - Licence: the Brakeman Public Use License, which is not an open source licence. OpenQodex does not bundle brakeman. It downloads brakeman at run time onto your machine. Read the licence before you use it, or switch it off with `scanners.disable: [brakeman]`.
@@ -162,7 +191,8 @@ The comments are found by a small reader per comment family, not a full parser. 
 ## rubocop
 
 - Version: 1.69.2, with rubocop-rails 2.28.0 and rubocop-performance 1.23.0.
-- Runs when: a `.rb`, `.rake` or `.gemspec` file, a `Gemfile` or a `Rakefile` changed.
+- Runs when: a `.rb`, `.rake` or `.gemspec` file or a `Rakefile` changed. Not a `Gemfile` alone: it declares gems, and the cops written for it are outside the Lint, Security and Performance cops OpenQodex keeps.
+- Loads the Rails cops only for a file in a Rails app (see brakeman).
 - Needs: Ruby 2.7 or newer. It installs from RubyGems.
 - Uses OpenQodex's own settings. A `.rubocop.yml` in the repo is not loaded, because it can load Ruby code.
 - Sends: nothing.

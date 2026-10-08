@@ -19,7 +19,8 @@ beforeAll(() => {
 beforeAll(() => {
   if (process.env.OPENQODEX_E2E_OFFLINE === "1" || installed()) return;
   mkdirSync(toolsHome, { recursive: true });
-  const result = run("doctor-install", root, ["doctor", "--install"], { tools: toolsHome, timeout: 1_200_000 });
+  // --all-scanners: every scanner, whatever this repository's own files call for.
+  const result = run("doctor-install", root, ["doctor", "--install", "--all-scanners"], { tools: toolsHome, timeout: 1_200_000 });
   if (result.status !== 0) throw new Error(`doctor --install exited ${result.status}: ${result.stderr}`);
 }, 1_200_000);
 afterAll(printReceipt);

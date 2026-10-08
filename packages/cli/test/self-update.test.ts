@@ -15,7 +15,23 @@
 //  6. The "updated" notice prints twice.
 // 11. Old runtimes are deleted while they are the baked-in, current or previous one.
 // 12. Rollback leaves the launcher pointing at a missing runtime.
-// 13. --rollback does not turn updating off.
+// 13. --rollback turns updating off, so the release after the bad one never
+//     comes; or it leaves the rolled-back release eligible again. (Reverses
+//     the plan's R9, 2026-10-07: rollback skips the version, updates stay on.)
+// 21. A rollback to a runtime that cannot read skip_version leaves updates
+//     on, and that runtime installs the release just rolled back from
+//     (tests/e2e/self-update.test.ts, with the real 0.7.1).
+// 22. A background switch leaves old runtimes behind for good: only init and
+//     a foreground update pruned them. (Reverses the plan's R7, 2026-10-07.)
+// 23. A worker whose own version is no longer the active one (a rollback ran
+//     after the command that started it) selects or activates with its own
+//     contract against another version's record.
+// 24. skip_version written while a release downloads does not stop that
+//     release from being activated.
+// 25. A release of another contract than the worker keeps is activated
+//     when the gate was passed before the boundary.
+// 26. A release's code runs (its --version) before its own package.json is
+//     compared with the contract the registry claimed.
 // 14. Finalize after an activation runs the new version on an old brief.
 // 15. Finalize executes a path taken from the manifest.
 // 16. The brief's finalize command names a runner other than the launcher,
@@ -24,6 +40,8 @@
 // 17. A finalize handed to another version hands off again.
 // 18. An inherited OPENQODEX_FINALIZE_HANDOFF stops a legitimate handoff.
 // 19. finalize --run hands the older runtime both --run and a findings path.
+// 20. A release whose own package.json declares another contract than the
+//     registry said is activated: the gate would rest on unsigned metadata.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -37,6 +55,11 @@ const NEWER = "0.99.0";
 const NOTICE = /openqodex updated to/;
 const DAY = 24 * 60 * 60 * 1000;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// The contract this build declares, as the registry would report it.
+const CONTRACT = (() => {
+  const p = JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { openqodex: { agentContract: number; configFormat: number } };
+  return { agent: p.openqodex.agentContract, config: p.openqodex.configFormat };
+})();
 
 // The environment of a developer's laptop: no CI, no switch set.
 function laptop(s: Sandbox, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -156,16 +179,21 @@ describe("what the command prints and returns", () => {
 
 // A worker's last step for a second real runtime, in a child process that
 // imports this repo's worker module (bundle.ts): the copy is unpacked where
-// the worker unpacks, then activated through the commit boundary.
-async function activateCopy(s: Sandbox, to: string, from: string): Promise<void> {
+// the worker unpacks, then activated through the commit boundary, as a
+// worker of version `running` (default `from`) that keeps contract `keep`.
+// `said`: the contract the registry would have said the release declares.
+type Activation = { said?: unknown; outcome?: string; running?: string; keep?: unknown };
+async function activateCopy(s: Sandbox, to: string, from: string, o: Activation = {}): Promise<string> {
   const tmp = join(s.oqHome, "runtime", `${to}.tmp-test`);
   const pkg = join(tmp, "unpacked", "package");
   cpSync(join(s.oqHome, "runtime", version), pkg, { recursive: true });
   const bin = join(pkg, "dist/bin.js");
   writeFileSync(bin, readFileSync(bin, "utf8").replaceAll(`"${version}"`, `"${to}"`));
-  const code = `const m = await import(${JSON.stringify(child)}); const r = await m.activateUnpacked({ home: process.env.H, version: ${JSON.stringify(to)}, from: ${JSON.stringify(from)}, tmp: ${JSON.stringify(tmp)}, env: process.env, wait: 0 }); process.stdout.write(JSON.stringify(r));`;
+  const opts = { version: to, from, tmp, wait: 0, contract: o.said ?? CONTRACT, running: o.running ?? from, ...(o.keep === undefined ? {} : { keep: o.keep }) };
+  const code = `const m = await import(${JSON.stringify(child)}); const r = await m.activateUnpacked({ ...${JSON.stringify(opts)}, home: process.env.H, env: process.env }); process.stdout.write(JSON.stringify(r));`;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...laptop(s), H: s.oqHome }, encoding: "utf8" });
-  expect(r.stdout, r.stderr).toMatch(/"outcome":"activated"/);
+  expect(r.stdout, r.stderr).toMatch(new RegExp(`"outcome":"${o.outcome ?? "activated"}"`));
+  return r.stdout;
 }
 
 let child = "";
@@ -202,16 +230,100 @@ describe("runtimes kept by init", () => {
   });
 });
 
+describe("the contract a release declares", () => {
+  it("a release whose own package.json declares another contract than the registry said is skipped, and the launcher stays (failure 20)", async () => {
+    const s = installed();
+    await activateCopy(s, NEWER, version, { said: { agent: CONTRACT.agent + 1, config: CONTRACT.config }, outcome: "skip" });
+    expect(current(s)).toBe(version);
+    expect(existsSync(join(s.oqHome, "runtime", NEWER))).toBe(false);
+  }, 120_000);
+});
+
+describe("a worker that outlives the version that started it", () => {
+  it("exits without writing when its own version is not the active one (failure 23)", () => {
+    const s = installed();
+    copyRuntime(s, NEWER);
+    // A rollback, or another switch, ran after the command that started this worker.
+    writeFileSync(join(s.oqHome, "runtime/current"), `${NEWER}\n${version}\n`);
+    const r = direct(s, ["__update"]);
+    expect(r.status).toBe(0);
+    expect(existsSync(join(s.oqHome, "update.json"))).toBe(false);
+  });
+
+  it("is refused at the boundary when its own version is not the active one (failure 23)", async () => {
+    const s = installed();
+    const out = await activateCopy(s, NEWER, version, { running: "0.98.0", outcome: "refused" });
+    expect(out).toMatch(/0\.98\.0/);
+    expect(current(s)).toBe(version);
+  }, 120_000);
+
+  it("is refused at the boundary when skip_version was written while it downloaded (failure 24)", async () => {
+    const s = installed();
+    writeFileSync(join(s.oqHome, "config.yaml"), `skip_version: ${NEWER}\n`);
+    const out = await activateCopy(s, NEWER, version, { outcome: "refused" });
+    expect(out).toMatch(/skip_version/);
+    expect(current(s)).toBe(version);
+    expect(existsSync(join(s.oqHome, "runtime", NEWER))).toBe(false);
+  }, 120_000);
+
+  it("is refused at the boundary when the release changes the contract it keeps (failure 25)", async () => {
+    const s = installed();
+    await activateCopy(s, NEWER, version, { keep: { agent: CONTRACT.agent + 1, config: CONTRACT.config }, outcome: "refused" });
+    expect(current(s)).toBe(version);
+  }, 120_000);
+});
+
+describe("a release's own package.json", () => {
+  it("is compared with the contract the registry claimed before any of its code runs (failure 26)", () => {
+    const s = installed();
+    // The real package, as a tarball, declaring another contract than the
+    // registry claims and printing another version than it is unpacked as:
+    // whichever check comes first names itself.
+    const dir = join(s.root, "tarball");
+    cpSync(join(s.oqHome, "runtime", version), join(dir, "package"), { recursive: true });
+    const pkg = JSON.parse(readFileSync(join(dir, "package/package.json"), "utf8")) as Record<string, unknown>;
+    pkg.openqodex = { agentContract: CONTRACT.agent + 1, configFormat: CONTRACT.config };
+    writeFileSync(join(dir, "package/package.json"), JSON.stringify(pkg));
+    expect(spawnSync("tar", ["-czf", join(s.root, "release.tgz"), "-C", dir, "package"]).status).toBe(0);
+    const code = `const m = await import(${JSON.stringify(child)}); try { await m.unpackRelease(process.env.H, "0.99.0", (await import("node:fs")).readFileSync(process.env.T), ${JSON.stringify(CONTRACT)}); process.stdout.write("unpacked"); } catch (e) { process.stdout.write(String(e.message)); }`;
+    const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...laptop(s), H: s.oqHome, T: join(s.root, "release.tgz") }, encoding: "utf8" });
+    expect(r.stdout, r.stderr).toMatch(/declares contract agent 2, config 1, the registry agent 1, config 1/);
+    expect(r.stdout).not.toMatch(/--version/);
+    expect(existsSync(join(s.oqHome, "runtime", "0.99.0"))).toBe(false);
+  });
+});
+
+describe("runtimes kept by a background switch", () => {
+  it("the switch removes openqodex runtimes older than 7 days except the baked-in, current and previous ones (failure 22)", async () => {
+    const s = installed();
+    const rt = (v: string) => join(s.oqHome, "runtime", v);
+    for (const v of ["0.0.5", "0.0.6", "0.0.8"]) copyRuntime(s, v);
+    for (const v of [version, "0.0.5", "0.0.8"]) age(rt(v), 8);
+    await activateCopy(s, NEWER, version);
+    expect(current(s)).toBe(NEWER);
+    expect(existsSync(rt(version)), "baked-in and previous").toBe(true);
+    expect(existsSync(rt(NEWER)), "current").toBe(true);
+    expect(existsSync(rt("0.0.6")), "younger than 7 days").toBe(true);
+    expect(existsSync(rt("0.0.5"))).toBe(false);
+    expect(existsSync(rt("0.0.8"))).toBe(false);
+  }, 120_000);
+});
+
 describe("rollback", () => {
-  it("points back at the previous runtime and turns updating off (failures 12 and 13)", async () => {
+  it("points back at the previous runtime, keeps updates on and skips the release it left (failures 12 and 13)", async () => {
     const s = installed();
     await activateCopy(s, NEWER, version);
     const r = launch(s, ["update", "--rollback"]);
     expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`${NEWER} and every older release`);
     expect(current(s)).toBe(version);
     expect(launch(s, ["--version"]).stdout.trim()).toBe(version);
-    expect(readFileSync(join(s.oqHome, "config.yaml"), "utf8")).toMatch(/^update: off$/m);
-    expect(launch(s, ["update", "--status"]).stdout).toMatch(/off/);
+    const config = readFileSync(join(s.oqHome, "config.yaml"), "utf8");
+    expect(config).toMatch(new RegExp(`^skip_version: ${NEWER.replaceAll(".", "\\.")}$`, "m"));
+    expect(config).not.toMatch(/^update:/m);
+    const status = launch(s, ["update", "--status"]).stdout;
+    expect(status).toMatch(/^updates +on$/m);
+    expect(status).toMatch(new RegExp(`^skipped +${NEWER.replaceAll(".", "\\.")} and every older release`, "m"));
   }, 120_000);
 
   it("refuses when the previous runtime is gone and leaves the record alone (failure 12)", () => {

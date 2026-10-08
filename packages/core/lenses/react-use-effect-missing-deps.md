@@ -9,6 +9,10 @@ triggers:
     - "**/*.jsx"
   hunk_regex: "\\b(useEffect|useMemo|useCallback|useLayoutEffect)\\s*\\("
 confidence_floor: 0.75
+# oxlint checks this with its react plugin, switched on for a React project;
+# then this lens is not handed to the reviewer.
+covered_by:
+  - "oxlint:react-hooks/exhaustive-deps"
 ---
 
 A `useEffect` / `useMemo` / `useCallback` hook reads a value from
