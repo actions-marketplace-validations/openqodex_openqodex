@@ -30,9 +30,10 @@ import { join } from "node:path";
 import { buildGraph, floorReasons, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { graphOf } from "../src/session.js";
-import { at, callSites, commitAll, makeRepo, symbol } from "./helpers.js";
+import { at, callSites, commitAll, makeHome, makeRepo, symbol } from "./helpers.js";
 
-const repos: string[] = [];
+const home = makeHome();
+const repos: string[] = [home];
 afterAll(() => {
   for (const r of repos) rmSync(r, { recursive: true, force: true });
 });
@@ -113,7 +114,7 @@ describe("a manifest or tsconfig the graph cannot read is said, never dropped", 
       "packages/app/src/main.ts": 'import { util } from "@app/util";\nexport function run() {\n  return util();\n}\n',
     };
     const root = repo(files);
-    const opened = await openStore(root);
+    const opened = await openStore(root, { home });
     if (!opened.ok) throw new Error(opened.reason);
     const st = opened.store;
     const g = await buildGraph({ repoRoot: root, store: st, mode: "retained" });

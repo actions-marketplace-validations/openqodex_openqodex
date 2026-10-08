@@ -16,15 +16,16 @@ import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { buildGraph, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
-import { callSites, commitAll, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
 
-const repos: string[] = [];
+const home = makeHome();
+const repos: string[] = [home];
 afterAll(() => {
   for (const r of repos) rmSync(r, { recursive: true, force: true });
 });
 
 async function storeOf(root: string) {
-  const opened = await openStore(root);
+  const opened = await openStore(root, { home });
   if (!opened.ok) throw new Error(opened.reason);
   return opened.store;
 }
