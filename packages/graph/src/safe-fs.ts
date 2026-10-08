@@ -3,6 +3,7 @@
 // links, and every read is bounded.
 import { isAbsolute, resolve } from "node:path";
 import { FolderReader, type EntryResult } from "@openqodex/core";
+import { isFrameworkFileFacts } from "./frameworks/facts.js";
 import type { FileFacts } from "./types.js";
 
 // Repo-relative reads, each decided by what the filesystem holds at the
@@ -161,6 +162,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
     isList(v.imports, isImport, 20_000) &&
     isList(v.exportsLocal, (e) => isObj(e) && isStr(e.local) && isStr(e.exported) && (e.line === undefined || isInt(e.line)), 20_000) &&
     (v.defaultExport === null || isStr(v.defaultExport)) &&
-    (v.goPackage === null || isStr(v.goPackage))
+    (v.goPackage === null || isStr(v.goPackage)) &&
+    (v.frameworks === undefined || isFrameworkFileFacts(v.frameworks))
   );
 }

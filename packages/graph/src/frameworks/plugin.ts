@@ -59,10 +59,14 @@ export const PLUGIN_API_VERSION = 1;
 // Everything else on a fact is the plugin's own plain JSON.
 export type FrameworkFactBase = { kind: string; line: number; column: number };
 
-// The most facts one plugin keeps from one file. Past it the plugin emits
-// one fact of kind "overflow" with `omitted` set, and resolve turns it into
-// an unknown with cause "fan-out-capped".
+// The most facts one plugin keeps from one file. Past it the core keeps
+// the first ones and adds one fact of kind "overflow" with `omitted` set;
+// a plugin whose `facts` throws on a file gets one fact of kind "error".
+// Both kinds are reserved: the core turns them into unknowns (cause
+// "fan-out-capped" and "file-not-parsed") and never hands them to the
+// plugin's `isFact` or `resolve`.
 export const MAX_FACTS_PER_FILE = 2000;
+export const RESERVED_FACT_KINDS: ReadonlySet<string> = new Set(["overflow", "error"]);
 
 // The facts of every plugin for one file, as cached beside the language
 // facts (FileFacts.frameworks): plugin id to its facts. A plugin that found

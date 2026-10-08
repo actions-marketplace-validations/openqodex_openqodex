@@ -3,6 +3,8 @@
 // JSON lines (index/*.jsonl). Reading an index back gives the same Graph
 // the build made: retained equals fresh (test/session.test.ts checks).
 import type { ProjectModel } from "../discovery/projects.js";
+import { FRAMEWORK_DATA_VERSION } from "../frameworks/stage.js";
+import type { FrameworkData } from "../frameworks/stage.js";
 import { projectFolder } from "../resolve.js";
 import type { Graph, GraphEdge, GraphNode, GraphSite, GraphStatus, Miss, UnknownSite } from "../types.js";
 import type { OpenGeneration } from "./types.js";
@@ -62,7 +64,8 @@ const parseLines = <T>(text: string | null): T[] | null => {
 // index/strings.json and rows are arrays that name strings by their
 // number. Measured on vscode: the plain JSON lines were 552 MB, past the
 // folder's 512 MB bound on their own.
-export const INDEX_FORMAT = 2;
+// 3: the framework layer's data (index/frameworks.json).
+export const INDEX_FORMAT = 3;
 
 type Row = (number | number[])[];
 
@@ -117,6 +120,7 @@ export function writeIndex(g: Graph): Record<string, string> {
     "index/misses.jsonl": lines(misses),
     "index/unknowns.jsonl": lines(unknowns),
     "index/status.json": JSON.stringify(g.status),
+    "index/frameworks.json": JSON.stringify(g.frameworks ?? null),
   };
 }
 
@@ -161,7 +165,13 @@ export function readIndex(gen: OpenGeneration): (Omit<Graph, "repoRoot"> & { rep
       if (Array.isArray(r[9])) u.candidates = (r[9] as number[]).map(d.s);
       return u;
     });
-    return assemble(nodes, edgeRows.map(d.edge), importerRows.map(d.edge), misses, unknowns, status, deserializeModel(projects.model), projects.goModules);
+    const graph = assemble(nodes, edgeRows.map(d.edge), importerRows.map(d.edge), misses, unknowns, status, deserializeModel(projects.model), projects.goModules);
+    const frameworks = JSON.parse(gen.read("index/frameworks.json") ?? "null") as FrameworkData | null;
+    if (frameworks !== null) {
+      if (typeof frameworks !== "object" || frameworks.version !== FRAMEWORK_DATA_VERSION || !Array.isArray(frameworks.edges) || !Array.isArray(frameworks.entities)) return null;
+      graph.frameworks = frameworks;
+    }
+    return graph;
   } catch {
     return null;
   }

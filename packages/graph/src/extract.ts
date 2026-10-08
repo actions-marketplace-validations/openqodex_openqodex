@@ -13,7 +13,8 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 // 9: body hashes on definitions, computed-member calls as dynamic call
 // sites, and the line of each local export. 10: predefined TypeScript
 // types (`string`, `number[]`) on receivers.
-export const EXTRACTOR_VERSION = 12;
+// 13: the framework plugins' facts beside the language facts (FileFacts.frameworks).
+export const EXTRACTOR_VERSION = 13;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
