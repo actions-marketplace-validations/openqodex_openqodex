@@ -19,7 +19,7 @@
 //    written, while `configs/base.json` answered) appears and now wins, and
 //    the old index is loaded, because only files that were read count.
 // 9. A folder no file of git's list names (an empty folder a `file:`
-//    dependency's path walks through) becomes a link, the placement of the
+//    dependency's path leads to) becomes a link, what the graph says of the
 //    dependency changes, and the old index is loaded, because no listed
 //    file changed.
 import { afterAll, describe, expect, it } from "vitest";
@@ -158,23 +158,24 @@ describe("the retained index", () => {
     expect(callSites(second, symbol(second, "other/x.ts", "f"))).toEqual(["src/use.ts:3"]);
   });
 
-  it("is not loaded after a folder a file: path walks through becomes a link (9)", async () => {
+  it("is not loaded after a folder a file: path leads to becomes a link (9)", async () => {
     const root = makeRepo({
       "package.json": '{ "name": "root", "private": true, "workspaces": ["packages/*"] }\n',
       "packages/shared/package.json": '{ "name": "shared", "main": "./index.ts" }\n',
       "packages/shared/index.ts": "export function helper() {\n  return 1;\n}\n",
-      "packages/b/package.json": '{ "name": "b", "dependencies": { "shared": "file:../pivot/../shared" } }\n',
+      "packages/b/package.json": '{ "name": "b", "dependencies": { "shared": "file:../pivot" } }\n',
       "packages/b/src/use.ts": 'import { helper } from "shared";\nexport function run() {\n  return helper();\n}\n',
     });
     repos.push(root);
     mkdirSync(join(root, "packages/pivot"));
     const st = await storeOf(root);
+    const noteAt = (g: Graph) => g.unknowns.find((u) => u.file === "packages/b/src/use.ts" && u.name === "helper")?.note ?? "";
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
-    expect(callSites(first, symbol(first, "packages/shared/index.ts", "helper"))).toEqual(["packages/b/src/use.ts:3"]);
+    expect(noteAt(first)).not.toMatch(/symbolic link/);
     rmdirSync(join(root, "packages/pivot"));
     symlinkSync(join(root, "packages/shared"), join(root, "packages/pivot"));
     const second = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(loadedIndex(second)).toBe(false);
-    expect(callSites(second, symbol(second, "packages/shared/index.ts", "helper"))).toEqual([]);
+    expect(noteAt(second)).toMatch(/packages\/pivot, a symbolic link/);
   });
 });

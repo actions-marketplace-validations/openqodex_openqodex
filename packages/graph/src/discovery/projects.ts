@@ -537,18 +537,13 @@ function placePath(folders: FolderReader, dir: string, spec: string, members: re
     at.push(name);
     return null;
   };
-  // The declaring folder itself first, from the root down.
-  for (const name of dir === "" ? [] : dir.split("/")) {
-    const stop = down(name);
-    if (stop !== null) return stop;
-  }
-  for (const name of rest.split("/")) {
-    if (name === "" || name === ".") continue;
-    if (name === "..") {
-      if (at.length === 0) return "outside";
-      at.pop();
-      continue;
-    }
+  // As npm and pnpm do (path.resolve), `..` is taken by its spelling: it
+  // removes the name before it, whatever that name is on disk. The folders
+  // the path then names are walked from the root one at a time, a link
+  // anywhere on them refused.
+  const joined = posix.normalize(posix.join(dir === "" ? "." : dir, rest));
+  if (joined === ".." || joined.startsWith("../")) return "outside";
+  for (const name of joined === "." ? [] : joined.split("/")) {
     const stop = down(name);
     if (stop !== null) return stop;
   }

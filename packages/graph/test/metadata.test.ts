@@ -29,11 +29,11 @@
 // 10. A manifest over the 1 MB cap is read in the base version (up to the
 //    16 MB lockfile cap) but not in the changed one, so a change to it
 //    reports every consumer of the package as broken.
-// 11. A `file:` path is placed by its spelling, `..` taken off the name
-//    before it: with `pivot` a link to a folder outside the repository,
-//    `file:../pivot/../shared` binds certainly to the workspace package
-//    `shared`, though the system walking that path reaches the folder
-//    beside the link's target.
+// 11. A `file:` path is placed differently from npm and pnpm, which take
+//    `..` by its spelling (path.resolve): with `pivot` a link to a folder
+//    outside the repository, `file:../pivot/../shared` links the workspace
+//    package `shared`, and a graph that follows the link instead loses the
+//    calls into it.
 // 12. A `file:` path whose last folder is itself a link to the workspace
 //    package's folder is said to lead to a folder that is not the
 //    package's: the note is false, and the link is never named.
@@ -130,7 +130,7 @@ describe("file: dependencies bind by where their path leads", () => {
     ]);
   });
 
-  it("never binds a file: dependency certainly when its path passes through a link, even one a later .. climbs back out of (11)", async () => {
+  it("takes .. in a file: path by its spelling, as npm and pnpm do, so a link that .. climbs back out of changes nothing (11)", async () => {
     const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
     repos.push(outside);
     // Through the link, packages/pivot/.. is `outside`, which holds a package of the same name.
@@ -145,10 +145,8 @@ describe("file: dependencies bind by where their path leads", () => {
     const root = repo(files);
     symlinkSync(join(outside, "deep"), join(root, "packages/pivot"));
     const g = await buildGraph({ repoRoot: root, store: null });
-    expect(callSites(g, symbol(g, "packages/shared/src/index.ts", "helper"))).toEqual([]);
-    expect(unknownAt(g, at(files, "packages/web/src/main.ts", "CALL"))).toEqual([
-      { cause: "unsupported-rule", note: "packages/web/package.json declares shared as file:../pivot/../shared, whose path passes through packages/pivot, a symbolic link, which the graph does not follow" },
-    ]);
+    expect(callSites(g, symbol(g, "packages/shared/src/index.ts", "helper"))).toEqual([at(files, "packages/web/src/main.ts", "CALL")]);
+    expect(unknownAt(g, at(files, "packages/web/src/main.ts", "CALL"))).toEqual([]);
   });
 
   it("names the link when a file: dependency's folder is itself a link to the workspace package's folder, and binds nothing certainly through it (12)", async () => {
