@@ -408,6 +408,43 @@
           "binaryPath": "zizmor"
         }
       }
+    },
+    "squawk": {
+      "version": "2.66.0",
+      "method": "github-release",
+      "repo": "sbdchd/squawk",
+      "tag": "v2.66.0",
+      "binary": "squawk",
+      "assets": {
+        "darwin-arm64": {
+          "name": "squawk-darwin-arm64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-darwin-arm64",
+          "sha256": "d273f3a234b81b8d540b2cdf1b07ed84f719a3ab11b47d6f3efe96baaf21b40b",
+          "archive": "none",
+          "binaryPath": "squawk-darwin-arm64"
+        },
+        "darwin-x64": {
+          "name": "squawk-darwin-x64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-darwin-x64",
+          "sha256": "e361365762a6bf11abbef746d29ff46ac0b4feba43df2f0570595f06c67d7daf",
+          "archive": "none",
+          "binaryPath": "squawk-darwin-x64"
+        },
+        "linux-x64": {
+          "name": "squawk-linux-x64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-linux-x64",
+          "sha256": "e7965f8146b53cfa7a4625ceecfea5c6aeb35add39132210aa60b11ae180b9f4",
+          "archive": "none",
+          "binaryPath": "squawk-linux-x64"
+        },
+        "linux-arm64": {
+          "name": "squawk-linux-arm64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-linux-arm64",
+          "sha256": "04455267bb895de1568dc24e52eb062b311096ad614c3e15a77cf8a7b3483c2a",
+          "archive": "none",
+          "binaryPath": "squawk-linux-arm64"
+        }
+      }
     }
   }
 }

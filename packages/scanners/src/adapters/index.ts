@@ -18,6 +18,7 @@ import { ruff } from "./ruff.js";
 import { semgrep } from "./semgrep.js";
 import { shellcheck } from "./shellcheck.js";
 import { sqllint } from "./sql-lint.js";
+import { squawk, SQUAWK_CONFIG } from "./squawk.js";
 import { zizmor, ZIZMOR_CONFIGS } from "./zizmor.js";
 
 export type Adapter = {
@@ -59,6 +60,8 @@ export const ADAPTERS: readonly Adapter[] = [
   gitleaks,
   // In-process SQL / Postgres analyzer. No-op without changed .sql files.
   sqllint,
+  // Postgres migration safety: locks, rewrites, lost data.
+  squawk,
   // Dependency vulnerabilities. No-op unless a lockfile changed.
   osvScanner,
   // GitHub Actions workflows under .github/workflows/.
@@ -112,4 +115,6 @@ export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFil
   actionlint: [{ path: ".github/actionlint.yaml" }, { path: ".github/actionlint.yml" }],
   // zizmor.ts: the first of these at the repository root, passed by path.
   zizmor: ZIZMOR_CONFIGS.map((path) => ({ path })),
+  // squawk.ts: the root .squawk.toml, passed by path.
+  squawk: [{ path: SQUAWK_CONFIG }],
 };

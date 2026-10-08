@@ -122,6 +122,18 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
   // a quoted value too. The closing `]` and what follows it are not checked,
   // so this is wider than zizmor, never narrower.
   zizmor: { family: "line", markers: [{ name: "# zizmor: ignore[...]", pattern: /(?<at># zizmor: ignore\[)/dg }] },
+  // A `--` or `/* */` comment whose text starts, after blanks, with
+  // squawk-ignore or squawk-ignore-file (crates/squawk_linter/src/ignore.rs,
+  // ignore_rule_info), or with squawk-disable-assume-in-transaction, which
+  // changes what squawk reports for the whole file. Case-sensitive. A bare
+  // `squawk-ignore` with no rule silences nothing in 2.66.0; it still counts.
+  squawk: {
+    family: "sql",
+    markers: [
+      { name: "-- {kw}", pattern: /^(?:--|\/\*)\s*(?<at>(?<kw>squawk-ignore(?:-file)?))/dg },
+      { name: "-- squawk-disable-assume-in-transaction", pattern: /^(?:--|\/\*)\s*(?<at>squawk-disable-assume-in-transaction)/dg },
+    ],
+  },
 };
 
 export type MarkerHit = { scanner: BuiltinScanner; line: number; name: string };
