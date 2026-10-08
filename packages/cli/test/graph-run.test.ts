@@ -3,12 +3,17 @@
 //    graph folder's lock stays busy, or the lease file cannot be written),
 //    and the error ends the whole review instead of the review going on
 //    without the lease.
+// 2. A secret the scanners found that sits in a symbol id (a file named
+//    after a key) is kept in the summary impact.json is written from, or
+//    in a file of the review's packet, because a field named `id` is
+//    exempt from the redaction.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_CONFIG, getChange } from "@openqodex/core";
+import { writePacket } from "@openqodex/graph";
 import { buildGraphRun } from "../src/pipeline.js";
 
 const dirs: string[] = [];
@@ -64,5 +69,32 @@ describe("the review's graph run", () => {
     expect(second.lease).toBeNull();
     expect(second.graph).not.toBeNull();
     expect(second.impact.callers.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a secret in a symbol id out of the graph summary and every packet file (2)", async () => {
+    const secret = ["sk", "live", "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2"].join("_");
+    const keyFile = `keys/${secret}.ts`;
+    const root = repo({ [keyFile]: "export function load() {\n  return 1;\n}\n", "use.ts": `import { load } from "./keys/${secret}";\nexport function run() {\n  return load();\n}\n` });
+    writeFileSync(join(root, keyFile), "export function load() {\n  return 2;\n}\n");
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const p = { repoRoot: root, workDir: root, config: structuredClone(DEFAULT_CONFIG), change, scan: null, secrets: [secret] };
+    const run = await buildGraphRun(p, { quiet: true } as never, false, false);
+    expect(run.graph).not.toBeNull();
+    expect(run.impact.touched.length).toBeGreaterThan(0);
+    expect(JSON.stringify(run.impact)).not.toContain(secret);
+    const snapshot = mkdtempSync(join(tmpdir(), "oq-graph-run-snapshot-"));
+    dirs.push(snapshot);
+    const packet = await writePacket({ root: snapshot, repoRoot: root, graph: run.graph as never, impact: run.impact, baseSha: change.baseSha, secrets: [secret] });
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else files.push(path);
+      }
+    };
+    walk(join(snapshot, packet.dir));
+    expect(files.length).toBeGreaterThan(0);
+    for (const f of files) expect(readFileSync(f, "utf8"), f).not.toContain(secret);
   });
 });
