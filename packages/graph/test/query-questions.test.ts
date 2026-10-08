@@ -28,7 +28,7 @@
 //     the base method, or a subclass two levels down is missed.
 // 13. Every question, asked of every corpus repository, breaks the answer
 //     shape: no graph block, no unknown block, a count that is neither a
-//     number nor null, an error with items.
+//     number nor null, an error with items, or a zero worded as "unused".
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -135,6 +135,8 @@ describe("every question, against every corpus repository (13)", () => {
         expect(a.graph.status, label).toMatch(/^(ok|partial)$/);
         expect(typeof a.unknown.floor, label).toBe("boolean");
         for (const v of Object.values(a.counts)) expect(v === null || Number.isInteger(v), label).toBe(true);
+        // A zero is never worded as "unused": the floor says what may be missing.
+        expect(JSON.stringify(a), label).not.toMatch(/\bunused\b/i);
         if (a.error) {
           expect(a.items, label).toEqual([]);
           expect(["ambiguous", "not-found", "bad-request", "generation-unavailable", "unsupported", "refused"], label).toContain(a.error.code);
