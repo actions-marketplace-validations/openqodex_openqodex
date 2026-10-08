@@ -28,6 +28,8 @@ import { getChange } from "@openqodex/core";
 import type { ImpactSite, ImpactSummary } from "@openqodex/core";
 import { buildGraph, detectImpact, validateEvidence } from "../src/index.js";
 import type { EvidenceKind, Graph } from "../src/index.js";
+import { scoreFrameworks } from "./frameworks.js";
+import type { FrameworkExpected } from "./frameworks.js";
 
 // A symbol is `<file>#<name>` or `<file>#<Owner>.<name>`, with an optional
 // `@<line>` when two definitions of one file share the name. A site is
@@ -47,6 +49,7 @@ export type Expected = {
   external?: { min: number; sites?: string[] };
   notBroken?: string[]; // consumer sites never listed as broken
   allRead?: boolean; // every eligible file was read
+  frameworks?: FrameworkExpected; // what a framework plugin must and must not produce (corpus/frameworks.ts)
 };
 
 export type Ratio = { hit: number; of: number };
@@ -300,6 +303,20 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
     if (graph.status.notRead.length === 0) controls.hit++;
     else failures.push(`files not read: ${graph.status.notRead.map((n) => `${n.file} (${n.reason})`).join(", ")}`);
   }
+
+  // ---------- frameworks ----------
+  // Expected registrations, edges, roles and brief lines count as recall at
+  // their tier's place; validity, gaps and controls add to their own.
+  const fw = scoreFrameworks(expected.frameworks, graph, impact, matches);
+  recall.certain.of += fw.recall.of;
+  recall.certain.hit += fw.recall.hit;
+  validity.of += fw.validity.of;
+  validity.hit += fw.validity.hit;
+  gaps.of += fw.gaps.of;
+  gaps.hit += fw.gaps.hit;
+  controls.of += fw.controls.of;
+  controls.hit += fw.controls.hit;
+  failures.push(...fw.failures);
 
   const all = [precision, ...Object.values(recall), validity, gaps, cuts, controls];
   return {

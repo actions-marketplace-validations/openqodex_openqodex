@@ -32,7 +32,7 @@ export type FrameworkData = {
   version: number;
   plugins: PluginRun[];
   apps: (Detection & { plugin: string })[];
-  roles: RoleAssignment[];
+  roles: (RoleAssignment & { plugin: string })[];
   entities: Entity[];
   edges: FrameworkEdge[];
   unknowns: FrameworkUnknown[];
@@ -167,7 +167,7 @@ export function runFrameworks(input: StageInput): FrameworkData {
       edges.push(...deriveTestCalls(plugin.id, roles, index));
       if (apps.length === 0 && roles.length === 0 && result.entities.length === 0 && edges.length === 0) run.status = "not-detected";
       data.apps.push(...apps.map((a) => ({ ...a, plugin: plugin.id })));
-      data.roles.push(...roles);
+      data.roles.push(...roles.map((r) => ({ ...r, plugin: plugin.id })));
       data.entities.push(...result.entities);
       data.edges.push(...edges);
       data.unknowns.push(...dropped, ...result.unknowns);
