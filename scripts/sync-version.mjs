@@ -1,5 +1,5 @@
 // Writes the CLI package version into every file that pins it: the skill, its
-// plugin copies, the three plugin manifests, the plugin hook, and the agent
+// plugin copies, the three plugin manifests, the plugin hook and MCP server, and the agent
 // install line in the README and the quickstart. Run after `changeset
 // version`; the gate fails when any of them differs from the package version.
 // It also gives each release notice marked "next" (packages/cli/src/notices.ts)
@@ -17,6 +17,7 @@ for (const rel of [
   "plugins/claude-code/skills/openqodex/SKILL.md",
   "plugins/codex/skills/openqodex/SKILL.md",
   "plugins/claude-code/hooks/hooks.json",
+  "plugins/claude-code/.mcp.json",
   ".pre-commit-hooks.yaml",
   "README.md",
   "docs/quickstart.md",

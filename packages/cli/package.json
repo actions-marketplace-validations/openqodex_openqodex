@@ -70,6 +70,7 @@
     "@clack/prompts": "^1.8.1",
     "@openqodex/core": "workspace:*",
     "@openqodex/graph": "workspace:*",
+    "@openqodex/mcp": "workspace:*",
     "@openqodex/scanners": "workspace:*",
     "@sigstore/bundle": "5.0.0",
     "@sigstore/protobuf-specs": "0.5.2",

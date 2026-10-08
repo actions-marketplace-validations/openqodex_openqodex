@@ -7,7 +7,7 @@ import { noteInternalError, offer, takePending } from "./feedback.js";
 type CommandModule = { run: (args: string[]) => Promise<number> };
 
 // Each command is loaded only when it runs, so startup stays fast. `--help`
-// shows the four a person uses; the hidden ones stay callable: hooks, the
+// shows the five a person uses (init, review, update, trust, graph); the hidden ones stay callable: hooks, the
 // skill, the Action and pre-commit call them (docs/plumbing.md). `scan` is
 // what plain `review` does, kept by its own name for released hooks.
 const commands: Record<string, { summary: string; usage?: string; hidden?: true; load: () => Promise<CommandModule> }> = {
@@ -28,15 +28,18 @@ const commands: Record<string, { summary: string; usage?: string; hidden?: true;
   report: { summary: "Report a problem with OpenQodex as a GitHub issue", hidden: true, load: () => import("./commands/report.js") },
   config: { summary: "Rewrite the repo config for this version", usage: "migrate [--write]", hidden: true, load: () => import("./commands/config.js") },
   graph: {
-    summary: "Ask the code graph: callers, callees, importers, changes, unknowns (may change before 1.0)",
-    usage: "<build | status | search | symbol | callers | callees | importers | changes | unknowns | explain | capabilities> [<target>] [--json]",
-    hidden: true,
+    summary: "Ask the code graph: who calls this, what it calls, implementers, tests, paths, what a change reaches",
+    usage: "<question> [<target>] [--json]; `openqodex graph help` lists the questions",
     load: () => import("./commands/graph.js"),
   },
+  // The code graph's tools for an agent, over stdio: `init` registers it
+  // with each agent, which starts it; a person never runs it by hand.
+  mcp: { summary: "Serve the code graph's questions to an agent as MCP tools, over stdio", usage: "[--repo <dir>]", hidden: true, load: () => import("./commands/mcp.js") },
 };
 
-// The hook check must stay silent, and report shows its own offer.
-const NO_OFFER = new Set(["hook", "report"]);
+// The hook check must stay silent, report shows its own offer, and the MCP
+// server has no terminal: its standard output is the protocol.
+const NO_OFFER = new Set(["hook", "report", "mcp"]);
 
 function cwdOf(args: string[]): string {
   const i = args.findIndex((a) => a === "--cwd" || a.startsWith("--cwd="));
