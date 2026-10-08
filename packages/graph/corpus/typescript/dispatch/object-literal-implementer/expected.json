@@ -1,0 +1,48 @@
+{
+  "guards": "reaches a method of a module-level object literal typed by an interface from a call through that interface",
+  "callers": [
+    {
+      "to": "src/repo.ts#Repo.find",
+      "site": "src/use.ts:4",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/memory.ts#memoryRepo.find",
+      "site": "src/use.ts:4",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "src/repo.ts#Repo",
+      "site": "src/memory.ts:3",
+      "tier": "certain",
+      "kind": "implements"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "src/use.ts:4",
+      "candidates": ["src/memory.ts#memoryRepo.find"],
+      "omitted": 0
+    }
+  ],
+  "references": [
+    {
+      "to": "src/repo.ts#Repo.find",
+      "site": "src/memory.ts:4",
+      "kind": "overrides",
+      "tier": "certain"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/use.ts",
+      "line": 4,
+      "cause": "unsupported-rule"
+    }
+  ],
+  "floor": {
+    "src/memory.ts#memoryRepo.find": true
+  }
+}

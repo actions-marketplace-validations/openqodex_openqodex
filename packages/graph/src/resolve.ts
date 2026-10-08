@@ -286,8 +286,12 @@ export function createWorld(input: ResolveInput): World {
       names.add(path);
       if (d.kind === "method") {
         const key = classKey(family, path, d.owner ?? "");
-        if (family === "python" || d.static) push(nameIndex(methodsOn.s, key), d.name, id);
-        if (family === "python" || !d.static) push(nameIndex(methodsOn.i, key), d.name, id);
+        // A method of an object literal made a module runs on the module
+        // itself and on whatever value the literal is given to (an object
+        // typed by an interface it implements).
+        const both = family === "python" || (family === "js" && d.static === true && classes.get(key)?.ids.every((x) => defById.get(x)?.kind === "module") === true);
+        if (both || d.static) push(nameIndex(methodsOn.s, key), d.name, id);
+        if (both || !d.static) push(nameIndex(methodsOn.i, key), d.name, id);
       } else if (family === "go") {
         if (d.topLevel) push(nameIndex(pkgTop, pkgOf(path)), d.name, id);
       } else if (family === "ruby" && d.kind === "function") {
@@ -1886,8 +1890,9 @@ export function createWorld(input: ResolveInput): World {
       if (family !== "go") {
         f.defs.forEach((d, i) => {
           if (d.kind !== "method") return;
-          const b = basesOf(classKey(family, path, d.owner ?? ""));
-          const side: Side = d.static ? "s" : "i";
+          const key = classKey(family, path, d.owner ?? "");
+          const b = basesOf(key);
+          const side: Side = methodsOn.i.get(key)?.has(d.name) ? "i" : "s";
           b.keys.forEach((base, j) => {
             if (b.rels[j] === "extend") return;
             const hit = methodOn(base, d.name, side, 0);
