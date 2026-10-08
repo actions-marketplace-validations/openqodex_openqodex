@@ -1,13 +1,15 @@
 // The brief's "What this change reaches" block, rendered from the same
 // ImpactSummary the report carries (PLAN.md 3.4): coverage first, then the
 // symbols the change touched, removed or moved with the public names it
-// removed or bound elsewhere, then the callers by tier with their evidence,
-// then what the graph could not see near the change, then how to read it.
+// removed or bound elsewhere, then the callers by tier with their evidence
+// (certain, likely, then possible: a call through an interface or a base
+// type, a function value something may call), then the other uses of the
+// touched code, then what the graph could not see near the change.
 // Every cut names the packet file that holds the rest; the packet lies
 // inside the folder the reviewer reads, so following the brief never reads
 // outside it.
 import type { ImpactEdge, ImpactSite, ImpactSummary, ImpactSymbol } from "@openqodex/core";
-import { INLINE_SITES } from "./impact.js";
+import { INLINE_POSSIBLE, INLINE_SITES } from "./impact.js";
 import { TIER_RANK, weakest } from "./model/records.js";
 
 const MAX_TOUCHED = 25;
@@ -17,6 +19,7 @@ const MAX_EXPORTS = 12;
 const MAX_CONSUMERS = 8;
 const MAX_NEAR = 12;
 const MAX_FLOOR_SEEDS = 8;
+const MAX_REFERENCES = 20;
 
 function n(count: number, one: string, many = `${one}s`): string {
   return `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
@@ -37,10 +40,10 @@ export function symbolKey(id: string): string {
 const instruction = (packet: string | null) =>
   [
     "How to read this block. A change in behaviour to a touched symbol (its signature, return shape, errors, side effects or ordering) can break a caller outside the diff. Open the call sites that matter for this change and read them. Raise a finding only when a caller actually breaks, and anchor it on the changed line that breaks it.",
-    "\"certain\" means an import, a definition in the same scope or a known receiver type proves the call, and every step it rests on is proved. \"likely\" means a stated convention picked the one target; its note says which, and it is a lead to check, not a fact. \"possible\" means the call reaches one of several definitions and nothing picks one; each is listed with the same note.",
-    "A caller list marked as a floor may be short: the graph could not bind some calls (a value of unknown type, a callback, a computed member), or did not read some files. Zero callers on a floor never means unused.",
+    "\"certain\" means an import, a definition in the same scope or a known receiver type proves the call, and every step it rests on is proved. \"likely\" means a stated convention picked the one target; its note says which, and it is a lead to check, not a fact. \"possible\" means the call may run this code and nothing proves it does: a call through an interface or a base type that one of several implementations or overrides answers, or a function used as a value that a callee, an alias, a table or a returned value may call. A possible caller is a lead to check, never proof that the code runs, and never proof that nothing else does.",
+    "A caller list marked as a floor may be short: the graph could not bind some calls (a value of unknown type, a callback, a computed member), a call may reach the symbol only possibly, or some files were not read. Zero callers on a floor never means unused.",
     packet !== null
-      ? `Everything this block leaves out is in \`${packet}\`, inside the folder you read: \`index.md\` lists the files, \`callers/<key>.json\` holds every caller of a symbol, \`unknowns.json\` what the graph could not see. Reading them does not count as reading the changed lines.`
+      ? `Everything this block leaves out is in \`${packet}\`, inside the folder you read: \`index.md\` lists the files, \`callers/<key>.json\` holds every caller of a symbol with its tier, \`implementers/<key>.json\` what implements or overrides it, \`references/<key>.json\` where it is used as a value or a type, \`unknowns.json\` what the graph could not see. Reading them does not count as reading the changed lines.`
       : "",
   ]
     .filter((l) => l !== "")
@@ -54,6 +57,15 @@ function throughStep(site: ImpactSite, step: ImpactSite | null): ImpactSite {
   const notes = [site.note, step.note].filter((n): n is string => typeof n === "string" && n !== "");
   return { ...site, tier: weakest(site.tier, step.tier), note: notes.length > 0 ? [...new Set(notes)].join(" ") : null };
 }
+
+// A method as `Owner.name`, anything else by its name.
+function qualifiedOf(id: string, fallback: string): string {
+  const hash = id.indexOf("#");
+  const at = id.lastIndexOf("@");
+  return hash >= 0 && at > hash ? id.slice(hash + 1, at) : fallback;
+}
+
+const VERB: Record<string, string> = { calls: "calls", inherits: "extends", implements: "implements", dispatches_to: "may call", may_invoke: "may invoke" };
 
 function siteTier(site: ImpactSite): string {
   if (site.tier === "certain") return "certain";
@@ -94,13 +106,15 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
   }
 
   out.push("", instruction(packet));
+  const possible = impact.possible ?? [];
   const callerIds = new Set(impact.callers.map((p) => (p.edges[p.edges.length - 1] as ImpactEdge).from));
   const callerFiles = new Set(impact.callers.flatMap((p) => (p.edges[p.edges.length - 1] as ImpactEdge).sites.map((s) => s.file)));
+  const possibleIds = new Set(possible.map((p) => (p.edges[p.edges.length - 1] as ImpactEdge).from));
   const parts = [n(impact.touched.length, "symbol") + " touched"];
   if (removed.length > 0) parts.push(`${removed.length} removed`);
   if (moved.length > 0) parts.push(`${moved.length} moved`);
   if (impact.exports.length > 0) parts.push(`${n(impact.exports.length, "public name")} changed`);
-  parts.push(`${n(callerIds.size, "caller")} in ${n(callerFiles.size, "file")}${impact.unknown.floor ? ", a floor" : ""}`);
+  parts.push(`${n(callerIds.size, "caller")} in ${n(callerFiles.size, "file")}${possibleIds.size > 0 ? ` and ${n(possibleIds.size, "possible caller")}` : ""}${impact.unknown.floor ? ", a floor" : ""}`);
   out.push("", `Risk: ${impact.risk ?? "none"} (${parts.join(", ")})`);
 
   // 3. Touched, removed and moved symbols, and the export surface diff.
@@ -158,25 +172,37 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
     if (impact.exports.length > MAX_EXPORTS) out.push(`- and ${impact.exports.length - MAX_EXPORTS} more${at("changes.json")}`);
   }
 
-  // 4. Callers by tier: certain first, then likely with their notes.
-  if (impact.callers.length > 0) {
-    out.push("", "Call sites of the touched and removed code, certain first:");
+  // 4. Callers by tier: certain first, then likely with their notes, then
+  // possible (each step of a path counted at its weakest), capped apart.
+  const rowsOf = (paths: typeof impact.callers, qualified: boolean): { tier: number; text: string }[] => {
     const rows: { tier: number; text: string }[] = [];
-    for (const p of impact.callers) {
+    const label = (id: string) => (qualified ? qualifiedOf(id, name(id)) : name(id));
+    for (const p of paths) {
       const last = p.edges[p.edges.length - 1] as ImpactEdge;
-      const via = p.edges.length === 2 ? `, which calls \`${name(p.seed)}\` (2 hops` : " (1 hop";
-      const verb = last.kind === "inherits" ? "extends" : "calls";
-      const inner = p.edges.length === 2 ? [...(p.edges[0] as ImpactEdge).sites].sort((a, b) => TIER_RANK[b.tier] - TIER_RANK[a.tier])[0] ?? null : null;
+      const first = p.edges[0] as ImpactEdge;
+      const via = p.edges.length === 2 ? `, which ${VERB[first.kind] ?? "calls"} \`${label(p.seed)}\` (2 hops` : " (1 hop";
+      const verb = VERB[last.kind] ?? "calls";
+      const inner = p.edges.length === 2 ? [...first.sites].sort((a, b) => TIER_RANK[b.tier] - TIER_RANK[a.tier])[0] ?? null : null;
       for (const raw of last.sites) {
         const site = throughStep(raw, inner);
-        rows.push({ tier: site.tier === "certain" ? 0 : site.tier === "likely" ? 1 : 2, text: `- ${site.file}:${site.line} in \`${name(last.from)}\` ${verb} \`${name(last.to)}\`${via}, ${siteTier(site)})` });
+        rows.push({ tier: site.tier === "certain" ? 0 : site.tier === "likely" ? 1 : 2, text: `- ${site.file}:${site.line} in \`${name(last.from)}\` ${verb} \`${label(last.to)}\`${via}, ${siteTier(site)})` });
       }
     }
-    rows.sort((a, b) => a.tier - b.tier);
+    return rows.sort((a, b) => a.tier - b.tier);
+  };
+  if (impact.callers.length > 0) {
+    out.push("", "Call sites of the touched and removed code, certain first:");
+    const rows = rowsOf(impact.callers, false);
     for (const r of rows.slice(0, INLINE_SITES)) out.push(r.text);
     if (rows.length > INLINE_SITES) out.push(`- and ${n(rows.length - INLINE_SITES, "more call site")}${at("callers/", ", every one in")}`);
   } else {
     out.push("", impact.unknown.floor ? "No certain or likely caller of the touched code was found in the graph; the list is a floor (below), so callers may exist." : "No caller of the touched code was found in the graph.");
+  }
+  if (possible.length > 0) {
+    out.push("", "Possible call sites, which may run the touched code and are not proved to (through an interface or a base type, or a function used as a value):");
+    const rows = rowsOf(possible, true);
+    for (const r of rows.slice(0, INLINE_POSSIBLE)) out.push(r.text);
+    if (rows.length > INLINE_POSSIBLE) out.push(`- and ${n(rows.length - INLINE_POSSIBLE, "more possible call site")}${at("callers/", ", every one in")}`);
   }
   for (const h of impact.hubs) {
     out.push(`- \`${name(h.symbol)}\` is a hub: called by ${n(h.callers, "symbol")} from ${n(h.sites, "site")} in ${n(h.files, "file")}; the 20 nearest callers are listed${at(`callers/${symbolKey(h.symbol)}.json`, ", the rest in")}.`);
@@ -184,6 +210,28 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
   for (const c of impact.cuts) {
     if (c.by === "second-hop") out.push(`- The second hop left out ${n(c.omitted ?? 0, "caller")} of \`${name(c.at ?? "")}\`${at(`second-hop/${symbolKey(c.at ?? "")}.json`, "; every one is in")}.`);
     if (c.by === "walk-limit") out.push(`- ${c.note}.`);
+    if (c.by === "hub" && c.note.includes("possible callers")) out.push(`- \`${name(c.at ?? "")}\` has ${c.note}${at(`callers/${symbolKey(c.at ?? "")}.json`, ", the rest in")}.`);
+    if (c.by === "fan-out") out.push(`- ${c.note.charAt(0).toUpperCase()}${c.note.slice(1)} (the fan-out cap).`);
+  }
+
+  // Other uses of the touched code: as a value, as a type, implemented or overridden.
+  const refs = impact.references ?? [];
+  if (refs.length > 0) {
+    out.push("", "Other uses of the touched and removed code, not calls:");
+    const ORDER: Record<string, number> = { overrides: 0, uses_value: 1, uses_type: 2 };
+    const rows = [...refs]
+      .flatMap((r) => r.edge.sites.map((s) => ({ r, s })))
+      .sort((a, b) => (ORDER[a.r.edge.kind] ?? 3) - (ORDER[b.r.edge.kind] ?? 3) || TIER_RANK[b.s.tier] - TIER_RANK[a.s.tier] || a.s.file.localeCompare(b.s.file) || a.s.line - b.s.line);
+    for (const { r, s } of rows.slice(0, MAX_REFERENCES)) {
+      const from = qualifiedOf(r.edge.from, name(r.edge.from));
+      const to = qualifiedOf(r.seed, name(r.seed));
+      const what = r.edge.kind === "overrides" ? `\`${from}\` overrides or implements \`${to}\`` : r.edge.kind === "uses_value" ? `in \`${name(r.edge.from)}\` uses \`${to}\` as a value` : `in \`${name(r.edge.from)}\` names \`${to}\` as a type`;
+      out.push(`- ${s.file}:${s.line} ${what} (${siteTier(s)})`);
+    }
+    const seeds = [...new Set(refs.map((r) => r.seed))];
+    const pages = seeds.length === 1 ? at(`references/${symbolKey(seeds[0] as string)}.json`, ", every one in") : at("references/", ", every one in");
+    if (rows.length > MAX_REFERENCES) out.push(`- and ${n(rows.length - MAX_REFERENCES, "more use")}${pages}`);
+    for (const c of impact.cuts) if (c.by === "references") out.push(`- ${c.note}.`);
   }
 
   if (impact.callees.length > 0) {

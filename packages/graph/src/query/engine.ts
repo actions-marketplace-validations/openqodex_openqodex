@@ -235,9 +235,9 @@ export function query(s: Session, req: Request, extra: { changes?: { exports: Im
           modelVersion: MODEL_VERSION,
           languages: ["typescript", "tsx", "javascript", "python", "go", "ruby"],
           operations: OPERATIONS,
-          relations: ["calls", "inherits", "imports"],
+          relations: ["calls", "inherits", "implements", "dispatches_to", "may_invoke", "overrides", "uses_value", "uses_type", "imports"],
           certainEvidence: [...CERTAIN_KINDS],
-          notYet: ["implementers and calls through interfaces (phase 2)", "references to functions used as values (phase 2)", "routes, handlers and tests (phase 4)"],
+          notYet: ["the implementers and references operations (the graph holds both; phase 3 asks it)", "routes, handlers and tests (phase 4)"],
         },
       ],
     };
