@@ -1,0 +1,8 @@
+{
+  "guards": "produces no Express route from a router of the repository's own, though the project declares express and a local function is named express",
+  "frameworks": {
+    "plugin": "express",
+    "apps": 0,
+    "none": ["registration", "handles", "mounts", "applies_middleware", "tests", "role"]
+  }
+}
