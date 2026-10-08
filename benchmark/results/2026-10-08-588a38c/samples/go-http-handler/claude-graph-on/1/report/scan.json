@@ -1,0 +1,170 @@
+{
+  "candidates": [
+    {
+      "source": "semgrep",
+      "ruleId": "go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+      "filePath": "internal/api/handler.go",
+      "lineStart": 34,
+      "lineEnd": 34,
+      "severity": "high",
+      "message": "User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection, which could let an attacker steal or manipulate data from the database. Instead, use prepared statements (`db.Query(\"SELECT * FROM t WHERE id = ?\", id)`) or a safe library.",
+      "reference": "https://golang.org/doc/database/sql-injection",
+      "id": "c1",
+      "token": "semgrep:go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "trailofbits.go.missing-unlock-before-return.missing-unlock-before-return",
+      "filePath": "internal/api/handler.go",
+      "lineStart": 63,
+      "lineEnd": 63,
+      "severity": "high",
+      "message": "Missing mutex unlock (`h.mu` variable) before returning from a function. This could result in panics resulting from double lock operations",
+      "reference": "https://pkg.go.dev/sync#Mutex",
+      "id": "c2",
+      "token": "semgrep:trailofbits.go.missing-unlock-before-return.missing-unlock-before-return",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "go.lang.security.audit.database.string-formatted-query.string-formatted-query",
+      "filePath": "internal/api/handler.go",
+      "lineStart": 34,
+      "lineEnd": 34,
+      "severity": "medium",
+      "message": "String-formatted SQL query detected. This could lead to SQL injection if the string is not sanitized properly. Audit this call to ensure the SQL is not manipulable by external data.",
+      "reference": "https://owasp.org/Top10/A03_2021-Injection",
+      "id": "c3",
+      "token": "semgrep:go.lang.security.audit.database.string-formatted-query.string-formatted-query",
+      "reviewSeverity": "minor"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 4,
+      "keptCount": 3,
+      "durationMs": 4259,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 40,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 1,
+      "reason": "needs Go"
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [],
+  "projects": [
+    {
+      "root": "",
+      "frameworks": []
+    }
+  ]
+}
