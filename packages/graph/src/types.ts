@@ -181,7 +181,7 @@ export type Graph = {
   valueCalls: Map<string, number>;
   model: ProjectModel;
   projectOf(file: string): string;
-  exportChanges: ImpactExportChange[]; // set when the build compared a base
+  exportChanges: ImpactExportChange[]; // set when the build compared a base; every consumer, never cut
   status: GraphStatus;
 };
 

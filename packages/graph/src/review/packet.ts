@@ -95,11 +95,27 @@ export async function writePacket(args: {
 
   write("impact.json", "the whole summary the brief was made from", { ...impact, packet: `${PACKET_DIR}/` });
   const movedOrRemoved = impact.symbols.filter((s) => impact.removed.includes(s.id));
-  write("changes.json", "public names the change removed or bound elsewhere, with every consumer kept; removed and moved symbols", {
-    exports: impact.exports,
-    removed: movedOrRemoved.filter((s) => !s.movedTo),
-    moved: movedOrRemoved.filter((s) => s.movedTo),
+  // Every consumer of each public name the change removed or bound
+  // elsewhere, one item each, from the graph's uncut list: the summary
+  // keeps only the first ones. The graph's list is used when it is the
+  // same entry as the summary's (the summary is made from it in order).
+  const consumers: Record<string, unknown>[] = [];
+  let missing = 0;
+  const exportsHead = impact.exports.map((e, i) => {
+    const g = graph.exportChanges[i];
+    const all = g && g.change === e.change && g.line === e.line && g.consumersTotal === e.consumersTotal ? g.consumers : e.consumers;
+    missing += e.consumersTotal - all.length;
+    for (const c of all) consumers.push({ name: e.name, exportedBy: e.file, ...c });
+    const { consumers: _, ...rest } = e;
+    return rest;
   });
+  pages(
+    "changes",
+    "public names the change removed or bound elsewhere, with every consumer as an item; removed and moved symbols",
+    { exports: exportsHead, removed: movedOrRemoved.filter((s) => !s.movedTo), moved: movedOrRemoved.filter((s) => s.movedTo) },
+    consumers,
+    missing > 0 ? { omitted: missing, note: "the graph this packet was written from does not hold these public names, so the consumers are the ones the summary kept" } : null,
+  );
 
   // Every caller of each touched and removed symbol, past the hub cut, from
   // the graph: a removed symbol's callers are the call sites that still

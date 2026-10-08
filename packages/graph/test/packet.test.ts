@@ -16,6 +16,8 @@
 //    rebuilt from the summary's cut list: short, and marked as complete.
 // 8. A symbol the graph handed to the packet does not hold gets a page
 //    that claims to be complete, with the brief's cut list or with zero.
+// 9. A public name with more consumers than the summary keeps (200) loses
+//    the rest from changes.json, which claims to hold every one.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -172,5 +174,28 @@ describe("the review packet", () => {
     const pages = readPages<Page<unknown>>(join(r.root, PACKET_DIR), `callers/${symbolKey(seed)}.json`);
     expect(pages[0]).toMatchObject({ total: 20, totalExact: false, cut: { omitted: 25 } });
     expect(pages.flatMap((p) => p.items)).toHaveLength(20);
+  });
+
+  it("keeps every consumer of a public name in changes.json, past the 200 the summary keeps (9)", async () => {
+    const before: Record<string, string> = { "lib.ts": "function target() {\n  return 1;\n}\nexport { target as publicApi };\n" };
+    for (let i = 0; i < 260; i++) before[`use/u${i}.ts`] = `import { publicApi } from "../lib";\nexport function u${i}() {\n  return publicApi();\n}\n`;
+    const r = await reviewed(before, { "lib.ts": "function target() {\n  return 1;\n}\nexport { target };\n" });
+    const e = r.impact.exports.find((x) => x.name === "publicApi");
+    expect(e?.consumersTotal).toBeGreaterThanOrEqual(260);
+    expect(e?.consumers).toHaveLength(200);
+    const total = e?.consumersTotal as number;
+    const packet = await writePacket({ root: r.root, repoRoot: r.root, graph: r.graph, impact: r.impact, baseSha: r.change.baseSha, secrets: [] });
+    const pages = readPages<Page<{ name: string; file: string; now: string }> & { exports: { name: string; consumersTotal: number }[] }>(join(r.root, PACKET_DIR), "changes.json");
+    expect(pages).toHaveLength(2);
+    expect(pages[0]).toMatchObject({ total, totalExact: true, cut: null });
+    expect(pages[0]?.exports.map((x) => [x.name, x.consumersTotal])).toEqual([["publicApi", total]]);
+    const items = pages.flatMap((p) => p.items).filter((i) => i.name === "publicApi");
+    expect(items).toHaveLength(total);
+    expect(new Set(items.map((i) => i.file)).size).toBe(260);
+    expect(items.every((i) => i.now === "broken")).toBe(true);
+    // The brief shows 8 and says how many more, and where they are.
+    expect(renderImpactBlock({ ...r.impact, packet: packet.dir })).toContain(`- and ${total - 8} more, in \`${PACKET_DIR}/changes.json\``);
+    // With no packet, impact.json beside the brief holds only the summary's 200.
+    expect(renderImpactBlock(r.impact, { overflow: "impact.json beside this brief" })).toContain(`- and ${total - 8} more; impact.json beside this brief lists 192 of them`);
   });
 });

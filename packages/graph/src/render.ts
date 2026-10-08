@@ -140,7 +140,10 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
         const now = c.now === "broken" ? "binds nothing now" : c.now === "retargeted" ? "binds another definition now" : c.now === "unchanged" ? "binds the same definition now" : "its file changed too";
         out.push(`  - ${c.file}:${c.line} in \`${name(c.from)}\`, ${now}`);
       }
-      if (e.consumers.length > MAX_CONSUMERS || e.consumersTotal > e.consumers.length) out.push(`  - and ${e.consumersTotal - Math.min(e.consumers.length, MAX_CONSUMERS)} more${at("changes.json")}`);
+      const more = e.consumersTotal - Math.min(e.consumers.length, MAX_CONSUMERS);
+      // The packet holds every consumer; impact.json beside the brief holds the summary's first ones.
+      const held = e.consumers.length - Math.min(e.consumers.length, MAX_CONSUMERS);
+      if (more > 0) out.push(`  - and ${more} more${packet || held === more ? at("changes.json") : held > 0 && opts.overflow ? `; ${opts.overflow} lists ${held} of them` : ""}`);
     }
     if (impact.exports.length > MAX_EXPORTS) out.push(`- and ${impact.exports.length - MAX_EXPORTS} more${at("changes.json")}`);
   }

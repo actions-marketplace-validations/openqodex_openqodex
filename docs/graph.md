@@ -47,7 +47,7 @@ A call no rule can bind is kept as an unknown with its cause, never dropped:
 
 A caller list is a floor, and the brief says so with the reasons, when a call of the same name could not be bound, a call through a value in the symbol's project could reach it, a file of its project was not read, a file that imports it was not resolved, or a walk was cut at it. Zero callers on a floor never means unused.
 
-Every cut is recorded with what it left out: a symbol with more than 40 callers keeps its 20 nearest in the brief, the second hop keeps 20 callers of each caller, the walk stops at 200 symbols (what lies past that frontier is not counted), the brief shows 60 call sites, and the walk of `export *` re-exports opens at most 4,096 files in one version of the code (names re-exported past that are not compared). Each barrel file is walked once, so two files that `export *` from each other end the walk where the cycle closes.
+Every cut is recorded with what it left out: a symbol with more than 40 callers keeps its 20 nearest in the brief, the second hop keeps 20 callers of each caller, the walk stops at 200 symbols (what lies past that frontier is not counted), the brief shows 60 call sites, the summary keeps the first 200 places that used each changed public name (the brief shows 8), and the walk of `export *` re-exports opens at most 4,096 files in one version of the code (names re-exported past that are not compared). Each barrel file is walked once, so two files that `export *` from each other end the walk where the cycle closes.
 
 Languages: TypeScript, TSX, JavaScript, Python, Go and Ruby. Files under `node_modules`, `dist`, `build`, `out`, `vendor` and the like, declaration files and minified files are left out.
 
@@ -86,12 +86,14 @@ A large repository may be partial on its first reviews: the `graph.max_files` ca
 
 - `index.md`: one line per file below.
 - `impact.json`: the summary the brief was made from.
-- `changes.json`: every public name the change removed or bound elsewhere, with every consumer; removed and moved symbols.
+- `changes.json`: every public name the change removed or bound elsewhere, every place that used each one with what it binds now (past the summary's cut), and the removed and moved symbols.
 - `callers/<key>.json`: every caller of each touched or removed symbol, in pages of 500, past any cut the brief makes.
 - `second-hop/<key>.json`, `callees/<key>.json`, `importers/<key>.json`: the same for the second hop, what the touched code calls, and who imports a changed file.
 - `unknowns.json`: what the graph could not see near the change, with causes.
 - `status.json`, `capabilities.json`: how the graph was built and what it can see.
 - `base/<key>.txt`: the base version of each removed or moved symbol, labelled as not the code under review.
+
+`changes.json` and the files under `callers/`, `second-hop/`, `callees/` and `importers/` come in pages of 500 items. Each page names the next one in `next` (`changes.2.json`, then `changes.3.json`). Each page says `total`, the items on all the pages, and `totalExact`, true when they are the whole list. When they are not, `cut.omitted` says how many are missing, or is null when that cannot be counted.
 
 Every file passes through the review's secret redaction. A repository that holds a path named `.openqodex-review` stops the review instead of being overwritten.
 

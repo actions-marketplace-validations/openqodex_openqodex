@@ -10,11 +10,11 @@
 // whose resolution read the changed name, found by tracing the affected
 // closure (the changed files, the files that import them, and through
 // every re-export, the files that import those, with no hop bound). The
-// same site in the current world says what the consumer binds now.
+// same site in the current world says what the consumer binds now. Every
+// consumer is kept: the review's packet lists them all, and the summary
+// the brief is made from keeps the first ones (impact.ts).
 import type { ImpactExportChange } from "@openqodex/core";
 import type { SiteTrace, World } from "../resolve.js";
-
-const MAX_CONSUMERS_KEPT = 200;
 
 export type ChangedFile = { path: string; oldPath: string | null; status: "added" | "modified" | "deleted" | "renamed" };
 
@@ -104,7 +104,7 @@ export function exportChanges(args: {
         line: b.line,
         before: args.nodeOf("base", b.target.ids[0] as string),
         after: a?.target && a.target !== "ext" ? args.nodeOf("current", a.target.ids[0] as string) : null,
-        consumers: consumers.slice(0, MAX_CONSUMERS_KEPT).map((t) => ({ file: t.file, line: t.line, column: t.column, from: t.from, now: statusOf(t) })),
+        consumers: consumers.map((t) => ({ file: t.file, line: t.line, column: t.column, from: t.from, now: statusOf(t) })),
         consumersTotal: consumers.length,
       });
     }
@@ -137,7 +137,7 @@ export function exportChanges(args: {
         line: null,
         before: args.nodeOf("base", (consumers[0]?.targets?.[0] ?? "") as string),
         after: null,
-        consumers: consumers.slice(0, MAX_CONSUMERS_KEPT).map((t) => ({ file: t.file, line: t.line, column: t.column, from: t.from, now: statusOf(t) })),
+        consumers: consumers.map((t) => ({ file: t.file, line: t.line, column: t.column, from: t.from, now: statusOf(t) })),
         consumersTotal: consumers.length,
       });
     }

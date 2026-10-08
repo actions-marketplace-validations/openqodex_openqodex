@@ -18,6 +18,7 @@ export const HUB_CALLERS = 40; // a symbol with more direct callers is a hub
 export const HUB_SHOWN = 20; // callers kept for a hub, and per caller on the second hop
 export const WALK_LIMIT = 200; // symbols the whole walk may reach
 export const INLINE_SITES = 60; // call sites the brief shows
+export const SUMMARY_CONSUMERS = 200; // consumers of a public name the summary keeps
 const NEAR_SHOWN = 40;
 
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec|specs|testdata|fixtures?)\/|[._-](test|spec)\.[^/]+$|_test\.go$|(^|\/)test_[^/]+\.py$|_spec\.rb$/;
@@ -342,8 +343,14 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
   const near = graph.unknowns.filter((u) => nearFiles.has(u.file));
   const causes: Record<string, number | null> = {};
   for (const u of near) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
-  const exports = graph.exportChanges;
-  const brokenConsumers = exports.reduce((n, e) => n + e.consumers.filter((c) => c.now === "broken" || c.now === "retargeted").length, 0);
+  // The graph keeps every consumer of a changed public name; the summary
+  // keeps the first SUMMARY_CONSUMERS of each and records the cut.
+  const brokenConsumers = graph.exportChanges.reduce((n, e) => n + e.consumers.filter((c) => c.now === "broken" || c.now === "retargeted").length, 0);
+  const exports = graph.exportChanges.map((e) => {
+    if (e.consumers.length <= SUMMARY_CONSUMERS) return e;
+    cuts.push({ by: "consumers", at: e.file, omitted: e.consumers.length - SUMMARY_CONSUMERS, exact: true, unit: "sites", note: `the summary keeps the first ${SUMMARY_CONSUMERS} consumers of \`${e.name}\`` });
+    return { ...e, consumers: e.consumers.slice(0, SUMMARY_CONSUMERS) };
+  });
 
   return {
     version: 2,

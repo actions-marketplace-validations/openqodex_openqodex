@@ -311,9 +311,10 @@ export type ImpactExportChange = {
   // Each consumer the base version bound through this name, and what the
   // same site binds to now: nothing, another definition, or the same one;
   // "unknown" when the consumer's own file changed, so the site has no
-  // twin to compare.
+  // twin to compare. The summary keeps the first 200 in file and line
+  // order; the review's packet lists every one.
   consumers: { file: string; line: number; column: number; from: string; now: "broken" | "retargeted" | "unchanged" | "unknown" }[];
-  consumersTotal: number;
+  consumersTotal: number; // every consumer, never cut
 };
 
 export type ImpactSummary = {
