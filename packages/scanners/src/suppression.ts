@@ -114,6 +114,14 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
     family: "js",
     markers: [{ name: "{kw}", pattern: /^\/[/*]\s*(?<at>(?<kw>(?:eslint|oxlint)-disable(?:-next-line|-line)?))(?=\s|\*\/|$)/dg }],
   },
+  // `# zizmor: ignore[` with one blank after the `#` and the colon
+  // (IGNORE_EXPR in crates/zizmor/src/finding/location.rs). Anywhere on the
+  // line: for the audits that locate a finding by its raw span
+  // (unredacted-secrets, obfuscation and four more), zizmor reads each line
+  // from its first `#`, so 1.30.1 obeys the marker inside a `run: |` body and
+  // a quoted value too. The closing `]` and what follows it are not checked,
+  // so this is wider than zizmor, never narrower.
+  zizmor: { family: "line", markers: [{ name: "# zizmor: ignore[...]", pattern: /(?<at># zizmor: ignore\[)/dg }] },
 };
 
 export type MarkerHit = { scanner: BuiltinScanner; line: number; name: string };

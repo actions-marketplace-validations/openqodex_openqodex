@@ -605,3 +605,44 @@ describe("lines and names", () => {
     for (const m of found) expect(m.name).not.toContain(key);
   });
 });
+
+// zizmor, squawk and SQLFluff. Each case was run through the scanner at its
+// pinned version: zizmor 1.30.1, squawk 2.66.0, sqlfluff 4.3.0.
+// Failure list, written before the code:
+//  Z1. A zizmor marker zizmor obeys is missed: it reads `# zizmor:
+//      ignore[...]` from the first `#` of each line of a finding's span, so
+//      for its line-read audits (unredacted-secrets, obfuscation and others)
+//      the marker counts inside a `run: |` body and a quoted value too.
+//  Z2. A form zizmor rejects is raised: no blank after the `#` or the colon.
+describe("zizmor, # zizmor: ignore[...] anywhere on the line", () => {
+  it("finds it in a comment, a block scalar body and a quoted value, as zizmor obeys it there (Z1)", () => {
+    const text = src(
+      "on: push",
+      "jobs:",
+      "  a:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo ${{ github.event.issue.title }} # zizmor: ignore[template-injection]",
+      "      - run: |",
+      "          echo ${{ fromJSON(secrets.CREDS).password }} # zizmor: ignore[unredacted-secrets]",
+      "      - run: 'echo ${{ fromJSON(secrets.CREDS).password }} # zizmor: ignore[unredacted-secrets] done'",
+      "      - run: echo hi # why # zizmor: ignore[template-injection]",
+    );
+    expect(findMarkers(text, ["zizmor"]).map((m) => [m.line, m.name])).toEqual([
+      [6, "# zizmor: ignore[...]"],
+      [8, "# zizmor: ignore[...]"],
+      [9, "# zizmor: ignore[...]"],
+      [10, "# zizmor: ignore[...]"],
+    ]);
+  });
+
+  it("raises nothing for the forms zizmor rejects (Z2)", () => {
+    const text = src(
+      "      - run: echo a # zizmor:ignore[template-injection]",
+      "      - run: echo b #zizmor: ignore[template-injection]",
+      "      - run: echo c #  zizmor: ignore[template-injection]",
+      "      - run: echo d # zizmor: ignore template-injection",
+    );
+    expect(findMarkers(text, ["zizmor"])).toEqual([]);
+  });
+});
