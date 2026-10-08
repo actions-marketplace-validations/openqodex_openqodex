@@ -93,6 +93,9 @@ export async function scanChange<C extends Change>(args: {
   flags: GlobalFlags;
   only?: ScannerSource[];
   skip?: ScannerSource[];
+  // How long a scanner still downloading is waited for; INSTALL_BUDGET_MS
+  // unless the caller says otherwise (the review init ends with).
+  installBudgetMs?: number;
 }): Promise<PipelineResult & { change: C }> {
   const { repoRoot, config, change, flags } = args;
   const workDir = args.workDir ?? repoRoot;
@@ -111,7 +114,7 @@ export async function scanChange<C extends Change>(args: {
     config,
     resolveTool: createToolResolver({
       allowInstall: !flags.noInstall,
-      installBudgetMs: INSTALL_BUDGET_MS,
+      installBudgetMs: args.installBudgetMs ?? INSTALL_BUDGET_MS,
       onProgress,
     }),
     // Approvals and the scanner list belong to the developer's repository and

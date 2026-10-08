@@ -19,20 +19,24 @@ For humans, in your terminal:
 npx openqodex init
 ```
 
-`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints every file it will write and asks once. Then it reviews your change, or asks what to review when there is none. After that, say to your agent "review my change with openqodex", or run `openqodex review` yourself.
+`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints every file it will write and asks once. Then it names the reviewer it found, or what to fix, and reviews your change, or asks what to review when there is none. After that, say to your agent "review my change with openqodex", or run `~/.openqodex/bin/openqodex review` yourself: `init` prints that full path, since an npx install puts no `openqodex` on your `PATH`.
 
-For agents:
-
-```
-npx skills add openqodex/openqodex
-```
-
-Or paste this prompt into your agent:
+For agents, the same install, run by the agent for itself with no question:
 
 ```
-Install the OpenQodex skill with `npx skills add openqodex/openqodex`.
-Then review my current change with openqodex and tell me the verdict and the findings.
+npx -y openqodex@0.8.1 init --yes --agent <host>
 ```
+
+`<host>` is `claude-code`, `codex`, `cursor` or `cline`. Or paste this prompt into your agent:
+
+```
+Install OpenQodex for yourself with `npx -y openqodex@0.8.1 init --yes --agent <host>`, where <host> is the agent you are: claude-code, codex, cursor or cline. Run it from this repository and allow it up to ten minutes: when a reviewer can start, it ends with a review of my current change.
+Then tell me the verdict and the findings, or what its last lines say is missing.
+```
+
+Codex runs commands in a sandbox that by default cannot write outside the project or reach the network: from Codex, run the line in your own terminal instead.
+
+The skill alone, with no push check, launcher or scanner download: `npx skills add openqodex/openqodex -g`. A later `init` replaces it with the skill it keeps up to date.
 
 OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows, use WSL.
 
@@ -78,7 +82,7 @@ Scanners download on first use into `~/.openqodex/tools/`. Only the scanners you
 
 Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
 
-A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. To install every scanner up front, run `npx openqodex doctor --install`.
+A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. The review `init` ends with waits up to two minutes, since `init` has just started the downloads. To install every scanner up front, run `npx openqodex doctor --install`.
 
 One measured first run: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `openqodex demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners. Your times depend on your line.
 
@@ -147,7 +151,7 @@ An install made with `npx openqodex init` from 0.3.0 on keeps itself up to date.
 
 Turn it off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml` or `OPENQODEX_AUTO_UPDATE=0`. It is also off with `--offline` and when `CI` is set.
 
-These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add`, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made with any earlier version needs one `npx openqodex init` to start updating.
+These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add` until the next `init` replaces it, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made with any earlier version needs one `npx openqodex init` to start updating.
 
 ## Packages
 

@@ -1,5 +1,6 @@
 // Writes the CLI package version into every file that pins it: the skill, its
-// plugin copies, the three plugin manifests and the plugin hook. Run after `changeset
+// plugin copies, the three plugin manifests, the plugin hook, and the agent
+// install line in the README and the quickstart. Run after `changeset
 // version`; the gate fails when any of them differs from the package version.
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,6 +15,8 @@ for (const rel of [
   "plugins/codex/skills/openqodex/SKILL.md",
   "plugins/claude-code/hooks/hooks.json",
   ".pre-commit-hooks.yaml",
+  "README.md",
+  "docs/quickstart.md",
 ]) {
   const file = join(root, rel);
   const before = readFileSync(file, "utf8");

@@ -8,11 +8,13 @@ Each file here is copied or merged by `openqodex init`. Three placeholders are f
 
 ## The instruction section
 
-`instructions-section.md` is the marked section (between `<!-- openqodex:start -->` and `<!-- openqodex:end -->`) that tells an agent to review with the openqodex skill when a feature or fix is done; OpenQodex starts its own reviewer process. `init` prints it before writing, records it, and `--uninstall` removes exactly that section. It goes into each agent's global instruction file in user scope, into the repo's `CLAUDE.md` and `AGENTS.md` in project scope, and inside the Cursor and Cline rules.
+`instructions-section.md` is the marked section (between `<!-- openqodex:start -->` and `<!-- openqodex:end -->`) that tells an agent to review with the openqodex skill when a feature or fix is done; OpenQodex starts its own reviewer process. `init` prints it before writing, records it, and `--uninstall` removes exactly that section. It goes into the repo's `CLAUDE.md` and `AGENTS.md` in project scope, and inside the Cursor and Cline rules.
+
+`global-section.md` is the one-line marked section for each agent's global instruction file in user scope (`CLAUDE.md` in Claude Code's folder, `AGENTS.md` in Codex's): "Before any push, review the change with the openqodex skill." The global file is read in every repository, so it holds the trigger only. It replaces the longer section an earlier `init` wrote there while that one is still as recorded.
 
 ## The team section
 
-`repo/team-section.md` is the marked section a user-scope `init` writes into the repository's own `CLAUDE.md` and `AGENTS.md` (creating a file that is not there), unless `--no-repo`, or a recorded "no" for that repository without `--yes`, says otherwise. It is for a teammate with nothing installed: it names only `npx -y openqodex@{{VERSION}} review` and never the skill or the launcher. Unlike other repository files in user scope, it is not added to `.git/info/exclude`: the developer commits it. It replaces an instruction section found there exactly as written, is recorded with `createdFile`, and `--uninstall` removes exactly it. In project scope the same two files get the instruction section instead.
+`repo/team-section.md` is the marked section a user-scope `init` writes into the repository's own `CLAUDE.md` and `AGENTS.md` (creating a file that is not there), unless `--no-repo`, given now or recorded for that repository, says otherwise (`--yes` keeps a recorded "no"). It is for a teammate with nothing installed: it names only `npx -y openqodex@{{VERSION}} review` and never the skill or the launcher. Unlike other repository files in user scope, it is not added to `.git/info/exclude`: the developer commits it. It replaces an instruction section found there exactly as written, is recorded with `createdFile`, and `--uninstall` removes exactly it. In project scope the same two files get the instruction section instead.
 
 ## The skill in user scope
 
@@ -22,7 +24,7 @@ The Cursor and Cline rules: in user scope every `npx -y openqodex@{{VERSION}}` b
 
 ## The repo folder
 
-`repo/custom-instructions.md` becomes `.openqodex/custom-instructions.md`, and the default config text from the core package becomes `.openqodex/config.yaml` (not written while a root `.openqodex.yaml` exists). Both are created by `init` in a repo and by the first `scan` or `review`, never touched once they exist, and are meant to be committed. `init` also asks whether to add the git pre-push hook.
+`repo/custom-instructions.md` becomes `.openqodex/custom-instructions.md`, and the default config text from the core package becomes `.openqodex/config.yaml` (not written while a root `.openqodex.yaml` exists). Both are created by `init` in a repo and by the first `scan` or `review`, never touched once they exist, and are meant to be committed. `init` also adds the git pre-push hook unless `--hook none` says otherwise.
 
 The skill itself is not a template: `init` builds it from `skills/openqodex/SKILL.md` in the package, as "The skill in user scope" says.
 
@@ -36,9 +38,10 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 |---|---|---|---|
 | Skill | `skills/openqodex/SKILL.md` | `~/.claude/skills/openqodex/SKILL.md` | `.claude/skills/openqodex/SKILL.md` |
 | Push gate hook | `claude-code/settings-hook.json`, merged | `~/.claude/settings.json` | `.claude/settings.json` |
-| Instructions | `instructions-section.md`, between its markers | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
+| Instructions | `global-section.md` in user scope, `instructions-section.md` in project scope, between their markers | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
 | Team section | `repo/team-section.md`, between its markers | `CLAUDE.md` in the repository, committed | none (the instruction section is there) |
 
+- Every user-scope path above is under `$CLAUDE_CONFIG_DIR` when it is set, the folder Claude Code then reads its settings from (https://code.claude.com/docs/en/settings); `~/.claude` otherwise. `src/agents/homes.ts` resolves it for detection and targets alike.
 - Settings paths: https://code.claude.com/docs/en/hooks, section "Hook locations".
 - Skill paths: the `skills` CLI agent table (github.com/vercel-labs/skills, README, "Supported agents"), and the same hooks page, which names `~/.claude/skills/` and `.claude/skills/`.
 - The hook: `matcher: "Bash"` with `if: "Bash(git push*)"` on the handler. The `if` field uses permission-rule syntax and is checked against each subcommand (same hooks page, "Bash if matching"). The page also says a pattern longer than the command name runs the hook anyway when the command holds `$()`, backticks or `$VAR`, so `hook check` must itself confirm the command is a push.
@@ -49,9 +52,11 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 | What | Template | User scope | Project scope |
 |---|---|---|---|
 | Skill | `skills/openqodex/SKILL.md` | see the note below | `.agents/skills/openqodex/SKILL.md` |
-| Instructions | `instructions-section.md`, between its markers | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `AGENTS.md` (replace the text between the markers, or append) |
+| Instructions | `global-section.md` in user scope, `instructions-section.md` in project scope, between their markers | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `AGENTS.md` (replace the text between the markers, or append) |
 | Team section | `repo/team-section.md`, between its markers | `AGENTS.md` in the repository, committed | none (the instruction section is there) |
-| Push gate hook | `codex/hooks.json`, merged | `~/.codex/hooks.json` | `.codex/hooks.json` |
+| Push gate hook | `codex/hooks.json`, merged | `$CODEX_HOME/hooks.json`, default `~/.codex/hooks.json` | `.codex/hooks.json` |
+
+- The instructions and the hook both follow `CODEX_HOME`, the folder Codex reads its config and hooks from (hooks page below: hooks sit beside the active config layer), resolved by `src/agents/homes.ts`. The skill does not: its folder is `~/.agents/skills` whatever `CODEX_HOME` says. That Codex loads `$CODEX_HOME/hooks.json`: from the docs, untested with a real custom `CODEX_HOME`.
 
 - Hook file paths, schema and output: https://learn.chatgpt.com/docs/hooks (where https://developers.openai.com/codex/hooks redirects). `codex features list` on Codex CLI 0.160.0 shows `hooks` as stable and on.
 - Codex hooks have no `if` field: the matcher is a regular expression on the tool name only. The hook therefore runs before every shell command, and `hook check` must abstain at once, printing nothing, when the command is not a `git push`.

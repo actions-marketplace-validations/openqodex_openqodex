@@ -1,6 +1,6 @@
 ---
 name: openqodex
-description: Code review for the current change, before it is pushed. One command runs the security, secret, dependency and lint scanners that fit the changed files, a separate reviewer that checks every scanner finding and is given every changed line, and prints the report. Use before every git push, when asked for a code review, a security scan, or to review changes, a diff or a pull request, and when a push was blocked or warned by OpenQodex.
+description: Code review for the current change, before it is pushed. One command runs the security, secret, dependency and lint scanners that fit the changed files, a separate reviewer that checks every scanner finding and is given every changed line, and prints a short receipt with the path of the full report. Use before every git push, when asked for a code review, a security scan, or to review changes, a diff or a pull request, and when a push was blocked or warned by OpenQodex.
 ---
 
 # OpenQodex: review the change before it is pushed
@@ -22,7 +22,7 @@ If `review` says "Full review unavailable" and prints a way to review with the a
 
 ## Procedure
 
-When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed.
+When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed. When it does not exist, this skill was installed alone, with no push check: before the first review, run `npx -y openqodex@0.8.1 init --yes --agent <host>` once from the repository, where `<host>` is the agent you are (`claude-code`, `codex`, `cursor` or `cline`). It installs OpenQodex for you, then reviews the change when a reviewer can start, so it can take five minutes: allow it up to ten, or run it in the background and wait for it to exit. When it prints `First review: finished`, the receipt above that line is the review's: show it as step 3 says, then go on from step 4.
 
 1. From the repository, run:
 

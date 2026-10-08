@@ -1,15 +1,19 @@
 // What `init` writes for each agent, in which scope. The paths and their
 // sources are listed in templates/README.md; this file follows it exactly.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { assetPath } from "../assets.js";
 import type { AgentId } from "./detect.js";
+import { claudeHome, codexHome } from "./homes.js";
+import shippedSkills from "./shipped-skills.json";
 
 export type Scope = "user" | "project";
 
 export type Target =
-  // A whole file (rule or skill).
-  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean }
+  // A whole file (rule or skill). `skillRunner`, on a skill: the command an
+  // init here writes for OpenQodex, so a shipped skill text is recognised (isShippedSkill).
+  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean; skillRunner?: string }
   // One hook group merged under hooks.PreToolUse of a JSON settings file.
   | { kind: "hook-json"; agent: AgentId; label: string; path: string; group: HookGroup; inRepo: boolean; usesLauncher: boolean }
   // A section between the openqodex markers in a markdown file.
@@ -34,21 +38,22 @@ function fill(text: string, version: string): string {
 }
 
 // The marked section that tells an agent to review with openqodex when a
-// feature or fix is done. The same text goes into every agent's global
-// instruction file, the project CLAUDE.md and AGENTS.md, and the Cursor and
-// Cline rules.
+// feature or fix is done. It goes into the project CLAUDE.md and AGENTS.md
+// and into the Cursor and Cline rules.
 export function instructionSection(): string {
   return template("instructions-section.md").trimEnd();
 }
 
-function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
-  return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo };
+// The marked section for each agent's global instruction file: one line
+// that names the skill. The global file is read in every repository, so it
+// carries only the trigger; the skill holds the procedure, and a repo's own
+// team section says how that repo reviews.
+export function globalSection(): string {
+  return template("global-section.md").trimEnd();
 }
 
-// Codex reads its home folder from CODEX_HOME, ~/.codex by default.
-function codexHome(home: string): string {
-  const fromEnv = process.env.CODEX_HOME;
-  return fromEnv !== undefined && fromEnv !== "" ? fromEnv : join(home, ".codex");
+function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
+  return { kind: "md-section", agent, label, path, section: inRepo ? instructionSection() : globalSection(), inRepo };
 }
 
 // The hook group from a JSON template, with the command put in after
@@ -75,6 +80,39 @@ function shippedSkill(): string {
 // replaced by `runner`: the launcher, or the pinned npx form of this version.
 export function renderSkill(runner: string): string {
   return shippedSkill().replace(LAUNCHER_PARAGRAPH, "").replace(PINNED_NPX, () => runner);
+}
+
+// The key of one exact skill text, with the two things that differ between
+// copies of one shipped text written as placeholders: the version a pin
+// names, and the command that runs OpenQodex (`npx -y openqodex@<version>`,
+// or `runner`, the launcher or pinned npx form an init on this machine
+// writes in its place). Nothing else is taken out: an edit anywhere, the
+// launcher paragraph included, changes the key. The placeholders hold a NUL,
+// which no skill file holds, so a file that spells a placeholder out is a
+// user edit and matches nothing (isShippedSkill refuses a NUL outright).
+// scripts/validate-skill.mjs computes the same key.
+const ANY_PIN = /openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
+const VERSION_TOKEN = "openqodex@\u0000version\u0000";
+const RUNNER_TOKEN = "\u0000runner\u0000";
+function skillKey(text: string, runner: string | null): string {
+  const own = runner === null ? text : text.replaceAll(runner, RUNNER_TOKEN);
+  return createHash("sha256").update(own.replace(ANY_PIN, VERSION_TOKEN).replaceAll(`npx -y ${VERSION_TOKEN}`, RUNNER_TOKEN)).digest("hex");
+}
+
+// The keys a shipped text adds to shipped-skills.json: the file as shipped
+// (what `npx skills add` copies), and the file without its launcher
+// paragraph (what an earlier init wrote, in either scope).
+export function shippedSkillKeys(shipped: string): string[] {
+  return [skillKey(shipped, null), skillKey(shipped.replace(LAUNCHER_PARAGRAPH, ""), null)];
+}
+
+// True when `text` is exactly the skill as some version shipped it, or as
+// an earlier init wrote it with `runner` in place of npx. Such a file is
+// OpenQodex's, not the developer's, so init replaces it; a copy the
+// developer edited anywhere matches none.
+const SHIPPED = new Set(shippedSkills.sha256);
+export function isShippedSkill(text: string, runner: string): boolean {
+  return !text.includes("\u0000") && SHIPPED.has(skillKey(text, runner));
 }
 
 // One level-2 section of the shipped skill, heading included.
@@ -187,23 +225,28 @@ export function targetsFor(args: {
   const base = user ? home : repoRoot;
   if (base === null) return { targets, skipped: [`${agent}: run init --project inside a git repository`] };
   const at = (...p: string[]): string => join(base, ...p);
+  // In user scope, Claude Code's and Codex's own folders, as homes.ts finds
+  // them, joined without folding `..`: the write check resolves the path the
+  // way the system does (real-path.ts).
+  const claude = (...p: string[]): string => (user ? [claudeHome(home), ...p].join(sep) : at(".claude", ...p));
+  const codex = (...p: string[]): string => (user ? [codexHome(home), ...p].join(sep) : at(".codex", ...p));
   const skillText = user ? skillStub(runner) : fill(renderSkill(runner), version);
   // A user-scope skill calls the launcher, so the launcher stays while it is installed.
-  const skillTarget = (label: string, path: string): Target => fileTarget(agent, label, path, skillText, !user, user);
+  const skillTarget = (label: string, path: string): Target => ({ kind: "file", agent, label, path, content: skillText, inRepo: !user, usesLauncher: user, skillRunner: runner });
 
   switch (agent) {
     case "claude-code":
-      targets.push(skillTarget("Claude Code skill", at(".claude", "skills", "openqodex", "SKILL.md")));
+      targets.push(skillTarget("Claude Code skill", claude("skills", "openqodex", "SKILL.md")));
       targets.push(
         user
-          ? sectionTarget(agent, "Claude Code global instructions", at(".claude", "CLAUDE.md"), false)
+          ? sectionTarget(agent, "Claude Code global instructions", claude("CLAUDE.md"), false)
           : sectionTarget(agent, "Claude Code project instructions", at("CLAUDE.md"), true),
       );
       targets.push({
         kind: "hook-json",
         agent,
         label: "Claude Code push hook",
-        path: at(".claude", "settings.json"),
+        path: claude("settings.json"),
         group: hookGroup("claude-code/settings-hook.json", runner),
         inRepo: !user,
         usesLauncher: user,
@@ -219,7 +262,7 @@ export function targetsFor(args: {
         kind: "allow-rules",
         agent,
         label: "Claude Code permission rules",
-        path: at(".claude", "settings.json"),
+        path: claude("settings.json"),
         rules: user && !hasRuleWildcard(runner) ? allowRules(runner) : [],
         inRepo: !user,
       });
@@ -228,14 +271,14 @@ export function targetsFor(args: {
       targets.push(skillTarget("Codex skill", at(".agents", "skills", "openqodex", "SKILL.md")));
       targets.push(
         user
-          ? sectionTarget(agent, "Codex global instructions", join(codexHome(home), "AGENTS.md"), false)
+          ? sectionTarget(agent, "Codex global instructions", codex("AGENTS.md"), false)
           : sectionTarget(agent, "Codex instructions", at("AGENTS.md"), true),
       );
       targets.push({
         kind: "hook-json",
         agent,
         label: "Codex push hook",
-        path: at(".codex", "hooks.json"),
+        path: codex("hooks.json"),
         group: hookGroup("codex/hooks.json", runner),
         inRepo: !user,
         usesLauncher: user,

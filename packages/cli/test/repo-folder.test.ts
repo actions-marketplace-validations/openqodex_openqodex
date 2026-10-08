@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { planRepoFiles } from "../src/agents/repo-folder.js";
+import { Guard } from "../src/agents/guarded-fs.js";
 import { emptyRecord } from "../src/agents/record.js";
 import { cli, sandbox, type Sandbox } from "./init-helpers.js";
 
@@ -46,7 +47,7 @@ describe("the repo folder's team files", () => {
     const s = sandbox({ "README.md": "hello\n" });
     const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain(`Commit ${CONFIG} and ${INSTRUCTIONS}`);
+    expect(r.stdout).toContain(`Commit ${CONFIG}, ${INSTRUCTIONS}`);
     const editedConfig = `${read(s, CONFIG)}# ours\n`;
     writeFileSync(join(s.repo, CONFIG), editedConfig);
     writeFileSync(join(s.repo, INSTRUCTIONS), "Never flag the vendored code.\n");
@@ -96,7 +97,7 @@ describe("the repo folder's team files", () => {
     const s = sandbox({ "README.md": "hello\n", ".gitignore": ".openqodex/custom-instructions.md\n" });
     const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain(`Commit ${CONFIG} so your team shares it.`);
+    expect(r.stdout).toMatch(new RegExp(`Commit ${CONFIG.replaceAll(".", "\\.")}[ ,]`));
     expect(r.stdout).not.toMatch(/Commit [^\n]*custom-instructions/);
     expect(r.stdout).toContain(`${INSTRUCTIONS} ${IGNORED}`);
   });
@@ -146,7 +147,7 @@ describe("ownership of the team files", () => {
   it("init never replaces a team file created after it made its plan, and does not record it", async () => {
     const s = sandbox();
     const record = emptyRecord();
-    const { actions } = planRepoFiles(s.repo, record);
+    const { actions } = planRepoFiles(s.repo, record, new Guard({ repoRoot: s.repo, gitFolders: [], roots: [] }));
     mkdirSync(join(s.repo, ".openqodex"), { recursive: true });
     writeFileSync(join(s.repo, INSTRUCTIONS), "Written by a first scan in another terminal.\n");
     for (const a of actions) await a.apply?.();

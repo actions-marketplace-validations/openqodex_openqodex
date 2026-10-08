@@ -1,9 +1,9 @@
 // The installation record, <openqodex home>/install.json: what `init` and
 // `hook install` wrote, so a later run changes or removes only what is still
 // exactly as we wrote it. A developer's edit makes a thing theirs.
-import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { readText, writeAtomic } from "./files.js";
+import { readText } from "./files.js";
+import { homeGuard, type Guard } from "./guarded-fs.js";
 
 export type InstallRecord = {
   version: 1;
@@ -87,11 +87,11 @@ export function isEmpty(record: InstallRecord): boolean {
 }
 
 // Writes the record when it changed; removes it when nothing is recorded.
-export function saveRecord(home: string, record: InstallRecord, before: string): void {
+export function saveRecord(home: string, record: InstallRecord, before: string, guard: Guard = homeGuard(home)): void {
   const next = `${JSON.stringify(record, null, 2)}\n`;
   if (next === before) return;
-  if (isEmpty(record)) rmSync(recordPath(home), { force: true });
-  else writeAtomic(recordPath(home), next, 0o600);
+  if (isEmpty(record)) guard.remove(recordPath(home));
+  else guard.write(recordPath(home), next, { mode: 0o600 });
 }
 
 export function serialize(record: InstallRecord): string {

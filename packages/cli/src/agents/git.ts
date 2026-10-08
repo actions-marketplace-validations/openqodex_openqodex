@@ -3,7 +3,8 @@ import { execFile } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Action } from "./plan.js";
-import { assertNotSymlink, readText, writeAtomic } from "./files.js";
+import { assertNotSymlink, readText } from "./files.js";
+import type { Guard } from "./guarded-fs.js";
 import type { InstallRecord } from "./record.js";
 
 const execFileAsync = promisify(execFile);
@@ -55,9 +56,11 @@ export function inWorkTree(repoRoot: string, gitFolders: string[], file: string)
   return within(repoRoot, file) && !excluding.some((dir) => within(dir, file));
 }
 
-export async function trackedFiles(repoRoot: string): Promise<string[]> {
-  const { stdout } = await execFileAsync("git", ["ls-files", "-z"], { cwd: repoRoot, maxBuffer: 256 << 20 });
-  return stdout.split("\0").filter((p) => p !== "");
+// The files of the work tree a review can see: tracked ones and untracked
+// ones git does not ignore, as the change source counts them.
+export async function repoFiles(repoRoot: string): Promise<string[]> {
+  const { stdout } = await execFileAsync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: repoRoot, maxBuffer: 256 << 20 });
+  return [...new Set(stdout.split("\0").filter((p) => p !== ""))];
 }
 
 // Whether git tracks this file: a team file that was committed stays on uninstall.
@@ -77,7 +80,7 @@ function lines(text: string | null): string[] {
 // Adds the line unless it is there. A line that was there before init is the
 // developer's and is not recorded; a line another work tree of the same
 // repository added (worktrees share the exclude file) is shared.
-export function planExclude(excludeFile: string, line: string, repo: string, record: InstallRecord): Action {
+export function planExclude(excludeFile: string, line: string, repo: string, record: InstallRecord, guard: Guard): Action {
   assertNotSymlink(excludeFile);
   const text = readText(excludeFile);
   const recs = record.excludes.filter((e) => e.file === excludeFile && e.line === line);
@@ -93,7 +96,7 @@ export function planExclude(excludeFile: string, line: string, repo: string, rec
     note: `exclude ${line} so git status does not change`,
     guard: { path: excludeFile, before: text },
     apply: () => {
-      writeAtomic(excludeFile, next);
+      guard.write(excludeFile, next);
       record.excludes = record.excludes.filter((e) => !(e.file === excludeFile && e.line === line && e.repo === repo));
       record.excludes.push(mine);
     },
@@ -102,7 +105,7 @@ export function planExclude(excludeFile: string, line: string, repo: string, rec
 
 // Removes the line only when we added it and no other recorded work tree
 // still needs it.
-export function planUnexclude(excludeFile: string, line: string, repo: string, record: InstallRecord): Action | null {
+export function planUnexclude(excludeFile: string, line: string, repo: string, record: InstallRecord, guard: Guard): Action | null {
   const recs = record.excludes.filter((e) => e.file === excludeFile && e.line === line);
   if (!recs.some((e) => e.repo === repo)) return null;
   const forget = (): void => {
@@ -128,7 +131,7 @@ export function planUnexclude(excludeFile: string, line: string, repo: string, r
     note: `remove ${line}`,
     guard: { path: excludeFile, before: text },
     apply: () => {
-      writeAtomic(excludeFile, next);
+      guard.write(excludeFile, next);
       forget();
     },
   };

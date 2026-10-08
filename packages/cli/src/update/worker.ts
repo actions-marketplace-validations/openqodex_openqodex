@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, renameSync, rmdirSync, rmSync, utimesSync, write
 import { dirname, join } from "node:path";
 import { extractArchive, openqodexHome } from "@openqodex/scanners";
 import { BoundaryError, withBoundary } from "../agents/lock.js";
+import { homeGuard } from "../agents/guarded-fs.js";
 import { activeVersion, checkRuns, identicalTree, launcherPath, runtimeDir, tempRuntimes, writeActive } from "../launcher.js";
 import { MIN_AGE_MS, selectCandidates } from "./candidate.js";
 import { fetchAttestations, fetchMetadata, fetchTarball } from "./fetch.js";
@@ -205,7 +206,7 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
   const from = activeVersion(home);
   if (from === null || !existsSync(launcherPath(home))) return { outcome: "failed", lines: ["No launcher install here; run npx openqodex init."] };
   // What a crashed or killed worker left behind.
-  for (const tmp of tempRuntimes(home, false)) rmSync(tmp, { recursive: true, force: true });
+  for (const tmp of tempRuntimes(home, false)) homeGuard(home).removeTree(tmp);
   await note(home, { checkedAt: new Date(now).toISOString() });
   await pauseAt(home, "before-metadata", env);
 
