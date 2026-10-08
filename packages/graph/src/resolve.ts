@@ -32,8 +32,12 @@ const MAX_DEPTH = 8; // re-export and base-class chains
 // once (its names are kept), so this bounds only a walk through cycles or a
 // barrel chain longer than any real repository holds.
 export const EXPORT_WALK_STEPS = 4096;
+// Export lookups one name may make before it stops. A lookup is kept once
+// it finished cleanly, so this bounds only a web of `export *` that loops
+// back on itself, which no cache can shorten.
+export const EXPORT_LOOKUP_STEPS = 10_000;
 export const HUB_FILES = 8; // a name defined in more files never binds without evidence
-export const RESOLVER_VERSION = 4;
+export const RESOLVER_VERSION = 5;
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -89,7 +93,16 @@ const SAME_SCOPE: Ev = { kind: "same-scope", tier: "certain", via: null, note: n
 // A name followed through more re-exports or aliases than MAX_DEPTH: the
 // graph stops there and says so, never a miss or an untyped value.
 const TOO_DEEP = { v: "gap", cause: "export-chain-too-deep", note: `the name is re-exported or aliased through more than ${MAX_DEPTH} modules; the graph stops following it there`, candidates: null } as const;
-const tooDeep = (v: { v: string; cause?: string } | null): boolean => v?.v === "gap" && v.cause === "export-chain-too-deep";
+const LOOKUP_CUT = {
+  v: "gap",
+  cause: "export-chain-too-deep",
+  note: `the lookup passed ${EXPORT_LOOKUP_STEPS.toLocaleString("en-US")} steps through export * that loops back on itself; the graph stops there`,
+  candidates: null,
+} as const;
+
+// A branch of an `export *` set the graph could not follow: what it was
+// and why. It may bring the name too.
+type Unfollowed = { spec: string; cause: Cause; note: string };
 
 // A step through a module: the outer binding (the import the call read)
 // keeps its kind and line; the tier is the weaker of the two and the notes
@@ -602,7 +615,7 @@ export function createWorld(input: ResolveInput): World {
     | { kind: "named"; mod: Mod | { ns: string; ev: Ev }; imported: string }
     | { kind: "ns"; mod: Mod | { ns: string; ev: Ev } }
     | { kind: "pyns"; dotted: string };
-  type FileBindings = { names: Map<string, Binding>; stars: (Mod | { ns: string; ev: Ev })[] };
+  type FileBindings = { names: Map<string, Binding>; stars: (Mod | { ns: string; ev: Ev })[]; starSpecs: string[] };
   const bindingsCache = new Map<string, FileBindings>();
   const importTargets = new Map<string, { target: string; line: number; column: number; ev: Ev; reexport: boolean }[]>();
   // The export reads of the site being traced, when one is.
@@ -619,7 +632,7 @@ export function createWorld(input: ResolveInput): World {
     bindings(file: string): FileBindings {
       let b = bindingsCache.get(file);
       if (b) return b;
-      b = { names: new Map(), stars: [] };
+      b = { names: new Map(), stars: [], starSpecs: [] };
       bindingsCache.set(file, b);
       const f = facts.get(file);
       if (!f) return b;
@@ -633,6 +646,7 @@ export function createWorld(input: ResolveInput): World {
         if (imp.scoped) continue; // binds only in its own scope, through CallFact.bound
         if (imp.star) {
           b.stars.push(mod);
+          b.starSpecs.push(imp.spec);
           continue;
         }
         if (family === "go") {
@@ -652,8 +666,77 @@ export function createWorld(input: ResolveInput): World {
 
     // A name a module offers to importers.
     exports(file: string, name: string, depth: number): Value | null {
-      if (depth > MAX_DEPTH) return TOO_DEEP;
-      if (reading) reading.add(`${file}\0${name}`);
+      return lookupExport(file, name, depth);
+    },
+
+    // The method and the evidence of the inheritance steps to the class
+    // that defines it (null when the class itself does).
+    members(key: string, name: string, side: Side): { ids: string[]; ev: Ev | null } | null {
+      return methodOn(key, name, side, 0);
+    },
+  };
+
+  // ---------- export lookups ----------
+  // A name's export value depends only on the file and the name, so it is
+  // kept after its first lookup, with the export reads it made (the trace
+  // replays them). A lookup that met a cycle, the depth limit or the step
+  // budget is kept by no one: its value depends on where it started.
+  const exportMemo = new Map<string, { v: Value | null; reads: string[] }>();
+  type LookupFrame = { reads: Set<string>; tainted: boolean };
+  const lookupStack: LookupFrame[] = [];
+  const openLookups = new Set<string>();
+  let lookupSteps = 0;
+  let lookupCut: Cut | null = null;
+  const taintAll = () => {
+    for (const frame of lookupStack) frame.tainted = true;
+  };
+  const noteRead = (read: string) => {
+    const top = lookupStack[lookupStack.length - 1];
+    if (top) top.reads.add(read);
+    else if (reading) reading.add(read);
+  };
+
+  function lookupExport(file: string, name: string, depth: number): Value | null {
+    const key = `${file}\0${name}`;
+    const kept = exportMemo.get(key);
+    if (kept) {
+      for (const read of kept.reads) noteRead(read);
+      return kept.v;
+    }
+    if (depth > MAX_DEPTH) {
+      taintAll();
+      return TOO_DEEP;
+    }
+    if (openLookups.has(key)) {
+      // A cycle: along this path the name is not found.
+      taintAll();
+      noteRead(key);
+      return { v: "miss", target: file, name, ev: SAME_SCOPE };
+    }
+    if (lookupStack.length === 0) lookupSteps = 0;
+    if (++lookupSteps > EXPORT_LOOKUP_STEPS) {
+      taintAll();
+      lookupCut ??= { by: "export-walk", at: file, omitted: null, exact: false, unit: "paths", note: LOOKUP_CUT.note };
+      return LOOKUP_CUT;
+    }
+    const frame: LookupFrame = { reads: new Set([key]), tainted: false };
+    lookupStack.push(frame);
+    openLookups.add(key);
+    let v: Value | null;
+    try {
+      v = exportsOf(file, name, depth);
+    } finally {
+      lookupStack.pop();
+      openLookups.delete(key);
+    }
+    if (!frame.tainted) exportMemo.set(key, { v, reads: [...frame.reads] });
+    for (const read of frame.reads) noteRead(read);
+    return v;
+  }
+
+  // What `file` offers under `name`, read once per name (lookupExport).
+  function exportsOf(file: string, name: string, depth: number): Value | null {
+    {
       const f = facts.get(file);
       if (!f) return known.has(file) ? { v: "miss", target: file, name, ev: SAME_SCOPE } : null;
       const family = familyOf(f.lang);
@@ -667,34 +750,34 @@ export function createWorld(input: ResolveInput): World {
         if (top && top.length > 0) return { v: "sym", ids: top, ev: SAME_SCOPE };
         for (const e of f.exportsLocal) if (e.exported === name) return resolveLocal(file, e.local, depth + 1);
         // Every `export *` that offers the name: one definition binds; two
-        // different ones are ambiguous (JavaScript exports neither).
+        // different ones are ambiguous (JavaScript exports neither). A star
+        // the graph cannot follow (a module that is not there, a package
+        // outside the repository, a gap) may bring the name too, so nothing
+        // it competes with is certain.
         const starHits: { v: Value; spec: string }[] = [];
-        let deep: Value | null = null; // a star whose chain passed the depth limit
+        const unfollowed: Unfollowed[] = [];
         for (const imp of f.imports) {
           if (!imp.reexport) continue;
           const named = imp.names.find((n) => n.local === name);
           if (!named && !imp.star) continue;
           const mod = jsSpec(file, imp.line, imp.spec);
-          if (mod === null) {
-            if (named) return { v: "miss", target: file, name, ev: SAME_SCOPE };
-            continue;
+          if (named) {
+            if (mod === null) return { v: "miss", target: file, name, ev: SAME_SCOPE };
+            if ("ext" in mod) return { v: "ext" };
+            if ("gap" in mod) return { v: "gap", cause: mod.gap, note: mod.note, candidates: mod.candidates };
+            return named.imported === "*" ? { v: "mod", file: mod.file, ev: mod.ev } : withEv(index.exports(mod.file, named.imported, depth + 1), mod.ev);
           }
-          if ("ext" in mod) {
-            if (named) return { v: "ext" };
-            continue;
-          }
-          if ("gap" in mod) {
-            if (named) return { v: "gap", cause: mod.gap, note: mod.note, candidates: mod.candidates };
-            continue;
-          }
-          if (named) return named.imported === "*" ? { v: "mod", file: mod.file, ev: mod.ev } : withEv(index.exports(mod.file, named.imported, depth + 1), mod.ev);
-          if (imp.star) {
+          if (mod === null) unfollowed.push({ spec: imp.spec, cause: "miss", note: `export * from ${imp.spec} names no module here` });
+          else if ("ext" in mod) unfollowed.push({ spec: imp.spec, cause: "external", note: `export * from ${imp.spec}, a package outside the repository, may bring it` });
+          else if ("gap" in mod) unfollowed.push({ spec: imp.spec, cause: mod.gap, note: mod.note });
+          else {
             const hit = withEv(index.exports(mod.file, name, depth + 1), mod.ev);
-            if (tooDeep(hit)) deep ??= hit;
-            else if (hit && hit.v !== "miss") starHits.push({ v: hit, spec: imp.spec });
+            if (hit === null) unfollowed.push({ spec: imp.spec, cause: "miss", note: `export * from ${imp.spec} could not be read` });
+            else if (hit.v === "gap") unfollowed.push({ spec: imp.spec, cause: hit.cause, note: hit.note });
+            else if (hit.v !== "miss") starHits.push({ v: hit, spec: imp.spec });
           }
         }
-        return starValue(file, name, starHits) ?? deep ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
+        return starValue(file, name, starHits, unfollowed) ?? noStarHit(unfollowed) ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
       }
       // Python: definitions, then names the module imported, then submodules of a package.
       const top = topByFile.get(file)?.get(name);
@@ -704,27 +787,52 @@ export function createWorld(input: ResolveInput): World {
         const sub = pyModule(join(dirOf(file), name));
         if (sub) return { v: "mod", file: sub, ev: { kind: "import", tier: "certain", via: null, note: null, rule: "py-submodule" } };
       }
-      let deep: Value | null = null;
-      for (const star of index.bindings(file).stars) {
-        if (star === null || !("file" in star)) continue;
-        const hit = index.exports(star.file, name, depth + 1);
-        if (tooDeep(hit)) deep ??= hit;
-        else if (hit && hit.v !== "miss") return withEv(hit, star.ev);
-      }
-      return deep ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
-    },
+      return pyStarValue(file, name, depth) ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
+    }
+  }
 
-    // The method and the evidence of the inheritance steps to the class
-    // that defines it (null when the class itself does).
-    members(key: string, name: string, side: Side): { ids: string[]; ev: Ev | null } | null {
-      return methodOn(key, name, side, 0);
-    },
-  };
+  // A Python module's `from x import *` lines run in order, so the last
+  // one that brings the name binds it. One after it that the graph cannot
+  // follow may bind it again: the binding is then only possible.
+  function pyStarValue(file: string, name: string, depth: number): Value | null {
+    const b = index.bindings(file);
+    const later: Unfollowed[] = [];
+    for (let i = b.stars.length - 1; i >= 0; i--) {
+      const star = b.stars[i] as Mod | { ns: string; ev: Ev };
+      const spec = b.starSpecs[i] ?? "a module";
+      if (star === null) later.push({ spec, cause: "miss", note: `from ${spec} import * names no module here` });
+      else if ("ext" in star) later.push({ spec, cause: "external", note: `from ${spec} import *, a module outside the repository, may bring it` });
+      else if ("gap" in star) later.push({ spec, cause: star.gap, note: star.note });
+      else if ("file" in star) {
+        const hit = index.exports(star.file, name, depth + 1);
+        if (hit === null) later.push({ spec, cause: "miss", note: `from ${spec} import * could not be read` });
+        else if (hit.v === "gap") later.push({ spec, cause: hit.cause, note: hit.note });
+        else if (hit.v !== "miss") return onlyPossible(withEv(hit, star.ev) as Value, later);
+      }
+    }
+    return noStarHit(later);
+  }
+
+  // A value another branch may also bring: at most possible, with why.
+  function onlyPossible(v: Value, open: Unfollowed[]): Value {
+    if (open.length === 0 || v.v !== "sym") return v;
+    const why = `${open.map((u) => u.note).join("; ")}, so the name may come from there instead.`;
+    return { ...v, ev: { ...v.ev, tier: weakest(v.ev.tier, "possible"), note: [v.ev.note, why].filter(Boolean).join(" ") } };
+  }
+
+  // No branch brought the name: the first branch that could not be
+  // followed says why, and a package outside the repository is the name's
+  // likely source; null when every branch was followed and none has it.
+  function noStarHit(open: Unfollowed[]): Value | null {
+    const gap = open.find((u) => u.cause !== "external");
+    if (gap) return { v: "gap", cause: gap.cause, note: gap.note, candidates: null };
+    return open.length > 0 ? { v: "ext" } : null;
+  }
 
   // The value of a name several `export *` statements offer. The same
   // definition (or module) reached twice is one value; different ones are
   // ambiguous: every candidate at the possible tier, with a note.
-  function starValue(file: string, name: string, hits: { v: Value; spec: string }[]): Value | null {
+  function starValue(file: string, name: string, hits: { v: Value; spec: string }[], open: Unfollowed[]): Value | null {
     if (hits.length === 0) return null;
     const keyOf = (v: Value): string | null => (v.v === "sym" ? [...new Set(v.ids.map(stableKey))].sort().join("\0") : v.v === "mod" ? `mod:${v.file}` : v.v === "ext" ? "ext" : null);
     const distinct = new Map<string, { v: Value; spec: string }>();
@@ -734,9 +842,10 @@ export function createWorld(input: ResolveInput): World {
       if (!distinct.has(k)) distinct.set(k, h);
     }
     const first = hits[0] as { v: Value };
-    if (distinct.size === 1) return first.v;
+    if (distinct.size === 1) return onlyPossible(first.v, open);
     const syms = [...distinct.values()].filter((h): h is { v: Extract<Value, { v: "sym" }>; spec: string } => h.v.v === "sym");
-    const note = `${file} re-exports ${name} through export * from ${distinct.size} modules (${[...distinct.values()].map((h) => h.spec).join(", ")}); JavaScript exports neither, and a bundler may pick one.`;
+    const unopened = open.length > 0 ? ` ${open.map((u) => u.note).join("; ")}.` : "";
+    const note = `${file} re-exports ${name} through export * from ${distinct.size} modules (${[...distinct.values()].map((h) => h.spec).join(", ")}); JavaScript exports neither, and a bundler may pick one.${unopened}`;
     if (syms.length < 2) return { v: "gap", cause: "ambiguous", note, candidates: [...distinct.keys()] };
     const base = syms[0]?.v.ev as Ev;
     return { v: "sym", ids: syms.flatMap((h) => h.v.ids), ev: { ...base, tier: "possible", note: [base.note, note].filter(Boolean).join(" "), rule: "js-star-ambiguous" } };
@@ -799,14 +908,12 @@ export function createWorld(input: ResolveInput): World {
     }
     const b = index.bindings(file).names.get(name);
     if (b) return bindingValue(file, family, name, b, depth);
-    let deep: Value | null = null;
+    if (family === "python") return pyStarValue(file, name, depth);
     for (const star of index.bindings(file).stars) {
       if (star === null || !("file" in star)) continue;
       const hit = index.exports(star.file, name, depth + 1);
-      if (tooDeep(hit)) deep ??= hit;
-      else if (hit && hit.v !== "miss") return withEv(hit, star.ev);
+      if (hit && hit.v !== "miss") return withEv(hit, star.ev);
     }
-    if (deep) return deep;
     if (family === "go") {
       // Dot imports bring a package's names into scope.
       for (const star of index.bindings(file).stars) if (star !== null && "ext" in star) return { v: "ext" };
@@ -1381,7 +1488,7 @@ export function createWorld(input: ResolveInput): World {
     return byKey.get(idOrKey) ?? null;
   };
 
-  return { resolveAll, trace, surface, importsOf, node, walkCuts: () => (walkCut ? [walkCut] : []) };
+  return { resolveAll, trace, surface, importsOf, node, walkCuts: () => [walkCut, lookupCut].filter((c): c is Cut => c !== null) };
 }
 
 // The name an unaliased Go import is used by when its package is not in the

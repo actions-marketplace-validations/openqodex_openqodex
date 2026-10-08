@@ -370,6 +370,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     } else if (args.base && args.base.files.length > 0) {
       reasons.push("the export surface was not compared: the budget ran out");
     }
+    // The walks of export * and the export lookups stop with a cut, in either version.
+    addWalkCuts(cuts, world);
     stage("compare");
 
     // ---------- the graph ----------
@@ -621,6 +623,11 @@ function removedSymbols(files: ChangedFile[], baseDefs: Map<string, { file: stri
   return removed;
 }
 
+// A world's walk cuts, each kind once whichever version of the code made it.
+function addWalkCuts(cuts: Cut[], world: World): void {
+  for (const cut of world.walkCuts()) if (!cuts.some((x) => x.by === cut.by && x.note === cut.note)) cuts.push(cut);
+}
+
 // "a.ts#Cls.m@3:5" to "Cls"; "" for a symbol with no owner.
 function ownerOf(id: string): string {
   const name = id.slice(id.indexOf("#") + 1, id.lastIndexOf("@"));
@@ -697,9 +704,7 @@ async function compareWorlds(c: {
       return n ? { id: n.id, file: n.file, line: n.startLine } : null;
     },
   });
-  // One cut for the walk, from whichever world stopped first.
-  const walk = [...baseWorld.walkCuts(), ...c.world.walkCuts()][0];
-  if (walk) c.cuts.push(walk);
+  addWalkCuts(c.cuts, baseWorld);
   return changes;
 }
 
