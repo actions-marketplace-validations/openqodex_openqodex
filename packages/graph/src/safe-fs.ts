@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { FolderReader } from "@openqodex/core";
+import { FolderReader, type EntryResult } from "@openqodex/core";
 import type { FileFacts } from "./types.js";
 
 // Repo-relative reads, each decided by what the filesystem holds at the
@@ -41,6 +41,15 @@ export class RepoReader {
     if (this.folders === null || isAbsolute(rel)) return null;
     const got = this.folders.read(rel.split("/"), maxBytes);
     return got.ok ? got.data : null;
+  }
+
+  // What stands at `rel`, of any kind (the caller judges it): its lstat,
+  // taken between two walks that find the same real folders by identity.
+  // "refused" when a name on the way is not a real folder (a link, a file)
+  // or the folders changed during the look; "missing" when nothing is there.
+  entry(rel: string): EntryResult {
+    if (this.folders === null || isAbsolute(rel)) return { ok: false, why: "refused" };
+    return this.folders.entry(rel.split("/"));
   }
 }
 
