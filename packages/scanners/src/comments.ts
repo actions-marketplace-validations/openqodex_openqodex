@@ -785,18 +785,10 @@ function rubyComments(r: Reader): void {
 // block scalar (`|` or `>` with its chomping and indentation indicators,
 // where a scalar starts) holds every following line that is blank or
 // indented deeper than the key or `-` that holds it.
-//
-// `masked`, when given, collects the spans that are not YAML code, in file
-// order: comments, the inside of a quoted value (a quoted key is code), and
-// block scalar bodies.
-function yamlComments(r: Reader, masked?: [number, number][]): void {
+function yamlComments(r: Reader): void {
   const s = r.s;
   const blankOrEnd = (k: number): boolean => k >= s.length || s[k] === " " || s[k] === "\t" || s[k] === "\n" || s[k] === "\r";
-  const comment = (k: number): number => {
-    const end = r.lineComment(k);
-    masked?.push([k, end]);
-    return end;
-  };
+  const comment = (k: number): number => r.lineComment(k);
   let flow = 0;
   let i = 0;
   while (i < s.length) {
@@ -838,10 +830,6 @@ function yamlComments(r: Reader, masked?: [number, number][]): void {
           i++;
           continue;
         }
-        let k = end;
-        while (s[k] === " " || s[k] === "\t") k++;
-        const key = s[k] === ":" && (blankOrEnd(k + 1) || (flow > 0 && ",]}".includes(s[k + 1] as string)));
-        if (!key) masked?.push([from + 1, end - 1]);
         i = end;
       } else if (start && flow === 0 && (c === "|" || c === ">")) {
         const header = blockHeader(s, i);
@@ -855,7 +843,6 @@ function yamlComments(r: Reader, masked?: [number, number][]): void {
         if (s[k] === "#") k = comment(k);
         const parent = keyed ? keyColumn : entry;
         next = skipBlockBody(s, lineEnd(s, k) + 1, parent);
-        masked?.push([Math.min(lineEnd(s, k) + 1, s.length), next]);
         break;
       } else if (start && (c === "&" || c === "!")) {
         // An anchor or a tag: the scalar starts after it.
@@ -934,34 +921,4 @@ function skipBlockBody(s: string, i: number, parent: number): number {
     i = end + 1;
   }
   return s.length;
-}
-
-// Each line of a YAML file as a Comment unit (its start, and its text
-// without a carriage return), with everything that is not YAML code turned
-// into blanks: comments, the inside of quoted values, block scalar bodies.
-// A suppression marker that a scanner obeys as a YAML key (kube-linter's
-// `ignore-check.kube-linter.io/<check>` annotation) is matched on these, so
-// the same text in a comment or a string is not.
-export function yamlCode(text: string): Comment[] {
-  const masked: [number, number][] = [];
-  yamlComments(new Reader(text), masked);
-  const parts: string[] = [];
-  let at = 0;
-  for (const [from, to] of masked) {
-    if (to <= at) continue;
-    const begin = Math.max(from, at);
-    parts.push(text.slice(at, begin), text.slice(begin, to).replace(/[^\n]/g, " "));
-    at = to;
-  }
-  parts.push(text.slice(at));
-  const code = parts.join("");
-  const out: Comment[] = [];
-  let start = 0;
-  for (;;) {
-    const end = code.indexOf("\n", start);
-    const line = code.slice(start, end < 0 ? code.length : end);
-    out.push({ start, text: line.endsWith("\r") ? line.slice(0, -1) : line });
-    if (end < 0) return out;
-    start = end + 1;
-  }
 }

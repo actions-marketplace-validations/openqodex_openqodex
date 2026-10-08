@@ -11,7 +11,8 @@
 // its osv-scanner.toml, and sqllint has none.
 
 import type { BuiltinScanner } from "@openqodex/core";
-import { comments, yamlCode } from "./comments.js";
+import { comments } from "./comments.js";
+import { yamlKeys } from "./yaml-keys.js";
 import type { Comment, Family } from "./comments.js";
 
 type Marker = {
@@ -34,11 +35,15 @@ type Marker = {
 };
 
 // "line": the scanner obeys the marker anywhere on the line, in a comment,
-// a string or code alike. "yaml-code": the scanner obeys it as YAML, such
-// as a key of an object's annotations, so it counts on each line's YAML code
-// (comments.ts, yamlCode) and never in a comment, a quoted value or a block
-// scalar's body.
-type Unit = Family | "line" | "yaml-code";
+// a string or code alike. "yaml-keys": the scanner obeys it as a key of a
+// YAML or JSON mapping, such as an object's annotations, in any style
+// (yaml-keys.ts): the pattern is tested on each key as the scanner decodes
+// it, and a hit counts on the key's line, or on the line of an alias that
+// brings the key in. A file the parser cannot read, or one too large, is
+// tested line by line instead, so the reading is never narrower than the
+// scanner's. A "yaml-keys" pattern must not be anchored to the start: in
+// that fallback a unit is a whole line.
+type Unit = Family | "line" | "yaml-keys";
 type Entry = { family: Unit; markers: Marker[] };
 
 export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
@@ -134,10 +139,21 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
     return lo + 1;
   };
   const units = new Map<Unit, Comment[]>();
+  // True when the "yaml-keys" units are keys, so a hit counts on the key's
+  // line whatever the key's escapes made of its offsets.
+  let keyUnits = false;
   const unitsOf = (family: Unit): Comment[] => {
     let found = units.get(family);
     if (found === undefined) {
-      found = family === "line" ? starts.map((start) => lineAt(text, start)) : family === "yaml-code" ? yamlCode(text) : comments(text, family);
+      if (family === "line") {
+        found = starts.map((start) => lineAt(text, start));
+      } else if (family === "yaml-keys") {
+        const read = yamlKeys(text);
+        found = read.units;
+        keyUnits = read.keys;
+      } else {
+        found = comments(text, family);
+      }
       units.set(family, found);
     }
     return found;
@@ -171,12 +187,13 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
     const entry = SUPPRESSION_MARKERS[scanner];
     if (entry === undefined) continue;
     for (const marker of entry.markers) {
-      for (const unit of unitsOf(marker.family ?? entry.family)) {
+      const family = marker.family ?? entry.family;
+      for (const unit of unitsOf(family)) {
         if (marker.ownLine && text.slice(starts[lineOf(unit.start) - 1], unit.start).trim() !== "") continue;
         if (marker.header && pastHeader(unit)) continue;
         for (const m of unit.text.matchAll(marker.pattern)) {
           const at = m.indices?.groups?.at?.[0] ?? m.index;
-          const line = lineOf(unit.start + at);
+          const line = family === "yaml-keys" && keyUnits ? lineOf(unit.start) : lineOf(unit.start + at);
           const name = marker.name.replace("{kw}", (m.groups?.kw ?? "").replace(/\s+/g, " "));
           const key = `${scanner}\0${line}\0${name}`;
           if (seen.has(key)) continue;
