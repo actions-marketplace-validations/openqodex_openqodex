@@ -12,7 +12,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
 import { readText } from "../agents/files.js";
-import { checkWrite, type WriteRoots } from "../agents/real-path.js";
+import { Guard } from "../agents/guarded-fs.js";
 import { claudeHome, codexHome } from "../agents/homes.js";
 import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoFiles, repoRootOf } from "../agents/git.js";
 import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
@@ -22,11 +22,11 @@ import { commitLines, INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, RO
 import { targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { hostAgent } from "../reviewers/driver.js";
-import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks } from "../launcher.js";
+import { launcherPath, launcherRunner, launcherUsers, oldLocks, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks, staleRuntimes } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
 import { firstReviewLine, reviewAfterInit } from "./init-review.js";
 import { REVIEWER_LABELS, reviewerReadiness, type Readiness } from "../review-run.js";
-import { pruneHomeReceipts } from "../receipts.js";
+import { pruneHomeReceipts, staleReceipts } from "../receipts.js";
 
 type HookChoice = "pre-push" | "none";
 
@@ -127,7 +127,7 @@ function ignoredByGit(repoRoot: string, path: string): boolean {
 }
 
 function planTeam(s: Setup, record: InstallRecord): Action[] {
-  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, write: s.write };
+  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, guard: s.guard };
   try {
     const actions: Action[] = [];
     for (const t of teamTargets(s.repoRoot!, s.version)) {
@@ -184,8 +184,8 @@ type Setup = {
   // could stage lies outside them.
   gitFolders: string[];
   // Where init may write, and the repository whose links it never follows:
-  // every write is checked against it (real-path.ts).
-  write: WriteRoots;
+  // every write, rename and delete goes through it (guarded-fs.ts).
+  guard: Guard;
 };
 
 function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
@@ -211,7 +211,7 @@ function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
 // Plans one agent's targets. A file that cannot be read, or a path through
 // a link the repository holds, stops that agent with the reason.
 async function planAgents(s: Setup, record: InstallRecord, targets: Target[]): Promise<Action[]> {
-  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, write: s.write };
+  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, guard: s.guard };
   const excludeFile = s.repoRoot !== null && !s.flags.project ? await gitPath(s.repoRoot, "info/exclude") : null;
   const actions: Action[] = [];
   for (const agent of s.agents) {
@@ -231,9 +231,9 @@ async function planAgents(s: Setup, record: InstallRecord, targets: Target[]): P
           const stays = last !== undefined && (last.verb === "keep" || last.verb === "refuse");
           if (stays) continue;
           if (s.flags.uninstall) {
-            const a = planUnexclude(excludeFile, line, s.repoRoot!, record);
+            const a = planUnexclude(excludeFile, line, s.repoRoot!, record, s.guard);
             if (a) planned.push(a);
-          } else planned.push(planExclude(excludeFile, line, s.repoRoot!, record));
+          } else planned.push(planExclude(excludeFile, line, s.repoRoot!, record, s.guard));
         }
       }
     } catch (error) {
@@ -314,8 +314,8 @@ async function runLocked(s: Setup): Promise<Outcome> {
   if (s.flags.uninstall) {
     actions.push(...agentActions);
     if (s.repoRoot !== null) {
-      actions.push(...(await planRepoFilesRemoval(s.repoRoot, record)));
-      const hook = await planGitHookRemoval(s.repoRoot, record, s.oqHome);
+      actions.push(...(await planRepoFilesRemoval(s.repoRoot, record, s.guard)));
+      const hook = await planGitHookRemoval(s.repoRoot, record, s.oqHome, s.guard);
       if (hook) actions.push(hook);
       record.hookChoices = record.hookChoices.filter((c) => c.repo !== s.repoRoot);
       if (!s.flags.project) {
@@ -327,13 +327,13 @@ async function runLocked(s: Setup): Promise<Outcome> {
     // Every user-scope install gets the runtime and the launcher: the skill
     // calls it even where no hook does.
     const needsLauncher = s.scope === "user" || targets.some((t) => t.kind === "hook-json" && t.usesLauncher);
-    const runtime = needsLauncher ? planRuntime(record, s.version, s.oqHome) : [];
+    const runtime = needsLauncher ? planRuntime(record, s.version, s.oqHome, s.guard) : [];
     for (const a of runtime) runtimeActions.add(a);
     mine.push(...runtime);
     // Project-scope agent files are committed: the team's.
     (s.flags.project ? team : mine).push(...agentActions);
     if (s.repoRoot !== null) {
-      const repo = planRepoFiles(s.repoRoot, record);
+      const repo = planRepoFiles(s.repoRoot, record, s.guard);
       rootConfig = repo.rootConfig;
       team.push(...repo.actions);
       const hook = hookChoiceFor(s, record);
@@ -341,12 +341,12 @@ async function runLocked(s: Setup): Promise<Outcome> {
       if (!s.flags.dryRun) setHookChoice(record, s.repoRoot, hookChoice);
       if (hookChoice === "pre-push") {
         if (runtimeActions.size === 0) {
-          const more = planRuntime(record, s.version, s.oqHome);
+          const more = planRuntime(record, s.version, s.oqHome, s.guard);
           for (const a of more) runtimeActions.add(a);
           // The runtime goes first: the hook calls it.
           mine.unshift(...more);
         }
-        gitHook = (await planGitHook(s.repoRoot, record, s.oqHome, false)).action;
+        gitHook = (await planGitHook(s.repoRoot, record, s.oqHome, false, s.guard)).action;
         mine.push(gitHook);
       } else notes.push(`git pre-push hook: left out${hook.earlier ? ", as this repo chose before" : ""}; --hook pre-push adds it`);
       // Project scope writes its own section into the same two files.
@@ -372,7 +372,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
     // be parsed) still call the launcher.
     const touched = new Set(actions.filter((a) => a.apply).map((a) => a.path));
     const willStay = launcherUsers(record).filter((p) => !touched.has(p));
-    actions.push(...planRuntimeRemoval(record, s.oqHome, willStay));
+    actions.push(...planRuntimeRemoval(record, s.oqHome, willStay, s.guard));
   }
 
   if (s.flags.uninstall) {
@@ -399,9 +399,22 @@ async function runLocked(s: Setup): Promise<Outcome> {
   const host = hostAgent();
   const consent = s.flags.yes ? "yes" : interactive() ? "terminal" : host !== null && !s.flags.uninstall ? "agent" : "none";
   if (work.length === 0) {
-    // Nothing to write; the record may still change (a choice, an entry
-    // found in place). Without consent it is not saved and nothing follows.
-    if (consent !== "none") saveRecord(s.oqHome, record, recordBefore);
+    // Nothing to write in the agents' files; the record may still change (a
+    // choice, an entry found in place), and the housekeeping in
+    // ~/.openqodex may have something to remove. Without consent neither
+    // happens. In a terminal either is asked about, as any write is.
+    const recordChanges = serialize(record) !== recordBefore;
+    const housekeeping = oldLocks(s.oqHome).length + staleRuntimes(s.oqHome).length + staleReceipts(s.oqHome).length > 0;
+    if (consent === "terminal" && (recordChanges || housekeeping)) {
+      out(
+        `No file of your agents changes. init would ${[...(recordChanges ? ["record the choices above"] : []), ...(housekeeping ? ["remove old runtimes, receipts or lock files from ~/.openqodex"] : [])].join(" and ")}.`,
+      );
+      if (!(await confirm(WRITE_QUESTION))) {
+        out("Nothing was written.");
+        return { code: EXIT_OK, ended: "cancelled" };
+      }
+    }
+    if (consent !== "none") saveRecord(s.oqHome, record, recordBefore, s.guard);
     out(s.flags.uninstall ? "Nothing to remove." : "Nothing to change: OpenQodex is already installed.");
     if (!s.flags.uninstall) {
       closingRepoLines(s, rootConfig);
@@ -441,9 +454,9 @@ async function runLocked(s: Setup): Promise<Outcome> {
         if (a.guard && readText(a.guard.path) !== a.guard.before) {
           throw new Error(`changed while init was running, nothing written to ${a.guard.path}`);
         }
-        // The path is walked again right before the write: a link the
-        // repository put in place after the plan is refused here.
-        checkWrite(a.path, s.write);
+        // Every action writes through s.guard, which walks its path again
+        // when it writes: a link the repository put in place after the plan
+        // is refused there.
         // The text before init's first write, so the review after init
         // takes the developer's own edits and not init's.
         if (s.repoRoot !== null && !s.before.has(a.path) && inWorkTree(s.repoRoot, gitFolders, a.path)) {
@@ -465,7 +478,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
       }
     }
   } finally {
-    saveRecord(s.oqHome, record, recordBefore);
+    saveRecord(s.oqHome, record, recordBefore, s.guard);
   }
 
   out();
@@ -592,6 +605,7 @@ export async function run(args: string[]): Promise<number> {
     );
     return EXIT_TOOL_FAILED;
   }
+  const gitFolders = repoRoot !== null ? await gitDirs(repoRoot) : [];
   const setup: Setup = {
     flags,
     agents,
@@ -603,11 +617,10 @@ export async function run(args: string[]): Promise<number> {
     written: [],
     before: new Map(),
     runner: flags.project ? `npx -y openqodex@${__OPENQODEX_VERSION__}` : launcherRunner(launcherPath(openqodexHomeDir())),
-    gitFolders: [],
-    write: { repoRoot, gitFolders: [], roots: [home, claudeHome(home), codexHome(home), openqodexHomeDir()] },
+    gitFolders,
+    // Every folder this run may write, each opened once, here.
+    guard: new Guard({ repoRoot, gitFolders, roots: [home, claudeHome(home), codexHome(home), openqodexHomeDir()] }),
   };
-  setup.gitFolders = repoRoot !== null ? await gitDirs(repoRoot) : [];
-  setup.write.gitFolders = setup.gitFolders;
   try {
     // A dry run writes nothing and takes no lock. Otherwise everything runs
     // inside the commit boundary, so no update switches versions meanwhile.
@@ -617,9 +630,9 @@ export async function run(args: string[]): Promise<number> {
       // The housekeeping in ~/.openqodex runs only on a run the developer
       // agreed to: never on a declined, stopped or unconfirmed one.
       if (outcome.ended === "written" || outcome.ended === "unchanged" || outcome.ended === "removed") {
-        removeOldLocks(setup.oqHome);
-        if (!flags.uninstall) pruneRuntimes(setup.oqHome);
-        pruneHomeReceipts(setup.oqHome);
+        removeOldLocks(setup.oqHome, setup.guard);
+        if (!flags.uninstall) pruneRuntimes(setup.oqHome, Date.now(), setup.guard);
+        pruneHomeReceipts(setup.oqHome, Date.now(), setup.guard);
       }
       return outcome;
     });

@@ -39,6 +39,13 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 28. A write compares places by their spelling while the filesystem acts on
+//     identity: a repo with no letter in its name, a name in the other
+//     Unicode normalisation, a common git folder that holds the work tree
+//     exempting its links, OpenQodex's own install.json or runtime folder
+//     as a link that sends a write or a delete outside, a terminal run that
+//     changes the record without asking, or a skill holding the placeholder
+//     text taken for a shipped copy.
 // 27. A write decides from the path's spelling, not where it really lands:
 //     `.` and `..` folded before the links on the way are followed, a work
 //     tree name that starts with two dots taken for outside the repository,
@@ -78,6 +85,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -905,5 +913,117 @@ describe("27. a write decides from where the path really lands, not from its spe
     // outside every root init may write.
     expect(initWith(s, join(flipped, ".claude")).status).toBe(2);
     expect(readdirSync(outside)).toEqual([]);
+  });
+});
+
+describe("28. writes decide by filesystem identity, through checked handles", () => {
+  // A repo of its own name under the sandbox root, with one commit.
+  function namedRepo(s: Sandbox, name: string): string {
+    const repo = join(s.root, name);
+    mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "start");
+    return repo;
+  }
+  const flipCase = (p: string): string => [...p].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join("");
+
+  it("a repo named with digits only, its config folder spelled in another case: the repo's link is refused", () => {
+    const s = sandbox();
+    const repo = namedRepo(s, "123");
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(repo, ".claude"));
+    // Only the sandbox root above the repo has letters to flip.
+    const spelled = join(flipCase(s.root), "123", ".claude");
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { cwd: repo, env: { CLAUDE_CONFIG_DIR: spelled } });
+    expect(r.status).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("an accented repo name spelled in the other Unicode normalisation: the repo's link is refused", () => {
+    const s = sandbox();
+    const repo = namedRepo(s, "café");
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(repo, ".claude"));
+    const spelled = join(s.root, "café", ".claude");
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { cwd: repo, env: { CLAUDE_CONFIG_DIR: spelled } });
+    expect(r.status).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("a work tree inside its bare repository: the common git folder does not exempt the work tree's links", () => {
+    const s = sandbox();
+    const bare = join(s.root, "repo.git");
+    git(s.root, "clone", "-q", "--bare", s.repo, bare);
+    git(bare, "worktree", "add", "-q", join(bare, "main"), "main");
+    const tree = join(bare, "main");
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(tree, ".claude"));
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { cwd: tree, env: { CLAUDE_CONFIG_DIR: join(tree, ".claude") } });
+    expect(r.status).toBe(2);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("install.json as a link to a file outside: the file outside is not replaced", () => {
+    const s = sandbox();
+    const outside = join(s.root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "victim.json"), "{}\n");
+    mkdirSync(s.oqHome, { recursive: true });
+    symlinkSync(join(outside, "victim.json"), join(s.oqHome, "install.json"));
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(r.status).toBe(2);
+    expect(readFileSync(join(outside, "victim.json"), "utf8")).toBe("{}\n");
+  });
+
+  it("runtime as a link to a folder outside with a stale version in it: nothing outside is deleted", () => {
+    const s = sandbox();
+    const cache = join(s.root, "cache");
+    const stale = join(cache, "0.0.1");
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, "package.json"), JSON.stringify({ name: "openqodex", version: "0.0.1" }));
+    const longAgo = new Date(Date.now() - 60 * 24 * 3600_000);
+    utimesSync(stale, longAgo, longAgo);
+    mkdirSync(s.oqHome, { recursive: true });
+    symlinkSync(cache, join(s.oqHome, "runtime"));
+    cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(existsSync(join(stale, "package.json"))).toBe(true);
+    expect(readdirSync(cache)).toEqual(["0.0.1"]);
+  });
+
+  it("a terminal run with --hook none on an unchanged install asks before it records the choice", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    const record = readFileSync(join(s.oqHome, "install.json"), "utf8");
+    const r = inTerminal(s, ["init", "--hook", "none", "--agent", "claude-code"], [["Write these files?", "n"]]);
+    expect(r.status, r.stdout).toBe(0);
+    expect(promptsAsked(r.stdout)).toContain("Write these files?");
+    expect(readFileSync(join(s.oqHome, "install.json"), "utf8")).toBe(record);
+  });
+
+  it("a skill that holds the placeholder text literally is a user edit, kept", () => {
+    const shipped = readFileSync(join(BIN, "..", "..", "skills/openqodex/SKILL.md"), "utf8");
+    const s = sandbox();
+    const skill = join(s.home, ".claude/skills/openqodex/SKILL.md");
+    mkdirSync(join(skill, ".."), { recursive: true });
+    const edited = shipped.replace(/npx -y openqodex@\d+\.\d+\.\d+/g, "<runner>");
+    expect(edited).not.toBe(shipped);
+    writeFileSync(skill, edited);
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    expect(readFileSync(skill, "utf8")).toBe(edited);
+  });
+
+  it("the dotfiles case still works: a link from the home to a file in the home is written through", () => {
+    const s = sandbox();
+    const dotfiles = join(s.home, "dotfiles");
+    mkdirSync(dotfiles);
+    writeFileSync(join(dotfiles, "settings.json"), '{"model":"x"}\n');
+    mkdirSync(join(s.home, ".claude"));
+    symlinkSync(join(dotfiles, "settings.json"), join(s.home, ".claude/settings.json"));
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    expect(lstatSync(join(s.home, ".claude/settings.json")).isSymbolicLink()).toBe(true);
+    expect(ourCommands(join(dotfiles, "settings.json"))).toHaveLength(1);
   });
 });

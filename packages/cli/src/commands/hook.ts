@@ -6,11 +6,12 @@
 // boundary: it does not know what a push sends. The git pre-push hook, which
 // git hands the exact ranges, is the authoritative check.
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { readText, sha256, writeAtomic, writeBackup } from "../agents/files.js";
-import { gitPath, repoRootOf } from "../agents/git.js";
+import { readText, sha256 } from "../agents/files.js";
+import { Guard } from "../agents/guarded-fs.js";
+import { gitDirs, gitPath, repoRootOf } from "../agents/git.js";
 import { ownedFile, type Action } from "../agents/plan.js";
 import { pushFolders } from "../agents/push-command.js";
 import { withBoundary } from "../agents/lock.js";
@@ -418,8 +419,10 @@ export type GitHookPlan = {
 
 // What installing the pre-push hook would do. The runtime and launcher it
 // calls are planned separately (planRuntime).
-export async function planGitHook(repoRoot: string, record: InstallRecord, home: string, force: boolean): Promise<GitHookPlan> {
+export async function planGitHook(repoRoot: string, record: InstallRecord, home: string, force: boolean, guard: Guard): Promise<GitHookPlan> {
   const path = await gitHookPath(repoRoot);
+  // The hooks folder git names (core.hooksPath can move it) is one init writes.
+  guard.add(dirname(path));
   const launcher = launcherPath(home);
   const manager = hookManager(repoRoot);
   const label = "git pre-push hook";
@@ -465,12 +468,11 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
       guard: { path, before: current },
       apply: () => {
         if (foreign) {
-          const backup = writeBackup(path, current);
+          const backup = guard.backup(path, current);
           record.backups.push({ path: backup, of: path });
           process.stdout.write(`The previous hook is saved as ${backup}\n`);
         }
-        writeAtomic(path, script, 0o755);
-        chmodSync(path, 0o755);
+        guard.write(path, script, { mode: 0o755, setMode: true });
         remember();
       },
     },
@@ -479,8 +481,9 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
 
 // What removing the pre-push hook would do; null when no hook is there.
 // The newest hook --force set aside is put back.
-export async function planGitHookRemoval(repoRoot: string, record: InstallRecord, home: string): Promise<Action | null> {
+export async function planGitHookRemoval(repoRoot: string, record: InstallRecord, home: string, guard: Guard): Promise<Action | null> {
   const path = await gitHookPath(repoRoot);
+  guard.add(dirname(path));
   const current = readText(path);
   const ours = current !== null && (ownedFile(record, path, current) || current === gitHookScript(launcherPath(home)));
   const recorded = record.files.some((f) => f.path === path);
@@ -501,9 +504,9 @@ export async function planGitHookRemoval(repoRoot: string, record: InstallRecord
     note: restore ? "git pre-push hook removed; the previous hook is put back" : "git pre-push hook",
     guard: { path, before: current },
     apply: () => {
-      rmSync(path, { force: true });
+      guard.remove(path);
       if (restore) {
-        renameSync(last.path, path);
+        guard.rename(last.path, path);
         record.backups = record.backups.filter((b) => b !== last);
       }
       forget();
@@ -527,16 +530,17 @@ async function install(args: string[]): Promise<number> {
     return EXIT_OK;
   }
 
+  const guard = new Guard({ repoRoot: target.repoRoot, gitFolders: await gitDirs(target.repoRoot), roots: [home] });
   return withBoundary(home, { wait: 60_000 }, async () => {
     const record = loadRecord(home);
     const recordBefore = serialize(record);
     try {
       // The hook always calls the launcher, so exit 1 can only be the scan's verdict.
-      const runtime = planRuntime(record, __OPENQODEX_VERSION__, home);
+      const runtime = planRuntime(record, __OPENQODEX_VERSION__, home, guard);
       const refused = runtime.find((a) => a.failed);
       if (refused) return fail(`openqodex hook install: ${refused.path}: ${refused.note}`);
       await applyAll(runtime);
-      const plan = await planGitHook(target.repoRoot, record, home, force);
+      const plan = await planGitHook(target.repoRoot, record, home, force, guard);
       if (plan.foreign) {
         return fail(
           `openqodex hook install: ${target.path} already exists and is not ours. Add this line to it:\n  ${hookLine(shQuote(launcher))}\nor run openqodex hook install --force to replace it (the old hook is kept beside it).`,
@@ -553,7 +557,7 @@ async function install(args: string[]): Promise<number> {
       );
       return EXIT_OK;
     } finally {
-      saveRecord(home, record, recordBefore);
+      saveRecord(home, record, recordBefore, guard);
     }
   });
 }
@@ -563,12 +567,13 @@ async function uninstall(args: string[]): Promise<number> {
   const target = await hookFile();
   if (target === null) return fail("openqodex hook uninstall: run it inside a git repository");
   const home = openqodexHomeDir();
+  const guard = new Guard({ repoRoot: target.repoRoot, gitFolders: await gitDirs(target.repoRoot), roots: [home] });
   return withBoundary(home, { wait: 60_000 }, async () => {
     const record = loadRecord(home);
     const recordBefore = serialize(record);
     try {
       const current = readText(target.path);
-      const action = await planGitHookRemoval(target.repoRoot, record, home);
+      const action = await planGitHookRemoval(target.repoRoot, record, home, guard);
       if (action === null || action.apply === undefined) {
         process.stdout.write(
           current === null
@@ -589,7 +594,7 @@ async function uninstall(args: string[]): Promise<number> {
       );
       return EXIT_OK;
     } finally {
-      saveRecord(home, record, recordBefore);
+      saveRecord(home, record, recordBefore, guard);
     }
   });
 }

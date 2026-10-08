@@ -3,12 +3,10 @@
 // installation record: a thing is changed or removed only while it is still
 // exactly what we wrote. In project scope a machine with no record (a
 // teammate's) counts a thing as ours only when it equals the current output.
-import { readdirSync, rmdirSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { removeRepoFile, writeRepoFile } from "@openqodex/core";
 import type { AgentId } from "./detect.js";
-import { readText, sha256, writeBackup } from "./files.js";
-import { checkWrite, removeChecked, writeChecked, type WriteRoots } from "./real-path.js";
+import { readText, sha256 } from "./files.js";
+import type { Guard } from "./guarded-fs.js";
 import { canonical, type InstallRecord } from "./record.js";
 import type { Scope, Target } from "./targets.js";
 import { isShippedSkill, SECTION_END, SECTION_START } from "./targets.js";
@@ -28,9 +26,8 @@ export type Action = {
   apply?: () => void | Promise<void>;
 };
 
-// `write`: the folders init may write and the repository whose links it
-// never follows (real-path.ts).
-export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null; write: WriteRoots };
+// `guard`: the one way this run writes, renames and deletes (guarded-fs.ts).
+export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null; guard: Guard };
 
 type Settings = {
   hooks?: { PreToolUse?: unknown[]; [k: string]: unknown };
@@ -115,13 +112,13 @@ function ourRules(ctx: Ctx, path: string): string[] {
 // refuses anything else, as every other action's guard does.
 const writtenThisRun = new Map<string, string | null>();
 
-function writeSettings(w: WriteRoots, path: string, text: string, mode?: number): void {
-  writeChecked(path, text, w, mode);
+function writeSettings(g: Guard, path: string, text: string, mode?: number): void {
+  g.write(path, text, { mode });
   writtenThisRun.set(path, text);
 }
 
-function removeSettings(w: WriteRoots, path: string): void {
-  removeFile(w, path);
+function removeSettings(g: Guard, path: string): void {
+  removeFile(g, path);
   writtenThisRun.set(path, null);
 }
 
@@ -133,11 +130,11 @@ function unchangedSincePlan(path: string, before: string | null): string | null 
   return now;
 }
 
-// Removes the file where it really is (real-path.ts), then its folder when
-// the folder is named openqodex and is left empty (the skill folder).
-function removeFile(w: WriteRoots, path: string): void {
-  const dir = dirname(removeChecked(path, w));
-  if (basename(dir) === "openqodex" && readdirSync(dir).length === 0) rmdirSync(dir);
+// Removes the file (a link as itself), then its folder when the folder is
+// named openqodex and is left empty (the skill folder).
+function removeFile(g: Guard, path: string): void {
+  g.remove(path);
+  if (basename(dirname(path)) === "openqodex") g.removeEmptyFolder(dirname(path));
 }
 
 function sectionBounds(text: string): { start: number; end: number } | null {
@@ -165,24 +162,19 @@ export function ownedFile(record: InstallRecord, path: string, text: string | nu
 
 // Every target, whatever its scope, is refused when its path runs through a
 // link the repository holds or lands outside every folder init writes
-// (real-path.ts); every write checks again right before it lands.
+// (guarded-fs.ts); every write checks again when it lands.
 function checkRepoPath(t: Target, ctx: Ctx): void {
-  checkWrite(t.path, ctx.write);
+  ctx.guard.check(t.path);
 }
 
-// A markdown file inside the repo is written and removed by the repo-state
-// helpers, which refuse a link at the moment of the write, after the same
-// check as any other file. Other files are written where they really land.
+// A markdown file, in the repository or not, goes through the guard like
+// every other file.
 function writeMarkdown(t: Target, ctx: Ctx, content: string): void {
-  if (t.inRepo && ctx.repoRoot !== null) {
-    checkWrite(t.path, ctx.write);
-    writeRepoFile(ctx.repoRoot, t.path, content);
-  } else writeChecked(t.path, content, ctx.write);
+  ctx.guard.write(t.path, content);
 }
 
 function removeMarkdown(t: Target, ctx: Ctx): void {
-  if (t.inRepo && ctx.repoRoot !== null) removeRepoFile(ctx.repoRoot, t.path);
-  else removeFile(ctx.write, t.path);
+  removeFile(ctx.guard, t.path);
 }
 
 export function planInstall(t: Target, ctx: Ctx): Action {
@@ -193,7 +185,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
   switch (t.kind) {
     case "file": {
       const write = (): void => {
-        writeChecked(t.path, t.content, ctx.write);
+        ctx.guard.write(t.path, t.content);
         setFile(record, t.path, t.content, t.usesLauncher);
       };
       if (before === null) return { ...base, verb: "create", note: t.label, apply: write };
@@ -220,7 +212,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           verb: "create",
           note: t.label,
           apply: () => {
-            writeSettings(ctx.write, t.path, json({ hooks: { PreToolUse: [t.group] } }), t.inRepo ? 0o644 : 0o600);
+            writeSettings(ctx.guard, t.path, json({ hooks: { PreToolUse: [t.group] } }), t.inRepo ? 0o644 : 0o600);
             record.hooks.push({ ...entry, createdFile: true });
           },
         };
@@ -245,7 +237,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           verb: "update",
           note: `${t.label}, replacing the one an earlier openqodex wrote`,
           apply: () => {
-            writeSettings(ctx.write, t.path, json(data));
+            writeSettings(ctx.guard, t.path, json(data));
             record.hooks = record.hooks.filter((r) => r !== old);
             record.hooks.push({ ...entry, createdFile: old.createdFile });
           },
@@ -263,8 +255,8 @@ export function planInstall(t: Target, ctx: Ctx): Action {
         verb: "merge",
         note: `${t.label}, other settings kept${hasBackup ? "" : ` (the file as it was is saved beside it as ${basename(t.path)}.openqodex.bak)`}`,
         apply: () => {
-          if (!hasBackup) record.backups.push({ path: writeBackup(checkWrite(t.path, ctx.write).self, before), of: t.path });
-          writeSettings(ctx.write, t.path, json(data));
+          if (!hasBackup) record.backups.push({ path: ctx.guard.backup(t.path, before), of: t.path });
+          writeSettings(ctx.guard, t.path, json(data));
           record.hooks.push({ ...entry, createdFile: false });
         },
       };
@@ -305,7 +297,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           const allow = (now.permissions?.allow ?? []) as unknown[];
           const add = t.rules.filter((r) => !allow.includes(r));
           if (add.length > 0) now.permissions = { ...now.permissions, allow: [...allow, ...add] };
-          writeSettings(ctx.write, t.path, json(now), t.inRepo ? 0o644 : 0o600);
+          writeSettings(ctx.guard, t.path, json(now), t.inRepo ? 0o644 : 0o600);
           forgetStale();
           for (const rule of add) record.allowRules.push({ path: t.path, rule });
         },
@@ -387,7 +379,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         verb: "remove",
         note: t.label,
         apply: () => {
-          removeFile(ctx.write, t.path);
+          removeFile(ctx.guard, t.path);
           dropFile(record, t.path);
         },
       };
@@ -427,8 +419,8 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
           verb: "restore",
           note: `${t.label} removed; the file is back as it was before install`,
           apply: () => {
-            writeSettings(ctx.write, t.path, backupText);
-            rmSync(backup.path, { force: true });
+            writeSettings(ctx.guard, t.path, backupText);
+            ctx.guard.remove(backup.path);
             dropBackup();
             forget();
           },
@@ -441,7 +433,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
           verb: "remove",
           note: `${t.label} (init created this file)`,
           apply: () => {
-            removeSettings(ctx.write, t.path);
+            removeSettings(ctx.guard, t.path);
             forget();
           },
         };
@@ -451,7 +443,7 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         verb: "update",
         note: `${t.label} removed, other settings kept${backup ? ` (the copy from before install stays at ${backup.path})` : ""}`,
         apply: () => {
-          writeSettings(ctx.write, t.path, json(data));
+          writeSettings(ctx.guard, t.path, json(data));
           dropBackup();
           forget();
         },
@@ -486,8 +478,8 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
           // the file back as it was: then there is nothing to write.
           if (now !== null && rules.some((r) => (now.permissions?.allow ?? []).includes(r))) {
             removeAllow(now, rules);
-            if (created && Object.keys(now).length === 0) removeSettings(ctx.write, t.path);
-            else writeSettings(ctx.write, t.path, json(now));
+            if (created && Object.keys(now).length === 0) removeSettings(ctx.guard, t.path);
+            else writeSettings(ctx.guard, t.path, json(now));
           }
           forget();
         },

@@ -87,12 +87,16 @@ export function renderSkill(runner: string): string {
 // names, and the command that runs OpenQodex (`npx -y openqodex@<version>`,
 // or `runner`, the launcher or pinned npx form an init on this machine
 // writes in its place). Nothing else is taken out: an edit anywhere, the
-// launcher paragraph included, changes the key. scripts/validate-skill.mjs
-// computes the same key.
+// launcher paragraph included, changes the key. The placeholders hold a NUL,
+// which no skill file holds, so a file that spells a placeholder out is a
+// user edit and matches nothing (isShippedSkill refuses a NUL outright).
+// scripts/validate-skill.mjs computes the same key.
 const ANY_PIN = /openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
+const VERSION_TOKEN = "openqodex@\u0000version\u0000";
+const RUNNER_TOKEN = "\u0000runner\u0000";
 function skillKey(text: string, runner: string | null): string {
-  const own = runner === null ? text : text.replaceAll(runner, "<runner>");
-  return createHash("sha256").update(own.replace(ANY_PIN, "openqodex@<version>").replaceAll("npx -y openqodex@<version>", "<runner>")).digest("hex");
+  const own = runner === null ? text : text.replaceAll(runner, RUNNER_TOKEN);
+  return createHash("sha256").update(own.replace(ANY_PIN, VERSION_TOKEN).replaceAll(`npx -y ${VERSION_TOKEN}`, RUNNER_TOKEN)).digest("hex");
 }
 
 // The keys a shipped text adds to shipped-skills.json: the file as shipped
@@ -108,7 +112,7 @@ export function shippedSkillKeys(shipped: string): string[] {
 // developer edited anywhere matches none.
 const SHIPPED = new Set(shippedSkills.sha256);
 export function isShippedSkill(text: string, runner: string): boolean {
-  return SHIPPED.has(skillKey(text, runner));
+  return !text.includes("\u0000") && SHIPPED.has(skillKey(text, runner));
 }
 
 // One level-2 section of the shipped skill, heading included.

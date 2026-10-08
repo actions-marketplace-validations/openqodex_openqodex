@@ -41,9 +41,12 @@ if (present(skill)) {
   // and replaces it (shippedSkillKeys in targets.ts computes the same two
   // keys). A text missing from the list would be kept as the developer's
   // and never update.
+  // The placeholders hold a NUL, as in targets.ts, so no file can spell one.
+  const V = "openqodex@\u0000version\u0000";
+  const R = "\u0000runner\u0000";
   const key = (t) =>
     createHash("sha256")
-      .update(t.replace(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g, "openqodex@<version>").replaceAll("npx -y openqodex@<version>", "<runner>"))
+      .update(t.replace(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g, V).replaceAll(`npx -y ${V}`, R))
       .digest("hex");
   const keys = [key(text), key(text.replace(/^When the file `~\/\.openqodex\/bin\/openqodex` exists[^\n]*\n\n/m, ""))];
   const shipped = readJson("packages/cli/src/agents/shipped-skills.json");

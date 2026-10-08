@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { planRepoFiles } from "../src/agents/repo-folder.js";
+import { Guard } from "../src/agents/guarded-fs.js";
 import { emptyRecord } from "../src/agents/record.js";
 import { cli, sandbox, type Sandbox } from "./init-helpers.js";
 
@@ -146,7 +147,7 @@ describe("ownership of the team files", () => {
   it("init never replaces a team file created after it made its plan, and does not record it", async () => {
     const s = sandbox();
     const record = emptyRecord();
-    const { actions } = planRepoFiles(s.repo, record);
+    const { actions } = planRepoFiles(s.repo, record, new Guard({ repoRoot: s.repo, gitFolders: [], roots: [] }));
     mkdirSync(join(s.repo, ".openqodex"), { recursive: true });
     writeFileSync(join(s.repo, INSTRUCTIONS), "Written by a first scan in another terminal.\n");
     for (const a of actions) await a.apply?.();

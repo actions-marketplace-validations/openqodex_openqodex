@@ -21,9 +21,10 @@
 // file and renamed into place. A file that is a link, too large, or not a
 // receipt reads as no record.
 import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GateReceipt } from "@openqodex/core";
+import { homeGuard, type Guard } from "./agents/guarded-fs.js";
 
 const MAX_BYTES = 64 * 1024;
 const KEEP_MS = 30 * 24 * 3600_000;
@@ -164,30 +165,51 @@ export function readHomeReceipts(home: string, repoRoot: string, limit: number):
 
 // Removes receipts and run records not written for 30 days, and repo
 // folders left empty. Run by init and the foreground update, never by a hook.
-export function pruneHomeReceipts(home: string, now = Date.now()): void {
-  for (const kind of ["receipts", "runs"]) pruneFolder(join(home, kind), now);
+// Each removal goes through the guard (guarded-fs.ts): it never follows a
+// link and removes only under OpenQodex's home, by identity.
+export function pruneHomeReceipts(home: string, now = Date.now(), guard: Guard = homeGuard(home)): void {
+  for (const kind of ["receipts", "runs"]) pruneFolder(join(home, kind), now, guard);
 }
 
-function pruneFolder(root: string, now: number): void {
-  let repos: string[];
+// The repo folders of receipts and run records, as pruning sees them; a
+// folder or root that is a link is not one.
+function repoFolders(root: string): string[] {
   try {
-    if (!lstatSync(root).isDirectory()) return;
-    repos = readdirSync(root);
+    if (!lstatSync(root).isDirectory()) return [];
+    return readdirSync(root)
+      .map((repo) => join(root, repo))
+      .filter((dir) => lstatSync(dir, { throwIfNoEntry: false })?.isDirectory() === true);
   } catch {
-    return;
+    return [];
   }
-  for (const repo of repos) {
-    const dir = join(root, repo);
+}
+
+// The receipts and run records pruneHomeReceipts would remove now.
+export function staleReceipts(home: string, now = Date.now()): string[] {
+  return ["receipts", "runs"]
+    .flatMap((kind) => repoFolders(join(home, kind)))
+    .flatMap((dir) => {
+      try {
+        return readdirSync(dir)
+          .map((name) => join(dir, name))
+          .filter((path) => now - lstatSync(path).mtimeMs > KEEP_MS);
+      } catch {
+        return [];
+      }
+    });
+}
+
+function pruneFolder(root: string, now: number, guard: Guard): void {
+  for (const dir of repoFolders(root)) {
     try {
-      if (!lstatSync(dir).isDirectory()) continue;
       for (const name of readdirSync(dir)) {
         const path = join(dir, name);
         const st = lstatSync(path);
-        if (now - st.mtimeMs > KEEP_MS) rmSync(path, { force: true });
+        if (now - st.mtimeMs > KEEP_MS) guard.remove(path);
       }
-      if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+      if (readdirSync(dir).length === 0) guard.removeEmptyFolder(dir);
     } catch {
-      // a folder that cannot be read is left alone
+      // a folder that cannot be read, or a removal refused, is left alone
     }
   }
 }

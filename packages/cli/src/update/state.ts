@@ -6,7 +6,8 @@
 // below, and it fails safe: a config that does not parse turns updating off.
 import { join } from "node:path";
 import { parseDocument } from "yaml";
-import { readText, sha256, writeAtomic } from "../agents/files.js";
+import { readText, sha256 } from "../agents/files.js";
+import { homeGuard } from "../agents/guarded-fs.js";
 
 export type UpdateState = {
   // When a worker last started a check (ISO time); the trigger waits 24 hours after it.
@@ -63,7 +64,7 @@ export function readState(home: string): UpdateState {
 
 // Reads, changes and writes the state. Not locked: see the top of this file.
 export function updateState(home: string, change: Partial<UpdateState>): void {
-  writeAtomic(statePath(home), `${JSON.stringify({ ...readState(home), ...change }, null, 2)}\n`, 0o600);
+  homeGuard(home).write(statePath(home), `${JSON.stringify({ ...readState(home), ...change }, null, 2)}\n`, { mode: 0o600 });
 }
 
 // ---------- the user-level config, <home>/config.yaml ----------
@@ -120,6 +121,6 @@ export function setUserUpdate(home: string, value: "on" | "off"): void {
     doc.set("update", value);
     text = String(doc);
   }
-  writeAtomic(userConfigPath(home), text);
+  homeGuard(home).write(userConfigPath(home), text);
   if (ours) updateState(home, { userConfig: sha256(text) });
 }
