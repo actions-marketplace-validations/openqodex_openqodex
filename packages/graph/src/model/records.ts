@@ -69,6 +69,9 @@ export type Evidence = {
 export type Cause =
   | "external" // the name comes from a declared dependency or the standard library
   | "no-receiver-type" // a method called on a value whose type no rule knows
+  | "untyped-receiver" // a method called on a value typed any, unknown, object or a structural type
+  | "not-exported" // a package path its exports map does not expose
+  | "metadata-unreadable" // a manifest or tsconfig that could not be read, parsed or followed
   | "ambiguous" // several definitions could be meant and no evidence picks one
   | "miss" // the evidence names a place where no such symbol exists now
   | "dynamic" // a call through a value: a parameter, a computed member
@@ -84,6 +87,9 @@ export type Cause =
 export const CAUSES: readonly Cause[] = [
   "external",
   "no-receiver-type",
+  "untyped-receiver",
+  "not-exported",
+  "metadata-unreadable",
   "ambiguous",
   "miss",
   "dynamic",
@@ -124,7 +130,7 @@ export type Unknown = {
 // A cut a walk or a build made. `omitted` is exact when `exact`, else null
 // (a stop at a budget cannot count what lies past the frontier).
 export type Cut = {
-  by: "hub" | "second-hop" | "walk-limit" | "inline" | "budget" | "parse-cap" | "memory" | "size" | "storage";
+  by: "hub" | "second-hop" | "walk-limit" | "inline" | "budget" | "parse-cap" | "memory" | "size" | "storage" | "export-walk";
   at: string | null; // the symbol or file where the cut was made
   omitted: number | null;
   exact: boolean;
