@@ -39,6 +39,9 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 24. init says every push from the repo is checked when it wrote no hook:
+//     husky runs the repo's hooks, or a pre-push hook it did not write is in
+//     the way, and the developer is not told what to add.
 // 23. --yes overrides a choice this repo recorded before (--no-repo, --hook
 //     none), or it does not take the defaults in a repo that recorded none.
 // 22. The scanner downloads init starts miss a file type that only an
@@ -611,6 +614,21 @@ describe("init, the hook question and the instruction section", () => {
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
     expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
+  });
+
+  it("24. with a pre-push hook it did not write, or husky, does not say every push is checked, and says what to add", () => {
+    const foreign = sandbox();
+    writeFileSync(join(foreign.repo, ".git/hooks/pre-push"), "#!/bin/sh\necho mine\n");
+    chmodSync(join(foreign.repo, ".git/hooks/pre-push"), 0o755);
+    const husky = sandbox({ ".husky/pre-commit": "npm test\n" });
+    for (const s of [foreign, husky]) {
+      const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+      expect(r.status, r.stderr).toBe(0);
+      const end = r.stdout.slice(r.stdout.lastIndexOf("is installed for"));
+      expect(end).not.toContain("Every push from this repo is now checked");
+      expect(end).toMatch(/git pre-push hook is not set up: .*add .*hook pre-push/);
+    }
+    expect(readFileSync(join(foreign.repo, ".git/hooks/pre-push"), "utf8")).toBe("#!/bin/sh\necho mine\n");
   });
 
   it("23. --yes keeps both choices this repo recorded (--no-repo, --hook none) and takes the defaults only where none was made", () => {

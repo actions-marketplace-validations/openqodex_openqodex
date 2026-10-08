@@ -17,3 +17,4 @@
 - The README, the quickstart and the skill give agents one install line, `npx -y openqodex@<version> init --yes --agent <host>`: the same install as `init` in a terminal, push check included. `npx skills add openqodex/openqodex -g` stays as the skill-only option, labelled so, in user scope so it writes nothing into the repository.
 - `init --yes` keeps what a repository chose before (`--no-repo`, `--hook none`) and takes the defaults only for what it never answered. Before, `--yes` put the team review section back where the repository had left it out.
 - With no terminal, no agent and no `--yes`, `init` writes nothing at all, its record of choices included, and runs no review, even when there is no file to write.
+- `init` says every push from the repository is checked only when its git pre-push hook is in place. Where husky or lefthook runs the hooks, or a pre-push hook it did not write is there, it says the hook is not set up and what to add.

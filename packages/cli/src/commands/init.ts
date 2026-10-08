@@ -301,6 +301,8 @@ async function runLocked(s: Setup): Promise<Outcome> {
   const agentActions = await planAgents(s, record, targets);
   let rootConfig = false;
   let hookChoice: HookChoice | null = null;
+  // The git pre-push hook action, when the plan holds one.
+  let gitHook: Action | null = null;
   if (s.flags.uninstall) {
     actions.push(...agentActions);
     if (s.repoRoot !== null) {
@@ -336,7 +338,8 @@ async function runLocked(s: Setup): Promise<Outcome> {
           // The runtime goes first: the hook calls it.
           mine.unshift(...more);
         }
-        mine.push((await planGitHook(s.repoRoot, record, s.oqHome, false)).action);
+        gitHook = (await planGitHook(s.repoRoot, record, s.oqHome, false)).action;
+        mine.push(gitHook);
       } else notes.push(`git pre-push hook: left out${hook.earlier ? ", as this repo chose before" : ""}; --hook pre-push adds it`);
       // Project scope writes its own section into the same two files.
       if (!s.flags.project) {
@@ -469,8 +472,15 @@ async function runLocked(s: Setup): Promise<Outcome> {
   if (forYou.length > 0) {
     out("Written for you, on this machine only:");
     for (const p of forYou) out(`  ${p}`);
-    if (s.repoRoot !== null && hookChoice === "pre-push") out("  Every push from this repo is now checked for a review through the git pre-push hook.");
     out(`  To undo: ${undoCommand(s)}`);
+  }
+  // Every push is checked only when the OpenQodex hook is in place: written
+  // now or found as written. Husky, lefthook or a hook of the developer's
+  // own gets nothing, and the plan's note says what to add there.
+  if (gitHook !== null) {
+    const inPlace = gitHook.verb === "skip" || (gitHook.apply !== undefined && !failedPaths.has(gitHook.path));
+    if (inPlace) out("Every push from this repo is now checked for a review through the git pre-push hook.");
+    else out(`The git pre-push hook is not set up: ${gitHook.note.replace(/^git pre-push hook: /, "")}.`);
   }
   const forTeam = written(team);
   if (forTeam.length > 0) {
