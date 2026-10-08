@@ -46,6 +46,8 @@ const SHIPPED_KEYS = [
   "graph.budget_ms",
   "graph.max_files",
   "graph.max_file_bytes",
+  "graph.max_cache_mb",
+  "graph.max_heap_mb",
 ];
 
 function repo(): string {

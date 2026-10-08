@@ -1,66 +1,60 @@
-// Builds the graph of a repo: list the files git knows, read each file's
-// facts from the cache or a parse, then resolve. Parsing stops at the time
-// budget (checked between files) or the file cap; the graph is then
-// "partial" and says what it left out. No timer is set, so nothing keeps the
-// process alive after the build.
+// Builds the graph of a folder: list what git knows (the inventory, with
+// content ids), read each file's facts from the store or a parse, model the
+// projects from their manifests, then resolve. The five-second rule
+// (runtime/predict.ts) decides the mode: under the line the graph is built
+// fresh from facts; over it the retained index of the same capture is
+// loaded when one exists, else the build runs under the budget and keeps an
+// index for next time.
+//
+// Every stage checks the budget between files, so a 1 ms budget stops a
+// cached vscode build within moments, partial and saying so. Facts come in
+// changed files first, so a cut never loses them. The parse cap counts
+// parses, never cached facts. The heap bound stops admitting files when the
+// heap passes it. Nothing here sets a timer.
+//
+// A generation is published to the store (store/types.ts) with its
+// inventory, its project model and what it could not read; the capture's
+// tree is written into the repository's objects so its bytes stay readable.
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, rmSync } from "node:fs";
-import { extname, join, posix } from "node:path";
+import { posix } from "node:path";
 import { safeGit } from "@openqodex/core";
+import type { ImpactExportChange } from "@openqodex/core";
 import type { Parser } from "web-tree-sitter";
+import { captureSnapshot, captureWorkingTree } from "./capture/capture.js";
+import { blobId, inventoryDigest, langOf, takeInventory } from "./capture/inventory.js";
+import type { InventoryEntry } from "./capture/inventory.js";
+import { exportChanges } from "./changes/exports.js";
+import type { ChangedFile } from "./changes/exports.js";
+import { discoverProjects } from "./discovery/projects.js";
+import type { ProjectModel } from "./discovery/projects.js";
 import { EXTRACTOR_VERSION, extract } from "./extract.js";
+import { MODEL_VERSION } from "./model/records.js";
+import type { Cut } from "./model/records.js";
 import { grammarVersion, parserFor } from "./parser.js";
-import type { FileInput, TsPaths } from "./resolve.js";
-import { resolveGraph, symbolId } from "./resolve.js";
-import { RepoReader, isFileFacts, readNoFollow, safeCacheDir, writeExclusive } from "./safe-fs.js";
-import type { DefFact, FileFacts, Graph, GraphEdge, GraphNode, Lang } from "./types.js";
+import { RESOLVER_VERSION, createWorld, projectFolder, stableKey, symbolId } from "./resolve.js";
+import type { FileInput, Resolved, World } from "./resolve.js";
+import { asPredictMeta, decideMode, predictMs, recordBuild } from "./runtime/predict.js";
+import type { Mode } from "./runtime/predict.js";
+import { RepoReader } from "./safe-fs.js";
+import { readIndex, serializeModel, writeIndex } from "./store/graph-files.js";
+import type { GraphStore } from "./store/types.js";
+import type { DefFact, FileFacts, Graph, GraphEdge, GraphNode, Lang, NotRead, UnknownSite } from "./types.js";
+
+export { langOf };
 
 export const DEFAULT_BUDGET_MS = 10_000;
-export const DEFAULT_MAX_FILES = 4000;
+export const DEFAULT_MAX_FILES = 4000; // a cap on parses per build; cached facts are not counted
 export const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
+export const DEFAULT_MAX_HEAP_MB = 2048;
+export const POLICY_VERSION = 1;
 
-const EXT_LANG: Record<string, Lang> = {
-  ".ts": "typescript",
-  ".mts": "typescript",
-  ".cts": "typescript",
-  ".tsx": "tsx",
-  ".js": "javascript",
-  ".mjs": "javascript",
-  ".cjs": "javascript",
-  ".jsx": "javascript",
-  ".py": "python",
-  ".go": "go",
-  ".rb": "ruby",
-  ".rake": "ruby",
-};
-
-// Folders that hold generated, vendored or installed code, never the repo's own.
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  "build",
-  "out",
-  ".next",
-  ".turbo",
-  ".cache",
-  "coverage",
-  "__pycache__",
-  ".venv",
-  "venv",
-  "vendor",
-  ".openqodex",
-]);
-
-export function langOf(path: string): Lang | null {
-  if (path.endsWith(".d.ts") || path.endsWith(".d.mts") || path.endsWith(".d.cts") || /\.min\.[cm]?js$/.test(path)) return null;
-  if (path.split("/").some((part) => SKIP_DIRS.has(part))) return null;
-  return EXT_LANG[extname(path).toLowerCase()] ?? null;
-}
+const META_BYTES = 1024 * 1024;
+const HEAP_CHECK_EVERY = 64;
 
 export type BuildArgs = {
+  // The folder the files are read from: the repository, or the review's snapshot.
   repoRoot: string;
-  // Paths to parse first (the change), so a budget cut never loses them.
+  // Paths to read first (the change), so a cut never loses them.
   files?: string[];
   // When set, the only paths the graph may read: anything else is left out
   // as if it were not in the repo (a whole-repo review passes its inventory,
@@ -69,84 +63,34 @@ export type BuildArgs = {
   budgetMs?: number;
   maxFiles?: number;
   maxFileBytes?: number;
-  cacheDir: string;
+  maxHeapMb?: number;
+  // Where facts and generations are kept: the owning repository's
+  // .openqodex/graph/. Null keeps nothing (the GitHub Action's
+  // --report-dir runs write nothing under .openqodex/).
+  store?: GraphStore | null;
+  // What tree the generation's capture is written as: the review snapshot,
+  // or the work tree for the graph commands. Null writes no tree.
+  capture?: "snapshot" | "working-tree" | null;
   onProgress?: (line: string) => void;
   // The change's base: each changed file's base version is parsed too, so a
-  // symbol the change removed is known with its surviving callers.
-  base?: { sha: string; files: { path: string; oldPath: string | null; status: "added" | "modified" | "deleted" | "renamed" }[] };
+  // symbol the change removed is known with its surviving callers, and the
+  // export surface is compared in two worlds.
+  base?: { sha: string; files: ChangedFile[] };
+  // Forces the mode (tests and `graph build --full`); otherwise the
+  // five-second rule decides.
+  mode?: Mode;
 };
 
-// Every git call here goes through safeGit: the folder may be the temporary
-// checkout of a branch or a pull request, whose files must start no program.
-async function gitFiles(repoRoot: string): Promise<string[]> {
-  const r = await safeGit(repoRoot, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
-  if (r.code !== 0) throw new Error(`git ls-files failed: ${r.stderr.trim()}`);
-  return [...new Set(r.stdout.toString("utf8").split("\0").filter(Boolean))];
-}
-
-function stripJsonComments(text: string): string {
-  let out = "";
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i] as string;
-    if (inString) {
-      out += c;
-      if (c === "\\") out += text[++i] ?? "";
-      else if (c === '"') inString = false;
-    } else if (c === '"') {
-      inString = true;
-      out += c;
-    } else if (c === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
-      out += "\n";
-    } else if (c === "/" && text[i + 1] === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
-      i++;
-    } else out += c;
-  }
-  return out.replace(/,(\s*[}\]])/g, "$1");
-}
-
-// `paths` and `baseUrl` from the root tsconfig.json, following relative
-// `extends`. Package-level tsconfig files are not read.
-const META_BYTES = 1024 * 1024;
-const CACHE_ENTRY_BYTES = 32 * 1024 * 1024;
-
-function readTsPaths(reader: RepoReader, known: ReadonlySet<string>): TsPaths {
-  let file = "tsconfig.json";
-  let paths: [string, string[]][] | null = null;
-  let baseUrl: string | null = null;
-  let baseDir = "";
-  for (let hop = 0; hop < 5 && known.has(file); hop++) {
-    let config: { extends?: unknown; compilerOptions?: { paths?: Record<string, string[]>; baseUrl?: string } };
-    try {
-      const text = reader.read(file, META_BYTES);
-      if (text === null) break;
-      config = JSON.parse(stripJsonComments(text)) as typeof config;
-    } catch {
-      break;
-    }
-    const dir = posix.dirname(file) === "." ? "" : posix.dirname(file);
-    const opts = config.compilerOptions ?? {};
-    if (baseUrl === null && typeof opts.baseUrl === "string") baseUrl = posix.normalize(posix.join(dir, opts.baseUrl)).replace(/^\.$/, "");
-    if (paths === null && opts.paths && typeof opts.paths === "object") {
-      paths = Object.entries(opts.paths).filter((e): e is [string, string[]] => Array.isArray(e[1]));
-      baseDir = typeof opts.baseUrl === "string" ? posix.normalize(posix.join(dir, opts.baseUrl)).replace(/^\.$/, "") : dir;
-    }
-    if (typeof config.extends !== "string" || !config.extends.startsWith(".")) break;
-    const next = posix.normalize(posix.join(dir, config.extends));
-    file = next.endsWith(".json") ? next : `${next}.json`;
-  }
-  if (paths === null && baseUrl === null) return null;
-  return { baseDir, paths: paths ?? [], baseUrl };
+// The key of a file's facts: the extractor, the grammar and the content.
+export function factsKey(lang: Lang, blob: string): string {
+  return createHash("sha1").update(`${EXTRACTOR_VERSION}\0${lang}\0${grammarVersion(lang)}\0${blob}`).digest("hex");
 }
 
 function readGoModules(reader: RepoReader, all: string[]): [string, string][] {
   const out: [string, string][] = [];
   for (const f of all) {
     if (f !== "go.mod" && !f.endsWith("/go.mod")) continue;
-    if (f.split("/").some((part) => SKIP_DIRS.has(part))) continue;
+    if (f.split("/").some((part) => part === "node_modules" || part === "vendor")) continue;
     try {
       const m = /^module\s+(\S+)/m.exec(reader.read(f, META_BYTES) ?? "");
       if (m?.[1]) out.push([m[1].replace(/^"|"$/g, ""), posix.dirname(f) === "." ? "" : posix.dirname(f)]);
@@ -157,267 +101,277 @@ function readGoModules(reader: RepoReader, all: string[]): [string, string][] {
   return out;
 }
 
-type CacheEntry = { key: string; facts: FileFacts };
-
-class FactCache {
-  used = new Set<string>();
-  hits = 0;
-  parses = 0;
-  private parsers = new Map<Lang, Parser>();
-
-  // `dir` null: no cache this build (a link in its path, or files of the
-  // repo's own in it); everything is parsed and nothing is written.
-  constructor(readonly dir: string | null) {}
-
-  key(lang: Lang, content: Buffer | string): string {
-    return createHash("sha1").update(`${EXTRACTOR_VERSION}\0${lang}\0${grammarVersion(lang)}\0`).update(content).digest("hex");
-  }
-
-  read(key: string): FileFacts | null {
-    if (!this.dir) return null;
-    const text = readNoFollow(join(this.dir, `${key}.json`), CACHE_ENTRY_BYTES);
-    if (text === null) return null;
-    try {
-      const entry = JSON.parse(text) as CacheEntry;
-      if (entry.key === key && isFileFacts(entry.facts)) return entry.facts;
-    } catch {
-      // corrupt: parse again and rewrite
-    }
-    return null;
-  }
-
-  write(key: string, facts: FileFacts): void {
-    if (this.dir) writeExclusive(join(this.dir, `${key}.json`), JSON.stringify({ key, facts } satisfies CacheEntry));
-  }
-
-  async facts(lang: Lang, content: string, canParse: boolean): Promise<FileFacts | null> {
-    const key = this.key(lang, content);
-    this.used.add(key);
-    const cached = this.read(key);
-    if (cached) {
-      this.hits++;
-      return cached;
-    }
-    if (!canParse) return null;
-    let parser = this.parsers.get(lang);
-    if (!parser) {
-      parser = await parserFor(lang);
-      this.parsers.set(lang, parser);
-    }
-    const tree = parser.parse(content);
-    if (!tree) return null;
-    this.parses++;
-    try {
-      const facts = extract(tree, lang);
-      this.write(key, facts);
-      return facts;
-    } finally {
-      tree.delete();
-    }
-  }
-
-  // Entries this build did not use belong to files that changed or are gone.
-  // Only regular files named the way this cache names them are removed.
-  prune(): void {
-    if (!this.dir) return;
-    let names: string[];
-    try {
-      names = readdirSync(this.dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      if (!/^[0-9a-f]{40}\.json$/.test(name) || this.used.has(name.slice(0, -5))) continue;
-      const path = join(this.dir, name);
-      try {
-        if (lstatSync(path).isFile()) rmSync(path);
-      } catch {
-        // gone already
-      }
-    }
-  }
-
-  close(): void {
-    for (const p of this.parsers.values()) p.delete();
-  }
-}
-
-// The cache folder when it is safe to use: no link in its path and no file
-// in it that git tracks (a repo could ship forged entries).
-async function usableCacheDir(repoRoot: string, dir: string): Promise<string | null> {
-  const safe = safeCacheDir(repoRoot, dir);
-  if (safe === null) return null;
-  const r = await safeGit(repoRoot, ["ls-files", "-z", "--", safe]);
-  // A failure means outside the repo: nothing there is tracked.
-  return r.code === 0 && r.stdout.length > 0 ? null : safe;
-}
-
-async function gitShow(repoRoot: string, sha: string, path: string): Promise<string | null> {
+async function gitShowBytes(repoRoot: string, sha: string, path: string): Promise<Buffer | null> {
   const r = await safeGit(repoRoot, ["show", "--no-textconv", "--no-ext-diff", `${sha}:${path}`]);
-  return r.code === 0 ? r.stdout.toString("utf8") : null;
+  return r.code === 0 ? r.stdout : null;
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 }
 
+// Parsers, one per language, closed after the build.
+class Parsers {
+  private map = new Map<Lang, Parser>();
+  count = 0;
+  async facts(lang: Lang, content: string): Promise<FileFacts | null> {
+    let parser = this.map.get(lang);
+    if (!parser) {
+      parser = await parserFor(lang);
+      this.map.set(lang, parser);
+    }
+    const tree = parser.parse(content);
+    if (!tree) return null;
+    this.count++;
+    try {
+      return extract(tree, lang);
+    } finally {
+      tree.delete();
+    }
+  }
+  close(): void {
+    for (const p of this.map.values()) p.delete();
+  }
+}
+
+const MANIFESTS = /(^|\/)(package\.json|tsconfig\.json|jsconfig\.json|pnpm-workspace\.yaml|pyproject\.toml|setup\.cfg|go\.mod|go\.work|Gemfile)$/;
+export function isManifest(path: string): boolean {
+  return MANIFESTS.test(path);
+}
+
 export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const started = performance.now();
   const budgetMs = args.budgetMs ?? DEFAULT_BUDGET_MS;
+  const deadline = started + budgetMs;
   const maxFiles = args.maxFiles ?? DEFAULT_MAX_FILES;
   const maxFileBytes = args.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-  const allowed = args.only === undefined ? null : new Set(args.only);
-  const all = (await gitFiles(args.repoRoot)).filter((f) => allowed === null || allowed.has(f));
-  const eligible = all.filter((f) => langOf(f) !== null);
-  const known = new Set(eligible);
-  for (const f of all) if (f.endsWith("__init__.py")) known.add(f);
+  const maxHeap = (args.maxHeapMb ?? DEFAULT_MAX_HEAP_MB) * 1024 * 1024;
+  const store = args.store ?? null;
+  const stages: Record<string, number> = {};
+  let mark = performance.now();
+  const stage = (name: string) => {
+    const now = performance.now();
+    stages[name] = Math.round((stages[name] ?? 0) + (now - mark));
+    mark = now;
+  };
+  const overBudget = () => performance.now() > deadline;
+  const reasons: string[] = [];
+  const cuts: Cut[] = [];
+  const notRead: NotRead[] = [];
 
-  // The change first, then everything else in git's order.
-  const first = (args.files ?? []).filter((f) => known.has(f));
-  const firstSet = new Set(first);
-  const order = [...first, ...eligible.filter((f) => !firstSet.has(f))];
-
+  // ---------- inventory ----------
   const reader = new RepoReader(args.repoRoot);
-  const cacheDir = await usableCacheDir(args.repoRoot, args.cacheDir);
-  if (cacheDir === null) args.onProgress?.("openqodex: the code graph cache is not used: its folder is a link, holds tracked files or cannot be made");
-  const cache = new FactCache(cacheDir);
-  const inputs: FileInput[] = [];
-  let tooBig = 0;
-  let overBudget = 0;
-  let overCap = 0;
-  try {
-    for (const path of order) {
-      if (inputs.length >= maxFiles) {
-        overCap++;
-        continue;
-      }
-      const lang = langOf(path) as Lang;
-      let size: number;
-      try {
-        const st = lstatSync(join(args.repoRoot, path));
-        if (!st.isFile()) continue; // a symbolic link or a folder
-        size = st.size;
-      } catch {
-        continue; // gone since git listed it
-      }
-      if (size > maxFileBytes) {
-        tooBig++;
-        continue;
-      }
-      const content = reader.read(path, maxFileBytes);
-      if (content === null) continue; // a link in its path, or changed under us
-      // Past the budget only cached facts are used; nothing more is parsed.
-      const canParse = performance.now() - started < budgetMs;
-      const facts = await cache.facts(lang, content, canParse);
-      if (!facts) {
-        overBudget++;
-        continue;
-      }
-      inputs.push({ path, facts });
-    }
+  const only = args.only === undefined ? undefined : new Set(args.only);
+  const inv = await takeInventory(args.repoRoot, reader, { maxFileBytes, only });
+  const known = new Set(inv.entries.map((e) => e.path));
+  for (const f of inv.all) if (f.endsWith("__init__.py") && langOf(f) !== null) known.add(f);
+  for (const f of inv.tooBig) notRead.push({ file: f, reason: "size" });
+  for (const f of inv.unreadable) notRead.push({ file: f, reason: "unreadable" });
+  const eligible = inv.entries.length + inv.tooBig.length + inv.unreadable.length;
+  // The change first, then everything else in git's order.
+  const firstSet = new Set((args.files ?? []).filter((f) => known.has(f)));
+  const order = [...inv.entries.filter((e) => firstSet.has(e.path)), ...inv.entries.filter((e) => !firstSet.has(e.path))];
+  stage("inventory");
 
-    // The base side of each changed file, for removed symbols. Only a file
-    // whose current side was read, or that is deleted, is compared: a file
-    // left out by a cap would otherwise look emptied. Base parses count
-    // against the same budget and file cap.
-    const baseDefs = new Map<string, { file: string; facts: FileFacts }>();
+  // ---------- the mode ----------
+  const meta = store ? asPredictMeta(store.readMeta()?.predict ?? null) : null;
+  const cached = store ? order.reduce((n, e) => n + Number(store.hasFacts(factsKey(e.lang, e.blob))), 0) : 0;
+  const predicted = predictMs(meta, { eligible, cached });
+  const decided = args.mode ? { mode: args.mode, streak: 0 } : decideMode(meta, predicted);
+  const config = { budgetMs, maxFiles, maxFileBytes, maxHeapMb: Math.round(maxHeap / 1024 / 1024) };
+  const versions = { model: MODEL_VERSION, extractor: EXTRACTOR_VERSION, resolver: RESOLVER_VERSION, policy: POLICY_VERSION };
+  const digest = inventoryDigest(inv.entries, { versions, only: args.only ?? null });
+  stage("predict");
+
+  // Retained: the same capture's index, when a complete one is kept.
+  if (decided.mode === "retained" && store && !args.base) {
+    const reused = store.list().find((m) => m.capture.digest === digest && m.complete && m.hasIndex);
+    const opened = reused ? store.open({ id: reused.id }) : null;
+    const loaded = opened ? readIndex(opened) : null;
+    if (reused && loaded) {
+      stage("load-index");
+      const durationMs = Math.round(performance.now() - started);
+      args.onProgress?.(`Code graph: ${plural(loaded.status.filesParsed, "file")} from the retained index in ${(durationMs / 1000).toFixed(1)} s`);
+      return { ...loaded, repoRoot: args.repoRoot, status: { ...loaded.status, durationMs, mode: "retained", generation: reused.id, predictedMs: predicted, stages } };
+    }
+  }
+
+  // ---------- facts ----------
+  const parsers = new Parsers();
+  const inputs: FileInput[] = [];
+  const keys = new Map<string, { key: string; blob: string; lang: Lang }>();
+  let hits = 0;
+  let parseCapped = 0;
+  let stoppedBy: "budget" | "memory" | null = null;
+  let changedDuringBuild = 0;
+  let factsMs = 0;
+  let parseMs = 0;
+  const memo = new Map<string, FileFacts>(); // facts of this build, for the base side of unchanged content
+  const factsFor = async (lang: Lang, blob: string, read: () => Buffer | null, canParse: boolean): Promise<{ facts: FileFacts | null; key: string; blob: string; parsed: boolean }> => {
+    let key = factsKey(lang, blob);
+    const t0 = performance.now();
+    const hit = memo.get(key) ?? store?.readFacts(key) ?? null;
+    if (hit) {
+      factsMs += performance.now() - t0;
+      memo.set(key, hit);
+      return { facts: hit, key, blob, parsed: false };
+    }
+    if (!canParse) return { facts: null, key, blob, parsed: false };
+    const t1 = performance.now();
+    const bytes = read();
+    if (bytes === null) return { facts: null, key, blob, parsed: false };
+    // A file that changed since the inventory is keyed by what was read.
+    const actual = blobId(bytes);
+    if (actual !== blob && blobId(Buffer.from(bytes.toString("utf8").replace(/\r\n/g, "\n"))) !== blob) {
+      changedDuringBuild++;
+      blob = actual;
+      key = factsKey(lang, blob);
+    }
+    const facts = await parsers.facts(lang, bytes.toString("utf8"));
+    parseMs += performance.now() - t1;
+    if (!facts) return { facts: null, key, blob, parsed: true };
+    memo.set(key, facts);
+    store?.writeFacts(key, facts);
+    return { facts, key, blob, parsed: true };
+  };
+  try {
+    for (const [i, e] of order.entries()) {
+      // Past the budget nothing more is admitted, cached facts included;
+      // the changed files come first, so they are in.
+      if (overBudget() && !firstSet.has(e.path)) {
+        stoppedBy = "budget";
+        for (const rest of order.slice(i)) notRead.push({ file: rest.path, reason: "budget" });
+        break;
+      }
+      if (i % HEAP_CHECK_EVERY === 0 && process.memoryUsage().heapUsed > maxHeap && !firstSet.has(e.path)) {
+        stoppedBy = "memory";
+        for (const rest of order.slice(i)) notRead.push({ file: rest.path, reason: "memory" });
+        break;
+      }
+      const canParse = parsers.count < maxFiles || firstSet.has(e.path);
+      const got = await factsFor(e.lang, e.blob, () => reader.readBytes(e.path, maxFileBytes), canParse);
+      if (!got.facts) {
+        if (!canParse) {
+          parseCapped++;
+          notRead.push({ file: e.path, reason: "parse-cap" });
+        } else notRead.push({ file: e.path, reason: got.parsed ? "parse-error" : "unreadable" });
+        continue;
+      }
+      if (!got.parsed) hits++;
+      keys.set(e.path, { key: got.key, blob: got.blob, lang: e.lang });
+      inputs.push({ path: e.path, facts: got.facts });
+    }
+    stage("facts");
+
+    // ---------- base versions of the changed files ----------
+    const baseFacts = new Map<string, { file: string; facts: FileFacts }>();
     const current = new Set(inputs.map((i) => i.path));
-    let baseParsed = 0;
     let removalUnchecked = 0;
+    const baseManifests = new Map<string, string | null>();
     for (const f of args.base?.files ?? []) {
       if (f.status === "added" || !args.base) continue;
       const basePath = f.oldPath ?? f.path;
+      if (isManifest(basePath)) {
+        const bytes = await gitShowBytes(args.repoRoot, args.base.sha, basePath);
+        baseManifests.set(basePath, bytes === null ? null : bytes.toString("utf8"));
+      }
       const lang = langOf(basePath);
       if (!lang) continue;
       known.add(basePath);
       if (f.status !== "deleted" && !current.has(f.path)) continue;
-      const canParse = performance.now() - started < budgetMs && inputs.length + baseParsed < maxFiles;
-      const content = await gitShow(args.repoRoot, args.base.sha, basePath);
-      const facts = content === null || Buffer.byteLength(content) > maxFileBytes ? null : await cache.facts(lang, content, canParse);
-      if (!facts) {
+      const bytes = await gitShowBytes(args.repoRoot, args.base.sha, basePath);
+      // Base versions count against the same budget and parse cap.
+      const got = bytes === null || bytes.length > maxFileBytes ? null : await factsFor(lang, blobId(bytes), () => bytes, !overBudget() && parsers.count < maxFiles);
+      if (!got?.facts) {
         removalUnchecked++;
         continue;
       }
-      baseParsed++;
-      baseDefs.set(f.path, { file: basePath, facts });
+      baseFacts.set(f.path, { file: basePath, facts: got.facts });
     }
-    cache.prune();
+    stage("base");
 
-    const goModules = readGoModules(reader, all);
-    const resolved = resolveGraph({ files: inputs, known, tsPaths: readTsPaths(reader, new Set(all)), goModules });
+    // ---------- projects and resolution ----------
+    const model = discoverProjects(inv.all, reader);
+    const goModules = readGoModules(reader, inv.all);
+    const projectOf = (file: string) => projectFolder(model, goModules, file);
+    const world = createWorld({ files: inputs, known, model, goModules, stop: overBudget });
+    const resolved = world.resolveAll();
+    if (resolved.budgetFiles.length > 0) stoppedBy ??= "budget";
+    stage("resolve");
 
-    // Definitions the change added to a file: every one in an added file,
-    // and in any other changed file those its base version did not have. A
-    // file whose base version was not read gained nothing that can be known.
-    const keyOf = (n: GraphNode) => `${n.kind}\0${ownerOf(n.id)}\0${n.name}`;
-    const baseKey = (d: DefFact) => `${d.kind}\0${d.owner ?? ""}\0${d.name}`;
-    const gained = new Map<string, GraphNode[]>();
-    for (const f of args.base?.files ?? []) {
-      const defs = f.status === "deleted" ? undefined : resolved.defsByFile.get(f.path);
-      const base = baseDefs.get(f.path);
-      if (!defs || (f.status !== "added" && !base)) continue;
-      const had = new Set(base?.facts.defs.map(baseKey));
-      for (const n of defs) {
-        if (had.has(keyOf(n))) continue;
-        const list = gained.get(keyOf(n));
-        if (list) list.push(n);
-        else gained.set(keyOf(n), [n]);
-      }
+    // ---------- removed, moved and the export surface ----------
+    const removed = removedSymbols(args.base?.files ?? [], baseFacts, resolved);
+    let exportsDiff: ImpactExportChange[] = [];
+    if (args.base && args.base.files.length > 0 && !overBudget()) {
+      exportsDiff = await compareWorlds({
+        args,
+        inputs,
+        baseFacts,
+        baseManifests,
+        known,
+        reader,
+        all: inv.all,
+        model,
+        goModules,
+        world,
+        // Removed and moved definitions are reported with the removed symbols, never again as public names.
+        removedKeys: new Set([...removed.values()].flat().map((n) => stableKey(n.id.replace(/^base:/, "")))),
+      });
+    } else if (args.base && args.base.files.length > 0) {
+      reasons.push("the export surface was not compared: the budget ran out");
     }
+    stage("compare");
 
-    // Symbols in the base version of a changed file and gone from it now. A
-    // file git renamed is gone from its old path as a whole: a symbol still
-    // defined at the new path moved with it. Any other gone symbol moved when
-    // exactly one file of the change gained a definition of the same kind,
-    // owner and name. impact.ts drops the move while a call site still
-    // reaches the old place.
-    const removed = new Map<string, GraphNode[]>();
-    for (const [path, base] of baseDefs) {
-      const renamed = base.file !== path;
-      const now = new Map<string, GraphNode>();
-      for (const n of resolved.defsByFile.get(path) ?? []) if (!now.has(keyOf(n))) now.set(keyOf(n), n);
-      const gone: GraphNode[] = [];
-      for (const d of base.facts.defs) {
-        let to = now.get(baseKey(d));
-        if (to && !renamed) continue;
-        if (!to) {
-          const elsewhere = (gained.get(baseKey(d)) ?? []).filter((n) => n.file !== path);
-          if (new Set(elsewhere.map((n) => n.file)).size === 1) to = elsewhere[0];
-        }
-        gone.push({
-          id: `base:${symbolId(base.file, d)}`,
-          file: base.file,
-          name: d.name,
-          kind: d.kind,
-          startLine: d.line,
-          endLine: d.endLine,
-          snapshot: "base",
-          exported: d.exported,
-          lang: base.facts.lang,
-          ...(to ? { movedTo: { id: to.id, file: to.file, line: to.startLine } } : {}),
-        });
-      }
-      if (gone.length > 0) removed.set(path, gone);
-    }
-
+    // ---------- the graph ----------
     const graphIn = new Map<string, GraphEdge[]>();
     const graphOut = new Map<string, GraphEdge[]>();
     for (const e of resolved.edges) {
       (graphIn.get(e.to) ?? graphIn.set(e.to, []).get(e.to))?.push(e);
       (graphOut.get(e.from) ?? graphOut.set(e.from, []).get(e.from))?.push(e);
     }
+    const unknowns: UnknownSite[] = [...resolved.unknowns];
+    for (const file of resolved.budgetFiles) {
+      unknowns.push({ file, line: 0, column: 0, name: "", cause: "budget", shape: "other", caller: file, scope: "file", note: "the budget ran out before the calls of this file were resolved" });
+    }
+    const unknownNames = new Map<string, number>();
+    const valueCalls = new Map<string, number>();
+    for (const u of unknowns) {
+      if (u.name !== "") unknownNames.set(u.name, (unknownNames.get(u.name) ?? 0) + 1);
+      if (u.scope === "project") {
+        const p = projectOf(u.file);
+        valueCalls.set(p, (valueCalls.get(p) ?? 0) + 1);
+      }
+    }
 
-    const skipped = tooBig + overBudget + overCap;
-    const reasons: string[] = [];
+    const tooBig = inv.tooBig.length;
+    const skipped = notRead.length;
     if (removalUnchecked > 0) reasons.push(`removed symbols were not checked in ${plural(removalUnchecked, "changed file")}`);
-    if (overBudget > 0) reasons.push(`the ${(budgetMs / 1000).toFixed(budgetMs < 1000 ? 3 : 0)} s budget ran out with ${plural(overBudget, "file")} not parsed`);
-    if (overCap > 0) reasons.push(`the ${plural(maxFiles, "file")} cap left out ${plural(overCap, "file")}`);
-    if (tooBig > 0) reasons.push(`${plural(tooBig, "file")} over ${Math.round(maxFileBytes / 1024)} KB not parsed`);
+    if (stoppedBy === "budget") {
+      const left = notRead.filter((n) => n.reason === "budget").length;
+      reasons.push(`the ${(budgetMs / 1000).toFixed(budgetMs < 1000 ? 3 : 0)} s budget ran out${left > 0 ? ` with ${plural(left, "file")} not read` : ""}${resolved.budgetFiles.length > 0 ? ` and the calls of ${plural(resolved.budgetFiles.length, "file")} not resolved` : ""}`);
+      cuts.push({ by: "budget", at: null, omitted: left + resolved.budgetFiles.length, exact: true, unit: "files", note: `stopped ${Math.max(0, Math.round(performance.now() - deadline))} ms after the ${budgetMs} ms budget` });
+    }
+    if (stoppedBy === "memory") {
+      const left = notRead.filter((n) => n.reason === "memory").length;
+      reasons.push(`the ${config.maxHeapMb} MB memory bound left out ${plural(left, "file")}`);
+      cuts.push({ by: "memory", at: null, omitted: left, exact: true, unit: "files", note: `the heap passed ${config.maxHeapMb} MB` });
+    }
+    if (parseCapped > 0) {
+      reasons.push(`the ${plural(maxFiles, "parse")} cap left out ${plural(parseCapped, "file")}; run \`openqodex graph build\` once to complete it`);
+      cuts.push({ by: "parse-cap", at: null, omitted: parseCapped, exact: true, unit: "files", note: `${maxFiles} parses per build` });
+    }
+    if (tooBig > 0) {
+      reasons.push(`${plural(tooBig, "file")} over ${Math.round(maxFileBytes / 1024)} KB not read`);
+      cuts.push({ by: "size", at: null, omitted: tooBig, exact: true, unit: "files", note: `files over ${maxFileBytes} bytes` });
+    }
+    const parseErrors = notRead.filter((n) => n.reason === "parse-error" || n.reason === "unreadable").length;
+    if (parseErrors > 0) reasons.push(`${plural(parseErrors, "file")} could not be read or parsed`);
+    if (changedDuringBuild > 0) reasons.push(`${plural(changedDuringBuild, "file")} changed while the graph was built; their facts are from what was read`);
+    if (store?.diskFull) reasons.push("the disk is full: the graph was not saved");
+    stage("assemble");
+
     const durationMs = Math.round(performance.now() - started);
-    args.onProgress?.(
-      `Code graph: ${plural(inputs.length, "file")} in ${(durationMs / 1000).toFixed(1)} s (${cache.parses} parsed, ${cache.hits} from cache)`,
-    );
-    return {
+    const graph: Graph = {
       repoRoot: args.repoRoot,
       nodes: resolved.nodes,
       edges: resolved.edges,
@@ -427,22 +381,175 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       defsByFile: resolved.defsByFile,
       removed,
       misses: resolved.misses,
+      unknowns,
+      unknownNames,
+      valueCalls,
+      model,
+      projectOf,
+      exportChanges: exportsDiff,
       status: {
-        status: skipped > 0 || removalUnchecked > 0 ? "partial" : "ok",
+        status: skipped > 0 || removalUnchecked > 0 || resolved.budgetFiles.length > 0 ? "partial" : "ok",
         reason: reasons[0] ?? null,
         reasons,
         filesParsed: inputs.length,
         filesSkipped: skipped,
         durationMs,
-        eligibleFiles: eligible.length,
-        cacheHits: cache.hits,
-        parses: cache.parses,
+        eligibleFiles: eligible,
+        cacheHits: hits,
+        parses: parsers.count,
         unresolvedSites: resolved.unresolvedSites,
+        externalSites: resolved.externalSites,
+        mode: decided.mode,
+        generation: null,
+        predictedMs: predicted,
+        stages,
+        cuts,
+        notRead,
       },
     };
+
+    // ---------- publish ----------
+    const complete = notRead.length === 0 && resolved.budgetFiles.length === 0;
+    const withIndex = decided.mode === "retained" && complete;
+    // A kept build of the same capture and configuration is the same graph:
+    // it is named, and nothing new is written.
+    const same = store && complete ? store.list().find((m) => m.capture.digest === digest && m.complete && (m.hasIndex || !withIndex)) : undefined;
+    if (store && same) {
+      graph.status.generation = same.id;
+      stage("publish");
+    } else if (store && !store.diskFull) {
+      let treeSha: string | null = null;
+      try {
+        if (args.capture === "snapshot") treeSha = await captureSnapshot(args.repoRoot);
+        else if (args.capture === "working-tree") treeSha = await captureWorkingTree(args.repoRoot);
+      } catch (error) {
+        reasons.push(`the capture's files were not kept: ${((error as Error).message ?? "").split("\n")[0]}`);
+      }
+      stage("capture");
+      const files: Record<string, string> = {
+        "inventory.json": JSON.stringify({ files: Object.fromEntries([...keys].map(([p, k]) => [p, k])) }),
+        "projects.json": JSON.stringify({ model: serializeModel(model), goModules }),
+        "coverage.json": JSON.stringify({ notRead, cuts, budgetFiles: resolved.budgetFiles }),
+      };
+      if (withIndex) Object.assign(files, writeIndex(graph));
+      const published = await store.publish({
+        manifest: {
+          capture: { kind: args.capture === "working-tree" ? "working-tree" : args.capture === "snapshot" ? "snapshot" : "revision", treeSha, digest, dirtyPaths: null },
+          versions,
+          config,
+          status: graph.status.status,
+          complete,
+          counts: { eligible, inGraph: inputs.length, parsed: parsers.count, fromCache: hits, skipped },
+          mode: decided.mode,
+          reasons,
+          stages,
+          wallMs: durationMs,
+          hasIndex: withIndex,
+        },
+        files,
+      });
+      if (published.ok) {
+        graph.status.generation = published.id;
+        if (published.overBudget) reasons.push(`the graph folder is over its ${Math.round(published.overBudget.boundBytes / 1024 / 1024)} MB bound: ${plural(published.overBudget.protected.length, "build")} in use are kept`);
+      } else if (published.error === "disk-full") reasons.push("the disk is full: the graph was not saved");
+      else reasons.push(`the graph was not saved: ${published.reason}`);
+      stage("publish");
+      graph.status.reason = reasons[0] ?? null;
+    }
+    // The whole build, capture and publication included, measured for the five-second rule.
+    const actualMs = Math.round(performance.now() - started);
+    graph.status.durationMs = actualMs;
+    if (store && !store.diskFull) {
+      const other = Math.max(0, actualMs - Math.round(parseMs) - Math.round(factsMs));
+      const next = recordBuild(meta, {
+        eligible,
+        parsed: parsers.count,
+        cached: hits,
+        stages: { parse: Math.round(parseMs), facts: Math.round(factsMs), other },
+        predictedMs: predicted,
+        actualMs,
+        mode: decided.mode,
+        streak: decided.streak,
+      });
+      try {
+        await store.updateMeta((m) => ({ ...m, predict: next }));
+      } catch {
+        // the measurement is lost; the next build measures again
+      }
+    }
+    args.onProgress?.(`Code graph: ${plural(inputs.length, "file")} in ${(actualMs / 1000).toFixed(1)} s (${parsers.count} parsed, ${hits} from cache, ${decided.mode})`);
+    return graph;
   } finally {
-    cache.close();
+    parsers.close();
   }
+}
+
+// Symbols in the base version of a changed file and gone from it now. A
+// file git renamed is gone from its old path as a whole: a symbol still
+// defined at the new path moved with it. Any other gone symbol moved when
+// exactly one file of the change gained a definition of the same kind,
+// owner and name, or else exactly one definition with the same body under
+// another name (moved and renamed). impact.ts drops the move while a call
+// site still reaches the old place.
+function removedSymbols(files: ChangedFile[], baseDefs: Map<string, { file: string; facts: FileFacts }>, resolved: Resolved): Map<string, GraphNode[]> {
+  const keyOf = (n: GraphNode) => `${n.kind}\0${ownerOf(n.id)}\0${n.name}`;
+  const baseKey = (d: DefFact) => `${d.kind}\0${d.owner ?? ""}\0${d.name}`;
+  // Definitions the change added: in an added file, and in any other changed
+  // file those its base version did not have. A file whose base version was
+  // not read gained nothing that can be known.
+  const gained = new Map<string, GraphNode[]>();
+  const gainedBody = new Map<string, GraphNode[]>();
+  for (const f of files) {
+    const defs = f.status === "deleted" ? undefined : resolved.defsByFile.get(f.path);
+    const base = baseDefs.get(f.path);
+    if (!defs || (f.status !== "added" && !base)) continue;
+    const had = new Set(base?.facts.defs.map(baseKey));
+    const hadBody = new Set(base?.facts.defs.map((d) => d.bodyHash).filter(Boolean));
+    for (const n of defs) {
+      if (had.has(keyOf(n))) continue;
+      (gained.get(keyOf(n)) ?? gained.set(keyOf(n), []).get(keyOf(n)))?.push(n);
+      if (n.bodyHash && !hadBody.has(n.bodyHash)) (gainedBody.get(n.bodyHash) ?? gainedBody.set(n.bodyHash, []).get(n.bodyHash))?.push(n);
+    }
+  }
+  const removed = new Map<string, GraphNode[]>();
+  for (const [path, base] of baseDefs) {
+    const renamed = base.file !== path;
+    const now = new Map<string, GraphNode>();
+    for (const n of resolved.defsByFile.get(path) ?? []) if (!now.has(keyOf(n))) now.set(keyOf(n), n);
+    const gone: GraphNode[] = [];
+    for (const d of base.facts.defs) {
+      let to = now.get(baseKey(d));
+      if (to && !renamed) continue;
+      let byBody = false;
+      if (!to) {
+        const elsewhere = (gained.get(baseKey(d)) ?? []).filter((n) => n.file !== path);
+        if (new Set(elsewhere.map((n) => n.file)).size === 1) to = elsewhere[0];
+      }
+      if (!to && d.bodyHash) {
+        // The same body under another name: one definition in one file only.
+        const same = (gainedBody.get(d.bodyHash) ?? []).filter((n) => n.kind === d.kind && n.name !== d.name);
+        if (same.length === 1) {
+          to = same[0];
+          byBody = true;
+        }
+      }
+      const node: GraphNode = {
+        id: `base:${symbolId(base.file, d)}`,
+        file: base.file,
+        name: d.name,
+        kind: d.kind,
+        startLine: d.line,
+        endLine: d.endLine,
+        snapshot: "base",
+        exported: d.exported,
+        lang: base.facts.lang,
+      };
+      if (to) node.movedTo = { id: to.id, file: to.file, line: to.startLine, ...(byBody ? { renamed: true } : {}) };
+      gone.push(node);
+    }
+    if (gone.length > 0) removed.set(path, gone);
+  }
+  return removed;
 }
 
 // "a.ts#Cls.m@3:5" to "Cls"; "" for a symbol with no owner.
@@ -451,3 +558,68 @@ function ownerOf(id: string): string {
   const dot = name.lastIndexOf(".");
   return dot === -1 ? "" : name.slice(0, dot);
 }
+
+// The base world: the base version of every changed file (deleted and
+// renamed files at their old path), the current facts of every other file,
+// and, when a manifest changed, the project model as the base had it.
+async function compareWorlds(c: {
+  args: BuildArgs;
+  inputs: FileInput[];
+  baseFacts: Map<string, { file: string; facts: FileFacts }>;
+  baseManifests: Map<string, string | null>;
+  known: Set<string>;
+  reader: RepoReader;
+  all: string[];
+  model: ProjectModel;
+  goModules: [string, string][];
+  world: World;
+  removedKeys: Set<string>;
+}): Promise<ImpactExportChange[]> {
+  const changed = c.args.base?.files ?? [];
+  const drop = new Set(changed.map((f) => f.path));
+  const baseInputs: FileInput[] = c.inputs.filter((i) => !drop.has(i.path));
+  for (const [, b] of c.baseFacts) baseInputs.push({ path: b.file, facts: b.facts });
+  const baseKnown = new Set([...c.known].filter((p) => !changed.some((f) => f.status === "added" && f.path === p)));
+  for (const [, b] of c.baseFacts) baseKnown.add(b.file);
+  // The base model: the manifests as the base had them.
+  let baseModel = c.model;
+  const seeds: { manifest: string; files: string[] }[] = [];
+  if (c.baseManifests.size > 0) {
+    const overlay = {
+      read: (path: string, max: number): string | null => (c.baseManifests.has(path) ? (c.baseManifests.get(path) ?? null) : c.reader.read(path, max)),
+      readBytes: (path: string, max: number): Buffer | null => {
+        const t = c.baseManifests.has(path) ? (c.baseManifests.get(path) ?? null) : c.reader.read(path, max);
+        return t === null ? null : Buffer.from(t);
+      },
+    } as unknown as RepoReader;
+    const baseAll = [...new Set([...c.all, ...[...c.baseManifests.keys()].filter((p) => c.baseManifests.get(p) !== null)])];
+    baseModel = discoverProjects(baseAll, overlay);
+    for (const manifest of c.baseManifests.keys()) {
+      const dir = posix.dirname(manifest) === "." ? "" : posix.dirname(manifest);
+      const base = posix.basename(manifest);
+      let files: string[];
+      if (base === "package.json") {
+        // Every file that imports the package by name, in either world.
+        const names = new Set([c.model.node.find((p) => p.file === manifest)?.pkg.name, baseModel.node.find((p) => p.file === manifest)?.pkg.name].filter((n): n is string => !!n));
+        files = c.inputs.filter((i) => i.facts.imports.some((imp) => [...names].some((n) => imp.spec === n || imp.spec.startsWith(`${n}/`)))).map((i) => i.path);
+      } else files = c.inputs.filter((i) => dir === "" || i.path.startsWith(`${dir}/`)).map((i) => i.path);
+      seeds.push({ manifest, files });
+    }
+  }
+  const baseWorld = createWorld({ files: baseInputs, known: baseKnown, model: baseModel, goModules: c.goModules });
+  return exportChanges({
+    current: c.world,
+    base: baseWorld,
+    changed,
+    files: c.inputs.map((i) => i.path),
+    baseFiles: baseInputs.map((i) => i.path),
+    removedKeys: c.removedKeys,
+    seeds,
+    nodeOf: (world, id) => {
+      const n = (world === "base" ? baseWorld : c.world).node(id);
+      return n ? { id: n.id, file: n.file, line: n.startLine } : null;
+    },
+  });
+}
+
+export type { InventoryEntry };
