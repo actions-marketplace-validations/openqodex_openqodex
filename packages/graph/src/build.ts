@@ -441,7 +441,12 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     };
 
     // ---------- publish ----------
-    const complete = notRead.length === 0 && resolved.budgetFiles.length === 0;
+    // Complete: nothing a later build of the same files could add. A file
+    // over the size cap, or one the parser rejects, is left out the same way
+    // every time; one cut by the budget, the parse cap, the memory bound or
+    // a slow parse, or one that vanished while it was read, is not.
+    const later = new Set<NotRead["reason"]>(["budget", "parse-cap", "memory", "slow-parse", "unreadable"]);
+    const complete = !notRead.some((n) => later.has(n.reason)) && resolved.budgetFiles.length === 0;
     const withIndex = decided.mode === "retained" && complete;
     // A kept build of the same capture and configuration is the same graph:
     // it is named, and nothing new is written.

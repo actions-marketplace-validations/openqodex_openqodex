@@ -9,6 +9,9 @@
 //    still read them while the build is kept.
 // 4. A build whose facts were collected reopens as complete instead of
 //    saying it is partial.
+// 5. A build that left out only files over the size cap (which the next
+//    build leaves out the same way) counts as incomplete, so in a
+//    repository with one large file no index is ever kept or loaded.
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readdirSync, rmSync, unlinkSync } from "node:fs";
@@ -92,5 +95,18 @@ describe("reopening a kept build", () => {
     const reopened = graphOf(st, st.open({ id: built.status.generation as string })!) as Graph;
     expect(reopened.status.status).toBe("partial");
     expect(reopened.status.reasons.join(" ")).toMatch(/no longer kept/);
+  });
+
+  it("keeps and loads the index of a build whose only left-out files are over the size cap (5)", async () => {
+    const root = makeRepo({ ...files, "big.ts": `export const big = "${"x".repeat(4096)}";\n` });
+    repos.push(root);
+    const st = await store(root);
+    const first = await buildGraph({ repoRoot: root, store: st, mode: "retained", maxFileBytes: 1024 });
+    expect(first.status.notRead).toEqual([{ file: "big.ts", reason: "size" }]);
+    const kept = st.open({ id: first.status.generation as string })?.manifest;
+    expect(kept).toMatchObject({ complete: true, hasIndex: true });
+    const second = await buildGraph({ repoRoot: root, store: st, mode: "retained", maxFileBytes: 1024 });
+    expect(Object.keys(second.status.stages)).toContain("load-index");
+    expect(shape(second)).toEqual(shape(first));
   });
 });

@@ -62,8 +62,9 @@ export type GenerationManifest = {
   versions: { model: number; extractor: number; resolver: number; policy: number };
   config: { budgetMs: number; maxFiles: number; maxFileBytes: number; maxHeapMb: number };
   status: "ok" | "partial";
-  // True when every eligible file of the capture has facts in the
-  // inventory: no file was cut by size, budget, cap or memory.
+  // True when a later build of the same capture could add nothing: no
+  // file was cut by the budget, the parse cap, the memory bound or a slow
+  // parse (a file over the size cap is left out the same way every time).
   complete: boolean;
   counts: { eligible: number; inGraph: number; parsed: number; fromCache: number; skipped: number };
   mode: "fresh" | "retained";
