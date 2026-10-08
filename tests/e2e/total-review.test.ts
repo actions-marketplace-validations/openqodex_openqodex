@@ -17,7 +17,11 @@
 //  8. With Codex as the reviewer, the planted change gives no report, a
 //     report that does not name Codex, or one that claims reads it never
 //     measured.
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+//  9. The screen carries the whole report instead of the receipt: a
+//     finding's problem or fix, no absolute path of report.html, or one that
+//     names no file; or report.html misses a finding, shows one twice, holds
+//     the planted secret or a script, or states another verdict.
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Candidate, Report } from "@openqodex/core";
@@ -76,13 +80,32 @@ describe("with Claude Code as the reviewer", () => {
     const candidates = readJson<{ candidates: Candidate[] }>(join(reportDir(dir), "scan.json"));
     const raw = candidates.candidates.map((c) => c.message.replace(/\s+/g, " ").trim()).filter((m) => m.length > 20);
     expect(raw.filter((m) => demoRun.stdout.includes(m))).toEqual([]);
+    const md = readFileSync(join(reportDir(dir), "report.md"), "utf8");
     // A rule id appears only on a Source line.
-    for (const line of demoRun.stdout.split("\n").filter((l) => /^\s+(Problem|Why it matters|Fix):/.test(l))) {
+    for (const line of md.split("\n").filter((l) => /^- \*\*(Problem|Why it matters|Fix):\*\*/.test(l))) {
       for (const c of candidates.candidates) expect(line).not.toContain(c.token);
     }
     expect(demoRun.stdout).not.toContain(generatedSecret(dir));
-    expect(readFileSync(join(reportDir(dir), "report.md"), "utf8")).toContain("**Why it matters:**");
+    expect(md).toContain("**Why it matters:**");
     expect(ours()).toEqual([]);
+  });
+
+  it("9. the screen shows the receipt and report.html holds every finding under the code, with no secret and no script", () => {
+    if (missing !== null) return void process.stdout.write(`total review with claude: skipped, ${missing}\n`);
+    const lines = demoRun.stdout.trimEnd().split("\n");
+    for (const prose of ["Problem:", "Why it matters:", "Fix:"]) expect(demoRun.stdout).not.toContain(prose);
+    const html = /^Report: (\/.+\/report\.html)$/m.exec(demoRun.stdout)?.[1];
+    expect(html, demoRun.stdout).toBeDefined();
+    expect(html).toBe(join(realpathSync(reportDir(dir)), "report.html"));
+    expect(lines.at(-1)).toBe(`Markdown: ${html!.replace(/report\.html$/, "report.md")}`);
+    expect(lines.filter((l) => /^\d+\. (Critical|Major|Minor|Nitpick|Info) /.test(l))).toHaveLength(report.findings.length);
+    const page = readFileSync(html!, "utf8");
+    expect(statSync(html!).mode & 0o777).toBe(0o600);
+    for (let n = 1; n <= report.findings.length; n++) expect(page.split(`id="f${n}"`).length - 1, `finding ${n}`).toBe(1);
+    expect(page).not.toContain(generatedSecret(dir));
+    expect(page).not.toMatch(/<script/i);
+    expect(page).toContain("app/search.py");
+    expect(lines[0]).toMatch(report.verdict === "blocked" ? /^Blocked/ : /^Passed/);
   });
 
   it("2. finds the pagination offset bug that no scanner reports", () => {
@@ -113,10 +136,12 @@ describe("with Codex as the reviewer", () => {
     const report = readJson<Report>(join(reportDir(dir), "report.json"));
     expect(report.completion?.reviewer?.driver).toBe("codex");
     expect(report.completion?.trace_complete).toBe(false);
-    expect(out.stdout).toMatch(/Reviewer: codex \d+\.\d+\.\d+/);
-    expect(out.stdout).toContain("Files read: not recorded by Codex");
-    expect(out.stdout).not.toContain("Files not read");
+    const md = readFileSync(join(reportDir(dir), "report.md"), "utf8");
+    expect(md).toMatch(/Reviewer: codex \d+\.\d+\.\d+/);
+    expect(md).toContain("Files the reviewer opened:** not recorded by Codex");
+    expect(md).not.toContain("Files not opened");
     expect(report.completion?.status, out.stderr).toBe("complete");
     expect(out.stdout).not.toContain(generatedSecret(dir));
+    expect(readFileSync(join(reportDir(dir), "report.html"), "utf8")).not.toContain(generatedSecret(dir));
   }, 1_000_000);
 });

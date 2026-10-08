@@ -112,15 +112,26 @@ The run folder of a review holds the brief, the scan, the reviewer's answer and 
 
 ## Secrets
 
-When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. It keeps the length and sha256 of each secret, to redact any text the agent quotes.
+When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. Each line of a secret that spans several lines, such as a private key, counts as the secret too, wherever it appears alone. It keeps the length and sha256 of each secret and of each such line, to redact any text the agent quotes. Every output of a review (`report.html`, `report.md`, `report.json`, `report.sarif`, the receipt and the paths it prints) is drawn from one redacted copy of the report.
 
 gitleaks writes its raw report to a temporary file outside the repository. That file holds the matched secrets. OpenQodex deletes it when the run ends. No file OpenQodex keeps holds the secret.
 
 A secret is redacted only when a scanner matched it. When gitleaks did not run, the brief shows the change as it is.
 
+## The HTML report
+
+`report.html` quotes the code under review, the reviewer's text and the scanners' messages, any of which can be hostile. So:
+
+- It holds the changed lines with their old and new line numbers (for a review of the whole repository, a few lines around each cited line), every finding with its suggested change, the dropped scanner candidates, the coverage, the scanners and the blast radius. Nothing else from your machine.
+- Every secret a scanner matched is redacted before the page is written, on both sides of the diff, a secret over several lines (a private key) included, with every line number kept. A secret no scanner matched is shown, as in the brief.
+- Every string is escaped, and every anchor in the page is generated, never taken from a path. There is no script, no form, no frame and no inline style. The page's content policy allows only its own stylesheet, by its hash, and loads nothing: no font, image or other file. Opening it sends nothing anywhere. Its one outgoing link, in the closing line, sends no referrer.
+- It is written readable by you only, like every file of the run, and only on your disk. OpenQodex never opens a browser and never uploads it. In the GitHub Action it stays in the run folder on the runner; the Action uploads no HTML.
+- `review --agent` saves the same redacted lines as `display.json` beside the brief, readable by you only, so `review --finalize` can draw the page after the secrets are gone from memory. It records the sha256 of this file and of the run's other files, `scan.json` with the secrets' fingerprints among them, in `~/.openqodex/runs/`. Finalize checks them before it renders anything: a run file a branch carries, or one changed since, gives a page without code that `findings` and the push hooks do not count.
+- The page and `display.json` are bounded: at most 5,000 files are listed and the rest counted; at most 50,000 lines of code are shown, and a listed file past that keeps its name with a note.
+
 ## Where files are written
 
-In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
+In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it). The records below (`receipts/`, `runs/`, `last-review/`) are read only from a folder that lies, by identity, under `~/.openqodex/`, through a handle opened without following a link: a record folder that is a link into a repository counts as no record.
 
 - `tools/<scanner>/<version>/`: the scanners.
 - `tools/uv-python/`: the Python 3.11 for semgrep and bandit.
@@ -131,14 +142,15 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 - `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews) and `reviewer_web` (the reviewer's web tools, on by default; `off` removes them).
 - `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
 - `receipts/<repo id>/`: one small record per reviewed change, readable by you only, written by `review` at the end of a run (and by `review --finalize` for the older two-step protocol, only for a run whose scan this machine ran). The push hooks decide from these records only. The files under the repository's `.openqodex/` are the readable report, never the proof: a branch can carry those files, so a record found only there counts as no review. The check inside your agent is a reminder about your current work: it does not know what a push sends. For a plain `git push` it asks whether your current work has a passing review; any other push command it cannot tell, and says so (a deny when `block_on_severity` is set). The git pre-push hook that `init` adds is the check that sees the exact commits a push sends, and `git push --no-verify` skips it. `init` and `openqodex update` remove records older than 30 days.
-- `runs/<repo id>/`: one record per `review --agent` run, readable by you only: the change and the hashes of the run files it wrote, so `review --finalize` can tell a run this machine scanned from one a branch carries. Removed with the receipts.
+- `runs/<repo id>/`: one record per `review --agent` run of any kind, readable by you only: the change and the hashes of the run files it wrote, so `review --finalize` can tell a run this machine scanned from one a branch carries. Removed with the receipts.
+- `last-review/<repo id>/`: the run folder, change and `report.json` sha256 of the last review of each repository run on this machine, readable by you only. `openqodex findings` prints that review's report only while it has that hash, never one a branch carries under `.openqodex/reviews/`. Removed with the receipts.
 - `trust.json`: your approvals of custom scanners.
 
 In the repository, under `.openqodex/` only:
 
 - `config.yaml` and `custom-instructions.md`: the team's config and instructions for the reviewer, created once and never touched after. They are meant to be committed.
 - `.gitignore`: keeps the run state below out of git, so after the first run `git status` shows only the two files above and the `.gitignore`.
-- `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the reviewer's answer, the list of its tool calls and the reports. OpenQodex keeps the newest 20.
+- `reviews/<time>-<id>/`: one folder per run, holding the brief, the scan result, the reviewer's answer, the list of its tool calls and the reports, `report.html` among them. OpenQodex keeps the newest 20.
 - `latest.json`: points at the newest review, for you and older tools; the push gate does not trust it (see `receipts/` above). `latest-scan.json` points at the newest scan.
 
 `init` decides each write from where the path really lands, never from its spelling: it walks the path as the system does, links followed and `.` and `..` taken after them. It refuses a link that lies in the repository's work tree, in either scope and for an agent folder set inside the repository with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` alike, and a path that lands outside the repository, its git folders, your home folder, the agents' own folders and `~/.openqodex`. Each folder is known by its identity on disk (device and inode), not by how its name is spelled. A write goes through the folder it checked: a temp file created only if nothing is there, written, synced and renamed, and afterwards the final name must hold that very file in that very folder, or the write is undone where it can be and fails. Node has no rename relative to an open folder, so that check after the rename is the closing one. Its own files in `~/.openqodex` (its record, the launcher, the runtime copies, receipts) are written and removed the same way, and a removal never follows a link. A link outside the repository, such as a dotfiles link of `~/.claude/settings.json` into your home, is the developer's and is followed.

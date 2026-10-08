@@ -33,10 +33,10 @@
 // 13. The user-scope skill is the full procedure or lacks "Who reviews";
 //     `guide skill` prints the stub or a pinned npx line when started by the
 //     launcher; a user-scope Cursor or Cline rule keeps a pinned npx line.
-// 14. A review or guide line the stub, `guide skill` or a brief gives the
-//     agent still asks for permission in Claude Code; a rule has a wildcard
-//     after `review`; trust, report or doctor is allowed; or a rule the
-//     developer had is removed.
+// 14. A review, findings or guide line the stub, `guide skill` or a brief
+//     gives the agent still asks for permission in Claude Code; a rule has a
+//     wildcard after `review`; trust, report or doctor is allowed; or a rule
+//     the developer had is removed.
 // 15. `scan --offline --bad-flag` starts a worker; so does a command that failed to parse.
 // 16. A project-scope skill tells the agent to use the updating launcher.
 // 17. A team file the repo's git ignore rules hide is written and named as one to commit.
@@ -468,7 +468,7 @@ describe("14. Claude Code permission rules", () => {
     expect(r.status, String(r.stderr)).toBe(0);
     const launcher = join(p.oqHome, "bin/openqodex");
     const rules = allow(join(p.home, ".claude/settings.json"));
-    expect(rules).toEqual([...EXACT, ...EXACT.map((c) => `${c} --offline`), "guide", "guide *"].map((c) => `Bash(${launcher} ${c})`));
+    expect(rules).toEqual([...EXACT, ...EXACT.map((c) => `${c} --offline`), "guide", "guide *", "findings *"].map((c) => `Bash(${launcher} ${c})`));
     for (const banned of ["scan", "doctor", "trust", "update", "init", "report", "hook", "review --agent", "review --finalize"]) {
       expect(rules.filter((x) => x.startsWith(`Bash(${launcher} ${banned}`)), banned).toEqual([]);
     }
@@ -491,10 +491,11 @@ describe("14. Claude Code permission rules", () => {
     const targetRuns = lines.filter(isTarget);
     expect(targetRuns.length).toBeGreaterThan(0);
     for (const l of targetRuns) expect(covers(rules, l), l).toBe(false);
-    const agentRuns = lines.filter((l) => / (review|guide)\b/.test(l) && !l.includes("<topic>") && !isTarget(l));
+    const agentRuns = lines.filter((l) => / (review|guide|findings)\b/.test(l) && !l.includes("<topic>") && !isTarget(l));
     expect(agentRuns).toContain(`${launcher} guide skill`);
     expect(agentRuns).toContain(`${launcher} review`);
     expect(agentRuns).toContain(`${launcher} review --all`);
+    expect(agentRuns.filter((l) => / findings /.test(l)).length).toBeGreaterThan(0);
     expect(agentRuns.filter((l) => / review --(agent|finalize)\b/.test(l))).toEqual([]);
     for (const l of agentRuns) expect(covers(rules, l), l).toBe(true);
     const asked = lines.filter((l) => / (trust|report --send-last|doctor --install)\b/.test(l));

@@ -9,7 +9,7 @@
 [![licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
 [![CI](https://github.com/openqodex/openqodex/actions/workflows/ci.yml/badge.svg)](https://github.com/openqodex/openqodex/actions/workflows/ci.yml)
 
-OpenQodex is open source AI code review for Claude Code and Codex. It runs before you push, from your coding agent or your terminal. One command, `openqodex review`, works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. Then it starts its own reviewer, a separate Claude Code or Codex process that reads a frozen copy of the change. The reviewer checks every scanner finding and is given every changed line. OpenQodex checks its answer with scripts and prints one report. It needs Claude Code or Codex installed and logged in, and no other key, account or server.
+OpenQodex is open source AI code review for Claude Code and Codex. It runs before you push, from your coding agent or your terminal. One command, `openqodex review`, works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. Then it starts its own reviewer, a separate Claude Code or Codex process that reads a frozen copy of the change. The reviewer checks every scanner finding and is given every changed line. OpenQodex checks its answer with scripts, writes one report, and prints a short receipt: the verdict, one line per finding and the path of `report.html`, a local page that shows each finding under its line of code. You choose which findings your agent fixes. It needs Claude Code or Codex installed and logged in, and no other key, account or server.
 
 ## Install
 
@@ -46,7 +46,10 @@ OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows
 
 Four commands: `init`, `review`, `update` and `trust`. The commands hooks and agents call are listed in [docs/plumbing.md](docs/plumbing.md).
 
-- `openqodex review` runs the whole review in one command: a frozen copy of the change, the scanners, the code graph, a reviewer process OpenQodex starts, script checks of its answer, and one report in the terminal and in `report.md`, `report.json` and `report.sarif`.
+- `openqodex review` runs the whole review in one command: a frozen copy of the change, the scanners, the code graph, a reviewer process OpenQodex starts, script checks of its answer, and one report in `report.html`, `report.md`, `report.json` and `report.sarif`.
+- When it ends, the terminal shows a receipt: the verdict, the reviewer's summary, one line per finding (number, severity, category, title, file and line) and the absolute paths of `report.html` and `report.md`. `--format markdown`, `json` or `sarif` still prints the whole report.
+- `report.html` is one file on your disk: each changed file as a diff, each finding under its line, then the coverage, the scanners and the blast radius. It runs no script, loads nothing, escapes every string and redacts the secrets the scanners found.
+- The skill tells your agent to show you the receipt, ask "Fix all, or tell me which?", and fix only the findings you name. `openqodex findings 1,3` prints the named findings in full for it.
 - `openqodex review --all` reviews the whole repository. `openqodex review <branch>` and `openqodex review '#42'` review a branch or a pull request that is not your current work. OpenQodex fetches it, checks it out in a temporary folder and reviews what it added since it left its base.
 - The reviewer is Claude Code (`claude -p`) or Codex (`codex exec`). `auto` picks the agent you run the command from, then Claude Code, then Codex; `--reviewer` or `reviewer:` in `~/.openqodex/config.yaml` picks one.
 - Claude Code starts with read, search and list tools only, inside the copy of the change, with none of your settings, hooks, plugins, memory or instruction files. Its event stream shows every read, so the report lists the files it read.

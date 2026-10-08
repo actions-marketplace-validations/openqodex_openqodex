@@ -13,6 +13,12 @@
 // 8. A legacy receipt (the old two-step protocol) counts as a complete
 //    record, or suddenly blocks a push the old version let through.
 // 9. A complete passing review of this change is not silent.
+// 10. A blocked or incomplete review names its report by a path relative to
+//     the repository, which nobody can click, or names report.md where
+//     report.html exists; or a receipt written before report.html existed no
+//     longer gives its message.
+// 11. A blocked push tells the agent to fix everything, where the developer
+//     chooses what to fix.
 import { describe, expect, it } from "vitest";
 import { finalizeReview } from "./finalize.js";
 import { checkPush, gateReceipt } from "./push-gate.js";
@@ -34,7 +40,8 @@ function judged(blockOn: "critical" | null): Report {
   });
 }
 
-const complete = (blockOn: "critical" | null): GateReceipt => gateReceipt(judged(blockOn), "complete", DIR);
+const HTML = "/abs/repo/.openqodex/reviews/x/report.html";
+const complete = (blockOn: "critical" | null): GateReceipt => gateReceipt(judged(blockOn), "complete", DIR, HTML);
 const legacy = (blockOn: "critical" | null): GateReceipt => gateReceipt(judged(blockOn), "legacy", DIR);
 function incomplete(): GateReceipt {
   const report: Report = { ...judged(null), verdict: "incomplete", findings: [], completion: { status: "incomplete", missing: ["the reviewer timed out and was stopped"] } as unknown as Report["completion"] };
@@ -69,8 +76,28 @@ describe("checkPush", () => {
     const d = checkPush({ currentChangeId: change.id, receipt: r, config: makeConfig({ blockOnSeverity: "critical" }) });
     expect(d.decision).toBe("deny");
     expect(d.message).toContain("at or above critical");
-    expect(d.message).toContain(`${DIR}/report.md`);
+    expect(d.message).toContain(HTML);
     expect(d.message).toContain("openqodex review");
+  });
+
+  it("10. names report.html by its absolute path, and a receipt from before report.html still gives today's message", () => {
+    const blocked = checkPush({ currentChangeId: change.id, receipt: complete("critical"), config: makeConfig({ blockOnSeverity: "critical" }) });
+    expect(blocked.message).toContain(`See ${HTML}.`);
+    expect(blocked.message).not.toContain("report.md");
+    const old = { ...complete("critical") } as Partial<GateReceipt>;
+    delete old.html;
+    const before = checkPush({ currentChangeId: change.id, receipt: old as GateReceipt, config: makeConfig({ blockOnSeverity: "critical" }) });
+    expect(before.decision).toBe("deny");
+    expect(before.message).toContain(`(see ${DIR}/report.md)`);
+    const stopped = checkPush({ currentChangeId: change.id, receipt: { ...incomplete(), html: HTML }, config: makeConfig() });
+    expect(stopped.message).toContain(`Report: ${HTML}`);
+  });
+
+  it("11. a blocked push asks the developer which findings to fix", () => {
+    const d = checkPush({ currentChangeId: change.id, receipt: complete("critical"), config: makeConfig({ blockOnSeverity: "critical" }) });
+    expect(d.message).toContain("fix all, or tell me which?");
+    expect(d.message).toContain("Fix only the findings they name");
+    expect(d.message).not.toMatch(/Fix them,/);
   });
 
   it("4. abstains on a complete passing review of this change when block_on_severity is set", () => {

@@ -21,8 +21,8 @@ openqodex review --agent [--all | <target>] [...]
 openqodex review --finalize [--run <id> | path]
 ```
 
-- `review --agent`: run the scanners, write the brief and print it for the agent running the command.
-- `review --finalize [path]`: check the agent's findings file and write the report. Without a path it reads `agent-findings.json` in the newest report folder. With a path it finds the run by the `change_id` in that file. `--run <id>` names the run folder instead; a review of a branch or a pull request is finalized only that way.
+- `review --agent`: run the scanners, write the brief and print it for the agent running the command. It also saves `display.json` beside the brief, readable by you only: the changed lines with the secrets the scanners found redacted, for the report's `report.html` (a review of the whole repository saves none). For every kind of run it records in `~/.openqodex/runs/` the sha256 of the run's files, `scan.json` with the secrets' fingerprints and `display.json` among them.
+- `review --finalize [path]`: check the agent's findings file, write the report (`report.html` beside `report.md`) and print the receipt, as `review` does. Before it renders anything it checks the run against this machine's record of it: the change, the config, the instructions and the exact text of each run file, `scan.json` included. A run with no record or another text gets a page without code, no record for `findings` and no record for the push hooks, and one line says why. `report.html` shows the code from `display.json` only when the record holds its sha256 too, the file still has it, and it was made for this very change. Without a path it reads `agent-findings.json` in the newest report folder. With a path it finds the run by the `change_id` in that file. `--run <id>` names the run folder instead; a review of a branch or a pull request is finalized only that way.
 
 `--finalize` exits 2 when the findings file breaks the shape (naming the first wrong field), the change or the config moved since the brief, a finding cites a scanner rule or candidate that is not in this scan, the brief was written by another openqodex version that is not installed in `~/.openqodex/runtime/`, or, for a branch or a pull request, the temporary checkout moved from the reviewed commit or is gone. When the launcher started the review, the brief's finalize command is the plain line `<launcher> review --finalize`, with `--all` and `--offline` as the review had them. When the version that runs `--finalize` is not the one that wrote the brief, and that one is installed, it hands the run to that version. It never repairs a finding.
 
@@ -77,6 +77,16 @@ openqodex guide [skill | topic]
 ```
 
 `guide skill`, and `guide` with no topic, print the full review procedure of the running version: the shipped skill with every command written for the runner that started it, the launcher's full path when the launcher started it, else `npx -y openqodex@<version>`. The skill `init` writes in user scope is a short stub that tells the agent to run `<launcher> guide skill` and follow what it prints. With a topic, it prints that page of these docs. An unknown topic lists the topics and exits 2.
+
+## findings
+
+For agents: after a review, the developer names the findings to fix by their numbers in the receipt, and the agent prints those in full with this command.
+
+```
+openqodex findings <numbers | all> [--cwd <dir>]
+```
+
+`findings 1,3` (or `findings 1 3`) prints findings 1 and 3 of the last review of this repository run on this machine, in the receipt's order: for each one its number, severity, category and title, then where it is, the problem, why it matters, the fix, the suggested change when the reviewer gave one, and the source. `findings all` prints every finding. A number the review does not have exits 2 and says how many findings it has. The last review is the one `review` (or `review --finalize`) recorded in `~/.openqodex/last-review/`, never the newest folder under `.openqodex/reviews/`, which a branch can carry. The record holds the sha256 of the `report.json` that review wrote, and `findings` prints it only while the file still has that hash. With no review on this machine yet, or a report that changed since, it exits 2 and says so. It only reads the report and prints; it takes no flag but `--cwd`, so in user scope `init` lets Claude Code run it with any numbers without asking.
 
 ## demo
 

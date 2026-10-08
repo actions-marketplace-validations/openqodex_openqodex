@@ -148,7 +148,7 @@ What `traced: false` changes in the run (`packages/cli/src/review-run.ts`, `pack
 
 - No read in the stream counts as coverage. A changed range counts only when its diff is in the brief or the run sent it in a correction round. A range still not sent after two rounds makes the review incomplete ("not given to the reviewer").
 - The commands and searches the stream shows are kept in `trace.json` with `inside: null` and their input under `detail`. They never pass or fail a review: there is no "read outside the snapshot" alarm and no "tool it was not given" check. The sandbox is the boundary.
-- The completion record holds `trace_complete: false`, and empty `files_read` and `files_not_read`. The report prints "Files read: not recorded by Codex" and "Reads outside the snapshot: not recorded by Codex".
+- The completion record holds `trace_complete: false`, and empty `files_read` and `files_not_read`. The report prints "Files the reviewer opened: not recorded by Codex" and "Reads outside the snapshot: not recorded by Codex".
 
 Read confinement held in every test: the permission profile is a real boundary, stronger than `-s read-only`. The code tool's own JavaScript runtime has no file or network access (`require`, `import("node:fs")` and `fetch` were all undefined or refused).
 

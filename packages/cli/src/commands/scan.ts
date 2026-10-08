@@ -7,7 +7,7 @@ import { keepRunStateOutOfRepo } from "../feedback.js";
 import type { ChangeScope, Report, Severity } from "@openqodex/core";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
-import { emitReport, exitFor, nothingToReview, reportFiles, runPipeline, writeReportCopies } from "../pipeline.js";
+import { checkReportFolder, emitReport, exitFor, nothingToReview, reportFiles, runPipeline, writeReportCopies } from "../pipeline.js";
 import type { PipelineResult } from "../pipeline.js";
 
 export const SCOPE_BOOLS = ["--uncommitted"];
@@ -41,7 +41,11 @@ export async function runScan(args: {
   if (args.blockOn !== undefined && !(SEVERITIES as readonly string[]).includes(args.blockOn)) {
     throw new OpenQodexError(`--block-on-severity must be one of ${SEVERITIES.join(", ")}, not ${args.blockOn}`);
   }
-  if (args.reportDir !== undefined) keepRunStateOutOfRepo();
+  if (args.reportDir !== undefined) {
+    // A folder reached through a link stops the scan before it runs.
+    checkReportFolder(args.reportDir);
+    keepRunStateOutOfRepo();
+  }
   const p = await runPipeline({
     scope: args.scope,
     flags,
@@ -63,7 +67,7 @@ export function reportScan(p: PipelineResult, flags: GlobalFlags, reportDir?: st
   const files = reportFiles(report);
   if (reportDir !== undefined) {
     const dir = resolve(reportDir);
-    writeReportCopies(dir, p.repoRoot, { "scan.json": `${JSON.stringify(p.scan, null, 2)}\n`, ...files });
+    writeReportCopies(dir, { "scan.json": `${JSON.stringify(p.scan, null, 2)}\n`, ...files });
     emitReport(report, flags, p.repoRoot);
     return { exitCode: exitFor(report), report, dir };
   }
