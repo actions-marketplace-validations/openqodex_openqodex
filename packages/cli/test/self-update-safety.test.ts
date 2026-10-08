@@ -49,7 +49,9 @@
 //     update.json into the removed home.
 // 23. A failed cache write after the record switched reports "did not switch".
 // 24. A finalize handoff breaks `review --finalize -- <findings path>`.
-// 25. After `init --no-repo`, `init --yes` still does not write the team section.
+// 25. After `init --no-repo`, a later `init --yes` adds the team section the
+//     repo chose to leave out: --yes takes the defaults only for what was
+//     never answered (decided 2026-10-07).
 // 26. Two spellings of one home (a link, a trailing slash) get two locks.
 // 27. A child spawned inside the boundary keeps the port after its parent exits.
 // 28. A temp folder a killed worker left stays for good, and stops uninstall
@@ -714,14 +716,16 @@ describe("20 to 27. the third review", () => {
     expect(existsSync(join(dir, "report.json"))).toBe(true);
   }, 180_000);
 
-  it("init --yes writes the team section after an earlier --no-repo (failure 25)", () => {
+  it("init --yes keeps an earlier --no-repo: the team section stays out (failure 25)", () => {
     const s = sandbox();
     const first = cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
-    expect(first.stdout).toMatch(/run init --yes without --no-repo/);
+    expect(first.status, first.stderr).toBe(0);
     expect(existsSync(join(s.repo, "CLAUDE.md"))).toBe(false);
     const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(readFileSync(join(s.repo, "CLAUDE.md"), "utf8")).toContain("openqodex:start");
+    expect(r.stdout).toContain("team review section: left out, as this repo chose before");
+    expect(existsSync(join(s.repo, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(s.repo, "AGENTS.md"))).toBe(false);
   });
 
   it("a linked spelling of the home and one with a trailing slash share the lock (failure 26)", () => {

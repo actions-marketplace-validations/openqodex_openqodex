@@ -36,7 +36,7 @@ The tables below name the file for each agent. In an existing file, the section 
 
 ## The team section in the repository
 
-Inside a repository, the plan of `init` in user scope also holds a review section for this repo's `CLAUDE.md` and `AGENTS.md`, so teammates' agents review before they push too. `--no-repo` leaves it out, and the choice is recorded for that repository; a later `init --yes` without `--no-repo` adds it again.
+Inside a repository, the plan of `init` in user scope also holds a review section for this repo's `CLAUDE.md` and `AGENTS.md`, so teammates' agents review before they push too. `--no-repo` leaves it out, and the choice is recorded for that repository: a later `init`, with `--yes` or without, keeps it out. `init --uninstall` in that repository forgets the choice.
 
 The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository, and `init` creates a file that is not there. It is meant for a teammate who has installed nothing, so it names only the pinned `npx` command:
 

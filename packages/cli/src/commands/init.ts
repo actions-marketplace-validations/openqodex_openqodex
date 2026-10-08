@@ -101,12 +101,11 @@ function hookChoiceFor(s: Setup, record: InstallRecord): { hook: HookChoice; ear
   return before ? { hook: before.hook, earlier: true } : { hook: "pre-push", earlier: false };
 }
 
-// Whether this repo gets the team review section: --no-repo, then --yes,
-// which adds it even where this repo said no before, then that earlier
-// choice, then yes.
+// Whether this repo gets the team review section: --no-repo, then the
+// choice this repo made before, then yes. --yes takes the defaults only for
+// what was never answered: it never undoes a recorded --no-repo.
 function teamChoiceFor(s: Setup, record: InstallRecord): { write: boolean; earlier: boolean } {
   if (s.flags.noRepo) return { write: false, earlier: false };
-  if (s.flags.yes) return { write: true, earlier: false };
   const before = record.teamChoices.find((c) => c.repo === s.repoRoot);
   return before ? { write: before.write, earlier: true } : { write: true, earlier: false };
 }
@@ -345,7 +344,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
         if (choice.write) {
           teamActions.push(...planTeam(s, record));
           team.push(...teamActions);
-        } else notes.push(`team review section: left out${choice.earlier ? ", as this repo chose before" : ""}; run init --yes without --no-repo to add it`);
+        } else notes.push(choice.earlier ? "team review section: left out, as this repo chose before (--no-repo)" : "team review section: left out (--no-repo), and recorded for this repo");
       }
     }
     actions.push(...mine, ...team);

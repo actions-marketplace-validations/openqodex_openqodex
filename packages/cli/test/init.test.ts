@@ -39,6 +39,8 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 23. --yes overrides a choice this repo recorded before (--no-repo, --hook
+//     none), or it does not take the defaults in a repo that recorded none.
 // 22. The scanner downloads init starts miss a file type that only an
 //     untracked file has, or download a scanner the config switches off.
 // 21. A command init prints for the developer to run next (the review, the
@@ -609,6 +611,24 @@ describe("init, the hook question and the instruction section", () => {
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
     expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
+  });
+
+  it("23. --yes keeps both choices this repo recorded (--no-repo, --hook none) and takes the defaults only where none was made", () => {
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--no-repo", "--hook", "none", "--agent", "claude-code"]).status).toBe(0);
+    const again = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(again.status, again.stderr).toBe(0);
+    expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
+    expect(existsSync(join(s.repo, "CLAUDE.md"))).toBe(false);
+    expect(again.stdout).toContain("git pre-push hook: left out, as this repo chose before");
+    expect(again.stdout).toContain("team review section: left out, as this repo chose before");
+    // Another repo answered nothing yet: --yes takes the defaults there.
+    const other = sandbox();
+    other.home = s.home;
+    other.oqHome = s.oqHome;
+    expect(cli(other, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    expect(existsSync(join(other.repo, ".git/hooks/pre-push"))).toBe(true);
+    expect(existsSync(join(other.repo, "CLAUDE.md"))).toBe(true);
   });
 
   it("uninstall removes the global section and the hook, and keeps the developer's own text around the section", () => {
