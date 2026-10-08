@@ -83,20 +83,36 @@
 // 26. A folder named like a build made in the future (a clock that ran
 //     ahead, or a planted name) and holding no valid manifest is never
 //     removed: its age is taken from the time in its name.
+// 27. A facts file planted with the developer's own user (0600, the right
+//     key, valid facts with calls removed, as an archive extracted over the
+//     repository could leave) is read, so the graph hides callers; or the
+//     facts parsed again in its place are never trusted after, so every
+//     later build parses that file again.
+// 28. A build and the record of builds in OpenQodex's home, copied from
+//     another repository (or kept from a repository that stood at the same
+//     path before), vouch for a build or a facts file here.
+// 29. A record whose repository identity is missing or names another
+//     repository vouches for anything.
+// 30. Facts a process wrote before it was killed, without publishing, are
+//     trusted by the next build.
+// 31. The record grows forever: facts and builds the collector removes, or
+//     the developer deletes, keep their entries.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, chownSync, copyFileSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildGraph } from "../src/build.js";
+import { buildGraph, factsKey } from "../src/build.js";
+import { blobId } from "../src/capture/inventory.js";
+import { isFileFacts } from "../src/safe-fs.js";
 import { ownStart } from "../src/store/lock.js";
 import { openStore } from "../src/store/store.js";
 import { buildIdTime, type GraphStore, type PublishResult } from "../src/store/types.js";
 import { factsOf, keyOf, publishInput } from "./fixtures/store/input.js";
-import { commitAll, git, makeRepo } from "./helpers.js";
+import { callSites, commitAll, git, makeRepo, symbol } from "./helpers.js";
 
 const HOUR = 3600_000;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -423,6 +439,9 @@ describe("size bound", () => {
       expect(writer.writeFacts(k, factsOf(`q${i}`, 300))).toBe("ok");
       utimesSync(join(store.dir, "facts", k.slice(0, 2), `${k}.json`), base + i, base + i);
     }
+    // A build ends inside the folder lock (here its meta update), which
+    // records in the home the facts it wrote.
+    await writer.updateMeta((m) => m ?? {});
     // The 1 MB store writes nothing more: the folder is past its bound.
     expect(store.writeFacts(keyOf("over"), factsOf("over", 300))).toBe("over-budget");
     expect(store.hasFacts(keyOf("over"))).toBe(false);
@@ -528,6 +547,9 @@ describe("links and tracked files", () => {
     const store = await storeOf(repo());
     const target = outside();
     const key = keyOf("linked");
+    // The store wrote these very bytes, so only the link can refuse them.
+    expect(store.writeFacts(key, factsOf("linked"))).toBe("ok");
+    rmSync(join(store.dir, "facts", key.slice(0, 2)), { recursive: true });
     writeFileSync(join(target, `${key}.json`), JSON.stringify({ key, facts: factsOf("linked") }));
     symlinkSync(target, join(store.dir, "facts", key.slice(0, 2)));
     expect(store.readFacts(key)).toBeNull();
@@ -957,12 +979,13 @@ describe("trust", () => {
     expect(store.readFacts(key)).toEqual(factsOf("mode"));
     expect(store.refusedFacts).toBe(4);
 
-    // Owned by another user. A hard link brings that user's content, which
-    // is no facts entry: the count, which a file that only fails to parse
-    // never moves, says the owner refused it.
+    // Owned by another user, in place of a file this store wrote. A hard
+    // link brings that user's content, which is no facts entry: the count,
+    // which a file with other bytes never moves, says the owner refused it.
     const otherKey = keyOf("other");
+    expect(store.writeFacts(otherKey, factsOf("other"))).toBe("ok");
     const at = join(store.dir, "facts", otherKey.slice(0, 2), `${otherKey}.json`);
-    mkdirSync(dirname(at), { recursive: true, mode: 0o700 });
+    unlinkSync(at);
     const how = otherOwned(at, JSON.stringify({ key: otherKey, facts: factsOf("other") }));
     if (how === null) {
       console.warn("skipped the other-owner case: not root, and no root-owned file on this disk could be hard linked (fs.protected_hardlinks)");
@@ -978,6 +1001,8 @@ describe("trust", () => {
       chmodSync(at, 0o600);
       expect(store.readFacts(otherKey)).toEqual(how === "chown" ? factsOf("other") : null);
       expect(store.refusedFacts).toBe(5);
+      // The linked file's bytes are not the ones this store wrote.
+      expect(store.changedFacts).toBe(how === "chown" ? 0 : 1);
     }
 
     // A build parses a refused file again and says how many.
@@ -1040,5 +1065,163 @@ describe("future builds", () => {
     writeFileSync(join(folder, "inventory.json"), "{}", { mode: 0o600 });
     await (await storeOf(root, { now: later(2 * HOUR) })).collect();
     expect(there(folder)).toBe(false);
+  });
+});
+
+// The record of what this user's store wrote, in OpenQodex's home.
+function recordPath(root: string, home = HOME): string {
+  return join(home, "graph", `${createHash("sha256").update(realpathSync(root)).digest("hex")}.json`);
+}
+type HomeRecord = { repo?: unknown; builds: Record<string, string>; facts: Record<string, string> };
+const recordOf = (root: string): HomeRecord => JSON.parse(readFileSync(recordPath(root), "utf8")) as HomeRecord;
+const factsFile = (store: GraphStore, key: string): string => join(store.dir, "facts", key.slice(0, 2), `${key}.json`);
+
+describe("the record of facts and builds", () => {
+  it("27. a planted 0600 facts file with the right key and valid facts with its calls removed is parsed again, the graph finds the calls, and the facts written in its place are read from the cache after", async () => {
+    const files = {
+      "a.ts": "export function f(): number {\n  return 1;\n}\n",
+      "b.ts": 'import { f } from "./a.js";\n\nexport function g(): number {\n  return f(); // CALL\n}\n',
+    };
+    const root = makeRepo(files);
+    cleanup.push(root);
+    commitAll(root);
+    const first = await buildGraph({ repoRoot: root, store: await storeOf(root), mode: "fresh" });
+    expect(callSites(first, symbol(first, "a.ts", "f"))).toEqual(["b.ts:4"]);
+    const store = await storeOf(root);
+    const inventory = JSON.parse(store.open("current")!.read("inventory.json")!) as { files: Record<string, { key: string }> };
+    const key = inventory.files["b.ts"]!.key;
+    const file = factsFile(store, key);
+    const entry = JSON.parse(readFileSync(file, "utf8")) as { key: string; facts: { calls: unknown[] } };
+    expect(entry.key).toBe(key);
+    expect(entry.facts.calls.length).toBeGreaterThan(0);
+    // Planted with the developer's own user: the right key, valid facts, no calls, 0600.
+    entry.facts.calls = [];
+    expect(isFileFacts(entry.facts)).toBe(true);
+    writeFileSync(file, JSON.stringify(entry));
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(file).uid).toBe(process.getuid?.());
+    expect(store.readFacts(key)).toBeNull();
+    expect(store.changedFacts).toBe(1);
+    expect(store.refusedFacts).toBe(0);
+
+    const again = await buildGraph({ repoRoot: root, store: await storeOf(root), mode: "fresh" });
+    expect(again.status.parses).toBe(1);
+    expect(callSites(again, symbol(again, "a.ts", "f"))).toEqual(["b.ts:4"]);
+    expect(again.status.reasons).toContain("1 facts file in the graph folder differed from what openqodex recorded and was parsed again");
+    // The same capture: no new build was published, and still the facts
+    // written in place of the planted file are trusted by the next run.
+    expect(again.status.generation).toBe(first.status.generation);
+    const third = await buildGraph({ repoRoot: root, store: await storeOf(root), mode: "fresh" });
+    expect(third.status.parses).toBe(0);
+    expect(third.status.cacheHits).toBe(2);
+    expect(callSites(third, symbol(third, "a.ts", "f"))).toEqual(["b.ts:4"]);
+  });
+
+  it("28. a build and its home record copied from another repository, or kept from a repository that stood at the same path before, vouch for no build and no facts", async () => {
+    const a = repo();
+    const storeA = await storeOf(a);
+    const key = keyOf("transplant");
+    expect(storeA.writeFacts(key, factsOf("transplant"))).toBe("ok");
+    const built = ok(await storeA.publish(publishInput({ tag: "a", keys: [key] })));
+    expect(ids(storeA)).toEqual([built]);
+    expect(storeA.readFacts(key)).toEqual(factsOf("transplant"));
+
+    // Another repository: A's graph folder and A's record copied in.
+    const b = repo();
+    cpSync(join(a, ".openqodex"), join(b, ".openqodex"), { recursive: true });
+    copyFileSync(recordPath(a), recordPath(b));
+    const storeB = await storeOf(b);
+    expect(readFileSync(join(storeB.dir, "generations", built, "manifest.json"), "utf8")).toBe(readFileSync(join(storeA.dir, "generations", built, "manifest.json"), "utf8"));
+    expect(ids(storeB)).toEqual([]);
+    expect(storeB.open("current")).toBeNull();
+    expect(storeB.readFacts(key)).toBeNull();
+    expect(storeB.hasFacts(key)).toBe(false);
+    // What B's store publishes itself it trusts; A's build stays refused.
+    const own = ok(await storeB.publish(publishInput({ tag: "b" })));
+    expect(ids(storeB)).toEqual([own]);
+
+    // A moved aside and a copy put at its path: the same path, another folder.
+    const aside = `${a}-aside`;
+    renameSync(a, aside);
+    cleanup.push(aside);
+    cpSync(aside, a, { recursive: true });
+    const copy = await storeOf(a);
+    expect(ids(copy)).toEqual([]);
+    expect(copy.readFacts(key)).toBeNull();
+    expect(copy.hasFacts(key)).toBe(false);
+  });
+
+  it("29. a record whose repository identity is missing or names another repository vouches for nothing, and the same record with this repository's identity vouches again", async () => {
+    const root = repo();
+    const store = await storeOf(root);
+    const key = keyOf("identity");
+    expect(store.writeFacts(key, factsOf("identity"))).toBe("ok");
+    const a = ok(await store.publish(publishInput({ tag: "a", keys: [key] })));
+    const path = recordPath(root);
+    const original = readFileSync(path, "utf8");
+    const record = JSON.parse(original) as HomeRecord & { repo: Record<string, unknown> };
+    expect(Object.keys(record.builds)).toEqual([a]);
+    expect(Object.keys(record.facts)).toEqual([key]);
+    const other = repo();
+    for (const [label, repoField] of [
+      ["missing", undefined],
+      ["another path", { ...record.repo, path: realpathSync(other) }],
+      ["another folder", { ...record.repo, ino: String(statSync(other).ino) }],
+      ["the path alone", realpathSync(root)],
+    ] as const) {
+      writeFileSync(path, JSON.stringify({ ...record, repo: repoField }));
+      const reopened = await storeOf(root);
+      expect(ids(reopened), label).toEqual([]);
+      expect(reopened.readFacts(key), label).toBeNull();
+      expect(reopened.hasFacts(key), label).toBe(false);
+    }
+    writeFileSync(path, original);
+    const restored = await storeOf(root);
+    expect(ids(restored)).toEqual([a]);
+    expect(restored.readFacts(key)).toEqual(factsOf("identity"));
+  });
+
+  it("30. facts a process wrote before it was killed, without publishing, are parsed again by the next build", async () => {
+    const text = "export function a(): number {\n  return 1;\n}\n";
+    const root = makeRepo({ "a.ts": text });
+    cleanup.push(root);
+    commitAll(root);
+    const key = factsKey("typescript", blobId(Buffer.from(text)));
+    const run = child({ cmd: "write-facts", repo: root, entries: [[key, factsOf("planted")]] });
+    const file = join(root, ".openqodex", "graph", "facts", key.slice(0, 2), `${key}.json`);
+    const deadline = Date.now() + 20_000;
+    while (!there(file) && Date.now() < deadline) await sleep(5);
+    run.proc.kill("SIGKILL");
+    const done = await run.done;
+    expect(done.signal, done.stderr).toBe("SIGKILL");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ key, facts: factsOf("planted") });
+
+    const g = await buildGraph({ repoRoot: root, store: await storeOf(root), mode: "fresh" });
+    expect(g.status.parses).toBe(1);
+    expect(g.status.cacheHits).toBe(0);
+    expect((g.defsByFile.get("a.ts") ?? []).map((d) => d.name)).toEqual(["a"]);
+    // A file the record has no entry for is a plain cache miss: nothing changed it.
+    expect(g.status.reasons.some((r) => r.includes("facts file"))).toBe(false);
+  }, 60_000);
+
+  it("31. the record keeps entries only for facts and builds the folder still holds: what the collector removes or the developer deletes leaves it at the next collection", async () => {
+    const root = repo();
+    const store = await storeOf(root, { now: later(2 * HOUR) });
+    const keys = [1, 2, 3, 4, 5].map((i) => keyOf(`r${i}`));
+    for (const [i, k] of keys.entries()) expect(store.writeFacts(k, factsOf(`r${i}`))).toBe("ok");
+    // A complete build names four: the fifth goes with the collection.
+    ok(await store.publish(publishInput({ tag: "four", keys: keys.slice(0, 4) })));
+    expect(store.hasFacts(keys[4]!)).toBe(false);
+    expect(Object.keys(recordOf(root).facts).sort()).toEqual(keys.slice(0, 4).sort());
+    // The developer deletes one facts folder.
+    rmSync(join(store.dir, "facts", keys[0]!.slice(0, 2)), { recursive: true });
+    await store.collect();
+    const left = keys.slice(0, 4).filter((k) => there(factsFile(store, k)));
+    expect(left.length).toBeLessThan(4);
+    expect(Object.keys(recordOf(root).facts).sort()).toEqual(left.sort());
+    // Builds the collector removes leave it too.
+    for (const tag of ["b", "c", "d"]) ok(await store.publish(publishInput({ tag, keys: left })));
+    expect(Object.keys(recordOf(root).builds).sort()).toEqual(ids(store).sort());
+    expect(ids(store).length).toBe(2);
   });
 });

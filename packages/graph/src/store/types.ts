@@ -13,12 +13,15 @@
 //
 // Beside it, in OpenQodex's home and never in the repository:
 //
-//   <home>/graph/<repo id>.json  the sha256 of every manifest this user's store wrote (trust.ts)
+//   <home>/graph/<repo id>.json  the repository's identity and the sha256 of
+//                                every manifest and facts file this user's
+//                                store wrote and the folder still holds (trust.ts)
 //
 // A generation is published by writing its files (outside the lock: the
 // id is new), then, inside the lock: writing manifest.json last, recording
-// its sha256 in the home, validating every file against the manifest's
-// checksums, collecting,
+// its sha256 in the home with the facts the store wrote, validating every
+// file against the manifest's checksums, collecting (and dropping from the
+// record what the collection removed),
 // keeping the capture's git ref, and moving `current` (and
 // `complete/<tree>` when the build is complete). The manifest is written
 // inside the lock so a collection in another process never sees a valid
@@ -141,13 +144,24 @@ export interface GraphStore {
   // user owns them or other users can write them (or the folder they are
   // in): each was a cache miss, and the build says how many it parsed again.
   readonly refusedFacts: number;
+  // Facts files readFacts refused since the store opened because their
+  // bytes are not the ones this user's store recorded for their key (an
+  // edit, or a file written over it): each was a cache miss, and the build
+  // says how many it parsed again. A key the record does not name is a
+  // plain miss, not counted here.
+  readonly changedFacts: number;
   // The folder's size bound in bytes (graph.max_cache_mb).
   readonly boundBytes: number;
 
+  // The facts of a key, only when the file holds the bytes this user's
+  // store wrote for it (the record in OpenQodex's home, trust.ts).
   readFacts(key: string): FileFacts | null;
+  // Writes the facts of a key; its sha256 is recorded in the home in the
+  // store's next critical section (publish, collect, lease or updateMeta).
   writeFacts(key: string, facts: FileFacts): WriteFactsResult;
-  // Whether a facts file for the key is there (an lstat, no read): what the
-  // five-second rule counts as cached before the build reads anything.
+  // Whether a facts file for the key is there and the record names the key
+  // (an lstat, no read): what the five-second rule counts as cached before
+  // the build reads anything. Its bytes are checked when it is read.
   hasFacts(key: string): boolean;
 
   publish(input: PublishInput): Promise<PublishResult>;

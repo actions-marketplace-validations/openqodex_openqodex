@@ -30,10 +30,15 @@
 // folder that is not is refused at open (the build then runs in memory);
 // a folder or file deeper down that is not is never read (a facts file is
 // then a cache miss, counted in refusedFacts). A facts key is public (it
-// is derived from the blob id) and a manifest carries its own checksums,
-// so neither proves a file is the store's own: a build is opened, listed
-// or leased only when its manifest is the one this user's store recorded
-// for it in OpenQodex's home (trust.ts).
+// is derived from the blob id), a facts file describes itself and a
+// manifest carries its own checksums, so none of them proves a file is the
+// store's own, even one the developer's own user wrote: a build is opened,
+// listed or leased only when its manifest is the one this user's store
+// recorded for it in OpenQodex's home, and a facts file is read only when
+// its bytes are the ones the store recorded for its key there (trust.ts),
+// else it is a cache miss (counted in changedFacts when the record named
+// the key). The record is for this repository alone: one of another
+// repository vouches for nothing.
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, renameSync, unlinkSync, writeSync, type BigIntStats } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -226,6 +231,7 @@ class Store implements GraphStore {
   readonly dir: string;
   diskFull = false;
   refusedFacts = 0;
+  changedFacts = 0;
   private readonly lock: FolderLock;
   private readonly ids = new BuildIds();
   // For writes: the folders the guard verified, by their path under the
@@ -430,13 +436,21 @@ class Store implements GraphStore {
     return `facts/${key.slice(0, 2)}/${key}.json`;
   }
 
-  // A facts file another user owns or other users can write is a cache
-  // miss, counted in refusedFacts.
+  // A key the record of this store's writes does not name is a cache miss
+  // with no read. A facts file another user owns or other users can write
+  // is a cache miss counted in refusedFacts; one whose bytes are not the
+  // ones recorded for its key, a cache miss counted in changedFacts.
   readFacts(key: string): FileFacts | null {
     if (!FACTS_KEY_PATTERN.test(key)) return null;
+    const expected = this.trust.factsDigest(key);
+    if (expected === undefined) return null;
     const read = this.reader.read(this.names(this.factsPath(key)), FACTS_MAX_BYTES);
     if (!read.ok) {
       if (read.why === "untrusted") this.refusedFacts++;
+      return null;
+    }
+    if (sha256(read.data) !== expected) {
+      this.changedFacts++;
       return null;
     }
     try {
@@ -448,8 +462,11 @@ class Store implements GraphStore {
     return null;
   }
 
+  // A facts file the record names, by lstat: hashing every file to count
+  // it would read the whole cache before the build starts. readFacts
+  // checks its bytes.
   hasFacts(key: string): boolean {
-    if (!FACTS_KEY_PATTERN.test(key)) return false;
+    if (!FACTS_KEY_PATTERN.test(key) || this.trust.factsDigest(key) === undefined) return false;
     return this.entryRel(this.factsPath(key))?.isFile() === true;
   }
 
@@ -468,6 +485,8 @@ class Store implements GraphStore {
     try {
       this.writeFast(`facts/${key.slice(0, 2)}`, `${key}.json`, data);
       this.used += data.length;
+      // Recorded in the home in the next critical section (trust.ts).
+      this.trust.wroteFacts(key, sha256(data));
       return "ok";
     } catch (error) {
       if (!isDiskFull(error)) return "refused";
@@ -582,16 +601,17 @@ class Store implements GraphStore {
       };
       const text = `${JSON.stringify(manifest)}\n`;
       this.guard.write(join(folder, "manifest.json"), text);
-      // Recorded before it is read back: only a recorded build loads.
-      this.trust.record(id, sha256(Buffer.from(text, "utf8")), (other) => this.buildThere(other));
+      // Recorded before it is read back, with the facts this store wrote:
+      // only a recorded build loads.
+      this.trust.record({ build: [id, sha256(Buffer.from(text, "utf8"))] }, (other) => this.buildThere(other));
       if (this.load(id) === null) {
         this.discard(folder);
         return { ok: false, error: "invalid", reason: `generation ${id} did not read back as it was written` };
       }
       // The new generation is counted before `current` moves: the build
       // reserves its room.
-      const collected = await collectLocked(this.collector(), id);
-      if (collected.removedGenerations.length > 0) this.pruneTrust();
+      const { report: collected, factsLeft } = await collectLocked(this.collector(), id);
+      this.pruneTrust(factsLeft);
       const tree = manifest.capture.treeSha;
       // A tree the object store does not hold gets no ref; its sources then
       // read as unavailable.
@@ -611,6 +631,8 @@ class Store implements GraphStore {
       if (!published) this.discard(folder);
       return this.failed(error);
     } finally {
+      // Facts this store wrote and the record did not take yet.
+      this.trust.recordFacts((other) => this.buildThere(other));
       held.release();
     }
   }
@@ -624,23 +646,28 @@ class Store implements GraphStore {
     return this.entryRel(`generations/${id}`)?.isDirectory() === true;
   }
 
-  // Drops from the record the builds the collector removed. A record that
-  // cannot be written keeps them: an id names one build only, so a stale
-  // entry vouches for nothing else.
-  private pruneTrust(): void {
+  // Drops from the record the builds whose folder is gone and the facts a
+  // collection did not find (`factsLeft`, when it listed them all), and
+  // records the facts this store wrote. A record that cannot be written
+  // keeps them: an id names one build only, and a facts entry vouches only
+  // for the bytes it names, so a stale entry vouches for nothing else.
+  private pruneTrust(factsLeft: ReadonlySet<string> | null): void {
     try {
-      this.trust.prune((id) => this.buildThere(id));
+      this.trust.record({ factsLeft }, (id) => this.buildThere(id));
     } catch {
       // left for the next publication or collection
     }
   }
 
+  // Runs `fn` inside the folder lock, then records the facts this store
+  // wrote since its last critical section (trust.ts).
   private async locked<T>(fn: () => T | Promise<T>): Promise<T> {
     const held = await this.lock.acquire();
     if (held === null) throw new Error(BUSY);
     try {
       return await fn();
     } finally {
+      this.trust.recordFacts((id) => this.buildThere(id));
       held.release();
     }
   }
@@ -683,8 +710,8 @@ class Store implements GraphStore {
   collect(): Promise<CollectReport> {
     this.used = null;
     return this.locked(async () => {
-      const report = await collectLocked(this.collector(), null);
-      if (report.removedGenerations.length > 0) this.pruneTrust();
+      const { report, factsLeft } = await collectLocked(this.collector(), null);
+      this.pruneTrust(factsLeft);
       return report;
     });
   }

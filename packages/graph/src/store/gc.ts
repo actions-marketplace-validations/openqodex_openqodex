@@ -24,6 +24,10 @@
 // Only folders the store verified (no link from the repo root down) are
 // listed, and every removal goes through the Guard, which never follows a
 // link: a link in the folder is removed as itself.
+//
+// It returns the keys of the facts files left, so the record in OpenQodex's
+// home (trust.ts) drops the entry of every facts file that is gone, whether
+// the collector removed it or the developer did.
 import { lstatSync, readdirSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { safeGit, type Guard } from "@openqodex/core";
@@ -99,45 +103,59 @@ export function treeBytes(abs: string, st = lstatQuiet(abs)): number {
   return total;
 }
 
-// What a verified folder holds, each entry by lstat.
-function entries(ctx: CollectorContext, rel: string): Entry[] {
-  const listed = ctx.list(rel);
-  if (listed === null) return [];
+// What a verified folder holds, each entry by lstat; null when it could not
+// be listed.
+function listed(ctx: CollectorContext, rel: string): Entry[] | null {
+  const found = ctx.list(rel);
+  if (found === null) return null;
   const out: Entry[] = [];
-  for (const name of listed.names) {
-    const path = join(listed.dir, name);
+  for (const name of found.names) {
+    const path = join(found.dir, name);
     const st = lstatQuiet(path);
     if (st !== null) out.push({ abs: path, name, bytes: treeBytes(path, st), mtimeMs: st.mtimeMs, folder: st.isDirectory() });
   }
   return out;
 }
 
+function entries(ctx: CollectorContext, rel: string): Entry[] {
+  return listed(ctx, rel) ?? [];
+}
+
 type Fact = { entry: Entry; key: string | null; gone: boolean };
 
 // facts/<xx>/<key>.json; anything else there (a temp file, a link, a
-// stray folder) has key null.
-function factEntries(ctx: CollectorContext): Fact[] {
+// stray folder) has key null. `whole`: every folder of it was listed.
+function factEntries(ctx: CollectorContext): { facts: Fact[]; whole: boolean } {
   const out: Fact[] = [];
-  for (const sub of entries(ctx, "facts")) {
+  const subs = listed(ctx, "facts");
+  let whole = subs !== null;
+  for (const sub of subs ?? []) {
     if (!sub.folder || !/^[0-9a-f]{2}$/.test(sub.name)) {
       out.push({ entry: sub, key: null, gone: false });
       continue;
     }
-    for (const entry of entries(ctx, `facts/${sub.name}`)) {
+    const inside = listed(ctx, `facts/${sub.name}`);
+    if (inside === null) whole = false;
+    for (const entry of inside ?? []) {
       const key = entry.name.endsWith(".json") ? entry.name.slice(0, -5) : "";
       const ok = !entry.folder && FACTS_KEY_PATTERN.test(key) && key.startsWith(sub.name) && lstatQuiet(entry.abs)?.isFile() === true;
       out.push({ entry, key: ok ? key : null, gone: false });
     }
   }
-  return out;
+  return { facts: out, whole };
 }
 
-export async function collectLocked(ctx: CollectorContext, incoming: BuildId | null): Promise<CollectReport> {
+// The collection's report, and the keys of the facts files left after it;
+// null when a folder of facts could not be listed, so that what is left is
+// not known.
+export type Collected = { report: CollectReport; factsLeft: Set<string> | null };
+
+export async function collectLocked(ctx: CollectorContext, incoming: BuildId | null): Promise<Collected> {
   const removedGenerations: BuildId[] = [];
   const removedRefs: string[] = [];
   let removedFacts = 0;
   const dir = ctx.folder("");
-  if (dir === null) return { removedGenerations, removedFacts, removedRefs, bytesBefore: 0, bytesAfter: 0, overBudget: null };
+  if (dir === null) return { report: { removedGenerations, removedFacts, removedRefs, bytesBefore: 0, bytesAfter: 0, overBudget: null }, factsLeft: null };
   const now = ctx.now();
   const bytesBefore = treeBytes(dir);
   let total = bytesBefore;
@@ -218,7 +236,7 @@ export async function collectLocked(ctx: CollectorContext, incoming: BuildId | n
     inventories.set(id, keys);
     for (const k of keys) named.add(k);
   }
-  const facts = factEntries(ctx);
+  const { facts, whole } = factEntries(ctx);
   for (const f of facts) {
     if (!old(f.entry.mtimeMs)) continue;
     if (f.key === null) remove(f.entry);
@@ -280,5 +298,6 @@ export async function collectLocked(ctx: CollectorContext, incoming: BuildId | n
     }
   }
 
-  return { removedGenerations, removedFacts, removedRefs, bytesBefore, bytesAfter: total, overBudget };
+  const factsLeft = whole ? new Set(facts.filter((f) => f.key !== null && !f.gone).map((f) => f.key as string)) : null;
+  return { report: { removedGenerations, removedFacts, removedRefs, bytesBefore, bytesAfter: total, overBudget }, factsLeft };
 }

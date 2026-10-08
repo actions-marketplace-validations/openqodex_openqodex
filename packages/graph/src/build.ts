@@ -176,6 +176,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const reasons: string[] = [];
   if (!store && args.storeRefused) reasons.push(`the graph folder is not used: ${args.storeRefused}`);
   const refusedBefore = store?.refusedFacts ?? 0;
+  const changedBefore = store?.changedFacts ?? 0;
   const cuts: Cut[] = [];
   const notRead: NotRead[] = [];
 
@@ -444,6 +445,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     if (store?.diskFull) reasons.push("the disk is full: the graph was not saved");
     const untrusted = (store?.refusedFacts ?? 0) - refusedBefore;
     if (untrusted > 0) reasons.push(`${plural(untrusted, "facts file")} in the graph folder could be changed by other users and ${untrusted === 1 ? "was" : "were"} parsed again`);
+    const changed = (store?.changedFacts ?? 0) - changedBefore;
+    if (changed > 0) reasons.push(`${plural(changed, "facts file")} in the graph folder differed from what openqodex recorded and ${changed === 1 ? "was" : "were"} parsed again`);
     stage("assemble");
 
     const durationMs = Math.round(performance.now() - started);

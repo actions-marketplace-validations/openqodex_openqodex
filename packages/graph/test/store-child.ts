@@ -5,6 +5,7 @@
 // timer left pending would show as a late exit.
 import { openStore } from "../src/store/store.js";
 import type { GraphStore } from "../src/store/types.js";
+import type { FileFacts } from "../src/types.js";
 import { publishInput } from "./fixtures/store/input.js";
 
 // `home`: OpenQodex's home the test gives every store, where the record of
@@ -14,6 +15,7 @@ type Command = { home: string } & (
   | { cmd: "lease-loop"; repo: string; rounds: number; holdMs: number }
   | { cmd: "publish-loop"; repo: string; rounds: number }
   | { cmd: "meta"; repo: string; rounds: number }
+  | { cmd: "write-facts"; repo: string; entries: [string, FileFacts][] }
 );
 
 const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
@@ -64,6 +66,14 @@ async function run(store: GraphStore, c: Command): Promise<unknown> {
     case "meta": {
       for (let i = 0; i < c.rounds; i++) await store.updateMeta((m) => ({ ...m, count: (typeof m?.count === "number" ? m.count : 0) + 1 }));
       return { done: c.rounds };
+    }
+    // Writes facts as a build does, then waits to be killed, as a build
+    // stopped before it published; it ends by itself after 30 seconds.
+    case "write-facts": {
+      const results = c.entries.map(([key, facts]) => store.writeFacts(key, facts));
+      process.stdout.write(`${JSON.stringify({ results })}\n`);
+      await sleep(30_000);
+      return { results, waited: true };
     }
   }
 }
