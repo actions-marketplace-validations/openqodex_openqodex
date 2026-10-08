@@ -253,8 +253,9 @@ export function emitReport(report: Report, flags: GlobalFlags, repoRoot: string)
 
 // A temp file beside it, then a rename: an existing entry, a symbolic link
 // included, is replaced and never written through. Into the repo state:
-// through the repo state writer, never through a link.
-function writeOutFile(out: string, repoRoot: string, text: string, mode?: number): void {
+// through the repo state writer, never through a link. A report quotes the
+// code, so the file is created readable by its owner only.
+function writeOutFile(out: string, repoRoot: string, text: string, mode = 0o600): void {
   const state = isRepoState(repoRoot, out);
   if (state !== null) {
     writeRepoFile(repoRoot, state, text, { mode });
@@ -275,7 +276,7 @@ function writeOutFile(out: string, repoRoot: string, text: string, mode?: number
 // takes a report that a branch committed under .openqodex/ for this run's.
 export function writeReportCopies(folder: string, repoRoot: string, files: Record<string, string>): void {
   const dir = resolve(folder);
-  if (isRepoState(repoRoot, dir) === null) mkdirSync(dir, { recursive: true });
+  if (isRepoState(repoRoot, dir) === null) mkdirSync(dir, { recursive: true, mode: 0o700 });
   for (const [name, text] of Object.entries(files)) writeOutFile(join(dir, name), repoRoot, text, 0o600);
 }
 

@@ -4,7 +4,7 @@
 // may be a symbolic link, and no read blocks or runs without a bound.
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, type Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Guard } from "./guarded-fs.js";
+import { closeWider, Guard } from "./guarded-fs.js";
 import { OpenQodexError } from "./types.js";
 
 // The cap for run files (receipts, manifests, reports). Callers with their
@@ -175,12 +175,15 @@ function guardFor(repoRoot: string): Guard {
 // Writes `content` to `path` in the repo state, making the folders on the way.
 // A link at the file or on the way throws. A temp file then a rename, so a
 // reader never sees half a file; with `exclusive` the file is created only
-// when nothing is there, and false says something was. `mode` sets the
-// permissions of a new file (0600 for what may quote the code under review).
+// when nothing is there, and false says something was. Everything here can
+// quote the code under review or decide a push, so a file is created 0600
+// (or `mode`) and a folder 0700; a file it replaces, or a folder it writes
+// in, that other users could read is closed and named once (closeWider).
 export function writeRepoFile(repoRoot: string, path: string, content: string, opts: { exclusive?: boolean; mode?: number } = {}): boolean {
   const parts = steps(repoRoot, path);
   refuseLinks(repoRoot, parts);
-  return guardFor(repoRoot).write(join(resolve(repoRoot), ...parts), content, { exclusive: opts.exclusive, mode: opts.mode });
+  const guard = guardFor(repoRoot);
+  return guard.write(join(resolve(repoRoot), ...parts), content, { exclusive: opts.exclusive, mode: opts.mode ?? 0o600, folderMode: 0o700, wider: closeWider(guard, resolve(repoRoot)) });
 }
 
 // Removes a file or an empty folder in the repo state; nothing when it is

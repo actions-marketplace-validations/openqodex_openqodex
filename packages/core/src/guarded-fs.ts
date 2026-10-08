@@ -30,7 +30,7 @@
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { dirname, isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 
 // Both macOS and Linux define these; a platform without them gets 0, and
 // the identity checks after each step still hold.
@@ -39,6 +39,10 @@ const DIRECTORY = constants.O_DIRECTORY ?? 0;
 const MAX_LINKS = 40;
 
 export type Id = { dev: bigint; ino: bigint };
+
+// What a write reports: a file it replaced, or the folder it landed in,
+// that let other users read more than the write asked for.
+export type Wider = (path: string, mode: number, kind: "file" | "folder") => void;
 
 function same(a: Id | null | undefined, b: Id | null | undefined): boolean {
   return a != null && b != null && a.dev === b.dev && a.ino === b.ino;
@@ -208,7 +212,7 @@ export class Guard {
   // Makes the folders a write needs, one at a time, each checked to be a
   // real folder in the folder before it. Returns the last one as a path
   // and an open handle on it.
-  private folderOf(w: Walk, mode = 0o755): { dir: string; fd: number; id: Id } {
+  private folderOf(w: Walk, mode = 0o700): { dir: string; fd: number; id: Id } {
     let dir = w.dir;
     let id = w.chain[w.chain.length - 1]!.id;
     for (const name of w.pending.slice(0, -1)) {
@@ -232,18 +236,30 @@ export class Guard {
     return { dir, fd, id };
   }
 
-  // Writes `data` where `path` lands. An existing file keeps its mode
-  // unless `setMode`; a new one gets `mode` (default 0644). With
-  // `exclusive`, the file is created only when nothing is there: false says
-  // something was. Folders it makes on the way get `folderMode` (default 0755).
-  write(path: string, data: string | Buffer, opts: { mode?: number; setMode?: boolean; exclusive?: boolean; folderMode?: number } = {}): boolean {
+  // Writes `data` where `path` lands, as a new file renamed into place
+  // (with `exclusive`, created where nothing is: false says something was).
+  // A file gets its mode when it is created, never by a chmod after: `mode`
+  // (default 0600), or with `keepMode` the mode of the file it replaces, for
+  // a file the developer owns that init edits in place. Folders it makes on
+  // the way get `folderMode` (default 0700) when they are made.
+  //
+  // Without keepMode, `wider` hears of what other users could read more of
+  // than asked for: the file it replaced (its content now has `mode`), and
+  // the folder it landed in when that folder was already there.
+  write(
+    path: string,
+    data: string | Buffer,
+    opts: { mode?: number; keepMode?: boolean; exclusive?: boolean; folderMode?: number; wider?: Wider } = {},
+  ): boolean {
     const w = this.check(path);
     if (w.stat !== null && !w.stat.isFile()) throw new Error(`${join(w.dir, w.final)} is not a regular file`);
     if (opts.exclusive && w.stat !== null) return false;
-    const folder = this.folderOf(w, opts.folderMode);
+    const folderMode = opts.folderMode ?? 0o700;
+    const madeFolders = w.pending.length > 1;
+    const folder = this.folderOf(w, folderMode);
     const final = join(folder.dir, w.final);
-    const keep = w.stat !== null && !opts.setMode ? Number(w.stat.mode & 0o7777n) : null;
-    const mode = opts.mode ?? 0o644;
+    const before = w.stat === null ? null : Number(w.stat.mode & 0o777n);
+    const mode = opts.keepMode && before !== null ? before : (opts.mode ?? 0o600);
     const tmp = opts.exclusive ? final : join(folder.dir, `.${w.final}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
     let fd: number;
     try {
@@ -259,8 +275,6 @@ export class Guard {
       if (!ours(tmp) || !same(idOf(lstatOf(folder.dir)), folder.id)) throw new Error(`${folder.dir} changed while openqodex was writing in it`);
       const bytes = typeof data === "string" ? Buffer.from(data, "utf8") : data;
       for (let off = 0; off < bytes.length; ) off += writeSync(fd, bytes, off, bytes.length - off);
-      if (keep !== null) fchmodSync(fd, keep);
-      else if (opts.setMode) fchmodSync(fd, mode);
       fsyncSync(fd);
       if (!opts.exclusive) renameSync(tmp, final);
       // The closing check, since Node has no renameat(2) and the rename went
@@ -270,6 +284,11 @@ export class Guard {
         if (ours(final)) unlinkSync(final);
         throw new Error(`${final} is not where openqodex wrote it; the write was undone where it could be`);
       }
+      if (!opts.keepMode && opts.wider !== undefined) {
+        if (before !== null && (before & ~mode) !== 0) opts.wider(final, before, "file");
+        const dirMode = Number(fstatSync(folder.fd, { bigint: true }).mode & 0o777n);
+        if (!madeFolders && (dirMode & ~folderMode) !== 0) opts.wider(folder.dir, dirMode, "folder");
+      }
       return true;
     } catch (error) {
       // The temp file, or the file an exclusive write made: ours to remove.
@@ -278,6 +297,24 @@ export class Guard {
     } finally {
       closeSync(fd);
       closeSync(folder.fd);
+    }
+  }
+
+  // Takes from the existing folder `path` every permission `mode` does not
+  // give, through a handle on the folder checked by identity; never follows
+  // a link. Returns the mode it had when it took any, else null.
+  narrowFolder(path: string, mode: number): number | null {
+    const w = this.check(path, false);
+    if (w.stat === null || !w.stat.isDirectory()) return null;
+    const had = Number(w.stat.mode & 0o777n);
+    if ((had & ~mode) === 0) return null;
+    const fd = openSync(join(w.dir, w.final), constants.O_RDONLY | DIRECTORY | NOFOLLOW);
+    try {
+      if (!same(idOf(fstatSync(fd, { bigint: true })), idOf(w.stat))) throw new Error(`${join(w.dir, w.final)} changed while openqodex was checking it`);
+      fchmodSync(fd, had & mode);
+      return had;
+    } finally {
+      closeSync(fd);
     }
   }
 
@@ -362,11 +399,12 @@ export class Guard {
     return true;
   }
 
-  // Makes the folder `path`, which must not exist yet, and its parents.
-  makeFolder(path: string): void {
+  // Makes the folder `path`, which must not exist yet, and its parents,
+  // each with `mode` (default 0700) when it is made.
+  makeFolder(path: string, mode = 0o700): void {
     const w = this.check(join(path, ".openqodex-folder"));
     if (w.pending.length < 2) throw new Error(`${path} is there already`);
-    closeSync(this.folderOf(w).fd);
+    closeSync(this.folderOf(w, mode).fd);
   }
 
   // Renames `from` to `to`, a name that must be free; afterwards `to` must
@@ -404,7 +442,7 @@ export class Guard {
           this.makeFolder(b);
           copy(a, b, false);
         } else if (entry.isFile()) {
-          this.write(b, readFileSync(a), { exclusive: true, mode: Number(lstatSync(a).mode & 0o777), setMode: true });
+          this.write(b, readFileSync(a), { exclusive: true, mode: Number(lstatSync(a).mode & 0o777) });
         } else throw new Error(`${a} is not a plain file or folder`);
       }
     };
@@ -423,4 +461,34 @@ export function homeGuard(home: string): Guard {
     homeGuards.set(home, g);
   }
   return g;
+}
+
+// The `wider` of a write that holds review content, a receipt or config:
+// a folder other users could read is closed to `folderMode` through the
+// guard, and each file or folder is named once in this process, on
+// stderr, by its path from `root`.
+const reported = new Set<string>();
+export function closeWider(guard: Guard, root: string, folderMode = 0o700): Wider {
+  return (path, mode, kind) => {
+    const octal = (m: number): string => `0${m.toString(8)}`;
+    const shown = relative(root, path) || path;
+    if (kind === "folder") {
+      try {
+        if (guard.narrowFolder(path, folderMode) === null) return;
+      } catch {
+        // could not be closed: said below as it is
+        if (reported.has(path)) return;
+        reported.add(path);
+        process.stderr.write(`openqodex: ${shown} can be read by other users (mode ${octal(mode)}); run chmod ${octal(folderMode)} on it\n`);
+        return;
+      }
+    }
+    if (reported.has(path)) return;
+    reported.add(path);
+    process.stderr.write(
+      kind === "folder"
+        ? `openqodex: ${shown} could be read by other users (mode ${octal(mode)}); it is now ${octal(folderMode)}, readable only by you\n`
+        : `openqodex: ${shown} could be read by other users (mode ${octal(mode)}); it was replaced by a file only you can read\n`,
+    );
+  };
 }

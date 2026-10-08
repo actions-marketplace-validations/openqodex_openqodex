@@ -281,7 +281,7 @@ export function planRuntime(record: InstallRecord, version: string, home: string
     record.files.push({ path: launcher, sha256: createHash("sha256").update(script).digest("hex"), usesLauncher: false });
   };
   const write = (): void => {
-    guard.write(launcher, script, { mode: 0o755, setMode: true });
+    guard.write(launcher, script, { mode: 0o755 });
     remember();
   };
   if (before === script) {

@@ -15,12 +15,17 @@
 //     .openqodex files (core's writeRepoFile) are written directly, so a
 //     link put in place after a check decides where a release, a receipt or
 //     a report lands.
+//  4. A receipt, or a report written where --output or --report-dir
+//     names, is created readable by other users, or in a folder made for it
+//     that they can open (core/test/private-modes.test.ts covers the repo's
+//     own .openqodex files).
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { cli, sandbox } from "./init-helpers.js";
 import { pruneRuntimes } from "../src/launcher.js";
 import { pruneHomeReceipts, writeHomeReceipt } from "../src/receipts.js";
 import { unpackRelease } from "../src/update/worker.js";
@@ -123,5 +128,47 @@ describe("3. the worker, the receipts and the repo files land only where they we
     await expect(unpackRelease(home, "0.0.9", readFileSync(archive))).rejects.toThrow(/outside every folder openqodex writes to/);
     expect(readdirSync(outside)).toEqual([]);
     expect(existsSync(join(outside, "0.0.9.tmp-" + process.pid))).toBe(false);
+  });
+});
+
+describe("4. a receipt is readable by the developer only", () => {
+  it("is created 0600 in folders made 0700, and an existing receipts folder other users could read is closed and named", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-guard-")));
+    const home = join(root, "oq home");
+    mkdirSync(join(home, "receipts"), { recursive: true });
+    chmodSync(join(home, "receipts"), 0o755);
+    const receipt = { version: 1, change_id: "b".repeat(64), kind: "complete", report: "r", base: { sha: "b", ref: "main" } };
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      writeHomeReceipt(home, root, receipt as never);
+      writeHomeReceipt(home, root, receipt as never);
+    } finally {
+      spy.mockRestore();
+    }
+    const mode = (p: string): number => statSync(p).mode & 0o777;
+    const dir = readdirSync(join(home, "receipts"))[0]!;
+    expect(mode(join(home, "receipts", dir))).toBe(0o700);
+    expect(mode(join(home, "receipts", dir, `${"b".repeat(64)}.json`))).toBe(0o600);
+    expect(mode(join(home, "receipts", dir, "latest.json"))).toBe(0o600);
+    // The repo folder is new: no report for it. receipts/ itself is not
+    // where a receipt lands, so it is left to the folder that is.
+    expect(spy.mock.calls.map((c) => String(c[0])).join("")).not.toMatch(/could be read/);
+  });
+});
+
+describe("4. a report written where the developer names is readable by them only", () => {
+  it("--output makes a 0600 file and --report-dir a 0700 folder of 0600 files", () => {
+    const s = sandbox({ "app.py": "print('hello')\n" });
+    writeFileSync(join(s.repo, "app.py"), "print('changed')\n");
+    const out = join(s.root, "out", "scan.json");
+    mkdirSync(dirname(out));
+    const r = cli(s, ["scan", "--no-install", "--offline", "--format", "json", "--output", out]);
+    expect(r.status, r.stderr).not.toBe(2);
+    expect(statSync(out).mode & 0o777).toBe(0o600);
+    const dir = join(s.root, "reports", "run");
+    const d = cli(s, ["scan", "--no-install", "--offline", "--report-dir", dir]);
+    expect(d.status, d.stderr).not.toBe(2);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    for (const f of readdirSync(dir)) expect(statSync(join(dir, f)).mode & 0o777, f).toBe(0o600);
   });
 });

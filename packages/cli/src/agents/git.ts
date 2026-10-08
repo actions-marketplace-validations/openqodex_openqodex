@@ -96,7 +96,7 @@ export function planExclude(excludeFile: string, line: string, repo: string, rec
     note: `exclude ${line} so git status does not change`,
     guard: { path: excludeFile, before: text },
     apply: () => {
-      guard.write(excludeFile, next);
+      guard.write(excludeFile, next, { keepMode: true });
       record.excludes = record.excludes.filter((e) => !(e.file === excludeFile && e.line === line && e.repo === repo));
       record.excludes.push(mine);
     },
@@ -131,7 +131,7 @@ export function planUnexclude(excludeFile: string, line: string, repo: string, r
     note: `remove ${line}`,
     guard: { path: excludeFile, before: text },
     apply: () => {
-      guard.write(excludeFile, next);
+      guard.write(excludeFile, next, { keepMode: true });
       forget();
     },
   };

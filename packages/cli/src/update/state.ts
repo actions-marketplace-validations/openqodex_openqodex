@@ -131,7 +131,7 @@ export function setUserKeys(home: string, set: { update?: "on" | "off"; skip_ver
   asMapping(doc);
   for (const [key, value] of Object.entries(set)) doc.set(key, value);
   const text = String(doc);
-  homeGuard(home).write(userConfigPath(home), text);
+  homeGuard(home).write(userConfigPath(home), text, { keepMode: true });
   if (ours) updateState(home, { userConfig: sha256(text) });
 }
 

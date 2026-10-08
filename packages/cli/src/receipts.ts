@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { GateReceipt } from "@openqodex/core";
+import { closeWider } from "@openqodex/core";
 import { homeGuard, type Guard } from "./agents/guarded-fs.js";
 
 const MAX_BYTES = 64 * 1024;
@@ -68,7 +69,7 @@ function writeRecord(home: string, kind: string, repoRoot: string, names: string
   const guard = homeGuard(home);
   const dir = join(home, kind, repoId(repoRoot));
   const text = `${JSON.stringify(value, null, 2)}\n`;
-  for (const name of names) guard.write(join(dir, name), text, { mode: 0o600, setMode: true, folderMode: 0o700 });
+  for (const name of names) guard.write(join(dir, name), text, { mode: 0o600, folderMode: 0o700, wider: closeWider(guard, home) });
 }
 
 // The parsed file, or null when it is not a regular file within the cap.

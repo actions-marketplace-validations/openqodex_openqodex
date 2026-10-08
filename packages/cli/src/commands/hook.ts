@@ -472,7 +472,7 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
           record.backups.push({ path: backup, of: path });
           process.stdout.write(`The previous hook is saved as ${backup}\n`);
         }
-        guard.write(path, script, { mode: 0o755, setMode: true });
+        guard.write(path, script, { mode: 0o755 });
         remember();
       },
     },
