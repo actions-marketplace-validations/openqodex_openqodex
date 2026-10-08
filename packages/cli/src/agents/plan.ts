@@ -7,6 +7,7 @@ import { basename, dirname } from "node:path";
 import type { AgentId } from "./detect.js";
 import { readText, sha256 } from "./files.js";
 import type { Guard } from "./guarded-fs.js";
+import { planJsonInstall, planJsonRemoval, planTomlInstall, planTomlRemoval } from "./mcp.js";
 import { canonical, type InstallRecord } from "./record.js";
 import type { Scope, Target } from "./targets.js";
 import { isShippedSkill, SECTION_END, SECTION_START } from "./targets.js";
@@ -354,6 +355,10 @@ export function planInstall(t: Target, ctx: Ctx): Action {
       }
       return { ...base, verb: "keep", note: `${t.label} section was edited; left as it is` };
     }
+    case "mcp-json":
+      return planJsonInstall(t, ctx, before);
+    case "mcp-toml":
+      return planTomlInstall(t, ctx, before);
   }
 }
 
@@ -529,6 +534,19 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         },
       };
     }
+    case "mcp-json":
+      return planJsonRemoval(t, ctx, before, false);
+    case "mcp-toml":
+      return planTomlRemoval(t, ctx, before, false);
   }
+}
+
+// --no-mcp: removes the code graph's MCP server where the record says init
+// added it, and nothing a record does not name, in either scope. Null when
+// there is nothing of ours there.
+export function planMcpOff(t: Extract<Target, { kind: "mcp-json" | "mcp-toml" }>, ctx: Ctx): Action | null {
+  checkRepoPath(t, ctx);
+  const before = readText(t.path);
+  return t.kind === "mcp-json" ? planJsonRemoval(t, ctx, before, true) : planTomlRemoval(t, ctx, before, true);
 }
 

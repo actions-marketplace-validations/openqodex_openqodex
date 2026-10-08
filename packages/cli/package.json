@@ -42,7 +42,7 @@
     "node": ">=22"
   },
   "openqodex": {
-    "agentContract": 1,
+    "agentContract": 2,
     "configFormat": 1
   },
   "bin": {

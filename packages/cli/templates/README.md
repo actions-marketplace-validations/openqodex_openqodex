@@ -23,7 +23,7 @@ Nothing `init` writes in user scope names a version, a review command or who rev
 - `skill-stub.md` is the user-scope skill: its frontmatter, when to run, then a procedure that says to run `{{LAUNCHER}} guide skill` and follow what it prints. `guide skill` prints the shipped skill with every `npx -y openqodex@<version>` written as the launcher.
 - `cursor/openqodex-user.mdc` and `cline/openqodex-user.md` are the user-scope Cursor and Cline rules: the instruction section, then the same `{{LAUNCHER}} guide skill` line.
 
-These files, the global section, the instruction section and the hook and permission rules a user-scope `init` writes change only with a new `agentContract` in `package.json` (`src/contract.ts`). `test/agent-contract.test.ts` holds them to the copy checked in under `test/fixtures/agent-contract/<number>/`, and fails when one changes under the same number.
+These files, the global section, the instruction section, the hook and permission rules and the MCP server entries a user-scope `init` writes change only with a new `agentContract` in `package.json` (`src/contract.ts`). `test/agent-contract.test.ts` holds them to the copy checked in under `test/fixtures/agent-contract/<number>/`, and fails when one changes under the same number.
 
 Project scope copies the shipped skill with its pinned version, and the Cursor and Cline rules `cursor/openqodex.mdc` and `cline/openqodex.md` as written. Both scopes drop the paragraph that tells a skill installed by `npx skills add` to prefer the launcher.
 
@@ -35,7 +35,11 @@ The project-scope skill is not a template: `init` copies it from `skills/openqod
 
 User scope is the default. Project scope (`--project`) writes into the repository for a team to commit. A repository file written in user scope is added to `.git/info/exclude` so `git status` does not change, except the team section.
 
-Every path below was read from the source named beside it on 2026-10-01. Anything marked "assumption, untested" was not confirmed and must not be written by `init` as if it were.
+Every path below was read from the source named beside it on 2026-10-01; the MCP server rows on 2026-10-08. Anything marked "assumption, untested" was not confirmed and must not be written by `init` as if it were.
+
+## The code graph's MCP server
+
+No template: `src/agents/targets.ts` builds each entry, and `src/agents/mcp.ts` merges it. The server is named `openqodex` and is stdio only. In user scope its command is the launcher's absolute path, unquoted (an entry's command runs with no shell), with `args` `["mcp"]`; in project scope the command is `npx` with `args` `["-y", "openqodex@{{VERSION}}", "mcp"]`. A JSON file gets the entry under `mcpServers.openqodex`, created with mode 0600 in user scope and 0644 in project scope; every other key and server stays. Codex's `config.toml` gets a block appended at its end, between the lines `# openqodex:start` and `# openqodex:end`, with the command and each argument written as TOML basic strings. `--no-mcp` leaves all of them out.
 
 ## Claude Code
 
@@ -45,12 +49,14 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 | Push gate hook | `claude-code/settings-hook.json`, merged | `~/.claude/settings.json` | `.claude/settings.json` |
 | Instructions | `global-section.md` in user scope, `instructions-section.md` in project scope, between their markers | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
 | Team section | `repo/team-section.md`, between its markers | `CLAUDE.md` in the repository, committed | none (the instruction section is there) |
+| MCP server | `{ "type": "stdio", "command", "args" }` under `mcpServers.openqodex` | `~/.claude.json`, in the home folder itself; `$CLAUDE_CONFIG_DIR/.claude.json` when that is set | `.mcp.json` at the repository root |
 
-- Every user-scope path above is under `$CLAUDE_CONFIG_DIR` when it is set, the folder Claude Code then reads its settings from (https://code.claude.com/docs/en/settings); `~/.claude` otherwise. `src/agents/homes.ts` resolves it for detection and targets alike.
+- Every user-scope path above except the MCP server's is under `$CLAUDE_CONFIG_DIR` when it is set, the folder Claude Code then reads its settings from (https://code.claude.com/docs/en/settings); `~/.claude` otherwise. `src/agents/homes.ts` resolves it for detection and targets alike.
 - Settings paths: https://code.claude.com/docs/en/hooks, section "Hook locations".
 - Skill paths: the `skills` CLI agent table (github.com/vercel-labs/skills, README, "Supported agents"), and the same hooks page, which names `~/.claude/skills/` and `.claude/skills/`.
 - The hook: `matcher: "Bash"` with `if: "Bash(git push*)"` on the handler. The `if` field uses permission-rule syntax and is checked against each subcommand (same hooks page, "Bash if matching"). The page also says a pattern longer than the command name runs the hook anyway when the command holds `$()`, backticks or `$VAR`, so `hook check` must itself confirm the command is a push.
 - Merge rule: append the one entry under `hooks.PreToolUse`, keep every other key, do nothing when an entry with the same command already exists.
+- MCP server: https://code.claude.com/docs/en/mcp. "MCP installation scopes": user scope is stored in `~/.claude.json`; "Scope hierarchy and precedence": user-scope servers sit at "the top level of `~/.claude.json`"; "Project scope": `.mcp.json` at the project root, and Claude Code asks for approval before it uses a project server. Claude Code reads an entry with no `type` as a stdio server, and the `add-json` example writes `"type":"stdio"`. With `CLAUDE_CONFIG_DIR` set, `.claude.json` with a top-level `mcpServers` sits in that folder: observed on a Mac with `CLAUDE_CONFIG_DIR` set, 2026-10-08, not documented. Claude Code rewrites `.claude.json` while it runs, so `init` merges into the file as it is just before the write and refuses only when the `openqodex` entry changed after the plan.
 
 ## Codex CLI
 
@@ -60,12 +66,14 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 | Instructions | `global-section.md` in user scope, `instructions-section.md` in project scope, between their markers | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `AGENTS.md` (replace the text between the markers, or append) |
 | Team section | `repo/team-section.md`, between its markers | `AGENTS.md` in the repository, committed | none (the instruction section is there) |
 | Push gate hook | `codex/hooks.json`, merged | `$CODEX_HOME/hooks.json`, default `~/.codex/hooks.json` | `.codex/hooks.json` |
+| MCP server | a `[mcp_servers.openqodex]` table with `command` and `args`, between `# openqodex:start` and `# openqodex:end` | `$CODEX_HOME/config.toml`, default `~/.codex/config.toml` | `.codex/config.toml` |
 
 - The instructions and the hook both follow `CODEX_HOME`, the folder Codex reads its config and hooks from (hooks page below: hooks sit beside the active config layer), resolved by `src/agents/homes.ts`. The skill does not: its folder is `~/.agents/skills` whatever `CODEX_HOME` says. That Codex loads `$CODEX_HOME/hooks.json`: from the docs, untested with a real custom `CODEX_HOME`.
 
 - Hook file paths, schema and output: https://learn.chatgpt.com/docs/hooks (where https://developers.openai.com/codex/hooks redirects). `codex features list` on Codex CLI 0.160.0 shows `hooks` as stable and on.
 - Codex hooks have no `if` field: the matcher is a regular expression on the tool name only. The hook therefore runs before every shell command, and `hook check` must abstain at once, printing nothing, when the command is not a `git push`.
 - Codex runs a new user or project hook only after the developer reviews and trusts it with `/hooks` inside Codex; project hooks load only in a trusted project. `init` must print that step.
+- MCP server: https://learn.chatgpt.com/docs/extend/mcp?surface=cli (where https://developers.openai.com/codex/mcp redirects), "Configure with config.toml" and "STDIO servers": a `[mcp_servers.<name>]` table with `command` and `args` in `~/.codex/config.toml`, or `.codex/config.toml` in trusted projects only. There is no TOML parser in the package: `init` appends its marked block, and adds nothing when the rest of the file already defines `mcp_servers.openqodex` in any form, or sets `mcp_servers` as an inline table, because a duplicate key makes Codex refuse the whole file. Uninstall removes the block while it is still as appended.
 - Codex's PreToolUse output supports `permissionDecision` deny, `additionalContext` and `systemMessage`; `ask` is parsed but not implemented. Exit code 2 with the reason on stderr also denies.
 - Skill path conflict: the `skills` CLI table puts the Codex user skill in `~/.codex/skills/`; the Codex docs (https://learn.chatgpt.com/docs/build-skills) list `$HOME/.agents/skills` and repository `.agents/skills`, and do not list `~/.codex/skills/`. Write `~/.agents/skills/openqodex/SKILL.md`, which the Codex docs name. That Codex 0.160.0 still reads `~/.codex/skills/`: assumption, untested.
 
@@ -75,9 +83,11 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 |---|---|---|---|
 | Skill | `skill-stub.md` in user scope, `skills/openqodex/SKILL.md` in project scope | `~/.cursor/skills/openqodex/SKILL.md` | `.agents/skills/openqodex/SKILL.md` |
 | Rule | `cursor/openqodex-user.mdc` in user scope, `cursor/openqodex.mdc` in project scope | `.cursor/rules/openqodex.mdc` in the repository, excluded from git | `.cursor/rules/openqodex.mdc` |
+| MCP server | `{ "type": "stdio", "command", "args" }` under `mcpServers.openqodex` | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
 
 - Rule location and frontmatter: https://cursor.com/docs/context/rules. Project rules are `.mdc` files in `.cursor/rules`; the fields are `description`, `globs` and `alwaysApply`; `alwaysApply: true` makes the rule apply to every chat. User rules live in Cursor's settings, not on disk, so there is no user-level rule file.
 - Skill paths: the `skills` CLI table, and https://cursor.com/docs/context/skills, which lists `.agents/skills/`, `.cursor/skills/`, `~/.agents/skills/` and `~/.cursor/skills/` (and the Claude and Codex folders for compatibility).
+- MCP server: https://cursor.com/docs/context/mcp, "Configuration locations" (`~/.cursor/mcp.json` for every project, `.cursor/mcp.json` for one) and the STDIO server table, where `type` is required and is `"stdio"`.
 - Cursor hooks (`.cursor/hooks.json`) were not checked: no Cursor hook is written. Assumption, untested, that a rule alone is enough for Cursor to review before pushing.
 
 ## Cline
@@ -86,13 +96,12 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 |---|---|---|---|
 | Skill | `skill-stub.md` in user scope, `skills/openqodex/SKILL.md` in project scope | `~/.cline/skills/openqodex/SKILL.md` | `.cline/skills/openqodex/SKILL.md` |
 | Rule | `cline/openqodex-user.md` in user scope, `cline/openqodex.md` in project scope | `~/Documents/Cline/Rules/openqodex.md` | `.clinerules/openqodex.md` |
+| MCP server | `{ "command", "args" }` under `mcpServers.openqodex` | `~/.cline/data/settings/cline_mcp_settings.json`, only when `~/.cline/data` is there | none: a note in the plan |
 
 - Rule paths: https://docs.cline.bot/features/cline-rules. Cline reads every file in `.clinerules/` (or `.cline/rules/`) at the project root; global rules are in `~/Documents/Cline/Rules` on macOS and Linux (`Documents\Cline\Rules` on Windows), with `~/.cline/rules` and `~/Cline/Rules` also searched. A rule with no frontmatter always applies. The plan's default (rule in the repository, excluded from git) also works; the global rule folder avoids touching the repository.
 - Skill path conflict: the `skills` CLI table puts Cline skills in `.agents/skills/` and `~/.agents/skills/`; Cline's docs (https://docs.cline.bot/features/skills) list `.cline/skills/`, `.clinerules/skills/`, `.claude/skills/` and `~/.cline/skills/`, and not `.agents/skills/`. Write the path Cline's docs name. That Cline reads `.agents/skills/`: assumption, untested.
 
-## Not written on Day 0
-
-No MCP server configuration is written for any agent.
+- MCP server: https://docs.cline.bot/mcp/configuring-mcp-servers names `~/.cline/data/settings/cline_mcp_settings.json` for the Cline CLI, and no project file. The VS Code extension's file is not documented there, so when Cline is found but `~/.cline/data` is not there, and in project scope, `init` writes nothing for Cline and its plan names the entry to add in Cline's "Configure MCP Servers". The test is `~/.cline/data`, not `~/.cline`: `init` itself makes `~/.cline` for the skill, which would make a second run register the server where the first did not.
 
 ## Placeholders
 
