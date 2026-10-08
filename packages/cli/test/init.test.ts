@@ -29,6 +29,11 @@
 // 17. A skill `npx skills add` copied over the stub (any version's shipped
 //     text) is kept as the developer's, so it never updates; or a copy the
 //     developer edited is replaced.
+// 18. Init asks more than once in a terminal (the hook, the team section,
+//     then the files), the plan does not say which files are the
+//     developer's and which the team's, an agent's shell (no terminal) can
+//     never install without --yes, or a shell with no terminal and no agent
+//     writes something or stops without the plan and the flags to choose with.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -47,7 +52,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { BIN, cli, env, git, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
+import { BIN, cli, env, git, inTerminal, promptsAsked, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 const isRoot = process.getuid?.() === 0;
@@ -378,13 +383,57 @@ describe("init, writes nothing when it should not", () => {
     expect(snapshot(s)).toEqual(before);
   });
 
-  it("without a terminal and without --yes exits 2 and writes nothing", () => {
+  it("18. without a terminal, an agent or --yes, exits 2, writes nothing, and prints the plan and the flags", () => {
     const s = sandbox();
     const before = snapshot(s);
     const r = cli(s, ["init", "--agent", "claude-code"]);
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("--yes");
+    expect(r.stdout).toContain("install plan");
+    expect(r.stdout).toContain(join(s.home, ".claude/skills/openqodex/SKILL.md"));
+    for (const flag of ["--yes", "--hook none", "--no-repo", "--project"]) expect(r.stderr).toContain(flag);
     expect(snapshot(s)).toEqual(before);
+  });
+});
+
+describe("18. init asks once", () => {
+  it("in a terminal, asks only 'Write these files?', and writes the hook and the team section by default", () => {
+    const s = sandbox();
+    const r = inTerminal(s, ["init", "--agent", "claude-code"], [["Write these files?", "\r"]]);
+    expect(r.status, r.stdout).toBe(0);
+    expect(promptsAsked(r.stdout)).toEqual(["Write these files?"]);
+    expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(true);
+    expect(readFileSync(join(s.repo, "CLAUDE.md"), "utf8")).toContain(SECTION_START);
+  });
+
+  it("the plan puts every file under 'For you' or 'For the team' and names the two opt-outs", () => {
+    const s = sandbox();
+    const r = cli(s, ["init", "--dry-run", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    const mine = r.stdout.indexOf("For you");
+    const team = r.stdout.indexOf("For the team");
+    expect(mine).toBeGreaterThan(-1);
+    expect(team).toBeGreaterThan(mine);
+    const at = (path: string): number => r.stdout.indexOf(path);
+    expect(at(join(s.home, ".claude/skills/openqodex/SKILL.md"))).toBeGreaterThan(mine);
+    expect(at(join(s.home, ".claude/skills/openqodex/SKILL.md"))).toBeLessThan(team);
+    expect(at(join(s.repo, ".git/hooks/pre-push"))).toBeLessThan(team);
+    expect(at(join(s.repo, "CLAUDE.md"))).toBeGreaterThan(team);
+    expect(at(join(s.repo, ".openqodex/config.yaml"))).toBeGreaterThan(team);
+    expect(r.stdout).toContain("--hook none");
+    expect(r.stdout).toContain("--no-repo");
+  });
+
+  it("inside a known agent with no terminal, takes the defaults and writes what --yes writes", () => {
+    const withYes = sandbox();
+    expect(cli(withYes, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    // Git's object names hold each sandbox's commit time; every other path is compared.
+    const files = (s: Sandbox): string[] => Object.keys(snapshot(s)).filter((p) => !p.includes("/.git/objects/")).sort();
+    for (const marker of [{ CLAUDECODE: "1" }, { CODEX_THREAD_ID: "019a0000-0000-0000-0000-000000000000" }, { CURSOR_AGENT: "1" }]) {
+      const s = sandbox();
+      const r = cli(s, ["init", "--agent", "claude-code"], { env: marker });
+      expect(r.status, r.stderr).toBe(0);
+      expect(files(s)).toEqual(files(withYes));
+    }
   });
 });
 

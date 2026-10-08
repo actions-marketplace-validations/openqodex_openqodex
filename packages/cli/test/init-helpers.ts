@@ -76,6 +76,23 @@ export function env(s: Sandbox, extra: Record<string, string> = {}): NodeJS.Proc
   return { ...e, ...extra };
 }
 
+// The CLI run in a real terminal (fixtures/pty-run.py): `steps` are the
+// [text to wait for, keys to type] pairs, "\r" for Enter. stdout holds what
+// the terminal showed, colours taken out. `init` gets --no-review as in cli().
+const PTY = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "pty-run.py");
+export function inTerminal(s: Sandbox, args: string[], steps: [string, string][], opts: { env?: Record<string, string>; review?: boolean } = {}): SpawnSyncReturns<string> {
+  const python = (process.env.PATH ?? "").split(delimiter).map((d) => join(d, "python3")).find((p) => existsSync(p));
+  if (python === undefined) throw new Error("python3 is needed to run the CLI in a terminal");
+  const argv = args[0] === "init" && !opts.review ? [...args, "--no-review"] : args;
+  return spawnSync(python, [PTY, JSON.stringify(steps), process.execPath, BIN, ...argv], { cwd: s.repo, env: env(s, opts.env), encoding: "utf8", timeout: 90_000 });
+}
+
+// The prompts a terminal run asked, each once, as clack prints them after the
+// answer ("◇  Write these files?").
+export function promptsAsked(stdout: string): string[] {
+  return [...new Set(stdout.split("\n").filter((l) => l.startsWith("◇")).map((l) => l.slice(1).trim()))];
+}
+
 // `init` gets --no-review unless `review` is set: the tests of what init
 // installs compare files before and after, and the review it ends with
 // writes a report folder. init-review.test.ts tests that review.

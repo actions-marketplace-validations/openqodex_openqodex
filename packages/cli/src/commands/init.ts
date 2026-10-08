@@ -1,9 +1,11 @@
 // `openqodex init`: installs OpenQodex into the developer's coding agents in
 // one step. User scope by default, so one install works in every repo and the
 // agent files stay out of the repo's git status; `--project` writes them into
-// the repo for a team to commit. Inside a repo it also asks about the git
-// pre-push hook and creates the two team files in `.openqodex/`. It ends
-// with a review (init-review.ts) unless --no-review is given.
+// the repo for a team to commit. Inside a repo the plan also holds the git
+// pre-push hook, the two team files in `.openqodex/` and the team review
+// section, each on by default (--hook none and --no-repo leave them out). It
+// prints the whole plan, for the developer and for the team, and asks once.
+// It ends with a review (init-review.ts) unless --no-review is given.
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
@@ -15,8 +17,9 @@ import { planInstall, planUninstall, type Action, type Ctx } from "../agents/pla
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { commitLines, INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, ROOT_CONFIG_NOTE } from "../agents/repo-folder.js";
-import { instructionSection, targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
+import { targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
+import { hostAgent } from "../reviewers/driver.js";
 import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
 import { reviewAfterInit } from "./init-review.js";
@@ -29,8 +32,10 @@ type Flags = { agents: AgentId[]; project: boolean; yes: boolean; uninstall: boo
 const USAGE =
   "usage: openqodex init [--agent <claude-code|cursor|codex|cline|all>]... [--project] [--hook <pre-push|none>] [--no-repo] [--no-review] [--yes] [--uninstall] [--dry-run]";
 
-const HOOK_QUESTION = "Add the git pre-push hook, so every push from this repo is checked for a review, from an agent or by hand?";
-const TEAM_QUESTION = "Add a review section to this repo's CLAUDE.md and AGENTS.md, so teammates' agents review before they push too?";
+// The one question init asks, after the whole plan.
+const WRITE_QUESTION = "Write these files?";
+
+const HOST_NAMES: Record<NonNullable<ReturnType<typeof hostAgent>>, string> = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
 
 function parseFlags(args: string[]): Flags | string {
   const flags: Flags = { agents: [], project: false, yes: false, uninstall: false, dryRun: false, hook: null, noRepo: false, noReview: false };
@@ -75,21 +80,22 @@ async function confirm(question: string): Promise<boolean> {
   return !prompts.isCancel(answer) && answer === true;
 }
 
-// The answer to the hook question: the flag, then the answer this repo gave
-// before, then --yes; null when it must be asked.
-function knownHookChoice(s: Setup, record: InstallRecord): HookChoice | null {
-  if (s.flags.hook !== null) return s.flags.hook;
+// Whether this repo gets the git pre-push hook: --hook, then the choice this
+// repo made before, then yes. `earlier`: the choice came from the record.
+function hookChoiceFor(s: Setup, record: InstallRecord): { hook: HookChoice; earlier: boolean } {
+  if (s.flags.hook !== null) return { hook: s.flags.hook, earlier: false };
   const before = record.hookChoices.find((c) => c.repo === s.repoRoot);
-  if (before) return before.hook;
-  return s.flags.yes ? "pre-push" : null;
+  return before ? { hook: before.hook, earlier: true } : { hook: "pre-push", earlier: false };
 }
 
-// The answer to the team section question: --no-repo or --yes on this
-// command line, then the answer this repo gave before; null when it must be asked.
-function knownTeamChoice(s: Setup, record: InstallRecord): boolean | null {
-  if (s.flags.noRepo) return false;
-  if (s.flags.yes) return true;
-  return record.teamChoices.find((c) => c.repo === s.repoRoot)?.write ?? null;
+// Whether this repo gets the team review section: --no-repo, then --yes,
+// which adds it even where this repo said no before, then that earlier
+// choice, then yes.
+function teamChoiceFor(s: Setup, record: InstallRecord): { write: boolean; earlier: boolean } {
+  if (s.flags.noRepo) return { write: false, earlier: false };
+  if (s.flags.yes) return { write: true, earlier: false };
+  const before = record.teamChoices.find((c) => c.repo === s.repoRoot);
+  return before ? { write: before.write, earlier: true } : { write: true, earlier: false };
 }
 
 function setTeamChoice(record: InstallRecord, repo: string, write: boolean): void {
@@ -216,12 +222,37 @@ function printPlan(actions: Action[], notes: string[]): void {
   for (const note of notes) out(`  note     ${note}`);
 }
 
+// The section each agent's own instruction file gets, as it will be written.
 function printSection(actions: Action[], targets: Target[]): void {
   const writes = new Set(actions.filter((a) => a.apply).map((a) => a.path));
-  const labels = targets.filter((t) => t.kind === "md-section" && writes.has(t.path)).map((t) => t.label);
-  if (labels.length === 0) return;
-  out(`The instruction section init writes into ${labels.join(" and ")}:`);
-  for (const line of instructionSection().split("\n")) out(`    ${line}`);
+  const sections = targets.flatMap((t) => (t.kind === "md-section" && writes.has(t.path) ? [t] : []));
+  if (sections.length === 0) return;
+  out(`The instruction section init writes into ${sections.map((t) => t.label).join(" and ")}:`);
+  for (const line of sections[0].section.split("\n")) out(`    ${line}`);
+}
+
+// The install plan, every file under the one it is for: the developer, on
+// this machine (user-scope agent files, the launcher, the git hook, which
+// lives in this clone only), or the team, in the repo to commit.
+function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: string[], targets: Target[], teamActions: Action[]): void {
+  out(`OpenQodex ${s.version} install plan (${s.scope} scope):`);
+  if (mine.length > 0) {
+    out("For you, on this machine:");
+    printPlan(mine, []);
+  }
+  if (team.length > 0) {
+    out("For the team, in this repo (commit these):");
+    printPlan(team, []);
+  }
+  printPlan([], notes);
+  printSection([...mine, ...team], targets);
+  if (teamActions.some((a) => a.apply)) {
+    out("The review section init writes into the repo's CLAUDE.md and AGENTS.md:");
+    for (const line of teamSection(s.version).split("\n")) out(`    ${line}`);
+  }
+  if (s.repoRoot !== null) {
+    out(s.flags.project ? "To leave out the git pre-push hook: --hook none." : "To leave out the git pre-push hook: --hook none. To leave out the team review section: --no-repo.");
+  }
 }
 
 async function runLocked(s: Setup): Promise<number> {
@@ -233,6 +264,10 @@ async function runLocked(s: Setup): Promise<number> {
   }
   const actions: Action[] = [];
   const runtimeActions = new Set<Action>();
+  // The install plan by whom each file is for (printInstallPlan).
+  const mine: Action[] = [];
+  const team: Action[] = [];
+  const teamActions: Action[] = [];
   let failed = false;
 
   const agentActions = await planAgents(s, record, targets);
@@ -256,16 +291,38 @@ async function runLocked(s: Setup): Promise<number> {
     const needsLauncher = s.scope === "user" || targets.some((t) => t.kind === "hook-json" && t.usesLauncher);
     const runtime = needsLauncher ? planRuntime(record, s.version, s.oqHome) : [];
     for (const a of runtime) runtimeActions.add(a);
-    actions.push(...runtime, ...agentActions);
+    mine.push(...runtime);
+    // Project-scope agent files are committed: the team's.
+    (s.flags.project ? team : mine).push(...agentActions);
     if (s.repoRoot !== null) {
       const repo = planRepoFiles(s.repoRoot, record);
       rootConfig = repo.rootConfig;
-      actions.push(...repo.actions);
-      hookChoice = knownHookChoice(s, record);
+      team.push(...repo.actions);
+      const hook = hookChoiceFor(s, record);
+      hookChoice = hook.hook;
+      if (!s.flags.dryRun) setHookChoice(record, s.repoRoot, hookChoice);
+      if (hookChoice === "pre-push") {
+        if (runtimeActions.size === 0) {
+          const more = planRuntime(record, s.version, s.oqHome);
+          for (const a of more) runtimeActions.add(a);
+          // The runtime goes first: the hook calls it.
+          mine.unshift(...more);
+        }
+        mine.push((await planGitHook(s.repoRoot, record, s.oqHome, false)).action);
+      } else notes.push(`git pre-push hook: left out${hook.earlier ? ", as this repo chose before" : ""}; --hook pre-push adds it`);
+      // Project scope writes its own section into the same two files.
+      if (!s.flags.project) {
+        const choice = teamChoiceFor(s, record);
+        if (!s.flags.dryRun) setTeamChoice(record, s.repoRoot, choice.write);
+        if (choice.write) {
+          teamActions.push(...planTeam(s, record));
+          team.push(...teamActions);
+        } else notes.push(`team review section: left out${choice.earlier ? ", as this repo chose before" : ""}; run init --yes without --no-repo to add it`);
+      }
     }
-    if (runtime.some((a) => a.failed)) {
-      out(`OpenQodex ${s.version} install plan (${s.scope} scope):`);
-      printPlan(actions, notes);
+    actions.push(...mine, ...team);
+    if ([...runtimeActions].some((a) => a.failed)) {
+      printInstallPlan(s, mine, team, notes, targets, teamActions);
       process.stderr.write("openqodex init: nothing was written; the launcher hooks call cannot be set up (see above)\n");
       return EXIT_TOOL_FAILED;
     }
@@ -279,58 +336,10 @@ async function runLocked(s: Setup): Promise<number> {
     actions.push(...planRuntimeRemoval(record, s.oqHome, willStay));
   }
 
-  out(s.flags.uninstall ? "OpenQodex uninstall plan:" : `OpenQodex ${s.version} install plan (${s.scope} scope):`);
-  printPlan(actions, notes);
-  if (!s.flags.uninstall) printSection(actions, targets);
-
-  // The hook question, asked after the plan is shown.
-  if (!s.flags.uninstall && s.repoRoot !== null) {
-    if (hookChoice === null && !s.flags.dryRun && interactive()) hookChoice = (await confirm(HOOK_QUESTION)) ? "pre-push" : "none";
-    if (hookChoice === null) {
-      out(`  note     git pre-push hook: ${s.flags.dryRun ? "init will ask whether to add it" : "not asked without a terminal; run init with --hook pre-push to add it"}`);
-    } else {
-      if (!s.flags.dryRun) setHookChoice(record, s.repoRoot, hookChoice);
-      if (hookChoice === "pre-push") {
-        const more: Action[] = [];
-        if (runtimeActions.size === 0) {
-          const runtime = planRuntime(record, s.version, s.oqHome);
-          for (const a of runtime) runtimeActions.add(a);
-          // The runtime goes first: the hook calls it.
-          actions.unshift(...runtime);
-          more.push(...runtime);
-        }
-        const hook = await planGitHook(s.repoRoot, record, s.oqHome, false);
-        actions.push(hook.action);
-        more.push(hook.action);
-        printPlan(more, []);
-        if (more.some((a) => a.failed)) {
-          process.stderr.write("openqodex init: nothing was written; the launcher the git hook calls cannot be set up (see above)\n");
-          return EXIT_TOOL_FAILED;
-        }
-      } else out("  note     git pre-push hook: not added (add it later with npx openqodex hook install)");
-    }
-  }
-
-  // The team section question, in user scope inside a repo. Project scope
-  // already writes its own section into the same two files.
-  const teamActions: Action[] = [];
-  if (!s.flags.uninstall && !s.flags.project && s.repoRoot !== null) {
-    let write = knownTeamChoice(s, record);
-    if (write === null && !s.flags.dryRun && interactive()) write = await confirm(TEAM_QUESTION);
-    if (write !== null && !s.flags.dryRun) setTeamChoice(record, s.repoRoot, write);
-    if (write === false) out("  note     team review section: not added (run init --yes without --no-repo to add it)");
-    else {
-      // Without --yes and a terminal, init stops before writing anyway.
-      if (write === null && s.flags.dryRun) out("  note     team review section: init will ask whether to add it");
-      teamActions.push(...planTeam(s, record));
-      actions.push(...teamActions);
-      printPlan(teamActions, []);
-      if (teamActions.some((a) => a.apply)) {
-        out("The review section init writes into the repo's CLAUDE.md and AGENTS.md:");
-        for (const line of teamSection(s.version).split("\n")) out(`    ${line}`);
-      }
-    }
-  }
+  if (s.flags.uninstall) {
+    out("OpenQodex uninstall plan:");
+    printPlan(actions, notes);
+  } else printInstallPlan(s, mine, team, notes, targets, teamActions);
 
   if (actions.some((a) => a.failed)) failed = true;
   const work = actions.filter((a) => a.apply !== undefined);
@@ -345,14 +354,26 @@ async function runLocked(s: Setup): Promise<number> {
     if (!s.flags.uninstall) closingRepoLines(s, rootConfig);
     return failed ? EXIT_TOOL_FAILED : EXIT_OK;
   }
+  // One consent for the whole plan: --yes, else the answer in a terminal,
+  // else the agent this runs inside (its shell has no terminal, and the
+  // agent ran init on purpose), else none: exit 2 with the plan shown.
   if (!s.flags.yes) {
-    if (!interactive()) {
-      process.stderr.write("openqodex init: no terminal to confirm in; run again with --yes\n");
+    const host = hostAgent();
+    if (interactive()) {
+      if (!(await confirm(s.flags.uninstall ? "Remove these?" : WRITE_QUESTION))) {
+        out("Nothing was written.");
+        return EXIT_OK;
+      }
+    } else if (host !== null && !s.flags.uninstall) {
+      out(`Running inside ${HOST_NAMES[host]} with no terminal to ask in: writing the plan above.`);
+    } else {
+      process.stderr.write(
+        s.flags.uninstall
+          ? "openqodex init: no terminal to confirm in; run again with --yes\n"
+          : "openqodex init: no terminal to confirm in, and no agent to act for; nothing was written.\n" +
+              "Run it again with --yes to write the plan above. To change the plan: --hook none (no git pre-push hook), --no-repo (no team review section), --project (everything inside the repo, for the team to commit), --agent <name> (only that agent).\n",
+      );
       return EXIT_TOOL_FAILED;
-    }
-    if (!(await confirm(s.flags.uninstall ? "Remove these?" : "Write these files?"))) {
-      out("Nothing was written.");
-      return EXIT_OK;
     }
   }
 

@@ -10,9 +10,11 @@ Run it in your own terminal, not inside the agent:
 npx openqodex init
 ```
 
-`init` prints every file it will write and asks once. `--agent <name>` picks agents by hand: `claude-code`, `cursor`, `codex`, `cline` or `all`. `--dry-run` prints the plan and writes nothing.
+`init` prints every file it will write and asks once: "Write these files?". The plan lists each file under the one it is for: "For you, on this machine" (the agent files in your home folder, the launcher, the git hook of this clone) and "For the team, in this repo" (the files to commit). `--agent <name>` picks agents by hand: `claude-code`, `cursor`, `codex`, `cline` or `all`. `--dry-run` prints the plan and writes nothing. `--yes` writes it without asking.
 
-Inside a repository, `init` also asks: "Add the git pre-push hook, so every push from this repo is checked for a review, from an agent or by hand?" The default is yes. `--hook pre-push` or `--hook none` answers without asking, and `--yes` answers yes. The answer is recorded for that repository, so a second `init` does not ask again. The hook is described under "A git hook for every tool" below.
+Inside a repository, the plan also holds the git pre-push hook, so every push from this repo is checked for a review, from an agent or by hand. `--hook none` leaves it out, and `--hook pre-push` puts it back. The choice is recorded for that repository, so a later `init` keeps it. The hook is described under "A git hook for every tool" below.
+
+Without a terminal to ask in, `init` writes the plan when it runs inside Claude Code, Codex or Cursor (their shells set `CLAUDECODE`, `CODEX_THREAD_ID` or `CURSOR_AGENT`): the agent ran it on purpose. Anywhere else without a terminal, it prints the plan and the flags that change it, writes nothing and exits 2, until you add `--yes`.
 
 ## The instruction section
 
@@ -32,7 +34,7 @@ The tables below name the file for each agent. Cursor has no instruction file in
 
 ## The team section in the repository
 
-Inside a repository, `init` in user scope also asks: "Add a review section to this repo's CLAUDE.md and AGENTS.md, so teammates' agents review before they push too?" The default is yes, and `--yes` answers yes. `--no-repo` answers no. The answer is recorded for that repository and asked no more; `--yes` or `--no-repo` on a later `init` replaces it.
+Inside a repository, the plan of `init` in user scope also holds a review section for this repo's `CLAUDE.md` and `AGENTS.md`, so teammates' agents review before they push too. `--no-repo` leaves it out, and the choice is recorded for that repository; a later `init --yes` without `--no-repo` adds it again.
 
 The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository, and `init` creates a file that is not there. It is meant for a teammate who has installed nothing, so it names only the pinned `npx` command:
 

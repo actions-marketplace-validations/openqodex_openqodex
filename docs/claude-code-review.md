@@ -78,7 +78,7 @@ The gate blocks only when `.openqodex/config.yaml` sets `review.block_on_severit
 
 `OPENQODEX_SKIP=1` in the environment lets the push through and says so. It is your switch, not your agent's.
 
-`init` also offers a git pre-push hook, so every push from the repository is checked for a review, from an agent or by hand.
+Inside a repository, `init` also adds a git pre-push hook, so every push from the repository is checked for a review, from an agent or by hand. `--hook none` leaves it out.
 
 ## Review a pull request or a branch
 

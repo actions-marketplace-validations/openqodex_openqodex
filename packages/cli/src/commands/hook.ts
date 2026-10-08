@@ -433,9 +433,13 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
   }
   const script = gitHookScript(launcher);
   const current = readText(path);
+  // An entry already there keeps its place, so a run that changes nothing
+  // leaves the record byte for byte as it was.
   const remember = (): void => {
-    record.files = record.files.filter((f) => f.path !== path);
-    record.files.push({ path, sha256: sha256(script), usesLauncher: true });
+    const entry = { path, sha256: sha256(script), usesLauncher: true };
+    const at = record.files.findIndex((f) => f.path === path);
+    if (at === -1) record.files.push(entry);
+    else record.files = record.files.map((f, i) => (i === at ? entry : f)).filter((f, i) => i === at || f.path !== path);
   };
   if (current === script) {
     remember();

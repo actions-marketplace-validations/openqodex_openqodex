@@ -22,7 +22,7 @@ The Cursor and Cline rules: in user scope every `npx -y openqodex@{{VERSION}}` b
 
 ## The repo folder
 
-`repo/custom-instructions.md` becomes `.openqodex/custom-instructions.md`, and the default config text from the core package becomes `.openqodex/config.yaml` (not written while a root `.openqodex.yaml` exists). Both are created by `init` in a repo and by the first `scan` or `review`, never touched once they exist, and are meant to be committed. `init` also asks whether to add the git pre-push hook.
+`repo/custom-instructions.md` becomes `.openqodex/custom-instructions.md`, and the default config text from the core package becomes `.openqodex/config.yaml` (not written while a root `.openqodex.yaml` exists). Both are created by `init` in a repo and by the first `scan` or `review`, never touched once they exist, and are meant to be committed. `init` also adds the git pre-push hook unless `--hook none` says otherwise.
 
 The skill itself is not a template: `init` builds it from `skills/openqodex/SKILL.md` in the package, as "The skill in user scope" says.
 

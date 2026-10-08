@@ -119,9 +119,11 @@ Installs OpenQodex into your coding agents, then reviews. After the install, ins
 
 - `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
-- `--hook <pre-push|none>`: answer the pre-push hook question without asking. Without it, `init` asks once per repository and records the answer.
-- `--no-repo`: do not add the team review section to the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` asks once per repository (default yes) and records the answer; `--yes` or `--no-repo` on a later run replaces the recorded answer. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.
-- `--yes`, `-y`: do not ask. It adds the team review section, even where this repository answered no before (only `--no-repo` keeps it out), and adds the pre-push hook unless this repository answered no to it before or `--hook none` says so. Without a terminal, `init` needs this flag.
+- `--hook <pre-push|none>`: the git pre-push hook is in the plan by default; `--hook none` leaves it out and `--hook pre-push` puts it back. The choice is recorded per repository, and a later `init` without the flag keeps it.
+- `--no-repo`: leave the team review section out of the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` puts the section in the plan, unless this repository chose `--no-repo` before; the choice is recorded per repository. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.
+- `--yes`, `-y`: write the plan without asking. It also adds the team review section where this repository chose `--no-repo` before (only `--no-repo` keeps it out), and keeps a recorded `--hook none`.
+
+`init` prints the plan, every file under "For you, on this machine" or "For the team, in this repo", and asks one question: "Write these files?". Without a terminal it does not ask: inside Claude Code, Codex or Cursor (`CLAUDECODE`, `CODEX_THREAD_ID` or `CURSOR_AGENT` is set) it writes the plan; anywhere else it prints the plan and the flags that change it, writes nothing and exits 2 unless `--yes` is given.
 - `--no-review`: end after the install, with no review and no question.
 - `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
 - `--dry-run`: print the plan and write nothing.

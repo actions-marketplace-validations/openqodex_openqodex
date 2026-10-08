@@ -24,11 +24,11 @@ Run this in your own terminal, not inside the agent:
 npx openqodex init
 ```
 
-`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints each file it will write, then asks once. `--yes` skips the questions. `agents` lists every file for each agent.
+`init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints each file it will write, for you and for the team, then asks once: "Write these files?". `--yes` skips the question. `agents` lists every file for each agent.
 
 Inside a repository, `init` also:
 
-- asks whether to add the git pre-push hook, so every push from that repository is checked for a review, from an agent or by hand. The default is yes.
+- adds the git pre-push hook, so every push from that repository is checked for a review, from an agent or by hand. `--hook none` leaves it out.
 - adds a short section to each agent's instruction file, such as `~/.claude/CLAUDE.md` for Claude Code: when a feature or fix is done, review it with openqodex. It prints the section before writing it.
 - creates `.openqodex/config.yaml` and `.openqodex/custom-instructions.md`. Commit both. Write in `custom-instructions.md` what a reviewer of your repository must know: conventions, what never to flag, what always to check. The review brief carries it word for word.
 
