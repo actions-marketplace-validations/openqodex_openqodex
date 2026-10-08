@@ -1,0 +1,95 @@
+{
+  "guards": "links Rails request, controller, model and minitest tests to routes, classes and methods as static links, never coverage",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "tests",
+        "from": "spec/requests/posts_spec.rb",
+        "to": "registration:config/routes.rb:2",
+        "tier": "likely",
+        "category": "route-request"
+      },
+      {
+        "kind": "tests",
+        "from": "spec/requests/posts_spec.rb",
+        "to": "registration:config/routes.rb:2",
+        "tier": "likely",
+        "category": "route-name"
+      },
+      {
+        "kind": "tests",
+        "from": "spec/controllers/posts_controller_spec.rb",
+        "to": "registration:config/routes.rb:2",
+        "tier": "likely",
+        "category": "route-request"
+      },
+      {
+        "kind": "tests",
+        "from": "spec/controllers/posts_controller_spec.rb",
+        "to": "app/controllers/posts_controller.rb#PostsController",
+        "tier": "possible",
+        "category": "subject"
+      },
+      {
+        "kind": "tests",
+        "from": "spec/models/post_spec.rb",
+        "to": "app/models/post.rb#Post",
+        "tier": "possible",
+        "category": "subject"
+      },
+      {
+        "kind": "tests",
+        "from": "spec/models/post_spec.rb",
+        "to": "app/models/post.rb#Post.title_length",
+        "tier": "likely",
+        "category": "direct-call"
+      },
+      {
+        "kind": "tests",
+        "from": "test/integration/search_test.rb#SearchTest",
+        "to": "registration:config/routes.rb:3",
+        "tier": "likely",
+        "category": "route-name"
+      },
+      {
+        "kind": "tests",
+        "from": "test/controllers/posts_controller_test.rb#PostsControllerTest",
+        "to": "registration:config/routes.rb:2",
+        "tier": "likely",
+        "category": "route-request"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "tests",
+        "from": "app/services/client.rb#Client.fetch"
+      }
+    ],
+    "roles": [
+      {
+        "target": "spec/requests/posts_spec.rb",
+        "role": "test"
+      },
+      {
+        "target": "test/integration/search_test.rb",
+        "role": "test"
+      },
+      {
+        "target": "test/integration/search_test.rb#SearchTest",
+        "role": "test"
+      }
+    ],
+    "brief": [
+      "| `posts_spec.rb` | `spec/requests/posts_spec.rb:9` | requests through route `GET /posts/:id` | `PostsController.show` | likely: The test requests a literal path that matches this route",
+      "| `PostsControllerTest` | `test/controllers/posts_controller_test.rb:3` | requests through route `GET /posts/:id` | `PostsController.show` | likely: A controller test calls show of PostsController by name",
+      "| `posts_controller_spec.rb` | `spec/controllers/posts_controller_spec.rb:3` | names the class of | `PostsController.show` | possible:",
+      "(static links, not coverage)"
+    ],
+    "notBrief": [
+      "covers",
+      "coverage:"
+    ]
+  }
+}

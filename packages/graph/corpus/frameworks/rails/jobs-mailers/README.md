@@ -1,0 +1,3 @@
+# Rails: jobs, workers and mailers and the code that enqueues them
+
+Guards against losing who enqueues a job or sends a mail. `PublishJob` (an ActiveJob class under app/jobs) and `HardWorker` (a Sidekiq worker under app/workers) have the job role, and each `perform_later`, `set(...).perform_later` and `perform_async` site links to the job's `perform` method; `UserMailer.welcome(...).deliver_later` and `UserMailer.with(...).welcome.deliver_now` link to `UserMailer#welcome`, which renders both its HTML and text views. `ApplicationJob` is an abstract base, not a job; `Notifier.perform_later` is a class method of a class that is not a job and is never linked; `MissingJob.perform_later` names a class no file defines, which is a gap.

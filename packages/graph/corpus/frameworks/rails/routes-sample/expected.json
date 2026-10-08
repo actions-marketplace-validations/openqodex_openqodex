@@ -1,0 +1,154 @@
+{
+  "guards": "lists the Rails route a changed controller action handles, its implicit view, its before_action and the request spec that requests it",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/",
+        "name": "root",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/posts_controller.rb#PostsController.index",
+        "status": "bound",
+        "mounted": true
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/posts",
+        "name": "posts",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/posts_controller.rb#PostsController.index",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/posts/new",
+        "name": "new_post",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/posts_controller.rb#PostsController.new",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/posts/:id/edit",
+        "name": "edit_post",
+        "methods": [
+          "GET"
+        ],
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/posts/:id",
+        "name": "post",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/posts_controller.rb#PostsController.show",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:4",
+        "pattern": "/about",
+        "name": "about",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/pages_controller.rb#PagesController.about",
+        "status": "bound"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "handles",
+        "from": "registration:config/routes.rb:3",
+        "to": "app/controllers/posts_controller.rb#PostsController.show",
+        "tier": "likely"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:config/routes.rb:3",
+        "to": "app/controllers/posts_controller.rb#PostsController.destroy",
+        "tier": "likely"
+      },
+      {
+        "kind": "applies_middleware",
+        "from": "app/controllers/posts_controller.rb#PostsController",
+        "to": "app/controllers/posts_controller.rb#PostsController.set_post",
+        "tier": "certain"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.show",
+        "to": "template:app/views/posts/show.html.erb",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/pages_controller.rb#PagesController.about",
+        "to": "template:app/views/pages/about.html.erb",
+        "tier": "likely"
+      },
+      {
+        "kind": "tests",
+        "from": "spec/requests/posts_spec.rb",
+        "to": "registration:config/routes.rb:3",
+        "tier": "likely",
+        "category": "route-request"
+      },
+      {
+        "kind": "maps_to",
+        "from": "app/models/post.rb#Post",
+        "to": "table:posts",
+        "tier": "likely"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.create"
+      },
+      {
+        "kind": "handles",
+        "to": "app/controllers/posts_controller.rb#PostsController.set_post"
+      }
+    ],
+    "roles": [
+      {
+        "target": "app/controllers/posts_controller.rb#PostsController.show",
+        "role": "route_handler",
+        "detail": "action"
+      },
+      {
+        "target": "config/routes.rb",
+        "role": "route_table"
+      },
+      {
+        "target": "spec/requests/posts_spec.rb",
+        "role": "test"
+      },
+      {
+        "target": "app/models/post.rb#Post",
+        "role": "model"
+      }
+    ],
+    "brief": [
+      "Framework entries this change reaches.",
+      "| `GET /posts/:id` | `post` | `config/routes.rb:3` | `posts#show` | handles `PostsController.show` (likely: Found by the controller path convention",
+      "| `PostsController.show` | `app/views/posts/show.html.erb` | likely: Rails renders app/views/posts/show when the action does not render another template. |",
+      "| `posts_spec.rb` | `spec/requests/posts_spec.rb:5` | requests through route `GET /posts/:id` | `PostsController.show` | likely: The test requests a literal path that matches this route",
+      "(static links, not coverage)"
+    ],
+    "notBrief": [
+      "covers",
+      "coverage:"
+    ]
+  }
+}

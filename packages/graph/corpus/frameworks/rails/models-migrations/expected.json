@@ -1,0 +1,106 @@
+{
+  "guards": "links Rails models to their associations, tables and the migrations that change them, and lists them for a model or migration change",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "uses_type",
+        "from": "app/models/post.rb#Post",
+        "to": "app/models/user.rb#User",
+        "tier": "likely"
+      },
+      {
+        "kind": "uses_type",
+        "from": "app/models/post.rb#Post",
+        "to": "app/models/comment.rb#Comment",
+        "tier": "likely"
+      },
+      {
+        "kind": "uses_type",
+        "from": "app/models/post.rb#Post",
+        "to": "app/models/tag.rb#Tag",
+        "tier": "likely"
+      },
+      {
+        "kind": "uses_type",
+        "from": "app/models/comment.rb#Comment",
+        "to": "app/models/post.rb#Post",
+        "tier": "likely"
+      },
+      {
+        "kind": "maps_to",
+        "from": "app/models/post.rb#Post",
+        "to": "table:posts",
+        "tier": "likely"
+      },
+      {
+        "kind": "maps_to",
+        "from": "app/models/user.rb#User",
+        "to": "table:members",
+        "tier": "certain"
+      },
+      {
+        "kind": "maps_to",
+        "from": "app/models/admin.rb#Admin",
+        "to": "table:members",
+        "tier": "likely"
+      },
+      {
+        "kind": "maps_to",
+        "from": "app/models/person.rb#Person",
+        "to": "table:people",
+        "tier": "likely"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "db/migrate/20240101000000_create_posts.rb",
+        "to": "table:posts",
+        "tier": "certain"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "db/migrate/20240101000000_create_posts.rb",
+        "to": "app/models/post.rb#Post",
+        "tier": "likely"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "db/migrate/20240102000000_create_members.rb",
+        "to": "app/models/user.rb#User",
+        "tier": "certain"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "db/migrate/20240104000000_create_posts_tags.rb",
+        "to": "table:posts_tags",
+        "tier": "certain"
+      }
+    ],
+    "roles": [
+      {
+        "target": "app/models/post.rb#Post",
+        "role": "model"
+      },
+      {
+        "target": "app/models/admin.rb#Admin",
+        "role": "model"
+      },
+      {
+        "target": "db/migrate/20240101000000_create_posts.rb",
+        "role": "migration"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "app/models/post.rb",
+        "line": 5,
+        "cause": "miss"
+      }
+    ],
+    "brief": [
+      "| `Post` | `db/migrate/20240101000000_create_posts.rb` (`create_table posts`), `db/migrate/20240103000000_add_body_to_posts.rb` (`add_column posts.body`) |",
+      "| `db/migrate/20240103000000_add_body_to_posts.rb` | `posts`, `Post` |"
+    ]
+  }
+}

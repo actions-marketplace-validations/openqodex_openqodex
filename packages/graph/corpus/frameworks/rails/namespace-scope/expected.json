@@ -1,0 +1,70 @@
+{
+  "guards": "composes Rails namespace, scope and controller blocks into paths, route names and controller modules",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/admin/users",
+        "name": "admin_users",
+        "handler": "app/controllers/admin/users_controller.rb#Admin::UsersController.index"
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/admin/users/:id",
+        "name": "admin_user",
+        "handler": "app/controllers/admin/users_controller.rb#Admin::UsersController.show"
+      },
+      {
+        "site": "config/routes.rb:4",
+        "pattern": "/admin",
+        "name": "admin_root",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/admin/dashboard_controller.rb#Admin::DashboardController.index"
+      },
+      {
+        "site": "config/routes.rb:5",
+        "pattern": "/admin/stats",
+        "name": "admin_stats",
+        "handler": "app/controllers/admin/dashboard_controller.rb#Admin::DashboardController.stats"
+      },
+      {
+        "site": "config/routes.rb:8",
+        "pattern": "/v1/status",
+        "name": "v1_status",
+        "handler": "app/controllers/api/health_controller.rb#API::HealthController.show",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:9",
+        "pattern": "/v1/items",
+        "name": "v1_items",
+        "handler": "app/controllers/api/items_controller.rb#Api::ItemsController.index"
+      },
+      {
+        "site": "config/routes.rb:12",
+        "pattern": "/help",
+        "name": "help",
+        "handler": "app/controllers/public/help_controller.rb#Public::HelpController.index"
+      },
+      {
+        "site": "config/routes.rb:15",
+        "pattern": "/about",
+        "name": "about",
+        "handler": "app/controllers/pages_controller.rb#PagesController.about"
+      },
+      {
+        "site": "config/routes.rb:17",
+        "pattern": "/legal/terms",
+        "name": "legal_terms",
+        "handler": "app/controllers/legal_controller.rb#LegalController.terms"
+      }
+    ],
+    "brief": [
+      "| `GET /admin/users/:id` | `admin_user` | `config/routes.rb:3` | `admin/users#show` | handles `Admin::UsersController.show` (likely: Found by the controller path convention"
+    ]
+  }
+}

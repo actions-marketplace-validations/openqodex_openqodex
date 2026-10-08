@@ -1,0 +1,3 @@
+# Rails: namespace, scope and controller blocks compose paths, names and modules
+
+Guards against routes that lose their prefix, their name prefix or their controller module. `namespace :admin` adds `/admin`, the `admin_` name prefix and the `Admin::` module; `scope "/v1", module: "api", as: "v1"` adds each of the three on its own; `scope module:` adds only a module; `controller :pages` names the controller for `get "about"`; `get "legal/terms"` is Rails' shorthand for `legal#terms`. Each handler is found under app/controllers in the module's folder, including `API::HealthController`, whose name differs from the default inflection in case only.

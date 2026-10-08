@@ -1,0 +1,74 @@
+{
+  "guards": "links Rails actions to the views they render explicitly and implicitly, with partials, and keeps a missing view as a gap",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.show",
+        "to": "template:app/views/posts/detail.html.erb",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.index",
+        "to": "template:app/views/posts/index.html.erb",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.index",
+        "to": "template:app/views/posts/index.json.jbuilder",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.edit",
+        "to": "template:app/views/posts/form_page.html.erb"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.preview",
+        "to": "template:app/views/posts/_card.html.erb"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.preview",
+        "to": "template:app/views/shared/_footer.html.erb"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.legacy",
+        "to": "template:missing/template"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.summary",
+        "to": "template:app/views/reports/summary.html.erb"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.show",
+        "to": "template:app/views/posts/show.html.erb"
+      },
+      {
+        "kind": "renders",
+        "to": "template:app/views/admin/posts/detail.html.erb"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "app/controllers/posts_controller.rb",
+        "line": 20,
+        "cause": "miss"
+      }
+    ],
+    "brief": [
+      "| `PostsController.show` | `app/views/posts/detail.html.erb` | likely: The view is found by the app/views folder convention",
+      "| `app/views/posts/detail.html.erb` | `PostsController.show` | `app/controllers/posts_controller.rb:"
+    ]
+  }
+}

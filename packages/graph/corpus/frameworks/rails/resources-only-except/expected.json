@@ -1,0 +1,142 @@
+{
+  "guards": "expands resources and resource from the declaration and its only and except options, with nested, member, collection and singular routes and Rails' names",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/articles",
+        "name": "articles",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/articles_controller.rb#ArticlesController.index"
+      },
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/articles/:id",
+        "name": "article",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/articles_controller.rb#ArticlesController.show"
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/articles/:article_id/comments",
+        "name": "article_comments",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/comments_controller.rb#CommentsController.index"
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/articles/:article_id/comments/new",
+        "name": "new_article_comment",
+        "methods": [
+          "GET"
+        ]
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/articles/:article_id/comments/:id",
+        "name": "article_comment",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/comments_controller.rb#CommentsController.show"
+      },
+      {
+        "site": "config/routes.rb:5",
+        "pattern": "/articles/:id/publish",
+        "name": "publish_article",
+        "methods": [
+          "POST"
+        ],
+        "handler": "app/controllers/articles_controller.rb#ArticlesController.publish",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:8",
+        "pattern": "/articles/search",
+        "name": "search_articles",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/articles_controller.rb#ArticlesController.search"
+      },
+      {
+        "site": "config/routes.rb:10",
+        "pattern": "/articles/:id/preview",
+        "name": "preview_article",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/articles_controller.rb#ArticlesController.preview"
+      },
+      {
+        "site": "config/routes.rb:12",
+        "pattern": "/profile",
+        "name": "profile",
+        "methods": [
+          "POST"
+        ],
+        "handler": "app/controllers/profiles_controller.rb#ProfilesController.create"
+      },
+      {
+        "site": "config/routes.rb:12",
+        "pattern": "/profile/new",
+        "name": "new_profile",
+        "methods": [
+          "GET"
+        ]
+      },
+      {
+        "site": "config/routes.rb:12",
+        "pattern": "/profile/edit",
+        "name": "edit_profile",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/profiles_controller.rb#ProfilesController.edit"
+      },
+      {
+        "site": "config/routes.rb:13",
+        "pattern": "/pictures/:id",
+        "name": "image",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/photos_controller.rb#PhotosController.show"
+      },
+      {
+        "site": "config/routes.rb:15",
+        "pattern": "/people/:id",
+        "name": "person",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/people_controller.rb#PeopleController.show"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "to": "app/controllers/articles_controller.rb#ArticlesController.new"
+      },
+      {
+        "kind": "handles",
+        "to": "app/controllers/profiles_controller.rb#ProfilesController.destroy"
+      },
+      {
+        "kind": "handles",
+        "to": "app/controllers/tags_controller.rb#TagsController.index"
+      }
+    ],
+    "brief": [
+      "| `POST /articles/:id/publish` | `publish_article` | `config/routes.rb:5` | `articles#publish` | handles `ArticlesController.publish` (likely: Found by the controller path convention"
+    ]
+  }
+}
