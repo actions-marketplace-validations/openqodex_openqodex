@@ -584,10 +584,14 @@ export async function run(args: string[]): Promise<number> {
     // inside the commit boundary, so no update switches versions meanwhile.
     if (flags.dryRun) return (await runLocked(setup)).code;
     const outcome = await withBoundary(setup.oqHome, { wait: 60_000 }, async () => {
-      removeOldLocks(setup.oqHome);
       const outcome = await runLocked(setup);
-      if (!flags.uninstall) pruneRuntimes(setup.oqHome);
-      pruneHomeReceipts(setup.oqHome);
+      // The housekeeping in ~/.openqodex runs only on a run the developer
+      // agreed to: never on a declined, stopped or unconfirmed one.
+      if (outcome.ended === "written" || outcome.ended === "unchanged" || outcome.ended === "removed") {
+        removeOldLocks(setup.oqHome);
+        if (!flags.uninstall) pruneRuntimes(setup.oqHome);
+        pruneHomeReceipts(setup.oqHome);
+      }
       return outcome;
     });
     // After the boundary is released, so the review holds no install lock.

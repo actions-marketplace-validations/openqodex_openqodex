@@ -26,13 +26,15 @@
 // 12. The first review runs with downloads off while init's downloads are
 //     still going, so it has the fewest scanners of any review; or it waits
 //     on them without a bound; or it does not name the ones still pending.
+// 14. A declined install still runs init's cleanup: old locks removed before
+//     the question, old runtimes and receipts pruned after the no.
 // 13. A run with no terminal, no agent marker and no --yes has no consent,
 //     yet a run with no file to write still saves changed choices to the
 //     record and starts the review.
 // 11. init says it is set up when no reviewer can start, then the first
 //     review fails; or it ends without saying how the first review ended
 //     (finished, incomplete, skipped, unavailable) and which reviewer was found.
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -289,6 +291,30 @@ describe("10. a declined install", () => {
     expect(r.stdout).toContain("Nothing was written.");
     expect(r.stdout).not.toContain("Reviewing your change now");
     expect(r.stdout).not.toContain("Full review unavailable");
+    expect(snapshot(s)).toEqual(before);
+  });
+
+  it("14. on a home that holds an install, removes no lock, old runtime or old receipt", () => {
+    const s = sandbox({ "README.md": "hello\n", ...NO_DOWNLOADS });
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
+    // What init's cleanup removes when it runs: the locks of versions before
+    // the commit boundary, a runtime older than 7 days, a receipt older than 30.
+    for (const name of ["install.lock", "update.lock", "update.json.lock"]) writeFileSync(join(s.oqHome, name), "old\n");
+    const oldRuntime = join(s.oqHome, "runtime", "0.0.1");
+    mkdirSync(oldRuntime, { recursive: true });
+    writeFileSync(join(oldRuntime, "package.json"), JSON.stringify({ name: "openqodex", version: "0.0.1" }));
+    const oldReceipt = join(s.oqHome, "receipts", "some-repo", "old.json");
+    mkdirSync(join(oldReceipt, ".."), { recursive: true });
+    writeFileSync(oldReceipt, "{}\n");
+    const longAgo = new Date(Date.now() - 60 * 24 * 3600_000);
+    utimesSync(oldRuntime, longAgo, longAgo);
+    utimesSync(oldReceipt, longAgo, longAgo);
+    writeFileSync(join(s.repo, "notes.txt"), "one line\n");
+    const before = snapshot(s);
+    // A second agent gives the plan something to write, so it asks.
+    const r = inTerminal(s, ["init", "--agent", "claude-code", "--agent", "codex"], [["Write these files?", "n"]], { review: true });
+    expect(r.status, r.stdout).toBe(0);
+    expect(r.stdout).toContain("Nothing was written.");
     expect(snapshot(s)).toEqual(before);
   });
 });
