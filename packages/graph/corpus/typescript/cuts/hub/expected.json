@@ -1,0 +1,239 @@
+{
+  "guards": "discloses a hub cut with 25 of 45 callers omitted, and keeps all 45 sites in the graph",
+  "callers": [
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:4",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:8",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:12",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:16",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:20",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:24",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:28",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:32",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:36",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:40",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:44",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:48",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:52",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:56",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/a.ts:60",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:4",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:8",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:12",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:16",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:20",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:24",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:28",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:32",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:36",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:40",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:44",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:48",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:52",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:56",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/b.ts:60",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:4",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:8",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:12",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:16",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:20",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:24",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:28",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:32",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:36",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:40",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:44",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:48",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:52",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:56",
+      "tier": "certain"
+    },
+    {
+      "to": "src/log.ts#logEvent",
+      "site": "src/c.ts:60",
+      "tier": "certain"
+    }
+  ],
+  "cuts": [
+    {
+      "by": "hub",
+      "omitted": 25
+    }
+  ],
+  "floor": {
+    "src/log.ts#logEvent": true
+  }
+}

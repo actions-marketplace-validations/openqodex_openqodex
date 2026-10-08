@@ -1,0 +1,17 @@
+{
+  "guards": "binds a bare Ruby call to the one definition of its name as likely with a note, never certain",
+  "callers": [
+    {
+      "to": "lib/money_format.rb#format_cents",
+      "site": "app/checkout.rb:3",
+      "tier": "likely",
+      "note": "autoload"
+    }
+  ],
+  "notCertain": [
+    {
+      "to": "lib/money_format.rb#format_cents",
+      "site": "app/checkout.rb:3"
+    }
+  ]
+}

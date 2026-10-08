@@ -1,0 +1,16 @@
+{
+  "guards": "binds a call after a block to the outer function and never binds the call inside the block to it",
+  "callers": [
+    {
+      "to": "src/format.ts#label@1",
+      "site": "src/format.ts:10",
+      "tier": "certain"
+    }
+  ],
+  "notCertain": [
+    {
+      "to": "src/format.ts#label@1",
+      "site": "src/format.ts:8"
+    }
+  ]
+}

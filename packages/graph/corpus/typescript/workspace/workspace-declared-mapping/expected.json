@@ -1,0 +1,13 @@
+{
+  "guards": "binds a workspace package import as certain when the importer's tsconfig paths map the name to source",
+  "callers": [
+    {
+      "to": "packages/core/src/index.ts#greet",
+      "site": "packages/app/src/main.ts:4",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "packages/core/src/index.ts#greet": false
+  }
+}

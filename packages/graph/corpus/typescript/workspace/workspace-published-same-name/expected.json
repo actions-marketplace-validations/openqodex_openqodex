@@ -1,0 +1,19 @@
+{
+  "guards": "keeps a call into a published package of the same name as a workspace package external, never a workspace caller or a gap",
+  "callers": [],
+  "notCertain": [
+    {
+      "to": "packages/core/src/index.ts#greet",
+      "site": "packages/app/src/main.ts:4"
+    }
+  ],
+  "external": {
+    "min": 1,
+    "sites": [
+      "packages/app/src/main.ts:4"
+    ]
+  },
+  "floor": {
+    "packages/core/src/index.ts#greet": false
+  }
+}

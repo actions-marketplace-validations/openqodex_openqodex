@@ -1,0 +1,14 @@
+{
+  "guards": "reports a package.json entry change as an export change with the importing package's call broken",
+  "exports": [
+    {
+      "file": "packages/core/package.json",
+      "name": "boot",
+      "change": "removed",
+      "consumers": [
+        "packages/app/src/main.ts:1:broken",
+        "packages/app/src/main.ts:4:broken"
+      ]
+    }
+  ]
+}

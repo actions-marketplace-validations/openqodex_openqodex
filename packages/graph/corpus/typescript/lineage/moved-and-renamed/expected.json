@@ -1,0 +1,20 @@
+{
+  "guards": "reports a function moved and renamed with the same body as a move, and never lists its updated caller as broken",
+  "moved": [
+    {
+      "from": "src/legacy.ts#oldFormat",
+      "to": "src/money.ts#formatMoney",
+      "renamed": true
+    }
+  ],
+  "callers": [
+    {
+      "to": "src/money.ts#formatMoney",
+      "site": "src/invoice.ts:4",
+      "tier": "certain"
+    }
+  ],
+  "notBroken": [
+    "src/invoice.ts:4"
+  ]
+}
