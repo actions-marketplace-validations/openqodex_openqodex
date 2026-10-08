@@ -114,8 +114,16 @@ function assignmentOf(stmt: Node): Node | null {
   return first && (first.type === "assignment" || first.type === "augmented_assignment") ? first : null;
 }
 
+// Words a walk needs in the file's text before it runs: a file without them
+// has nothing that walk records, so the tree is not walked for it. An
+// aliased import still names the original in its import line.
+const CLASS_WORDS = /\bclass\s/;
+const DECORATOR_WORDS = /@[^\n]*(receiver|register|tag|filter|\bon\b)|receiver/;
+const CALL_WORDS = /render|get_template|select_template|TemplateResponse|\.connect\(|\.register\(|reverse|resolve_url|DJANGO_SETTINGS_MODULE|getattr\(|client\./;
+
 export function djangoFacts(root: Node): DjangoFact[] {
   const out: DjangoFact[] = [];
+  const text = root.text;
   const statements = topStatements(root);
   const aliases = aliasesOf(statements);
   // A dotted name with its head read through the file's imports.
@@ -220,8 +228,20 @@ export function djangoFacts(root: Node): DjangoFact[] {
     }
   }
 
+  // One walk of the tree for every node kind the reads below need: each
+  // walk of a large file costs as much as the next, whatever it finds.
+  const kinds: string[] = [];
+  if (CLASS_WORDS.test(text)) kinds.push("class_definition");
+  if (text.includes("@") && DECORATOR_WORDS.test(text)) kinds.push("decorated_definition");
+  if (CALL_WORDS.test(text)) kinds.push("call");
+  const settingsRead = /settings\.[A-Z]/.test(text);
+  if (settingsRead) kinds.push("attribute");
+  const found = new Map<string, Node[]>(kinds.map((k) => [k, []]));
+  if (kinds.length > 0) for (const n of root.descendantsOfType(kinds)) found.get(n.type)?.push(n);
+  const nodes = (kind: string): Node[] => found.get(kind) ?? [];
+
   // ---------- class bodies ----------
-  for (const cls of root.descendantsOfType("class_definition")) {
+  for (const cls of nodes("class_definition")) {
     const name = cls.childForFieldName("name")?.text;
     const body = cls.childForFieldName("body");
     if (!name || !body) continue;
@@ -298,7 +318,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
   }
 
   // ---------- decorated functions: template tags and signal receivers ----------
-  for (const dec of root.descendantsOfType("decorated_definition")) {
+  for (const dec of nodes("decorated_definition")) {
     const def = dec.childForFieldName("definition");
     if (def?.type !== "function_definition") continue;
     const fnName = def.childForFieldName("name")?.text;
@@ -336,8 +356,16 @@ export function djangoFacts(root: Node): DjangoFact[] {
   }
 
   // ---------- calls anywhere ----------
-  for (const call of root.descendantsOfType("call")) {
-    const fn = calleeOf(call);
+  // The last name of a callee this loop reads, and the local names the
+  // file's imports bind to one of them.
+  const wanted = new Set<string>([...Object.keys(RENDER_FUNCTIONS), "connect", "register", "reverse", "reverse_lazy", "resolve_url", "setdefault", "getattr", ...HTTP_METHODS]);
+  for (const [local, to] of aliases) if (wanted.has(to[to.length - 1] as string)) wanted.add(local);
+  for (const call of nodes("call")) {
+    // The callee's last name first, without building the dotted name of every call.
+    const callee = call.childForFieldName("function");
+    const name = callee?.type === "identifier" ? callee.text : callee?.type === "attribute" ? callee.childForFieldName("attribute")?.text : undefined;
+    if (name === undefined || !wanted.has(name)) continue;
+    const fn = dotted(callee);
     const tail = fn && fn.length === 1 ? tailOf(fn) : last(fn);
     if (!fn || !tail) continue;
     const at = lineOf(call);
@@ -396,8 +424,8 @@ export function djangoFacts(root: Node): DjangoFact[] {
   }
 
   // ---------- settings reads ----------
-  if (/settings\.[A-Z]/.test(root.text)) {
-    for (const attr of root.descendantsOfType("attribute")) {
+  if (settingsRead) {
+    for (const attr of nodes("attribute")) {
       const key = attr.childForFieldName("attribute")?.text;
       if (!key || !SETTING.test(key)) continue;
       const base = dotted(attr.childForFieldName("object"));
