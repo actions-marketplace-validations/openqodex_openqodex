@@ -127,7 +127,8 @@ const shorthand = (s: string): { controller: string; action: string } | null => 
   return { controller: t.slice(0, cut), action: t.slice(cut + 1).split("-").join("_") };
 };
 const text = (l: Lit | undefined): string | null => (l && (l.t === "str" || l.t === "sym") ? l.v : null);
-const isDyn = (l: Lit | undefined) => l !== undefined && l.t !== "str" && l.t !== "sym" && l.t !== "nil" && l.t !== "bool";
+// A value the plugin cannot read: computed, a constant or a call.
+const isDyn = (l: Lit | undefined) => l !== undefined && (l.t === "dyn" || l.t === "const" || l.t === "call");
 const listOf = (l: Lit | undefined): string[] | null => (l === undefined ? null : l.t === "list" ? l.v : l.t === "str" || l.t === "sym" ? [l.v] : null);
 
 export type Expansion = { drafts: Draft[]; gaps: RouteGap[]; tables: { file: string; site: Site; app: App }[] };

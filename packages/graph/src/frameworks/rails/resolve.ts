@@ -47,11 +47,15 @@ const SIDEKIQ = new Set(["Sidekiq::Job", "Sidekiq::Worker"]);
 const CONTROLLER_TEST = new Set(["ActionController::TestCase"]);
 
 const strip = (n: string) => (n.startsWith("::") ? n.slice(2) : n);
-// A note as one sentence: a capital first letter and a closing period, so
-// notes the layer joins read as separate sentences.
+// A note as one sentence with a closing period, so notes the layer joins
+// read as separate sentences. A plain first word is capitalised; a first
+// word quoted from code (`has_one`, `posts#show`) is kept as written.
 const sentence = (note: string) => {
   const t = note.trim();
-  const s = t.charAt(0).toUpperCase() + t.slice(1);
+  const first = t.split(" ", 1)[0] ?? "";
+  let plain = first.length > 0;
+  for (const c of first) if (c < "a" || c > "z") plain = false;
+  const s = plain ? t.charAt(0).toUpperCase() + t.slice(1) : t;
   return s.endsWith(".") ? s : `${s}.`;
 };
 const isTestBase = (base: string | null) => base !== null && (base.endsWith("TestCase") || base.endsWith("IntegrationTest") || strip(base) === "Minitest::Test");
