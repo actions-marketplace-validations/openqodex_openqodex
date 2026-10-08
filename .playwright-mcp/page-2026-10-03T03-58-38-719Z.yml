@@ -1,0 +1,29 @@
+- generic [active] [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - generic [ref=f2e3]:
+      - generic [ref=f2e4]: ">"
+      - text: infra
+    - generic [ref=f2e5]:
+      - generic [ref=f2e6]: ">"
+      - text: worker
+    - generic [ref=f2e7]:
+      - generic [ref=f2e8]: ">"
+      - text: checkout-api
+      - generic [ref=f2e9]: ×
+    - generic [ref=f2e10]:
+      - generic [ref=f2e11]: ">"
+      - text: storefront
+  - generic [ref=f2e12]: "✻ Welcome to Claude Code! Claude Code v2.1.288 · Opus 5.5 · Claude Max /help for help, /status for your current setup cwd: ~/code/checkout-api"
+  - generic [ref=f2e15]:
+    - generic [ref=f2e16]: checkout-api
+    - generic [ref=f2e18]: ❯
+    - generic [ref=f2e21]:
+      - generic [ref=f2e22]: ▶▶ auto mode on
+      - generic [ref=f2e23]: (shift+tab to cycle)
+  - generic:
+    - generic:
+      - generic: openqodex
+      - generic: Code review inside your agent, before every push.
+      - generic:
+        - code: npx openqodex init
+  - generic [ref=f2e25]: "Space: next sentence (the demo starts after the intro) · P pauses · Shift+Space hurries · Esc restarts"
