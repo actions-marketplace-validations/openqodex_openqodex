@@ -194,8 +194,20 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const decided = args.mode ? { mode: args.mode, streak: 0 } : decideMode(meta, predicted);
   const config = { budgetMs, maxFiles, maxFileBytes, maxHeapMb: Math.round(maxHeap / 1024 / 1024) };
   const versions = { model: MODEL_VERSION, extractor: EXTRACTOR_VERSION, resolver: RESOLVER_VERSION, policy: POLICY_VERSION };
-  // The index format is part of what a kept build is the same as.
-  const digest = inventoryDigest(inv.entries, { versions, index: INDEX_FORMAT, only: args.only ?? null });
+  // What a kept index was resolved from, besides the source files: the
+  // graph's versions and index format, the files the project model reads
+  // (tsconfig chains, manifests and their exports, workspace files,
+  // lockfiles), the files left out and why, and the size cap that decides
+  // which are left out. The same digest means the same graph.
+  const digest = inventoryDigest(inv.entries, {
+    versions,
+    index: INDEX_FORMAT,
+    only: args.only ?? null,
+    maxFileBytes,
+    inputs: inv.inputs,
+    tooBig: [...inv.tooBig].sort(),
+    unreadable: [...inv.unreadable].sort(),
+  });
   stage("predict");
 
   // Retained: the same capture's index, when a complete one is kept.
