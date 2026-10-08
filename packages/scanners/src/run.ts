@@ -40,6 +40,7 @@ import type {
   ScannerSource,
   StaticFinding,
 } from "@openqodex/core";
+import { sameProblemClass } from "./same-problem.js";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import { repoFacts, type RepoFacts } from "./detect.js";
 import { DISABLED_REASON, selectScanners, type ScannerChoice } from "./select.js";
@@ -621,6 +622,8 @@ function severityRank(s: ScannerSeverity): number {
 // of its own, so a scanner's finding on the same line never swallows it.
 export function ruleClassFor(f: StaticFinding): string {
   if (isOwnCandidate(f)) return `${f.source}:${f.ruleId}`;
+  const same = sameProblemClass(f);
+  if (same !== null) return same;
   if (f.source === "gitleaks") return "secret";
   const id = f.ruleId.toLowerCase();
   if (/secret|credential|api[-_]?key|access[-_]?key|password|token/.test(id)) {
@@ -649,17 +652,44 @@ export function ruleClassFor(f: StaticFinding): string {
 // rule message is the more descriptive). Two different rules from one
 // scanner on one span are two problems and both stay; only an exact repeat
 // (same scanner, same rule) collapses.
+// A class from same-problem.ts groups by overlap instead: its rules come from
+// scanners that each report their own span for the one problem, so findings
+// of the class in one file whose spans overlap, directly or through a chain,
+// form one group.
 // Exported for unit tests.
 export function dedupByRuleClass(findings: StaticFinding[]): StaticFinding[] {
   const groups = new Map<string, StaticFinding[]>();
+  const spread = new Map<string, StaticFinding[]>();
   for (const f of findings) {
-    const key = `${f.filePath}::${f.lineStart}::${f.lineEnd}::${ruleClassFor(f)}`;
-    const bucket = groups.get(key);
+    const cls = ruleClassFor(f);
+    const target = cls.startsWith("same:") ? spread : groups;
+    const key = cls.startsWith("same:") ? `${f.filePath}::${cls}` : `${f.filePath}::${f.lineStart}::${f.lineEnd}::${cls}`;
+    const bucket = target.get(key);
     if (bucket) bucket.push(f);
-    else groups.set(key, [f]);
+    else target.set(key, [f]);
+  }
+  const buckets = [...groups.values()];
+  const order = new Map(findings.map((f, i) => [f, i]));
+  const inOrder = (list: StaticFinding[]) => list.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  for (const bucket of spread.values()) {
+    // Sorted by first line (stable, so input order holds within a line), then
+    // cut wherever a span starts after every span before it has ended.
+    const sorted = [...bucket].sort((a, b) => a.lineStart - b.lineStart);
+    let current: StaticFinding[] = [];
+    let end = -Infinity;
+    for (const f of sorted) {
+      if (current.length > 0 && f.lineStart > end) {
+        buckets.push(inOrder(current));
+        current = [];
+        end = -Infinity;
+      }
+      current.push(f);
+      end = Math.max(end, f.lineEnd);
+    }
+    if (current.length > 0) buckets.push(inOrder(current));
   }
   const emitted = new Set<StaticFinding>();
-  for (const bucket of groups.values()) {
+  for (const bucket of buckets) {
     const winner = [...bucket].sort(
       (a, b) => severityRank(b.severity) - severityRank(a.severity),
     )[0];

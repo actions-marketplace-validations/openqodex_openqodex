@@ -149,3 +149,40 @@ describe("dedupByRuleClass", () => {
     expect(dedupByRuleClass([a, b])).toEqual([a]);
   });
 });
+
+// Rules of different scanners that name one problem (same-problem.ts) merge
+// when their spans overlap, since each scanner reports its own span: a
+// whole `run:` block, one line, one expression.
+describe("dedupByRuleClass, one problem named by several scanners", () => {
+  const workflow = ".github/workflows/ci.yml";
+  const semgrep = fakeFinding({ source: "semgrep", ruleId: "yaml.github-actions.security.run-shell-injection.run-shell-injection", filePath: workflow, lineStart: 14, lineEnd: 15, severity: "high" });
+  const actionlint = fakeFinding({ source: "actionlint", ruleId: "expression", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "high", message: '"github.event.pull_request.title" is potentially untrusted. avoid using it directly in inline scripts' });
+  const zizmor = fakeFinding({ source: "zizmor", ruleId: "template-injection", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "high" });
+
+  it("keeps one finding for a workflow injection three scanners report on overlapping lines", () => {
+    expect(dedupByRuleClass([semgrep, actionlint, zizmor])).toEqual([semgrep]);
+  });
+
+  it("keeps the higher severity across the group", () => {
+    const critical = { ...zizmor, severity: "critical" as const };
+    expect(dedupByRuleClass([semgrep, actionlint, critical])).toEqual([critical]);
+  });
+
+  it("does not merge a rule id that covers other problems when its message names another one", () => {
+    const typeError = { ...actionlint, message: 'property "titel" is not defined in object type' };
+    expect(dedupByRuleClass([typeError, zizmor])).toEqual([typeError, zizmor]);
+  });
+
+  it("keeps the group's findings apart on lines that do not overlap, or in another file", () => {
+    const later = { ...zizmor, lineStart: 30, lineEnd: 30 };
+    const elsewhere = { ...actionlint, filePath: "release.yml" };
+    expect(dedupByRuleClass([semgrep, later, elsewhere])).toEqual([semgrep, later, elsewhere]);
+  });
+
+  it("merges a chain of overlapping spans into one", () => {
+    const wide = { ...semgrep, lineStart: 10, lineEnd: 20 };
+    const a = { ...actionlint, lineStart: 12, lineEnd: 12 };
+    const b = { ...zizmor, lineStart: 19, lineEnd: 22 };
+    expect(dedupByRuleClass([wide, a, b])).toEqual([wide]);
+  });
+});
