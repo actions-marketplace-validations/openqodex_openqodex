@@ -27,8 +27,8 @@ import {
   writeRepoFile,
 } from "@openqodex/core";
 import type { Change, ChangeScope, Config, Display, HotSpot, ImpactSummary, Report, RuleCoverage, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
-import { buildGraph, detectImpact, emptyImpact, hotSymbols, langOf } from "@openqodex/graph";
-import type { Graph } from "@openqodex/graph";
+import { buildGraph, detectImpact, emptyImpact, hotSymbols, isManifest, langOf, openStore } from "@openqodex/graph";
+import type { Graph, GraphStore, Lease } from "@openqodex/graph";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
 import { Guard } from "./agents/guarded-fs.js";
 import { instructionsTemplate } from "./agents/repo-folder.js";
@@ -207,25 +207,47 @@ export function reviewOutputs(args: { report: Report; display: Display | null; d
   return { report, paths, files, reportSha256: createHash("sha256").update(files["report.json"] as string, "utf8").digest("hex") };
 }
 
+// The graph folder of the developer's repository for this run, or null when
+// the run keeps nothing (--report-dir writes nothing under .openqodex/) or
+// the folder cannot be used (a link, a tracked file): the graph is then
+// built in memory and the run goes on.
+async function graphStore(p: PipelineResult, persist: boolean): Promise<GraphStore | null> {
+  if (!persist) return null;
+  try {
+    const opened = await openStore(p.repoRoot, { maxCacheMb: p.config.graph.maxCacheMb });
+    if (opened.ok) return opened.store;
+    warn(`openqodex: the code graph's folder is not used: ${opened.reason}`);
+  } catch (error) {
+    warn(`openqodex: the code graph's folder is not used: ${((error as Error).message ?? "").split("\n")[0]}`);
+  }
+  return null;
+}
+
 // The graph for this run, or the summary saying why there is none. For the
-// whole repo (no base) it reads only the inventory. Never
-// throws: a graph that cannot be built is reported as "failed" with one line
-// and the review goes on.
-async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean, withBase: boolean): Promise<Graph | ImpactSummary> {
+// whole repo (no base) it reads only the inventory. The graph runs when a
+// changed file is code in a supported language or a manifest that decides
+// how imports resolve (package.json, tsconfig.json, pyproject.toml, go.mod,
+// ...). Never throws: a graph that cannot be built is reported as "failed"
+// with one line and the review goes on.
+async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean, withBase: boolean, persist: boolean): Promise<Graph | ImpactSummary> {
   if (noGraph) return emptyImpact("off", "--no-graph was given");
   if (!p.config.graph.enabled) return emptyImpact("off", "graph.enabled is false in the config");
-  if (!p.change.files.some((f) => langOf(f.path) !== null || (f.oldPath !== null && langOf(f.oldPath) !== null))) {
-    return emptyImpact("skipped", `no ${withBase ? "changed " : ""}file is TypeScript, JavaScript, Python, Go or Ruby`);
+  const relevant = (path: string | null) => path !== null && (langOf(path) !== null || isManifest(path));
+  if (!p.change.files.some((f) => relevant(f.path) || relevant(f.oldPath))) {
+    return emptyImpact("skipped", `no ${withBase ? "changed " : ""}file is TypeScript, JavaScript, Python, Go or Ruby code or a manifest`);
   }
   try {
+    const store = await graphStore(p, persist);
     return await buildGraph({
       repoRoot: p.workDir,
+      store,
+      capture: store === null ? null : p.workDir === p.repoRoot ? "working-tree" : "snapshot",
       files: withBase ? p.change.changedPaths : undefined,
       only: withBase ? undefined : p.change.changedPaths,
       budgetMs: p.config.graph.budgetMs,
       maxFiles: p.config.graph.maxFiles,
       maxFileBytes: p.config.graph.maxFileBytes,
-      cacheDir: join(p.workDir, STATE_DIR, "graph"),
+      maxHeapMb: p.config.graph.maxHeapMb,
       onProgress: progress(flags),
       base: withBase ? { sha: p.change.baseSha, files: p.change.files } : undefined,
     });
@@ -238,10 +260,25 @@ async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean,
 
 const isGraph = (g: Graph | ImpactSummary): g is Graph => "nodes" in g;
 
-// The code graph's view of the change.
-export async function buildImpact(p: PipelineResult, flags: GlobalFlags, noGraph: boolean): Promise<ImpactSummary> {
-  const graph = await graphFor(p, flags, noGraph, true);
-  return isGraph(graph) ? redactStored(detectImpact(graph, p.change), p.secrets) : graph;
+// The graph of a review and its view of the change. The build the review
+// read is held with a lease until `lease.release()`, so a build that
+// another review publishes meanwhile never collects it.
+export type GraphRun = { impact: ImpactSummary; graph: Graph | null; lease: Lease | null };
+
+export async function buildGraphRun(p: PipelineResult, flags: GlobalFlags, noGraph: boolean, persist = true): Promise<GraphRun> {
+  const graph = await graphFor(p, flags, noGraph, true, persist);
+  if (!isGraph(graph)) return { impact: graph, graph: null, lease: null };
+  let lease: Lease | null = null;
+  if (persist && graph.status.generation) {
+    const store = await graphStore(p, persist);
+    lease = (await store?.lease({ id: graph.status.generation }, "review"))?.lease ?? null;
+  }
+  return { impact: redactStored(detectImpact(graph, p.change), p.secrets), graph, lease };
+}
+
+// The code graph's view of the change, for a run that holds no build open.
+export async function buildImpact(p: PipelineResult, flags: GlobalFlags, noGraph: boolean, persist = true): Promise<ImpactSummary> {
+  return (await buildGraphRun(p, flags, noGraph, persist)).impact;
 }
 
 const HOT_SYMBOLS = 20;
@@ -255,8 +292,9 @@ export async function buildHotSpots(
   p: PipelineResult,
   flags: GlobalFlags,
   noGraph: boolean,
+  persist = true,
 ): Promise<{ impact: ImpactSummary; hot: HotSpot[]; note: string | null }> {
-  const graph = await graphFor(p, flags, noGraph, false);
+  const graph = await graphFor(p, flags, noGraph, false, persist);
   if (!isGraph(graph)) {
     const lead = graph.status === "off" ? "The code graph is off" : graph.status === "skipped" ? "The code graph was skipped" : "The code graph could not be built";
     return { impact: graph, hot: [], note: `${lead}: ${graph.reasons.join("; ")}. Find the most-used code with your own tools.` };
