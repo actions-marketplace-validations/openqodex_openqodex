@@ -243,7 +243,7 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     secrets: p.secrets,
     findingsPath: join(dir, FINDINGS_FILE),
     finalizeCommand: finalizeCommand(p.repoRoot, flags, join(dir, FINDINGS_FILE), false, runId),
-    impactBlock: renderImpactBlock(impact),
+    impactBlock: renderImpactBlock(impact, { overflow: "impact.json beside this brief" }),
     instructions: instructions.text,
     target,
   });
@@ -447,7 +447,9 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
 // The graph's summary the brief was made with; null for a run from before the graph.
 function readImpact(repoRoot: string, dir: string): ImpactSummary | null {
   const value = readJsonFile(repoRoot, join(dir, IMPACT_FILE), "graph impact") as ImpactSummary | null;
-  return value !== null && typeof value === "object" && value.version === 1 ? value : null;
+  // Version 1 (before 0.9) lacks the export and unknown blocks; the renderers read them as absent.
+  const version = (value as { version?: unknown } | null)?.version;
+  return value !== null && typeof value === "object" && (version === 1 || version === 2) ? value : null;
 }
 
 // A JSON file in the run folder, or null when it is missing. Read through

@@ -27,7 +27,14 @@
 // the very folder verified. On any mismatch it removes what it can and
 // fails. A delete never follows a link, and checks the identity of the
 // folder before each name it removes inside it.
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, renameSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
+//
+// Reading. FolderReader reads under a root known by identity: every read
+// walks from that root down one name at a time, each name a real folder
+// (lstat: a link is not one), opens the file without following a link,
+// then walks again and requires the same folders, by device and inode, and
+// the opened file at its name. A link put on the way before the open, or
+// put there and taken away again around it, fails one of those checks.
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, renameSync, rmdirSync, statSync, unlinkSync, writeSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
@@ -36,6 +43,7 @@ import { dirname, isAbsolute, join, relative, sep } from "node:path";
 // the identity checks after each step still hold.
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 const DIRECTORY = constants.O_DIRECTORY ?? 0;
+const NONBLOCK = constants.O_NONBLOCK ?? 0;
 const MAX_LINKS = 40;
 
 export type Id = { dev: bigint; ino: bigint };
@@ -498,6 +506,191 @@ export class Guard {
       }
     };
     copy(src, dst, true);
+  }
+}
+
+// ---------- reading ----------
+
+// Why a read gave nothing: "missing", nothing there; "refused", a link, a
+// name that is not a folder or not a regular file, a file over the bound,
+// or folders that changed during the read; "untrusted", a folder or the
+// file that `accept` did not take.
+export type ReadRefusal = "missing" | "refused" | "untrusted";
+export type ReadResult = { ok: true; data: Buffer; stat: BigIntStats } | { ok: false; why: ReadRefusal };
+export type EntryResult = { ok: true; stat: BigIntStats } | { ok: false; why: ReadRefusal };
+
+// What a reader takes on the way: the lstat of each folder below the root
+// and of the entry read, with its depth (0 for the first name below the
+// root).
+export type Accept = (st: BigIntStats, depth: number) => boolean;
+
+// True when only this process's user can change the file or folder: that
+// user owns it, and neither its group nor other users may write it. Other
+// users may read it. A platform without user ids (Windows) has no owner or
+// mode bits that say this, and is not judged. The user id is asked once:
+// a build judges every folder of 14,000 reads.
+const MY_UID = process.getuid?.();
+export function writableByMeAlone(st: { uid: number | bigint; mode: number | bigint }): boolean {
+  if (MY_UID === undefined) return true;
+  return Number(st.uid) === MY_UID && (Number(st.mode) & 0o022) === 0;
+}
+
+function lstatQuiet(path: string): BigIntStats | null | "error" {
+  try {
+    return lstatSync(path, { bigint: true, throwIfNoEntry: false }) ?? null;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOTDIR" ? null : "error";
+  }
+}
+
+function sameIds(a: Id[], b: Id[]): boolean {
+  return a.length === b.length && a.every((id, i) => same(id, b[i]));
+}
+
+// One plain name: never empty, ".", ".." or holding a separator.
+function plainName(name: string): boolean {
+  return name !== "" && name !== "." && name !== ".." && !name.includes("/") && !name.includes(sep);
+}
+
+export class FolderReader {
+  private readonly rootId: Id;
+  // The root with no separator at its end ("" for the file system's root),
+  // so a path below it is this plus a separator and each name: every name
+  // is checked to be plain, and joining by hand costs less than join() on
+  // the 14,000 reads of one build.
+  private readonly base: string;
+
+  // `root`, an absolute path, is known by its identity from now on. It is
+  // found with stat, which follows a link: the path to the root is the
+  // caller's own, as the Guard takes it. Throws when the root is not a
+  // folder.
+  constructor(
+    readonly root: string,
+    private readonly accept: Accept = () => true,
+  ) {
+    if (!isAbsolute(root)) throw new Error(`${root} is not an absolute path`);
+    const st = statSync(root, { bigint: true });
+    if (!st.isDirectory()) throw new Error(`${root} is not a folder`);
+    this.rootId = idOf(st)!;
+    this.base = join(root).replace(/[\\/]+$/, "");
+  }
+
+  private pathOf(names: string[]): string {
+    let at = this.base;
+    for (const name of names) at += sep + name;
+    return at === "" ? sep : at;
+  }
+
+  // The identities of the root and of each folder `names` names under it,
+  // from the root down; or why not.
+  private walkIds(names: string[]): Id[] | ReadRefusal {
+    let root: BigIntStats;
+    try {
+      root = statSync(this.root, { bigint: true });
+    } catch {
+      return "refused";
+    }
+    if (!same(idOf(root), this.rootId)) return "refused";
+    const ids = [this.rootId];
+    let at = this.base;
+    for (const [depth, name] of names.entries()) {
+      if (!plainName(name)) return "refused";
+      at += sep + name;
+      const st = lstatQuiet(at);
+      if (st === null) return "missing";
+      // isDirectory is false for a link: lstat does not follow it.
+      if (st === "error" || !st.isDirectory()) return "refused";
+      if (!this.accept(st, depth)) return "untrusted";
+      ids.push(idOf(st)!);
+    }
+    return ids;
+  }
+
+  // The identities of the folders from the root down to `names`, when each
+  // is a real folder `accept` takes; null otherwise.
+  ids(names: string[]): Id[] | null {
+    const ids = this.walkIds(names);
+    return Array.isArray(ids) ? ids : null;
+  }
+
+  // The folder `names` as a path, when every folder from the root down to
+  // it is a real folder `accept` takes; null otherwise. A caller that reads
+  // through the path checks again after (`list`, `read` and `entry` do).
+  folder(names: string[]): string | null {
+    return this.ids(names) === null ? null : this.pathOf(names);
+  }
+
+  // The names in the folder `names`, read between two walks that find the
+  // same folders; null when they do not.
+  list(names: string[]): { dir: string; names: string[] } | null {
+    const before = this.ids(names);
+    if (before === null) return null;
+    const dir = this.pathOf(names);
+    let found: string[];
+    try {
+      found = readdirSync(dir);
+    } catch {
+      return null;
+    }
+    const after = this.ids(names);
+    return after !== null && sameIds(before, after) ? { dir, names: found } : null;
+  }
+
+  // The lstat of the entry `names` names (any kind: the caller judges it),
+  // taken between two walks that find the same folders, when `accept` takes
+  // it.
+  entry(names: string[]): EntryResult {
+    if (names.length === 0 || !plainName(names[names.length - 1]!)) return { ok: false, why: "refused" };
+    const folders = names.slice(0, -1);
+    const before = this.walkIds(folders);
+    if (!Array.isArray(before)) return { ok: false, why: before };
+    const st = lstatQuiet(this.pathOf(names));
+    if (st === null) return { ok: false, why: "missing" };
+    if (st === "error") return { ok: false, why: "refused" };
+    const after = this.ids(folders);
+    if (after === null || !sameIds(before, after)) return { ok: false, why: "refused" };
+    return this.accept(st, names.length - 1) ? { ok: true, stat: st } : { ok: false, why: "untrusted" };
+  }
+
+  // The regular file `names` names, read whole when it holds at most
+  // `maxBytes`. The file is opened without following a link and without
+  // blocking (a named pipe cannot hold the open); after the open the
+  // folders from the root down must be the same ones, and the name must
+  // hold the very file opened.
+  read(names: string[], maxBytes: number): ReadResult {
+    if (names.length === 0 || !plainName(names[names.length - 1]!)) return { ok: false, why: "refused" };
+    const folders = names.slice(0, -1);
+    const before = this.walkIds(folders);
+    if (!Array.isArray(before)) return { ok: false, why: before };
+    const abs = this.pathOf(names);
+    let fd: number;
+    try {
+      fd = openSync(abs, constants.O_RDONLY | NOFOLLOW | NONBLOCK);
+    } catch (error) {
+      return { ok: false, why: (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "refused" };
+    }
+    try {
+      const st = fstatSync(fd, { bigint: true });
+      if (!st.isFile()) return { ok: false, why: "refused" };
+      if (!this.accept(st, names.length - 1)) return { ok: false, why: "untrusted" };
+      if (st.size > BigInt(maxBytes)) return { ok: false, why: "refused" };
+      const after = this.ids(folders);
+      const at = lstatQuiet(abs);
+      if (after === null || !sameIds(before, after) || at === null || at === "error" || !same(idOf(at), idOf(st))) return { ok: false, why: "refused" };
+      const size = Number(st.size);
+      const data = Buffer.allocUnsafe(size);
+      let off = 0;
+      while (off < size) {
+        const n = readSync(fd, data, off, size - off, off);
+        if (n === 0) break;
+        off += n;
+      }
+      return off === size ? { ok: true, data, stat: st } : { ok: false, why: "refused" };
+    } catch {
+      return { ok: false, why: "refused" };
+    } finally {
+      closeSync(fd);
+    }
   }
 }
 

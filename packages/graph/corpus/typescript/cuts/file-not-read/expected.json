@@ -1,0 +1,22 @@
+{
+  "guards": "marks the caller list a floor and discloses the size cut when a file of the project is over the size cap",
+  "build": {
+    "maxFileBytes": 2048
+  },
+  "callers": [
+    {
+      "to": "src/units.ts#toCents",
+      "site": "src/checkout.ts:4",
+      "tier": "certain"
+    }
+  ],
+  "cuts": [
+    {
+      "by": "size",
+      "omitted": 1
+    }
+  ],
+  "floor": {
+    "src/units.ts#toCents": true
+  }
+}

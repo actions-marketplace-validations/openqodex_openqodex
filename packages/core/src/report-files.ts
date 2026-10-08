@@ -52,8 +52,10 @@ function json(value: unknown): string {
 }
 
 // The state folder with its .gitignore. A link at .openqodex, at reviews or
-// at the .gitignore throws before anything is touched.
-function ensureStateDir(repoRoot: string): string {
+// at the .gitignore throws before anything is touched. The code graph calls
+// it before it writes .openqodex/graph/, so that folder is ignored by git
+// from its first file.
+export function ensureStateDir(repoRoot: string): string {
   repoStat(repoRoot, join(STATE_DIR, "reviews"));
   const ignore = join(STATE_DIR, ".gitignore");
   const current = readRepoFile(repoRoot, ignore);

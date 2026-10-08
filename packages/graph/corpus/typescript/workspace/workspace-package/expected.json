@@ -1,0 +1,20 @@
+{
+  "guards": "finds the caller of a workspace package reached through its dist entry, as likely with a note naming that entry",
+  "callers": [
+    {
+      "to": "packages/core/src/index.ts#greet",
+      "site": "packages/app/src/main.ts:4",
+      "tier": "likely",
+      "note": "packages/core/dist/index.js"
+    }
+  ],
+  "notCertain": [
+    {
+      "to": "packages/core/src/index.ts#greet",
+      "site": "packages/app/src/main.ts:4"
+    }
+  ],
+  "floor": {
+    "packages/core/src/index.ts#greet": false
+  }
+}

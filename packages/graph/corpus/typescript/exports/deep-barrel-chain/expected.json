@@ -1,0 +1,14 @@
+{
+  "guards": "reports the consumer of a removed export reached through six export-star barrels",
+  "exports": [
+    {
+      "file": "src/core.ts",
+      "name": "parseToken",
+      "change": "removed",
+      "consumers": [
+        "src/client.ts:1:broken",
+        "src/client.ts:4:broken"
+      ]
+    }
+  ]
+}

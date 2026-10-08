@@ -27,6 +27,12 @@ const commands: Record<string, { summary: string; usage?: string; hidden?: true;
   demo: { summary: "Build the demo repo with planted bugs", hidden: true, load: () => import("./commands/demo.js") },
   report: { summary: "Report a problem with OpenQodex as a GitHub issue", hidden: true, load: () => import("./commands/report.js") },
   config: { summary: "Rewrite the repo config for this version", usage: "migrate [--write]", hidden: true, load: () => import("./commands/config.js") },
+  graph: {
+    summary: "Ask the code graph: callers, callees, importers, changes, unknowns (may change before 1.0)",
+    usage: "<build | status | search | symbol | callers | callees | importers | changes | unknowns | explain | capabilities> [<target>] [--json]",
+    hidden: true,
+    load: () => import("./commands/graph.js"),
+  },
 };
 
 // The hook check must stay silent, and report shows its own offer.

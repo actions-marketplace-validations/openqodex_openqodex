@@ -1,117 +1,53 @@
-// Reads and writes inside the repo that a hostile repo cannot redirect: no
-// path component may be a symbolic link, files are opened without following
+// Reads inside the repo that a hostile repo cannot redirect: no path
+// component may be a symbolic link, files are opened without following
 // links, and every read is bounded.
-import { randomBytes } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import { FolderReader, type EntryResult } from "@openqodex/core";
 import type { FileFacts } from "./types.js";
 
-function readOpen(fd: number, maxBytes: number): string | null {
-  const st = fstatSync(fd);
-  if (!st.isFile() || st.size > maxBytes) return null;
-  const buf = Buffer.alloc(st.size);
-  let off = 0;
-  while (off < st.size) {
-    const n = readSync(fd, buf, off, st.size - off, off);
-    if (n === 0) break;
-    off += n;
-  }
-  return buf.subarray(0, off).toString("utf8");
-}
-
-// A regular file at `abs`, opened without following a link; null otherwise.
-export function readNoFollow(abs: string, maxBytes: number): string | null {
-  let fd: number;
-  try {
-    // Non-blocking, so a named pipe here cannot hold the open; readOpen then
-    // reads only a regular file.
-    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch {
-    return null;
-  }
-  try {
-    return readOpen(fd, maxBytes);
-  } catch {
-    return null;
-  } finally {
-    closeSync(fd);
-  }
-}
-
-// Repo-relative reads: every folder on the way must be a real folder.
+// Repo-relative reads, each decided by what the filesystem holds at the
+// moment of that read and by nothing kept from an earlier one. The root is
+// known by its identity (device and inode) from the moment the reader is
+// made. Every read walks from it one name at a time, each folder a real
+// folder (lstat: a link is not one), opens the file without following a
+// link and without blocking, then walks again and requires the same
+// folders by identity and the opened file at its name (FolderReader,
+// packages/core/src/guarded-fs.ts). A folder swapped for a link after one
+// read stops the next read.
 export class RepoReader {
-  private dirs = new Map<string, boolean>();
-  constructor(readonly root: string) {}
+  // Null when the root is not a folder: every read then gives null.
+  private readonly folders: FolderReader | null;
 
-  private dirOk(rel: string): boolean {
-    if (rel === "" || rel === ".") return true;
-    let ok = this.dirs.get(rel);
-    if (ok === undefined) {
-      const cut = rel.lastIndexOf("/");
-      ok = this.dirOk(cut === -1 ? "" : rel.slice(0, cut));
-      if (ok) {
-        try {
-          const st = lstatSync(join(this.root, rel));
-          ok = st.isDirectory() && !st.isSymbolicLink();
-        } catch {
-          ok = false;
-        }
-      }
-      this.dirs.set(rel, ok);
+  constructor(readonly root: string) {
+    let folders: FolderReader | null = null;
+    try {
+      folders = new FolderReader(resolve(root));
+    } catch {
+      // not a folder: nothing below it can be read
     }
-    return ok;
+    this.folders = folders;
   }
 
   read(rel: string, maxBytes: number): string | null {
-    if (isAbsolute(rel) || rel.split("/").some((p) => p === ".." || p === "")) return null;
-    const cut = rel.lastIndexOf("/");
-    if (!this.dirOk(cut === -1 ? "" : rel.slice(0, cut))) return null;
-    return readNoFollow(join(this.root, rel), maxBytes);
+    return this.readBytes(rel, maxBytes)?.toString("utf8") ?? null;
   }
-}
 
-// The cache folder, made and checked component by component below the repo
-// root (or, for a folder outside the repo, the folder itself): null when any
-// component is a link or not a folder.
-export function safeCacheDir(repoRoot: string, dir: string): string | null {
-  const rel = relative(repoRoot, dir);
-  const inside = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
-  const steps = inside ? rel.split(sep) : [];
-  let cur = inside ? repoRoot : dir;
-  const check = (path: string): boolean => {
-    try {
-      mkdirSync(path);
-    } catch {
-      // already there, or the parent cannot hold it: lstat decides
-    }
-    try {
-      const st = lstatSync(path);
-      return st.isDirectory() && !st.isSymbolicLink();
-    } catch {
-      return false;
-    }
-  };
-  if (!inside) return check(dir) ? dir : null;
-  for (const step of steps) {
-    cur = join(cur, step);
-    if (!check(cur)) return null;
+  // The regular file `rel` (a path from the root, `/` between names) when
+  // it holds at most `maxBytes`; null otherwise. An empty name, `.` or `..`
+  // anywhere in it is refused.
+  readBytes(rel: string, maxBytes: number): Buffer | null {
+    if (this.folders === null || isAbsolute(rel)) return null;
+    const got = this.folders.read(rel.split("/"), maxBytes);
+    return got.ok ? got.data : null;
   }
-  return cur;
-}
 
-// Written through a fresh temporary file (created exclusively, so never
-// through a link) and renamed over the target entry.
-export function writeExclusive(path: string, content: string): void {
-  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-  try {
-    writeFileSync(tmp, content, { flag: "wx" });
-    renameSync(tmp, path);
-  } catch {
-    try {
-      rmSync(tmp, { force: true });
-    } catch {
-      // nothing was written
-    }
+  // What stands at `rel`, of any kind (the caller judges it): its lstat,
+  // taken between two walks that find the same real folders by identity.
+  // "refused" when a name on the way is not a real folder (a link, a file)
+  // or the folders changed during the look; "missing" when nothing is there.
+  entry(rel: string): EntryResult {
+    if (this.folders === null || isAbsolute(rel)) return { ok: false, why: "refused" };
+    return this.folders.entry(rel.split("/"));
   }
 }
 
@@ -182,7 +118,9 @@ function isDef(v: unknown, imports: number): boolean {
     Object.keys(v.fields).length <= 4096 &&
     Object.values(v.fields).every(isType) &&
     (v.results === undefined || isList(v.results, (r) => r === null || isType(r), 64)) &&
-    optBool(v.static)
+    (v.alias === undefined || isType(v.alias)) &&
+    optBool(v.static) &&
+    (v.bodyHash === undefined || (typeof v.bodyHash === "string" && /^[0-9a-f]{16}$/.test(v.bodyHash)))
   );
 }
 
@@ -202,6 +140,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
     optBool(c.implicit) &&
     optBool(c.shadowed) &&
     optBool(c.static) &&
+    optBool(c.dynamic) &&
     (c.local === undefined || (isInt(c.local) && (c.local as number) >= 0 && (c.local as number) < defs)) &&
     optBound(c.bound, imports);
   const isImport = (i: unknown) =>
@@ -220,7 +159,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
   return (
     isList(v.calls, isCall) &&
     isList(v.imports, isImport, 20_000) &&
-    isList(v.exportsLocal, (e) => isObj(e) && isStr(e.local) && isStr(e.exported), 20_000) &&
+    isList(v.exportsLocal, (e) => isObj(e) && isStr(e.local) && isStr(e.exported) && (e.line === undefined || isInt(e.line)), 20_000) &&
     (v.defaultExport === null || isStr(v.defaultExport)) &&
     (v.goPackage === null || isStr(v.goPackage))
   );

@@ -48,14 +48,15 @@ import {
   writeReportFiles,
 } from "@openqodex/core";
 import type { Change, ChangeScope, Config, Hunk, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, Severity, TraceEntry, WholeRepo } from "@openqodex/core";
-import { renderImpactBlock } from "@openqodex/graph";
+import { PacketCollision, PacketLeak, renderImpactBlock, writePacket } from "@openqodex/graph";
+import type { Lease } from "@openqodex/graph";
 import { announceRepoFiles } from "./agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, lfsPaths, placeSettings, removeTargetCheckout } from "./checkout.js";
 import type { Checkout } from "./checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
-import { buildHotSpots, buildImpact, emitReview, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFolderWriter, reviewOutputs, ruleCoverage, scanChange, warn, wholeRepoLenses, writeReportHtml } from "./pipeline.js";
+import { buildGraphRun, buildHotSpots, emitReview, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFolderWriter, reviewOutputs, ruleCoverage, scanChange, warn, wholeRepoLenses, writeReportHtml } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
 import { keepRunStateOutOfRepo } from "./feedback.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
@@ -661,6 +662,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
   let snapshot: Checkout | null = null;
   let session: ReviewerSession | null = null;
+  // The graph build this review read, held until the review ends.
+  let graphLease: Lease | null = null;
   // Ctrl-C or a kill: the reviewer's process group and the snapshot go too,
   // synchronously, since the process exits right after. The reviewer runs in
   // a group of its own, so nothing else would stop it. Git then forgets the
@@ -734,12 +737,25 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     let impact: ImpactSummary;
     let brief: { text: string; diffFiles: Set<string> };
     if (prep.whole) {
-      const hot = await buildHotSpots(p, o.flags, o.noGraph);
+      const hot = await buildHotSpots(p, o.flags, o.noGraph, o.reportDir === undefined);
       impact = hot.impact;
       lenses = wholeRepoLenses(prep.whole, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) } });
     } else {
-      impact = await buildImpact(p, o.flags, o.noGraph);
+      const run = await buildGraphRun(p, o.flags, o.noGraph, o.reportDir === undefined);
+      graphLease = run.lease;
+      impact = run.impact;
+      // The graph files the brief names, written into the snapshot before it
+      // is hashed, so the reviewer reads them inside the folder it may read.
+      if (run.graph) {
+        try {
+          const packet = await writePacket({ root: prep.snapshot.tree, repoRoot, graph: run.graph, impact, baseSha: change.baseSha, secrets: p.secrets });
+          impact = { ...impact, packet: packet.dir };
+        } catch (error) {
+          if (error instanceof PacketCollision || error instanceof PacketLeak) throw new OpenQodexError(error.message);
+          throw error;
+        }
+      }
       lenses = selectLenses(change, undefined, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, target: prep.target });
     }
@@ -907,6 +923,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+    graphLease?.release();
     if (snapshot !== null) await removeTargetCheckout(repoRoot, (snapshot as Checkout).tree);
   }
 }

@@ -1,0 +1,14 @@
+{
+  "guards": "marks the caller list a floor and discloses a dynamic gap for a computed member call, although every file was read",
+  "unknowns": [
+    {
+      "file": "src/router.ts",
+      "line": 6,
+      "cause": "dynamic"
+    }
+  ],
+  "floor": {
+    "src/handlers.ts#onSave": true
+  },
+  "allRead": true
+}

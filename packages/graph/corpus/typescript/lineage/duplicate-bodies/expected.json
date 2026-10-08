@@ -1,0 +1,6 @@
+{
+  "guards": "never pairs a removed function with one of two identical bodies gained elsewhere",
+  "removed": [
+    "src/legacy.ts#oldFormat"
+  ]
+}

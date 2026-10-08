@@ -1,0 +1,14 @@
+{
+  "guards": "reports a public alias retargeted inside one file, with the unchanged consumer retargeted",
+  "exports": [
+    {
+      "file": "src/storage.ts",
+      "name": "save",
+      "change": "retargeted",
+      "consumers": [
+        "src/editor.ts:1:retargeted",
+        "src/editor.ts:4:retargeted"
+      ]
+    }
+  ]
+}

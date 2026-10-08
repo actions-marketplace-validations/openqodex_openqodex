@@ -1,0 +1,19 @@
+{
+  "guards": "binds a Python relative import as certain and keeps a standard library call external, never an in-repo gap",
+  "callers": [
+    {
+      "to": "shop/prices.py#with_tax",
+      "site": "shop/api.py:7",
+      "tier": "certain"
+    }
+  ],
+  "external": {
+    "min": 1,
+    "sites": [
+      "shop/api.py:8"
+    ]
+  },
+  "floor": {
+    "shop/prices.py#with_tax": false
+  }
+}

@@ -5,11 +5,15 @@
 //
 // The node types and fields below are the tree-sitter grammars' own; the
 // patterns were written here against the pinned grammar files.
+import { createHash } from "node:crypto";
 import type { Node, Tree } from "web-tree-sitter";
 import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TypeRef } from "./types.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
-export const EXTRACTOR_VERSION = 8;
+// 9: body hashes on definitions, computed-member calls as dynamic call
+// sites, and the line of each local export. 10: predefined TypeScript
+// types (`string`, `number[]`) on receivers.
+export const EXTRACTOR_VERSION = 12;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -83,7 +87,9 @@ function receiverIn(at: Scope | null, name: string, path: string[], topNames: Re
   if (bound) return topNames ? { kind: "name", name, path, nesting: null, bound } : named;
   if (topNames && at.depth === 0 && topNames.has(name)) return named;
   const t = at.locals?.get(name) ?? null;
-  return t && !t.elem ? { kind: "type", type: t, path } : { kind: "other" };
+  // A collection (an array, a list) is kept as such: a method called on it
+  // is the language's own, never a gap.
+  return t ? { kind: "type", type: t, path } : { kind: "other" };
 }
 
 // An identifier receiver is tagged with what was read where, until Ctx.addCall takes it.
@@ -133,11 +139,45 @@ function stringContent(node: Node): string {
   return node.text.replace(/^['"`]|['"`]$/g, "");
 }
 
+// A short hash of a definition's text without its own name, its comments
+// and its whitespace: the same body under another name or in another file
+// hashes the same, so a removal and an addition can be paired as a move.
+function bodyHash(lang: Lang, node: Node, nameNode: Node): string {
+  const start = node.startIndex;
+  const text = node.text;
+  const inside = nameNode.startIndex >= start && nameNode.endIndex <= node.endIndex;
+  const cut = inside ? text.slice(0, nameNode.startIndex - start) + text.slice(nameNode.endIndex - start) : text;
+  return createHash("sha1").update(withoutComments(cut, lang === "python" || lang === "ruby")).digest("hex").slice(0, 16);
+}
+
+// The text without its comments and blanks, in one pass: a comment's end
+// is found with indexOf from where it starts, so unclosed comments cost no
+// more than the text. Strings are not told apart: the hash only has to be
+// the same for the same text.
+function withoutComments(text: string, hashComments: boolean): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i] as string;
+    if (hashComments ? c === "#" : c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      i = end === -1 ? text.length : end;
+    } else if (!hashComments && c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 2;
+    } else {
+      if (c !== " " && c !== "\t" && c !== "\n" && c !== "\r") out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
 class Ctx {
   defs: DefFact[] = [];
   calls: CallFact[] = [];
   imports: ImportFact[] = [];
-  exportsLocal: { local: string; exported: string }[] = [];
+  exportsLocal: { local: string; exported: string; line?: number }[] = [];
   defaultExport: string | null = null;
   goPackage: string | null = null;
   top: Scope;
@@ -280,6 +320,10 @@ class Ctx {
 
   addDef(node: Node, nameNode: Node, kind: DefFact["kind"], fields: Partial<DefFact> = {}, spanNode: Node = node): number {
     const { column } = pos(nameNode);
+    // Only definitions at the top of the file or directly in a top-level
+    // class get a body hash: hashing every nested one would read deep code
+    // once per level.
+    const hash = this.top.depth <= 2 ? bodyHash(this.lang, spanNode, nameNode) : undefined;
     this.defs.push({
       name: nameNode.text,
       kind,
@@ -292,8 +336,16 @@ class Ctx {
       bases: [],
       fields: {},
       ...fields,
+      ...(hash ? { bodyHash: hash } : {}),
     });
     return this.defs.length - 1;
+  }
+
+  // A call whose callee is computed (`table[key]()`): no name to bind, so
+  // the resolver records it as a dynamic call site the graph cannot follow.
+  addDynamicCall(node: Node): void {
+    const { line, column } = pos(node);
+    this.calls.push({ name: "", line, column, caller: this.caller(), recv: { kind: "other" }, dynamic: true });
   }
 
   addCall(nameNode: Node, recv: Receiver, implicit = false): void {
@@ -431,7 +483,11 @@ function jsTypeRef(annotation: Node | null): TypeRef | null {
   }
   if (!t) return null;
   const { line, column } = pos(t);
-  if (t.type === "type_identifier" || t.type === "identifier") return typeRef({ name: t.text, qualifier: null, line, column });
+  // An object type written in place (`{ save(): number }`) names no
+  // definition: "{}" marks it, so a call on it is an untyped receiver.
+  if (t.type === "object_type") return typeRef({ name: "{}", qualifier: null, line, column });
+  // A predefined type (`string`, `number`) is kept, so a call on it is known to be the language's own.
+  if (t.type === "type_identifier" || t.type === "identifier" || t.type === "predefined_type") return typeRef({ name: t.text, qualifier: null, line, column });
   if (t.type === "nested_type_identifier" || t.type === "member_expression") {
     const name = t.childForFieldName("name") ?? t.childForFieldName("property");
     const module = t.childForFieldName("module") ?? t.childForFieldName("object");
@@ -473,6 +529,10 @@ function jsCallee(ctx: Ctx, fn: Node | null): void {
   if (fn.type === "instantiation_expression") return jsCallee(ctx, fn.childForFieldName("function"));
   if (fn.type === "await_expression") return jsCallee(ctx, fn.firstNamedChild);
   if (fn.type === "parenthesized_expression") return;
+  if (fn.type === "subscript_expression") {
+    ctx.addDynamicCall(fn);
+    return;
+  }
   if (fn.type === "identifier") {
     if (fn.text !== "require") ctx.addCall(fn, { kind: "none" });
     return;
@@ -604,7 +664,7 @@ function jsExport(ctx: Ctx, node: Node): void {
   for (const s of specs) {
     const name = s.childForFieldName("name");
     const alias = s.childForFieldName("alias");
-    if (name) ctx.exportsLocal.push({ local: name.text, exported: (alias ?? name).text });
+    if (name) ctx.exportsLocal.push({ local: name.text, exported: (alias ?? name).text, line: s.startPosition.row + 1 });
   }
   if (node.children.some((c) => c.type === "default")) {
     const decl = node.childForFieldName("declaration");
@@ -627,11 +687,11 @@ function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): L
   if (target === "module.exports") {
     if (right.type === "identifier") ctx.defaultExport = right.text;
     for (const p of right.type === "object" ? right.namedChildren : []) {
-      if (p.type === "shorthand_property_identifier") ctx.exportsLocal.push({ local: p.text, exported: p.text });
+      if (p.type === "shorthand_property_identifier") ctx.exportsLocal.push({ local: p.text, exported: p.text, line: p.startPosition.row + 1 });
       else if (p.type === "pair") {
         const key = p.childForFieldName("key");
         const value = p.childForFieldName("value");
-        if (key && value?.type === "identifier") ctx.exportsLocal.push({ local: value.text, exported: key.text });
+        if (key && value?.type === "identifier") ctx.exportsLocal.push({ local: value.text, exported: key.text, line: p.startPosition.row + 1 });
       }
     }
     return true;
@@ -640,7 +700,7 @@ function jsCommonExport(ctx: Ctx, node: Node, left: Node, right: Node | null): L
   if (!m) return false;
   const name = m[1] as string;
   if (right.type === "identifier") {
-    ctx.exportsLocal.push({ local: right.text, exported: name });
+    ctx.exportsLocal.push({ local: right.text, exported: name, line: node.startPosition.row + 1 });
     return true;
   }
   if (["arrow_function", "function_expression", "function"].includes(right.type)) {
@@ -823,7 +883,9 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
       case "type_alias_declaration":
       case "enum_declaration": {
         const name = node.childForFieldName("name");
-        if (name) ctx.addDef(node, name, "type", { topLevel: ctx.atModuleLevel(), exported: isExportedDecl(node) });
+        // A type alias keeps what it stands for, so `type Loose = any` is known as any.
+        const alias = node.type === "type_alias_declaration" ? jsTypeRef(node.childForFieldName("value")) : null;
+        if (name) ctx.addDef(node, name, "type", { topLevel: ctx.atModuleLevel(), exported: isExportedDecl(node), ...(alias ? { alias } : {}) });
         return false;
       }
       case "arrow_function":
@@ -1097,6 +1159,7 @@ function extractPython(tree: Tree): FileFacts {
       case "call": {
         const fn = node.childForFieldName("function");
         if (fn?.type === "identifier") ctx.addCall(fn, { kind: "none" });
+        else if (fn?.type === "subscript") ctx.addDynamicCall(fn);
         else if (fn?.type === "attribute") {
           const attr = fn.childForFieldName("attribute");
           const object = fn.childForFieldName("object");

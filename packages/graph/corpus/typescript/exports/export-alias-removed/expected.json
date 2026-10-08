@@ -1,0 +1,14 @@
+{
+  "guards": "reports a removed export alias whose implementation stays, with its consumer broken",
+  "exports": [
+    {
+      "file": "src/pricing.ts",
+      "name": "total",
+      "change": "removed",
+      "consumers": [
+        "src/cart.ts:1:broken",
+        "src/cart.ts:4:broken"
+      ]
+    }
+  ]
+}
