@@ -394,6 +394,12 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       (graphIn.get(e.to) ?? graphIn.set(e.to, []).get(e.to))?.push(e);
       (graphOut.get(e.from) ?? graphOut.set(e.from, []).get(e.from))?.push(e);
     }
+    const refsIn = new Map<string, GraphEdge[]>();
+    const refsOut = new Map<string, GraphEdge[]>();
+    for (const e of resolved.references) {
+      (refsIn.get(e.to) ?? refsIn.set(e.to, []).get(e.to))?.push(e);
+      (refsOut.get(e.from) ?? refsOut.set(e.from, []).get(e.from))?.push(e);
+    }
     const unknowns: UnknownSite[] = [...resolved.unknowns];
     for (const file of resolved.budgetFiles) {
       unknowns.push({ file, line: 0, column: 0, name: "", cause: "budget", shape: "other", caller: file, scope: "file", note: "the budget ran out before the calls of this file were resolved" });
@@ -456,6 +462,11 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       edges: resolved.edges,
       in: graphIn,
       out: graphOut,
+      references: resolved.references,
+      refsIn,
+      refsOut,
+      dispatch: resolved.dispatch,
+      summaries: resolved.summaries,
       importers: resolved.importers,
       defsByFile: resolved.defsByFile,
       removed,

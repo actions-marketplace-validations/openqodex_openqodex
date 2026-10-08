@@ -4,7 +4,9 @@
 //    array) counts as an in-repo gap, so every repository function named
 //    `trim` or `reduce` gets a false floor.
 // 2. A method called on a value whose type the repository defines but no
-//    rule can see into stays a gap (never turned into an external call).
+//    rule can see into stays a gap (never turned into an external call). A
+//    TypeScript interface's member now binds as declared, and the call
+//    keeps a gap for the values of its shape that declare nothing.
 // 3. A method called on what a call returns is named in the brief as if the
 //    call were a type ("the type Buffer.concat"), which misleads the reader.
 import { afterAll, describe, expect, it } from "vitest";
@@ -40,7 +42,8 @@ describe("unknown records", () => {
     });
     repos.push(root);
     const g = await buildGraph({ repoRoot: root, store: null });
-    expect(g.unknowns.map((u) => `${u.file}:${u.line} ${u.name} ${u.cause}`)).toEqual(["src/use.ts:3 find no-receiver-type"]);
+    expect(g.unknowns.map((u) => `${u.file}:${u.line} ${u.name} ${u.cause}`)).toEqual(["src/use.ts:3 find unsupported-rule"]);
+    expect(g.status.externalSites).toBe(0);
   });
 
   it("names a call's result as what the call returns, never as a type (3)", async () => {

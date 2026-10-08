@@ -58,6 +58,10 @@ export function graphOf(store: GraphStore, gen: OpenGeneration): Graph | null {
     cuts: [],
     notRead,
   };
-  const graph = assemble([...resolved.nodes.values()], resolved.edges, [...resolved.importers.values()].flat(), resolved.misses, resolved.unknowns, status, model, projects.goModules);
+  const graph = assemble([...resolved.nodes.values()], resolved.edges, [...resolved.importers.values()].flat(), resolved.misses, resolved.unknowns, status, model, projects.goModules, {
+    references: resolved.references,
+    dispatch: resolved.dispatch,
+    summaries: resolved.summaries,
+  });
   return { ...graph, repoRoot: store.repoRoot };
 }
