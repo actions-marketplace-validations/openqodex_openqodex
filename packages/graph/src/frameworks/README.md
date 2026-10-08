@@ -13,6 +13,8 @@ The contract is `plugin.ts`. This page says how a plugin is written, registered 
 - Overflow is a gap. Every cap emits a scoped unknown when it stops.
 - Failure removes output. A plugin that throws contributes nothing to the build, and the build says so in its reasons.
 - Nothing from the repository runs. Settings, routes and config files are parsed, never imported or executed.
+- Bounded work on hostile input. No regular expression is ever built from repository text or run on it: a route pattern becomes tokens read by a linear scan and a request path is matched by hand under a step budget. Every regex a plugin keeps runs on paths or short tokens and has no nested or overlapping repetition. A plugin caps what can multiply (Django includes, Rails nested resources: 10,000 registrations per application) and emits a gap when it stops. The core adds its own caps: no plugin reads a source over 1 MiB (`facts.ts`), one plugin keeps at most 2,000 facts per file, 20,000 entities and 100,000 edges per application (`stage.ts`). Each plugin ships a test that runs its facts and its resolve on a hostile file just under 1 MiB in under a second.
+- Repository text reaches the reviewer only quoted. The brief prints every route path, route name, template name and note inside a table cell, on one line, cut to 120 characters (`render.ts`); a plugin's notes are short plain sentences.
 
 ## How a plugin is written
 
