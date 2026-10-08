@@ -6,7 +6,11 @@
 //
 // A notice names the version it starts in. Notices of earlier releases were
 // added when this list was made, so an install that updates across them
-// still hears of them.
+// still hears of them. A change not yet released is marked "next": the
+// release number is given by changesets only when the release is prepared,
+// and scripts/sync-version.mjs then writes it in place of the marker. A
+// "next" notice is never printed.
+
 export type Notice = { version: string; kind: "leaves the machine" | "blocks a push" | "who reviews"; text: string };
 
 export const NOTICES: readonly Notice[] = [
@@ -26,7 +30,7 @@ export const NOTICES: readonly Notice[] = [
     text: "The reviewer can search the web and open web pages by default; set reviewer_web: off in ~/.openqodex/config.yaml to take its web tools away.",
   },
   {
-    version: "0.9.0",
+    version: "next",
     kind: "blocks a push",
     text: "A name in scanners.disable that this version does not know is ignored with a warning and the review runs, so it can block a push; before, the run stopped with exit 2 and the push went through.",
   },
@@ -46,7 +50,8 @@ export function compareVersions(a: string, b: string): number {
   return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
 }
 
-// The notices of every release after `from`, up to and including `to`.
+// The notices of every release after `from`, up to and including `to`; a
+// "next" one never, as no version is known for it yet.
 export function noticesBetween(from: string, to: string, list: readonly Notice[] = NOTICES): Notice[] {
   return list.filter((n) => compareVersions(n.version, from) > 0 && compareVersions(n.version, to) <= 0);
 }

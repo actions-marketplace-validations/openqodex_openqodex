@@ -14,9 +14,17 @@
 //     init would refresh.
 //  5. update --status still names a release as waiting for a foreground
 //     update once that release, or a newer one, runs.
-import { spawnSync } from "node:child_process";
+//  6. A notice of a change not yet released names a version chosen by hand,
+//     so when changesets gives the release another number it prints after
+//     the wrong update, or never.
+//  7. The step that prepares the release (scripts/sync-version.mjs) leaves
+//     a "next" notice as it is, or gives it another version than the
+//     package's, so it never prints after the update to that release.
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NOTICES, noticesBetween } from "../src/notices.js";
@@ -101,5 +109,34 @@ describe("a release left for a foreground update", () => {
     expect(launch(s, ["update", "--status"]).stdout).toMatch(/^waiting +99\.0\.0 changes how agents run a review; openqodex update installs it$/m);
     held(version);
     expect(launch(s, ["update", "--status"]).stdout).not.toMatch(/^waiting/m);
+  });
+});
+
+describe("the notice of a change not yet released", () => {
+  const root = join(import.meta.dirname, "..", "..", "..");
+  const source = join(root, "packages/cli/src/notices.ts");
+
+  it("carries no version until the release, and prints after no update meanwhile (failure 6)", () => {
+    const next = NOTICES.filter((n) => n.version === "next");
+    expect(next.length, "the change of this branch is a notice marked next").toBeGreaterThan(0);
+    expect(noticesBetween("0.0.1", "999.0.0").filter((n) => n.version === "next")).toEqual([]);
+  });
+
+  it("gets the package version from the release step, and then prints after the update to that version (failure 7)", async () => {
+    const original = readFileSync(source, "utf8");
+    const was = NOTICES.filter((n) => n.version === "next").map((n) => n.text);
+    try {
+      execFileSync(process.execPath, [join(root, "scripts/sync-version.mjs")], { cwd: root, stdio: "pipe" });
+      const stamped = readFileSync(source, "utf8");
+      expect(stamped).not.toMatch(/version: "next"/);
+      // The module as the release builds it, from a fresh path so no cache answers.
+      const copy = join(realpathSync(mkdtempSync(join(tmpdir(), "oq-notices-"))), "notices.ts");
+      writeFileSync(copy, stamped);
+      const { NOTICES: after, noticesBetween: between } = (await import(/* @vite-ignore */ pathToFileURL(copy).href)) as typeof import("../src/notices.js");
+      for (const text of was) expect(after.find((n) => n.text === text)?.version, text).toBe(version);
+      expect(between("0.0.1", version).map((n) => n.text)).toEqual(expect.arrayContaining(was));
+    } finally {
+      writeFileSync(source, original);
+    }
   });
 });
