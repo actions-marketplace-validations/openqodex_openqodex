@@ -26,11 +26,11 @@ describe("every registered framework plugin", () => {
             continue;
           }
           expect(cases.length, `${rule.id} ${kind}`).toBeGreaterThan(0);
-          for (const c of cases) expect(existsSync(join(corpus, c, "expected.json")), `${rule.id} ${kind}: ${c}`).toBe(true);
+          for (const c of cases) expect(existsSync(join(corpus, "frameworks", plugin.id, c, "expected.json")), `${rule.id} ${kind}: ${c}`).toBe(true);
         }
       }
       expect(report.negativeControls.length).toBeGreaterThan(0);
-      for (const c of report.negativeControls) expect(existsSync(join(corpus, c, "expected.json")), c).toBe(true);
+      for (const c of report.negativeControls) expect(existsSync(join(corpus, "frameworks", plugin.id, c, "expected.json")), c).toBe(true);
     });
   }
 });

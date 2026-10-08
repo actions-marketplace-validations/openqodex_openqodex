@@ -397,7 +397,8 @@ export type PluginOutput = {
 // ---------- what a plugin proves, and with which fixtures ----------
 
 // Each rule a plugin applies, with the corpus cases that prove it. Cases
-// are folders under packages/graph/corpus/frameworks/<plugin id>/. Every
+// are folders under packages/graph/corpus/frameworks/<plugin id>/, named
+// relative to that folder ("blog-app"). Every
 // rule names a positive case, an aliased-import case, an unrelated
 // same-name case, a dynamic case and a metadata-edit case (PLAN.md 3.2.3,
 // "Fixtures per rule"); a shape the rule does not have (a path convention

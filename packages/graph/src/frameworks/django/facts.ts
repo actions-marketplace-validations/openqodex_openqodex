@@ -58,6 +58,36 @@ export function wantsDjango(source: string): boolean {
 const last = (r: Ref | null): string | null => (r && r.length > 0 ? (r[r.length - 1] as string) : null);
 const calleeOf = (call: Node): Ref | null => dotted(call.childForFieldName("function"));
 
+// The names the file's own imports bind, to what they import: `show` to
+// ["django", "shortcuts", "render"] for `from django.shortcuts import render
+// as show`. Read from the same file, so the facts stay context-free; a name
+// test on a call (is this `render`, `include`, `receiver`?) reads through
+// it, and the fact keeps the name as written for resolve to bind.
+function aliasesOf(statements: Node[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const stmt of statements) {
+    if (stmt.type === "import_from_statement") {
+      const module = stmt.childForFieldName("module_name")?.text ?? "";
+      const base = module.startsWith(".") ? [] : module.split(".");
+      for (const n of stmt.childrenForFieldName("name")) {
+        if (n.type === "aliased_import") {
+          const name = n.childForFieldName("name")?.text;
+          const alias = n.childForFieldName("alias")?.text;
+          if (name && alias) out.set(alias, [...base, ...name.split(".")]);
+        } else if (n.type === "dotted_name") out.set(n.text, [...base, ...n.text.split(".")]);
+      }
+    } else if (stmt.type === "import_statement") {
+      for (const n of stmt.childrenForFieldName("name")) {
+        if (n.type !== "aliased_import") continue;
+        const name = n.childForFieldName("name")?.text;
+        const alias = n.childForFieldName("alias")?.text;
+        if (name && alias) out.set(alias, name.split("."));
+      }
+    }
+  }
+  return out;
+}
+
 // Statements at the top level of the module, through `if` and `try` blocks
 // (settings and URL lists are often assembled under `if DEBUG:`).
 function topStatements(root: Node): Node[] {
@@ -86,13 +116,22 @@ function assignmentOf(stmt: Node): Node | null {
 
 export function djangoFacts(root: Node): DjangoFact[] {
   const out: DjangoFact[] = [];
+  const statements = topStatements(root);
+  const aliases = aliasesOf(statements);
+  // A dotted name with its head read through the file's imports.
+  const named = (ref: Ref | null): Ref | null => {
+    if (!ref) return null;
+    const to = aliases.get(ref[0] as string);
+    return to ? [...to, ...ref.slice(1)] : ref;
+  };
+  const tailOf = (ref: Ref | null): string | null => last(named(ref));
 
   // ---------- URL lists ----------
   const view = (node: Node | undefined, entryIndex: () => number, list: string): { view: View; ns: Lit } => {
     if (!node) return { view: { t: "other" }, ns: null };
     if (node.type === "call") {
       const fn = calleeOf(node);
-      if (fn && last(fn) === "include") {
+      if (fn && tailOf(fn) === "include") {
         const { positional, keyword } = pyArgs(node);
         const arg = positional[0] ?? keyword.get("arg");
         const ns = keyword.has("namespace") ? pyString(keyword.get("namespace")) : null;
@@ -129,13 +168,13 @@ export function djangoFacts(root: Node): DjangoFact[] {
   const urlItems = (list: Node, name: string, force: boolean) => {
     const calls = list.namedChildren.filter((c) => c.type === "call");
     // A list counts when it is `urlpatterns`, or when its items call path, re_path or url.
-    if (!force && !calls.some((c) => URL_FUNCTIONS.has(last(calleeOf(c)) ?? ""))) return false;
+    if (!force && !calls.some((c) => URL_FUNCTIONS.has(tailOf(calleeOf(c)) ?? ""))) return false;
     for (const c of calls) urlEntry(c, name, -1);
     return true;
   };
 
   let settings = 0;
-  for (const stmt of topStatements(root)) {
+  for (const stmt of statements) {
     const asg = assignmentOf(stmt);
     if (asg) {
       const left = asg.childForFieldName("left");
@@ -156,7 +195,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (name === "urlpatterns") out.push({ kind: "urllist", ...at, name, literal: sawList || augmented || parts.some((p) => p?.type === "identifier") });
       if (right.type === "call") {
         const fn = calleeOf(right);
-        const tail = last(fn);
+        const tail = tailOf(fn);
         if (fn && (tail === "DefaultRouter" || tail === "SimpleRouter")) out.push({ kind: "router", ...at, name, ctor: fn });
         if (fn && tail === "Library") out.push({ kind: "tag_library", ...at, name, ctor: fn });
         if (fn && tail === "Signal") out.push({ kind: "signal_def", ...at, name, ctor: fn });
@@ -271,7 +310,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const call = expr.type === "call" ? expr : null;
       const ref = call ? calleeOf(call) : dotted(expr);
       if (!ref) continue;
-      const tail = last(ref);
+      const tail = ref.length === 2 ? last(ref) : tailOf(ref);
       const at = lineOf(d);
       if (ref.length === 2 && (tail === "simple_tag" || tail === "filter" || tail === "inclusion_tag" || tail === "tag")) {
         const args = call ? pyArgs(call) : { positional: [] as Node[], keyword: new Map<string, Node>() };
@@ -299,10 +338,10 @@ export function djangoFacts(root: Node): DjangoFact[] {
   // ---------- calls anywhere ----------
   for (const call of root.descendantsOfType("call")) {
     const fn = calleeOf(call);
-    const tail = last(fn);
+    const tail = fn && fn.length === 1 ? tailOf(fn) : last(fn);
     if (!fn || !tail) continue;
     const at = lineOf(call);
-    if (tail in RENDER_FUNCTIONS) {
+    if (Object.hasOwn(RENDER_FUNCTIONS, tail)) {
       const { positional, keyword } = pyArgs(call);
       const pos = RENDER_FUNCTIONS[tail] as number;
       const node = keyword.get(tail === "TemplateResponse" || tail === "SimpleTemplateResponse" ? "template" : "template_name") ?? positional[pos];

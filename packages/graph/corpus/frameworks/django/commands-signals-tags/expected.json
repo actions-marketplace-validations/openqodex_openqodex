@@ -1,0 +1,59 @@
+{
+  "guards": "links Django management commands, signal receivers and template tags, and nothing from same-named functions of other libraries",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "runs",
+        "from": "command:publish",
+        "to": "news/management/commands/publish.py#Command.handle",
+        "tier": "certain"
+      },
+      {
+        "kind": "schedules",
+        "from": "signal:django.db.models.signals.post_save",
+        "to": "news/signals.py#index_story",
+        "tier": "certain"
+      },
+      {
+        "kind": "schedules",
+        "from": "signal:published",
+        "to": "news/signals.py#notify",
+        "tier": "certain"
+      },
+      {
+        "kind": "renders",
+        "from": "news/templatetags/news_tags.py#card",
+        "to": "template:news/templates/news/card.html",
+        "tier": "likely"
+      }
+    ],
+    "roles": [
+      {
+        "target": "news/management/commands/publish.py#Command",
+        "role": "command",
+        "detail": "management"
+      },
+      {
+        "target": "news/templatetags/news_tags.py#headline",
+        "role": "template_tag",
+        "detail": "simple_tag"
+      },
+      {
+        "target": "news/templatetags/news_tags.py#shout",
+        "role": "template_tag",
+        "detail": "filter"
+      },
+      {
+        "target": "news/signals.py#index_story",
+        "role": "signal_receiver"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "schedules",
+        "to": "news/signals.py#not_a_django_receiver"
+      }
+    ]
+  }
+}

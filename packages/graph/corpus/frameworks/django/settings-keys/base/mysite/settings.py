@@ -1,0 +1,4 @@
+INSTALLED_APPS = ["billing"]
+ROOT_URLCONF = "mysite.urls"
+PAYMENT_TIMEOUT = 30
+CURRENCY = "EUR"

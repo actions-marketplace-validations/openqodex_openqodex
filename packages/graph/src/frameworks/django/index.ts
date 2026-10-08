@@ -9,8 +9,7 @@ import { RULES, detectDjango, resolveDjango } from "./resolve.js";
 const VERSION = 1;
 const SUPPORTED = "Django 3.2 to 5.1, Django REST framework routers 3.x";
 
-// Corpus cases live under packages/graph/corpus/frameworks/django/.
-const c = (name: string) => `frameworks/django/${name}`;
+// Corpus case names are relative to packages/graph/corpus/frameworks/django/.
 
 export const django: FrameworkPlugin<DjangoFact> = {
   id: "django",
@@ -37,80 +36,80 @@ export const django: FrameworkPlugin<DjangoFact> = {
         version: RULES.urls.version,
         description: "Each path, re_path or url entry of a urlpatterns list reached from ROOT_URLCONF is a registration bound to its view through the resolver; a class view's HTTP methods are possible handlers.",
         emits: ["registration", "handles", "route_handler", "route_table"],
-        fixtures: { positive: [c("blog-app")], aliased: [c("urls-aliased-import")], unrelatedSameName: [c("urls-unrelated-path")], dynamic: [c("urls-dynamic")], metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["blog-app"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.include.id,
         version: RULES.include.version,
         description: "include() of a literal module path composes the included table under the entry's prefix, to a depth of 8, with namespaces carried.",
         emits: ["mounts", "registration"],
-        fixtures: { positive: [c("blog-app")], aliased: [c("urls-aliased-import")], unrelatedSameName: [c("urls-unrelated-path")], dynamic: [c("urls-dynamic")], metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["blog-app"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.drf.id,
         version: RULES.drf.version,
         description: "A Django REST framework router's register() calls become list and detail registrations under the prefix the router is included at.",
         emits: ["registration", "handles"],
-        fixtures: { positive: [c("drf-router")], aliased: { none: "a router is a value of the module, not an import that can be aliased at the call" }, unrelatedSameName: [c("drf-router")], dynamic: [c("drf-router")], metadataEdit: { none: "covered by the urlpatterns rule's dependency case" } },
+        fixtures: { positive: ["drf-router"], aliased: { none: "a router is a value of the module, not an import that can be aliased at the call" }, unrelatedSameName: ["drf-router"], dynamic: ["drf-router"], metadataEdit: { none: "covered by the urlpatterns rule's dependency case" } },
       },
       {
         id: RULES.templates.id,
         version: RULES.templates.version,
         description: "A literal template name in render(), a template loader call or template_name is matched to files under templates folders: one match is likely, several are possible, none is a gap.",
         emits: ["renders", "template"],
-        fixtures: { positive: [c("templates")], aliased: [c("templates")], unrelatedSameName: [c("templates")], dynamic: [c("templates")], metadataEdit: [c("template-added")] },
+        fixtures: { positive: ["templates"], aliased: ["templates"], unrelatedSameName: ["templates"], dynamic: ["templates"], metadataEdit: ["template-added"] },
       },
       {
         id: RULES.models.id,
         version: RULES.models.version,
         description: "A class whose base binds to django.db.models.Model, or to such a class, is a model with its fields, its relations and its table.",
         emits: ["model", "declares_field", "uses_type", "maps_to", "model_field", "table"],
-        fixtures: { positive: [c("models-migrations")], aliased: [c("models-migrations")], unrelatedSameName: [c("models-migrations")], dynamic: { none: "a model base is a name, never a computed value" }, metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["models-migrations"], aliased: ["models-migrations"], unrelatedSameName: ["models-migrations"], dynamic: { none: "a model base is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.migrations.id,
         version: RULES.migrations.version,
         description: "A Migration class under migrations/ is a migration; each operation names its model in the same app folder.",
         emits: ["migration", "changes_schema", "migration_operation", "runs"],
-        fixtures: { positive: [c("models-migrations")], aliased: { none: "operations are read inside a Migration class whose base binds to Django" }, unrelatedSameName: [c("models-migrations")], dynamic: [c("models-migrations")], metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["models-migrations"], aliased: { none: "operations are read inside a Migration class whose base binds to Django" }, unrelatedSameName: ["models-migrations"], dynamic: ["models-migrations"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.commands.id,
         version: RULES.commands.version,
         description: "A Command class under management/commands/<name>.py is the command <name>, run by its handle method.",
         emits: ["command", "runs"],
-        fixtures: { positive: [c("commands-signals-tags")], aliased: { none: "the command name comes from the file path" }, unrelatedSameName: [c("commands-signals-tags")], dynamic: { none: "the command name comes from the file path" }, metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["commands-signals-tags"], aliased: { none: "the command name comes from the file path" }, unrelatedSameName: ["commands-signals-tags"], dynamic: { none: "the command name comes from the file path" }, metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.tags.id,
         version: RULES.tags.version,
         description: "A function decorated by a template.Library() value's simple_tag, filter, tag or inclusion_tag is a template tag; an inclusion tag renders its template.",
         emits: ["template_tag", "renders"],
-        fixtures: { positive: [c("commands-signals-tags")], aliased: [c("commands-signals-tags")], unrelatedSameName: [c("commands-signals-tags")], dynamic: { none: "a decorator is a name, never a computed value" }, metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["commands-signals-tags"], aliased: ["commands-signals-tags"], unrelatedSameName: ["commands-signals-tags"], dynamic: { none: "a decorator is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.signals.id,
         version: RULES.signals.version,
         description: "@receiver(signal) and signal.connect(handler) connect a Django signal or a Signal() of the repository to its receiver.",
         emits: ["schedules", "signal", "signal_receiver"],
-        fixtures: { positive: [c("commands-signals-tags")], aliased: [c("commands-signals-tags")], unrelatedSameName: [c("commands-signals-tags")], dynamic: { none: "a signal is a name, never a computed value" }, metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["commands-signals-tags"], aliased: ["commands-signals-tags"], unrelatedSameName: ["commands-signals-tags"], dynamic: { none: "a signal is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.settings.id,
         version: RULES.settings.version,
         description: "Upper-case assignments of an application's settings module are config keys; settings.X reads through django.conf are links to them, never their values.",
         emits: ["config_key", "defines_config", "reads_config", "config"],
-        fixtures: { positive: [c("settings-keys")], aliased: [c("settings-keys")], unrelatedSameName: [c("settings-keys")], dynamic: { none: "a getattr with a computed key is not read" }, metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["settings-keys"], aliased: ["settings-keys"], unrelatedSameName: ["settings-keys"], dynamic: { none: "a getattr with a computed key is not read" }, metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.tests.id,
         version: RULES.tests.version,
         description: "Test files and their TestCase classes and test functions are tests; a client request whose literal path matches a route, or a reverse() of a route name, links the test to the route.",
         emits: ["tests", "test"],
-        fixtures: { positive: [c("blog-app")], aliased: [c("urls-aliased-import")], unrelatedSameName: [c("urls-unrelated-path")], dynamic: [c("urls-dynamic")], metadataEdit: [c("dependency-added")] },
+        fixtures: { positive: ["blog-app"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic"], metadataEdit: ["dependency-added"] },
       },
     ],
-    negativeControls: [c("urls-unrelated-path"), c("no-dependency"), c("two-apps")],
+    negativeControls: ["urls-unrelated-path", "no-dependency", "two-apps"],
     sampleApps: ["packages/graph/test/frameworks-django.test.ts"],
   }),
 };
