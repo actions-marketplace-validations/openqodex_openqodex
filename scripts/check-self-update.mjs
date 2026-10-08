@@ -5,8 +5,17 @@
 //
 //   node scripts/check-self-update.mjs --from <x.y.z | previous> --to <x.y.z> [--route daily|now|both]
 //
+// Nothing of a release runs before it is checked the way the updater checks
+// one: <from> and <to> are downloaded by exact version, their sha512 must
+// match the registry's and their SLSA provenance must verify with Sigstore
+// as signed by this repository's release workflow on main
+// (self-update-check-lib.mjs, with this repository's own modules). Every
+// process it starts gets an environment built from an allowlist, never the
+// one it runs in, so no token of the job reaches a package. The release
+// workflow runs it in a job of its own, after the publish, with no secret.
+//
 // For each route, in a fresh HOME:
-//  1. installs openqodex@<from> with `init` for all four agents, in user
+//  1. installs the checked <from> with `init` for all four agents, in user
 //     scope (in one repository) and in project scope (in another);
 //  2. edits what a developer edits: an agent file of each agent in both
 //     scopes, the Claude Code settings, the global instruction files, the
@@ -33,7 +42,9 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { cleanEnv, loadVerifier, verifiedRelease } from "./self-update-check-lib.mjs";
 
 const args = process.argv.slice(2);
 const value = (flag) => {
@@ -80,33 +91,52 @@ if (metadata.versions?.[from] === undefined || metadata.versions?.[to] === undef
 const sameContract = contractOf(from) === contractOf(to);
 process.stdout.write(`contracts: ${from} ${contractOf(from) ?? "none"}, ${to} ${contractOf(to) ?? "none"}\n`);
 
+// Both releases, checked before anything of them runs; <to> is checked
+// here too, though the updater checks it again before it switches.
+const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const releases = realpathSync(mkdtempSync(join(tmpdir(), "oq-self-update-releases-")));
+let fromBin;
+try {
+  const verifier = await loadVerifier(repoRoot);
+  fromBin = await verifiedRelease(from, metadata, join(releases, from), verifier);
+  await verifiedRelease(to, metadata, join(releases, to), verifier);
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+process.stdout.write(`checked: ${from} and ${to} are this repository's releases\n`);
+
 function setup(name) {
   const top = realpathSync(mkdtempSync(join(tmpdir(), `oq-self-update-${name}-`)));
   const b = { top, home: join(top, "home"), oqHome: join(top, "home", ".openqodex"), user: join(top, "user-repo"), project: join(top, "project-repo") };
   for (const dir of [b.home, b.user, b.project]) mkdirSync(dir, { recursive: true });
-  const env = { ...process.env, HOME: b.home, OPENQODEX_HOME: b.oqHome, npm_config_cache: join(top, "npm-cache"), npm_config_update_notifier: "false" };
-  for (const key of ["CI", "OPENQODEX_OFFLINE", "OPENQODEX_AUTO_UPDATE", "OPENQODEX_E2E", "OPENQODEX_UPDATE_AS", "OPENQODEX_UPDATE_MIN_AGE_MS", "OPENQODEX_LAUNCHER", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CODEX_THREAD_ID", "CURSOR_AGENT"]) delete env[key];
-  b.env = env;
+  // What the check sets on top of the allowlist (self-update-check-lib.mjs).
+  b.set = { HOME: b.home, OPENQODEX_HOME: b.oqHome };
   b.launcher = join(b.oqHome, "bin", "openqodex");
   return b;
 }
 
+// The one place a process starts: with the allowlisted environment, never
+// this script's own.
+function run(cwd, command, argv, extra = {}, input = "") {
+  return spawnSync(command, argv, { cwd, env: cleanEnv(process.env, { ...box.set, ...extra }), input, encoding: "utf8", timeout: 600_000 });
+}
+
 function step(what, cwd, command, argv, extra = {}, input = "") {
-  const r = spawnSync(command, argv, { cwd, env: { ...box.env, ...extra }, input, encoding: "utf8", timeout: 600_000 });
+  const r = run(cwd, command, argv, extra, input);
   process.stdout.write(`$ ${what}: exit ${r.status}\n${r.stdout ?? ""}${r.stderr ?? ""}`);
   return r;
 }
 
 function git(cwd, ...argv) {
-  const r = spawnSync("git", argv, { cwd, encoding: "utf8" });
+  const r = run(cwd, "git", argv);
   if (r.status !== 0) fail(`git ${argv.join(" ")}: ${r.stderr}`);
 }
 
-// init of <from>, with --no-review where that version knows it.
+// init of the checked <from>, with --no-review where that version knows it.
 function initFrom(cwd, extra) {
-  const base = ["-y", `openqodex@${from}`, "init", "--yes", "--agent", "all", ...extra];
-  let r = step(`init ${from} ${extra.join(" ")}`, cwd, "npx", [...base, "--no-review"]);
-  if (r.status !== 0 && /unknown argument: --no-review/.test(`${r.stdout}${r.stderr}`)) r = step(`init ${from} ${extra.join(" ")}`, cwd, "npx", base);
+  const base = [fromBin, "init", "--yes", "--agent", "all", ...extra];
+  let r = step(`init ${from} ${extra.join(" ")}`, cwd, process.execPath, [...base, "--no-review"]);
+  if (r.status !== 0 && /unknown argument: --no-review/.test(`${r.stdout}${r.stderr}`)) r = step(`init ${from} ${extra.join(" ")}`, cwd, process.execPath, base);
   if (r.status !== 0) fail(`openqodex@${from} init ${extra.join(" ")} did not succeed`);
 }
 
@@ -280,4 +310,5 @@ for (const name of route === "both" ? ["daily", "now"] : [route]) {
   rmSync(box.top, { recursive: true, force: true });
   box = null;
 }
+rmSync(releases, { recursive: true, force: true });
 process.stdout.write(`PASS: ${from} to ${to} (${route})\n`);

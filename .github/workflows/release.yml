@@ -29,6 +29,9 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
+    outputs:
+      # The version published in this run, empty when none was.
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -78,17 +81,46 @@ jobs:
           case "$major" in ''|*[!0-9]*) echo "cannot read the major version of $version; no major tag moved"; exit 1 ;; esac
           git tag -f "v$major"
           git push --force origin "refs/tags/v$major"
-      - name: Check the self-update into the new release
-        # Only after a publish, and only a check: nothing is merged, tagged or
-        # published by it. In a temp HOME it installs the release before this
-        # one for all four agents, edits their files the way a developer
-        # does, updates on the daily route and with update --now, and fails
-        # when an update wrote anything outside its runtime state, or left the
-        # agents' permission rules short of the new procedure.
+      - name: The version published
+        id: version
         if: steps.changesets.outputs.published == 'true'
         env:
           PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
         run: |
           version=$(node -e 'const p = JSON.parse(process.env.PUBLISHED).find((x) => x.name === "openqodex"); if (p) process.stdout.write(p.version)')
-          if [ -z "$version" ]; then echo "openqodex was not published in this run"; exit 0; fi
-          node scripts/check-self-update.mjs --from previous --to "$version" --route both
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  check-self-update:
+    name: Check the self-update into the new release
+    # A check only, in a job of its own after the publish, which never waits
+    # on it: no secret, no npm token, no id-token, a GITHUB_TOKEN that can
+    # only read, and a checkout of this repository's tag of the new version
+    # that keeps no credentials. The script checks the provenance of every
+    # release before it runs it, as the updater does, and runs each with an
+    # environment built from an allowlist. In a temp HOME it installs the
+    # release before this one for all four agents, edits their files the way
+    # a developer does, updates on the daily route and with update --now, and
+    # fails when an update wrote anything outside its runtime state or left
+    # the agents' permission rules short of the new procedure. A failure
+    # marks the run; it cannot publish, tag, push or roll anything back.
+    needs: release
+    if: needs.release.outputs.version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ needs.release.outputs.version }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # The esbuild and Sigstore modules the check verifies with; no
+      # dependency's install script runs.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Check the self-update from the release before
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: node scripts/check-self-update.mjs --from previous --to "$VERSION" --route both
