@@ -39,37 +39,37 @@
       }
     },
     "osv-scanner": {
-      "version": "1.9.2",
+      "version": "2.6.0",
       "method": "github-release",
       "repo": "google/osv-scanner",
-      "tag": "v1.9.2",
+      "tag": "v2.6.0",
       "binary": "osv-scanner",
       "assets": {
         "darwin-arm64": {
           "name": "osv-scanner_darwin_arm64",
-          "url": "https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_darwin_arm64",
-          "sha256": "393f2c7089d9431bd26a3804d6e46d417b1c05abd5d49c41c7dfc174c520acf0",
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_darwin_arm64",
+          "sha256": "98c460dcd37de25819babd757d04542045b6243113e209edcd4d89fedb0256b4",
           "archive": "none",
           "binaryPath": "osv-scanner_darwin_arm64"
         },
         "darwin-x64": {
           "name": "osv-scanner_darwin_amd64",
-          "url": "https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_darwin_amd64",
-          "sha256": "487ab433b2c2a8c80b737c0bd428a80e6d2e211b4adf775a52a6964163fa3249",
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_darwin_amd64",
+          "sha256": "60c5296637e977b28eeda5c7f13573e447659a632922737f94d11fa7e30ad6ca",
           "archive": "none",
           "binaryPath": "osv-scanner_darwin_amd64"
         },
         "linux-x64": {
           "name": "osv-scanner_linux_amd64",
-          "url": "https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_amd64",
-          "sha256": "d6af4b67fa5de658598bd2d445efb99e90d1734b3146962418719c4350ecb74b",
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64",
+          "sha256": "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108",
           "archive": "none",
           "binaryPath": "osv-scanner_linux_amd64"
         },
         "linux-arm64": {
           "name": "osv-scanner_linux_arm64",
-          "url": "https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_arm64",
-          "sha256": "9c6160afb26c79449a1f1b667323b989a57dda8fc19f22936c9ff920fd97ddfa",
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_arm64",
+          "sha256": "2c71403eb443d05891c4f268c3ad771cf4f16e5443463fd7851ef8f454d3c7e4",
           "archive": "none",
           "binaryPath": "osv-scanner_linux_arm64"
         }

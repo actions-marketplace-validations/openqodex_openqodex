@@ -2,6 +2,8 @@
 // guards that scanner's invocation, output parser, changed-line filter and tool
 // resolution together. Run by the end-to-end config, not the unit config.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import net from "node:net";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -114,6 +116,46 @@ describe("builtin scanner subprocesses", () => {
     const deps = result.scan.candidates.filter((c) => c.ruleId === "react-hooks/exhaustive-deps").map((c) => c.filePath);
     expect(deps).toEqual(["web/page.tsx"]);
     expect([...(result.checked.get("oxlint:react-hooks/exhaustive-deps") ?? [])]).toEqual(["web/page.tsx"]);
+  }, 300_000);
+
+  // osv-scanner 2 asks deps.dev and sends file hashes unless told not to;
+  // OpenQodex promises names and versions to osv.dev only. A proxy that
+  // logs every host the scan opens a tunnel to holds that promise.
+  it("osv-scanner reads a bun.lock and opens api.osv.dev only", async () => {
+    if (process.env.OPENQODEX_E2E_OFFLINE === "1") return;
+    const hosts: string[] = [];
+    const proxy = http.createServer((_req, res) => res.writeHead(403).end());
+    proxy.on("connect", (req, socket, head) => {
+      const [host, port] = (req.url ?? "").split(":");
+      hosts.push(host ?? "");
+      const upstream = net.connect(Number(port), host, () => {
+        socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.write(head);
+        upstream.pipe(socket);
+        socket.pipe(upstream);
+      });
+      upstream.on("error", () => socket.destroy());
+      socket.on("error", () => upstream.destroy());
+    });
+    await new Promise<void>((done) => proxy.listen(0, "127.0.0.1", done));
+    const { port } = proxy.address() as net.AddressInfo;
+    const saved = { HTTPS_PROXY: process.env.HTTPS_PROXY, HTTP_PROXY: process.env.HTTP_PROXY };
+    process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+    process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
+    try {
+      // Resolved first, outside the proxy, so the download is not counted.
+      await createToolResolver({ allowInstall: true, installBudgetMs: null })("osv-scanner");
+      hosts.length = 0;
+      const bun = '{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "tiny", "dependencies": { "lodash": "4.17.15" } } },\n  "packages": {\n    "lodash": ["lodash@4.17.15", "", {}, "sha512-x"]\n  }\n}\n';
+      const pom = "<project><modelVersion>4.0.0</modelVersion><groupId>a</groupId><artifactId>b</artifactId><version>1</version><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>\n";
+      const result = await scan({ scanner: "osv-scanner", rule: "", files: { "bun.lock": bun, "pom.xml": pom }, anchor: "" });
+      expect(result.scan.scanners[0]!.status).toBe("ran");
+      expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "osv-scanner", ruleId: "GHSA-p6mc-m468-83gw", filePath: "bun.lock" }));
+      expect([...new Set(hosts)]).toEqual(["api.osv.dev"]);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      proxy.close();
+    }
   }, 300_000);
 
   it("gitleaks finds a secret and never puts its value in the scan result", async () => {

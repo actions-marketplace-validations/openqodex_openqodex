@@ -41,6 +41,8 @@
 //      entry, so the changed-line filter drops the advisory.
 //  14. A nested lockfile's findings take the root lockfile's path because
 //      its printed path ends with the root key.
+//  15. Two advisories osv-scanner groups as aliases of one another (two
+//      GHSA ids for one CVE) become two findings for one problem.
 
 import { describe, expect, it } from "vitest";
 import { parseOsvScannerJson } from "./osv-scanner.js";
@@ -170,6 +172,26 @@ describe("references and the message (C)", () => {
     expect(finding.message).toBe(
       "lodash@4.17.20: GHSA-p6mc-m468-83gw (CVE-2020-8203). Prototype pollution in lodash",
     );
+  });
+});
+
+describe("aliased advisories (15)", () => {
+  it("reports one finding per osv-scanner group, under its first id", () => {
+    const out = parseOsvScannerJson(
+      report("bun.lock", [
+        pkg(
+          "lodash",
+          "4.17.15",
+          [{ id: "GHSA-35jh-r3h4-6jhm" }, { id: "GHSA-r5fr-rjxr-66jc" }, { id: "GHSA-p6mc-m468-83gw" }],
+          [
+            { ids: ["GHSA-35jh-r3h4-6jhm", "GHSA-r5fr-rjxr-66jc"], aliases: ["CVE-2021-23337"], max_severity: "8.1" },
+            { ids: ["GHSA-p6mc-m468-83gw"], max_severity: "7.4" },
+          ],
+        ),
+      ]),
+      new Map(),
+    );
+    expect(out.map((f) => f.ruleId)).toEqual(["GHSA-35jh-r3h4-6jhm", "GHSA-p6mc-m468-83gw"]);
   });
 });
 

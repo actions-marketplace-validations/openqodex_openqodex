@@ -30,7 +30,10 @@
 //  12. A Python dependency is missed in [project] dependencies, a poetry
 //      table or a requirements file; or a name in a description or an isort
 //      list counts as a dependency.
-//  13. A hostile manifest, script or YAML file from the repo (long runs of
+//  13. A lockfile osv-scanner 2 reads (bun.lock, uv.lock, pdm.lock, the NuGet
+//      ones) is left out, or a file it has no extractor for (go.sum,
+//      package.json) is handed to it, which stops the whole lockfile run.
+//  14. A hostile manifest, script or YAML file from the repo (long runs of
 //      blanks with no closing quote, bracket or comment) makes a pattern
 //      backtrack without bound, so reading it hangs the review.
 import { execFileSync } from "node:child_process";
@@ -230,7 +233,17 @@ describe("manifests are data, read within limits", () => {
   });
 });
 
-describe("hostile files read in linear time (13)", () => {
+describe("the lockfiles osv-scanner gets (13)", () => {
+  it("hands over every lockfile osv-scanner 2 reads and none it cannot", () => {
+    const dir = repo({});
+    const reads = ["bun.lock", "web/uv.lock", "pdm.lock", "pylock.toml", "api/packages.lock.json", "packages.config", "requirements-dev.txt", "App.deps.json", "gems.locked", "renv.lock", "gradle/verification-metadata.xml", "go.mod", "package-lock.json"];
+    const never = ["go.sum", "package.json", "deps.json", "Pipfile", "requirements.in"];
+    const choice = selectScanners({ repoDir: dir, paths: [...reads, ...never], config: config() }).find((c) => c.scanner === "osv-scanner")!;
+    expect(choice.paths).toEqual(reads);
+  });
+});
+
+describe("hostile files read in linear time (14)", () => {
   // Just under the cap, so the whole file is read.
   const N = MAX_MANIFEST_BYTES - 1024;
   const blanks = (n: number) => " ".repeat(n);
