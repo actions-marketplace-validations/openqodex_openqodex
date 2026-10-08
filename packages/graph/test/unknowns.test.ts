@@ -5,6 +5,8 @@
 //    `trim` or `reduce` gets a false floor.
 // 2. A method called on a value whose type the repository defines but no
 //    rule can see into stays a gap (never turned into an external call).
+// 3. A method called on what a call returns is named in the brief as if the
+//    call were a type ("the type Buffer.concat"), which misleads the reader.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { buildGraph, floorReasons } from "../src/index.js";
@@ -39,5 +41,14 @@ describe("unknown records", () => {
     repos.push(root);
     const g = await buildGraph({ repoRoot: root, store: null });
     expect(g.unknowns.map((u) => `${u.file}:${u.line} ${u.name} ${u.cause}`)).toEqual(["src/use.ts:3 find no-receiver-type"]);
+  });
+
+  it("names a call's result as what the call returns, never as a type (3)", async () => {
+    const root = makeRepo({
+      "src/use.ts": "export function use(parts: Uint8Array[]) {\n  return Buffer.concat(parts).toString();\n}\n",
+    });
+    repos.push(root);
+    const g = await buildGraph({ repoRoot: root, store: null });
+    expect(g.unknowns.map((u) => `${u.name}: ${u.note}`)).toEqual(["toString: what Buffer.concat returns is not known to the graph"]);
   });
 });

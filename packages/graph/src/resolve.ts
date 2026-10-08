@@ -981,7 +981,12 @@ export function createWorld(input: ResolveInput): World {
         // built-in type the file does not redefine: the method is the
         // language's own.
         if (t === null && r.path.length === 0 && (r.type.elem || (!r.type.qualifier && BUILTIN_TYPES[family].has(r.type.name) && resolveLocal(file, r.type.name) === null))) return { ext: true };
-        if (t === null) return { unknown: "no-receiver-type", shape: "typed", note: `the type ${r.type.qualifier ? `${r.type.qualifier}.` : ""}${r.type.name} is not found in the graph` };
+        if (t === null) {
+          const named = `${r.type.qualifier ? `${r.type.qualifier}.` : ""}${r.type.name}`;
+          // `result`: the value is what calling `named` returns, not a type of that name.
+          const note = r.type.result !== undefined ? `what ${named} returns is not known to the graph` : `the type ${named} is not found in the graph`;
+          return { unknown: "no-receiver-type", shape: "typed", note };
+        }
         const key = followPath(t, r.path);
         if (key === "ext") return { ext: true };
         if (key === null) return { unknown: "no-receiver-type", shape: "typed", note: "a field whose type no rule knows" };
