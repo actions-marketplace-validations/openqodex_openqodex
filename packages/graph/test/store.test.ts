@@ -887,7 +887,8 @@ function otherOwned(path: string, text: string): "chown" | "link" | null {
     for (const name of names) {
       const src = join(dir, name);
       const st = lstatSync(src, { throwIfNoEntry: false });
-      if (!st?.isFile() || st.uid === process.getuid?.() || st.dev !== dev || (st.mode & 0o022) !== 0) continue;
+      // Readable by others too: the test copies its bytes after the check.
+      if (!st?.isFile() || st.uid === process.getuid?.() || st.dev !== dev || (st.mode & 0o022) !== 0 || (st.mode & 0o004) === 0) continue;
       try {
         linkSync(src, path);
         return "link";
