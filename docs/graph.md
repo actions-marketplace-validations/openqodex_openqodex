@@ -38,7 +38,7 @@ A call no rule can bind is kept as an unknown with its cause, never dropped:
 
 - external: the name comes from a declared dependency or the standard library. Only these are external; an import of a module that is not in the repository and that no manifest declares is a miss.
 - no-receiver-type: a method called on a value whose type no rule knows, or on an interface or a type alias (calls through interfaces come later).
-- untyped-receiver: a method called on a value typed `any`, `unknown` or `object` (Python `object` or `Any`, Go `any`). It may reach any method of that name, so it is never counted as external.
+- untyped-receiver: a method called on a value typed `any`, `unknown`, `object` or an object type written in place such as `{ save(): number }` (Python `object` or `Any`, Go `any`). It may reach any method of that name, so it is never counted as external.
 - not-exported: a path of a workspace package that its `exports` map does not expose.
 - dynamic: a call through a parameter, a local value or a computed member such as `handlers[key]()`. Such a call could reach any function of its project.
 - miss: the evidence names a place where no such symbol exists now.
