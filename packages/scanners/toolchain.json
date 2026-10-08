@@ -415,6 +415,11 @@
       "repo": "yannh/kubeconform",
       "tag": "v0.8.0",
       "binary": "kubeconform",
+      "schemas": {
+        "repo": "yannh/kubernetes-json-schema",
+        "commit": "8df8a883b68a24a104b4a9e43c1288090ae60b3b",
+        "kubernetes": "1.37.1"
+      },
       "assets": {
         "darwin-arm64": {
           "name": "kubeconform-darwin-arm64.tar.gz",

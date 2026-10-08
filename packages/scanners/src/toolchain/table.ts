@@ -25,8 +25,13 @@ type RecipeBase = { version: string; binary: string; needs?: string };
 // <tool>-<platform>.txt beside toolchain.json, made by scripts/lock-scanners.mjs
 // from the fields below. `package`, `with` and `gems` are what the lock was
 // made from.
+// Data a scanner downloads at run time, pinned beside it: kubeconform's
+// Kubernetes JSON schemas, from one commit of `repo` on GitHub, for one
+// Kubernetes version (x.y.z).
+export type SchemaPin = { repo: string; commit: string; kubernetes: string };
+
 export type Recipe =
-  | (RecipeBase & { method: "github-release"; repo: string; tag: string; assets: Partial<Record<Platform, ReleaseAsset | null>> })
+  | (RecipeBase & { method: "github-release"; repo: string; tag: string; assets: Partial<Record<Platform, ReleaseAsset | null>>; schemas?: SchemaPin })
   // `with`: extra packages pinned beside the tool, for a dependency the tool
   // itself leaves unpinned (semgrep needs a setuptools that still ships pkg_resources).
   | (RecipeBase & { method: "uv"; package: string; python: string; with?: string[] })
