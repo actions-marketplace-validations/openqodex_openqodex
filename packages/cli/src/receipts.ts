@@ -18,13 +18,16 @@
 // own gets no receipt.
 //
 // The repo id is the sha256 of the repository's real root path. Folders are
-// 0700 and real (never a link), files 0600, written to a fresh temporary
-// file and renamed into place. A record folder that leads outside the home,
-// a file that is a link, too large, or not a receipt reads as no record.
-import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+// made 0700, files 0600, each written through the home guard
+// (guarded-fs.ts): a temporary file renamed into place, in a folder that
+// lies, by identity, under OpenQodex's home, with no link anywhere on the
+// way. Each is read through the same guard: a record folder or file that is
+// a link, one too large, or not a receipt reads as no record.
+import { createHash } from "node:crypto";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { GateReceipt } from "@openqodex/core";
+import { closeWider } from "@openqodex/core";
 import { homeGuard, type Guard } from "./agents/guarded-fs.js";
 
 const MAX_BYTES = 64 * 1024;
@@ -65,35 +68,26 @@ export function homeReceiptPath(home: string, repoRoot: string, changeId: string
   return join(receiptsDir(home), repoId(repoRoot), `${changeId}.json`);
 }
 
-// A real folder made 0700, or an error: never written through a link.
-function realFolder(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  const st = lstatSync(path);
-  if (!st.isDirectory() || st.isSymbolicLink()) throw new Error(`${path} is not a real folder`);
-}
-
-// Each named file written 0600 into <home>/<kind>/<repo id>/.
+// Each named file written 0600 into <home>/<kind>/<repo id>/. A link
+// anywhere on the way, the file itself included, is refused, and so is a
+// path that leads outside OpenQodex's home.
 function writeRecord(home: string, kind: string, repoRoot: string, names: string[], value: unknown): void {
-  realFolder(home);
-  realFolder(join(home, kind));
+  const guard = homeGuard(home, true);
   const dir = join(home, kind, repoId(repoRoot));
-  realFolder(dir);
   const text = `${JSON.stringify(value, null, 2)}\n`;
-  for (const name of names) {
-    const tmp = join(dir, `.${name}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-    writeFileSync(tmp, text, { flag: "wx", mode: 0o600 });
-    renameSync(tmp, join(dir, name));
-  }
+  for (const name of names) guard.write(join(dir, name), text, { mode: 0o600, folderMode: 0o700, wider: closeWider(guard, home) });
 }
 
 // The parsed file, or null when it is not a regular file within the cap.
-// Read through the guard (agents/guarded-fs.ts): the folder it lies in must
-// be, by identity, under OpenQodex's home, so a record folder that is a link
-// into a repository is no record; and the file is read through a handle
-// opened without following a link and checked to be the file walked to.
+// Read through the strict home guard that writes it (guarded-fs.ts): the
+// folder it lies in must be, by identity, under OpenQodex's home with no
+// link on the way, so a record folder that is a link (into a repository, or
+// to another folder of the home) is no record; and the file is read through
+// a handle opened without following a link and checked to be the file
+// walked to.
 function readRecord(home: string, path: string): unknown {
   try {
-    const buf = homeGuard(home).read(path, MAX_BYTES);
+    const buf = homeGuard(home, true).read(path, MAX_BYTES);
     return buf === null ? null : (JSON.parse(buf.toString("utf8")) as unknown);
   } catch {
     return null;

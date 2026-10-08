@@ -112,8 +112,9 @@ function ourRules(ctx: Ctx, path: string): string[] {
 // refuses anything else, as every other action's guard does.
 const writtenThisRun = new Map<string, string | null>();
 
+// A file the developer owns keeps its own mode; a new one gets `mode`.
 function writeSettings(g: Guard, path: string, text: string, mode?: number): void {
-  g.write(path, text, { mode });
+  g.write(path, text, { mode, keepMode: true });
   writtenThisRun.set(path, text);
 }
 
@@ -170,7 +171,7 @@ function checkRepoPath(t: Target, ctx: Ctx): void {
 // A markdown file, in the repository or not, goes through the guard like
 // every other file.
 function writeMarkdown(t: Target, ctx: Ctx, content: string): void {
-  ctx.guard.write(t.path, content);
+  ctx.guard.write(t.path, content, { keepMode: true });
 }
 
 function removeMarkdown(t: Target, ctx: Ctx): void {
@@ -185,7 +186,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
   switch (t.kind) {
     case "file": {
       const write = (): void => {
-        ctx.guard.write(t.path, t.content);
+        ctx.guard.write(t.path, t.content, { keepMode: true });
         setFile(record, t.path, t.content, t.usesLauncher);
       };
       if (before === null) return { ...base, verb: "create", note: t.label, apply: write };

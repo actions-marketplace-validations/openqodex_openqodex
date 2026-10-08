@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { nearestName } from "./names.js";
 import { isRepoState, readFileBounded, readRepoFile } from "./repo-state.js";
 import { SEVERITIES } from "./severity.js";
 import type { BuiltinScanner, Config, CustomInstall, CustomScanner, JsonMap, LoadedConfig, Severity } from "./types.js";
@@ -44,6 +45,11 @@ export type ConfigKey = { key: string; default: string; description: string };
 
 export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: "version", default: "1", description: "The file format version. 1 is the only one." },
+  {
+    key: "min_version",
+    default: "null",
+    description: "The oldest openqodex that may read this file, such as 0.9.0; an older one stops with exit 2 and names the version it needs.",
+  },
   {
     key: "review.severity_threshold",
     default: "minor",
@@ -86,25 +92,38 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   },
 ];
 
-// The commented default config, every key present with its default. `init`
-// writes it as .openqodex/config.yaml.
+// The config `init` and the first review write as .openqodex/config.yaml:
+// `version: 1` set, every other key a comment holding its default. A default
+// lives in the code, so a release that changes one reaches every repo that
+// never set the key; a line here would freeze it as a choice nobody made.
+// Removing the `# ` that starts a line sets it.
 export const DEFAULT_CONFIG_YAML = defaultYaml();
+
+// The first line of the file `init` wrote up to 0.8.1, with every default
+// as a live value: a value there that equals an old default was not chosen.
+export const LIVE_DEFAULTS_HEADER = "# OpenQodex settings for this repo. Every key is optional; these are the defaults.";
 
 function defaultYaml(): string {
   const out = [
-    "# OpenQodex settings for this repo. Every key is optional; these are the defaults.",
-    "# Each key is explained by: openqodex guide config",
+    "# OpenQodex settings for this repo. Only version is set: every other key below is",
+    "# a comment that shows its default, and a later release may change a default.",
+    "# To set a key, remove the `# ` that starts its line and the lines of the blocks",
+    "# above it. Each key is explained by: openqodex guide config",
   ];
   let open: string[] = [];
   for (const { key, default: value, description } of CONFIG_KEYS) {
+    if (key === "version") {
+      out.push(`${key}: ${value}`);
+      continue;
+    }
     const parts = key.split(".");
     const parents = parts.slice(0, -1);
     let same = 0;
     while (same < open.length && same < parents.length && open[same] === parents[same]) same++;
-    for (let i = same; i < parents.length; i++) out.push(`${"  ".repeat(i)}${parents[i]}:`);
+    for (let i = same; i < parents.length; i++) out.push(`# ${"  ".repeat(i)}${parents[i]}:`);
     open = parents;
     const indent = "  ".repeat(parents.length);
-    out.push(`${indent}# ${description}`, `${indent}${parts[parts.length - 1]}: ${value}`);
+    out.push(`# ${indent}# ${description}`, `# ${indent}${parts[parts.length - 1]}: ${value}`);
   }
   return `${out.join("\n")}\n`;
 }
@@ -123,6 +142,44 @@ const HOSTED_ONLY_REVIEW_KEYS = [
 const HOSTED_ONLY_TOP_KEYS = ["probes"];
 const HOSTED_ONLY = "is used by the hosted review only and is ignored";
 
+// Every change to a key or to the file's place, one row each. The parser
+// reads, warns and fails from this table; `openqodex config migrate`
+// applies the renames, removals and the move. A key leaves CONFIG_KEYS only
+// with a row here (test/config-changes.test.ts holds every key a release
+// shipped).
+//   renamed: read under the old top-level name, with a warning; a file with
+//            both is refused. migrate renames it.
+//   removed: warned about and ignored. migrate removes it.
+//   hosted:  a key of the hosted review's file: warned about and ignored, and
+//            left by migrate, since one file can serve both.
+//   default: the default moved from `was` in `since`. A file an earlier
+//            init wrote with every default live (LIVE_DEFAULTS_HEADER) that
+//            still holds `was` is told; `unset`, when given, is said to a
+//            file at the place the file had before the default moved that
+//            leaves the key unset.
+//   moved:   the file's place; the old one is read while the new one is
+//            absent. migrate moves it.
+export type ConfigChange =
+  | { kind: "renamed"; key: string; to: string; since: string; why: string; what: string }
+  | { kind: "removed"; key: string; since: string; why: string }
+  | { kind: "hosted"; key: string }
+  | { kind: "default"; key: string; was: string; since: string; unset?: string }
+  | { kind: "moved"; file: string; to: string; since: string };
+
+export const CONFIG_CHANGES: readonly ConfigChange[] = [
+  { kind: "moved", file: LEGACY_CONFIG_FILE, to: CONFIG_FILE, since: "0.2.0" },
+  { kind: "renamed", key: "pr_review", to: "review", since: "0.1.0", why: "the hosted name of the review block", what: "block" },
+  ...HOSTED_ONLY_REVIEW_KEYS.map((k): ConfigChange => ({ kind: "hosted", key: `review.${k}` })),
+  ...HOSTED_ONLY_TOP_KEYS.map((k): ConfigChange => ({ kind: "hosted", key: k })),
+  {
+    kind: "default",
+    key: "review.severity_threshold",
+    was: "info",
+    since: "0.2.0",
+    unset: "the report now hides findings below minor by default; set review.severity_threshold: info in {file} to keep seeing them",
+  },
+];
+
 const BUILTIN: Record<BuiltinScanner, true> = {
   semgrep: true,
   gitleaks: true,
@@ -140,6 +197,7 @@ const BUILTIN: Record<BuiltinScanner, true> = {
 };
 const BUILTIN_NAMES = Object.keys(BUILTIN) as [BuiltinScanner, ...BuiltinScanner[]];
 
+const VERSION_TEXT = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const GITHUB_REPO = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -196,6 +254,7 @@ function schemas(strict: boolean) {
 
   const file = obj({
     version: z.literal(1).optional(),
+    min_version: text.pipe(z.string().regex(VERSION_TEXT, "expected a version such as 0.9.0")).nullish(),
     review: obj({
       severity_threshold: severityLevel.optional(),
       block_on_severity: severityLevel.nullish(),
@@ -206,7 +265,9 @@ function schemas(strict: boolean) {
       ...hostedOnly(HOSTED_ONLY_REVIEW_KEYS),
     }).optional(),
     scanners: obj({
-      disable: z.array(z.enum(BUILTIN_NAMES)).optional(),
+      // A name this version does not know is warned about and ignored
+      // (parseConfig): a newer version may know it.
+      disable: strings.optional(),
       custom: z.array(custom).optional(),
     }).optional(),
     graph: obj({
@@ -320,8 +381,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export type ParseOptions = {
+  // The running openqodex: min_version is checked against it. Without it,
+  // min_version is read but not checked.
+  runtimeVersion?: string;
+  // The table of changes; tests pass their own rows.
+  changes?: readonly ConfigChange[];
+};
+
+function versionParts(v: string): [number, number, number] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+  return m === null ? null : [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function olderThan(a: string, b: string): boolean {
+  const pa = versionParts(a);
+  const pb = versionParts(b);
+  if (pa === null || pb === null) return false;
+  return pa[0] < pb[0] || (pa[0] === pb[0] && (pa[1] < pb[1] || (pa[1] === pb[1] && pa[2] < pb[2])));
+}
+
+// Whether a dotted key path is set in the parsed file, and its value.
+function lookup(data: unknown, path: string[]): { set: boolean; value: unknown } {
+  let at: unknown = data;
+  for (const p of path) {
+    if (!isRecord(at) || !(p in at)) return { set: false, value: undefined };
+    at = at[p];
+  }
+  return { set: true, value: at };
+}
+
 // Parses the text of a config file. `file` names it in error messages.
-export function parseConfig(source: string, file: string = CONFIG_FILE): { config: Config; warnings: string[] } {
+export function parseConfig(source: string, file: string = CONFIG_FILE, opts: ParseOptions = {}): { config: Config; warnings: string[] } {
+  const changes = opts.changes ?? CONFIG_CHANGES;
   let data: unknown;
   try {
     data = parseYaml(source);
@@ -331,27 +423,45 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
   if (data === null || data === undefined) return { config: structuredClone(DEFAULT_CONFIG), warnings: [] };
 
   const warnings: string[] = [];
-  // The hosted file names the review block pr_review. It is read as review,
-  // through a new top-level object so the parsed YAML is never edited, and
-  // every message names the key the developer wrote.
+  // A renamed top-level key (the hosted file names the review block
+  // pr_review) is read under its new name, through a new top-level object so
+  // the parsed YAML is never edited, and every message names the key the
+  // developer wrote.
   let shown = (path: PropertyKey[]): PropertyKey[] => path;
-  if (isRecord(data) && "pr_review" in data) {
-    if ("review" in data) fail(file, ["pr_review"], "review and pr_review are the same block; keep only review");
-    const { pr_review: review, ...rest } = data;
-    data = { ...rest, review };
-    shown = (path) => (path[0] === "review" ? ["pr_review", ...path.slice(1)] : path);
-    warnings.push("pr_review is the hosted name of the review block; it is read as review");
+  for (const c of changes) {
+    if (c.kind !== "renamed" || !isRecord(data) || !(c.key in data)) continue;
+    if (c.to in data) fail(file, [c.key], `${c.to} and ${c.key} are the same ${c.what}; keep only ${c.to}`);
+    const { [c.key]: value, ...rest } = data;
+    data = { ...rest, [c.to]: value };
+    const before = shown;
+    shown = (path) => before(path[0] === c.to ? [c.key, ...path.slice(1)] : path);
+    warnings.push(`${c.key} is ${c.why}; it is read as ${c.to}`);
   }
   function failAt(path: PropertyKey[], message: string): never {
     fail(file, shown(path), message);
   }
 
-  if (isRecord(data)) {
-    for (const key of HOSTED_ONLY_TOP_KEYS) if (key in data) warnings.push(`${key} ${HOSTED_ONLY}`);
-    if (isRecord(data.review)) {
-      for (const key of HOSTED_ONLY_REVIEW_KEYS) {
-        if (key in data.review) warnings.push(`${keyPath(shown(["review", key]))} ${HOSTED_ONLY}`);
-      }
+  // Keys of the hosted file, and keys a release removed: each warned about
+  // once, with its reason, and not again as unknown.
+  const named = new Set<string>();
+  for (const c of changes) {
+    if (c.kind !== "hosted" && c.kind !== "removed") continue;
+    const path = c.key.split(".");
+    if (!lookup(data, path).set) continue;
+    named.add(c.key);
+    const where = keyPath(shown(path));
+    warnings.push(c.kind === "hosted" ? `${where} ${HOSTED_ONLY}` : `${where} was removed in ${c.since} and is ignored: ${c.why} (openqodex config migrate removes it)`);
+  }
+
+  // A file an earlier init wrote with every default live, still at a
+  // default a release changed since.
+  if (source.startsWith(LIVE_DEFAULTS_HEADER)) {
+    for (const c of changes) {
+      if (c.kind !== "default") continue;
+      const found = lookup(data, c.key.split("."));
+      const now = CONFIG_KEYS.find((k) => k.key === c.key)?.default;
+      if (!found.set || now === undefined || String(found.value) !== c.was) continue;
+      warnings.push(`${c.key}: ${c.was} is the default an earlier openqodex init wrote; since ${c.since} the default is ${now}. Delete the line to follow the default, or keep it to stay on ${c.was}.`);
     }
   }
 
@@ -361,12 +471,33 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
     if (real) failAt(real.path, real.message);
     for (const issue of strict.error.issues) {
       if (issue.code !== "unrecognized_keys") continue;
-      for (const key of issue.keys) warnings.push(`unknown key ${keyPath(shown([...issue.path, key]))} is ignored`);
+      for (const key of issue.keys) {
+        if (named.has([...issue.path, key].join("."))) continue;
+        warnings.push(`unknown key ${keyPath(shown([...issue.path, key]))} is ignored`);
+      }
     }
   }
   const result = STRIPPING.file.safeParse(data);
   if (!result.success) failAt(result.error.issues[0].path, result.error.issues[0].message);
   const yaml = result.data;
+
+  if (yaml.min_version !== undefined && yaml.min_version !== null && opts.runtimeVersion !== undefined && olderThan(opts.runtimeVersion, yaml.min_version)) {
+    failAt(["min_version"], `this repo's config needs openqodex ${yaml.min_version} or newer, and this is ${opts.runtimeVersion}; run openqodex update`);
+  }
+
+  // A name a newer version added is ignored here, not fatal: an older
+  // teammate's review still runs, and the warning names the near one.
+  const disabled: BuiltinScanner[] = [];
+  for (const name of yaml.scanners?.disable ?? []) {
+    if (name in BUILTIN) {
+      disabled.push(name as BuiltinScanner);
+      continue;
+    }
+    const near = nearestName(name, BUILTIN_NAMES);
+    warnings.push(
+      `${keyPath(shown(["scanners", "disable"]))}: ${name} is not a scanner this version knows; it is ignored (${near === null ? `the scanners are ${BUILTIN_NAMES.join(", ")}` : `did you mean ${near}?`})`,
+    );
+  }
 
   const custom = (yaml.scanners?.custom ?? []).map((c, i) => toCustom(file, i, c));
   const seen = new Set<string>();
@@ -384,7 +515,7 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
       disabledRules: yaml.review?.disabled_rules ?? [],
       defaultBase: yaml.review?.default_base ?? null,
       includeFixtures: yaml.review?.include_fixtures ?? false,
-      disabledScanners: yaml.scanners?.disable ?? [],
+      disabledScanners: disabled,
       custom,
       graph: {
         enabled: yaml.graph?.enabled ?? graph.enabled,
@@ -397,15 +528,11 @@ export function parseConfig(source: string, file: string = CONFIG_FILE): { confi
   };
 }
 
-function setsThreshold(data: unknown): boolean {
-  if (!isRecord(data)) return false;
-  return [data.review, data.pr_review].some((block) => isRecord(block) && "severity_threshold" in block);
-}
-
 // `--config` wins. Otherwise .openqodex/config.yaml, then the 0.1.0 file at
-// the root. With both, the folder file is read and a warning names both, so a
-// 0.1.0 repo keeps working once `init` has written the folder file.
-export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfig {
+// the root (the "moved" row of CONFIG_CHANGES). With both, the folder file
+// is read and a warning names both, so a 0.1.0 repo keeps working once
+// `init` has written the folder file.
+export function loadConfig(repoRoot: string, explicitPath?: string, opts: ParseOptions = {}): LoadedConfig {
   if (explicitPath !== undefined) {
     const path = isAbsolute(explicitPath) ? explicitPath : resolve(repoRoot, explicitPath);
     // A file in the repo state is read as repo state, never through a link.
@@ -413,29 +540,38 @@ export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfi
     if (state !== null) {
       const text = readRepoFile(repoRoot, state, CONFIG_MAX_BYTES);
       if (text === null) throw new OpenQodexError(`config file not found: ${path}`);
-      return { ...parseConfig(text, explicitPath), path };
+      return { ...parseConfig(text, explicitPath, opts), path };
     }
     if (!existsSync(path)) throw new OpenQodexError(`config file not found: ${path}`);
     // Any other file the developer named: a link is followed; it must still be a regular file within the cap.
-    return { ...parseConfig(readFileBounded(path, CONFIG_MAX_BYTES), explicitPath), path };
+    return { ...parseConfig(readFileBounded(path, CONFIG_MAX_BYTES), explicitPath, opts), path };
   }
+  const changes = opts.changes ?? CONFIG_CHANGES;
+  const moved = changes.find((c): c is Extract<ConfigChange, { kind: "moved" }> => c.kind === "moved");
   // The repo's own files: never through a link, never past the cap.
-  const texts = [CONFIG_FILE, LEGACY_CONFIG_FILE].map((name) => ({ name, text: readRepoFile(repoRoot, name, CONFIG_MAX_BYTES) }));
+  const names = moved === undefined ? [CONFIG_FILE] : [moved.to, moved.file];
+  const texts = names.map((name) => ({ name, text: readRepoFile(repoRoot, name, CONFIG_MAX_BYTES) }));
   const found = texts.filter((t) => t.text !== null).map((t) => t.name);
   if (found.length === 0) return { config: structuredClone(DEFAULT_CONFIG), path: null, warnings: [] };
   const path = join(repoRoot, found[0]);
   const text = texts.find((t) => t.name === found[0])!.text!;
-  const { config, warnings } = parseConfig(text, found[0]);
-  // The threshold default went from info to minor after 0.1.0; a file from
-  // then that never set it would lose findings without a word.
-  if (found[0] === LEGACY_CONFIG_FILE && !setsThreshold(parseYaml(text))) {
-    warnings.push(
-      `the report now hides findings below ${DEFAULT_CONFIG.severityThreshold} by default; set review.severity_threshold: info in ${LEGACY_CONFIG_FILE} to keep seeing them`,
-    );
+  const { config, warnings } = parseConfig(text, found[0], opts);
+  // A file at the old place was written before the move: a default changed
+  // by then reached it without a word, so say so (the `unset` of a row).
+  if (moved !== undefined && found[0] === moved.file) {
+    const data: unknown = parseYaml(text);
+    const renamed = changes.filter((c): c is Extract<ConfigChange, { kind: "renamed" }> => c.kind === "renamed");
+    for (const c of changes) {
+      if (c.kind !== "default" || c.unset === undefined || olderThan(moved.since, c.since)) continue;
+      const path = c.key.split(".");
+      const spellings = [path, ...renamed.filter((r) => r.to === path[0]).map((r) => [r.key, ...path.slice(1)])];
+      if (spellings.some((p) => lookup(data, p).set)) continue;
+      warnings.push(c.unset.replaceAll("{file}", moved.file));
+    }
   }
-  if (found.length === 2) {
+  if (found.length === 2 && moved !== undefined) {
     warnings.unshift(
-      `both ${CONFIG_FILE} and ${LEGACY_CONFIG_FILE} exist; read ${CONFIG_FILE} only, so move anything still needed from ${LEGACY_CONFIG_FILE} into it and delete it`,
+      `both ${moved.to} and ${moved.file} exist; read ${moved.to} only, so move anything still needed from ${moved.file} into it and delete it`,
     );
   }
   return { config, path, warnings };

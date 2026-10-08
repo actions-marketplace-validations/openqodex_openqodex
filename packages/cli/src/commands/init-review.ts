@@ -89,7 +89,7 @@ async function firstReview(o: Parameters<typeof reviewAfterInit>[0]): Promise<{ 
       if (end.installing.length > 0) out(`Still downloading: ${end.installing.join(", ")}. The next review includes them once they finish.`);
       return end.ended === "nothing" ? { ended: "skipped", why: "nothing to review" } : { ended: end.ended };
     };
-    const { config } = loadConfig(o.repoRoot);
+    const { config } = loadConfig(o.repoRoot, undefined, { runtimeVersion: __OPENQODEX_VERSION__ });
     const overlay = [...(o.initFiles ?? new Map<string, string | null>())]
       .map(([path, content]) => ({ path: relative(resolve(o.repoRoot), resolve(path)), content }))
       .filter((f) => f.path !== "" && !f.path.startsWith("..") && !isAbsolute(f.path));

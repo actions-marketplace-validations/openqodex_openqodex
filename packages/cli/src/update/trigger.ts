@@ -7,7 +7,9 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { openqodexHome } from "@openqodex/scanners";
+import { staleLine } from "../agents/stale.js";
 import { launcherStarted } from "../launcher.js";
+import { noticesBetween } from "../notices.js";
 import { readState, updateState, updatesAllowed, type UpdateState } from "./state.js";
 
 // The hidden argument a finalize handoff passes to the runtime that wrote the brief.
@@ -60,10 +62,21 @@ export function maybeStartUpdate(home: string, state: UpdateState): void {
 }
 
 // The pending notice, printed once by the version it is for, then cleared.
-// update.json is not locked: two commands at once may both print it.
+// update.json is not locked: two commands at once may both print it. After a
+// switch it is followed by the notices of every release after the version
+// switched from (src/notices.ts), and by how many files OpenQodex wrote this
+// version would write differently, which `init` refreshes (agents/stale.ts).
 function notices(home: string, state: UpdateState): void {
   if (state.notice === null || state.notice.version !== __OPENQODEX_VERSION__) return;
-  process.stderr.write(`${state.notice.text}\n`);
+  const lines = [state.notice.text];
+  // Workers of earlier releases name the old version only in their text.
+  const from = state.notice.from ?? /^openqodex updated to \S+ \(was (\d+\.\d+\.\d+)\)/.exec(state.notice.text)?.[1];
+  if (from !== undefined) {
+    for (const n of noticesBetween(from, __OPENQODEX_VERSION__)) lines.push(`  ${n.version}: ${n.text}`);
+    const stale = staleLine(homedir(), home);
+    if (stale !== null) lines.push(stale);
+  }
+  process.stderr.write(`${lines.join("\n")}\n`);
   updateState(home, { notice: null });
 }
 

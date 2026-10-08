@@ -114,7 +114,7 @@ export function planRepoFiles(repoRoot: string, record: InstallRecord, guard: Gu
         note: `${f.label}, in place of the old "*"`,
         guard: { path: f.path, before },
         apply: () => {
-          guard.write(f.path, f.text);
+          guard.write(f.path, f.text, { keepMode: true });
           record.migrations = record.migrations.filter((m) => m.path !== f.path);
           record.migrations.push({ path: f.path, original: before, sha256: sha256(f.text) });
         },
@@ -180,7 +180,7 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
         note: "the .gitignore as it was before init",
         guard: { path: gitignore.path, before: now },
         apply: () => {
-          guard.write(gitignore.path, migration.original);
+          guard.write(gitignore.path, migration.original, { keepMode: true });
         },
       });
     }

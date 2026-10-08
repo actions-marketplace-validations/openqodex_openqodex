@@ -313,7 +313,8 @@ scanners:
     expect(error("review:\n  include_fixtures: yes please\n")).toMatch(/^\.openqodex\/config\.yaml: review\.include_fixtures: /);
     expect(error("review:\n  block_on_severity: high\n")).toMatch(/review\.block_on_severity: /);
     expect(error("review:\n  paths:\n    exclude: vendor\n")).toMatch(/review\.paths\.exclude: /);
-    expect(error("scanners:\n  disable: [nope]\n")).toMatch(/scanners\.disable\[0\]: /);
+    // An unknown name in scanners.disable is a warning now (config-changes.test.ts, failure 20).
+    expect(error("scanners:\n  disable: nope\n")).toMatch(/scanners\.disable: /);
     expect(error("version: 2\n")).toMatch(/version: /);
     expect(error("- a\n- b\n")).toMatch(/\(top level\): /);
     expect(

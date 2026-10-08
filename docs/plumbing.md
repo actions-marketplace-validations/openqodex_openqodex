@@ -41,6 +41,8 @@ Prints the Node and git versions, the repository, the config, the OpenQodex home
 - `--install`: download every scanner that fits this machine, and wait for all of them.
 - `--json`: print the same facts as JSON.
 
+Under "Your settings" it prints each key of `~/.openqodex/config.yaml` (`update`, `reviewer`, `reviewer_web`, `skip_version`) with the value in force and where it comes from: the file, the default, or the environment variable that turns updates off. It names a key it does not know with the known key nearest to it.
+
 Under "Updates" it prints the running version and whether the launcher started it, the newest version the last check saw and when, the last check, whether updates are on (and why not), and the last update error. For a version not started through the launcher (npx, a project-scope file), it says when that pinned version is behind the newest one a check saw. Without a check on this machine, it says nothing about that.
 
 `doctor` always prints its table. It then exits 2 in three cases:
@@ -97,6 +99,16 @@ openqodex demo [dir]
 ```
 
 Builds the demo repository in `<dir>`, or in a new temporary folder. A relative `<dir>` resolves from the folder you run the command in. The folder must be empty or new. The demo commits a clean baseline, then adds a change with planted bugs and leaves it uncommitted. It scans that change and prints the report. When some scanners are still installing, it says so and asks you to run `scan` again. The secret in the demo is generated each time and works nowhere.
+
+## config migrate
+
+For you, after a release renames or removes a key of the repo config, or for a repository that still has the 0.1.0 root `.openqodex.yaml`.
+
+```
+openqodex config migrate [--write]
+```
+
+Prints each change the table in `config` ("Changes between versions") asks of this repository's config, and the file as it would be, and writes nothing. With `--write` it writes that file: a renamed key gets its new name in place, a removed key is taken out, every comment stays, and the root `.openqodex.yaml` moves to `.openqodex/config.yaml`. A rewrite that would change what the config does is refused with exit 2. With nothing to change, it says so.
 
 ## report
 

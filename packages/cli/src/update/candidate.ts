@@ -1,6 +1,7 @@
 // Which published releases the self-update may install. The input is npm's
 // full metadata document for the package; anything in it that does not
 // parse makes that one version ineligible, never the whole list.
+import { contractOf, sameContract, type Contract } from "../contract.js";
 
 export type UpdateCandidate = {
   version: string;
@@ -8,6 +9,10 @@ export type UpdateCandidate = {
   integrity: string;
   attestationsUrl: string;
   publishedAt: string;
+  // The contract the release declares (src/contract.ts); null for a release
+  // from before contracts. The worker installs in the background only a
+  // release whose contract equals the running one's.
+  contract: Contract | null;
 };
 
 // A release younger than this is not installed: a window to notice and
@@ -19,8 +24,11 @@ const PACKAGE = "openqodex";
 
 type Version = [number, number, number];
 
-// Plain x.y.z only: a prerelease, build metadata or a leading zero does not parse.
-function parseVersion(text: unknown): Version | null {
+// Plain x.y.z only: a prerelease, build metadata, a leading zero or a part
+// too large to count does not parse. The user config's skip_version is read
+// with it too (state.ts), so a value the selection cannot use is never
+// taken as a threshold.
+export function parseVersion(text: unknown): Version | null {
   if (typeof text !== "string") return null;
   const m = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(text);
   if (!m) return null;
@@ -67,12 +75,14 @@ function record(value: unknown): Record<string, unknown> | null {
 
 // The versions eligible to install, highest first. The caller tries them in
 // order and skips one that fails verification, so a bad high version does
-// not block a good lower one.
+// not block a good lower one. `skip`: the release `update --rollback` left
+// (skip_version); neither it nor an older one is offered.
 export function selectCandidates(
   metadata: unknown,
-  opts: { current: string; now: number | Date; nodeVersion: string },
+  opts: { current: string; now: number | Date; nodeVersion: string; skip?: string | null },
 ): UpdateCandidate[] {
   const current = parseVersion(opts.current);
+  const skip = opts.skip === undefined || opts.skip === null ? null : parseVersion(opts.skip);
   const node = parseVersion(opts.nodeVersion.replace(/^v/, ""));
   const now = opts.now instanceof Date ? opts.now.getTime() : opts.now;
   const doc = record(metadata);
@@ -84,6 +94,7 @@ export function selectCandidates(
   for (const [version, raw] of Object.entries(versions)) {
     const parsed = parseVersion(version);
     if (parsed === null || compare(parsed, current) <= 0) continue;
+    if (skip !== null && compare(parsed, skip) <= 0) continue;
     // Same major only. While the major is 0 that is any higher 0.x.
     if (parsed[0] !== current[0]) continue;
 
@@ -114,8 +125,28 @@ export function selectCandidates(
         integrity: dist.integrity,
         attestationsUrl: attestations.url,
         publishedAt: published as string,
+        contract: contractOf(meta),
       },
     });
   }
   return found.sort((a, b) => compare(b.parsed, a.parsed)).map((f) => f.candidate);
+}
+
+// The releases the background worker may install, highest first: those
+// with the contract it keeps. And the highest newer release with another
+// contract, which waits for a foreground `openqodex update`; null when none
+// is newer than every release it may install.
+export function byContract(candidates: UpdateCandidate[], keep: Contract | null): { install: UpdateCandidate[]; held: UpdateCandidate | null } {
+  const install = candidates.filter((c) => sameContract(c.contract, keep));
+  const best = install[0] === undefined ? null : parseVersion(install[0].version);
+  const held = candidates.find((c) => !sameContract(c.contract, keep) && (best === null || compare(parseVersion(c.version)!, best) > 0)) ?? null;
+  return { install, held };
+}
+
+// What a release with contract `next` changes for an install that keeps `keep`.
+export function contractChange(next: Contract | null, keep: Contract | null): string {
+  const agent = next?.agent !== keep?.agent;
+  const config = next?.config !== keep?.config;
+  if (agent && config) return "how agents run a review and the config format";
+  return config ? "the config format" : "how agents run a review";
 }

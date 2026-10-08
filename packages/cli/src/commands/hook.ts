@@ -223,7 +223,7 @@ async function decide(input: HookInput): Promise<void> {
   const notes = new Set<string>();
   const home = openqodexHomeDir();
   for (const repoRoot of roots) {
-    const { config } = core.loadConfig(repoRoot);
+    const { config } = core.loadConfig(repoRoot, undefined, { runtimeVersion: __OPENQODEX_VERSION__ });
     const where = (m: string) => (roots.length > 1 ? `${repoRoot}: ${m}` : m);
     const branch = spec === null || spec === "" || spec === "HEAD" ? null : await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
     if (spec === null || (spec !== "" && spec !== "HEAD" && spec !== branch)) {
@@ -303,7 +303,7 @@ async function prePush(args: string[]): Promise<number> {
   const repoRoot = await repoRootOf(process.cwd());
   if (repoRoot === null) return fail("openqodex hook pre-push: run it inside a git repository");
   const core = await import("@openqodex/core");
-  const { config } = core.loadConfig(repoRoot);
+  const { config } = core.loadConfig(repoRoot, undefined, { runtimeVersion: __OPENQODEX_VERSION__ });
   const home = openqodexHomeDir();
   const remote = args[0] ?? "origin";
   // Only the records in the developer's own home count (see hook check).
@@ -472,7 +472,7 @@ export async function planGitHook(repoRoot: string, record: InstallRecord, home:
           record.backups.push({ path: backup, of: path });
           process.stdout.write(`The previous hook is saved as ${backup}\n`);
         }
-        guard.write(path, script, { mode: 0o755, setMode: true });
+        guard.write(path, script, { mode: 0o755 });
         remember();
       },
     },

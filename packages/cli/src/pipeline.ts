@@ -68,7 +68,7 @@ export type PipelineResult = {
 export async function loadRepo(flags: GlobalFlags, checkoutSettings = true): Promise<{ repoRoot: string; config: Config }> {
   const repoRoot = await findRepoRoot(flags.cwd);
   if (!checkoutSettings && flags.config === undefined) return { repoRoot, config: structuredClone(DEFAULT_CONFIG) };
-  const loaded = loadConfig(repoRoot, flags.config);
+  const loaded = loadConfig(repoRoot, flags.config, { runtimeVersion: __OPENQODEX_VERSION__ });
   for (const w of loaded.warnings) warn(`openqodex: ${w}`);
   return { repoRoot, config: loaded.config };
 }
@@ -340,8 +340,9 @@ export function writeReportHtml(write: (files: Record<string, string>) => void, 
 
 // A temp file beside it, then a rename: an existing entry, a symbolic link
 // included, is replaced and never written through. Into the repo state:
-// through the repo state writer, never through a link.
-function writeOutFile(out: string, repoRoot: string, text: string, mode?: number): void {
+// through the repo state writer, never through a link. A report quotes the
+// code, so the file is created readable by its owner only.
+function writeOutFile(out: string, repoRoot: string, text: string, mode = 0o600): void {
   const state = isRepoState(repoRoot, out);
   if (state !== null) {
     writeRepoFile(repoRoot, state, text, { mode });
@@ -420,7 +421,7 @@ export function reportFolderWriter(folder: string): (files: Record<string, strin
     for (const [name, text] of Object.entries(files)) {
       if (name !== basename(name) || name.startsWith(".")) throw new Error(`not a plain file name: ${name}`);
       if (lstatSync(join(dir, name), { throwIfNoEntry: false })?.isSymbolicLink()) throw new OpenQodexError(`--report-dir ${folder}: ${join(dir, name)} is a symbolic link; openqodex does not write through it`);
-      guard.write(join(dir, name), text, { mode: 0o600, setMode: true });
+      guard.write(join(dir, name), text, { mode: 0o600 });
     }
   };
 }
