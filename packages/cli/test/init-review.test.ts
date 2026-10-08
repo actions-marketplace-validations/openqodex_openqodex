@@ -26,6 +26,9 @@
 // 12. The first review runs with downloads off while init's downloads are
 //     still going, so it has the fewest scanners of any review; or it waits
 //     on them without a bound; or it does not name the ones still pending.
+// 13. A run with no terminal, no agent marker and no --yes has no consent,
+//     yet a run with no file to write still saves changed choices to the
+//     record and starts the review.
 // 11. init says it is set up when no reviewer can start, then the first
 //     review fails; or it ends without saying how the first review ended
 //     (finished, incomplete, skipped, unavailable) and which reviewer was found.
@@ -287,6 +290,24 @@ describe("10. a declined install", () => {
     expect(r.stdout).not.toContain("Reviewing your change now");
     expect(r.stdout).not.toContain("Full review unavailable");
     expect(snapshot(s)).toEqual(before);
+  });
+});
+
+describe("13. no consent", () => {
+  it("with no terminal, no agent and no --yes, a run with nothing to write records nothing and starts no review", () => {
+    const s = sandbox({ "README.md": "hello\n", ...NO_DOWNLOADS });
+    const path = `${standIn()}${delimiter}${agentFreePath()}`;
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code", "--no-repo"], { env: { PATH: path } }).status).toBe(0);
+    writeFileSync(join(s.repo, "notes.txt"), "one line\n");
+    const record = readFileSync(join(s.oqHome, "install.json"), "utf8");
+    // --hook none changes only a recorded choice: no file to write.
+    const r = cli(s, ["init", "--hook", "none", "--agent", "claude-code"], { env: { PATH: path }, review: true });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Nothing to change");
+    expect(readFileSync(join(s.oqHome, "install.json"), "utf8")).toBe(record);
+    expect(r.stdout).not.toContain("Reviewing your change now");
+    expect(existsSync(join(s.repo, ".openqodex/reviews"))).toBe(false);
+    expect(r.stdout).toContain("First review: skipped");
   });
 });
 

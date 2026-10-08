@@ -279,8 +279,9 @@ function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: strin
 }
 
 // How the install step ended, beside its exit code. Only "written" and
-// "unchanged" go on to the review: a declined plan ("cancelled") stops there.
-type Outcome = { code: number; ended: "written" | "unchanged" | "cancelled" | "stopped" | "dry-run" | "removed" };
+// "unchanged" go on to the review: a declined plan ("cancelled") stops there,
+// and so does a run with nothing to write and no consent ("unconfirmed").
+type Outcome = { code: number; ended: "written" | "unchanged" | "unconfirmed" | "cancelled" | "stopped" | "dry-run" | "removed" };
 
 async function runLocked(s: Setup): Promise<Outcome> {
   const record = loadRecord(s.oqHome);
@@ -375,26 +376,36 @@ async function runLocked(s: Setup): Promise<Outcome> {
     out(work.length === 0 ? "Nothing to change." : "Dry run: nothing was written.");
     return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "dry-run" };
   }
+  // One consent for the whole run, settled before anything is written, the
+  // record included, and before the review: --yes; else a terminal, where
+  // the plan is asked about when it writes files; else the agent this runs
+  // inside; else none.
+  //
+  // A host marker (CLAUDECODE, CODEX_THREAD_ID, CURSOR_AGENT) counts as
+  // consent because it grants nothing --yes does not: whoever can run init
+  // in that shell can pass --yes. It only spares an agent's shell, which has
+  // no terminal, the exit 2. Decided 2026-10-07; uninstall still needs --yes.
+  const host = hostAgent();
+  const consent = s.flags.yes ? "yes" : interactive() ? "terminal" : host !== null && !s.flags.uninstall ? "agent" : "none";
   if (work.length === 0) {
-    saveRecord(s.oqHome, record, recordBefore);
+    // Nothing to write; the record may still change (a choice, an entry
+    // found in place). Without consent it is not saved and nothing follows.
+    if (consent !== "none") saveRecord(s.oqHome, record, recordBefore);
     out(s.flags.uninstall ? "Nothing to remove." : "Nothing to change: OpenQodex is already installed.");
     if (!s.flags.uninstall) {
       closingRepoLines(s, rootConfig);
       out(`To undo: ${undoCommand(s)}`);
     }
-    return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: s.flags.uninstall ? "removed" : "unchanged" };
+    const ended = consent === "none" ? "unconfirmed" : s.flags.uninstall ? "removed" : "unchanged";
+    return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended };
   }
-  // One consent for the whole plan: --yes, else the answer in a terminal,
-  // else the agent this runs inside (its shell has no terminal, and the
-  // agent ran init on purpose), else none: exit 2 with the plan shown.
-  if (!s.flags.yes) {
-    const host = hostAgent();
-    if (interactive()) {
+  if (consent !== "yes") {
+    if (consent === "terminal") {
       if (!(await confirm(s.flags.uninstall ? "Remove these?" : WRITE_QUESTION))) {
         out("Nothing was written.");
         return { code: EXIT_OK, ended: "cancelled" };
       }
-    } else if (host !== null && !s.flags.uninstall) {
+    } else if (consent === "agent" && host !== null) {
       out(`Running inside ${HOST_NAMES[host]} with no terminal to ask in: writing the plan above.`);
     } else {
       process.stderr.write(
@@ -594,6 +605,8 @@ export async function run(args: string[]): Promise<number> {
       // puts no `openqodex` on PATH, and init never edits a shell profile.
       out();
       out(`Next: say "review my change with openqodex" to your agent, or run ${setup.runner} review`);
+    } else if (outcome.ended === "unconfirmed") {
+      firstReviewLine("skipped", "no terminal to confirm in, and no agent to act for; run init with --yes");
     }
     return outcome.code;
   } catch (error) {
