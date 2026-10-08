@@ -80,6 +80,18 @@ async function confirm(question: string): Promise<boolean> {
   return !prompts.isCancel(answer) && answer === true;
 }
 
+// The agents to install into when detection found none; null when the
+// developer cancels.
+async function chooseAgents(): Promise<AgentId[] | null> {
+  const prompts = await import("@clack/prompts");
+  const answer = await prompts.multiselect<AgentId>({
+    message: "No coding agent found on this machine. Which ones should OpenQodex install into?",
+    options: AGENTS.map((a) => ({ value: a, label: AGENT_NAMES[a] })),
+    required: true,
+  });
+  return prompts.isCancel(answer) ? null : AGENTS.filter((a) => answer.includes(a));
+}
+
 // Whether this repo gets the git pre-push hook: --hook, then the choice this
 // repo made before, then yes. `earlier`: the choice came from the record.
 function hookChoiceFor(s: Setup, record: InstallRecord): { hook: HookChoice; earlier: boolean } {
@@ -464,6 +476,16 @@ export async function run(args: string[]): Promise<number> {
   const home = homedir();
   let agents = flags.agents;
   if (agents.length === 0) agents = flags.uninstall ? [...AGENTS] : detectAgents(home);
+  // None found: a terminal can ask which ones (an agent installed where no
+  // check looks, or one about to be installed); a shell without one gets the list.
+  if (agents.length === 0 && interactive() && !flags.yes && !flags.dryRun) {
+    const chosen = await chooseAgents();
+    if (chosen === null) {
+      out("Nothing was written.");
+      return EXIT_OK;
+    }
+    agents = chosen;
+  }
   if (agents.length === 0) {
     process.stderr.write(
       "openqodex init: no coding agent found on this machine. Name one with --agent:\n" +

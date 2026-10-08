@@ -117,7 +117,7 @@ openqodex init [--agent <name>]... [--project] [--hook <pre-push|none>] [--no-re
 
 Installs OpenQodex into your coding agents, then reviews. After the install, inside a repository: when there is a change, it runs `review` and prints the report; when there is none, it asks what to review (the whole repository, a pull request, a branch, or not now). With `--yes` or without a terminal it prints the three commands instead of asking. This review uses the scanners already installed, starts no download, and never changes the exit code of `init`, which is about the install.
 
-- `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
+- `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds. When it finds none, it asks which ones in a terminal; without a terminal, or with `--yes`, it exits 2 with this list.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
 - `--hook <pre-push|none>`: the git pre-push hook is in the plan by default; `--hook none` leaves it out and `--hook pre-push` puts it back. The choice is recorded per repository, and a later `init` without the flag keeps it.
 - `--no-repo`: leave the team review section out of the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` puts the section in the plan, unless this repository chose `--no-repo` before; the choice is recorded per repository. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.

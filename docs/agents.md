@@ -10,7 +10,7 @@ Run it in your own terminal, not inside the agent:
 npx openqodex init
 ```
 
-`init` prints every file it will write and asks once: "Write these files?". The plan lists each file under the one it is for: "For you, on this machine" (the agent files in your home folder, the launcher, the git hook of this clone) and "For the team, in this repo" (the files to commit). `--agent <name>` picks agents by hand: `claude-code`, `cursor`, `codex`, `cline` or `all`. `--dry-run` prints the plan and writes nothing. `--yes` writes it without asking.
+`init` prints every file it will write and asks once: "Write these files?". The plan lists each file under the one it is for: "For you, on this machine" (the agent files in your home folder, the launcher, the git hook of this clone) and "For the team, in this repo" (the files to commit). `--agent <name>` picks agents by hand: `claude-code`, `cursor`, `codex`, `cline` or `all`. When `init` finds no agent, it asks which of the four to install into, before the plan. `--dry-run` prints the plan and writes nothing. `--yes` writes it without asking.
 
 Inside a repository, the plan also holds the git pre-push hook, so every push from this repo is checked for a review, from an agent or by hand. `--hook none` leaves it out, and `--hook pre-push` puts it back. The choice is recorded for that repository, so a later `init` keeps it. The hook is described under "A git hook for every tool" below.
 

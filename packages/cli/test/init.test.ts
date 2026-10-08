@@ -34,6 +34,9 @@
 //     developer's and which the team's, an agent's shell (no terminal) can
 //     never install without --yes, or a shell with no terminal and no agent
 //     writes something or stops without the plan and the flags to choose with.
+// 19. With no agent found, init stops with a flag list although a terminal
+//     could ask which agents to install into; or, with no terminal, it asks
+//     or installs instead of exiting 2 with that list.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -391,6 +394,30 @@ describe("init, writes nothing when it should not", () => {
     expect(r.stdout).toContain("install plan");
     expect(r.stdout).toContain(join(s.home, ".claude/skills/openqodex/SKILL.md"));
     for (const flag of ["--yes", "--hook none", "--no-repo", "--project"]) expect(r.stderr).toContain(flag);
+    expect(snapshot(s)).toEqual(before);
+  });
+});
+
+describe("19. init with no agent found", () => {
+  it("in a terminal, offers the four agents and installs into the one chosen", () => {
+    const s = sandbox();
+    // Space ticks the first agent, Claude Code; clack redraws that line only.
+    const r = inTerminal(s, ["init"], [["Space: select", " "], ["◼ Claude Code", "\r"], ["Write these files?", "\r"]]);
+    expect(r.stdout).toContain("No coding agent found on this machine");
+    expect(r.status, r.stdout).toBe(0);
+    for (const name of ["Claude Code", "Cursor", "Codex CLI", "Cline"]) expect(r.stdout).toContain(name);
+    // No other question than the chooser and the one confirmation.
+    expect(promptsAsked(r.stdout).filter((p) => p !== "Write these files?" && !p.startsWith("No coding agent found"))).toEqual([]);
+    expect(existsSync(join(s.home, ".claude/skills/openqodex/SKILL.md"))).toBe(true);
+    expect(existsSync(join(s.home, ".agents/skills/openqodex/SKILL.md"))).toBe(false);
+  });
+
+  it("without a terminal, exits 2 with the --agent list and writes nothing", () => {
+    const s = sandbox();
+    const before = snapshot(s);
+    const r = cli(s, ["init", "--yes"]);
+    expect(r.status).toBe(2);
+    for (const agent of ["claude-code", "cursor", "codex", "cline", "all"]) expect(r.stderr).toContain(`--agent ${agent}`);
     expect(snapshot(s)).toEqual(before);
   });
 });
