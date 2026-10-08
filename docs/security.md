@@ -59,12 +59,13 @@ An install made with `npx openqodex init` runs through the launcher `~/.openqode
 
 What it sends: GET requests to `registry.npmjs.org` only, over https, with no body and no header but the user agent `openqodex/<version>`. First the openqodex package's release list. Then, for a newer release, its tarball and its attestations. Nothing about you, your code or your repository is sent. Every redirect must stay on `registry.npmjs.org`.
 
-What it installs: a release that is newer than the running one, in the same major version, at least 24 hours old, not deprecated, not a prerelease, and fit for your Node. Before any of its code runs:
+What it installs: a release that is newer than the running one, in the same major version, at least 24 hours old, not deprecated, not a prerelease, fit for your Node, newer than the `skip_version` a rollback left, and with the same agent contract and config format as the running one. A release that changes either waits for `openqodex update`. Before any of its code runs:
 
 - the tarball's sha512 must equal the registry's `dist.integrity`;
 - its SLSA provenance must verify in full with Sigstore: the certificate chain to the Fulcio roots, the certificate transparency entry, the transparency log entry and the signature;
 - the signing certificate must be issued to `https://github.com/openqodex/openqodex/.github/workflows/release.yml@refs/heads/main` by `https://token.actions.githubusercontent.com`, compared exactly;
-- the signed statement must name `pkg:npm/openqodex@<version>` with the downloaded tarball's sha512.
+- the signed statement must name `pkg:npm/openqodex@<version>` with the downloaded tarball's sha512;
+- the `package.json` in the tarball must declare the agent contract and config format the registry said it does.
 
 A stolen npm publish token is therefore not enough to reach your machine: the release must come out of this repository's release workflow on `main`. The 24 hour age is a window to deprecate a bad release before installs take it.
 
@@ -74,7 +75,7 @@ A verified release is unpacked into a temporary folder under `~/.openqodex/runti
 
 The lock: while `init`, `init --uninstall`, `hook install`, `update --rollback`, `update --off`, `update --on` or an update's switch runs, OpenQodex briefly opens a listener on 127.0.0.1, on a port between 20000 and 32000 derived from the path of `~/.openqodex`, so that two of them never run at once; it accepts no data and answers nothing, and the operating system closes it when the process ends, however it ends. When the listener cannot be opened at all, those commands stop with one line saying why, and the daily check skips the switch. The port is predictable, so a local program that holds it stops install, uninstall and updates until it lets go; nothing is installed or changed while it is held. A command that waited 60 seconds for it names the port and the line that shows the holder (`lsof -nP -iTCP:<port> -sTCP:LISTEN`), and the daily check records the same as its last error, which `openqodex update --status` and `doctor` show.
 
-Updates are off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml`, `OPENQODEX_AUTO_UPDATE=0`, `--offline` or `OPENQODEX_OFFLINE=1`, and whenever `CI` is set. A run through `npx` or a project-scope file never checks.
+Updates are off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml`, `OPENQODEX_AUTO_UPDATE=0`, `--offline` or `OPENQODEX_OFFLINE=1`, and whenever `CI` is set. They pause while `~/.openqodex/config.yaml` holds a key OpenQodex does not know. A run through `npx` or a project-scope file never checks.
 
 OpenQodex sends no telemetry. See `telemetry`.
 
