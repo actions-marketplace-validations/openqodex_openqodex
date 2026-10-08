@@ -36,7 +36,7 @@ export function symbolKey(id: string): string {
 const instruction = (packet: string | null) =>
   [
     "How to read this block. A change in behaviour to a touched symbol (its signature, return shape, errors, side effects or ordering) can break a caller outside the diff. Open the call sites that matter for this change and read them. Raise a finding only when a caller actually breaks, and anchor it on the changed line that breaks it.",
-    "\"certain\" means an import, a definition in the same scope or a known receiver type proves the call, and every step it rests on is proved. \"likely\" means a stated convention picked the one target; its note says which, and it is a lead to check, not a fact.",
+    "\"certain\" means an import, a definition in the same scope or a known receiver type proves the call, and every step it rests on is proved. \"likely\" means a stated convention picked the one target; its note says which, and it is a lead to check, not a fact. \"possible\" means the call reaches one of several definitions and nothing picks one; each is listed with the same note.",
     "A caller list marked as a floor may be short: the graph could not bind some calls (a value of unknown type, a callback, a computed member), or did not read some files. Zero callers on a floor never means unused.",
     packet !== null
       ? `Everything this block leaves out is in \`${packet}\`, inside the folder you read: \`index.md\` lists the files, \`callers/<key>.json\` holds every caller of a symbol, \`unknowns.json\` what the graph could not see. Reading them does not count as reading the changed lines.`

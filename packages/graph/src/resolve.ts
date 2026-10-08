@@ -33,7 +33,7 @@ const MAX_DEPTH = 8; // re-export and base-class chains
 // barrel chain longer than any real repository holds.
 export const EXPORT_WALK_STEPS = 4096;
 export const HUB_FILES = 8; // a name defined in more files never binds without evidence
-export const RESOLVER_VERSION = 2;
+export const RESOLVER_VERSION = 3;
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -62,11 +62,21 @@ const BUILTINS: Record<Family, ReadonlySet<string>> = {
 // one is external, never a gap of the repository.
 const BUILTIN_TYPES: Record<Family, ReadonlySet<string>> = {
   js: new Set(
-    "string number boolean bigint symbol object any unknown never void undefined null String Number Boolean BigInt Symbol Object Array ReadonlyArray Map ReadonlyMap Set ReadonlySet WeakMap WeakSet Promise PromiseLike Date RegExp Error TypeError RangeError Function Record Partial Required Readonly Pick Omit Iterable IterableIterator AsyncIterable AsyncIterableIterator Iterator Generator AsyncGenerator ArrayBuffer SharedArrayBuffer DataView Uint8Array Int8Array Uint16Array Int16Array Uint32Array Int32Array Float32Array Float64Array BigInt64Array BigUint64Array Buffer URL URLSearchParams AbortController AbortSignal TextEncoder TextDecoder".split(" "),
+    "string number boolean bigint symbol never void undefined null String Number Boolean BigInt Symbol Object Array ReadonlyArray Map ReadonlyMap Set ReadonlySet WeakMap WeakSet Promise PromiseLike Date RegExp Error TypeError RangeError Function Record Partial Required Readonly Pick Omit Iterable IterableIterator AsyncIterable AsyncIterableIterator Iterator Generator AsyncGenerator ArrayBuffer SharedArrayBuffer DataView Uint8Array Int8Array Uint16Array Int16Array Uint32Array Int32Array Float32Array Float64Array BigInt64Array BigUint64Array Buffer URL URLSearchParams AbortController AbortSignal TextEncoder TextDecoder".split(" "),
   ),
-  python: new Set("str int float bool bytes bytearray list dict set frozenset tuple object complex List Dict Set FrozenSet Tuple Sequence Mapping MutableMapping MutableSequence Iterable Iterator".split(" ")),
-  go: new Set("string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr float32 float64 complex64 complex128 byte rune bool error any".split(" ")),
+  python: new Set("str int float bool bytes bytearray list dict set frozenset tuple complex List Dict Set FrozenSet Tuple Sequence Mapping MutableMapping MutableSequence Iterable Iterator".split(" ")),
+  go: new Set("string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr float32 float64 complex64 complex128 byte rune bool error".split(" ")),
   ruby: new Set("String Integer Float Array Hash Symbol Range Proc".split(" ")),
+};
+
+// Types that say nothing about a value's methods: a call on a value of one
+// may reach any method of that name, so it is an untyped receiver, never
+// external and never bound.
+const UNTYPED: Record<Family, ReadonlySet<string>> = {
+  js: new Set(["any", "unknown", "object"]),
+  python: new Set(["object", "Any"]),
+  go: new Set(["any"]),
+  ruby: new Set(),
 };
 
 export type FileInput = { path: string; facts: FileFacts };
@@ -397,11 +407,20 @@ export function createWorld(input: ResolveInput): World {
     let entry: string | null = null;
     let condition: string | null = null;
     if (member.pkg.exports !== null) {
-      const picked = pickExport(exportsEntry(member.pkg.exports, sub), active);
-      if (picked) {
-        entry = join(member.dir, picked.target);
-        condition = picked.condition;
+      // An exports map is the whole public surface: a path it does not
+      // expose, under the conditions this import uses, is refused by Node.
+      const listed = exportsEntry(member.pkg.exports, sub);
+      const picked = listed === undefined ? null : pickExport(listed, active);
+      if (!picked) {
+        const what = sub === "." ? "its root" : sub;
+        return {
+          gap: "not-exported",
+          note: `${member.file} has an exports map that does not expose ${what}${listed === undefined ? "" : " under the conditions this import uses"}`,
+          candidates: [member.dir],
+        };
       }
+      entry = join(member.dir, picked.target);
+      condition = picked.condition;
     } else if (sub === ".") {
       const field = member.pkg.module ?? member.pkg.main;
       if (field) entry = join(member.dir, field);
@@ -429,7 +448,8 @@ export function createWorld(input: ResolveInput): World {
           return { file: hit, ev: capped({ kind: "workspace-package", tier: "likely", via, note: `Bound to ${hit} by the src/index convention; ${missing}.`, rule: "workspace-index" }) };
         }
       }
-    } else {
+    } else if (member.pkg.exports === null) {
+      // No exports map: Node finds a subpath by the package's folder layout.
       const hit = jsCandidates(join(member.dir, sub.slice(2)));
       if (hit) return { file: hit, ev: capped({ kind: "workspace-package", tier: "certain", via, note: null, rule: "workspace-subpath" }) };
     }
@@ -512,22 +532,28 @@ export function createWorld(input: ResolveInput): World {
       const hit = pyModule(join(d, rest));
       return hit ? { file: hit, ev: { kind: "import", tier: "certain", via, note: null, rule: "py-relative" } } : null;
     }
+    // Every module the name finds, from the importer's own folders and from
+    // the source roots of the repository's projects: one binds, several are
+    // ambiguous. A module or a regular package wins over a namespace
+    // package wherever it is, as Python's path finder does.
+    const files = new Map<string, string>(); // file to the rule that found it
     for (const root of pyWalkRoots(from)) {
       const hit = pyModule(join(root, rest));
-      if (hit) return { file: hit, ev: { kind: "py-root", tier: "certain", via, note: null, rule: "py-walk-root" } };
+      if (hit && !files.has(hit)) files.set(hit, "py-walk-root");
     }
-    // The source roots of the repository's projects: one hit binds, several are ambiguous.
-    const hits = new Map<string, PyHit>();
+    const spaces = new Set<string>();
     for (const root of model.pyRoots) {
       const hit = pyFind(root, rest);
-      if (hit) hits.set("file" in hit ? hit.file : `ns:${hit.ns}`, hit);
+      if (hit && "file" in hit && !files.has(hit.file)) files.set(hit.file, "py-src-root");
+      else if (hit && "ns" in hit) spaces.add(hit.ns);
     }
-    if (hits.size === 1) {
-      const hit = [...hits.values()][0] as PyHit;
-      const ev: Ev = { kind: "py-root", tier: "certain", via, note: null, rule: "py-src-root" };
-      return "file" in hit ? { file: hit.file, ev } : { ns: hit.ns, ev };
+    if (files.size === 1) {
+      const [file, rule] = [...files.entries()][0] as [string, string];
+      return { file, ev: { kind: "py-root", tier: "certain", via, note: null, rule } };
     }
-    if (hits.size > 1) return { gap: "ambiguous", note: `${rest.replaceAll("/", ".")} is found under ${hits.size} source roots`, candidates: [...hits.keys()] };
+    if (files.size > 1) return { gap: "ambiguous", note: `${rest.replaceAll("/", ".")} is found in ${files.size} places on the import path`, candidates: [...files.keys()].sort() };
+    if (spaces.size === 1) return { ns: [...spaces][0] as string, ev: { kind: "py-root", tier: "certain", via, note: null, rule: "py-src-root" } };
+    if (spaces.size > 1) return { gap: "ambiguous", note: `${rest.replaceAll("/", ".")} is found under ${spaces.size} source roots`, candidates: [...spaces].sort().map((d) => `ns:${d}`) };
     // A namespace package next to the importer.
     for (const root of pyWalkRoots(from)) {
       const hit = pyFind(root, rest);
@@ -627,7 +653,9 @@ export function createWorld(input: ResolveInput): World {
         const top = topByFile.get(file)?.get(name)?.filter((id) => defById.get(id)?.exported);
         if (top && top.length > 0) return { v: "sym", ids: top, ev: SAME_SCOPE };
         for (const e of f.exportsLocal) if (e.exported === name) return resolveLocal(file, e.local, depth + 1);
-        let starHit: Value | null = null;
+        // Every `export *` that offers the name: one definition binds; two
+        // different ones are ambiguous (JavaScript exports neither).
+        const starHits: { v: Value; spec: string }[] = [];
         for (const imp of f.imports) {
           if (!imp.reexport) continue;
           const named = imp.names.find((n) => n.local === name);
@@ -646,12 +674,12 @@ export function createWorld(input: ResolveInput): World {
             continue;
           }
           if (named) return named.imported === "*" ? { v: "mod", file: mod.file, ev: mod.ev } : withEv(index.exports(mod.file, named.imported, depth + 1), mod.ev);
-          if (imp.star && !starHit) {
-            const hit = index.exports(mod.file, name, depth + 1);
-            if (hit && hit.v !== "miss") starHit = withEv(hit, mod.ev);
+          if (imp.star) {
+            const hit = withEv(index.exports(mod.file, name, depth + 1), mod.ev);
+            if (hit && hit.v !== "miss") starHits.push({ v: hit, spec: imp.spec });
           }
         }
-        return starHit ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
+        return starValue(file, name, starHits) ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
       }
       // Python: definitions, then names the module imported, then submodules of a package.
       const top = topByFile.get(file)?.get(name);
@@ -669,10 +697,33 @@ export function createWorld(input: ResolveInput): World {
       return { v: "miss", target: file, name, ev: SAME_SCOPE };
     },
 
-    members(key: string, name: string, side: Side): string[] | null {
+    // The method and the evidence of the inheritance steps to the class
+    // that defines it (null when the class itself does).
+    members(key: string, name: string, side: Side): { ids: string[]; ev: Ev | null } | null {
       return methodOn(key, name, side, 0);
     },
   };
+
+  // The value of a name several `export *` statements offer. The same
+  // definition (or module) reached twice is one value; different ones are
+  // ambiguous: every candidate at the possible tier, with a note.
+  function starValue(file: string, name: string, hits: { v: Value; spec: string }[]): Value | null {
+    if (hits.length === 0) return null;
+    const keyOf = (v: Value): string | null => (v.v === "sym" ? [...new Set(v.ids.map(stableKey))].sort().join("\0") : v.v === "mod" ? `mod:${v.file}` : v.v === "ext" ? "ext" : null);
+    const distinct = new Map<string, { v: Value; spec: string }>();
+    for (const h of hits) {
+      const k = keyOf(h.v);
+      if (k === null) return (hits[0] as { v: Value }).v; // a gap or a namespace: the first decides, as before
+      if (!distinct.has(k)) distinct.set(k, h);
+    }
+    const first = hits[0] as { v: Value };
+    if (distinct.size === 1) return first.v;
+    const syms = [...distinct.values()].filter((h): h is { v: Extract<Value, { v: "sym" }>; spec: string } => h.v.v === "sym");
+    const note = `${file} re-exports ${name} through export * from ${distinct.size} modules (${[...distinct.values()].map((h) => h.spec).join(", ")}); JavaScript exports neither, and a bundler may pick one.`;
+    if (syms.length < 2) return { v: "gap", cause: "ambiguous", note, candidates: [...distinct.keys()] };
+    const base = syms[0]?.v.ev as Ev;
+    return { v: "sym", ids: syms.flatMap((h) => h.v.ids), ev: { ...base, tier: "possible", note: [base.note, note].filter(Boolean).join(" "), rule: "js-star-ambiguous" } };
+  }
 
   // A value reached through a module step keeps that step's evidence.
   function withEv(v: Value | null, ev: Ev): Value | null {
@@ -759,7 +810,9 @@ export function createWorld(input: ResolveInput): World {
       if (sub !== null && "file" in sub) return { v: "mod", file: sub.file, ev: sub.ev };
       if (sub !== null && "ns" in sub) return { v: "pyns", dir: sub.ns, ev: sub.ev };
       const mod = pySpec(value.from, 0, value.dotted);
-      if (mod !== null && ("ext" in mod || "gap" in mod)) return mod !== null && "ext" in mod ? { v: "ext" } : { v: "pymod", from: value.from, dotted };
+      if (mod !== null && "ext" in mod) return { v: "ext" };
+      // A module the name cannot settle (ambiguous, missing): the gap stands for every name read from it.
+      if (mod !== null && "gap" in mod) return { v: "gap", cause: mod.gap, note: mod.note, candidates: mod.candidates };
       if (mod === null) return null;
       if ("ns" in mod) return attr({ v: "pyns", dir: mod.ns, ev: mod.ev }, name);
       return withEv(index.exports(mod.file, name, 0), mod.ev);
@@ -767,7 +820,7 @@ export function createWorld(input: ResolveInput): World {
     const key = value.ids.length === 1 ? classOfId.get(value.ids[0] as string) : undefined;
     if (!key) return null;
     const m = index.members(key, name, "s");
-    return m ? { v: "sym", ids: m, ev: value.ev } : { v: "miss", target: key, name, ev: value.ev };
+    return m ? { v: "sym", ids: m.ids, ev: m.ev ? chain(value.ev, m.ev) : value.ev } : { v: "miss", target: key, name, ev: value.ev };
   };
 
   // Ruby: a constant by lexical lookup from the innermost nesting outwards.
@@ -817,37 +870,45 @@ export function createWorld(input: ResolveInput): World {
     return inner === null || inner === "ext" ? inner : { key: inner.key, ev: chain(v.ev, inner.ev) };
   };
 
-  const baseKeys = new Map<string, { keys: string[]; outside: boolean }>();
-  // The in-repo base classes of a class, and whether any base is outside the graph.
-  const basesOf = (key: string): { keys: string[]; outside: boolean } => {
+  const baseKeys = new Map<string, { keys: string[]; evs: Ev[]; outside: boolean }>();
+  // The in-repo base classes of a class, each with the evidence of the name
+  // that binds it, and whether any base is outside the graph.
+  const basesOf = (key: string): { keys: string[]; evs: Ev[]; outside: boolean } => {
     let out = baseKeys.get(key);
     if (out) return out;
-    out = { keys: [], outside: false };
+    out = { keys: [], evs: [], outside: false };
     baseKeys.set(key, out);
     const info = classes.get(key);
     if (!info) return out;
     for (const b of info.bases) {
       const k = typeKey(info.file, info.family, b);
-      if (k !== null && k !== "ext" && k.key !== key) out.keys.push(k.key);
-      else if (k === null || k === "ext") out.outside = true;
+      if (k !== null && k !== "ext" && k.key !== key) {
+        out.keys.push(k.key);
+        out.evs.push(k.ev);
+      } else if (k === null || k === "ext") out.outside = true;
     }
     return out;
   };
 
-  function methodOn(key: string, name: string, side: Side, depth: number): string[] | null {
+  // A step from a class to its base: the base binding's evidence, then
+  // what was found past it. The weakest step decides the tier.
+  const throughBase = (base: Ev, past: Ev | null): Ev => (past ? chain(base, past) : base);
+
+  function methodOn(key: string, name: string, side: Side, depth: number): { ids: string[]; ev: Ev | null } | null {
     if (depth > MAX_DEPTH) return null;
     const own = methods.get(sideKey(key, side))?.get(name);
-    if (own) return own;
+    if (own) return { ids: own, ev: null };
     // A Ruby module's instance methods are called on the module itself
     // through module_function or extend self.
     const info = classes.get(key);
     if (side === "s" && info?.family === "ruby" && info.ids.every((id) => defById.get(id)?.kind === "module")) {
       const viaModule = methods.get(sideKey(key, "i"))?.get(name);
-      if (viaModule) return viaModule;
+      if (viaModule) return { ids: viaModule, ev: null };
     }
-    for (const base of basesOf(key).keys) {
-      const hit = methodOn(base, name, side, depth + 1);
-      if (hit) return hit;
+    const b = basesOf(key);
+    for (let i = 0; i < b.keys.length; i++) {
+      const hit = methodOn(b.keys[i] as string, name, side, depth + 1);
+      if (hit) return { ids: hit.ids, ev: throughBase(b.evs[i] as Ev, hit.ev) };
     }
     return null;
   }
@@ -864,9 +925,11 @@ export function createWorld(input: ResolveInput): World {
     const info = classes.get(key);
     const t = info?.fields.get(field);
     if (info && t) return typeKey(info.file, info.family, t);
-    for (const base of basesOf(key).keys) {
-      const hit = fieldKey(base, field, depth + 1);
-      if (hit) return hit;
+    const b = basesOf(key);
+    for (let i = 0; i < b.keys.length; i++) {
+      const hit = fieldKey(b.keys[i] as string, field, depth + 1);
+      if (hit === "ext") return hit;
+      if (hit) return { key: hit.key, ev: throughBase(b.evs[i] as Ev, hit.ev) };
     }
     return null;
   };
@@ -910,8 +973,8 @@ export function createWorld(input: ResolveInput): World {
   const onClass = (key: string, name: string, side: Side, ev: Ev): Outcome => {
     const info = classes.get(key);
     if (name === "new" && side === "s" && info?.family === "ruby") return { ids: info.ids, ev };
-    const ids = index.members(key, name, side);
-    if (ids) return { ids, ev };
+    const hit = index.members(key, name, side);
+    if (hit) return { ids: hit.ids, ev: hit.ev ? chain(ev, hit.ev) : ev };
     // Not on the class or its bases in the repository: inherited from a
     // base outside the graph, or gone.
     // An interface or a type alias: its members are not definitions the
@@ -976,11 +1039,19 @@ export function createWorld(input: ResolveInput): World {
       }
       case "super": {
         const key = enclosingClass(file, family, caller);
-        const base = key ? basesOf(key).keys[0] : undefined;
+        const bases = key ? basesOf(key) : null;
+        const base = bases?.keys[0];
         if (!base) return key && outsideBase(key) ? { unknown: "no-receiver-type", shape: "self", note: "the base class is outside the graph" } : { unknown: "no-receiver-type", shape: "self" };
-        return onClass(base, call.name, call.static ? "s" : "i", { kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-super" });
+        // super is the base class as the class's own declaration binds it.
+        const superEv = chain({ kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-super" }, bases.evs[0] as Ev);
+        return onClass(base, call.name, call.static ? "s" : "i", superEv);
       }
       case "type": {
+        // `any`, `unknown`, `object` (Python `object`, `typing.Any`; Go `any`), unless the file defines the name.
+        const untyped = r.type.result === undefined && !r.type.elem && UNTYPED[family].has(r.type.name) && (r.type.qualifier === null || (family === "python" && r.type.qualifier === "typing"));
+        if (untyped && resolveLocal(file, r.type.name)?.v !== "sym") {
+          return { unknown: "untyped-receiver", shape: "typed", note: `a value typed ${r.type.name} may be anything with a method of this name` };
+        }
         const t = typeKey(file, family, r.type);
         if (t === "ext") return { ext: true };
         // A collection itself (an array, a list, a slice) or a value of a

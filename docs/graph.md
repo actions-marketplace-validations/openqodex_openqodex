@@ -14,21 +14,22 @@ For a review, the brief's block "What this change reaches" lists:
 
 Everything the brief leaves out is in the review's packet (below).
 
-## Certain and likely
+## Certain, likely and possible
 
 Every call site on a line carries the evidence that proved it and one of these levels:
 
 - certain: an import that names the symbol, a definition in the same scope or Go package, or a receiver whose type a constructor, an annotation, a declared result or `this`/`self` gives, and every step it rests on is proved the same way. A name match alone is never certain.
 - likely: a stated convention picked the one target. The line says which convention, for example a workspace package reached through its built `dist` entry with no tsconfig `paths`, project reference or source condition mapping it to source, or a Ruby constant found by the autoload convention.
+- possible: the call reaches one of several definitions and nothing picks one, such as a name that two `export *` statements bring from different modules (JavaScript exports neither; a bundler may pick one). Each candidate is listed with the note. Calls through interfaces, also possible, come in a later release.
 
-A third level, possible (one of a set, such as every implementer of an interface), comes with calls through interfaces in a later release.
+A step through inheritance is part of the proof: a method found on a base class is no surer than the binding of that base class, for a call on an instance and for `super`.
 
 ## Workspaces and source roots
 
 - A bare import that names a package of the workspace (`pnpm-workspace.yaml`, or `workspaces` in `package.json`) binds when the importing package declares it: with `workspace:`, `file:` or `link:`, or a version range a lockfile resolves to the workspace. A lockfile that resolves it to a published version keeps the call external. A package that does not declare it is not assumed.
-- The package's entry comes from `exports` (in key order, `types` never), then `module` and `main`. A source entry is certain; a built entry mapped back to `src` (through the package tsconfig's `outDir` and `rootDir`, or `dist` to `src`) is likely, and certain when the importer's tsconfig references the package as a project.
+- The package's entry comes from `exports` (in key order, `types` never), then `module` and `main`. A package with an `exports` map exposes only what the map lists: any other path is not bound and is recorded as not exported, as Node refuses it. Without an `exports` map, a path such as `pkg/src/x` is found by the package's folders. A source entry is certain; a built entry mapped back to `src` (through the package tsconfig's `outDir` and `rootDir`, or `dist` to `src`) is likely, and certain when the importer's tsconfig references the package as a project.
 - The nearest `tsconfig.json` or `jsconfig.json` above a file governs it, with `extends` followed. Its `paths` and `baseUrl` prove an import when its `files`, `include` and `exclude` list the file; otherwise the binding is likely.
-- Python absolute imports search the importing file's own folders, every `src` folder that holds a package, every folder with a `pyproject.toml`, `setup.cfg` or `setup.py`, and namespace packages without `__init__.py`. A module found under two roots is not bound.
+- Python absolute imports search the importing file's own folders, every `src` folder that holds a package, every folder with a `pyproject.toml`, `setup.cfg` or `setup.py`, and namespace packages without `__init__.py`. A module found in two places (next to the importer, or under two roots) is not bound and is recorded as ambiguous. A module file or a regular package wins over a namespace package, as in Python.
 - Manifests and tsconfig files are read as text, each up to 1 MB, and lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`) up to 16 MB; a larger file is not read. Each is read in one pass, so a crafted file cannot make the graph hang. Nothing in the repository is run.
 
 ## What it cannot see
@@ -37,6 +38,8 @@ A call no rule can bind is kept as an unknown with its cause, never dropped:
 
 - external: the name comes from a declared dependency or the standard library. Only these are external; an import of a module that is not in the repository and that no manifest declares is a miss.
 - no-receiver-type: a method called on a value whose type no rule knows, or on an interface or a type alias (calls through interfaces come later).
+- untyped-receiver: a method called on a value typed `any`, `unknown` or `object` (Python `object` or `Any`, Go `any`). It may reach any method of that name, so it is never counted as external.
+- not-exported: a path of a workspace package that its `exports` map does not expose.
 - dynamic: a call through a parameter, a local value or a computed member such as `handlers[key]()`. Such a call could reach any function of its project.
 - miss: the evidence names a place where no such symbol exists now.
 - ambiguous: several definitions could be meant and nothing picks one.
