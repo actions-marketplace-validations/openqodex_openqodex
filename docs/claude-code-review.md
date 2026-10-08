@@ -38,7 +38,7 @@ Say to Claude Code:
 review my change with openqodex
 ```
 
-The skill tells Claude Code to run one command, `openqodex review`, wait for it, and show you the report exactly as printed. Claude Code does not review the change itself and starts no subagent. You can also run `openqodex review` in your own terminal.
+The skill tells Claude Code to run one command, `openqodex review`, wait for it, and show you the report exactly as printed. Claude Code does not review the change itself and starts no subagent. In your own terminal, run `~/.openqodex/bin/openqodex review`, the full path `init` prints.
 
 A review takes one to three minutes and uses your own Claude Code plan. `review` prints a line every 15 seconds while the reviewer works. `openqodex review --all` reviews the whole repository instead of one change.
 

@@ -39,6 +39,9 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 21. A command init prints for the developer to run next (the review, the
+//     undo) names a bare `openqodex`, which an npx install never puts on PATH,
+//     so pasting it exits 127.
 // 19. With no agent found, init stops with a flag list although a terminal
 //     could ask which agents to install into; or, with no terminal, it asks
 //     or installs instead of exiting 2 with that list.
@@ -457,6 +460,28 @@ describe("20. the global section and what init says it wrote", () => {
     expect(end.slice(team)).toContain(".openqodex/config.yaml");
     expect(end.slice(team)).toContain("CLAUDE.md");
     expect(end).toContain("init --project");
+  });
+});
+
+describe("21. the commands init prints run as pasted", () => {
+  it("the next review and the undo run from a shell with no openqodex on PATH", () => {
+    const s = sandbox();
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    const next = /^Next: .* or run (.+)$/m.exec(r.stdout)?.[1];
+    const undo = /To undo: (.+)$/m.exec(r.stdout)?.[1];
+    expect(next, r.stdout).toBeDefined();
+    expect(undo, r.stdout).toBeDefined();
+    const paste = (command: string) => spawnSync("sh", ["-c", command], { cwd: s.repo, env: env(s), encoding: "utf8" });
+    expect(paste("command -v openqodex").status).not.toBe(0);
+    // What fails is the program name. The flags keep the test from
+    // downloading scanners, and --yes stands in for the answer in a terminal.
+    const review = paste(`${next!} --no-install --offline`);
+    expect(review.status, review.stderr).not.toBe(127);
+    expect(review.stderr).not.toMatch(/not found/);
+    const removed = paste(`${undo!} --yes`);
+    expect(removed.status, removed.stderr).toBe(0);
+    expect(existsSync(join(s.home, ".claude/skills/openqodex/SKILL.md"))).toBe(false);
   });
 });
 

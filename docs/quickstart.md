@@ -49,7 +49,7 @@ Say to your agent:
 review my change with openqodex
 ```
 
-The agent runs `openqodex review` and shows you the report it prints. That one command works out the change, copies it to a temporary folder, runs the scanners and the code graph, and starts its own reviewer: a separate Claude Code or Codex process that reads that copy. The reviewer checks every scanner finding and is given every changed line; a script checks its answer, and OpenQodex prints the report. It takes one to three minutes and uses your Claude Code or Codex plan. You can run the same command in your terminal.
+The agent runs `openqodex review` and shows you the report it prints. That one command works out the change, copies it to a temporary folder, runs the scanners and the code graph, and starts its own reviewer: a separate Claude Code or Codex process that reads that copy. The reviewer checks every scanner finding and is given every changed line; a script checks its answer, and OpenQodex prints the report. It takes one to three minutes and uses your Claude Code or Codex plan. In your terminal, run it by the full path `init` prints, `~/.openqodex/bin/openqodex review`: an npx install puts no `openqodex` on your `PATH`, and `init` never edits your shell profile.
 
 To review the whole repository instead of one change, say:
 

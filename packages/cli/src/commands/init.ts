@@ -556,6 +556,12 @@ export async function run(args: string[]): Promise<number> {
     if (outcome.code === EXIT_OK && installed && !flags.noReview && repoRoot !== null) {
       await reviewAfterInit({ repoRoot, runner: setup.runner, interactive: interactive() && !flags.yes, initFiles: setup.before });
     }
+    // The command to run next, by the launcher's full path: an npx install
+    // puts no `openqodex` on PATH, and init never edits a shell profile.
+    if (outcome.code === EXIT_OK && installed) {
+      out();
+      out(`Next: say "review my change with openqodex" to your agent, or run ${setup.runner} review`);
+    }
     return outcome.code;
   } catch (error) {
     process.stderr.write(`openqodex init: ${message(error)}\n`);
