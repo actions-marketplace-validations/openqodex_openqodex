@@ -29,14 +29,32 @@
 // 10. A manifest over the 1 MB cap is read in the base version (up to the
 //    16 MB lockfile cap) but not in the changed one, so a change to it
 //    reports every consumer of the package as broken.
+// 11. A `file:` path is placed by its spelling, `..` taken off the name
+//    before it: with `pivot` a link to a folder outside the repository,
+//    `file:../pivot/../shared` binds certainly to the workspace package
+//    `shared`, though the system walking that path reaches the folder
+//    beside the link's target.
+// 12. A `file:` path whose last folder is itself a link to the workspace
+//    package's folder is said to lead to a folder that is not the
+//    package's: the note is false, and the link is never named.
+// 13. A `file:` path spelled otherwise than the workspace package's folder
+//    (another letter case) is compared by spelling, so on a filesystem
+//    that finds that very folder by it the binding is lost.
+// 14. Where a `file:` path leads is lost when the model is kept, so a build
+//    reopened from its kept model no longer binds what the fresh build
+//    bound.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, floorReasons, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { graphOf } from "../src/session.js";
-import { at, callSites, commitAll, makeHome, makeRepo, symbol } from "./helpers.js";
+import { discoverProjects, linkageOf, pathLinkOff } from "../src/discovery/projects.js";
+import { RepoReader } from "../src/safe-fs.js";
+import { deserializeModel, serializeModel } from "../src/store/graph-files.js";
+import { at, callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
 
 const home = makeHome();
 const repos: string[] = [home];
@@ -106,6 +124,81 @@ describe("file: dependencies bind by where their path leads", () => {
     expect(unknownAt(g, at(files, "app/main.ts", "CALL"))).toEqual([
       { cause: "unsupported-rule", note: "app/package.json declares local as file:../tools/local, which leads to tools/local, a folder of this repository that is no workspace package" },
     ]);
+  });
+
+  it("never binds a file: dependency certainly when its path passes through a link, even one a later .. climbs back out of (11)", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+    repos.push(outside);
+    // Through the link, packages/pivot/.. is `outside`, which holds a package of the same name.
+    writeFiles(outside, { "deep/.keep": "", "shared/package.json": json({ name: "shared", main: "index.ts" }), "shared/index.ts": "export function helper() {\n  return 2;\n}\n" });
+    const files = {
+      "package.json": workspaceRoot,
+      "packages/shared/package.json": json({ name: "shared", main: "src/index.ts" }),
+      "packages/shared/src/index.ts": "export function helper() {\n  return 1;\n}\n",
+      "packages/web/package.json": json({ name: "web", dependencies: { shared: "file:../pivot/../shared" } }),
+      "packages/web/src/main.ts": helperCall,
+    };
+    const root = repo(files);
+    symlinkSync(join(outside, "deep"), join(root, "packages/pivot"));
+    const g = await buildGraph({ repoRoot: root, store: null });
+    expect(callSites(g, symbol(g, "packages/shared/src/index.ts", "helper"))).toEqual([]);
+    expect(unknownAt(g, at(files, "packages/web/src/main.ts", "CALL"))).toEqual([
+      { cause: "unsupported-rule", note: "packages/web/package.json declares shared as file:../pivot/../shared, whose path passes through packages/pivot, a symbolic link, which the graph does not follow" },
+    ]);
+  });
+
+  it("names the link when a file: dependency's folder is itself a link to the workspace package's folder, and binds nothing certainly through it (12)", async () => {
+    const files = {
+      "package.json": json({ name: "root", private: true, workspaces: ["packages/*", "libs/*"] }),
+      "libs/shared/package.json": json({ name: "shared", main: "src/index.ts" }),
+      "libs/shared/src/index.ts": "export function helper() {\n  return 1;\n}\n",
+      "packages/web/package.json": json({ name: "web", dependencies: { shared: "file:../shared" } }),
+      "packages/web/src/main.ts": helperCall,
+    };
+    const root = repo(files);
+    symlinkSync("../libs/shared", join(root, "packages/shared"));
+    const g = await buildGraph({ repoRoot: root, store: null });
+    expect(callSites(g, symbol(g, "libs/shared/src/index.ts", "helper"))).toEqual([]);
+    expect(unknownAt(g, at(files, "packages/web/src/main.ts", "CALL"))).toEqual([
+      { cause: "unsupported-rule", note: "packages/web/package.json declares shared as file:../shared, whose path passes through packages/shared, a symbolic link, which the graph does not follow" },
+    ]);
+  });
+
+  it("binds a file: dependency spelled otherwise than the workspace package's folder when the filesystem finds that very folder by it (13)", async () => {
+    const files = {
+      "package.json": workspaceRoot,
+      "packages/shared/package.json": json({ name: "shared", main: "src/index.ts" }),
+      "packages/shared/src/index.ts": "export function helper() {\n  return 1;\n}\n",
+      "packages/web/package.json": json({ name: "web", dependencies: { shared: "file:../Shared" } }),
+      "packages/web/src/main.ts": helperCall,
+    };
+    const root = repo(files);
+    const g = await buildGraph({ repoRoot: root, store: null });
+    const member = symbol(g, "packages/shared/src/index.ts", "helper");
+    const site = at(files, "packages/web/src/main.ts", "CALL");
+    // The filesystem decides: one that ignores letter case (macOS by default) finds packages/shared by that name.
+    if (existsSync(join(root, "packages/Shared"))) {
+      expect(callSites(g, member)).toEqual([site]);
+      expect(g.in.get(member)?.[0]?.tier).toBe("certain");
+    } else {
+      expect(callSites(g, member)).toEqual([]);
+      expect(unknownAt(g, site)).toEqual([
+        { cause: "unsupported-rule", note: "packages/web/package.json declares shared as file:../Shared, whose path passes through packages/Shared, which is not a folder in the work tree" },
+      ]);
+    }
+  });
+
+  it("keeps where each file: dependency leads with the kept model, so a reopened build binds what the fresh one bound (14)", () => {
+    const files = {
+      "package.json": workspaceRoot,
+      "packages/shared/package.json": json({ name: "shared", main: "src/index.ts" }),
+      "packages/web/package.json": json({ name: "web", dependencies: { shared: "file:../shared" } }),
+    };
+    const model = discoverProjects(Object.keys(files), new RepoReader(repo(files)));
+    const kept = deserializeModel(JSON.parse(JSON.stringify(serializeModel(model))) as Record<string, unknown>);
+    const link = linkageOf(kept, "packages/web/src/main.ts", "shared");
+    expect(link).toEqual(linkageOf(model, "packages/web/src/main.ts", "shared"));
+    expect(pathLinkOff(link!, "shared", "packages/shared")).toBeNull();
   });
 });
 

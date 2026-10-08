@@ -14,7 +14,8 @@
 // file governs, and the build into a partial status. Why a read was
 // refused is told from the file's own entry (lstat), never by following it.
 import { lstatSync } from "node:fs";
-import { join as joinPath, posix } from "node:path";
+import { join as joinPath, posix, resolve as resolvePath } from "node:path";
+import { FolderReader, type Id } from "@openqodex/core";
 import type { Relation } from "../model/records.js";
 import type { RepoReader } from "../safe-fs.js";
 import type { UnknownSite } from "../types.js";
@@ -37,6 +38,10 @@ export type PackageJson = {
   type: "module" | "commonjs";
   deps: Map<string, string>; // dependencies, devDependencies, peerDependencies, optionalDependencies: name to the spec as written
   workspaces: string[] | null;
+  // Not read from the file: where each dependency declared by a `file:` or
+  // `link:` path leads in the work tree, found when the model is built
+  // (placePathDeps) and kept with it.
+  pathDeps?: [string, LinkPath][];
 };
 
 export type NodeProject = { dir: string; file: string; pkg: PackageJson };
@@ -448,6 +453,7 @@ export function discoverProjects(all: readonly string[], reader: RepoReader, loo
     if (list) list.push(m);
     else model.members.set(m.pkg.name, [m]);
   }
+  placePathDeps(model, reader.root);
   return model;
 }
 
@@ -472,19 +478,83 @@ export function governingTsconfig(model: ProjectModel, file: string): { config: 
   }
 }
 
-// Where a dependency declared by a path (`file:` or `link:`) leads, from
-// the declaring package's folder and normalised the way npm and pnpm
-// resolve it: a folder of the repository, outside the repository, or a
-// path the graph cannot place in it (absolute, or from the home folder).
-export type LinkPath = { folder: string } | "outside" | "unplaced";
+// Where a dependency declared by a path (`file:` or `link:`) leads, found
+// in the work tree when the model is built (placePath):
+// - `folder`: a real folder of the repository, named by the names walked
+//   from the root; `member`, the folder of the one workspace package of the
+//   dependency's name when the folder reached is that very folder by
+//   identity (device and inode), else null;
+// - "outside": the path climbs above the repository root;
+// - `link`: a name on the way is a symbolic link, which is not followed;
+// - `notFolder`: a name on the way is missing or not a folder;
+// - "unplaced": an absolute path or one from the home folder.
+export type LinkPath = { folder: string; member: string | null } | { link: string } | { notFolder: string } | "outside" | "unplaced";
 
 export type Link = { linkage: Linkage; declaredIn: string; spec: string; path?: LinkPath };
 
-function linkPath(dir: string, spec: string): LinkPath {
+const sameFolder = (a: Id | null | undefined, b: Id | null | undefined): boolean => a != null && b != null && a.dev === b.dev && a.ino === b.ino;
+
+// Walks the path of `spec` from the declaring package's folder `dir`, one
+// name at a time from the repository root, as the system would and never
+// by spelling alone: each name must be a real folder (a link anywhere on
+// the way stops the walk, the last name included), `.` is skipped, and
+// `..` is taken only from a folder walked into, which is known to be real,
+// so it lands where its name says. Climbing above the root is "outside".
+// `members`: the workspace packages of the dependency's name.
+function placePath(folders: FolderReader, dir: string, spec: string, members: readonly NodeProject[] | undefined): LinkPath {
   const rest = spec.slice(spec.indexOf(":") + 1);
   if (rest.startsWith("/") || rest.startsWith("~") || /^[A-Za-z]:/.test(rest)) return "unplaced";
-  const to = join(dir, rest).replace(/\/+$/, "");
-  return to === ".." || to.startsWith("../") ? "outside" : { folder: to };
+  const at: string[] = [];
+  // One name further down, when it is a real folder; else what stops the walk there.
+  const down = (name: string): LinkPath | null => {
+    const names = [...at, name];
+    const entry = folders.entry(names);
+    if (entry.ok && entry.stat.isSymbolicLink()) return { link: names.join("/") };
+    if (!entry.ok || !entry.stat.isDirectory()) return { notFolder: names.join("/") };
+    at.push(name);
+    return null;
+  };
+  // The declaring folder itself first, from the root down.
+  for (const name of dir === "" ? [] : dir.split("/")) {
+    const stop = down(name);
+    if (stop !== null) return stop;
+  }
+  for (const name of rest.split("/")) {
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      if (at.length === 0) return "outside";
+      at.pop();
+      continue;
+    }
+    const stop = down(name);
+    if (stop !== null) return stop;
+  }
+  const reached = folders.ids(at)?.at(-1);
+  const member = members?.length === 1 ? members[0]! : null;
+  const memberId = member === null ? null : folders.ids(member.dir === "" ? [] : member.dir.split("/"))?.at(-1);
+  return { folder: at.join("/"), member: member !== null && sameFolder(reached, memberId) ? member.dir : null };
+}
+
+// Places every dependency a package declares by a path (pkg.pathDeps), in
+// the work tree under `root` as it is now. Done once, when the model is
+// built, so a build reopened from its kept model gives the same answer.
+function placePathDeps(model: ProjectModel, root: string): void {
+  let folders: FolderReader | null | undefined;
+  for (const p of model.node) {
+    const placed: [string, LinkPath][] = [];
+    for (const [name, spec] of p.pkg.deps) {
+      if (!/^(link|file):/.test(spec)) continue;
+      if (folders === undefined) {
+        try {
+          folders = new FolderReader(resolvePath(root));
+        } catch {
+          folders = null; // the root is not a folder: nothing can be placed
+        }
+      }
+      placed.push([name, folders === null ? "unplaced" : placePath(folders, p.dir, spec, model.members.get(name))]);
+    }
+    if (placed.length > 0) p.pkg.pathDeps = placed;
+  }
 }
 
 // How the importer's package is linked to the dependency `name`: declared
@@ -497,7 +567,11 @@ export function linkageOf(model: ProjectModel, importer: string, name: string): 
   const declaring = project?.pkg.deps.has(name) ? project : model.node.find((p) => p.dir === "" && p.pkg.deps.has(name)) ?? null;
   if (!declaring) return null;
   const spec = declaring.pkg.deps.get(name) as string;
-  if (/^(link|file):/.test(spec)) return { linkage: "workspace", declaredIn: declaring.file, spec, path: linkPath(declaring.dir, spec) };
+  if (/^(link|file):/.test(spec)) {
+    // A model kept before path dependencies were placed has no place for it: never bound.
+    const path = declaring.pkg.pathDeps?.find(([n]) => n === name)?.[1] ?? "unplaced";
+    return { linkage: "workspace", declaredIn: declaring.file, spec, path };
+  }
   if (spec.startsWith("workspace:")) return { linkage: "workspace", declaredIn: declaring.file, spec };
   const fromPnpm = model.pnpmLinks.get(declaring.dir)?.get(name);
   if (fromPnpm && fromPnpm !== "unknown") return { linkage: fromPnpm, declaredIn: declaring.file, spec };
@@ -510,18 +584,21 @@ export function linkageOf(model: ProjectModel, importer: string, name: string): 
 
 // Whether a path dependency may bind to the workspace package of its name
 // (`memberDir`, null when no workspace package has the name). It binds only
-// when its path leads to that package's own folder, compared as folders of
-// the repository: a name match alone never binds it. Null: no path
-// dependency, or the member's folder. "outside": the path leaves the
-// repository, so the code is not the repository's and the call is
-// external. A note: why it does not bind.
+// when its path, walked in the work tree with no link on the way, reaches
+// that package's own folder, the same folder by identity: a name match or
+// a spelling alone never binds it. Null: no path dependency, or the
+// member's folder. "outside": the path leaves the repository, so the code
+// is not the repository's and the call is external. A note: why it does
+// not bind.
 export function pathLinkOff(link: Link, name: string, memberDir: string | null): "outside" | { note: string } | null {
   const path = link.path;
   if (path === undefined) return null;
   if (path === "outside") return "outside";
   const declared = `${link.declaredIn} declares ${name} as ${link.spec}`;
   if (path === "unplaced") return { note: `${declared}, a path the graph cannot place in this repository` };
-  if (path.folder === memberDir) return null;
+  if ("link" in path) return { note: `${declared}, whose path passes through ${path.link}, a symbolic link, which the graph does not follow` };
+  if ("notFolder" in path) return { note: `${declared}, whose path passes through ${path.notFolder}, which is not a folder in the work tree` };
+  if (memberDir !== null && path.member === memberDir) return null;
   const where = path.folder === "" ? "the repository root" : path.folder;
   return { note: memberDir === null ? `${declared}, which leads to ${where}, a folder of this repository that is no workspace package` : `${declared}, which leads to ${where}, not to the workspace package ${memberDir}` };
 }
