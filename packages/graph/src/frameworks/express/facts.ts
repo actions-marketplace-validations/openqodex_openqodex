@@ -8,7 +8,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
 import type { Expr } from "./js.js";
-import { exported, isExpr, namePath, paramCount, pos, readExpr, scopeLine, stringValue, walk } from "./js.js";
+import { exported, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, pos, readExpr, stringValue, walk } from "./js.js";
 
 // The member calls watched: the routing methods of an application and a
 // router, `use`, `route`, `listen`, and the requests of a test agent.
@@ -31,7 +31,9 @@ export type ExpressFact =
   // A top-level function and how many parameters it takes.
   | (FrameworkFactBase & { kind: "function"; name: string; params: number })
   // A test block: `describe(...)`, `it(...)`, `test(...)` with a literal name.
-  | (FrameworkFactBase & { kind: "test-block"; fn: string; name: string | null });
+  | (FrameworkFactBase & { kind: "test-block"; fn: string; name: string | null })
+  // The file is larger than MAX_SOURCE_BYTES and was not read.
+  | (FrameworkFactBase & { kind: "too-large"; bytes: number });
 
 export function wants(source: string): boolean {
   return source.includes("express") || source.includes("supertest") || source.includes("createServer") || source.includes("module.exports");
@@ -40,8 +42,9 @@ export function wants(source: string): boolean {
 const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
 
 export function readFacts(root: Node): ExpressFact[] {
+  if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
   const out: ExpressFact[] = [];
-  walk(root, (node) => {
+  walk(root, (node, scope) => {
     switch (node.type) {
       case "call_expression": {
         const fn = node.childForFieldName("function");
@@ -49,11 +52,11 @@ export function readFacts(root: Node): ExpressFact[] {
         if (fn?.type === "member_expression") {
           const prop = fn.childForFieldName("property");
           if (prop && WATCHED.has(prop.text)) {
-            out.push({ kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: prop.text, args: args.map((a) => readExpr(a)), scope: scopeLine(node) });
+            out.push({ kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: prop.text, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
           }
         }
         const path = namePath(fn);
-        if (path && path[path.length - 1] === "createServer") out.push({ kind: "server", ...pos(node), fn: path, args: args.map((a) => readExpr(a)), scope: scopeLine(node) });
+        if (path && path[path.length - 1] === "createServer") out.push({ kind: "server", ...pos(node), fn: path, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
         if (path && path.length === 1 && TEST_FNS.has(path[0] as string)) out.push({ kind: "test-block", ...pos(node), fn: path[0] as string, name: stringValue(args[0] ?? null) });
         return;
       }
@@ -61,7 +64,6 @@ export function readFacts(root: Node): ExpressFact[] {
         const name = node.childForFieldName("name");
         const value = node.childForFieldName("value");
         if (name?.type !== "identifier" || !value) return;
-        const scope = scopeLine(node);
         out.push({ kind: "value", ...pos(node), name: name.text, value: readExpr(value), scope, top: scope === 0 && node.parent?.parent?.type !== "for_statement", exported: exported(node) });
         return;
       }
@@ -80,7 +82,6 @@ export function readFacts(root: Node): ExpressFact[] {
           return;
         }
         if (path.length === 1) {
-          const scope = scopeLine(node);
           out.push({ kind: "value", ...pos(node), name: path[0] as string, value: readExpr(right), scope, top: scope === 0, exported: false });
         }
         return;
@@ -96,7 +97,7 @@ export function readFacts(root: Node): ExpressFact[] {
       }
       case "function_declaration": {
         const name = node.childForFieldName("name");
-        if (name && scopeLine(node) === 0) out.push({ kind: "function", ...pos(node), name: name.text, params: paramCount(node) });
+        if (name && scope === 0) out.push({ kind: "function", ...pos(node), name: name.text, params: paramCount(node) });
         return;
       }
     }
@@ -136,6 +137,8 @@ export function isExpressFact(v: unknown): v is ExpressFact {
       return typeof f.name === "string" && Number.isInteger(f.params);
     case "test-block":
       return typeof f.fn === "string" && (f.name === null || typeof f.name === "string");
+    case "too-large":
+      return Number.isInteger(f.bytes);
     default:
       return false;
   }
