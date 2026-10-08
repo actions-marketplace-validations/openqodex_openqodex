@@ -9,10 +9,10 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, repoStat } from "@openqodex/core";
+import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
 import { readText } from "../agents/files.js";
-import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoRootOf, trackedFiles } from "../agents/git.js";
+import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoFiles, repoRootOf } from "../agents/git.js";
 import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
@@ -143,16 +143,21 @@ function planTeam(s: Setup, record: InstallRecord): Action[] {
   }
 }
 
-// Starts the scanner installs this repo will need, outside any agent sandbox.
-// Never fails init: the review installs on first use anyway.
-async function startScannerInstalls(repoRoot: string): Promise<void> {
+// Starts the scanner installs this repo will need, outside any agent sandbox:
+// the scanners its files call for, tracked or untracked as a review sees
+// them, less the ones its config switches off. The files init itself just
+// wrote are not the developer's code and call for nothing. The first review
+// joins these downloads (init-review.ts). Never fails init: a review
+// installs on first use anyway.
+async function startScannerInstalls(repoRoot: string, written: string[]): Promise<void> {
   try {
-    const { ADAPTERS, installToolsDetached } = await import("@openqodex/scanners");
-    const files = await trackedFiles(repoRoot);
-    const wanted = ADAPTERS.filter((a) => a.wants(files, repoRoot)).map((a) => a.source);
+    const { installToolsDetached, scannersToInstall } = await import("@openqodex/scanners");
+    const ours = new Set(written.map((p) => relative(repoRoot, p)));
+    const files = (await repoFiles(repoRoot)).filter((p) => !ours.has(p));
+    const wanted = scannersToInstall(files, repoRoot, loadConfig(repoRoot).config);
     if (wanted.length === 0) return;
     installToolsDetached(wanted);
-    out(`Installing the scanners this repo needs in the background: ${wanted.join(", ")}.`);
+    out(`Downloading the scanners this repo needs in the background: ${wanted.join(", ")}.`);
   } catch (error) {
     process.stderr.write(`openqodex: could not start the scanner installs (${message(error)}); they install on first review instead\n`);
   }
@@ -443,7 +448,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
     return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "removed" };
   }
 
-  if (s.repoRoot !== null) await startScannerInstalls(s.repoRoot);
+  if (s.repoRoot !== null) await startScannerInstalls(s.repoRoot, s.written);
   out(`OpenQodex ${s.version} is installed for ${s.agents.map((a) => AGENT_NAMES[a]).join(", ")}.`);
   // What was written, by whom it is for, as the plan grouped it.
   const written = (list: Action[]): string[] => [...new Set(list.filter((a) => a.apply && !failedPaths.has(a.path)).map((a) => shown(s, a.path)))];

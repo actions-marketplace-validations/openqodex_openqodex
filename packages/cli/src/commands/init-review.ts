@@ -1,10 +1,14 @@
 // The review `init` ends with, after the install boundary is released: of
 // the change when the repository has one; else one question (the whole
 // repository, a pull request, a branch, not now); without a terminal, the
-// three commands instead of the question. It runs in this process with
-// scanner downloads off, so it never starts another install step, and it
+// three commands instead of the question. It runs in this process and
 // never throws: init's exit code is about the install. It ends with one
 // line, "First review: <how it ended>".
+//
+// init has just started the downloads of the scanners this repo calls for.
+// The review joins them, as any review joins a download in progress, for up
+// to FIRST_REVIEW_INSTALL_WAIT_MS, then names the ones still downloading;
+// it resolves only the scanners its own change calls for.
 import { isAbsolute, relative, resolve } from "node:path";
 import { getChange, loadConfig } from "@openqodex/core";
 import { parseFlags } from "../flags.js";
@@ -13,6 +17,13 @@ import type { ReviewEnd, ReviewOptions } from "../review-run.js";
 import type { ReviewerDriver } from "../reviewers/driver.js";
 
 export type Choice = { kind: "all" } | { kind: "target"; target: string } | null;
+
+// How long the first review waits for a scanner still downloading. A
+// review's usual 45 seconds left semgrep, osv-scanner and hadolint out of the
+// demo's first run on a Mac (Fable's audit, 2026-10-07): the first review had
+// the fewest scanners of any. Two minutes covers the big downloads on an
+// ordinary line and still bounds the wait; the review itself takes one to three.
+export const FIRST_REVIEW_INSTALL_WAIT_MS = 120_000;
 
 // How the first review ended: it ran to a complete report (finished), ran
 // and was not complete (incomplete), was not run (skipped, with the reason),
@@ -60,6 +71,8 @@ export async function reviewAfterInit(o: {
   // Tests pass a model provider stand-in.
   drivers?: ReviewerDriver[];
   ask?: () => Promise<Choice>;
+  // FIRST_REVIEW_INSTALL_WAIT_MS unless a test asks for less.
+  installWaitMs?: number;
 }): Promise<FirstReview> {
   const ended = await firstReview(o);
   firstReviewLine(ended.ended, ended.why);
@@ -68,10 +81,12 @@ export async function reviewAfterInit(o: {
 
 async function firstReview(o: Parameters<typeof reviewAfterInit>[0]): Promise<{ ended: FirstReview; why?: string }> {
   try {
-    const { global } = parseFlags(["--cwd", o.repoRoot, "--no-install"], {});
+    const { global } = parseFlags(["--cwd", o.repoRoot], {});
+    const installBudgetMs = o.installWaitMs ?? FIRST_REVIEW_INSTALL_WAIT_MS;
     const review = async (extra: Partial<ReviewOptions>): Promise<{ ended: FirstReview; why?: string }> => {
-      const end: ReviewEnd = { ended: "nothing" };
-      await runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000, drivers: o.drivers, end, ...extra });
+      const end: ReviewEnd = { ended: "nothing", installing: [] };
+      await runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000, drivers: o.drivers, end, installBudgetMs, ...extra });
+      if (end.installing.length > 0) out(`Still downloading: ${end.installing.join(", ")}. The next review includes them once they finish.`);
       return end.ended === "nothing" ? { ended: "skipped", why: "nothing to review" } : { ended: end.ended };
     };
     const { config } = loadConfig(o.repoRoot);

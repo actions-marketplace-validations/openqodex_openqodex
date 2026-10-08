@@ -72,6 +72,15 @@ type Outcome = {
   secrets: string[];
 };
 
+// The builtin scanners with a tool to download for these files: the ones
+// runBuiltin would resolve for them, by the same gates (switched off in the
+// config, no file it reads, a reason it must not run, runs in-process).
+export function scannersToInstall(paths: string[], repoDir: string, config: Config): BuiltinScanner[] {
+  return ADAPTERS.filter(
+    (a) => !IN_PROCESS.has(a.source) && !config.disabledScanners.includes(a.source) && a.wants(paths, repoDir) && !(a.skip?.() ?? null),
+  ).map((a) => a.source);
+}
+
 export async function runScanners(args: {
   repoDir: string;
   changedPaths: string[];

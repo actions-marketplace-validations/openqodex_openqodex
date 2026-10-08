@@ -39,6 +39,8 @@
 //     keeps its long section; or init ends without saying what it wrote for
 //     the developer (with the undo) and for the team, and that --project
 //     keeps everything inside the repo.
+// 22. The scanner downloads init starts miss a file type that only an
+//     untracked file has, or download a scanner the config switches off.
 // 21. A command init prints for the developer to run next (the review, the
 //     undo) names a bare `openqodex`, which an npx install never puts on PATH,
 //     so pasting it exits 127.
@@ -568,6 +570,18 @@ describe("init, after writing", () => {
     const r = cli(s, ["init", "--yes", "--agent", "cursor"]);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/background: .*shellcheck/);
+  });
+
+  it("22. picks the downloads from tracked and untracked files alike, and leaves out a scanner the config switches off", () => {
+    const s = sandbox({ "deploy.sh": "#!/bin/sh\necho hi\n", ".openqodex/config.yaml": "scanners:\n  disable: [gitleaks]\n" });
+    writeFileSync(join(s.repo, "app.py"), "print('hi')\n");
+    lockTools(s);
+    const r = cli(s, ["init", "--yes", "--agent", "cursor"]);
+    expect(r.status, r.stderr).toBe(0);
+    const line = /background: (.*)\.$/m.exec(r.stdout)?.[1]?.split(", ") ?? [];
+    expect(line).toEqual(expect.arrayContaining(["shellcheck", "ruff", "bandit"]));
+    expect(line).not.toContain("gitleaks");
+    expect(line).not.toContain("oxlint");
   });
 });
 

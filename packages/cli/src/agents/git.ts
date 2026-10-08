@@ -55,9 +55,11 @@ export function inWorkTree(repoRoot: string, gitFolders: string[], file: string)
   return within(repoRoot, file) && !excluding.some((dir) => within(dir, file));
 }
 
-export async function trackedFiles(repoRoot: string): Promise<string[]> {
-  const { stdout } = await execFileAsync("git", ["ls-files", "-z"], { cwd: repoRoot, maxBuffer: 256 << 20 });
-  return stdout.split("\0").filter((p) => p !== "");
+// The files of the work tree a review can see: tracked ones and untracked
+// ones git does not ignore, as the change source counts them.
+export async function repoFiles(repoRoot: string): Promise<string[]> {
+  const { stdout } = await execFileAsync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: repoRoot, maxBuffer: 256 << 20 });
+  return [...new Set(stdout.split("\0").filter((p) => p !== ""))];
 }
 
 // Whether git tracks this file: a team file that was committed stays on uninstall.

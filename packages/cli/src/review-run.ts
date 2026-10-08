@@ -120,6 +120,9 @@ export type ReviewOptions = {
   // Filled with how the review ended, beside the exit code, which cannot
   // tell an incomplete review from one that never had a reviewer.
   end?: ReviewEnd;
+  // How long a scanner still downloading is waited for; the scan's default
+  // (INSTALL_BUDGET_MS) when left out.
+  installBudgetMs?: number;
 };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -170,8 +173,9 @@ export async function reviewerReadiness(repoRoot: string, drivers: ReviewerDrive
   return { ready: null, reasons: reasons.length > 0 ? reasons : [`${choice}: no driver of that name`] };
 }
 
-// How a review ended, for the caller that must say so (init's first review).
-export type ReviewEnd = { ended: "finished" | "incomplete" | "unavailable" | "nothing" };
+// How a review ended, for the caller that must say so (init's first review),
+// and the scanners it left out because they were still downloading.
+export type ReviewEnd = { ended: "finished" | "incomplete" | "unavailable" | "nothing"; installing: string[] };
 
 // Every regular file under `dir` but the work tree's .git link file, by
 // path relative to `dir`. Links (there are none: they were written as
@@ -536,7 +540,7 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
       const lfs = await lfsPaths(snapshot.tree, change.changedPaths);
       if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
       const target: RunTarget = { spec: o.target, base_ref: t.baseRef, base_source: t.baseSource, base_sha: t.baseSha, merge_base: t.mergeBase, head_sha: t.headSha, repo_root: repoRoot, checkout: snapshot.tree };
-      const p = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, flags, only, skip });
+      const p = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, flags, only, skip, installBudgetMs: o.installBudgetMs });
       return { p, snapshot, tree: null, target };
     } finally {
       if (t.tmpRef !== null) await dropTempRef(repoRoot, t.tmpRef);
@@ -564,7 +568,7 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
     // The whole repository as the snapshot holds it, so nothing written in
     // the developer's folder from here on is part of the review.
     const whole = await getWholeRepo({ repoRoot: snap.tree, exclude: config.exclude });
-    const p = await scanChange<WholeRepo>({ repoRoot, workDir: snap.tree, config, change: whole, wholeRepo: true, flags, only, skip });
+    const p = await scanChange<WholeRepo>({ repoRoot, workDir: snap.tree, config, change: whole, wholeRepo: true, flags, only, skip, installBudgetMs: o.installBudgetMs });
     return p.scan === null ? null : { p, snapshot: snap, tree: treeSha, whole: p.change };
   }
   if (change.files.length === 0) {
@@ -572,7 +576,7 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
     return null;
   }
   progress(flags)(`Reviewing the change against ${change.baseRef}: ${change.stats.files} ${change.stats.files === 1 ? "file" : "files"}, +${change.stats.additions} -${change.stats.deletions}`);
-  const p = await scanChange({ repoRoot, workDir: snap.tree, config, change, flags, only, skip });
+  const p = await scanChange({ repoRoot, workDir: snap.tree, config, change, flags, only, skip, installBudgetMs: o.installBudgetMs });
   return { p, snapshot: snap, tree: treeSha };
 }
 
@@ -653,6 +657,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     }
     const { p } = prep;
     const scan = p.scan as ScanResult;
+    if (o.end) o.end.installing = scan.scanners.filter((s) => s.status === "installing").map((s) => s.scanner);
     const change = p.change;
     const folder = runFolder(o, repoRoot, change.shortId);
     const dir = folder.dir;

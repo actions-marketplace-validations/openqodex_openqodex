@@ -35,11 +35,11 @@ Inside a repository, `init` also:
 
 After writing, `init` lists what it wrote for you, with the command that undoes it (`init --uninstall` through the launcher), and what it wrote for the team, to commit. `init --project` instead keeps everything inside the repository, for the team to commit.
 
-`init` also starts the scanner downloads that your repo needs, in the background. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
+`init` also starts the scanner downloads that your repo needs, in the background: the ones its files call for, tracked or untracked, less any `scanners.disable` switches off. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
 
 Then `init` checks the reviewers: it prints "Reviewer ready" with the Claude Code or Codex it found, or "No reviewer can start yet" with what to fix for each.
 
-Last, `init` reviews, when a reviewer can start: when the repository has a change, it runs `openqodex review` and prints the report. When it has none, it asks what to review: the whole repository, a pull request, a branch, or not now. With `--yes` or without a terminal it prints the three commands instead of asking. `--no-review` skips this step. The review uses the scanners already installed and never fails `init`. One line says how it ended: `First review: finished`, `incomplete`, `skipped` or `unavailable`.
+Last, `init` reviews, when a reviewer can start: when the repository has a change, it runs `openqodex review` and prints the report. When it has none, it asks what to review: the whole repository, a pull request, a branch, or not now. With `--yes` or without a terminal it prints the three commands instead of asking. `--no-review` skips this step. The review waits up to two minutes for a scanner its change needs that is still downloading, names any still going after that, and never fails `init`. One line says how it ended: `First review: finished`, `incomplete`, `skipped` or `unavailable`.
 
 Codex only: open Codex, run `/hooks` and trust the OpenQodex hook. Codex runs a new hook only after you trust it.
 

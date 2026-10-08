@@ -75,7 +75,7 @@ Scanners download on first use into `~/.openqodex/tools/`. Only the scanners you
 
 Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
 
-A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. To install every scanner up front, run `npx openqodex doctor --install`.
+A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. The review `init` ends with waits up to two minutes, since `init` has just started the downloads. To install every scanner up front, run `npx openqodex doctor --install`.
 
 One measured first run: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `openqodex demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners. Your times depend on your line.
 
