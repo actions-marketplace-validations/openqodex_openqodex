@@ -1,6 +1,6 @@
 # Commands
 
-Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the four commands below: `init`, `review`, `update` and `trust`. The commands that hooks, the skill and the Action call (`scan`, `doctor`, `hook`, `guide`, `findings`, `demo`, `report`) still work; `plumbing` describes them.
+Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the four commands below: `init`, `review`, `update` and `trust`. The commands that hooks, the skill and the Action call (`scan`, `doctor`, `hook`, `guide`, `findings`, `demo`, `report`, `config`) still work; `plumbing` describes them.
 
 ## Exit codes
 

@@ -30,7 +30,7 @@ Before any push, review the change with the openqodex skill.
 
 The skill holds the procedure, and a repository's own team section (below) says how that repository reviews. An install made by an earlier version, with the longer section, gets this line in its place on the next `init`, while that section is still exactly as `init` wrote it.
 
-In project scope the repository's `CLAUDE.md` and `AGENTS.md` get a longer section that also names the reviewer process, the blocked verdict and where the report is. The Cursor and Cline rules carry that longer section too: Cursor has no instruction file in the home folder, so its rule in the repository holds it.
+In project scope the repository's `CLAUDE.md` and `AGENTS.md` get a longer section: review with the openqodex skill when a feature or fix is done, and do not push on a blocked verdict unless the developer says so after seeing the findings. The Cursor and Cline rules carry that longer section too: Cursor has no instruction file in the home folder, so its rule in the repository holds it.
 
 The tables below name the file for each agent. In an existing file, the section is appended and your own text stays as it is. `--uninstall` removes exactly that section, and nothing around it.
 

@@ -68,9 +68,10 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 
 ## Rules
 
-- Never edit code during the review. Review first, show the receipt, ask "Fix all, or tell me which?", then fix only the findings the developer names.
+- Never edit code during the review. Review first, show the receipt, then fix only the findings the developer names (steps 3 to 5).
 - Never run `openqodex trust` without asking the developer first. It approves a custom scanner, which is a command that runs on their machine.
 - Never set `OPENQODEX_SKIP`. It is the developer's switch, not yours.
+- When OpenQodex prints that files it wrote for your agent are from an older version and that `init` refreshes them, tell the developer in one line and give them that `init` command. Run it only if they ask you to: it rewrites their agent files.
 - When the verdict is `blocked`, do not push unless the developer says so after seeing the findings.
 - When OpenQodex prints "OpenQodex had a problem. Nothing has been sent." with `1 create a GitHub issue` and `2 ignore`, tell the developer in one line what went wrong and give them the two choices. Never choose 1 yourself. If they say 1, run `npx -y openqodex@0.8.1 report --send-last` from the same folder. Anything else means 2: do nothing.
 
