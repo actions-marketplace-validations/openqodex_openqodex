@@ -351,18 +351,25 @@ function read(node: Node | null, depth: number, budget: { left: number }): Expr 
 }
 
 // One depth-first pass over the named nodes of a tree with a cursor, so a
-// deep tree never overflows the stack. `visit` gets each node and the line
-// of the innermost function around it (0 at module level), kept on a stack
-// as the walk enters and leaves functions, never found by climbing the
-// parents. It returns false to skip the children of a node.
+// deep tree never overflows the stack. `visit` gets each node, the line
+// of the innermost function around it (0 at module level), and `up`, which
+// gives the node's ancestors (`up(1)` its parent, `up(2)` the one above).
+// Both come from stacks the walk keeps as it enters and leaves nodes, never
+// from a node's `parent`, which tree-sitter finds by descending from the
+// root again: a lookup per node would make a deeply nested file quadratic.
+// `visit` returns false to skip the children of a node.
 //
 // A region the parser could not read (an ERROR node) is never visited: the
 // language would not run such a file, so nothing in it is a fact. `broken`
 // is told the line of each such region.
-export function walk(root: Node, visit: (node: Node, scope: number) => boolean | void, broken?: (line: number) => void): void {
+export type Up = (k: number) => Node | null;
+
+export function walk(root: Node, visit: (node: Node, scope: number, up: Up) => boolean | void, broken?: (line: number) => void): void {
   const cursor = root.walk();
   const scopes: { depth: number; line: number }[] = [];
+  const path: Node[] = []; // the named node at each depth of the current path
   let depth = 0;
+  const up: Up = (k) => (depth - k >= 0 ? (path[depth - k] ?? null) : null);
   for (;;) {
     let descend = true;
     if (cursor.nodeType === "ERROR" || cursor.nodeIsMissing) {
@@ -370,7 +377,8 @@ export function walk(root: Node, visit: (node: Node, scope: number) => boolean |
       broken?.(cursor.startPosition.row + 1);
     } else if (cursor.nodeIsNamed) {
       const node = cursor.currentNode;
-      descend = visit(node, scopes.length > 0 ? (scopes[scopes.length - 1] as { line: number }).line : 0) !== false;
+      path[depth] = node;
+      descend = visit(node, scopes.length > 0 ? (scopes[scopes.length - 1] as { line: number }).line : 0, up) !== false;
       if (descend && SCOPE_TYPES.has(node.type)) scopes.push({ depth, line: node.startPosition.row + 1 });
     }
     if (descend && cursor.gotoFirstChild()) {
@@ -405,12 +413,12 @@ export function isTestFile(file: string): boolean {
 export const JS_RUNNERS: readonly string[] = ["vitest", "jest", "mocha", "ava", "@jest/globals", "uvu", "tap"];
 
 // Whether a declaration sits under an `export` statement: its declaration
-// statement's parent, two steps up at most.
-export function exported(node: Node): boolean {
-  let p = node.parent;
-  for (let steps = 0; p && steps < 3; steps++, p = p.parent) {
+// statement's parent, three steps up at most, read from the walk's stack.
+export function exported(up: Up): boolean {
+  for (let k = 1; k <= 3; k++) {
+    const p = up(k);
+    if (!p || p.type === "program" || p.type === "statement_block") return false;
     if (p.type === "export_statement") return true;
-    if (p.type === "program" || p.type === "statement_block") return false;
   }
   return false;
 }

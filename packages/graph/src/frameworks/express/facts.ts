@@ -8,6 +8,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
 import type { Expr } from "./js.js";
+import type { Up } from "./js.js";
 import { exported, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, pos, readExpr, stringValue, walk } from "./js.js";
 
 // The member calls watched: the routing methods of an application and a
@@ -53,7 +54,7 @@ export function readFacts(root: Node): ExpressFact[] {
   const out: ExpressFact[] = [];
   let firstBroken = 0;
   let broken = 0;
-  const visit = (node: Node, scope: number): void => {
+  const visit = (node: Node, scope: number, up: Up): void => {
     switch (node.type) {
       case "call_expression": {
         // A call the parser had to repair (a missing parenthesis) is no fact.
@@ -77,7 +78,7 @@ export function readFacts(root: Node): ExpressFact[] {
         const value = node.childForFieldName("value");
         const id = name?.type === "identifier" ? identifierName(name.text) : null;
         if (id === null || !value || node.hasError) return;
-        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && node.parent?.parent?.type !== "for_statement", exported: exported(node) });
+        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && up(2)?.type !== "for_statement", exported: exported(up) });
         return;
       }
       case "assignment_expression": {
@@ -106,7 +107,9 @@ export function readFacts(root: Node): ExpressFact[] {
         const id = pattern?.type === "identifier" ? identifierName(pattern.text) : null;
         if (id === null || !ann) return;
         const type = typeName(ann);
-        if (type) out.push({ kind: "param", ...pos(node), name: id, type, scope: node.parent?.parent ? node.parent.parent.startPosition.row + 1 : 0 });
+        // The parameter list's owner, two steps up: the function the scope is named by.
+        const owner = up(2);
+        if (type) out.push({ kind: "param", ...pos(node), name: id, type, scope: owner ? owner.startPosition.row + 1 : 0 });
         return;
       }
       case "function_declaration": {

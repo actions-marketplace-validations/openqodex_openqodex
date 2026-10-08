@@ -277,9 +277,13 @@ export type Scope = { line: number; inClass: boolean };
 // Depth-first walk over the named nodes with a cursor, so a deep tree never
 // overflows the stack, and the enclosing scope of each node tracked on a
 // stack keyed by the cursor's depth (no walk up the parent chain). `visit`
+// also gets the type of the node's parent, kept on the same kind of stack:
+// tree-sitter finds `node.parent` by descending from the root again, so a
+// lookup per node would make a deeply nested file quadratic. `visit`
 // returns false to skip the children of a node.
-export function walkScoped(root: Node, visit: (node: Node, scope: Scope) => boolean | void): void {
+export function walkScoped(root: Node, visit: (node: Node, scope: Scope, parentType: string | null) => boolean | void): void {
   const cursor = root.walk();
+  const types: string[] = []; // the node type at each depth of the current path
   const stack: { depth: number; line: number; inClass: boolean }[] = [];
   let depth = 0;
   const top: Scope = { line: 0, inClass: false };
@@ -289,7 +293,8 @@ export function walkScoped(root: Node, visit: (node: Node, scope: Scope) => bool
       while (stack.length > 0 && (stack[stack.length - 1] as { depth: number }).depth >= depth) stack.pop();
       const s = stack[stack.length - 1];
       const node = cursor.currentNode;
-      descend = visit(node, s ? { line: s.line, inClass: s.inClass } : top) !== false;
+      types[depth] = node.type;
+      descend = visit(node, s ? { line: s.line, inClass: s.inClass } : top, depth > 0 ? (types[depth - 1] ?? null) : null) !== false;
       if (descend && SCOPES.has(node.type)) stack.push({ depth, line: node.startPosition.row + 1, inClass: node.type === "class_definition" });
     }
     if (descend && cursor.gotoFirstChild()) {

@@ -54,7 +54,7 @@ export function readFacts(root: Node): NextFact[] {
   let firstBroken = 0;
   walk(
     root,
-    (node) => {
+    (node, _scope, up) => {
       switch (node.type) {
         case "function_declaration":
         case "arrow_function":
@@ -66,17 +66,17 @@ export function readFacts(root: Node): NextFact[] {
           let name: string | null = null;
           const own = node.childForFieldName("name");
           if (node.type === "function_declaration" && own) name = identifierName(own.text);
-          else if (node.parent?.type === "variable_declarator" && node.parent.childForFieldName("value")?.id === node.id) {
-            const n = node.parent.childForFieldName("name");
+          else if (up(1)?.type === "variable_declarator" && up(1)?.childForFieldName("value")?.id === node.id) {
+            const n = up(1)?.childForFieldName("name");
             if (n?.type === "identifier") name = identifierName(n.text);
           }
-          if (name !== null) out.push({ kind: "action", ...pos(node.type === "function_declaration" ? node : (node.parent as Node)), name });
+          if (name !== null) out.push({ kind: "action", ...pos(node.type === "function_declaration" ? node : (up(1) as Node)), name });
           return;
         }
         case "variable_declarator": {
           const n = node.childForFieldName("name");
           if (n?.type !== "identifier" || identifierName(n.text) !== "config" || node.hasError) return;
-          if (node.parent?.parent?.type !== "export_statement") return;
+          if (up(2)?.type !== "export_statement") return;
           const value = readExpr(node.childForFieldName("value"));
           if (value.t !== "object") return;
           const m = value.props.find((p) => p.key === "matcher");

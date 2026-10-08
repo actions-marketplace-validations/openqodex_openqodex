@@ -93,7 +93,7 @@ export function readFacts(root: Node): FastApiFact[] {
   if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
   const out: FastApiFact[] = [];
   let broken: { line: number; column: number } | null = null;
-  walkScoped(root, (node, scope: Scope) => {
+  walkScoped(root, (node, scope: Scope, parentType) => {
     // A broken region is not read at all, and no fact comes from a node
     // whose subtree holds a syntax error.
     if (node.type === "ERROR" || node.isMissing) {
@@ -129,7 +129,7 @@ export function readFacts(root: Node): FastApiFact[] {
       }
       case "call": {
         // A decorator's call is read with its decorated definition.
-        if (node.parent?.type === "decorator") return;
+        if (parentType === "decorator") return;
         const fn = node.childForFieldName("function");
         if (fn?.type !== "attribute") return;
         const prop = fn.childForFieldName("attribute")?.text ?? "";

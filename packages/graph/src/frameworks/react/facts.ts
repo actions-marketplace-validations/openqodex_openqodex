@@ -100,15 +100,11 @@ export function readFacts(root: Node): ReactFact[] {
   if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
   const out: ReactFact[] = [];
   const frames: Frame[] = [];
+  // The function frames alone, so the innermost one is found in one step.
+  const fnFrames: (Frame & { t: "fn" })[] = [];
   // Names declared by the functions on the stack, with how many frames declare each.
   const locals = new Map<string, number>();
-  const topFn = (): (Frame & { t: "fn" }) | null => {
-    for (let i = frames.length - 1; i >= 0; i--) {
-      const f = frames[i] as Frame;
-      if (f.t === "fn") return f;
-    }
-    return null;
-  };
+  const topFn = (): (Frame & { t: "fn" }) | null => fnFrames[fnFrames.length - 1] ?? null;
   // The innermost frame that is a function or a class; a return marker above
   // it says the walk is in a returned position of that function.
   const returned = (): boolean => {
@@ -119,7 +115,10 @@ export function readFacts(root: Node): ReactFact[] {
   const pop = (depth: number) => {
     while (frames.length > 0 && (frames[frames.length - 1] as Frame).depth >= depth) {
       const f = frames.pop() as Frame;
-      if (f.t === "fn") for (const n of f.locals) locals.set(n, (locals.get(n) ?? 1) - 1);
+      if (f.t === "fn") {
+        fnFrames.pop();
+        for (const n of f.locals) locals.set(n, (locals.get(n) ?? 1) - 1);
+      }
     }
   };
   const declare = (name: string) => {
@@ -133,6 +132,11 @@ export function readFacts(root: Node): ReactFact[] {
   let depth = 0;
   let broken = 0;
   let firstBroken = 0;
+  // The named node at each depth of the current path: a node's parent is
+  // read from here, never from `node.parent`, which tree-sitter finds by
+  // descending from the root again (quadratic on a deeply nested file).
+  const path: Node[] = [];
+  const up = (k: number): Node | null => (depth - k >= 0 ? (path[depth - k] ?? null) : null);
   for (;;) {
     let descend = true;
     // A region the parser could not read is never visited: the language
@@ -143,13 +147,16 @@ export function readFacts(root: Node): ReactFact[] {
     } else if (cursor.nodeIsNamed) {
       const node = cursor.currentNode;
       const type = node.type;
+      const field = cursor.currentFieldName;
+      path[depth] = node;
+      const parent = up(1);
       // A return position: a return statement, or an arrow function's expression body.
-      const parent = node.parent;
-      if (type === "return_statement" || (parent?.type === "arrow_function" && type !== "statement_block" && parent.childForFieldName("body")?.id === node.id)) {
+      const top = frames[frames.length - 1];
+      if (type === "return_statement" || (parent?.type === "arrow_function" && type !== "statement_block" && field === "body")) {
         frames.push({ t: "return", depth, owner: topFn() });
       } else if (type === "parenthesized_expression" || type === "ternary_expression" || type === "binary_expression") {
         // `return (<X />)`, `cond ? <A /> : <B />`, `ok && <X />` keep the position.
-      } else if (frames.length > 0 && (frames[frames.length - 1] as Frame).t === "return" && !JSX_TYPES.has(type)) {
+      } else if (top && top.t === "return" && top.owner !== null && !JSX_TYPES.has(type)) {
         // Anything else under a return ends the returned position for what it holds.
         frames.push({ t: "return", depth, owner: null });
       }
@@ -162,16 +169,16 @@ export function readFacts(root: Node): ReactFact[] {
         if (type === "function_declaration" || type === "generator_function_declaration") {
           const n = node.childForFieldName("name");
           name = n ? identifierName(n.text) : null;
-          isExported = exported(node);
+          isExported = exported(up);
         } else if (type === "method_definition") {
           name = null;
-        } else if (parent?.type === "variable_declarator" && parent.childForFieldName("value")?.id === node.id) {
+        } else if (parent?.type === "variable_declarator" && field === "value") {
           const n = parent.childForFieldName("name");
           if (n?.type === "identifier") {
             name = identifierName(n.text);
             line = parent.startPosition.row + 1;
             column = parent.startPosition.column + 1;
-            isExported = exported(parent);
+            isExported = exported((k) => up(k + 1));
           }
         }
         // Only a top-level function (or one directly in an exported binding) is a component.
@@ -185,8 +192,9 @@ export function readFacts(root: Node): ReactFact[] {
           const cls = frames[frames.length - 1];
           if (cls && cls.t === "class") fact = cls.fact;
         }
-        const frame: Frame = { t: "fn", depth, line: node.startPosition.row + 1, fact, locals: [], render: false };
+        const frame: Frame & { t: "fn" } = { t: "fn", depth, line: node.startPosition.row + 1, fact, locals: [], render: false };
         frames.push(frame);
+        fnFrames.push(frame);
         const params = node.childForFieldName("parameters") ?? node.childForFieldName("parameter");
         if (params) {
           const names: string[] = [];
@@ -201,7 +209,7 @@ export function readFacts(root: Node): ReactFact[] {
         const ext = heritage?.namedChildren.find((c) => c.type === "extends_clause") ?? null;
         const baseNode = ext ? (ext.childForFieldName("value") ?? ext.firstNamedChild) : (heritage?.firstNamedChild ?? null);
         if (name && isComponentName(name) && topFn() === null) {
-          out.push({ kind: "component", ...pos(node), name, form: "class", returnsJsx: false, base: namePath(baseNode), exported: exported(node) });
+          out.push({ kind: "component", ...pos(node), name, form: "class", returnsJsx: false, base: namePath(baseNode), exported: exported(up) });
           frames.push({ t: "class", depth, fact: out.length - 1 });
         }
       } else if (type === "variable_declarator") {
@@ -225,7 +233,8 @@ export function readFacts(root: Node): ReactFact[] {
         }
         if (name && !node.hasError && (name.length > 1 || isComponentName(name[0] as string))) {
           let render: string[] | null = null;
-          if (parent?.type === "arguments" && parent.firstNamedChild?.id === node.id && parent.parent?.type === "call_expression") render = namePath(parent.parent.childForFieldName("function"));
+          const call = up(2);
+          if (parent?.type === "arguments" && parent.firstNamedChild?.id === node.id && call?.type === "call_expression") render = namePath(call.childForFieldName("function"));
           out.push({ kind: "element", ...pos(node), name, local: (locals.get(name[0] as string) ?? 0) > 0, render });
         }
       } else if (type === "jsx_fragment" || (type === "jsx_opening_element" && node.childForFieldName("name") === null)) {
