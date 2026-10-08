@@ -30,7 +30,7 @@ export const NOTICES: readonly Notice[] = [
     text: "The reviewer can search the web and open web pages by default; set reviewer_web: off in ~/.openqodex/config.yaml to take its web tools away.",
   },
   {
-    version: "next",
+    version: "0.9.0",
     kind: "blocks a push",
     text: "A name in scanners.disable that this version does not know is ignored with a warning and the review runs, so it can block a push; before, the run stopped with exit 2 and the push went through.",
   },

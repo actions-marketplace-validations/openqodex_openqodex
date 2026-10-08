@@ -38,9 +38,13 @@ export function impactLine(report: Report): string | null {
   const parts = [`${impact.touched.length} ${impact.touched.length === 1 ? "symbol" : "symbols"} touched`];
   if (removed > 0) parts.push(`${removed} removed`);
   if (impact.removed.length > removed) parts.push(`${impact.removed.length - removed} moved`);
+  const names = impact.exports?.length ?? 0;
+  if (names > 0) parts.push(`${names} public ${names === 1 ? "name" : "names"} changed`);
   parts.push(`${callers} ${callers === 1 ? "caller" : "callers"} in ${files} ${files === 1 ? "file" : "files"}`);
   const partial = impact.status === "partial" ? ", partial graph" : "";
-  return `Blast radius: risk ${impact.risk ?? "none"} (${parts.join(", ")}${partial})`;
+  // What the graph could not see: the brief and the packet say which calls.
+  const floor = impact.unknown?.floor && impact.touched.length + impact.removed.length > 0 ? ", a floor: some calls the graph could not see" : "";
+  return `Blast radius: risk ${impact.risk ?? "none"} (${parts.join(", ")}${partial}${floor})`;
 }
 
 export function renderTerminal(report: Report, opts: { color: boolean }): string {

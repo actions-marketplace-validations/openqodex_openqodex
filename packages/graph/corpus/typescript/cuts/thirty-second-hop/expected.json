@@ -1,0 +1,19 @@
+{
+  "guards": "discloses the second-hop cut with its omitted count when a caller has 30 callers",
+  "callers": [
+    {
+      "to": "src/rate.ts#baseRate",
+      "site": "src/quote.ts:4",
+      "tier": "certain"
+    }
+  ],
+  "cuts": [
+    {
+      "by": "second-hop",
+      "omitted": 10
+    }
+  ],
+  "floor": {
+    "src/rate.ts#baseRate": true
+  }
+}

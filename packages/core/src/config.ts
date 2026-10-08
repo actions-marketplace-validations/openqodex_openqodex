@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: Config = {
   includeFixtures: false,
   disabledScanners: [],
   custom: [],
-  graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024 },
+  graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxCacheMb: 512, maxHeapMb: 1536 },
 };
 
 // Every key of the file in order, with its default as YAML text and one line
@@ -84,11 +84,25 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   },
   { key: "graph.enabled", default: "true", description: "Show the callers and importers of the changed code in the brief." },
   { key: "graph.budget_ms", default: "10000", description: "Time the code graph may take, in milliseconds." },
-  { key: "graph.max_files", default: "4000", description: "Files past this count are left out of the code graph." },
+  {
+    key: "graph.max_files",
+    default: "4000",
+    description: "New parses per build: files past this count wait for a later build. Facts already cached are not counted.",
+  },
   {
     key: "graph.max_file_bytes",
     default: "524288",
     description: "Files larger than this, in bytes, are left out of the code graph.",
+  },
+  {
+    key: "graph.max_cache_mb",
+    default: "512",
+    description: "The size bound of .openqodex/graph/, in MB; the oldest builds and facts no kept build names are removed first.",
+  },
+  {
+    key: "graph.max_heap_mb",
+    default: "1536",
+    description: "The memory the code graph may use, in MB; files past it are left out and the graph says so.",
   },
 ];
 
@@ -275,6 +289,8 @@ function schemas(strict: boolean) {
       budget_ms: positive.optional(),
       max_files: positive.optional(),
       max_file_bytes: positive.optional(),
+      max_cache_mb: positive.optional(),
+      max_heap_mb: positive.optional(),
     }).optional(),
     ...hostedOnly(HOSTED_ONLY_TOP_KEYS),
   });
@@ -522,6 +538,8 @@ export function parseConfig(source: string, file: string = CONFIG_FILE, opts: Pa
         budgetMs: yaml.graph?.budget_ms ?? graph.budgetMs,
         maxFiles: yaml.graph?.max_files ?? graph.maxFiles,
         maxFileBytes: yaml.graph?.max_file_bytes ?? graph.maxFileBytes,
+        maxCacheMb: yaml.graph?.max_cache_mb ?? graph.maxCacheMb,
+        maxHeapMb: yaml.graph?.max_heap_mb ?? graph.maxHeapMb,
       },
     },
     warnings,

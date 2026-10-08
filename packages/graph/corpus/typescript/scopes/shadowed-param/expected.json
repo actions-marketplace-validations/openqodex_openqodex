@@ -1,0 +1,26 @@
+{
+  "guards": "never binds a call through a parameter that shadows a module function, and discloses it as a dynamic gap",
+  "callers": [
+    {
+      "to": "src/text.ts#slugify",
+      "site": "src/text.ts:10",
+      "tier": "certain"
+    }
+  ],
+  "notCertain": [
+    {
+      "to": "src/text.ts#slugify",
+      "site": "src/text.ts:6"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/text.ts",
+      "line": 6,
+      "cause": "dynamic"
+    }
+  ],
+  "floor": {
+    "src/text.ts#slugify": true
+  }
+}

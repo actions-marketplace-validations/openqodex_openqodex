@@ -121,8 +121,8 @@ describe("the notice of a change not yet released", () => {
   const source = join(root, "packages/cli/src/notices.ts");
 
   it("carries no version until the release, and prints after no update meanwhile (failure 6)", () => {
-    const next = NOTICES.filter((n) => n.version === "next");
-    expect(next.length, "the change of this branch is a notice marked next").toBeGreaterThan(0);
+    // On a release commit the version step has stamped every "next" notice,
+    // so none is left; that is the released state, not a failure.
     expect(noticesBetween("0.0.1", "999.0.0").filter((n) => n.version === "next")).toEqual([]);
   });
 

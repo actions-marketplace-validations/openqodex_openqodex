@@ -1,0 +1,13 @@
+{
+  "guards": "binds an import through a paths alias that only a package-local tsconfig declares, as certain",
+  "callers": [
+    {
+      "to": "packages/web/src/lib/dates.ts#formatDate",
+      "site": "packages/web/src/page.ts:4",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "packages/web/src/lib/dates.ts#formatDate": false
+  }
+}

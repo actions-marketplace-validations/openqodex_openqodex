@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildGraph } from "../../packages/graph/src/index.js";
+import { buildGraph, openStore } from "../../packages/graph/src/index.js";
 import { git, run } from "./support.js";
 
 type Target = { file: string; symbol: string; grep: string[]; calls: string[]; gaps?: string[] };
@@ -310,9 +310,12 @@ describe.skipIf(process.env.OPENQODEX_E2E_OFFLINE === "1")("graph acceptance on 
   for (const repo of REPOS) {
     it(`${repo.name} at ${repo.sha.slice(0, 12)}: every bindable caller found, precision at least 0.9`, async () => {
       const dir = clone(repo);
-      const cacheDir = mkdtempSync(join(tmpdir(), `oq-graph-cache-${repo.name}-`));
-      const cold = await buildGraph({ repoRoot: dir, cacheDir, budgetMs: 120_000 });
-      const warm = await buildGraph({ repoRoot: dir, cacheDir, budgetMs: 120_000 });
+      // The graph folder of the clone itself, as a review keeps it; the
+      // record of its builds in a temporary OpenQodex home.
+      const opened = await openStore(dir, { home: mkdtempSync(join(tmpdir(), "oq-e2e-graph-home-")) });
+      if (!opened.ok) throw new Error(opened.reason);
+      const cold = await buildGraph({ repoRoot: dir, store: opened.store, budgetMs: 120_000, maxFiles: 100_000 });
+      const warm = await buildGraph({ repoRoot: dir, store: opened.store, budgetMs: 120_000, maxFiles: 100_000 });
       expect(cold.status.status).toBe("ok");
       expect(warm.status.parses).toBe(0);
       const lines = [
@@ -392,7 +395,7 @@ describe("blast radius in the brief", () => {
       const dir = plantedRepo(c.files, c.change);
       const r = run(`graph-brief-${c.lang}`, dir, ["review", "--agent", "--only", "gitleaks", "--no-install", "--offline"]);
       expect(r.status, r.stderr).toBe(0);
-      expect(r.stdout).toContain("## Blast radius");
+      expect(r.stdout).toContain("## What this change reaches");
       expect(r.stdout).toContain(`- ${c.site}`);
       const off = run(`graph-brief-off-${c.lang}`, dir, ["review", "--agent", "--only", "gitleaks", "--no-install", "--offline", "--no-graph"]);
       expect(off.status, off.stderr).toBe(0);

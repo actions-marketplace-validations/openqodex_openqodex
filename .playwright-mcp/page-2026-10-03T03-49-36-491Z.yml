@@ -1,0 +1,6 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]: prompter
+  - generic [ref=e3]:
+    - generic [ref=e4]: waiting for the demo page
+    - generic [ref=e5]: Open terminal.html?auto=1&cam=1 in the other window. Your intro text appears here.
+  - generic [ref=e7]: Next

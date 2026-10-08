@@ -11,7 +11,6 @@
 // 5. A call site's line is wrong or only the first site of a pair is kept.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
-import { join } from "node:path";
 import { buildGraph } from "../src/index.js";
 import { at, callSites, makeRepo, symbol } from "./helpers.js";
 
@@ -23,7 +22,7 @@ afterAll(() => {
 async function graphOf(files: Record<string, string>) {
   const root = makeRepo(files);
   repos.push(root);
-  return buildGraph({ repoRoot: root, cacheDir: join(root, ".openqodex", "graph") });
+  return buildGraph({ repoRoot: root, store: null });
 }
 
 describe("typescript", () => {

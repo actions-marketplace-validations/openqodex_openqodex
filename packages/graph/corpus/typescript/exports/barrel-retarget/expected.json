@@ -1,0 +1,14 @@
+{
+  "guards": "reports a barrel that binds its public name to another definition, with the unchanged consumer retargeted",
+  "exports": [
+    {
+      "file": "src/index.ts",
+      "name": "fetchItem",
+      "change": "retargeted",
+      "consumers": [
+        "src/view.ts:1:retargeted",
+        "src/view.ts:4:retargeted"
+      ]
+    }
+  ]
+}

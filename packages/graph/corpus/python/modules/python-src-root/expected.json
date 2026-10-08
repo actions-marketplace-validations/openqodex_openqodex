@@ -1,0 +1,13 @@
+{
+  "guards": "binds a Python absolute import across two projects' src roots",
+  "callers": [
+    {
+      "to": "pkgs/a/src/alib/shared.py#compute",
+      "site": "pkgs/b/src/blib/use.py:5",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "pkgs/a/src/alib/shared.py#compute": false
+  }
+}

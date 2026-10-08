@@ -1,0 +1,7 @@
+[project]
+name = "blib"
+version = "0.1.0"
+dependencies = ["alib"]
+
+[tool.uv.sources]
+alib = { workspace = true }

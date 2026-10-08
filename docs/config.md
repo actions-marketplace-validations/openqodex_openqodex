@@ -26,8 +26,10 @@ An unknown key prints a warning and is ignored. A name in `scanners.disable` tha
 | `scanners.custom` | `[]` | Open source scanners to add by GitHub link; each runs only after openqodex trust. |
 | `graph.enabled` | `true` | Show the callers and importers of the changed code in the brief. |
 | `graph.budget_ms` | `10000` | Time the code graph may take, in milliseconds. |
-| `graph.max_files` | `4000` | Files past this count are left out of the code graph. |
+| `graph.max_files` | `4000` | New parses per build: files past this count wait for a later build. Facts already cached are not counted. |
 | `graph.max_file_bytes` | `524288` | Files larger than this, in bytes, are left out of the code graph. |
+| `graph.max_cache_mb` | `512` | The size bound of .openqodex/graph/, in MB; the oldest builds and facts no kept build names are removed first. |
+| `graph.max_heap_mb` | `1536` | The memory the code graph may use, in MB; files past it are left out and the graph says so. |
 <!-- config-keys:end -->
 
 ## A full example
@@ -236,14 +238,16 @@ How OpenQodex gets the scanner. The default downloads the GitHub release asset t
 
 ## graph
 
-The code graph lists the callers and importers of the code a change touches, for the brief.
+The code graph lists the callers and importers of the code a change touches, for the brief, with what it could not see. `graph` explains it.
 
-The brief lists a function, class or type the change deletes as removed, with each call site that still reaches it. When exactly one file of the change now defines it with the same name and kind, and no call site still reaches the old place, it is listed as moved to that file and does not raise the risk. A move with a new name reads as removed.
+The brief lists a function, class or type the change deletes as removed, with each call site that still reaches it. When exactly one file of the change now defines it with the same name and kind, or exactly one definition gained the same body under another name, and no call site still reaches the old place, it is listed as moved to that file and does not raise the risk. A public name the change stops exporting, or binds to another definition, is listed with the places that used it.
 
 - `graph.enabled`: `true` or `false`. The default is `true`.
-- `graph.budget_ms`: the time the graph may take, in milliseconds. The default is `10000`.
-- `graph.max_files`: the most files the graph reads. The default is `4000`.
+- `graph.budget_ms`: the time the graph may take, in milliseconds, checked between files in every stage. The default is `10000`. A build past it is partial and says what it left out.
+- `graph.max_files`: the most files one build parses. Files whose facts are already in `.openqodex/graph/` do not count, so a large repository completes over a few reviews, or in one `openqodex graph build`. The default is `4000`.
 - `graph.max_file_bytes`: a file larger than this, in bytes, is left out of the graph. The default is `524288`.
+- `graph.max_cache_mb`: the size bound of `.openqodex/graph/`, in MB. The oldest builds and facts no kept build names are removed first; builds in use are never removed. The default is `512`.
+- `graph.max_heap_mb`: the memory the graph may take, in MB. Past it no more files are read, and the graph says how many it left out. The default is `1536`: a whole build of a 14,000-file repository from cached facts needs about 1 GB.
 
 ## The user config, ~/.openqodex/config.yaml
 
