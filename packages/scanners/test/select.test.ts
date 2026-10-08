@@ -209,6 +209,17 @@ describe("what a file's first bytes say", () => {
     expect(facts.content("compose.yaml")).toBeNull();
     expect(facts.content("nested.yaml")).toBeNull();
   });
+
+  // A Helm template is not YAML until Helm renders it: a Kubernetes scanner
+  // handed one reads `{{ .Values.x }}` as broken YAML and fails or reports
+  // lines that do not exist.
+  it("a Helm template with apiVersion and kind is not Kubernetes", () => {
+    const dir = repo({
+      "chart/Chart.yaml": "apiVersion: v2\nname: web\nversion: 1.0.0\n",
+      "chart/templates/deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {{ .Release.Name }}\n",
+    });
+    expect(repoFacts(dir).content("chart/templates/deploy.yaml")).toBeNull();
+  });
 });
 
 describe("manifests are data, read within limits", () => {

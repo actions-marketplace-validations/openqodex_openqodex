@@ -205,6 +205,42 @@ The comments are found by a small reader per comment family, not a full parser. 
 - Checks Postgres migrations for common mistakes, such as a privileged function left callable by every role.
 - Sends: nothing.
 
+## zizmor
+
+- PLACEHOLDER zizmor: the builder of this scanner replaces this line.
+
+## trivy
+
+- PLACEHOLDER trivy: the builder of this scanner replaces this line.
+
+## squawk
+
+- PLACEHOLDER squawk: the builder of this scanner replaces this line.
+
+## kube-linter
+
+- PLACEHOLDER kube-linter: the builder of this scanner replaces this line.
+
+## tflint
+
+- PLACEHOLDER tflint: the builder of this scanner replaces this line.
+
+## kubeconform
+
+- PLACEHOLDER kubeconform: the builder of this scanner replaces this line.
+
+## cargo-deny
+
+- PLACEHOLDER cargo-deny: the builder of this scanner replaces this line.
+
+## checkov
+
+- PLACEHOLDER checkov: the builder of this scanner replaces this line.
+
+## sqlfluff
+
+- PLACEHOLDER sqlfluff: the builder of this scanner replaces this line.
+
 ## Choosing scanners
 
 - `scanners.disable` in `.openqodex/config.yaml` switches built-in scanners off.

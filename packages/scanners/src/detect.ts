@@ -203,8 +203,11 @@ function isShellScript(text: string): boolean {
 }
 
 // A document with `apiVersion:` and `kind:` at the top level, in any of the
-// documents read. Nested keys (indented) and comments do not count.
+// documents read. Nested keys (indented) and comments do not count. A file
+// holding `{{` is a template (Helm, Go templates), not YAML a Kubernetes
+// scanner can read.
 function isKubernetes(text: string): boolean {
+  if (text.includes("{{")) return false;
   let api = false;
   let kind = false;
   const hasValue = (line: string, key: string) => line.startsWith(key) && line.slice(key.length).trim() !== "";

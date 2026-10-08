@@ -38,6 +38,15 @@ const builtins: Record<BuiltinScanner, true> = {
   bandit: true,
   oxlint: true,
   golangci: true,
+  zizmor: true,
+  trivy: true,
+  squawk: true,
+  "kube-linter": true,
+  tflint: true,
+  kubeconform: true,
+  "cargo-deny": true,
+  checkov: true,
+  sqlfluff: true,
 };
 const ALL_SCANNERS = Object.keys(builtins) as BuiltinScanner[];
 

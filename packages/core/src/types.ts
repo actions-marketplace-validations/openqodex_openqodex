@@ -16,7 +16,16 @@ export type BuiltinScanner =
   | "rubocop"
   | "bandit"
   | "oxlint"
-  | "golangci";
+  | "golangci"
+  | "zizmor"
+  | "trivy"
+  | "squawk"
+  | "kube-linter"
+  | "tflint"
+  | "kubeconform"
+  | "cargo-deny"
+  | "checkov"
+  | "sqlfluff";
 
 // A custom scanner from .openqodex.yaml is "custom:<name>".
 export type ScannerSource = BuiltinScanner | `custom:${string}`;
