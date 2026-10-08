@@ -35,6 +35,7 @@ copy("packages/core/lenses", "lenses", (file) => file.endsWith(".md"));
 copy("docs", "docs");
 copy("skills/openqodex", "skills/openqodex");
 copy("packages/scanners/toolchain.json", "toolchain.json");
+copy("packages/scanners/locks", "locks");
 copy("examples/demo-repo", "demo");
 copy("README.md", "README.md");
 copy("LICENSE", "LICENSE");

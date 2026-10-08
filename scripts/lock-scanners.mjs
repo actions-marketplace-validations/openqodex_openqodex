@@ -1,0 +1,172 @@
+// Writes the lock files of the registry-installed scanners: one per scanner
+// and platform in packages/scanners/locks/, each naming every package of the
+// tool's dependency tree at an exact version with its sha256. The installer
+// installs exactly what a lock names and checks each file against its hash,
+// so two machines get the same tree whatever was published since.
+//
+//   node scripts/lock-scanners.mjs           every uv and gem recipe
+//   node scripts/lock-scanners.mjs semgrep   one of them
+//
+// uv recipes (semgrep, bandit): `uv pip compile --generate-hashes` for each
+// platform, wheels only, for the recipe's Python. gem recipes (brakeman,
+// rubocop): the dependency tree resolved from the RubyGems API, each gem the
+// newest release that meets every requirement on it and runs on the recipe's
+// lowest Ruby; its sha256 is the one RubyGems publishes. Needs uv (on PATH, or
+// the file $UV names) and the network; reads nothing from any repository
+// under review.
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const table = JSON.parse(readFileSync(join(root, "packages", "scanners", "toolchain.json"), "utf8"));
+const locks = join(root, "packages", "scanners", "locks");
+const PLATFORMS = {
+  "darwin-arm64": "aarch64-apple-darwin",
+  "darwin-x64": "x86_64-apple-darwin",
+  "linux-x64": "x86_64-unknown-linux-gnu",
+  "linux-arm64": "aarch64-unknown-linux-gnu",
+};
+
+const wanted = process.argv.slice(2);
+const tools = Object.entries(table.tools).filter(([name, r]) => (r.method === "uv" || r.method === "gem") && (wanted.length === 0 || wanted.includes(name)));
+if (wanted.length > 0 && tools.length !== wanted.length) {
+  process.stderr.write(`usage: node scripts/lock-scanners.mjs [${Object.entries(table.tools).filter(([, r]) => r.method === "uv" || r.method === "gem").map(([n]) => n).join("|")}]...\n`);
+  process.exit(2);
+}
+
+function uvLock(recipe, triple, file) {
+  const dir = mkdtempSync(join(tmpdir(), "openqodex-lock-"));
+  try {
+    const input = join(dir, "requirements.in");
+    writeFileSync(input, [`${recipe.package}==${recipe.version}`, ...(recipe.with ?? [])].join("\n") + "\n");
+    execFileSync(
+      process.env.UV ?? "uv",
+      ["pip", "compile", "--quiet", "--generate-hashes", "--no-header", "--no-annotate", "--python-version", recipe.python, "--python-platform", triple, "--only-binary", ":all:", "--index-url", "https://pypi.org/simple", input, "-o", file],
+      { stdio: ["ignore", "inherit", "inherit"] },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------- gems ----------
+
+async function json(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  return response.json();
+}
+
+// Gem::Version order for release versions: numeric segments compared as
+// numbers. A version with a letter is a prerelease and never chosen.
+const isRelease = (v) => /^\d+(\.\d+)*$/.test(v);
+function compare(a, b) {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+// One requirement such as "~> 2.3", ">= 1.10, < 2.0" or "= 7.1.3".
+function satisfies(version, requirement) {
+  return requirement.split(",").every((part) => {
+    const t = part.trim();
+    const op = ["~>", ">=", "<=", "!=", ">", "<", "="].find((o) => t.startsWith(o)) ?? "=";
+    const want = t.startsWith(op) ? t.slice(op.length).trim() : t;
+    if (!isRelease(want)) throw new Error(`cannot read the requirement "${requirement}"`);
+    const c = compare(version, want);
+    if (op === "=") return c === 0;
+    if (op === "!=") return c !== 0;
+    if (op === ">=") return c >= 0;
+    if (op === ">") return c > 0;
+    if (op === "<=") return c <= 0;
+    if (op === "<") return c < 0;
+    // ~> 2.3 is >= 2.3 and < 3; ~> 2.3.1 is >= 2.3.1 and < 2.4.
+    const parts = want.split(".").map(Number);
+    const upper = parts.length > 1 ? [...parts.slice(0, -2), parts[parts.length - 2] + 1].join(".") : `${parts[0] + 1}`;
+    return c >= 0 && compare(version, upper) < 0;
+  });
+}
+
+async function gemLock(name, recipe) {
+  const ruby = /^ruby>=([0-9.]+)$/.exec(recipe.needs ?? "")?.[1];
+  if (!ruby) throw new Error(`${name}: needs must name the lowest Ruby, such as ruby>=3.0`);
+  const releases = new Map();
+  const releasesOf = async (gem) => {
+    if (!releases.has(gem)) {
+      const all = await json(`https://rubygems.org/api/v1/versions/${encodeURIComponent(gem)}.json`);
+      releases.set(gem, all.filter((r) => r.platform === "ruby" && isRelease(r.number) && satisfies(ruby, r.ruby_version ?? ">= 0")));
+    }
+    return releases.get(gem);
+  };
+  const deps = new Map();
+  const depsOf = async (gem, version) => {
+    const key = `${gem}@${version}`;
+    if (!deps.has(key)) {
+      const info = await json(`https://rubygems.org/api/v2/rubygems/${encodeURIComponent(gem)}/versions/${version}.json`);
+      deps.set(key, (info.dependencies?.runtime ?? []).map((d) => ({ name: d.name, requirement: d.requirements })));
+    }
+    return deps.get(key);
+  };
+
+  // gem -> (who asked -> requirement), and the version chosen for each gem.
+  const asks = new Map();
+  const chosen = new Map();
+  const ask = (gem, from, requirement) => {
+    if (!asks.has(gem)) asks.set(gem, new Map());
+    asks.get(gem).set(from, requirement);
+  };
+  for (const spec of recipe.gems) {
+    const [gem, version] = spec.split(":");
+    ask(gem, "toolchain.json", `= ${version}`);
+  }
+  for (let round = 0; ; round++) {
+    if (round > 200) throw new Error(`${name}: the gem tree did not settle`);
+    let changed = false;
+    // A snapshot: choosing a gem adds the requirements of its dependencies.
+    for (const [gem, from] of Array.from(asks)) {
+      const requirements = [...from.values()];
+      const fits = (await releasesOf(gem)).filter((r) => requirements.every((q) => satisfies(r.number, q))).sort((a, b) => compare(b.number, a.number));
+      if (fits.length === 0) throw new Error(`${name}: no release of ${gem} meets ${requirements.join(" and ")} on Ruby ${ruby}`);
+      const best = fits[0];
+      const before = chosen.get(gem);
+      if (before?.number === best.number) continue;
+      changed = true;
+      // The old choice's requirements on others no longer stand.
+      if (before) for (const m of asks.values()) m.delete(`${gem}@${before.number}`);
+      chosen.set(gem, best);
+      for (const d of await depsOf(gem, best.number)) ask(d.name, `${gem}@${best.number}`, d.requirement);
+    }
+    // A gem nobody asks for any more leaves the tree.
+    for (const [gem, from] of Array.from(asks)) {
+      if (from.size === 0) {
+        asks.delete(gem);
+        const old = chosen.get(gem);
+        if (old) for (const m of asks.values()) m.delete(`${gem}@${old.number}`);
+        chosen.delete(gem);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  const lines = [...chosen].sort(([a], [b]) => (a < b ? -1 : 1)).map(([gem, r]) => `${gem} ${r.number} sha256:${r.sha}`);
+  return [`# ${recipe.gems.join(" ")} for Ruby ${ruby} or newer, made by scripts/lock-scanners.mjs`, ...lines, ""].join("\n");
+}
+
+mkdirSync(locks, { recursive: true });
+for (const [name, recipe] of tools) {
+  const text = recipe.method === "uv" ? null : await gemLock(name, recipe);
+  for (const [platform, triple] of Object.entries(PLATFORMS)) {
+    const file = join(locks, `${name}-${platform}.txt`);
+    if (recipe.method === "uv") uvLock(recipe, triple, file);
+    else writeFileSync(file, text);
+    const packages = readFileSync(file, "utf8").split("\n").filter((l) => l !== "" && !l.startsWith(" ") && !l.startsWith("#")).length;
+    process.stdout.write(`${name} ${platform}: ${packages} packages\n`);
+  }
+}

@@ -1,6 +1,7 @@
-// The pinned scanner table (toolchain.json) and where installed tools live.
+// The pinned scanner table (toolchain.json), the lock files beside it, and
+// where installed tools live.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,9 +20,13 @@ export type ReleaseAsset = {
 
 type RecipeBase = { version: string; binary: string; needs?: string };
 
+// A registry install (uv, gem) installs exactly the packages its lock file
+// names, each checked against its sha256 before it is installed: locks/
+// <tool>-<platform>.txt beside toolchain.json, made by scripts/lock-scanners.mjs
+// from the fields below. `package`, `with` and `gems` are what the lock was
+// made from.
 export type Recipe =
   | (RecipeBase & { method: "github-release"; repo: string; tag: string; assets: Partial<Record<Platform, ReleaseAsset | null>> })
-  | (RecipeBase & { method: "npm"; package: string })
   // `with`: extra packages pinned beside the tool, for a dependency the tool
   // itself leaves unpinned (semgrep needs a setuptools that still ships pkg_resources).
   | (RecipeBase & { method: "uv"; package: string; python: string; with?: string[] })
@@ -44,14 +49,22 @@ export function toolDir(home: string, tool: string): string {
   return join(home, "tools", tool);
 }
 
+// The folder of one install. A registry install's folder also names its
+// lock's sha256, so a new lock (a dependency pin moved, the version did not)
+// installs afresh instead of reusing the old tree.
 export function versionDir(home: string, tool: string, recipe: Recipe): string {
-  return join(home, "tools", tool, recipe.version);
+  if (recipe.method === "github-release") return join(home, "tools", tool, recipe.version);
+  return join(home, "tools", tool, lockedFolder(recipe.version, lockText(tool)));
+}
+
+// "1.9.4-<first 12 hex of the lock's sha256>".
+export function lockedFolder(version: string, lock: string | null): string {
+  return `${version}-${lock === null ? "nolock" : createHash("sha256").update(lock).digest("hex").slice(0, 12)}`;
 }
 
 // Where the executable sits once installed.
 export function binaryPath(home: string, tool: string, recipe: Recipe): string {
-  const dir = versionDir(home, tool, recipe);
-  return recipe.method === "npm" ? join(dir, "node_modules", ".bin", recipe.binary) : join(dir, "bin", recipe.binary);
+  return join(versionDir(home, tool, recipe), "bin", recipe.binary);
 }
 
 // Written last by every install; a version folder without it is not installed.
@@ -86,9 +99,30 @@ export function loadToolchain(): Toolchain {
   return cached;
 }
 
-// sha256 of the pinned table as shipped: it changes when any pin changes and
-// only then, so a cache of the tools folder keyed on it survives a release
-// that pins nothing new.
+function locksDir(): string {
+  return join(dirname(findTable()), "locks");
+}
+
+// The lock file of a registry install for this machine, or null.
+export function lockFile(tool: string): string | null {
+  const platform = currentPlatform();
+  if (platform === null) return null;
+  const file = join(locksDir(), `${tool}-${platform}.txt`);
+  return existsSync(file) ? file : null;
+}
+
+function lockText(tool: string): string | null {
+  const file = lockFile(tool);
+  return file === null ? null : readFileSync(file, "utf8");
+}
+
+// sha256 of the pinned table and every lock file as shipped: it changes when
+// any pin changes and only then, so a cache of the tools folder keyed on it
+// survives a release that pins nothing new.
 export function toolchainHash(): string {
-  return createHash("sha256").update(readFileSync(findTable())).digest("hex");
+  const hash = createHash("sha256").update(readFileSync(findTable()));
+  const dir = locksDir();
+  const locks = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".txt")).sort() : [];
+  for (const name of locks) hash.update(`\0${name}\0`).update(readFileSync(join(dir, name)));
+  return hash.digest("hex");
 }

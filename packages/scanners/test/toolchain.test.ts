@@ -17,7 +17,8 @@
 // 7. An archive member such as ../escape is written outside the destination.
 // 8. A home folder that cannot be written gives a stack trace or a crash
 //    instead of one plain line naming the fix.
-// 9. A missing developer runtime (Ruby 2.7 or newer, Go) is not named.
+// 9. A missing developer runtime (Ruby 3.0 or newer for brakeman, whose pinned
+//    gem needs it, Ruby 2.7 or newer for rubocop, Go) is not named.
 // 10. openqodexHome ignores OPENQODEX_HOME.
 // 11. An installed launcher fails when started the way scanners are started:
 //     a small environment (PATH, HOME, TMPDIR, LANG) with the tool env on top.
@@ -38,6 +39,12 @@
 //     publishes over it or deletes a folder it did not create.
 // 22. The install process puts a relative home somewhere the caller never looks.
 // 23. The caller waits past its budget on a poll interval.
+// 24. A registry install (uv, gem) installs a package its lock does not
+//     name, or another version of one it does.
+// 25. A lock whose pins moved, with the tool's own version unchanged,
+//     reuses the tree installed from the old lock.
+// 26. A gem lock line in any other shape (a path in the name, no sha256)
+//     is installed.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -49,7 +56,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { run } from "../src/toolchain/fetch.js";
-import { publishVersion, readLock, takeOverStaleLock } from "../src/toolchain/install.js";
+import { publishVersion, readGemLock, readLock, takeOverStaleLock } from "../src/toolchain/install.js";
+import { lockedFolder } from "../src/toolchain/table.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist", "index.js");
@@ -175,19 +183,56 @@ describe("toolchain", () => {
     });
   });
 
-  it("runs an npm launcher with only the small scanner environment plus its env", async () => {
-    freshHome();
-    // A registry setting in the developer's environment must not reach the installer.
-    process.env.npm_config_registry = "http://127.0.0.1:9/";
-    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: null })("oxlint").finally(() => {
-      delete process.env.npm_config_registry;
+  it("installs bandit from its lock, exactly the packages it names, and runs it from the small scanner environment (11, 13, 24)", async () => {
+    const home = freshHome();
+    // An index setting in the developer's environment must not reach the installer.
+    process.env.UV_INDEX_URL = "http://127.0.0.1:9/simple";
+    const r = await tc.createToolResolver({ allowInstall: true, installBudgetMs: null })("bandit").finally(() => {
+      delete process.env.UV_INDEX_URL;
     });
     expect(r).toMatchObject({ ok: true });
     if (!r.ok) return;
     const env = { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", TMPDIR: tmpdir(), LANG: "en_US.UTF-8", ...r.tool.env };
-    expect(execFileSync(r.tool.path, ["--version"], { encoding: "utf8", env })).toContain(table.tools.oxlint.version);
-    // A real npm install into a fresh home: under the full suite it has taken over 90 seconds.
+    expect(execFileSync(r.tool.path, ["--version"], { encoding: "utf8", env })).toContain(table.tools.bandit.version);
+    const platform = `${process.platform}-${process.arch}`;
+    const norm = (name: string) => name.toLowerCase().replace(/[-_.]+/g, "-");
+    const pins = readFileSync(join(here, "..", "locks", `bandit-${platform}.txt`), "utf8")
+      .split("\n")
+      .filter((l) => /^[A-Za-z0-9]/.test(l))
+      .map((l) => {
+        const [name, version] = l.split(" ")[0]!.split("==");
+        return `${norm(name!)}==${version}`;
+      })
+      .sort();
+    const site = join(home, "tools", "bandit");
+    const folder = readdirSync(site).find((f) => f.startsWith(`${table.tools.bandit.version}-`))!;
+    const lib = join(site, folder, "lib");
+    const packages = readdirSync(join(lib, readdirSync(lib)[0]!, "site-packages"))
+      .filter((f) => f.endsWith(".dist-info"))
+      .map((f) => {
+        const [name, version] = f.slice(0, -".dist-info".length).split("-");
+        return `${norm(name!)}==${version}`;
+      })
+      .sort();
+    expect(packages.map((p) => p.split("==")[0])).toEqual(pins.map((p) => p.split("==")[0]));
+    expect(packages).toEqual(pins);
   }, 300_000);
+
+  it("names a registry install's folder for its lock, so moved pins install afresh (25)", () => {
+    expect(lockedFolder("1.9.4", "bandit==1.9.4 --hash=sha256:aa\n")).toMatch(/^1\.9\.4-[0-9a-f]{12}$/);
+    expect(lockedFolder("1.9.4", "bandit==1.9.4 --hash=sha256:aa\n")).not.toBe(lockedFolder("1.9.4", "bandit==1.9.4 --hash=sha256:bb\n"));
+  });
+
+  it("refuses a gem lock line in any other shape (26)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oq-gemlock-"));
+    const good = `# note\nbrakeman 6.2.1 sha256:${"a".repeat(64)}\n`;
+    writeFileSync(join(dir, "good.txt"), good);
+    expect(readGemLock(join(dir, "good.txt"))).toEqual([{ name: "brakeman", version: "6.2.1", sha256: "a".repeat(64) }]);
+    for (const bad of [`../x 1.0 sha256:${"a".repeat(64)}`, "brakeman 6.2.1", `brakeman 6.2.1 md5:${"a".repeat(32)}`]) {
+      writeFileSync(join(dir, "bad.txt"), `${bad}\n`);
+      expect(() => readGemLock(join(dir, "bad.txt")), bad).toThrow(/cannot read the lock line/);
+    }
+  });
 
   it("takes over a lock whose holder is dead", async () => {
     const home = freshHome();
@@ -283,13 +328,14 @@ describe("toolchain", () => {
     const caller = `
       const tc = await import(${JSON.stringify(dist)});
       const resolve = tc.createToolResolver({ allowInstall: true, installBudgetMs: null });
-      process.stdout.write(JSON.stringify([await resolve("brakeman"), await resolve("golangci")]));
+      process.stdout.write(JSON.stringify([await resolve("brakeman"), await resolve("rubocop"), await resolve("golangci")]));
     `;
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", caller], {
       encoding: "utf8",
       env: { ...process.env, PATH: "/nonexistent" },
     });
     expect(JSON.parse(out)).toEqual([
+      { ok: false, status: "not_installed", reason: "needs Ruby 3.0 or newer" },
       { ok: false, status: "not_installed", reason: "needs Ruby 2.7 or newer" },
       { ok: false, status: "not_installed", reason: "needs Go" },
     ]);

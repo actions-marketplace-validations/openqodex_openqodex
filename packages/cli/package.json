@@ -52,6 +52,7 @@
     "templates",
     "demo",
     "toolchain.json",
+    "locks",
     "wasm",
     "README.md",
     "LICENSE",

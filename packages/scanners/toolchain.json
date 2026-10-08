@@ -299,10 +299,41 @@
       }
     },
     "oxlint": {
-      "version": "1.71.0",
-      "method": "npm",
-      "package": "oxlint",
-      "binary": "oxlint"
+      "version": "1.86.0",
+      "method": "github-release",
+      "repo": "oxc-project/oxc",
+      "tag": "oxlint_v1.86.0",
+      "binary": "oxlint",
+      "assets": {
+        "darwin-arm64": {
+          "name": "oxlint-aarch64-apple-darwin.tar.gz",
+          "url": "https://github.com/oxc-project/oxc/releases/download/oxlint_v1.86.0/oxlint-aarch64-apple-darwin.tar.gz",
+          "sha256": "53b0cdbf1696b88293db648901a76785d5a3a4f98aeeb0a2be2b8d2eb8c44642",
+          "archive": "tar.gz",
+          "binaryPath": "oxlint-aarch64-apple-darwin"
+        },
+        "darwin-x64": {
+          "name": "oxlint-x86_64-apple-darwin.tar.gz",
+          "url": "https://github.com/oxc-project/oxc/releases/download/oxlint_v1.86.0/oxlint-x86_64-apple-darwin.tar.gz",
+          "sha256": "7cadde791a93b921429115594e71e47ab444ccdcbcbaae5a9a498cb52955aa3e",
+          "archive": "tar.gz",
+          "binaryPath": "oxlint-x86_64-apple-darwin"
+        },
+        "linux-x64": {
+          "name": "oxlint-x86_64-unknown-linux-gnu.tar.gz",
+          "url": "https://github.com/oxc-project/oxc/releases/download/oxlint_v1.86.0/oxlint-x86_64-unknown-linux-gnu.tar.gz",
+          "sha256": "8ac22aebac95651eb64eff44d4abafeeee5bf606e6c943e3c6648de530c73255",
+          "archive": "tar.gz",
+          "binaryPath": "oxlint-x86_64-unknown-linux-gnu"
+        },
+        "linux-arm64": {
+          "name": "oxlint-aarch64-unknown-linux-gnu.tar.gz",
+          "url": "https://github.com/oxc-project/oxc/releases/download/oxlint_v1.86.0/oxlint-aarch64-unknown-linux-gnu.tar.gz",
+          "sha256": "c31f8b8b7e61924a3ac2a8d1223e34fe249baa4e0e7ba6a4984b96a946371aa2",
+          "archive": "tar.gz",
+          "binaryPath": "oxlint-aarch64-unknown-linux-gnu"
+        }
+      }
     },
     "semgrep": {
       "version": "1.94.0",
@@ -327,7 +358,7 @@
       "gems": [
         "brakeman:6.2.1"
       ],
-      "needs": "ruby>=2.7",
+      "needs": "ruby>=3.0",
       "binary": "brakeman"
     },
     "rubocop": {
