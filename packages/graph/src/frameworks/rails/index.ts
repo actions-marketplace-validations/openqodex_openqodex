@@ -75,9 +75,9 @@ export function railsCapabilities(): CapabilityReport {
       {
         id: RULES.views,
         version: 1,
-        description: "Links an action or mailer method to the views it renders: render with a literal name, template, action or partial, and the implicit view of an action.",
+        description: "Links an action or mailer method to the views it renders: render with a literal name, template, action, partial or component class, and the implicit view of an action, looked up in the folders of the class, its base classes and its subclasses.",
         emits: ["renders", "template"],
-        fixtures: { positive: ["views"], aliased: { none: NO_IMPORT }, unrelatedSameName: ["views"], dynamic: ["dynamic-values"], metadataEdit: ["view-added"] },
+        fixtures: { positive: ["views", "views-inherited"], aliased: { none: NO_IMPORT }, unrelatedSameName: ["views"], dynamic: ["dynamic-values"], metadataEdit: ["view-added"] },
       },
       {
         id: RULES.models,

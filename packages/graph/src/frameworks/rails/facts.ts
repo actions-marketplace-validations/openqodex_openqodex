@@ -68,15 +68,16 @@ export type VisibilityFact = FrameworkFactBase & { kind: "visibility"; cls: numb
 // `through` and `source` name associations, not classes: the class of a
 // through association is the class of its source association on the
 // through model.
-export type AssocFact = FrameworkFactBase & { kind: "assoc"; cls: number; macro: string; name: string | null; className: string | null; classNameDynamic: boolean; polymorphic: boolean; through: string | null; source: string | null };
+export type AssocFact = FrameworkFactBase & { kind: "assoc"; cls: number; macro: string; name: string | null; className: string | null; classNameDynamic: boolean; polymorphic: boolean; through: string | null; source: string | null; sourceType: string | null };
 export type TableNameFact = FrameworkFactBase & { kind: "table-name"; cls: number; value: string | null };
 export type AbstractFact = FrameworkFactBase & { kind: "abstract"; cls: number };
 export type IsolateFact = FrameworkFactBase & { kind: "isolate"; cls: number; name: string | null };
 
 // `render "x"` (name), `render template:`, `render :x` and `render action:`
-// (action), `render partial:`; "other" for a render of no template (`json:`,
+// (action), `render partial:`; `render SomeView.new(...)` (component, the
+// constant as written); "other" for a render of no template (`json:`,
 // `plain:`); value null when the name is computed.
-export type RenderFact = FrameworkFactBase & { kind: "render"; mode: "name" | "template" | "action" | "partial" | "other"; value: string | null };
+export type RenderFact = FrameworkFactBase & { kind: "render"; mode: "name" | "template" | "action" | "partial" | "component" | "other"; value: string | null };
 
 // A schema operation in a migration (or anywhere: the resolve step reads
 // them only in db/migrate/). `table` is null when computed.
@@ -510,6 +511,7 @@ export function railsFacts(root: Node): RailsFact[] {
             polymorphic: poly !== undefined && poly.type === "true",
             through: word("through"),
             source: word("source"),
+            sourceType: word("source_type"),
           });
           return;
         }
@@ -534,7 +536,9 @@ export function railsFacts(root: Node): RailsFact[] {
         if (opts.has("partial")) fact = { kind: "render", line: line(n), column: col(n), mode: "partial", value: value(litOf(opts.get("partial"))) };
         else if (opts.has("template")) fact = { kind: "render", line: line(n), column: col(n), mode: "template", value: value(litOf(opts.get("template"))) };
         else if (opts.has("action")) fact = { kind: "render", line: line(n), column: col(n), mode: "action", value: value(litOf(opts.get("action"))) };
-        else if (args[0]) {
+        else if (args[0]?.type === "call" && args[0].childForFieldName("method")?.text === "new" && (args[0].childForFieldName("receiver")?.type === "constant" || args[0].childForFieldName("receiver")?.type === "scope_resolution")) {
+          fact = { kind: "render", line: line(n), column: col(n), mode: "component", value: args[0].childForFieldName("receiver")?.text ?? null };
+        } else if (args[0]) {
           const x = litOf(args[0]);
           fact = { kind: "render", line: line(n), column: col(n), mode: x.t === "sym" ? "action" : "name", value: value(x) };
         } else if (opts.size > 0) fact = { kind: "render", line: line(n), column: col(n), mode: "other", value: null };
@@ -865,7 +869,7 @@ export function isRailsFact(v: unknown): v is RailsFact {
     case "visibility":
       return isInt(r.cls) && (r.value === "private" || r.value === "protected" || r.value === "public") && isStrListOrNull(r.names);
     case "assoc":
-      return isInt(r.cls) && isStr(r.macro) && isStrOrNull(r.name) && isStrOrNull(r.className) && typeof r.classNameDynamic === "boolean" && typeof r.polymorphic === "boolean" && isStrOrNull(r.through) && isStrOrNull(r.source);
+      return isInt(r.cls) && isStr(r.macro) && isStrOrNull(r.name) && isStrOrNull(r.className) && typeof r.classNameDynamic === "boolean" && typeof r.polymorphic === "boolean" && isStrOrNull(r.through) && isStrOrNull(r.source) && isStrOrNull(r.sourceType);
     case "table-name":
       return isInt(r.cls) && isStrOrNull(r.value);
     case "abstract":
@@ -873,7 +877,7 @@ export function isRailsFact(v: unknown): v is RailsFact {
     case "isolate":
       return isInt(r.cls) && isStrOrNull(r.name);
     case "render":
-      return (r.mode === "name" || r.mode === "template" || r.mode === "action" || r.mode === "partial" || r.mode === "other") && isStrOrNull(r.value);
+      return (r.mode === "name" || r.mode === "template" || r.mode === "action" || r.mode === "partial" || r.mode === "component" || r.mode === "other") && isStrOrNull(r.value);
     case "migration-op":
       return isStr(r.op) && isStrOrNull(r.table) && isStrOrNull(r.field) && isStrOrNull(r.to) && isStrList(r.columns);
     case "enqueue":

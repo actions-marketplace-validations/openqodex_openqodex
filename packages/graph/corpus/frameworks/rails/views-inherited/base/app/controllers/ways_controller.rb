@@ -1,0 +1,2 @@
+class WaysController < ApplicationController
+end

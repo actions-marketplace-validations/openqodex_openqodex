@@ -16,7 +16,12 @@ import { compilePattern, firstLiterals, matches, requestSegments, stripPrefix } 
 import type { Draft } from "./routes.js";
 import { Budget, expandRoutes } from "./routes.js";
 import type { App, ClassInfo } from "./world.js";
-import { PLUGIN, RailsWorld, appsFrom, relTo, under } from "./world.js";
+import { FRAMEWORK_BASES, MAX_CHAIN, PLUGIN, RailsWorld, appsFrom, relTo, under } from "./world.js";
+
+// The view folder of a controller ("admin/posts" for Admin::PostsController)
+// and of a mailer ("user_mailer"); null for another class.
+const controllerFolder = (c: ClassInfo) => (c.name.endsWith("Controller") && c.name.length > "Controller".length ? underscore(c.name.slice(0, -"Controller".length)) : null);
+const mailerFolder = (c: ClassInfo) => (c.name.endsWith("Mailer") ? underscore(c.name) : null);
 
 // Work units one resolve may spend on route expansion and request matching.
 export const WORK_BUDGET = 2_000_000;
@@ -72,6 +77,7 @@ export function resolveRails(index: PluginIndex, detections: readonly Detection[
 class Resolver {
   private readonly budget = new Budget(WORK_BUDGET);
   private readonly roleKeys = new Set<string>();
+  private readonly viewCapped = new Set<string>();
   private readonly edgeKeys = new Set<string>();
   private readonly entityById = new Map<string, Entity>();
   private readonly registrations: Registration[] = [];
@@ -347,8 +353,7 @@ class Resolver {
           this.role(m.id, "route_handler", "action", app, this.ev("role-path", "likely", { file: m.file, line: m.def.line, column: 0 }, RULES.actions, `a public method of ${cls.name} under app/controllers; Rails treats it as an action`));
         }
         this.callbacks(app, cls);
-        const controller = underscore(cls.name.slice(0, -"Controller".length));
-        this.renders(app, cls, controller, actions);
+        this.renders(app, cls, controllerFolder, actions);
       }
     }
   }
@@ -401,10 +406,39 @@ class Resolver {
     return m;
   }
 
-  private renders(app: App, cls: ClassInfo, prefix: string, actions: { id: string; def: { name: string; line: number }; file: string }[]): void {
+  // The view folders a class's renders are looked up in, as Rails does for
+  // an instance: its own folder, then the folders of the classes it
+  // inherits from, in order; and, for the code it hands down, each
+  // subclass's own folder, where Rails looks first on an instance of it.
+  private viewFolders(app: App, cls: ClassInfo, folderOf: (c: ClassInfo) => string | null): { own: { folder: string; owner: ClassInfo }[]; down: { folder: string; owner: ClassInfo }[]; cut: boolean } {
+    const own: { folder: string; owner: ClassInfo }[] = [];
+    let cur: ClassInfo | null = cls;
+    for (let depth = 0; cur && depth < MAX_CHAIN; depth++) {
+      const folder = folderOf(cur);
+      if (folder !== null) own.push({ folder, owner: cur });
+      if (cur.base === null || FRAMEWORK_BASES.has(strip(cur.base))) break;
+      const next = this.w.resolveConst(cur.base, cur.def.owner ?? null, app);
+      if (!next || next.id === cur.id) break;
+      cur = next;
+    }
+    const subs = this.w.descendants(cls, MAX_SUBCLASSES);
+    const down: { folder: string; owner: ClassInfo }[] = [];
+    for (const c of subs.list) {
+      const folder = folderOf(c);
+      if (folder !== null) down.push({ folder, owner: c });
+    }
+    return { own, down, cut: subs.cut };
+  }
+
+  // Explicit renders in each method, then the implicit view of every
+  // action that names no template.
+  private renders(app: App, cls: ClassInfo, folderOf: (c: ClassInfo) => string | null, actions: { id: string; def: { name: string; line: number }; file: string }[]): void {
     const explicit = new Set<string>();
     const views = this.w.views(app);
     const byMethod = this.rendersIn(cls.file);
+    let folders: ReturnType<Resolver["viewFolders"]> | null = null;
+    const lookup = () => (folders ??= this.viewFolders(app, cls, folderOf));
+    const own = folderOf(cls) ?? underscore(cls.name);
     for (const m of this.w.ownMethods(cls)) {
       if (m.file !== cls.file) continue;
       for (const f of byMethod.get(m.id) ?? []) {
@@ -415,36 +449,70 @@ class Resolver {
           explicit.add(m.id);
           continue;
         }
-        let logical: string;
         const v = f.value;
-        if (f.mode === "partial") {
-          const cut = v.lastIndexOf("/");
-          logical = cut === -1 ? `${prefix}/_${v}` : `${v.slice(0, cut)}/_${v.slice(cut + 1)}`;
-        } else if (f.mode === "template") logical = v.includes("/") ? v : `${prefix}/${v}`;
-        else if (f.mode === "action") logical = `${prefix}/${v}`;
-        else logical = v.includes("/") ? v : `${prefix}/${v}`;
         if (f.mode !== "partial") explicit.add(m.id);
-        this.renderTo(app, m.id, logical, views, site, "template-literal", `the view is found by the app/views folder convention for ${JSON.stringify(v.slice(0, 80))}`);
+        if (f.mode === "component") {
+          const hit = this.w.resolveConst(v, cls.name, app);
+          if (hit) this.edge(m.id, hit.id, "renders", app, this.ev("template-literal", "likely", site, RULES.views, `renders the component ${hit.name}, found by the autoload convention`));
+          else {
+            const nf = this.notFound(v, `render ${strip(v)}.new names ${strip(v)}`);
+            this.unknown(site, { file: cls.file }, nf.gap, ["renders"], nf.name, nf.note);
+          }
+          continue;
+        }
+        const quoted = JSON.stringify(v.slice(0, 80));
+        // A name with a folder is relative to app/views (an action name never is).
+        if (f.mode !== "action" && v.includes("/")) {
+          const cut = v.lastIndexOf("/");
+          const logical = f.mode === "partial" ? `${v.slice(0, cut)}/_${v.slice(cut + 1)}` : v;
+          if (!this.viewEdges(app, m.id, views.get(logical) ?? [], site, "template-literal", "likely", `the view is found by the app/views folder convention for ${quoted}`)) this.missingView(app, m.id, logical, site, "template-literal");
+          continue;
+        }
+        const leaf = f.mode === "partial" ? `_${v}` : v;
+        if (!this.folderEdges(app, cls, m.id, leaf, lookup(), views, site, "template-literal", quoted)) this.missingView(app, m.id, `${own}/${leaf}`, site, "template-literal");
       }
     }
     for (const m of actions) {
       if (explicit.has(m.id)) continue;
-      const files = views.get(`${prefix}/${m.def.name}`) ?? [];
-      if (files.length === 0) continue;
-      this.renderTo(app, m.id, `${prefix}/${m.def.name}`, views, { file: m.file, line: m.def.line, column: 0 }, "template-implicit", `Rails renders app/views/${prefix}/${m.def.name} when the action does not render another template`);
+      this.folderEdges(app, cls, m.id, m.def.name, lookup(), views, { file: m.file, line: m.def.line, column: 0 }, "template-implicit", null);
     }
   }
 
-  private renderTo(app: App, from: string, logical: string, views: Map<string, string[]>, site: Site, kind: "template-literal" | "template-implicit", note: string): void {
-    const files = views.get(logical) ?? [];
-    if (files.length === 0) {
-      const id = this.missingTemplate(app, logical);
-      this.edge(from, id, "renders", app, this.ev(kind, "likely", site, RULES.views, `${note}; no such view file exists`));
-      this.unknown(site, { file: site.file }, "miss", ["renders"], logical, `no view file under app/views matches ${logical}`);
-      return;
+  // Links a method to the view named `leaf` in the first of its own
+  // folders that has it (likely) and in each subclass folder that has it
+  // (possible). Returns whether any view was found.
+  private folderEdges(app: App, cls: ClassInfo, from: string, leaf: string, folders: ReturnType<Resolver["viewFolders"]>, views: Map<string, string[]>, site: Site, kind: "template-literal" | "template-implicit", quoted: string | null): boolean {
+    let found = false;
+    for (const { folder, owner } of folders.own) {
+      const files = views.get(`${folder}/${leaf}`) ?? [];
+      if (files.length === 0) continue;
+      const where = owner.id === cls.id ? "" : ` in the folder of ${owner.name}, which ${cls.name} inherits from`;
+      const note = quoted !== null ? `the view is found by the app/views folder convention for ${quoted}${where}` : `Rails renders app/views/${folder}/${leaf} when the action does not render another template${where}`;
+      found = this.viewEdges(app, from, files, site, kind, "likely", note) || found;
+      break;
     }
+    for (const { folder, owner } of folders.down) {
+      const files = views.get(`${folder}/${leaf}`) ?? [];
+      if (files.length === 0) continue;
+      found = this.viewEdges(app, from, files, site, kind, "possible", `rendered on an instance of ${owner.name}, which inherits from ${cls.name}; Rails looks the view up in that folder first`) || found;
+    }
+    // Once per class: past the cap, views in the other subclasses' folders are not searched.
+    if (folders.cut && !this.viewCapped.has(cls.id)) {
+      this.viewCapped.add(cls.id);
+      this.unknown({ file: cls.file, line: cls.line, column: 0 }, { file: cls.file }, "fan-out-capped", ["renders"], cls.name, `${cls.name} has more than ${MAX_SUBCLASSES} subclasses; the views of the rest are not searched for what its methods render`);
+    }
+    return found;
+  }
+
+  private viewEdges(app: App, from: string, files: readonly string[], site: Site, kind: "template-literal" | "template-implicit", tier: Tier, note: string): boolean {
     const several = files.length > 1 ? `; one of ${files.length} views of this name, picked by the request format` : "";
-    for (const f of files) this.edge(from, this.template(app, f), "renders", app, this.ev(kind, "likely", site, RULES.views, `${note}${several}`));
+    for (const f of files) this.edge(from, this.template(app, f), "renders", app, this.ev(kind, tier, site, RULES.views, `${note}${several}`));
+    return files.length > 0;
+  }
+
+  private missingView(app: App, from: string, logical: string, site: Site, kind: "template-literal" | "template-implicit"): void {
+    this.edge(from, this.missingTemplate(app, logical), "renders", app, this.ev(kind, "likely", site, RULES.views, `the template is named in the source and no such view file exists`));
+    this.unknown(site, { file: site.file }, "miss", ["renders"], logical, `no view file under app/views matches ${logical}`);
   }
 
   // ---------- mailers ----------
@@ -460,7 +528,7 @@ class Resolver {
         const site = { file: cls.file, line: cls.line, column: 0 };
         this.role(cls.id, "mailer", null, app, this.ev("role-base", "likely", site, RULES.mailers, this.baseNote(cls, reach.via)));
         const methods = this.w.ownMethods(cls).filter((m) => m.file === cls.file && this.w.isPublic(cls, m.def, m.file));
-        this.renders(app, cls, underscore(cls.name), methods);
+        this.renders(app, cls, mailerFolder, methods);
       }
     }
   }
@@ -541,7 +609,7 @@ class Resolver {
     const name = f.name ?? "";
     if (f.className !== null) {
       const hit = this.w.resolveConst(f.className, cls.name, app);
-      return hit ? { hit, how: `class_name names ${f.className}` } : { gap: "miss", name: f.className, note: `${f.macro} :${name} names ${f.className}, which no class in the repository defines` };
+      return hit ? { hit, how: `class_name names ${f.className}` } : this.notFound(f.className, `${f.macro} :${name} names ${f.className}`);
     }
     if (f.through !== null) {
       const chain = { gap: "unsupported-rule" as Cause, name: `${name} through ${f.through}`, note: `${f.macro} :${name} goes through :${f.through}, and the plugin could not follow that chain to a class` };
@@ -551,7 +619,12 @@ class Resolver {
       if (!mid || !("hit" in mid)) return chain;
       const names = f.source !== null ? [f.source] : [singularize(name), name];
       const source = this.assocsOf(mid.hit).find((a) => a.name !== null && names.includes(a.name));
-      if (!source || source.polymorphic || source.name === null) return chain;
+      if (!source || source.name === null) return chain;
+      if (source.polymorphic) {
+        // A polymorphic source names its class with `source_type:`.
+        const typed = f.sourceType !== null ? this.w.resolveConst(f.sourceType, cls.name, app) : null;
+        return typed ? { hit: typed, how: `${f.macro} :${name} goes through :${f.through} to the polymorphic ${source.name} association of ${mid.hit.name}, typed ${f.sourceType}` } : chain;
+      }
       const end = this.assocTarget(mid.hit, app, source, depth + 1);
       if (!("hit" in end)) return chain;
       return { hit: end.hit, how: `${f.macro} :${name} goes through :${f.through} to the ${source.name} association of ${mid.hit.name}` };
@@ -559,7 +632,16 @@ class Resolver {
     const plural = f.macro === "has_many" || f.macro === "has_and_belongs_to_many";
     const target = plural ? classify(name) : camelize(name);
     const hit = this.w.resolveConst(target, cls.name, app);
-    return hit ? { hit, how: `${f.macro} :${name} names ${target} by the Rails naming convention` } : { gap: "miss", name: target, note: `${f.macro} :${name} names ${target}, which no class in the repository defines` };
+    return hit ? { hit, how: `${f.macro} :${name} names ${target} by the Rails naming convention` } : this.notFound(target, `${f.macro} :${name} names ${target}`);
+  }
+
+  // A class name no class of the repository defines: outside the
+  // repository when its namespace is defined nowhere in it (a gem's
+  // `Noticed::Notification`), else a miss.
+  private notFound(name: string, what: string): { gap: Cause; name: string; note: string } {
+    const head = strip(name).split("::")[0] ?? "";
+    if (strip(name).includes("::") && !this.w.classesByName.has(head)) return { gap: "external", name, note: `${what}, from the namespace ${head}, which the repository does not define` };
+    return { gap: "miss", name, note: `${what}, which no class in the repository defines` };
   }
 
   private assocsOf(cls: ClassInfo): AssocFact[] {

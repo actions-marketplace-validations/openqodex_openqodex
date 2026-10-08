@@ -46,6 +46,12 @@
         "kind": "renders",
         "from": "app/controllers/posts_controller.rb#PostsController.summary",
         "to": "template:app/views/reports/summary.html.erb"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.card",
+        "to": "app/components/posts/card_component.rb#Posts.CardComponent",
+        "tier": "likely"
       }
     ],
     "notEdges": [
@@ -63,6 +69,11 @@
       {
         "file": "app/controllers/posts_controller.rb",
         "line": 20,
+        "cause": "miss"
+      },
+      {
+        "file": "app/controllers/posts_controller.rb",
+        "line": 32,
         "cause": "miss"
       }
     ],

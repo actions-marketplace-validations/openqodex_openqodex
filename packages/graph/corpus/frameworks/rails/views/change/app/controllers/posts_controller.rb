@@ -23,4 +23,12 @@ class PostsController < ApplicationController
   def summary
     render template: "reports/summary"
   end
+
+  def card
+    render Posts::CardComponent.new(post: 1)
+  end
+
+  def gone
+    render GoneComponent.new
+  end
 end

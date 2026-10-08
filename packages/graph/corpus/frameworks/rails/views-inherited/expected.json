@@ -1,0 +1,40 @@
+{
+  "guards": "looks a view a Rails controller renders up in its subclasses' and base classes' folders before calling it missing",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "renders",
+        "from": "app/controllers/application_controller.rb#ApplicationController.respond_to_timeout",
+        "to": "template:app/views/nodes/timeout.html.erb",
+        "tier": "possible"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/application_controller.rb#ApplicationController.respond_to_timeout",
+        "to": "template:app/views/ways/timeout.html.erb",
+        "tier": "possible"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/preferences/preferences_controller.rb#Preferences::PreferencesController.update",
+        "to": "template:app/views/preferences/basic_preferences/show.html.erb",
+        "tier": "possible"
+      },
+      {
+        "kind": "renders",
+        "from": "app/controllers/posts_controller.rb#PostsController.index",
+        "to": "template:app/views/application/shared_list.html.erb",
+        "tier": "likely"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "app/controllers/application_controller.rb",
+        "line": 7,
+        "cause": "miss"
+      }
+    ]
+  }
+}
