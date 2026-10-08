@@ -41,8 +41,8 @@ function tierText(tier: ImpactTier, note: string | null): string {
   return tier === "certain" ? "certain" : note ? `${tier}: ${prose(note)}` : tier;
 }
 
-function routeText(r: Pick<ImpactFrameworkRoute, "methods" | "pattern">): string {
-  return literal(`${r.methods.map((m) => (m === "*" ? "ANY" : m)).join("|")} ${r.pattern ?? "(computed path)"}`);
+function routeText(r: Pick<ImpactFrameworkRoute, "methods" | "pattern" | "partial">): string {
+  return literal(`${r.methods.map((m) => (m === "*" ? "ANY" : m)).join("|")} ${r.pattern ?? r.partial ?? "(computed path)"}`);
 }
 
 const at = (file: string, line: number | null) => literal(line ? `${file}:${line}` : file);

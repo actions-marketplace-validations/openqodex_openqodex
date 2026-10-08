@@ -14,7 +14,7 @@ export const MAX_ROUTES = 40;
 export const MAX_TESTS = 40;
 export const MAX_ROWS = 40;
 
-const routeLabel = (r: Registration) => `${r.methods.map((m) => (m === "*" ? "ANY" : m)).join("|")} ${r.pattern ?? "(computed path)"}`;
+const routeLabel = (r: Registration) => `${r.methods.map((m) => (m === "*" ? "ANY" : m)).join("|")} ${r.pattern ?? r.partial ?? "(computed path)"}`;
 
 export function frameworkImpact(graph: Graph, change: Pick<Change, "files" | "coverage">, touched: readonly string[], removed: readonly string[]): ImpactFrameworks | undefined {
   const layer = frameworkLayer(graph);
@@ -41,6 +41,7 @@ export function frameworkImpact(graph: Graph, change: Pick<Change, "files" | "co
     registration: r.id,
     methods: r.methods,
     pattern: r.pattern,
+    partial: r.partial ?? null,
     name: r.name,
     site: { file: r.site.file, line: r.site.line },
     handler: r.handler.written,

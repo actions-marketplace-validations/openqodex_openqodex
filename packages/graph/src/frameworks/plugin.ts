@@ -50,7 +50,8 @@ import type { ProjectModel } from "../discovery/projects.js";
 import type { Cause, Tier } from "../model/records.js";
 import type { FileFacts, GraphEdge, GraphNode, Lang } from "../types.js";
 
-export const PLUGIN_API_VERSION = 1;
+// 2: Registration.partial (appended).
+export const PLUGIN_API_VERSION = 2;
 
 // ---------- the facts a plugin reads from one file ----------
 
@@ -272,6 +273,10 @@ export type Registration = {
   // relative and the route may not be served at all.
   mounted: boolean;
   handler: { written: string; status: HandlerStatus; targets: string[] };
+  // When `pattern` is null: the pattern with each computed part shown as
+  // "{computed}" ("{computed}accounts/login/"), for display only; never
+  // matched against a request. Absent or null when nothing is known.
+  partial?: string | null;
 };
 
 export type Entity =

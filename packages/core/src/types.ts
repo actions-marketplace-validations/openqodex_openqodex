@@ -376,6 +376,7 @@ export type ImpactFrameworkRoute = {
   registration: string;
   methods: string[];
   pattern: string | null; // null when computed
+  partial?: string | null; // when pattern is null: the known parts, each computed part shown as "{computed}"
   name: string | null;
   site: { file: string; line: number };
   handler: string; // as written at the registration

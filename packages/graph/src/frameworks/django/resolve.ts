@@ -18,7 +18,7 @@ import { isDynamic } from "../shared/literals.js";
 import type { Lit } from "../shared/literals.js";
 import { HTTP_METHODS } from "./facts.js";
 import type { DjangoFact, Ref } from "./facts.js";
-import { MAX_REQUEST, joinTokens, matchTokens, requestPath, routePart } from "./routes.js";
+import { COMPUTED_PART, MAX_REQUEST, joinTokens, matchTokens, requestPath, routePart } from "./routes.js";
 import type { Budget, Part, Tok } from "./routes.js";
 
 export const PLUGIN = "django";
@@ -383,7 +383,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       plugin: PLUGIN,
       app,
       methods,
-      pattern: parts ? parts.map((p) => p.text).join("") : null,
+      pattern: parts && !parts.some((p) => p.computed) ? parts.map((p) => p.text).join("") : null,
+      partial: parts && parts.some((p) => p.computed) ? parts.map((p) => p.text).join("") : null,
       written,
       name,
       site,
@@ -411,7 +412,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         ["list", `${reg.prefix}/`],
         ["detail", `${reg.prefix}/<pk>/`],
       ] as const) {
-        const parts = prefix ? [...prefix, routePart(suffix, false)] : null;
+        const parts = [...(prefix ?? [COMPUTED_PART]), routePart(suffix, false)];
         const methods = [...new Set(VIEWSET_ACTIONS.filter(([, , s]) => s === shape).map(([, m]) => m))];
         const r = newRegistration(app, file, reg, parts, suffix, [...namespaces, `${base}-${shape}`].join(":"), via, `:${shape}`, methods);
         if (!r) return true;
@@ -452,10 +453,12 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         return;
       }
       const regex = !fn.endsWith(".path");
-      let parts: Part[] | null = prefix;
-      if (typeof f.route === "string") parts = parts ? [...parts, routePart(f.route, regex)] : null;
+      // A computed part stays in the parts as a marker: the pattern is then
+      // unknown, and the known rest is kept for display.
+      let parts: Part[] = prefix ?? [COMPUTED_PART];
+      if (typeof f.route === "string") parts = [...parts, routePart(f.route, regex)];
       else {
-        parts = null;
+        parts = [...parts, COMPUTED_PART];
         out.gap({ site, scope, affects: ["handles", "mounts"], cause: "dynamic", name: null, note: "the route is computed, so its path is not known" });
       }
       const written = typeof f.route === "string" ? f.route : null;
@@ -882,7 +885,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         if (m === "budget") break;
         if (m) hits.push(r);
       }
-      if (hits.length === 0 && unmatchable > 0) out.gap({ site: csite, scope: { file }, affects: ["tests"], cause: "unsupported-rule", name: null, note: `${unmatchable} routes of this project use a regex the graph does not match requests against` });
+      // Said once per test file: the routes the requests could reach are not matchable.
+      if (hits.length === 0 && unmatchable > 0) out.gap({ site: null, scope: { file }, affects: ["tests"], cause: "unsupported-rule", name: null, note: "some routes of this project have a computed path or a regex the graph does not match requests against, so requests in this file may reach routes it does not link" });
       for (const r of hits.slice(0, MAX_FAN_OUT)) {
         const tier: Tier = hits.length === 1 ? "likely" : "possible";
         out.edge({ from, to: r.id, kind: "tests", plugin: PLUGIN, app: r.app, category: "route-request", evidence: ev("test-route-request", tier, csite, RULES.tests, hits.length === 1 ? `the test requests ${c.path}, which matches this route's pattern` : `the test requests ${c.path}, which ${hits.length} route patterns match`, null, [r.id]) });

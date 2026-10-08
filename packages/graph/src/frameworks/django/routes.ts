@@ -11,7 +11,10 @@ export type Tok = { lit: string } | { param: ParamClass; min: 0 | 1 };
 
 // The route's display text, and its tokens; null tokens when the route
 // cannot be matched against a request (a regex outside the subset).
-export type Part = { text: string; toks: Tok[] | null };
+export type Part = { text: string; toks: Tok[] | null; computed?: true };
+
+// A part of a route the graph cannot read: a computed prefix or route.
+export const COMPUTED_PART: Part = { text: "{computed}", toks: null, computed: true };
 
 export const MAX_TOKENS = 32;
 export const MAX_REQUEST = 512;

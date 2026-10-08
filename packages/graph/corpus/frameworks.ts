@@ -21,7 +21,9 @@ export type FrameworkExpected = {
   edges?: { kind: FrameworkEdgeKind; from: string; to: string; tier?: Tier; category?: TestCategory }[];
   roles?: { target: string; role: Role; detail?: string }[];
   unknowns?: { file: string; line?: number; cause: string }[];
-  notUnknowns?: { file: string; line: number; cause: string }[]; // gaps that must not be reported (a relation outside the repository is not a miss)
+  notUnknowns?: { file: string; line: number; cause: string }[];
+  partials?: { site: string; partial: string | null }[]; // the known part of a computed pattern
+  maxUnknowns?: { file: string; cause: string; max: number }[]; // a gap said once, not once per site // gaps that must not be reported (a relation outside the repository is not a miss)
   // Kinds the plugin must emit none of: an edge kind, an entity kind, or
   // "role" for any role at all.
   none?: string[];
@@ -158,6 +160,19 @@ export function scoreFrameworks(expected: FrameworkExpected | undefined, graph: 
         : [...mine.edges.filter((e) => e.kind === kind).map((e) => `${e.kind} ${show(e.from)} to ${show(e.to)}`), ...mine.entities.filter((e) => e.kind === kind).map((e) => show(e.id))];
     if (bad.length === 0) out.controls.hit++;
     else out.failures.push(`negative control broken: the ${expected.plugin} plugin emitted ${kind}: ${bad.slice(0, 4).join("; ")}`);
+  }
+  for (const x of expected.partials ?? []) {
+    out.recall.of++;
+    const reg = mine.entities.find((e) => e.kind === "registration" && `${e.site.file}:${e.site.line}` === x.site);
+    const got = reg && reg.kind === "registration" ? (reg.partial ?? null) : undefined;
+    if (got === x.partial) out.recall.hit++;
+    else out.failures.push(`registration ${x.site} has partial ${JSON.stringify(got)}, expected ${JSON.stringify(x.partial)}`);
+  }
+  for (const x of expected.maxUnknowns ?? []) {
+    out.controls.of++;
+    const n = mine.unknowns.filter((u) => u.cause === x.cause && (u.site?.file === x.file || ("file" in u.scope && u.scope.file === x.file))).length;
+    if (n <= x.max) out.controls.hit++;
+    else out.failures.push(`${n} ${x.cause} gaps in ${x.file}, at most ${x.max} expected`);
   }
   for (const n of expected.notUnknowns ?? []) {
     out.controls.of++;
