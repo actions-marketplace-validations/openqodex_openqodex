@@ -727,7 +727,7 @@ function untrustedLayout(root: string): string | null {
   for (const rel of [STATE.join("/"), ...FOLDERS.map((f) => `${STATE.join("/")}/${f}`)]) {
     const st = lstatBig(join(root, ...rel.split("/")));
     const problem = st === null ? null : notMineAlone(st);
-    if (problem !== null) return `${rel} ${problem}, so what it holds may not be yours and is not used: remove ${STATE.join("/")} and openqodex makes a new one`;
+    if (problem !== null) return `${rel} ${problem}, so what it holds may not be yours: remove ${STATE.join("/")} and openqodex makes a new one`;
   }
   return null;
 }

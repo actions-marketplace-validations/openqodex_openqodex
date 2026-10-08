@@ -859,7 +859,7 @@ describe("trust", () => {
       chmodSync(graph, mode);
       const refused = await openStore(root, { home: HOME });
       const reason = refused.ok ? "" : refused.reason;
-      expect(reason).toBe(`.openqodex/graph can be written by other users (mode 0${mode.toString(8)}), so what it holds may not be yours and is not used: remove .openqodex/graph and openqodex makes a new one`);
+      expect(reason).toBe(`.openqodex/graph can be written by other users (mode 0${mode.toString(8)}), so what it holds may not be yours: remove .openqodex/graph and openqodex makes a new one`);
       expect(statSync(graph).mode & 0o777).toBe(mode);
       const g = await buildGraph({ repoRoot: root, store: null, storeRefused: reason });
       expect(g.status.filesParsed).toBe(1);
