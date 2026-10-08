@@ -2,9 +2,9 @@
 // contain a space, and runs of the built CLI as a real subprocess.
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
@@ -43,13 +43,36 @@ export function sandbox(files: Record<string, string> = {}, rootName = "oq test 
   return { root, home, oqHome: join(home, ".openqodex"), repo };
 }
 
+// What ties a run to the developer's own agents: their config folders, which
+// would point init at the real ones, and the markers of the agent session the
+// tests may run in, which would decide init's consent and the reviewer order.
+export const AGENT_ENV = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CURSOR_AGENT"];
+
+// A PATH with git, node and the system folders and no coding agent, so
+// init's reviewer check never runs a real claude or codex, which would write
+// into the test home. Git and node are linked from where this PATH finds them.
+let agentFree: string | null = null;
+export function agentFreePath(): string {
+  if (agentFree !== null) return agentFree;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "oq-agent-free-bin-")));
+  for (const name of ["git", "node"]) {
+    for (const folder of (process.env.PATH ?? "").split(delimiter)) {
+      if (folder !== "" && existsSync(join(folder, name))) {
+        symlinkSync(realpathSync(join(folder, name)), join(dir, name));
+        break;
+      }
+    }
+  }
+  agentFree = [dir, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
+  return agentFree;
+}
+
 export function env(s: Sandbox, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   // No update worker from a test run through the launcher: it would reach
   // the registry and leave update.json behind. self-update.test.ts turns it on.
-  const e: NodeJS.ProcessEnv = { ...process.env, HOME: s.home, OPENQODEX_HOME: s.oqHome, OPENQODEX_AUTO_UPDATE: "0" };
+  const e: NodeJS.ProcessEnv = { ...process.env, HOME: s.home, OPENQODEX_HOME: s.oqHome, OPENQODEX_AUTO_UPDATE: "0", PATH: agentFreePath() };
   delete e.OPENQODEX_SKIP;
-  // Codex's home would otherwise point init at the real one.
-  delete e.CODEX_HOME;
+  for (const key of AGENT_ENV) delete e[key];
   return { ...e, ...extra };
 }
 

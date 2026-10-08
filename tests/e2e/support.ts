@@ -23,7 +23,11 @@ export function run(label: string, cwd: string, args: string[], options: { home?
   const home = options.home ?? mkdtempSync(join(tmpdir(), "oq-e2e-user-"));
   mkdirSync(home, { recursive: true });
   // OPENQODEX_AUTO_UPDATE=0: a command run through the launcher starts no update worker here.
-  const env = { ...process.env, HOME: home, OPENQODEX_HOME: options.tools ?? toolsHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", OPENQODEX_AUTO_UPDATE: "0", ...options.env };
+  const base: NodeJS.ProcessEnv = { ...process.env, HOME: home, OPENQODEX_HOME: options.tools ?? toolsHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", OPENQODEX_AUTO_UPDATE: "0" };
+  // A temporary home is a fresh machine: the agents' own folders must not
+  // point back into the real ones, or init would write there.
+  if (home !== process.env.HOME) for (const key of ["CLAUDE_CONFIG_DIR", "CODEX_HOME"]) delete base[key];
+  const env = { ...base, ...options.env };
   const command = options.shell ? "sh" : process.execPath;
   const argv = options.shell ? ["-c", args[0]!] : [bin, ...args];
   const started = Date.now();

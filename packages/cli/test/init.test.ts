@@ -23,6 +23,9 @@
 // 14. Uninstall leaves the global instruction section behind, or removes the
 //     developer's own text around it.
 // 15. --project leaves the section out of the repo's CLAUDE.md or AGENTS.md.
+// 16. With CLAUDE_CONFIG_DIR or CODEX_HOME set, init reports success but puts
+//     the skill, instructions or push hook in a folder the agent does not
+//     read, or does not find an agent known only by that folder.
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -428,5 +431,45 @@ describe("init, the hook question and the instruction section", () => {
     expect(claudeMd.startsWith("# Repo\n")).toBe(true);
     expect(claudeMd).toContain(SECTION_START);
     expect(readFileSync(join(s.repo, "AGENTS.md"), "utf8")).toContain(SECTION_START);
+  });
+});
+
+describe("16. init, custom agent homes", () => {
+  it("with CLAUDE_CONFIG_DIR set, writes the Claude Code skill, instructions, hook and rules there and nothing in ~/.claude", () => {
+    const s = sandbox();
+    const config = join(s.root, "claude config");
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { env: { CLAUDE_CONFIG_DIR: config } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(config, "skills/openqodex/SKILL.md"))).toBe(true);
+    expect(readFileSync(join(config, "CLAUDE.md"), "utf8")).toContain(SECTION_START);
+    expect(ourCommands(join(config, "settings.json"))).toHaveLength(1);
+    expect(readJson<{ permissions: { allow: string[] } }>(join(config, "settings.json")).permissions.allow.length).toBeGreaterThan(0);
+    expect(existsSync(join(s.home, ".claude"))).toBe(false);
+    const un = cli(s, ["init", "--uninstall", "--yes"], { env: { CLAUDE_CONFIG_DIR: config } });
+    expect(un.status, un.stderr).toBe(0);
+    expect(existsSync(join(config, "skills/openqodex/SKILL.md"))).toBe(false);
+  });
+
+  it("with CODEX_HOME set, puts the Codex push hook beside its AGENTS.md there, and the skill in ~/.agents/skills", () => {
+    const s = sandbox();
+    const codexHome = join(s.root, "codex home");
+    const r = cli(s, ["init", "--yes", "--agent", "codex"], { env: { CODEX_HOME: codexHome } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(ourCommands(join(codexHome, "hooks.json"))).toHaveLength(1);
+    expect(readFileSync(join(codexHome, "AGENTS.md"), "utf8")).toContain(SECTION_START);
+    expect(existsSync(join(s.home, ".agents/skills/openqodex/SKILL.md"))).toBe(true);
+    expect(existsSync(join(s.home, ".codex"))).toBe(false);
+  });
+
+  it("finds Claude Code and Codex by CLAUDE_CONFIG_DIR and CODEX_HOME when neither program is on PATH", () => {
+    const s = sandbox();
+    const config = join(s.root, "claude config");
+    const codexHome = join(s.root, "codex home");
+    mkdirSync(config);
+    mkdirSync(codexHome);
+    const r = cli(s, ["init", "--yes", "--dry-run"], { env: { CLAUDE_CONFIG_DIR: config, CODEX_HOME: codexHome } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(join(config, "skills/openqodex/SKILL.md"));
+    expect(r.stdout).toContain(join(codexHome, "hooks.json"));
   });
 });

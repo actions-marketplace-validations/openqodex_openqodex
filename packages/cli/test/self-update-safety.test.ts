@@ -61,7 +61,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { bundleChildEntry } from "./bundle.js";
-import { BIN, cli, env, git, sandbox, snapshot, type Sandbox } from "./init-helpers.js";
+import { AGENT_ENV, BIN, agentFreePath, cli, env, git, sandbox, snapshot, type Sandbox } from "./init-helpers.js";
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 const OLDER = "0.98.0";
@@ -444,8 +444,8 @@ describe("14. Claude Code permission rules", () => {
     mkdirSync(repo);
     git(repo, "init", "-q");
     const oqHome = join(home, ".openqodex");
-    const e: NodeJS.ProcessEnv = { ...process.env, HOME: home, OPENQODEX_HOME: oqHome, OPENQODEX_AUTO_UPDATE: "0" };
-    delete e.CODEX_HOME;
+    const e: NodeJS.ProcessEnv = { ...process.env, HOME: home, OPENQODEX_HOME: oqHome, OPENQODEX_AUTO_UPDATE: "0", PATH: agentFreePath() };
+    for (const key of AGENT_ENV) delete e[key];
     return { home, oqHome, repo, env: e, run: (args) => spawnSync(process.execPath, [BIN, ...args], { cwd: repo, env: e, encoding: "utf8", input: "" }) };
   }
   const allow = (settings: string): string[] => (JSON.parse(readFileSync(settings, "utf8")) as { permissions?: { allow?: string[] } }).permissions?.allow ?? [];

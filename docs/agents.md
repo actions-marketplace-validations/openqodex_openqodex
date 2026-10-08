@@ -100,6 +100,8 @@ In project scope, the hooks, the skill and the rules call `npx -y openqodex@<ver
 | Instructions | a marked section in `~/.claude/CLAUDE.md` | a marked section in `CLAUDE.md` |
 | Permission rules | merged into `permissions.allow` of `~/.claude/settings.json` | none |
 
+When `CLAUDE_CONFIG_DIR` is set, Claude Code reads its settings from that folder instead of `~/.claude`, and so do these user-scope paths. `init` also finds Claude Code by that folder.
+
 The hook is one `PreToolUse` entry. It matches the `Bash` tool and runs only for `git push` commands. It calls `openqodex hook check`.
 
 In user scope, `init` adds rules so Claude Code runs these review commands without asking, and the agent can review unattended: `<launcher> review` and `review --all`, each also with ` --offline` at the end, plus `guide`, `guide skill` and `guide <topic>`. Each rule matches one exact line, so the same command with any other flag, such as `--output` or `--config`, a branch or a pull request, or chained with `&&`, still asks you. `scan`, `doctor`, `trust`, `update`, `init` and `report` still ask you. The rules of earlier versions for `review --agent` and `review --finalize` are removed by the next `init`. Project scope writes no permission rule: a committed settings file would decide for every teammate. A rule you already had is left alone, and `init --uninstall` removes only the rules `init` added. When a later version grants a different set, the next `init` removes the rules an earlier version added and adds the new ones. When your home path holds a space or another character the shell would read, the launcher is written in single quotes in the skill and in the rules alike. When the launcher's path holds `*`, which Claude Code reads as a wildcard, `init` writes no rule and says so in one line; Claude Code then asks before each review command.
@@ -116,7 +118,9 @@ Neither the skill `init` writes nor `guide skill` carries the sentence that tell
 |---|---|---|
 | Skill | `~/.agents/skills/openqodex/SKILL.md` | `.agents/skills/openqodex/SKILL.md` |
 | Instructions | a marked section in `$CODEX_HOME/AGENTS.md` (`~/.codex/AGENTS.md` by default) | a marked section in `AGENTS.md` |
-| Push gate hook | merged into `~/.codex/hooks.json` | merged into `.codex/hooks.json` |
+| Push gate hook | merged into `$CODEX_HOME/hooks.json` (`~/.codex/hooks.json` by default) | merged into `.codex/hooks.json` |
+
+`init` also finds Codex by `$CODEX_HOME`. The skill stays in `~/.agents/skills`, the folder the Codex docs name for skills, whatever `CODEX_HOME` says.
 
 Codex runs the hook before every shell command. `hook check` returns at once and prints nothing when the command is not a `git push`.
 

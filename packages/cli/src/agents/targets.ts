@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assetPath } from "../assets.js";
 import type { AgentId } from "./detect.js";
+import { claudeHome, codexHome } from "./homes.js";
 
 export type Scope = "user" | "project";
 
@@ -43,12 +44,6 @@ export function instructionSection(): string {
 
 function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
   return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo };
-}
-
-// Codex reads its home folder from CODEX_HOME, ~/.codex by default.
-function codexHome(home: string): string {
-  const fromEnv = process.env.CODEX_HOME;
-  return fromEnv !== undefined && fromEnv !== "" ? fromEnv : join(home, ".codex");
 }
 
 // The hook group from a JSON template, with the command put in after
@@ -184,23 +179,26 @@ export function targetsFor(args: {
   const base = user ? home : repoRoot;
   if (base === null) return { targets, skipped: [`${agent}: run init --project inside a git repository`] };
   const at = (...p: string[]): string => join(base, ...p);
+  // In user scope, Claude Code's and Codex's own folders, as homes.ts finds them.
+  const claude = (...p: string[]): string => (user ? join(claudeHome(home), ...p) : at(".claude", ...p));
+  const codex = (...p: string[]): string => (user ? join(codexHome(home), ...p) : at(".codex", ...p));
   const skillText = user ? skillStub(runner) : fill(renderSkill(runner), version);
   // A user-scope skill calls the launcher, so the launcher stays while it is installed.
   const skillTarget = (label: string, path: string): Target => fileTarget(agent, label, path, skillText, !user, user);
 
   switch (agent) {
     case "claude-code":
-      targets.push(skillTarget("Claude Code skill", at(".claude", "skills", "openqodex", "SKILL.md")));
+      targets.push(skillTarget("Claude Code skill", claude("skills", "openqodex", "SKILL.md")));
       targets.push(
         user
-          ? sectionTarget(agent, "Claude Code global instructions", at(".claude", "CLAUDE.md"), false)
+          ? sectionTarget(agent, "Claude Code global instructions", claude("CLAUDE.md"), false)
           : sectionTarget(agent, "Claude Code project instructions", at("CLAUDE.md"), true),
       );
       targets.push({
         kind: "hook-json",
         agent,
         label: "Claude Code push hook",
-        path: at(".claude", "settings.json"),
+        path: claude("settings.json"),
         group: hookGroup("claude-code/settings-hook.json", runner),
         inRepo: !user,
         usesLauncher: user,
@@ -216,7 +214,7 @@ export function targetsFor(args: {
         kind: "allow-rules",
         agent,
         label: "Claude Code permission rules",
-        path: at(".claude", "settings.json"),
+        path: claude("settings.json"),
         rules: user && !hasRuleWildcard(runner) ? allowRules(runner) : [],
         inRepo: !user,
       });
@@ -225,14 +223,14 @@ export function targetsFor(args: {
       targets.push(skillTarget("Codex skill", at(".agents", "skills", "openqodex", "SKILL.md")));
       targets.push(
         user
-          ? sectionTarget(agent, "Codex global instructions", join(codexHome(home), "AGENTS.md"), false)
+          ? sectionTarget(agent, "Codex global instructions", codex("AGENTS.md"), false)
           : sectionTarget(agent, "Codex instructions", at("AGENTS.md"), true),
       );
       targets.push({
         kind: "hook-json",
         agent,
         label: "Codex push hook",
-        path: at(".codex", "hooks.json"),
+        path: codex("hooks.json"),
         group: hookGroup("codex/hooks.json", runner),
         inRepo: !user,
         usesLauncher: user,

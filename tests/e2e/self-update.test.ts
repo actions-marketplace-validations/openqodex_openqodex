@@ -37,7 +37,7 @@ type Box = { home: string; oqHome: string; repo: string };
 
 function laptop(b: Box, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const e: NodeJS.ProcessEnv = { ...process.env, HOME: b.home, OPENQODEX_HOME: b.oqHome };
-  for (const key of ["CI", "OPENQODEX_OFFLINE", "OPENQODEX_AUTO_UPDATE", "OPENQODEX_E2E", "OPENQODEX_UPDATE_AS", "OPENQODEX_UPDATE_MIN_AGE_MS", "OPENQODEX_LAUNCHER", "CODEX_HOME"]) delete e[key];
+  for (const key of ["CI", "OPENQODEX_OFFLINE", "OPENQODEX_AUTO_UPDATE", "OPENQODEX_E2E", "OPENQODEX_UPDATE_AS", "OPENQODEX_UPDATE_MIN_AGE_MS", "OPENQODEX_LAUNCHER", "CODEX_HOME", "CLAUDE_CONFIG_DIR"]) delete e[key];
   return { ...e, ...extra };
 }
 

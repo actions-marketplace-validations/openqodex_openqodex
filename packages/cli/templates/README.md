@@ -39,6 +39,7 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 | Instructions | `instructions-section.md`, between its markers | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
 | Team section | `repo/team-section.md`, between its markers | `CLAUDE.md` in the repository, committed | none (the instruction section is there) |
 
+- Every user-scope path above is under `$CLAUDE_CONFIG_DIR` when it is set, the folder Claude Code then reads its settings from (https://code.claude.com/docs/en/settings); `~/.claude` otherwise. `src/agents/homes.ts` resolves it for detection and targets alike.
 - Settings paths: https://code.claude.com/docs/en/hooks, section "Hook locations".
 - Skill paths: the `skills` CLI agent table (github.com/vercel-labs/skills, README, "Supported agents"), and the same hooks page, which names `~/.claude/skills/` and `.claude/skills/`.
 - The hook: `matcher: "Bash"` with `if: "Bash(git push*)"` on the handler. The `if` field uses permission-rule syntax and is checked against each subcommand (same hooks page, "Bash if matching"). The page also says a pattern longer than the command name runs the hook anyway when the command holds `$()`, backticks or `$VAR`, so `hook check` must itself confirm the command is a push.
@@ -51,7 +52,9 @@ Every path below was read from the source named beside it on 2026-10-01. Anythin
 | Skill | `skills/openqodex/SKILL.md` | see the note below | `.agents/skills/openqodex/SKILL.md` |
 | Instructions | `instructions-section.md`, between its markers | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `AGENTS.md` (replace the text between the markers, or append) |
 | Team section | `repo/team-section.md`, between its markers | `AGENTS.md` in the repository, committed | none (the instruction section is there) |
-| Push gate hook | `codex/hooks.json`, merged | `~/.codex/hooks.json` | `.codex/hooks.json` |
+| Push gate hook | `codex/hooks.json`, merged | `$CODEX_HOME/hooks.json`, default `~/.codex/hooks.json` | `.codex/hooks.json` |
+
+- The instructions and the hook both follow `CODEX_HOME`, the folder Codex reads its config and hooks from (hooks page below: hooks sit beside the active config layer), resolved by `src/agents/homes.ts`. The skill does not: its folder is `~/.agents/skills` whatever `CODEX_HOME` says. That Codex loads `$CODEX_HOME/hooks.json`: from the docs, untested with a real custom `CODEX_HOME`.
 
 - Hook file paths, schema and output: https://learn.chatgpt.com/docs/hooks (where https://developers.openai.com/codex/hooks redirects). `codex features list` on Codex CLI 0.160.0 shows `hooks` as stable and on.
 - Codex hooks have no `if` field: the matcher is a regular expression on the tool name only. The hook therefore runs before every shell command, and `hook check` must abstain at once, printing nothing, when the command is not a `git push`.
