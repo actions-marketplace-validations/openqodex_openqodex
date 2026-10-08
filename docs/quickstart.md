@@ -41,7 +41,7 @@ Inside a repository, `init` also:
 
 After writing, `init` lists what it wrote for you, with the command that undoes it (`init --uninstall` through the launcher), and what it wrote for the team, to commit. `init --project` instead puts the agent files inside the repository, for the team to commit; the scanners and the record of what `init` wrote stay in `~/.openqodex` on your machine.
 
-`init` also starts the scanner downloads that your repo needs, in the background: the ones its files call for, tracked or untracked, less any `scanners.disable` switches off. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
+`init` also starts the scanner downloads that your repo needs, in the background: the ones its files call for, tracked or untracked, less the paths `review.paths.exclude` leaves out and any scanner `scanners.disable` switches off. It prints one line per scanner saying why, such as `oxlint: JavaScript or TypeScript files, such as app/index.tsx`. `init --dry-run` prints those lines and downloads nothing. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
 
 Then `init` checks the reviewers: it prints "Reviewer ready" with the Claude Code or Codex it found, or "No reviewer can start yet" with what to fix for each.
 
@@ -106,15 +106,17 @@ npx openqodex review
 
 ## First run
 
-Scanners download on first use into `~/.openqodex/tools/`. Only the scanners your change needs download. A scanner still installing after 45 seconds keeps going in the background. The report lists it as installing. It joins the next run.
+Scanners download on first use into `~/.openqodex/tools/`. A review downloads only the scanners its changed files call for. A scanner still installing after 45 seconds keeps going in the background. The report lists it as installing. It joins the next run.
 
 One measured first run: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners the demo needs. They take about 700 MB of disk.
 
-To download every scanner now:
+To download what this repository needs now, run this inside it:
 
 ```
 npx openqodex doctor --install
 ```
+
+`--all-scanners` downloads every scanner.
 
 ## Next
 

@@ -55,7 +55,7 @@ import type { Checkout } from "./checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
-import { buildHotSpots, buildImpact, emitReview, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFolderWriter, reviewOutputs, scanChange, warn, wholeRepoLenses, writeReportHtml } from "./pipeline.js";
+import { buildHotSpots, buildImpact, emitReview, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFolderWriter, reviewOutputs, ruleCoverage, scanChange, warn, wholeRepoLenses, writeReportHtml } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
 import { keepRunStateOutOfRepo } from "./feedback.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
@@ -735,11 +735,11 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     if (prep.whole) {
       const hot = await buildHotSpots(p, o.flags, o.noGraph);
       impact = hot.impact;
-      lenses = wholeRepoLenses(prep.whole);
+      lenses = wholeRepoLenses(prep.whole, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) } });
     } else {
       impact = await buildImpact(p, o.flags, o.noGraph);
-      lenses = selectLenses(change);
+      lenses = selectLenses(change, undefined, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, target: prep.target });
     }
     const manifest: RunManifest = {

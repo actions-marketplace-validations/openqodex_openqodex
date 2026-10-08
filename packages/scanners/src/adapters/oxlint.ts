@@ -7,7 +7,10 @@
 // no-unused-vars, no-debugger, no-constant-condition, the
 // always-a-bug class). That makes it the right zero-setup linter for
 // the ensemble where a repo's own ESLint may not be runnable. A repo's
-// `.oxlintrc.json` is not loaded: it can load JavaScript plugins.
+// `.oxlintrc.json` is not loaded: it can load JavaScript plugins. For a
+// file in a React, React Native or Next.js project (detect.ts reads the
+// project's package.json) oxlint's own react, jsx-a11y and nextjs plugins
+// are switched on: built into the binary, nothing more to download.
 //
 // We invoke it only on changed .js/.jsx/.ts/.tsx/.mjs/.cjs/.cts/.mts
 // files so a change without them is a no-op. oxlint emits one JSON object
@@ -26,8 +29,11 @@ import type {
 } from "@openqodex/core";
 import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
+import type { RepoFacts } from "../detect.js";
 import type { Adapter } from "./index.js";
 import { withOwnedConfig } from "./owned-config.js";
+import { groupBy } from "./group.js";
+import { folderList, listAnd, suchAs } from "./words.js";
 
 const OXLINT_TIMEOUT_MS = 60_000;
 const OXLINT_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
@@ -37,12 +43,49 @@ function isJsTsPath(p: string): boolean {
   return /\.(jsx?|tsx?|[cm][jt]s)$/i.test(p);
 }
 
+const jsTsFiles = (changedPaths: string[]): string[] => safeFileArgs(changedPaths.filter(isJsTsPath));
+
+// oxlint's built-in plugins switched on for a file, from its project's
+// frameworks, on top of oxlint's default plugins.
+export type OxlintPlugin = "react" | "jsx-a11y" | "nextjs";
+const PLUGIN_NAMES: Record<OxlintPlugin, string> = { react: "React", "jsx-a11y": "accessibility", nextjs: "Next.js" };
+
+export function oxlintPlugins(p: string, facts: RepoFacts): OxlintPlugin[] {
+  const frameworks = facts.project(p)?.frameworks ?? [];
+  const react = frameworks.includes("react") || frameworks.includes("react-native") || frameworks.includes("nextjs");
+  return [...(react ? (["react", "jsx-a11y"] as const) : []), ...(frameworks.includes("nextjs") ? (["nextjs"] as const) : [])];
+}
+
+// The React rule a review pattern (lens) also looks for: with the react
+// plugin on, oxlint checks it, so the lens stands down for those files.
+export const OXLINT_EXHAUSTIVE_DEPS = "oxlint:react-hooks/exhaustive-deps";
+
+// Files grouped by the plugins they get ("react,jsx-a11y"; "" for none): one
+// oxlint run per group.
+export function oxlintGroups(files: string[], facts: RepoFacts): Map<string, string[]> {
+  return groupBy(files, (p) => oxlintPlugins(p, facts).join(","));
+}
+
+// The projects with plugins on, and the plugins, for the selection line.
+function pluginProjects(files: string[], facts: RepoFacts): string[] {
+  return [...new Set(files.filter((p) => oxlintPlugins(p, facts).length > 0).map((p) => facts.project(p)!.root))].sort();
+}
+
+function oxlintWhy(files: string[], facts: RepoFacts): string {
+  const projects = pluginProjects(files, facts);
+  const base = `JavaScript or TypeScript files, ${suchAs(files)}`;
+  if (projects.length === 0) return base;
+  const plugins = [...new Set(files.flatMap((p) => oxlintPlugins(p, facts)))];
+  return `${base}; ${listAnd(plugins.map((x) => PLUGIN_NAMES[x]))} rules in ${folderList(projects)}`;
+}
+
 export async function runOxlint(args: {
   repoDir: string;
   changedPaths: string[];
   tool: ResolvedTool | null;
+  facts: RepoFacts;
 }): Promise<AdapterResult> {
-  const jsFiles = safeFileArgs(args.changedPaths.filter(isJsTsPath));
+  const jsFiles = jsTsFiles(args.changedPaths);
   if (jsFiles.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
@@ -53,21 +96,30 @@ export async function runOxlint(args: {
     // plugins (jsPlugins), which oxlint runs in Node: code from the change
     // running on the developer's machine. Reproduced with oxlint 1.71.0.
     // --format=json: the stable machine shape. Changed files are passed
-    // positionally so it lints only those.
-    // One process per chunk of files, so a whole-repo file list stays under
-    // the argument limit; the findings of every chunk are merged.
+    // positionally so it lints only those. --react-plugin and the others
+    // add oxlint's own framework rules for the files of such a project.
+    // One process per group of files with the same plugins, and per chunk
+    // of a group, so a whole-repo file list stays under the argument limit;
+    // the findings of every run are merged.
     return await withOwnedConfig("oxlintrc.json", "{}\n", async (configPath) => {
-      const findings = await runInChunks("oxlint", jsFiles, OXLINT_TIMEOUT_MS, async (chunk, left) => {
-        const cliArgs = ["-c", configPath, "--disable-nested-config", "--format=json", "--", ...chunk];
-        const stdout = await execOxlint(tool, cliArgs, args.repoDir, left);
-        try {
-          return parseOxlintJson(stdout);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(`parse: ${message.slice(0, 200)}`);
-        }
-      });
-      return { findings, error: null };
+      const findings: StaticFinding[] = [];
+      for (const [key, files] of oxlintGroups(jsFiles, args.facts)) {
+        const flags = key === "" ? [] : key.split(",").map((plugin) => `--${plugin}-plugin`);
+        findings.push(
+          ...(await runInChunks("oxlint", files, OXLINT_TIMEOUT_MS, async (chunk, left) => {
+            const cliArgs = ["-c", configPath, "--disable-nested-config", ...flags, "--format=json", "--", ...chunk];
+            const stdout = await execOxlint(tool, cliArgs, args.repoDir, left);
+            try {
+              return parseOxlintJson(stdout);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              throw new Error(`parse: ${message.slice(0, 200)}`);
+            }
+          })),
+        );
+      }
+      const react = jsFiles.filter((p) => oxlintPlugins(p, args.facts).includes("react"));
+      return { findings, error: null, checked: react.length > 0 ? [{ token: OXLINT_EXHAUSTIVE_DEPS, files: react }] : [] };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -99,7 +151,9 @@ async function execOxlint(tool: ResolvedTool, cliArgs: string[], cwd: string, ti
 
 export const oxlint: Adapter = {
   source: "oxlint",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isJsTsPath)).length > 0,
+  files: jsTsFiles,
+  why: oxlintWhy,
+  projects: pluginProjects,
   run: (args) => runOxlint(args),
 };
 

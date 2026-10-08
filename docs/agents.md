@@ -185,7 +185,7 @@ Before each push it runs `openqodex hook pre-push` through the launcher. For eac
 
 ## Inside a sandbox
 
-Some agents run commands in a sandbox that cannot reach the network or write outside the project. There, the first review cannot download scanners, and the reviewer may not reach its model or write in `~/.openqodex/`. Inside Codex's sandbox a second Codex does not start at all: with Codex as the reviewer, `review` prints "Full review unavailable" and the fallback. Each scanner reports why it was left out. Run this once in your own terminal for the scanners, and run `review` there when the reviewer cannot start inside the sandbox:
+Some agents run commands in a sandbox that cannot reach the network or write outside the project. There, the first review cannot download scanners, and the reviewer may not reach its model or write in `~/.openqodex/`. Inside Codex's sandbox a second Codex does not start at all: with Codex as the reviewer, `review` prints "Full review unavailable" and the fallback. Each scanner reports why it was left out. Run this once in your own terminal, inside the repository, for the scanners it needs, and run `review` there when the reviewer cannot start inside the sandbox:
 
 ```
 npx openqodex doctor --install

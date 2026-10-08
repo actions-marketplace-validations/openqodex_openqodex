@@ -62,12 +62,32 @@ runs:
       with:
         node-version: 22
 
+    # Which scanners this repository's files call for, and the hash of the
+    # pinned scanner table: the cache key below. Nothing is installed here.
+    - name: Plan the scanner downloads
+      id: plan
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ""
+        OPENQODEX_STEP: plan
+        OPENQODEX_VERSION: ${{ inputs.version }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        BASE_REF: ${{ github.base_ref }}
+        BLOCK_ON_SEVERITY: ${{ inputs.block-on-severity }}
+        CONFIG_FROM: ${{ inputs.config-from }}
+        EVENT_NAME: ${{ github.event_name }}
+        PUSH_BEFORE: ${{ github.event.before }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        REVIEW: ${{ inputs.review }}
+        CLAUDE_CODE_VERSION: ${{ inputs.claude-code-version }}
+      run: bash "${GITHUB_ACTION_PATH}/scripts/action-scan.sh"
+
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       env:
         ANTHROPIC_API_KEY: ""
       with:
         path: ~/.openqodex/tools
-        key: openqodex-tools-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+        key: ${{ steps.plan.outputs.cache-key }}
 
     # Inputs and event values reach the script through the environment only,
     # never pasted into it, so a branch name cannot inject a command. The key

@@ -83,19 +83,19 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
   - `no matching files`: nothing in the change is the kind of file it reads.
   - `installing`: it is being downloaded for the first time; it is included from the next run. Say so to the developer rather than waiting.
   - `not installed`: it could not be installed here; the reason says why.
-  - `needs Ruby 2.7+` or `needs Go`: brakeman and rubocop need Ruby, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
+  - `needs Ruby` or `needs Go`: brakeman needs Ruby 3.0 or newer, rubocop Ruby 2.7 or newer, golangci-lint needs Go. OpenQodex does not install language runtimes. If the developer wants those scanners, they install Ruby or Go the usual way for their system (for example `brew install ruby go` on a Mac) and run the review again.
   - `untrusted`: a custom scanner from the repo's config that the developer has not approved. Tell the developer; approving it is their decision (`npx -y openqodex@0.8.1 trust`).
   - `failed`: the scanner ran and broke; the reason has its error. A scanner problem never changes the exit code.
 
 ## Inside a sandbox
 
-Some agents run commands in a sandbox that cannot reach the network or write outside the project. There the first run cannot download the scanners, and the reviewer may not reach its model. Tell the developer to run this once in their own terminal, outside the agent:
+Some agents run commands in a sandbox that cannot reach the network or write outside the project. There the first run cannot download the scanners, and the reviewer may not reach its model. Tell the developer to run this once in their own terminal, outside the agent, inside the repository:
 
 ```
 npx -y openqodex@0.8.1 doctor --install
 ```
 
-It downloads every scanner that fits the machine into `~/.openqodex/tools/`. If the review still says "Full review unavailable" inside the sandbox, the developer runs `npx -y openqodex@0.8.1 review` in their own terminal.
+It downloads the scanners this repository's files call for into `~/.openqodex/tools/` and prints why for each one; `--all-scanners` downloads every scanner. If the review still says "Full review unavailable" inside the sandbox, the developer runs `npx -y openqodex@0.8.1 review` in their own terminal.
 
 ## More
 

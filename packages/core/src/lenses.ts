@@ -19,7 +19,14 @@ export type LensTriggers = {
   hunkRegex?: string;
 };
 
-export type Lens = SelectedLens & { triggers: LensTriggers };
+// `coveredBy`: scanner rules ("<source>:<ruleId>") that check what the lens
+// asks the reviewer to look for. When a scanner ran such a rule on every
+// changed file the lens's file globs match, the lens stands down: a script
+// does the deterministic work, the model does not repeat it.
+export type Lens = SelectedLens & { triggers: LensTriggers; coveredBy?: string[] };
+
+// Whether a scanner rule ran on a file in this run.
+export type RuleCoverage = (token: string, file: string) => boolean;
 
 const DEFAULT_CONFIDENCE_FLOOR = 0.7;
 
@@ -67,7 +74,8 @@ export function parseLens(text: string): Lens {
     }
   }
   if (!body) throw new Error(`lens ${name}: body is empty`);
-  return { name, description, triggers: { files, hunkRegex }, confidenceFloor, body };
+  const coveredBy = Array.isArray(obj.covered_by) ? obj.covered_by.filter((x): x is string => typeof x === "string") : undefined;
+  return { name, description, triggers: { files, hunkRegex }, confidenceFloor, body, ...(coveredBy ? { coveredBy } : {}) };
 }
 
 // The first candidate that is a directory holding at least one `.md` file.
@@ -152,13 +160,25 @@ function specificity(lens: Lens): number {
   return score;
 }
 
-// The lenses whose triggers all match, most specific first, then lower
-// confidence floor first (a noisy lens raises its own floor), then by name,
-// capped at four.
-export function selectLensesForDiff(args: { diff: string; files: string[]; catalog: Lens[] }): SelectedLens[] {
+// True when a scanner ran one of the lens's covering rules on every changed
+// file the lens's globs match (every changed file, for a lens without globs).
+function coveredByScanner(lens: Lens, files: string[], covered?: RuleCoverage): boolean {
+  if (!covered || !lens.coveredBy || lens.coveredBy.length === 0) return false;
+  const globs = lens.triggers.files;
+  const mine = globs && globs.length > 0 ? files.filter((path) => globs.some((g) => matchesGlob(path, g))) : files;
+  return mine.length > 0 && mine.every((file) => lens.coveredBy!.some((token) => covered(token, file)));
+}
+
+// The lenses whose triggers all match and that no scanner rule already
+// covered, most specific first, then lower confidence floor first (a noisy
+// lens raises its own floor), then by name, capped at four.
+export function selectLensesForDiff(args: { diff: string; files: string[]; catalog: Lens[]; covered?: RuleCoverage }): SelectedLens[] {
   const text = extractChangedLineText(args.diff);
   const matched = args.catalog.filter(
-    (lens) => fileTriggerMatches(args.files, lens.triggers.files) && hunkTriggerMatches(text, lens.triggers.hunkRegex),
+    (lens) =>
+      fileTriggerMatches(args.files, lens.triggers.files) &&
+      hunkTriggerMatches(text, lens.triggers.hunkRegex) &&
+      !coveredByScanner(lens, args.files, args.covered),
   );
   const ranked = [...matched].sort((a, b) => {
     const delta = specificity(b) - specificity(a);
@@ -174,10 +194,11 @@ export function selectLensesForDiff(args: { diff: string; files: string[]; catal
   }));
 }
 
-export function selectLenses(change: Change, dir?: string): SelectedLens[] {
+export function selectLenses(change: Change, dir?: string, covered?: RuleCoverage): SelectedLens[] {
   return selectLensesForDiff({
     diff: change.diff,
     files: change.files.map((f) => f.path),
     catalog: cachedCatalog(dir),
+    covered,
   });
 }

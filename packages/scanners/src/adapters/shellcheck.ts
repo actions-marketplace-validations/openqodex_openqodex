@@ -5,8 +5,9 @@
 // glob injection), unsafe `rm` patterns, `cd` without error handling,
 // missing `set -e`, and command-substitution mistakes.
 //
-// We invoke it only on changed files that look like shell scripts (.sh
-// / .bash extension) so a change without one is a no-op. ShellCheck emits
+// We invoke it only on changed shell scripts, by extension (.sh, .bash) or,
+// for a file with no extension, by its sh, bash, dash or ksh shebang (read
+// by detect.ts), so a change without one is a no-op. ShellCheck emits
 // a JSON array (one object per finding) with span lines and a per-finding
 // level we map to our severity scale. It writes nothing to disk.
 //
@@ -21,25 +22,30 @@ import type {
 } from "@openqodex/core";
 import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
+import type { RepoFacts } from "../detect.js";
 import type { Adapter } from "./index.js";
+import { suchAs } from "./words.js";
 
 const SHELLCHECK_TIMEOUT_MS = 60_000;
 const SHELLCHECK_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
 
-// Match .sh / .bash by extension. We deliberately don't try to sniff
-// shebangs of extensionless files: that needs a file read per path and
-// most CI/repo scripts carry an extension. Keeps the adapter cheap and
-// predictable.
 function isShellPath(p: string): boolean {
   return /\.(sh|bash)$/i.test(p);
+}
+
+// .sh and .bash files, and extensionless scripts whose shebang names a shell
+// shellcheck reads (bin/deploy with #!/usr/bin/env bash).
+function shellScripts(changedPaths: string[], facts: RepoFacts): string[] {
+  return safeFileArgs(changedPaths.filter((p) => isShellPath(p) || facts.content(p) === "shell"));
 }
 
 export async function runShellcheck(args: {
   repoDir: string;
   changedPaths: string[];
   tool: ResolvedTool | null;
+  facts: RepoFacts;
 }): Promise<AdapterResult> {
-  const scripts = safeFileArgs(args.changedPaths.filter(isShellPath));
+  const scripts = shellScripts(args.changedPaths, args.facts);
   if (scripts.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
@@ -88,7 +94,8 @@ async function execShellcheck(tool: ResolvedTool, cliArgs: string[], cwd: string
 
 export const shellcheck: Adapter = {
   source: "shellcheck",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isShellPath)).length > 0,
+  files: shellScripts,
+  why: (files) => `shell scripts, ${suchAs(files)}`,
   run: (args) => runShellcheck(args),
 };
 

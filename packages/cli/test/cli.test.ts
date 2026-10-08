@@ -45,6 +45,10 @@
 // 21. the finalize command in the brief drops --cwd or --config, or breaks
 //     on a path with a space or a quote.
 // 22. demo accepts a flag it ignores, such as --config.
+// 23. doctor --install in a repository installs scanners its files do not
+//     call for (brakeman in a TypeScript repo) or ones its config switches
+//     off; outside a repository, or with --all-scanners, it installs less
+//     than every scanner; --all-scanners is taken without --install.
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   cpSync,
@@ -462,6 +466,30 @@ describe("doctor", () => {
       expect(r.stderr.trim().split("\n")).toHaveLength(1);
       expect(readdirSync(h)).toEqual([]);
     }
+  });
+
+  it("doctor --install installs what the repository's files call for; outside one, or with --all-scanners, every scanner (23)", () => {
+    const repo = temp("ts");
+    git(repo, ["init", "--quiet", "-b", "main"]);
+    mkdirSync(join(repo, "app"));
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ dependencies: { "react-native": "0.76.0", react: "18.3.1" } }));
+    writeFileSync(join(repo, "app/index.tsx"), "export default function Home() { return null; }\n");
+    writeFileSync(join(repo, "Gemfile"), "gem 'cocoapods'\n");
+    writeFileSync(join(repo, "deploy.sh"), "echo hi\n");
+    writeFileSync(join(repo, ".openqodex.yaml"), "scanners:\n  disable: [shellcheck]\n");
+    const inRepo = JSON.parse(cli(["doctor", "--json"], repo).stdout) as { downloads: string[] | null; selection: { scanner: string; wanted: boolean; line: string }[]; toolchain: string };
+    expect(inRepo.downloads).toEqual(["semgrep", "gitleaks", "oxlint"]);
+    expect(inRepo.selection.find((c) => c.scanner === "shellcheck")).toEqual({ scanner: "shellcheck", wanted: false, line: "shellcheck: disabled in .openqodex/config.yaml" });
+    expect(inRepo.toolchain).toMatch(/^[0-9a-f]{64}$/);
+    const text = cli(["doctor"], repo).stdout;
+    expect(text).toContain("This repository needs\n  semgrep: any file\n  gitleaks: any file\n  oxlint: JavaScript or TypeScript files");
+    expect(text).toMatch(/Not needed here: .*brakeman/);
+
+    const outside = JSON.parse(cli(["doctor", "--json"], temp("plain")).stdout) as { downloads: string[] | null; selection: unknown };
+    expect(outside).toMatchObject({ downloads: null, selection: null });
+    const alone = cli(["doctor", "--all-scanners"], repo);
+    expect(alone.code).toBe(2);
+    expect(alone.stderr).toContain("--all-scanners goes with --install");
   });
 
   it("doctor exits 0 for a --config or --cwd that does not exist", () => {

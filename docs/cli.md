@@ -38,7 +38,7 @@ A repository with no commits checks every file with `scan`; `review` needs a fir
 - `--no-install`: do not download missing scanners. The report lists them as not installed.
 - `--offline`: no built-in scanner goes online. osv-scanner and semgrep are skipped and listed as disabled. Scanner downloads are off. The daily version check does not start after this run.
 
-`doctor --install` together with `--offline` or `--no-install` exits 2.
+`doctor --install` together with `--offline` or `--no-install` exits 2, and so does `--all-scanners` without `--install`.
 
 Progress goes to stderr. A scan's report goes to stdout; a review prints its receipt there.
 
@@ -145,7 +145,7 @@ Installs OpenQodex into your coding agents, then reviews. After the install, it 
 `init` prints the plan, every file under "For you, on this machine" or "For the team, in this repo", and asks one question: "Write these files?". After writing, it lists what it wrote for you, with the command that undoes it, and what it wrote for the team, and names `init --project`, which puts the agent files inside the repository instead; the scanners, the record of what `init` wrote and the launcher a git hook calls stay in `~/.openqodex` on your machine. Its last line is the command to run next. Each command it prints starts with the launcher's full path (in project scope, the pinned `npx -y openqodex@<version>`), because an npx install puts no `openqodex` on your `PATH`; `init` never edits a shell profile. Without a terminal it does not ask: inside Claude Code, Codex or Cursor (`CLAUDECODE`, `CODEX_THREAD_ID` or `CURSOR_AGENT` is set) it writes the plan; anywhere else it prints the plan and the flags that change it, writes nothing and exits 2 unless `--yes` is given. When there is nothing to write, such a run exits 0 but records no choice and runs no review.
 - `--no-review`: end after the install, with no review and no question.
 - `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
-- `--dry-run`: print the plan and write nothing.
+- `--dry-run`: print the plan, with the scanners `init` would download and why, and write and download nothing.
 
 `init` does not take the flags listed under "Flags every command below accepts". `agents` lists each file it writes.
 

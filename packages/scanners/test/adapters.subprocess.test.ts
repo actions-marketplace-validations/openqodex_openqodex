@@ -2,6 +2,8 @@
 // guards that scanner's invocation, output parser, changed-line filter and tool
 // resolution together. Run by the end-to-end config, not the unit config.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import net from "node:net";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,6 +17,17 @@ process.env.OPENQODEX_HOME = scannerHome;
 process.env.HOME = mkdtempSync(join(tmpdir(), "oq-adapter-user-"));
 
 const generatedSecret = `sk_live_${randomBytes(12).toString("hex")}`;
+// A React page whose effect reads `id` and leaves it out of its dependencies.
+const REACT_PAGE = `import { useEffect, useState } from "react";
+export default function Page({ id }: { id: string }) {
+  const [data, setData] = useState<string | null>(null);
+  useEffect(() => {
+    fetch(\`/api/\${id}\`).then((r) => r.text()).then(setData);
+  }, []);
+  return <p>{data}</p>;
+}
+`;
+
 // runtime: the language runtime a scanner needs that this machine may lack, and
 // the reason the product must give when it is missing.
 type Case = { scanner: BuiltinScanner; rule: string; files: Record<string, string>; anchor: string; runtime?: RegExp; network?: true };
@@ -37,6 +50,10 @@ def query():
   { scanner: "rubocop", rule: "Lint/UselessAssignment", files: { "app.rb": "unused = 1\n" }, anchor: "app.rb", runtime: /^needs Ruby/ },
   { scanner: "bandit", rule: "B608", files: { "search.py": "def query(user):\n    return f'SELECT * FROM users WHERE name = {user}'\n" }, anchor: "search.py" },
   { scanner: "oxlint", rule: "eslint/no-debugger", files: { "main.js": "debugger;\n" }, anchor: "main.js" },
+  // Framework rules the project's manifest switches on (detect.ts): oxlint's
+  // react plugin in a React project, ruff's DJ rules in a Django one.
+  { scanner: "oxlint", rule: "react-hooks/exhaustive-deps", files: { "web/package.json": JSON.stringify({ dependencies: { react: "18.3.1" } }), "web/page.tsx": REACT_PAGE }, anchor: "web/page.tsx" },
+  { scanner: "ruff", rule: "DJ001", files: { "requirements.txt": "Django==5.0\n", "shop/models.py": "from django.db import models\n\n\nclass Item(models.Model):\n    name = models.CharField(max_length=10, null=True)\n\n    def __str__(self):\n        return self.name\n" }, anchor: "shop/models.py" },
   { scanner: "golangci", rule: "gosec", files: { "go.mod": "module example.com/tiny\n\ngo 1.22\n", "main.go": "package main\nimport \"crypto/md5\"\nfunc main() { _ = md5.New() }\n" }, anchor: "main.go", runtime: /^needs Go/ },
 ];
 
@@ -80,6 +97,65 @@ describe("builtin scanner subprocesses", () => {
     if (first.scan.scanners[0]!.status === "not_installed") { process.stdout.write(`golangci: ${first.scan.scanners[0]!.reason}\n`); return; }
     const second = await scan(spec);
     expect(second.scan.candidates).toContainEqual(expect.objectContaining({ source: "golangci", ruleId: spec.rule, filePath: spec.anchor }));
+  }, 300_000);
+
+  it("oxlint's React rules stay off for a file outside a React project, and the run says which files had them", async () => {
+    const spec: Case = {
+      scanner: "oxlint",
+      rule: "",
+      files: {
+        "web/package.json": JSON.stringify({ dependencies: { react: "18.3.1" } }),
+        "web/page.tsx": REACT_PAGE,
+        "api/package.json": JSON.stringify({ dependencies: { express: "4.21.0" } }),
+        "api/hooks.tsx": REACT_PAGE,
+      },
+      anchor: "",
+    };
+    const result = await scan(spec);
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    const deps = result.scan.candidates.filter((c) => c.ruleId === "react-hooks/exhaustive-deps").map((c) => c.filePath);
+    expect(deps).toEqual(["web/page.tsx"]);
+    expect([...(result.checked.get("oxlint:react-hooks/exhaustive-deps") ?? [])]).toEqual(["web/page.tsx"]);
+  }, 300_000);
+
+  // osv-scanner 2 asks deps.dev and sends file hashes unless told not to;
+  // OpenQodex promises names and versions to osv.dev only. A proxy that
+  // logs every host the scan opens a tunnel to holds that promise.
+  it("osv-scanner reads a bun.lock and opens api.osv.dev only", async () => {
+    if (process.env.OPENQODEX_E2E_OFFLINE === "1") return;
+    const hosts: string[] = [];
+    const proxy = http.createServer((_req, res) => res.writeHead(403).end());
+    proxy.on("connect", (req, socket, head) => {
+      const [host, port] = (req.url ?? "").split(":");
+      hosts.push(host ?? "");
+      const upstream = net.connect(Number(port), host, () => {
+        socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.write(head);
+        upstream.pipe(socket);
+        socket.pipe(upstream);
+      });
+      upstream.on("error", () => socket.destroy());
+      socket.on("error", () => upstream.destroy());
+    });
+    await new Promise<void>((done) => proxy.listen(0, "127.0.0.1", done));
+    const { port } = proxy.address() as net.AddressInfo;
+    const saved = { HTTPS_PROXY: process.env.HTTPS_PROXY, HTTP_PROXY: process.env.HTTP_PROXY };
+    process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+    process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
+    try {
+      // Resolved first, outside the proxy, so the download is not counted.
+      await createToolResolver({ allowInstall: true, installBudgetMs: null })("osv-scanner");
+      hosts.length = 0;
+      const bun = '{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "tiny", "dependencies": { "lodash": "4.17.15" } } },\n  "packages": {\n    "lodash": ["lodash@4.17.15", "", {}, "sha512-x"]\n  }\n}\n';
+      const pom = "<project><modelVersion>4.0.0</modelVersion><groupId>a</groupId><artifactId>b</artifactId><version>1</version><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>\n";
+      const result = await scan({ scanner: "osv-scanner", rule: "", files: { "bun.lock": bun, "pom.xml": pom }, anchor: "" });
+      expect(result.scan.scanners[0]!.status).toBe("ran");
+      expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "osv-scanner", ruleId: "GHSA-p6mc-m468-83gw", filePath: "bun.lock" }));
+      expect([...new Set(hosts)]).toEqual(["api.osv.dev"]);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      proxy.close();
+    }
   }, 300_000);
 
   it("gitleaks finds a secret and never puts its value in the scan result", async () => {

@@ -4,7 +4,7 @@
 // file from elsewhere on the machine into a finding. So only a regular file
 // that is inside the repo and under a size cap is read.
 
-import { constants } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -44,5 +44,50 @@ export async function readRepoFile(repoDir: string, rel: string, maxBytes: numbe
     return buffer.subarray(0, bytesRead).toString("utf8");
   } finally {
     await handle.close();
+  }
+}
+
+// True when every folder from the repo root down to `rel`'s own is a real
+// folder, never a link, even one that stays inside the repo.
+export function noLinkOnTheWay(repoDir: string, rel: string): boolean {
+  const parts = path.normalize(rel).split(path.sep).slice(0, -1);
+  let at = repoDir;
+  for (const part of parts) {
+    at = path.join(at, part);
+    try {
+      const stat = lstatSync(at);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The same checks, synchronous, for at most the first `maxBytes` of a file,
+// and stricter: no link anywhere on the way, not even one that stays inside
+// the repo. `whole`: the file must fit in `maxBytes`, or nothing is read.
+// Null for anything that is not a regular file inside the repo, or that
+// cannot be read. `realRepo` is the repo's real path, computed once by the
+// caller.
+export function readRepoPrefixSync(realRepo: string, repoDir: string, rel: string, maxBytes: number, whole = false): Buffer | null {
+  const normalized = path.normalize(rel);
+  if (path.isAbsolute(normalized) || normalized === ".." || normalized.startsWith(`..${path.sep}`)) return null;
+  if (!noLinkOnTheWay(repoDir, normalized)) return null;
+  const abs = path.join(repoDir, normalized);
+  let fd: number | null = null;
+  try {
+    if (!lstatSync(abs).isFile()) return null;
+    if (!realpathSync(abs).startsWith(realRepo + path.sep)) return null;
+    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || (whole && stat.size > maxBytes)) return null;
+    const buffer = Buffer.alloc(Math.min(stat.size, maxBytes));
+    const read = readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, read);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
   }
 }

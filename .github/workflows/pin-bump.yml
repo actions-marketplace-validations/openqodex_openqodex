@@ -1,0 +1,230 @@
+name: Scanner pin bumps
+
+# Once a month, one pull request per scanner whose newest release is at least
+# seven days old and newer than its pin (scripts/pin-bump.mjs). The pinned
+# table is the product's supply chain, so the work is split by trust:
+# - plan and gate run with read access only and keep no git credentials. gate
+#   makes the bump, which for a PyPI scanner starts the pinned uv to re-lock
+#   it, and then runs the gate on it, which starts the new scanner release:
+#   code from outside this repository. Before the gate runs it hands over,
+#   as an artifact no later step can change, the sha256 of the files its
+#   bump wrote, the lock files it made and their sha256; after, the gate's
+#   outcome.
+# - open-pr holds the write token and starts nothing it downloads: no uv, no
+#   scanner, no package install, build or test. It makes the bump again
+#   itself with pin-bump.mjs, which downloads and checks every release file,
+#   and takes the lock files from gate only with --locks: their sha256 must
+#   be the one recorded, every line must read as a lock, and every hash must
+#   be one PyPI or RubyGems publishes for that exact version. It reads the
+#   gate job's other claims only as a sha256 that must equal its own and a
+#   word that must be success or failure. The branch and the body are built
+#   from the scanner's name in the table, the version the script wrote, that
+#   word and the script's sums= line.
+# Nothing here merges or approves: a person reads the change and merges it.
+on:
+  schedule:
+    - cron: "17 6 3 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Scanners with a bump due
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tools: ${{ steps.plan.outputs.tools }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # The scanner names come from the table's own keys; the script prints
+      # only those whose bump is due.
+      - id: plan
+        run: |
+          tools="$(node scripts/pin-bump.mjs --matrix)"
+          if ! [[ "$tools" =~ ^\[(\"[a-z0-9-]+\"(,\"[a-z0-9-]+\")*)?\]$ ]]; then
+            echo "::error title=Pin bump::the plan is not a list of scanner names"
+            exit 1
+          fi
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  gate:
+    name: Bump ${{ matrix.tool }} and run the gate on it
+    needs: plan
+    if: needs.plan.outputs.tools != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tool: ${{ fromJSON(needs.plan.outputs.tools) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      # golangci-lint needs Go on PATH for the end-to-end tests.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Move the pin
+        env:
+          TOOL: ${{ matrix.tool }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/pin-bump.mjs --apply "$TOOL"
+      # Written and uploaded before any code from outside the repository runs
+      # here, so the gate cannot change it afterwards.
+      - name: Record the bump
+        env:
+          TOOL: ${{ matrix.tool }}
+          OUT: ${{ runner.temp }}/proposal
+        run: |
+          mkdir -p "$OUT/locks"
+          node scripts/pin-bump.mjs --proposal "$TOOL" > "$OUT/sha256.txt"
+          node scripts/pin-bump.mjs --lock-digest "$TOOL" > "$OUT/locks-sha256.txt"
+          for f in packages/scanners/locks/"$TOOL"-*.txt; do
+            if [ -f "$f" ]; then cp "$f" "$OUT/locks/"; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proposal-${{ matrix.tool }}
+          path: ${{ runner.temp }}/proposal
+          if-no-files-found: error
+          retention-days: 7
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Check every pinned download
+        run: node scripts/refresh-toolchain.mjs --verify
+      - name: Gate
+        id: gate
+        continue-on-error: true
+        env:
+          OPENQODEX_E2E_HOME: ${{ runner.temp }}/openqodex-e2e-home
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash scripts/gate.sh
+      - name: Record the gate's outcome
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          OUT: ${{ runner.temp }}/outcome
+        run: |
+          mkdir -p "$OUT"
+          printf '%s\n' "$OUTCOME" > "$OUT/outcome.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: outcome-${{ matrix.tool }}
+          path: ${{ runner.temp }}/outcome/outcome.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  open-pr:
+    name: Open the pull request for ${{ matrix.tool }}
+    needs: [plan, gate]
+    if: ${{ !cancelled() && needs.plan.outputs.tools != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tool: ${{ fromJSON(needs.plan.outputs.tools) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: proposal-${{ matrix.tool }}
+          path: ${{ runner.temp }}/claims
+      # The bump made again here, by the script that checks every download
+      # and starts none. A PyPI or RubyGems pin takes the gate job's lock
+      # files only through the checks of --locks. No token: the GitHub API
+      # answers without one.
+      - name: Move the pin
+        env:
+          TOOL: ${{ matrix.tool }}
+          CLAIMS: ${{ runner.temp }}/claims
+        run: |
+          if ! [[ "$TOOL" =~ ^[a-z0-9-]+$ ]]; then
+            echo "::error title=Pin bump::not a scanner name"
+            exit 1
+          fi
+          locksum="$(head -c 100 "$CLAIMS/locks-sha256.txt" | head -n 1)"
+          if ! [[ "$locksum" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error title=Pin bump::the recorded lock sha256 is not one"
+            exit 1
+          fi
+          node scripts/pin-bump.mjs --apply "$TOOL" --locks "$CLAIMS/locks" --locks-sha256 "$locksum" > "$RUNNER_TEMP/apply.txt"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: outcome-${{ matrix.tool }}
+          path: ${{ runner.temp }}/claims
+      - name: Check the gate job's claims against this bump
+        env:
+          TOOL: ${{ matrix.tool }}
+          CLAIMS: ${{ runner.temp }}/claims
+        run: |
+          own="$(node scripts/pin-bump.mjs --proposal "$TOOL")"
+          claimed="$(head -c 100 "$CLAIMS/sha256.txt" | head -n 1)"
+          outcome="$(head -c 20 "$CLAIMS/outcome.txt" | head -n 1)"
+          if ! [[ "$claimed" =~ ^[0-9a-f]{64}$ ]] || ! [ "$claimed" = "$own" ]; then
+            echo "::error title=Pin bump::the gate ran on another bump than this one; no pull request"
+            exit 1
+          fi
+          if ! [[ "$outcome" =~ ^(success|failure)$ ]]; then
+            echo "::error title=Pin bump::the gate's outcome is not success or failure"
+            exit 1
+          fi
+      - name: Commit and open the pull request
+        env:
+          TOOL: ${{ matrix.tool }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(jq -r --arg t "$TOOL" '.tools[$t].version' packages/scanners/toolchain.json)"
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error title=Pin bump::the table holds no version for this scanner"
+            exit 1
+          fi
+          gate="$(head -n 1 "$RUNNER_TEMP/claims/outcome.txt")"
+          if [ "$gate" = "success" ]; then result="passed"; else result="failed; read its log in this workflow run before merging"; fi
+          if grep -q -x "sums=checksum-file-and-digest" "$RUNNER_TEMP/apply.txt"; then
+            sums="Each download's sha256 was computed from the downloaded file and matched both the project's checksum file and the sha256 GitHub publishes for it."
+          elif grep -q -x "sums=digest-only" "$RUNNER_TEMP/apply.txt"; then
+            sums="Each download's sha256 was computed from the downloaded file and matched the sha256 GitHub publishes for it. The project publishes no checksum file."
+          else
+            sums="Its lock files name every package at one version, and each sha256 was checked against what the registry publishes for that version."
+          fi
+          branch="pin-bump/${TOOL}-${version}"
+          if git ls-remote --exit-code origin "refs/heads/${branch}" > /dev/null; then
+            echo "A pull request branch for ${TOOL} ${version} already exists."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add packages/scanners/toolchain.json packages/scanners/locks .changeset
+          git commit -m "Move the ${TOOL} pin to ${version}"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" push origin "$branch"
+          body="The built-in ${TOOL} scanner moves to ${version}, its newest release at least seven days old. This job made the bump itself. ${sums} The gate ran on the same files in a job without write access: ${result}. CI does not start on a pull request a workflow opens: push a commit, or close and reopen it, to run CI. Read the change in findings before merging; nothing merges or approves this automatically."
+          gh pr create --base main --head "$branch" --title "Move the ${TOOL} pin to ${version}" --body "$body"

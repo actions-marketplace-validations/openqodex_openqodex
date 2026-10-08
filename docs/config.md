@@ -46,7 +46,7 @@ scanners:
   disable: [brakeman]
   custom:
     - source: https://github.com/aquasecurity/trivy
-      run: trivy config --format sarif --output {report} {target}
+      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
 graph:
   enabled: true
 ```
@@ -157,7 +157,7 @@ A list of custom scanners. Each one needs two keys:
 scanners:
   custom:
     - source: https://github.com/aquasecurity/trivy
-      run: trivy config --format sarif --output {report} {target}
+      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
 ```
 
 A custom scanner never runs until you approve it with `openqodex trust`. `custom-scanners` explains the step.
