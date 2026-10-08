@@ -1,6 +1,9 @@
 // The Django plugin on a small real application and on hostile input.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { describe, expect, it } from "vitest";
+import { PACKET_DIR, writePacket } from "../src/review/packet.js";
 import { buildGraph, detectImpact, frameworkLayer, openStore, renderImpactBlock } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { django } from "../src/frameworks/django/index.js";
@@ -101,6 +104,24 @@ describe("the Django plugin on a small application", () => {
     expect(brief).toContain("| `DetailTests.test_load` | `blog/tests.py:15` | calls | `load` | certain |");
     expect(brief).toContain("| `DetailTests.test_request` | `blog/tests.py:9` | requests through route `ANY blog/<int:pk>/` | `load` | likely: ");
     expect(brief).not.toMatch(/\bcover(s|age:)/);
+  });
+
+  it("writes every route and test link past the brief's cut into the packet, and the brief names the file that holds them", async () => {
+    const many = Array.from({ length: 15 }, (_, i) => `    path("r${i}/", views.detail, name="r${i}"),\n`).join("");
+    const files = { ...APP, "blog/urls.py": `from django.urls import path\n\nfrom blog import views\n\napp_name = "blog"\nurlpatterns = [\n${many}]\n` };
+    const root = makeRepo(files);
+    commitAll(root);
+    writeFiles(root, { "blog/views.py": (APP["blog/views.py"] as string).replace("return get_object_or_404(Post, pk=pk)", "return get_object_or_404(Post, pk=str(pk))") });
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const g = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const impact = detectImpact(g, change);
+    const packet = await writePacket({ root, repoRoot: root, graph: g, impact, baseSha: change.baseSha, secrets: [] });
+    impact.packet = packet.dir;
+    expect(packet.files).toContain("frameworks.json");
+    const held = JSON.parse(readFileSync(join(root, PACKET_DIR, "frameworks.json"), "utf8")) as { routes: { pattern: string | null }[]; tests: unknown[] };
+    expect(held.routes.map((r) => r.pattern).sort()).toEqual(Array.from({ length: 15 }, (_, i) => `blog/r${i}/`).sort());
+    const brief = renderImpactBlock(impact);
+    expect(brief).toContain(`| and 3 more, every one in \`${PACKET_DIR}/frameworks.json\` |`);
   });
 
   it("finds the routes of unchanged files once Django is added to the manifest, from cached facts, never from a stale build", async () => {

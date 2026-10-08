@@ -16,6 +16,46 @@ export const MAX_ROWS = 40;
 
 const routeLabel = (r: Registration) => `${r.methods.map((m) => (m === "*" ? "ANY" : m)).join("|")} ${r.pattern ?? r.partial ?? "(computed path)"}`;
 
+// Everything the brief's framework tables cut, uncut, for the review's
+// packet: every route that reaches each touched symbol, every test link,
+// every template rendered and every migration of a touched model, plus the
+// summary's declared and orphaned routes. Null when the stage did not run.
+export function frameworkPacket(graph: Graph, impact: { touched: readonly string[]; frameworks?: ImpactFrameworks }): Record<string, unknown> | null {
+  const layer = frameworkLayer(graph);
+  if (!layer || !impact.frameworks) return null;
+  const routes = new Map<string, Record<string, unknown>>();
+  const asRow = (r: Registration) => ({ registration: r.id, plugin: r.plugin, app: r.app, methods: r.methods, pattern: r.pattern, partial: r.partial ?? null, name: r.name, site: r.site, handler: r.handler, mounted: r.mounted, mountedVia: r.mountedVia });
+  for (const row of impact.frameworks.routes) {
+    const r = layer.entity(row.registration);
+    if (r && r.kind === "registration") routes.set(r.id, { ...asRow(r), declared: row.declared, reaches: [] });
+  }
+  const tests: Record<string, unknown>[] = [];
+  const renders: Record<string, unknown>[] = [];
+  const migrations: Record<string, unknown>[] = [];
+  let cut = false;
+  for (const seed of impact.touched) {
+    const reach = layer.routesReaching(seed);
+    cut = cut || reach.cut;
+    for (const x of reach.routes) {
+      const row = routes.get(x.registration.id) ?? { ...asRow(x.registration), declared: false, reaches: [] };
+      (row.reaches as unknown[]).push({ seed, path: x.path, hops: x.hops, tier: x.tier, note: x.note });
+      routes.set(x.registration.id, row);
+    }
+    for (const t of layer.testsOf(seed)) tests.push({ ...t, target: seed });
+    for (const e of layer.edgesFrom(seed)) if (e.kind === "renders") renders.push({ from: seed, to: layer.entity(e.to), evidence: e.evidence });
+    for (const e of layer.edgesTo(seed)) if (e.kind === "changes_schema") migrations.push({ model: seed, migration: e.from, evidence: e.evidence });
+  }
+  return {
+    routes: [...routes.values()],
+    routesTotal: routes.size,
+    walkCut: cut,
+    tests,
+    renders,
+    migrations,
+    note: "Test links are static references, calls or possible requests, never coverage.",
+  };
+}
+
 export function frameworkImpact(graph: Graph, change: Pick<Change, "files" | "coverage">, touched: readonly string[], removed: readonly string[]): ImpactFrameworks | undefined {
   const layer = frameworkLayer(graph);
   if (!layer) return undefined;

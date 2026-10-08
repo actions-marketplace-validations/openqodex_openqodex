@@ -65,16 +65,17 @@ const VERB: Record<string, string> = {
   "type-or-value-reference": "references",
 };
 
-function table(head: string[], rows: string[][], total: number): string[] {
-  const out = [`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`];
-  for (const r of rows.slice(0, MAX_ROWS)) out.push(`| ${r.join(" | ")} |`);
-  const shown = Math.min(rows.length, MAX_ROWS);
-  if (total > shown) out.push(`| and ${total - shown} more |${head.slice(1).map(() => " ").join("|")}|`);
-  return out;
-}
-
-export function renderFrameworkLines(fw: ImpactFrameworks | undefined): string[] {
+export function renderFrameworkLines(fw: ImpactFrameworks | undefined, packet: string | null = null): string[] {
   if (!fw) return [];
+  // A cut names the packet file that holds the rest, when there is a packet.
+  const rest = packet ? `, every one in \`${packet}frameworks.json\`` : "";
+  const table = (head: string[], rows: string[][], total: number): string[] => {
+    const out = [`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`];
+    for (const r of rows.slice(0, MAX_ROWS)) out.push(`| ${r.join(" | ")} |`);
+    const shown = Math.min(rows.length, MAX_ROWS);
+    if (total > shown) out.push(`| and ${total - shown} more${rest} |${head.slice(1).map(() => " ").join("|")}|`);
+    return out;
+  };
   const blocks: string[][] = [];
   if (fw.routes.length > 0) {
     const rows = fw.routes.map((r) => {

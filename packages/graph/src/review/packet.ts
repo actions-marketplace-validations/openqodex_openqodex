@@ -20,6 +20,8 @@ import type { ImpactSummary } from "@openqodex/core";
 import { showBlob } from "../capture/git.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION } from "../model/records.js";
 import { callersOfRemoved, isTestPath, toImpactUnknown } from "../impact.js";
+import { frameworkPacket } from "../frameworks/impact.js";
+import { PLUGINS } from "../frameworks/registry.js";
 import { symbolKey } from "../render.js";
 import type { Graph, GraphEdge } from "../types.js";
 
@@ -176,6 +178,8 @@ export async function writePacket(args: {
     notRead: graph.status.notRead,
     cuts: impact.cuts,
   });
+  const fw = frameworkPacket(graph, impact);
+  if (fw) write("frameworks.json", "every route, template, migration and test link of the change that the brief's framework tables cut", fw);
   write("status.json", "how the graph was built: counts, mode, generation, what it left out", { apiVersion: API_VERSION, ...graph.status });
   write("capabilities.json", "what this installation's graph can see", {
     apiVersion: API_VERSION,
@@ -183,7 +187,8 @@ export async function writePacket(args: {
     languages: ["typescript", "tsx", "javascript", "python", "go", "ruby"],
     relations: ["calls", "inherits", "imports"],
     tiers: { certain: [...CERTAIN_KINDS], likely: ["autoload", "workspace-package by the dist to src or src/index convention", "ts-paths when the tsconfig's globs do not list the file"], possible: [] },
-    notYet: ["calls through interfaces and base classes (phase 2)", "functions used as values (phase 2)", "routes, handlers and tests (phase 4)"],
+    frameworks: PLUGINS.map((p) => ({ id: p.id, version: p.version, supportedVersions: p.supportedVersions, rules: p.capabilities().rules.map((r) => r.id) })),
+    notYet: ["calls through interfaces and base classes (phase 2)", "functions used as values (phase 2)", `routes, handlers and tests of frameworks other than ${PLUGINS.map((p) => p.id).join(", ")} (phase 4)`],
   });
 
   // The base version of each removed or moved symbol, as the base had it.
