@@ -363,7 +363,8 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     status: s.status,
     reasons: s.reasons,
     // A move is no change of its own: the lines added at the new place make its new definition a touched symbol.
-    risk: riskFor(touched.length + removed.length - moved + exports.length, callerIds.size, removedStillCalled, brokenConsumers),
+    // A route the change left without its handler is broken like a removed symbol still called.
+    risk: riskFor(touched.length + removed.length - moved + exports.length, callerIds.size, removedStillCalled || (frameworks?.routes.some((r) => r.status === "missing") ?? false), brokenConsumers),
     build: {
       durationMs: s.durationMs,
       cacheHits: s.cacheHits,
