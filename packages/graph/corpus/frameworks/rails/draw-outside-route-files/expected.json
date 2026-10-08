@@ -1,0 +1,55 @@
+{
+  "guards": "reads only config/routes.rb and the config/routes/ files it draws as Rails route tables, never a draw block in a test or another file",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/posts",
+        "handler": "app/controllers/posts_controller.rb#PostsController.index"
+      },
+      {
+        "site": "config/routes/admin.rb:1",
+        "pattern": "/admin/users",
+        "name": "admin_users",
+        "handler": "app/controllers/admin/users_controller.rb#Admin::UsersController.index",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes/admin.rb:2",
+        "pattern": "/admin/stats",
+        "name": "admin_stats",
+        "handler": "app/controllers/admin/dashboard_controller.rb#Admin::DashboardController.stats",
+        "status": "bound"
+      }
+    ],
+    "roles": [
+      {
+        "target": "config/routes.rb",
+        "role": "route_table"
+      },
+      {
+        "target": "config/routes/admin.rb",
+        "role": "route_table"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "to": "app/controllers/webauthn_test_controller.rb#WebauthnTestController.prompt"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:lib/top.rb:1"
+      },
+      {
+        "kind": "tests",
+        "from": "test/integration/webauthn_verifiable_test.rb#WebauthnVerifiableTest"
+      }
+    ],
+    "notBrief": [
+      "| `GET /webauthn_test` |"
+    ]
+  }
+}
