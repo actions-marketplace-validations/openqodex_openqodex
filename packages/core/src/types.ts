@@ -57,6 +57,9 @@ export type Candidate = StaticFinding & {
   id: string;
   token: string;
   reviewSeverity: Severity;
+  // The tokens of other scanners' findings that named the same problem on
+  // the same lines and were merged into this one; absent when none were.
+  alsoReportedBy?: string[];
 };
 
 export type ScannerStatus =

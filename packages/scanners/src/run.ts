@@ -171,7 +171,8 @@ export async function runScanners(args: {
 
   // Cross-scanner dedup, then a severity sort that is stable within a
   // severity, so ties keep the ensemble order (semgrep before gitleaks).
-  const deduped = dedupByRuleClass(postRules);
+  const mergedInto = new Map<StaticFinding, string[]>();
+  const deduped = dedupByRuleClass(postRules, mergedInto);
   deduped.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
   const candidates: Candidate[] = deduped.map((f, i) => ({
@@ -180,6 +181,7 @@ export async function runScanners(args: {
     id: `c${i + 1}`,
     token: `${f.source}:${f.ruleId}`,
     reviewSeverity: mapScannerSeverity(f.severity),
+    ...(mergedInto.has(f) ? { alsoReportedBy: mergedInto.get(f) } : {}),
   }));
 
   const kept = new Map<ScannerSource, number>();
@@ -620,10 +622,18 @@ function severityRank(s: ScannerSeverity): number {
 // A candidate OpenQodex raises about the change itself (a changed settings
 // file, an added suppression comment) is not a scanner hit: it has a class
 // of its own, so a scanner's finding on the same line never swallows it.
+//
+// Rules of different scanners that name one problem share the class of
+// their group in same-problem.ts. The word classes apply only to the
+// scanners they were written for (WORD_CLASSED) and to custom scanners: a
+// scanner added later merges through same-problem.ts or not at all, since a
+// word in its rule id ("env-var-secret", "excessive-permissions") does not
+// say it names the problem a secret or access rule of another scanner names.
 export function ruleClassFor(f: StaticFinding): string {
   if (isOwnCandidate(f)) return `${f.source}:${f.ruleId}`;
   const same = sameProblemClass(f);
   if (same !== null) return same;
+  if (!WORD_CLASSED.has(f.source) && !f.source.startsWith("custom:")) return `${f.source}:${f.ruleId}`;
   if (f.source === "gitleaks") return "secret";
   const id = f.ruleId.toLowerCase();
   if (/secret|credential|api[-_]?key|access[-_]?key|password|token/.test(id)) {
@@ -644,6 +654,22 @@ export function ruleClassFor(f: StaticFinding): string {
   return `${f.source}:${f.ruleId}`;
 }
 
+const WORD_CLASSED: ReadonlySet<string> = new Set<BuiltinScanner>([
+  "semgrep",
+  "gitleaks",
+  "sqllint",
+  "osv-scanner",
+  "actionlint",
+  "hadolint",
+  "shellcheck",
+  "ruff",
+  "brakeman",
+  "rubocop",
+  "bandit",
+  "oxlint",
+  "golangci",
+]);
+
 // Group by (file, lineStart, lineEnd, ruleClass). The class merge is only
 // across scanners: semgrep and gitleaks reporting the same secret on one
 // line is one problem, so the scanner with the highest-severity hit keeps
@@ -651,54 +677,39 @@ export function ruleClassFor(f: StaticFinding): string {
 // first occurrence: semgrep precedes gitleaks in the input order, and its
 // rule message is the more descriptive). Two different rules from one
 // scanner on one span are two problems and both stay; only an exact repeat
-// (same scanner, same rule) collapses.
-// A class from same-problem.ts groups by overlap instead: its rules come from
-// scanners that each report their own span for the one problem, so findings
-// of the class in one file whose spans overlap, directly or through a chain,
-// form one group.
+// (same scanner, same rule) collapses. Findings on different lines never
+// merge, even where their spans overlap.
+//
+// `merged`, when given, receives for each finding kept the tokens
+// ("<source>:<ruleId>") of the other scanners' findings merged into it, in
+// input order, so the report can say who else reported it.
 // Exported for unit tests.
-export function dedupByRuleClass(findings: StaticFinding[]): StaticFinding[] {
+export function dedupByRuleClass(findings: StaticFinding[], merged?: Map<StaticFinding, string[]>): StaticFinding[] {
   const groups = new Map<string, StaticFinding[]>();
-  const spread = new Map<string, StaticFinding[]>();
   for (const f of findings) {
-    const cls = ruleClassFor(f);
-    const target = cls.startsWith("same:") ? spread : groups;
-    const key = cls.startsWith("same:") ? `${f.filePath}::${cls}` : `${f.filePath}::${f.lineStart}::${f.lineEnd}::${cls}`;
-    const bucket = target.get(key);
+    const key = `${f.filePath}::${f.lineStart}::${f.lineEnd}::${ruleClassFor(f)}`;
+    const bucket = groups.get(key);
     if (bucket) bucket.push(f);
-    else target.set(key, [f]);
-  }
-  const buckets = [...groups.values()];
-  const order = new Map(findings.map((f, i) => [f, i]));
-  const inOrder = (list: StaticFinding[]) => list.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
-  for (const bucket of spread.values()) {
-    // Sorted by first line (stable, so input order holds within a line), then
-    // cut wherever a span starts after every span before it has ended.
-    const sorted = [...bucket].sort((a, b) => a.lineStart - b.lineStart);
-    let current: StaticFinding[] = [];
-    let end = -Infinity;
-    for (const f of sorted) {
-      if (current.length > 0 && f.lineStart > end) {
-        buckets.push(inOrder(current));
-        current = [];
-        end = -Infinity;
-      }
-      current.push(f);
-      end = Math.max(end, f.lineEnd);
-    }
-    if (current.length > 0) buckets.push(inOrder(current));
+    else groups.set(key, [f]);
   }
   const emitted = new Set<StaticFinding>();
-  for (const bucket of buckets) {
+  for (const bucket of groups.values()) {
     const winner = [...bucket].sort(
       (a, b) => severityRank(b.severity) - severityRank(a.severity),
     )[0];
     const seenRules = new Set<string>();
+    const others: string[] = [];
     for (const f of bucket) {
-      if (f.source !== winner.source || seenRules.has(f.ruleId)) continue;
+      if (f.source !== winner.source) {
+        const token = `${f.source}:${f.ruleId}`;
+        if (!others.includes(token)) others.push(token);
+        continue;
+      }
+      if (seenRules.has(f.ruleId)) continue;
       seenRules.add(f.ruleId);
       emitted.add(f);
     }
+    if (merged && others.length > 0) merged.set(winner, others);
   }
   // Walk the input once so survivors keep their input order.
   return findings.filter((f) => emitted.has(f));
