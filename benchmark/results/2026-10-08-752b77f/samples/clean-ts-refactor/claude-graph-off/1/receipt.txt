@@ -1,0 +1,6 @@
+Passed: no findings
+Change 32c939b7a434 against HEAD, 2 files, +34 -5
+Summary: Moves the unset-or-empty env lookup for PORT and HOST into a shared setting helper and exports the default values as constants. It also adds node:test coverage for both functions.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

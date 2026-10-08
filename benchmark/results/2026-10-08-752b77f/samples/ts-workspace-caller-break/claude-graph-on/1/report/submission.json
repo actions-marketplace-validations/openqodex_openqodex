@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "Changes safeGit to return a GitResult object with code, stdout and stderr instead of a stdout string. It also stops throwing on a failed git command and exports the new GitResult type.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 10,
+      "title": "safeGit return type change breaks both CLI callers",
+      "problem": "safeGit now returns a GitResult object, but currentBranch calls name.trim() and changedFiles calls out.split() on it. Neither caller was updated in this change.",
+      "consequence": "changedFiles throws a TypeError on every run, so the CLI crashes. currentBranch catches its TypeError and always returns null, so main.ts always reports a missing repository and exits.",
+      "fix": "Update packages/cli/src/branch.ts and packages/cli/src/status.ts so they read result.stdout. Alternatively, keep safeGit returning a string and add a separate function that returns GitResult.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 14,
+      "line_end": 17,
+      "title": "Removed throw on git failure breaks callers' error detection",
+      "problem": "The catch block now turns every git failure into a returned result instead of throwing. currentBranch relies on a throw to return null outside a repository, and neither caller checks code.",
+      "consequence": "After the callers move to stdout, currentBranch outside a repository returns an empty string instead of null. main.ts then skips its not-a-repository exit and reports zero changed files.",
+      "fix": "Make currentBranch return null when code is not 0. Make changedFiles throw or report an error when code is not 0.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

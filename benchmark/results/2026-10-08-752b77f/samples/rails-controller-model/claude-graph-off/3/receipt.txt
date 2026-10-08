@@ -1,0 +1,9 @@
+Passed with warnings: 4 findings (2 critical, 1 major, 1 minor)
+Change 44b3a626f5e8 against HEAD, 3 files, +24 -3
+Summary: Adds email search to the user index, plus new update and destroy actions with routes. The User model now sends a welcome email after every save.
+1. Critical security: Search term interpolated into SQL (app/controllers/users_controller.rb:6)
+2. Critical security: Destroy action skips the admin check (app/controllers/users_controller.rb:2)
+3. Major bug: Welcome email sent on every save (app/models/user.rb:4)
+4. Minor maintainability: New endpoints have no covering test (app/controllers/users_controller.rb:14-23)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

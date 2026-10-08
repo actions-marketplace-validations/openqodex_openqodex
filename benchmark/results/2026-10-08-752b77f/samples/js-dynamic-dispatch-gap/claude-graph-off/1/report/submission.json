@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "eab11e18f842",
+  "summary": "Makes onSave async so it writes a JSON snapshot of the in-memory store to data/notes.json after each save.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Async onSave returns a Promise to a synchronous caller",
+      "problem": "onSave now returns a Promise, but dispatch in src/router.js:7 returns it unchanged. The server in src/main.js:9 passes that Promise straight to res.end, which accepts only a string or Buffer.",
+      "consequence": "Every POST /save request makes res.end throw a TypeError inside the request listener, which crashes the server process. The Promise is also never awaited, so a writeFile failure becomes an unhandled rejection.",
+      "fix": "Await the result along the whole call path. Make dispatch async and have the server await it, catch errors and send an error response.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Snapshot write has no covering test",
+      "problem": "onSave now writes the store to disk and returns a Promise. The repository has no test that covers this behaviour.",
+      "consequence": "A test would have caught the broken return type at the HTTP layer. Without one, future regressions in persistence will also go unnoticed.",
+      "fix": "Add a test that calls dispatch for a save action and checks the response text. The test should also check the snapshot file contents.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

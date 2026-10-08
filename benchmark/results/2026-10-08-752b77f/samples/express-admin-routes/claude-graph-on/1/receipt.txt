@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 09f3ac8900f8 against HEAD, 1 file, +17 -0
+Summary: Adds an admin endpoint that deletes one user by id and a purge endpoint that deletes a list of users.
+1. Critical security: User delete route lacks the admin check (src/admin.js:11)
+2. Major bug: Purge drops the delete promises (src/admin.js:22-25)
+3. Minor maintainability: New delete endpoints have no tests (src/admin.js:11-26)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

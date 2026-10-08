@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "started_at": "2026-10-08T19:24:24.495Z",
+  "resumed_at": [],
+  "build": {
+    "commit": "752b77fd3d62bdd3b06d44c45bd22ae1edac41fc",
+    "short": "752b77f",
+    "branch": "benchmark",
+    "dirty": false,
+    "cli": "packages/cli/dist/bin.js",
+    "cliVersion": "0.9.0",
+    "bundleSha256": "c08fe4949714e1e96e5054cda6fd9c49a83a6b0a693bdbd33760b76e812db334",
+    "bundleBuiltAt": "2026-10-08T19:03:16.356Z"
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "27.2.0",
+    "arch": "arm64",
+    "cpu": "Apple M5 Pro",
+    "cpus": 15,
+    "memoryGb": 48,
+    "node": "v22.23.3"
+  },
+  "reviewer": {
+    "name": "claude",
+    "version": "2.1.294",
+    "model": "claude-opus-5-5"
+  },
+  "reviewers": {
+    "claude": {
+      "name": "claude",
+      "version": "2.1.294",
+      "model": "claude-opus-5-5"
+    }
+  },
+  "review": {
+    "web": "on",
+    "timeoutSeconds": 900,
+    "reportDir": true,
+    "flags": "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]"
+  },
+  "cases": [
+    "clean-python-feature",
+    "clean-ts-refactor",
+    "demo-polyglot",
+    "django-model-view",
+    "express-admin-routes",
+    "flask-path-traversal",
+    "go-http-handler",
+    "js-dynamic-dispatch-gap",
+    "nextjs-react-hooks",
+    "python-caller-break",
+    "rails-controller-model",
+    "suppression-comments",
+    "ts-removed-export",
+    "ts-workspace-caller-break"
+  ],
+  "configs": [
+    "claude-graph-off",
+    "claude-graph-on"
+  ],
+  "repeat": 3,
+  "concurrency": 1,
+  "planned": 84,
+  "ended": {
+    "at": "2026-10-08T20:00:17.770Z",
+    "how": "finished",
+    "why": null,
+    "samples": 84
+  }
+}

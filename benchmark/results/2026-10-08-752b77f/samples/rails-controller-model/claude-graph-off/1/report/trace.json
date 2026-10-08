@@ -1,0 +1,16 @@
+[
+  {
+    "tool": "Grep",
+    "path": "app",
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

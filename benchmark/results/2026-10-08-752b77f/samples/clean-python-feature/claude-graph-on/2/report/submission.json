@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "1957ed62c932",
+  "summary": "Adds to_display, which formats cents as signed dollars with thousands separators. It also adds balance_line, which builds a statement line from the summed entries, and tests for both.",
+  "findings": [],
+  "dropped": [
+    {
+      "candidate": "c1",
+      "reason": "The assert sits in a pytest test function, where pytest uses asserts to check results. Optimised bytecode never applies to these tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 21
+    },
+    {
+      "candidate": "c2",
+      "reason": "The assert sits in a pytest test function, where pytest uses asserts to check results. Optimised bytecode never applies to these tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 22
+    },
+    {
+      "candidate": "c3",
+      "reason": "The assert sits in a pytest test function, where pytest uses asserts to check results. Optimised bytecode never applies to these tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 23
+    },
+    {
+      "candidate": "c4",
+      "reason": "The assert sits in a pytest test function, where pytest uses asserts to check results. Optimised bytecode never applies to these tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c5",
+      "reason": "The assert sits in a pytest test function, where pytest uses asserts to check results. Optimised bytecode never applies to these tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 28
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "version": 2,
+  "change_id": "44b3a626f5e8",
+  "summary": "Adds email search to the user index, plus update and destroy actions and routes. It also adds a welcome email callback on the User model.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Search term interpolated into SQL",
+      "problem": "The index action puts params[:q] straight into the WHERE clause text. Any authenticated caller controls that SQL fragment.",
+      "consequence": "Any API token holder can read or change arbitrary database rows, including other users' api_token values.",
+      "fix": "Pass the search term as a bound parameter. Escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 21,
+      "line_end": 21,
+      "title": "Any user can delete any user",
+      "problem": "The change exempts destroy from require_admin on line 2. The destroy action then deletes any User by id with no ownership check.",
+      "consequence": "Any authenticated non-admin can delete every account, including admin accounts.",
+      "fix": "Remove destroy from the require_admin exemption list. Alternatively, scope the lookup to the current user.",
+      "suggested_change": null,
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c3"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "problem": "The model registers send_welcome_email as an after_save callback. That callback fires on updates as well as on creation.",
+      "consequence": "Users get a new welcome email each time an admin updates their record through the new update action.",
+      "fix": "Use after_create_commit so the email goes out once, after the insert commits.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 14,
+      "line_end": 23,
+      "title": "New behaviour has no covering test",
+      "problem": "The change adds search, update, destroy and an email callback. The repository has no test or spec directory at all.",
+      "consequence": "Nothing catches regressions in authorization or callback behaviour on these endpoints.",
+      "fix": "Add request tests for search, update and destroy with admin and non-admin tokens. Add a model test for the welcome email callback.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The require_admin filter still guards update, so only admins reach this lookup. Admins may legitimately edit any user.",
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 2
+    }
+  ]
+}

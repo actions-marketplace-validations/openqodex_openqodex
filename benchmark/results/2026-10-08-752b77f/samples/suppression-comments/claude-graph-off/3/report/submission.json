@@ -1,0 +1,111 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a thumbnail helper that shells out to ImageMagick convert, a resize docs URL setting, and a GET /calc endpoint that evaluates an arithmetic expression from the query string.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Remote code execution through eval of query parameter",
+      "problem": "The /calc handler passes req.query.expr straight to eval. Any caller controls the JavaScript that the server runs.",
+      "consequence": "Any client can run arbitrary code inside the Node process. That client can read secrets, touch the filesystem, or spawn processes.",
+      "fix": "Replace eval with a restricted arithmetic parser such as expr-eval or mathjs evaluate. Remove both suppression comments on these lines.",
+      "suggested_change": "  const value = new Parser().evaluate(String(req.query.expr));",
+      "source": "lens:eval-on-user-input",
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Shell command injection through upload name",
+      "problem": "make_thumbnail interpolates upload_name into a shell string and runs it with shell=True. The docstring says upload_name comes from the upload form.",
+      "consequence": "An uploader can choose a name with shell metacharacters, such as a semicolon, and run arbitrary commands on the host. The same name can also contain path traversal to write outside THUMB_DIR.",
+      "fix": "Pass an argument list without shell=True. Reduce upload_name to a basename and reject names that start with a dash.",
+      "suggested_change": "    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Suppression comment hides the shell injection",
+      "problem": "The nosec B602 comment silences the warning for the shell=True call. That call really is injectable.",
+      "consequence": "Later scans stay quiet about a command injection that the code still contains.",
+      "fix": "Remove the nosec comment once the call uses an argument list without a shell.",
+      "suggested_change": null,
+      "source": "bandit:openqodex.suppression-added",
+      "candidate": "c3"
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "web/server.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Lint suppression hides eval of request input",
+      "problem": "The eslint-disable-next-line no-eval comment silences the warning on the eval call. That eval runs request input.",
+      "consequence": "The linter never reports the remote code execution in the /calc handler.",
+      "fix": "Delete the disable comment when you replace eval with a safe expression parser.",
+      "suggested_change": null,
+      "source": "oxlint:openqodex.suppression-added",
+      "candidate": "c4"
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Pattern scan suppression hides eval of request input",
+      "problem": "The nosemgrep comment silences pattern scanning on the line that calls eval with req.query.expr.",
+      "consequence": "Future scans miss the remote code execution in the /calc handler.",
+      "fix": "Remove the nosemgrep comment together with the eval call.",
+      "suggested_change": null,
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "web/server.js",
+      "line_number": 10,
+      "line_end": 14,
+      "title": "New behaviour has no covering test",
+      "problem": "The change adds the /calc endpoint and make_thumbnail. No test in the repository exercises either one.",
+      "consequence": "Nothing would catch regressions in the endpoint or the helper, including hostile input.",
+      "fix": "Add tests for valid expressions, hostile expressions, and upload names that contain metacharacters.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The noqa E501 comment only allows one long documentation URL constant. It hides no logic problem.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is not a problem on its own. The real risk is the shell=True call raised separately.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 1
+    }
+  ]
+}

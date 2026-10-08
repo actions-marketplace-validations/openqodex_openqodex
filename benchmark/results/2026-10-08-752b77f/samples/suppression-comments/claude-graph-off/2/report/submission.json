@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a thumbnail helper that shells out to ImageMagick convert, and a /calc endpoint that evaluates an arithmetic expression from the query string. It also adds a documentation URL constant to settings.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Request query text evaluated as JavaScript",
+      "problem": "The /calc handler passes req.query.expr straight to eval. The added suppression comments hide this from review tooling.",
+      "consequence": "Any caller of /calc can run arbitrary code inside the server process. That caller can read secrets, files and data, or take over the host.",
+      "fix": "Replace eval with a restricted arithmetic parser such as expr-eval or mathjs evaluate in a limited scope. Remove both suppression comments.",
+      "suggested_change": null,
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Upload name interpolated into a shell command",
+      "problem": "make_thumbnail builds a shell string from upload_name, which comes from the upload form. It runs that string with shell=True, and a nosec comment hides it.",
+      "consequence": "An uploader can use a name like a.png;rm -rf ~ to run arbitrary commands as the service user.",
+      "fix": "Pass an argument list to subprocess.run without shell=True. Remove the nosec comment.",
+      "suggested_change": "    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.75,
+      "file_path": "tools/thumbs.py",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Upload name allows path traversal",
+      "problem": "make_thumbnail joins upload_name from the form into the input and output paths without validation. A name containing ../ escapes UPLOAD_DIR and THUMB_DIR.",
+      "consequence": "An uploader can make convert read files outside the upload folder. The uploader can also overwrite files outside the thumbnail folder.",
+      "fix": "Reduce upload_name to its basename with os.path.basename. Reject names that differ or start with a dash.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.7,
+      "file_path": "tools/thumbs.py",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "New behaviour has no covering test",
+      "problem": "This change adds make_thumbnail and the /calc endpoint. The repository has no test that exercises either one.",
+      "consequence": "Regressions and unsafe input handling in these paths go unnoticed.",
+      "fix": "Add tests for make_thumbnail and /calc. Include hostile names and expressions.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The noqa comment only silences the line-length check on a long documentation URL constant. It hides no real problem.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    },
+    {
+      "candidate": "c3",
+      "reason": "The nosec comment hides the shell injection that the finding for c1 already reports on this line. That is one problem, so it gets one finding.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c4",
+      "reason": "The eslint-disable comment hides the eval that the finding for c5 already reports. That is one problem, so it gets one finding.",
+      "file_path": "web/server.js",
+      "line_number": 11
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is not a risk on its own. The unsafe shell=True call is reported under c1.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 1
+    }
+  ]
+}

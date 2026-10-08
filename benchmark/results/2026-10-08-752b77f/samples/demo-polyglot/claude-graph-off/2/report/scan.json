@@ -1,0 +1,448 @@
+{
+  "candidates": [
+    {
+      "source": "semgrep",
+      "ruleId": "yaml.github-actions.security.run-shell-injection.run-shell-injection",
+      "filePath": ".github/workflows/ci.yml",
+      "lineStart": 15,
+      "lineEnd": 15,
+      "severity": "high",
+      "message": "Using variable interpolation `${{...}}` with `github` context data in a `run:` step could allow an attacker to inject their own code into the runner. This would allow them to steal secrets and code. `github` context data can have arbitrary user input and should be treated as untrusted. Instead, use an intermediate environment variable with `env:` to store the data and use the environment variable in the `run:` script. Be sure to use double-quotes the environment variable, like this: \"$ENVVAR\".",
+      "reference": "https://docs.github.com/en/actions/learn-github-actions/security-hardening-for-github-actions#understanding-the-risk-of-script-injections",
+      "id": "c1",
+      "token": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "filePath": "app/config.py",
+      "lineStart": 2,
+      "lineEnd": 2,
+      "severity": "high",
+      "message": "Stripe API Key detected",
+      "reference": "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures",
+      "id": "c2",
+      "token": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+      "filePath": "app/search.py",
+      "lineStart": 14,
+      "lineEnd": 14,
+      "severity": "high",
+      "message": "Avoiding SQL string concatenation: untrusted input concatenated with raw SQL query can result in SQL Injection. In order to execute raw query safely, prepared statement should be used. SQLAlchemy provides TextualSQL to easily used prepared statement with named parameters. For complex SQL composition, use SQL Expression Language or Schema Definition Language. In most cases, SQLAlchemy ORM will be a better option.",
+      "reference": "https://docs.sqlalchemy.org/en/14/core/tutorial.html#using-textual-sql",
+      "id": "c3",
+      "token": "semgrep:python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "python.django.security.injection.tainted-sql-string.tainted-sql-string",
+      "filePath": "app/search.py",
+      "lineStart": 14,
+      "lineEnd": 14,
+      "severity": "high",
+      "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using the Django object-relational mappers (ORM) instead of raw SQL queries.",
+      "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
+      "id": "c4",
+      "token": "semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+      "filePath": "app/search.py",
+      "lineStart": 14,
+      "lineEnd": 14,
+      "severity": "high",
+      "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using an object-relational mapper (ORM) such as SQLAlchemy which will protect your queries.",
+      "reference": "https://docs.sqlalchemy.org/en/14/core/tutorial.html#using-textual-sql",
+      "id": "c5",
+      "token": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "osv-scanner",
+      "ruleId": "GHSA-35jh-r3h4-6jhm",
+      "filePath": "package-lock.json",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "high",
+      "message": "lodash@4.17.15: GHSA-35jh-r3h4-6jhm (CVE-2021-23337, CVE-2026-4800, GHSA-r5fr-rjxr-66jc). Command Injection in lodash",
+      "reference": "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm",
+      "id": "c6",
+      "token": "osv-scanner:GHSA-35jh-r3h4-6jhm",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "osv-scanner",
+      "ruleId": "GHSA-p6mc-m468-83gw",
+      "filePath": "package-lock.json",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "high",
+      "message": "lodash@4.17.15: GHSA-p6mc-m468-83gw (CVE-2020-8203). Prototype Pollution in lodash",
+      "reference": "https://osv.dev/vulnerability/GHSA-p6mc-m468-83gw",
+      "id": "c7",
+      "token": "osv-scanner:GHSA-p6mc-m468-83gw",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "actionlint",
+      "ruleId": "expression",
+      "filePath": ".github/workflows/ci.yml",
+      "lineStart": 15,
+      "lineEnd": 15,
+      "severity": "high",
+      "message": "\"github.event.pull_request.title\" is potentially untrusted. avoid using it directly in inline scripts. instead, pass it through an environment variable. see https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions for more details",
+      "reference": "https://github.com/rhysd/actionlint/blob/main/docs/checks.md",
+      "id": "c8",
+      "token": "actionlint:expression",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3020",
+      "filePath": "Dockerfile",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "high",
+      "message": "Use COPY instead of ADD for files and folders",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3020",
+      "id": "c9",
+      "token": "hadolint:DL3020",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "shellcheck",
+      "ruleId": "SC2045",
+      "filePath": "scripts/deploy.sh",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "high",
+      "message": "Iterating over ls output is fragile. Use globs.",
+      "reference": "https://www.shellcheck.net/wiki/SC2045",
+      "id": "c10",
+      "token": "shellcheck:SC2045",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
+      "filePath": "app/search.py",
+      "lineStart": 10,
+      "lineEnd": 14,
+      "severity": "medium",
+      "message": "User-controlled data from a request is passed to 'execute()'. This could lead to a SQL injection and therefore protected information could be leaked. Instead, use django's QuerySets, which are built with query parameterization and therefore not vulnerable to sql injection. For example, you could use `Entry.objects.filter(date=2006)`.",
+      "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
+      "id": "c11",
+      "token": "semgrep:python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+      "filePath": "app/search.py",
+      "lineStart": 14,
+      "lineEnd": 14,
+      "severity": "medium",
+      "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
+      "reference": "https://stackoverflow.com/questions/775296/mysql-parameterized-queries",
+      "id": "c12",
+      "token": "semgrep:python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "osv-scanner",
+      "ruleId": "GHSA-29mw-wpgm-hmr9",
+      "filePath": "package-lock.json",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "medium",
+      "message": "lodash@4.17.15: GHSA-29mw-wpgm-hmr9 (CVE-2020-28500). Regular Expression Denial of Service (ReDoS) in lodash",
+      "reference": "https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9",
+      "id": "c13",
+      "token": "osv-scanner:GHSA-29mw-wpgm-hmr9",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "osv-scanner",
+      "ruleId": "GHSA-f23m-r3pf-42rh",
+      "filePath": "package-lock.json",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "medium",
+      "message": "lodash@4.17.15: GHSA-f23m-r3pf-42rh (CVE-2025-13465, CVE-2026-2950, GHSA-xxjr-mmjv-4gpg). lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+      "reference": "https://osv.dev/vulnerability/GHSA-f23m-r3pf-42rh",
+      "id": "c14",
+      "token": "osv-scanner:GHSA-f23m-r3pf-42rh",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3007",
+      "filePath": "Dockerfile",
+      "lineStart": 1,
+      "lineEnd": 1,
+      "severity": "medium",
+      "message": "Using latest is prone to errors if the image will ever update. Pin the version explicitly to a release tag",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3007",
+      "id": "c15",
+      "token": "hadolint:DL3007",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3008",
+      "filePath": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "medium",
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3008",
+      "id": "c16",
+      "token": "hadolint:DL3008",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3014",
+      "filePath": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "medium",
+      "message": "Use the `-y` switch to avoid manual input `apt-get -y install <package>`",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3014",
+      "id": "c17",
+      "token": "hadolint:DL3014",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3042",
+      "filePath": "Dockerfile",
+      "lineStart": 7,
+      "lineEnd": 7,
+      "severity": "medium",
+      "message": "Avoid use of cache directory with pip. Use `pip install --no-cache-dir <package>`",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3042",
+      "id": "c18",
+      "token": "hadolint:DL3042",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "shellcheck",
+      "ruleId": "SC2115",
+      "filePath": "scripts/deploy.sh",
+      "lineStart": 7,
+      "lineEnd": 7,
+      "severity": "medium",
+      "message": "Use \"${var:?}\" to ensure this never expands to / .",
+      "reference": "https://www.shellcheck.net/wiki/SC2115",
+      "id": "c19",
+      "token": "shellcheck:SC2115",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "bandit",
+      "ruleId": "B608",
+      "filePath": "app/search.py",
+      "lineStart": 14,
+      "lineEnd": 14,
+      "severity": "medium",
+      "message": "B608: Possible SQL injection vector through string-based query construction.",
+      "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "id": "c20",
+      "token": "bandit:B608",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3015",
+      "filePath": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "message": "Avoid additional packages by specifying `--no-install-recommends`",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3015",
+      "id": "c21",
+      "token": "hadolint:DL3015",
+      "reviewSeverity": "nitpick"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3009",
+      "filePath": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "message": "Delete the apt lists (/var/lib/apt/lists) after installing something",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3009",
+      "id": "c22",
+      "token": "hadolint:DL3009",
+      "reviewSeverity": "nitpick"
+    },
+    {
+      "source": "shellcheck",
+      "ruleId": "SC2086",
+      "filePath": "scripts/deploy.sh",
+      "lineStart": 7,
+      "lineEnd": 7,
+      "severity": "low",
+      "message": "Double quote to prevent globbing and word splitting.",
+      "reference": "https://www.shellcheck.net/wiki/SC2086",
+      "id": "c23",
+      "token": "shellcheck:SC2086",
+      "reviewSeverity": "nitpick"
+    },
+    {
+      "source": "shellcheck",
+      "ruleId": "SC2086",
+      "filePath": "scripts/deploy.sh",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "low",
+      "message": "Double quote to prevent globbing and word splitting.",
+      "reference": "https://www.shellcheck.net/wiki/SC2086",
+      "id": "c24",
+      "token": "shellcheck:SC2086",
+      "reviewSeverity": "nitpick"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 8,
+      "keptCount": 7,
+      "durationMs": 3388,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 1,
+      "keptCount": 0,
+      "durationMs": 27,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "ran",
+      "version": "2.6.0",
+      "rawCount": 4,
+      "keptCount": 4,
+      "durationMs": 2311,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "ran",
+      "version": "1.7.7",
+      "rawCount": 1,
+      "keptCount": 1,
+      "durationMs": 5,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "ran",
+      "version": "2.15.1",
+      "rawCount": 7,
+      "keptCount": 7,
+      "durationMs": 23,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "ran",
+      "version": "0.10.0",
+      "rawCount": 4,
+      "keptCount": 4,
+      "durationMs": 17,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 11,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 1,
+      "keptCount": 1,
+      "durationMs": 66,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [
+    {
+      "length": 32,
+      "sha256": "76b6df35728898cc3ae79b8e70a795c64c0a37ba11393ecebaacdf4f39b583d6"
+    }
+  ],
+  "projects": [
+    {
+      "root": "",
+      "frameworks": []
+    }
+  ]
+}

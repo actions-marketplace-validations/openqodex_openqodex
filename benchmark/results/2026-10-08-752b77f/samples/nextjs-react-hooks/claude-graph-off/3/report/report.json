@@ -1,0 +1,339 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "f40fe5221f97e86897c4832f153547a621e2f7eb9b6d866029b00e48284df196",
+  "base": {
+    "ref": "HEAD",
+    "sha": "3d6a052e845bcf30ab75830d5649e2bec5967d38"
+  },
+  "generated_at": "2026-10-08T19:55:58.679Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Turns the search page into a client component that reads q from the URL. It fetches matching products and renders them as a list.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/search/page.tsx",
+      "line_number": 22,
+      "line_end": 22,
+      "title": "URL query rendered as raw HTML",
+      "description": "The heading puts the q URL parameter into dangerouslySetInnerHTML without escaping. The query text therefore reaches the DOM as live HTML. An attacker can send a link such as /search?q=<img src=x onerror=...> to run script in the victim's session. This is reflected XSS. Render the query as a normal JSX text child so that React escapes it.",
+      "suggested_change": "      <h1>Results for {query}</h1>",
+      "source": "lens:react-dangerously-set-inner-html",
+      "candidate": null,
+      "notes": [],
+      "problem": "The heading puts the q URL parameter into dangerouslySetInnerHTML without escaping. The query text therefore reaches the DOM as live HTML.",
+      "consequence": "An attacker can send a link such as /search?q=<img src=x onerror=...> to run script in the victim's session. This is reflected XSS.",
+      "fix": "Render the query as a normal JSX text child so that React escapes it."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "app/search/page.tsx",
+      "line_number": 15,
+      "line_end": 17,
+      "title": "Effect without dependencies refetches forever",
+      "description": "The useEffect has no dependency array, so it runs after every render. Each run calls setResults with a new array, which causes another render. The page sends an endless stream of requests to /api/products. This loads the API and keeps re-rendering the browser tab. Pass [query] as the dependency array so that the page fetches only when the query changes.",
+      "suggested_change": "  useEffect(() => {\n    searchProducts(query).then(setResults);\n  }, [query]);",
+      "source": "oxlint:react-hooks/exhaustive-deps",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The useEffect has no dependency array, so it runs after every render. Each run calls setResults with a new array, which causes another render.",
+      "consequence": "The page sends an endless stream of requests to /api/products. This loads the API and keeps re-rendering the browser tab.",
+      "fix": "Pass [query] as the dependency array so that the page fetches only when the query changes."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/search/page.tsx",
+      "line_number": 10,
+      "line_end": 13,
+      "title": "Hooks called after a conditional return",
+      "description": "SearchPage returns early when q is empty, before it calls useState and useEffect. The number of hooks therefore changes between renders. React throws a rendered-more-hooks error when q goes from empty to set during client navigation. The page then crashes. Call useState and useEffect before the early return. Inside the effect, skip the fetch when query is empty.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "SearchPage returns early when q is empty, before it calls useState and useEffect. The number of hooks therefore changes between renders.",
+      "consequence": "React throws a rendered-more-hooks error when q goes from empty to set during client navigation. The page then crashes.",
+      "fix": "Call useState and useEffect before the early return. Inside the effect, skip the fetch when query is empty."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.8,
+      "file_path": "app/search/page.tsx",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Search request rejection is unhandled",
+      "description": "The effect chains .then on searchProducts but never adds a .catch. searchProducts throws when the response is not ok. A failed search produces an unhandled promise rejection. The user sees stale or empty results with no error message. Add a .catch handler that records an error state and shows the error to the user.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null,
+      "notes": [],
+      "problem": "The effect chains .then on searchProducts but never adds a .catch. searchProducts throws when the response is not ok.",
+      "consequence": "A failed search produces an unhandled promise rejection. The user sees stale or empty results with no error message.",
+      "fix": "Add a .catch handler that records an error state and shows the error to the user."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/search/page.tsx",
+      "line_number": 23,
+      "line_end": 25,
+      "title": "List items rendered without a key",
+      "description": "The results map renders each li without a key prop. Product already has a stable id field. React cannot match list items correctly when the results change. It also logs a key warning. Set key to product.id on each li.",
+      "suggested_change": "        {results.map((product) => (\n          <li key={product.id}>{product.name}</li>\n        ))}",
+      "source": "oxlint:react/jsx-key",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "The results map renders each li without a key prop. Product already has a stable id field.",
+      "consequence": "React cannot match list items correctly when the results change. It also logs a key warning.",
+      "fix": "Set key to product.id on each li."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "app/search/page.tsx",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Search form removed with no replacement",
+      "description": "The change deletes the search form, and no other file in the repository renders an input named q. The empty state still tells users to type a search term. Users have no input to type into. They can search only by editing the URL by hand. Keep the form with the q input on the page, alongside the results list.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change deletes the search form, and no other file in the repository renders an input named q. The empty state still tells users to type a search term.",
+      "consequence": "Users have no input to type into. They can search only by editing the URL by hand.",
+      "fix": "Keep the form with the q input on the page, alongside the results list."
+    }
+  ],
+  "below_threshold": 1,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3605,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 18,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 9,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 23,
+    "deletions": 5
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 29134,
+      "started_at": "2026-10-08T19:55:19.363Z",
+      "ended_at": "2026-10-08T19:55:58.682Z",
+      "duration_ms": 39319,
+      "rounds": 2,
+      "usage": {
+        "turns": 4,
+        "input_tokens": 46197,
+        "output_tokens": 4533,
+        "cost_usd": 0.1671268
+      }
+    },
+    "snapshot": {
+      "change_id": "f40fe5221f97e86897c4832f153547a621e2f7eb9b6d866029b00e48284df196",
+      "tree": "dfdb40899e8a0fab04c9d9c21fec0fa51d164f35",
+      "before": "e993d59eedbebbc84e52e170b0e325593c89aa775fd95298886ba070ae4bd9e2",
+      "after": "e993d59eedbebbc84e52e170b0e325593c89aa775fd95298886ba070ae4bd9e2"
+    },
+    "candidates": {
+      "total": 2,
+      "disposed": 2
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [],
+      "files_not_read": [
+        "app/search/page.tsx"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

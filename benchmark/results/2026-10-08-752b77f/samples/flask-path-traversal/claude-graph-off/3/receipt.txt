@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 1b9dcc940469 against HEAD, 1 file, +13 -2
+Summary: Adds a /download endpoint that serves files from the upload directory by name. It also changes the dev server to bind all interfaces with debug mode on.
+1. Critical security: Path traversal in download endpoint (files/app.py:17-20)
+2. Major security: Debug server exposed on all interfaces (files/app.py:24)
+3. Minor maintainability: New download endpoint has no covering test (files/app.py:14-20)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

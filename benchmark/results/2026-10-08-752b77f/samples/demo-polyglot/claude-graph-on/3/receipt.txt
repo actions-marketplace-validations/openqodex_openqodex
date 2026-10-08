@@ -1,0 +1,15 @@
+Passed with warnings: 10 findings (2 critical, 4 major, 4 minor)
+Change 10985528b336 against HEAD, 8 files, +38 -14
+Summary: Adds a Flask search endpoint and a hardcoded Stripe key, and changes the pagination offset. It also downgrades lodash and loosens the Dockerfile, deploy script and CI workflow.
+1. Critical security: Search query built from request input (app/search.py:14)
+2. Critical security: Stripe API key committed to source (app/config.py:2)
+3. Major bug: Pagination offset skips the first page (app/server.py:23)
+4. Major security: Lodash downgraded to a vulnerable release (package-lock.json:11-17)
+5. Major security: Container now runs as root (Dockerfile:9-10)
+6. Major bug: Unguarded recursive delete of deploy directory (scripts/deploy.sh:7)
+7. Minor bug: Deploy loop parses ls output (scripts/deploy.sh:11)
+8. Minor security: Pull request title expanded inside shell script (.github/workflows/ci.yml:15)
+9. Minor maintainability: Base image no longer pinned (Dockerfile:1)
+10. Minor maintainability: Changed endpoints have no covering test (app/search.py:9-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

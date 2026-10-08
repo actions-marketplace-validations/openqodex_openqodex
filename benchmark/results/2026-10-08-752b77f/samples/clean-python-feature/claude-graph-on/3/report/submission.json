@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "1957ed62c932",
+  "summary": "Adds to_display, which formats whole cents as a signed dollar string with thousands separators. Adds balance_line, which puts the formatted balance on a statement line, and adds tests for both.",
+  "findings": [],
+  "dropped": [
+    {
+      "candidate": "c1",
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "file_path": "tests/test_money.py",
+      "line_number": 21
+    },
+    {
+      "candidate": "c2",
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "file_path": "tests/test_money.py",
+      "line_number": 22
+    },
+    {
+      "candidate": "c3",
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "file_path": "tests/test_money.py",
+      "line_number": 23
+    },
+    {
+      "candidate": "c4",
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "file_path": "tests/test_money.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c5",
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "file_path": "tests/test_money.py",
+      "line_number": 28
+    }
+  ]
+}

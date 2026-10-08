@@ -1,0 +1,287 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "09f3ac8900f84abad10d156c3db2778b2f4e6139ace172b662fb9b34edd4e73f",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d194e02b0ce16fe11e37eb9b77ae01cf46a2554b"
+  },
+  "generated_at": "2026-10-08T19:28:09.310Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds an admin route that deletes one user by id and a purge route that deletes a list of users.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Delete user route lacks admin check",
+      "description": "The DELETE /users/:id route omits the requireAdmin middleware that its sibling routes use. The handler deletes the user named in the URL without any authorization check. Any caller who can reach the server can delete any user account. The caller only needs to guess or enumerate user ids. Add requireAdmin to the route, as the GET /users and POST /users/purge routes do.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": "lens:id-enumeration-sequential",
+      "candidate": null,
+      "notes": [],
+      "problem": "The DELETE /users/:id route omits the requireAdmin middleware that its sibling routes use. The handler deletes the user named in the URL without any authorization check.",
+      "consequence": "Any caller who can reach the server can delete any user account. The caller only needs to guess or enumerate user ids.",
+      "fix": "Add requireAdmin to the route, as the GET /users and POST /users/purge routes do."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 25,
+      "title": "Purge deletions float outside the request",
+      "description": "The forEach callback starts async removeUser calls, and nothing awaits them. db.removeUser throws for an unknown id, so each failure becomes an unhandled rejection. One unknown id in the purge list crashes the Node process on current Node versions. The handler also reports every id as removed before any deletion finishes. Await all deletions with Promise.allSettled, then report how many succeeded.",
+      "suggested_change": "  const results = await Promise.allSettled(ids.map((id) => db.removeUser(id)));\n  res.json({ removed: results.filter((r) => r.status === \"fulfilled\").length });",
+      "source": "lens:async-floating-promise",
+      "candidate": null,
+      "notes": [],
+      "problem": "The forEach callback starts async removeUser calls, and nothing awaits them. db.removeUser throws for an unknown id, so each failure becomes an unhandled rejection.",
+      "consequence": "One unknown id in the purge list crashes the Node process on current Node versions. The handler also reports every id as removed before any deletion finishes.",
+      "fix": "Await all deletions with Promise.allSettled, then report how many succeeded."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 16,
+      "line_end": 26,
+      "title": "New delete routes have no covering test",
+      "description": "The change adds two delete routes, and the repository contains no tests for them. Nothing will catch a regression in the auth check or in purge error handling. Add tests for the single delete and purge routes, covering auth and an unknown id.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds two delete routes, and the repository contains no tests for them.",
+      "consequence": "Nothing will catch a regression in the auth check or in purge error handling.",
+      "fix": "Add tests for the single delete and purge routes, covering auth and an unknown id."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 2982,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 18,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 22,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 17,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 95189,
+      "started_at": "2026-10-08T19:27:50.095Z",
+      "ended_at": "2026-10-08T19:28:09.310Z",
+      "duration_ms": 19215,
+      "rounds": 1,
+      "usage": {
+        "turns": 6,
+        "input_tokens": 46319,
+        "output_tokens": 1279,
+        "cost_usd": 0.0914242
+      }
+    },
+    "snapshot": {
+      "change_id": "09f3ac8900f84abad10d156c3db2778b2f4e6139ace172b662fb9b34edd4e73f",
+      "tree": "2f3e74a87f59d5061a7d827c86e1dd2d346f8226",
+      "before": "abea5008fc76ed8eb86a58338c51f285eff75aa756d548d400421cd467ae53a5",
+      "after": "abea5008fc76ed8eb86a58338c51f285eff75aa756d548d400421cd467ae53a5"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 1,
+      "covered": 1,
+      "unread": [],
+      "files_read": [
+        "src/admin.js",
+        "src/db.js",
+        "src/server.js"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

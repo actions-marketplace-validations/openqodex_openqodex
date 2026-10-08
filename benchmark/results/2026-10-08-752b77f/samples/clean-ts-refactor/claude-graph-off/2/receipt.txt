@@ -1,0 +1,6 @@
+Passed: no findings
+Change 32c939b7a434 against HEAD, 2 files, +34 -5
+Summary: Refactors port and host so both read env through a shared setting helper and named default constants. Adds node:test coverage for the defaults and for PORT validation.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

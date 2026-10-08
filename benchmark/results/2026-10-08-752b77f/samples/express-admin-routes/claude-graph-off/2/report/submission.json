@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "09f3ac8900f8",
+  "summary": "Adds an admin route that deletes one user by id and a bulk purge route that deletes a list of user ids.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Delete user route lacks admin check",
+      "problem": "The DELETE /users/:id handler omits the requireAdmin middleware that its sibling routes use. The router has no shared auth middleware, and server.js mounts it without auth.",
+      "consequence": "Any caller who reaches the server can delete any user by id. Unauthenticated callers can also delete users.",
+      "fix": "Add requireAdmin to the route, as the GET /users and POST /users/purge routes do.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 25,
+      "title": "Purge deletions are never awaited",
+      "problem": "The purge handler passes an async callback to forEach, so nothing awaits any removeUser promise. The handler responds with ids.length before any deletion finishes.",
+      "consequence": "removeUser throws for an unknown id, and that rejection goes unhandled and crashes the Node process. The client also gets a removed count that hides failed deletions.",
+      "fix": "Await Promise.allSettled over the ids. Then report the count of fulfilled deletions.",
+      "suggested_change": "  const results = await Promise.allSettled(ids.map((id) => db.removeUser(id)));\n  res.json({ removed: results.filter((r) => r.status === \"fulfilled\").length });",
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 26,
+      "title": "New delete routes have no tests",
+      "problem": "The change adds two routes that delete users. The repository has no test that covers either route.",
+      "consequence": "A regression in authorization or in deletion handling would go unnoticed. The missing admin check above is one example.",
+      "fix": "Add tests for both routes. Cover the admin check, a partial purge failure and the reported removed count.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

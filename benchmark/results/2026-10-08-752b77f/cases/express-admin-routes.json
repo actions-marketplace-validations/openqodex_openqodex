@@ -1,0 +1,59 @@
+{
+  "id": "express-admin-routes",
+  "guards": "an Express admin route added without the admin check its siblings use, and a purge that answers before its deletions run, are reported",
+  "language": "javascript",
+  "framework": "express",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "delete-without-admin",
+      "file": "src/admin.js",
+      "lines": [
+        11,
+        11
+      ],
+      "anchor": {
+        "line": 11,
+        "text": "admin.delete(\"/users/:id\", async"
+      },
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "The delete route has no requireAdmin, unlike the other admin routes, so any caller can delete any user. The fix is admin.delete(\"/users/:id\", requireAdmin, ...)."
+    },
+    {
+      "id": "foreach-async-not-awaited",
+      "file": "src/admin.js",
+      "lines": [
+        22,
+        25
+      ],
+      "anchor": {
+        "line": 22,
+        "text": "ids.forEach(async (id) => {"
+      },
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "forEach does not wait for the async callbacks, so the answer says every user was removed before any removal ran, and a failed removal becomes an unhandled rejection. The fix is await Promise.all(ids.map((id) => db.removeUser(id))), or a for...of loop with await."
+    }
+  ],
+  "extras": [
+    {
+      "file": "src/admin.js",
+      "lines": [
+        12,
+        12
+      ],
+      "why": "removeUser throws for an unknown id and the route does not catch it; Express 5 passes the rejection to the error handler, so this is a 500 rather than a crash; real, not planted"
+    }
+  ]
+}

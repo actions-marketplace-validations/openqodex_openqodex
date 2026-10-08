@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "1957ed62c932",
+  "summary": "Adds to_display to format cents as dollar text, plus a balance_line helper for the monthly statement. Tests cover both.",
+  "findings": [],
+  "dropped": [
+    {
+      "candidate": "c1",
+      "reason": "Pytest test functions use plain assert by design. The tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 21
+    },
+    {
+      "candidate": "c2",
+      "reason": "Pytest test functions use plain assert by design. The tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 22
+    },
+    {
+      "candidate": "c3",
+      "reason": "Pytest test functions use plain assert by design. The tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 23
+    },
+    {
+      "candidate": "c4",
+      "reason": "Pytest test functions use plain assert by design. The tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c5",
+      "reason": "Pytest test functions use plain assert by design. The tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 28
+    }
+  ]
+}

@@ -1,0 +1,385 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "none",
+    "build": {
+      "durationMs": 49,
+      "cacheHits": 0,
+      "parses": 5,
+      "eligibleFiles": 4,
+      "parsedFiles": 4,
+      "omittedFiles": 0,
+      "unresolvedSites": 10,
+      "externalSites": 14,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "src/server.js",
+        "file": "src/server.js",
+        "name": "server.js",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 1,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [
+      {
+        "from": "src/server.js",
+        "to": "src/admin.js",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "src/server.js",
+            "line": 2,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "src/server.js",
+              "line": 2,
+              "spec": "./admin.js"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [],
+      "causes": {
+        "no-receiver-type": 7
+      },
+      "near": [
+        {
+          "file": "src/admin.js",
+          "line": 8,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 13,
+          "name": "end",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what res.status returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 13,
+          "name": "status",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 19,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what res.status returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 19,
+          "name": "status",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 22,
+          "name": "forEach",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 25,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 7,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "09f3ac8900f84abad10d156c3db2778b2f4e6139ace172b662fb9b34edd4e73f",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d194e02b0ce16fe11e37eb9b77ae01cf46a2554b"
+  },
+  "generated_at": "2026-10-08T19:28:33.412Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds an admin endpoint that deletes one user by id and a purge endpoint that deletes a list of users.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "User delete route lacks the admin check",
+      "description": "The DELETE /users/:id route does not pass requireAdmin, unlike its sibling routes. The router in server.js applies no auth middleware either. Any caller who can reach the server can delete any user account. The caller only needs to guess or enumerate user ids. Add requireAdmin to the route's middleware chain, matching GET /users and POST /users/purge.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The DELETE /users/:id route does not pass requireAdmin, unlike its sibling routes. The router in server.js applies no auth middleware either.",
+      "consequence": "Any caller who can reach the server can delete any user account. The caller only needs to guess or enumerate user ids.",
+      "fix": "Add requireAdmin to the route's middleware chain, matching GET /users and POST /users/purge."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 25,
+      "title": "Purge drops the delete promises",
+      "description": "The forEach call discards the promise from each async callback, so the handler never awaits any delete. db.removeUser throws for an unknown id, and nothing catches that rejection. One unknown id in the list raises an unhandled rejection, and Node then crashes the whole server. The response also reports every id as removed before any delete has finished. Await all deletes with Promise.all, or use a for-of loop with await. Count only the deletes that succeeded.",
+      "suggested_change": "  await Promise.all(ids.map((id) => db.removeUser(id)));\n  res.json({ removed: ids.length });",
+      "source": "lens:async-floating-promise",
+      "candidate": null,
+      "notes": [],
+      "problem": "The forEach call discards the promise from each async callback, so the handler never awaits any delete. db.removeUser throws for an unknown id, and nothing catches that rejection.",
+      "consequence": "One unknown id in the list raises an unhandled rejection, and Node then crashes the whole server. The response also reports every id as removed before any delete has finished.",
+      "fix": "Await all deletes with Promise.all, or use a for-of loop with await. Count only the deletes that succeeded."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 26,
+      "title": "New delete endpoints have no tests",
+      "description": "The change adds two delete endpoints, and the repository has no test that calls either one. Nothing would catch a missing admin check or a broken purge in later changes. Add tests that check a non-admin gets 403 and that a purge with an unknown id fails cleanly.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds two delete endpoints, and the repository has no test that calls either one.",
+      "consequence": "Nothing would catch a missing admin check or a broken purge in later changes.",
+      "fix": "Add tests that check a non-admin gets 403 and that a purge with an unknown id fails cleanly."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3104,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 18,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 7,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 17,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 95766,
+      "started_at": "2026-10-08T19:28:13.177Z",
+      "ended_at": "2026-10-08T19:28:33.413Z",
+      "duration_ms": 20236,
+      "rounds": 1,
+      "usage": {
+        "turns": 8,
+        "input_tokens": 58995,
+        "output_tokens": 1714,
+        "cost_usd": 0.1055296
+      }
+    },
+    "snapshot": {
+      "change_id": "09f3ac8900f84abad10d156c3db2778b2f4e6139ace172b662fb9b34edd4e73f",
+      "tree": "2f3e74a87f59d5061a7d827c86e1dd2d346f8226",
+      "before": "2001bc64b94822b4c3903ba5fdc105bb8f1b888753aa4d35b42c1786b5e40ed5",
+      "after": "2001bc64b94822b4c3903ba5fdc105bb8f1b888753aa4d35b42c1786b5e40ed5"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 1,
+      "covered": 1,
+      "unread": [],
+      "files_read": [
+        "package.json",
+        "src/admin.js",
+        "src/auth.js",
+        "src/db.js",
+        "src/server.js"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

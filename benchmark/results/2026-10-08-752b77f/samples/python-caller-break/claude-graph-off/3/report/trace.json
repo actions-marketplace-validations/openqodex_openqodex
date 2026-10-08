@@ -1,0 +1,36 @@
+[
+  {
+    "tool": "Grep",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "pkgs/shop/src/shop/checkout.py",
+    "inside": true,
+    "range": [
+      1,
+      7
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "pkgs/shop/src/shop/receipt.py",
+    "inside": true,
+    "range": [
+      1,
+      7
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

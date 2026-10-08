@@ -1,0 +1,6 @@
+Passed: no findings
+Change 32c939b7a434 against HEAD, 2 files, +34 -5
+Summary: Moves the unset-or-empty env check into a shared setting helper, names the default port and host, and adds tests for port and host. Both functions behave exactly as they did before.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

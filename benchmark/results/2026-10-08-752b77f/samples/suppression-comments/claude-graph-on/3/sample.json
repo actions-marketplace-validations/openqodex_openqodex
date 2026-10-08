@@ -1,0 +1,124 @@
+{
+  "case": "suppression-comments",
+  "config": "claude-graph-on",
+  "reviewer": "claude",
+  "graph": "on",
+  "repeat": 3,
+  "attempts": 1,
+  "started_at": "2026-10-08T19:58:35.393Z",
+  "exit": 0,
+  "signal": null,
+  "wallMs": 23566,
+  "status": "complete",
+  "failure": null,
+  "verdict": "passed",
+  "reviewerUsed": {
+    "started": true,
+    "driver": "claude",
+    "version": "2.1.295"
+  },
+  "findings": 3,
+  "usage": {
+    "turns": 2,
+    "input_tokens": 27124,
+    "output_tokens": 1970,
+    "cost_usd": 0.1150634
+  },
+  "reviewerMs": 19620,
+  "rounds": 1,
+  "graphStatus": "ok",
+  "graphMs": 86,
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "kept": 2,
+      "ms": 3112
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "kept": 0,
+      "ms": 20
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "kept": 1,
+      "ms": 10
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "kept": 2,
+      "ms": 60
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "kept": 1,
+      "ms": 8
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    }
+  ]
+}
