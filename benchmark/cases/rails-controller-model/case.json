@@ -1,6 +1,6 @@
 {
   "id": "rails-controller-model",
-  "guards": "a Rails change with SQL built from params, an admin check that skips destroy, mass assignment of every attribute and a callback that runs on every save is reviewed as Rails code",
+  "guards": "a Rails change with SQL built from params, an admin check that skips destroy, a self-service profile update that permits every attribute and a callback that runs on every save is reviewed as Rails code",
   "language": "ruby",
   "framework": "rails",
   "clean": false,
@@ -36,8 +36,25 @@
       ],
       "anchor": {
         "line": 2,
-        "text": "except: [:index, :show, :destroy]"
+        "text": "except: [:index, :show, :profile, :destroy]"
       },
+      "also": [
+        {
+          "file": "app/controllers/users_controller.rb",
+          "lines": [
+            20,
+            22
+          ]
+        }
+      ],
+      "mentions": [
+        "admin",
+        "any user",
+        "anyone",
+        "any account",
+        "authoriz",
+        "permission"
+      ],
       "kind": [
         "security"
       ],
@@ -61,13 +78,13 @@
       "kind": [
         "security"
       ],
-      "severity": "major",
+      "severity": "critical",
       "found_by": [
         "brakeman",
         "semgrep",
         "reasoning"
       ],
-      "truth": "permit! allows every attribute, so a request can set admin or api_token on a user. The fix is to permit the editable attributes by name, such as permit(:email)."
+      "truth": "profile lets every user update their own record with permit!, which allows every attribute, so a user can send admin=true or a new api_token and make themselves an administrator. The fix is to permit the editable attributes by name, such as permit(:email)."
     },
     {
       "id": "welcome-on-every-save",

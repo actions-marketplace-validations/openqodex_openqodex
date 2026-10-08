@@ -4,7 +4,7 @@
 // bug found at its second location, an accepted side issue, a false finding,
 // a clean change, a missing report, and what a brief did and did not say.
 import { describe, expect, it } from "vitest";
-import { classify, regressions, runDifferences, scoreBrief, scoreSample, summarize, value } from "../lib/score.mjs";
+import { classify, regressions, runDifferences, scoreBrief, scoreSample, specDifferences, summarize, value } from "../lib/score.mjs";
 
 const bug = (id, file, lines, anchorLine, kind, severity, extra = {}) => ({ id, file, lines, anchor: { line: anchorLine, text: "x" }, kind, severity, found_by: ["reasoning"], truth: "t", ...extra });
 
@@ -85,6 +85,8 @@ describe("matching one finding to a planted bug", () => {
 
   it("counts a finding that only asks for a test apart on a planted case, and as false on a clean case", () => {
     expect(classify(finding("app/other.py", 5, "maintainability", "Changed formatting has no covering test"), spec).outcome).toBe("test-gap");
+    // Spanning a planted bug's lines does not make a request for a test a wrong kind for that bug.
+    expect(classify(finding("app/search.py", 9, "maintainability", "New and changed endpoints lack tests", { line_end: 17 }), spec).outcome).toBe("test-gap");
     expect(classify(finding("src/a.ts", 5, "maintainability", "Changed formatting has no covering test"), { ...spec, clean: true, bugs: [], extras: [] }).outcome).toBe("false");
   });
 });
@@ -184,5 +186,12 @@ describe("summing and comparing runs", () => {
     const b = { ...a, reviewer: { ...a.reviewer, model: "m2" } };
     expect(runDifferences(a, a)).toEqual([]);
     expect(runDifferences(a, b)[0]).toMatch(/reviewer model/);
+  });
+
+  it("names an edited case, by its files or by its spec, before any comparison", () => {
+    const a = { reviewer: { model: "m" }, cases: ["x"], repeat: 3, configs: ["c"], caseHashes: { x: "1" } };
+    expect(runDifferences(a, { ...a, caseHashes: { x: "2" } })).toEqual(["the case x changed between the runs (its files or its spec)"]);
+    expect(specDifferences({ x: spec }, { x: { ...spec, extras: [] } })).toEqual(["the spec of x differs between the runs"]);
+    expect(specDifferences({ x: spec }, { x: spec })).toEqual([]);
   });
 });

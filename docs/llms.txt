@@ -1,6 +1,7 @@
 # OpenQodex docs
 
 - [Agents](agents.md)
+- [The review benchmark](benchmark.md)
 - [Code review in Claude Code](claude-code-review.md)
 - [Commands](cli.md)
 - [Configuration](config.md)

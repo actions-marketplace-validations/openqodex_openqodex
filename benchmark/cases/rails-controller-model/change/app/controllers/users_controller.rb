@@ -1,5 +1,5 @@
 class UsersController < ApplicationController
-  before_action :require_admin, except: [:index, :show, :destroy]
+  before_action :require_admin, except: [:index, :show, :profile, :destroy]
 
   def index
     users = User.order(:email).limit(50)
@@ -11,10 +11,10 @@ class UsersController < ApplicationController
     render json: User.find(params[:id]).as_json(only: [:id, :email])
   end
 
-  def update
-    user = User.find(params[:id])
-    user.update!(params.require(:user).permit!)
-    render json: user.as_json(only: [:id, :email])
+  # Each user edits their own profile.
+  def profile
+    @current_user.update!(params.require(:user).permit!)
+    render json: @current_user.as_json(only: [:id, :email])
   end
 
   def destroy

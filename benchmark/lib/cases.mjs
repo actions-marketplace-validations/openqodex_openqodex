@@ -202,6 +202,25 @@ export function buildCase(id, into, root = casesRoot) {
   return { dir, spec };
 }
 
+// One hash over everything a case builds from: its spec, the base and change
+// folders it names (wherever they lie) and delete.txt. Two runs whose hashes
+// differ for a case reviewed different code or scored it differently.
+export function caseHash(id, root = casesRoot) {
+  const spec = readCase(id, root);
+  const caseDir = join(root, id);
+  const h = createHash("sha256");
+  h.update(readFileSync(join(caseDir, "case.json")));
+  for (const [label, folder] of [["base", resolve(caseDir, spec.base ?? "base")], ["change", resolve(caseDir, spec.change ?? "change")]]) {
+    for (const path of filesUnder(folder)) {
+      h.update(`\0${label}/${path}\0`);
+      h.update(readFileSync(join(folder, path)));
+    }
+  }
+  const del = join(caseDir, "delete.txt");
+  if (existsSync(del)) h.update(readFileSync(del));
+  return h.digest("hex");
+}
+
 // The lines a finding may start on, per file, as the review counts them:
 // lines the change added or modified, and the lines on either side of a
 // deletion. Computed with git from the built repository (untracked files

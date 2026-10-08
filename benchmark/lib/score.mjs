@@ -101,6 +101,9 @@ export function classify(finding, spec) {
     hits.sort((a, b) => Number(Boolean(b.bug.mentions)) - Number(Boolean(a.bug.mentions)) || anchorGap(a.bug) - anchorGap(b.bug) || a.order - b.order);
     return { outcome: "hit", bug: hits[0].bug.id };
   }
+  // A request for a test is about the missing test, not about a planted
+  // bug whose lines it happens to span.
+  if (!spec.clean && TEST_GAP.test(String(finding.title ?? ""))) return { outcome: "test-gap" };
   const wrong = bugs.find((bug) => dist(bug) === 0 && mentionsOk(bug, text) && !kindOk(bug));
   if (wrong) return { outcome: "wrong-kind", bug: wrong.id, expected: wrong.kind };
   const near = bugs
@@ -110,7 +113,6 @@ export function classify(finding, spec) {
   if (near) return { outcome: "near", bug: near.bug.id, distance: near.d };
   const extra = (spec.extras ?? []).find((x) => normPath(x.file) === file && gap(start, end, x.lines) === 0);
   if (extra) return { outcome: "accepted", why: extra.why };
-  if (!spec.clean && TEST_GAP.test(String(finding.title ?? ""))) return { outcome: "test-gap" };
   return { outcome: "false" };
 }
 
@@ -355,7 +357,20 @@ export function runDifferences(a, b) {
   same("cases", [...(a.cases ?? [])].sort(), [...(b.cases ?? [])].sort());
   same("repeats", a.repeat, b.repeat);
   same("configurations", a.configs, b.configs);
+  // An edited case: compared where both runs recorded what the case was built from.
+  for (const [id, hash] of Object.entries(a.caseHashes ?? {})) {
+    const other = b.caseHashes?.[id];
+    if (other !== undefined && other !== hash) out.push(`the case ${id} changed between the runs (its files or its spec)`);
+  }
   return out;
+}
+
+// Cases whose spec differs between two runs' own copies: the same review
+// can score differently under them.
+export function specDifferences(aSpecs, bSpecs) {
+  return Object.keys(aSpecs)
+    .filter((id) => bSpecs[id] !== undefined && JSON.stringify(aSpecs[id]) !== JSON.stringify(bSpecs[id]))
+    .map((id) => `the spec of ${id} differs between the runs`);
 }
 
 // Bugs a config found in at least two samples of the old run and in at most

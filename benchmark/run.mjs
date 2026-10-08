@@ -54,9 +54,9 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, appendFileSync } from "node:fs";
-import { cpus, totalmem, tmpdir, hostname, platform, arch, release } from "node:os";
+import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { benchRoot, buildCase, casesRoot, generatedValue, listCases, readCase, repoRoot } from "./lib/cases.mjs";
+import { benchRoot, buildCase, caseHash, casesRoot, generatedValue, listCases, readCase, repoRoot } from "./lib/cases.mjs";
 import { probeReviewer, REVIEWER_FAILED, BLOCKED } from "./lib/reviewers.mjs";
 
 const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run]";
@@ -124,7 +124,8 @@ function buildInfo(cli) {
 }
 
 function machine() {
-  return { host: hostname(), platform: platform(), release: release(), arch: arch(), cpu: cpus()[0]?.model ?? null, cpus: cpus().length, memoryGb: Math.round(totalmem() / 1024 ** 3), node: process.version };
+  // No host name: the results are published, and the hardware is what compares.
+  return { platform: platform(), release: release(), arch: arch(), cpu: cpus()[0]?.model ?? null, cpus: cpus().length, memoryGb: Math.round(totalmem() / 1024 ** 3), node: process.version };
 }
 
 // The jobs in run order: per repeat, every case, every configuration, with
@@ -273,6 +274,8 @@ async function main() {
     reviewers,
     review: { web: o.web, timeoutSeconds: o.timeout, reportDir: true, flags: "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]" },
     cases: o.cases,
+    // What each case was built from, so a comparison can tell an edited case from a product change.
+    caseHashes: Object.fromEntries(o.cases.map((c) => [c, caseHash(c)])),
     configs: configs.map((c) => c.id),
     repeat: o.repeat,
     concurrency: o.concurrency,

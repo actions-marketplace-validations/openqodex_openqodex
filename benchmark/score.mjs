@@ -22,8 +22,9 @@
 // 4. A table hides how many samples a number rests on: every ratio is
 //    printed as hits/checks, every time and cost with its count.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { SEVERITY_ORDER, bugStability, groupBy, regressions, runDifferences, scoreSample, summarize, value } from "./lib/score.mjs";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { repoRoot } from "./lib/cases.mjs";
+import { SEVERITY_ORDER, bugStability, groupBy, regressions, runDifferences, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 
 const readJson = (path) => {
   try {
@@ -65,7 +66,10 @@ export function loadRun(folder) {
       }
     }
   }
-  return { folder, manifest, specs, samples, notRun };
+  // Shown and saved relative to the repository when the run lies in it, so no machine path is published.
+  const inside = relative(repoRoot, folder);
+  const name = inside !== "" && !inside.startsWith("..") && !isAbsolute(inside) ? inside : folder;
+  return { folder, name, manifest, specs, samples, notRun };
 }
 
 const pct = (r) => `${r.hit}/${r.of}${r.of > 0 ? ` (${Math.round(value(r) * 100)}%)` : ""}`;
@@ -92,7 +96,7 @@ export function summary(run) {
   }
   const falseFindings = run.samples.flatMap((s) => s.findings.filter((f) => ["false", "near", "wrong-kind"].includes(f.outcome)).map((f) => ({ case: s.case, config: s.config, repeat: s.repeat, outcome: f.outcome, file: f.file, line: f.line, category: f.category, severity: f.severity, title: f.title, bug: f.bug ?? null, distance: f.distance ?? null })));
   return {
-    run: run.folder,
+    run: run.name,
     build: run.manifest.build,
     reviewer: run.manifest.reviewer ?? run.manifest.reviewers,
     repeat: run.manifest.repeat,
@@ -120,7 +124,7 @@ export function render(s) {
     ...SEVERITY_ORDER.filter((k) => configs.some((c) => s.byConfig[c].bySeverity[k].of > 0)).map((k) => [`  ${k}`, (c) => pct(c.bySeverity[k])]),
     ["Findings that are planted bugs (precision)", (c) => pct(c.precision)],
     ["False findings", (c) => String(c.falseFindings)],
-    ["  of them near misses / wrong kind", (c) => `${c.nearMisses} / ${c.wrongKinds}`],
+    ["Near misses / wrong kind (not hits either)", (c) => `${c.nearMisses} / ${c.wrongKinds}`],
     ["Accepted side issues (not counted)", (c) => String(c.accepted)],
     ["Findings that only ask for a test (not counted)", (c) => String(c.testGaps)],
     ["Clean changes with no finding", (c) => pct(c.controls)],
@@ -168,10 +172,15 @@ export function render(s) {
   return out.join("\n");
 }
 
+// Everything besides the build that differs between two runs.
+export function differences(older, newer) {
+  return [...runDifferences(older.manifest, newer.manifest), ...specDifferences(older.specs, newer.specs)];
+}
+
 export function renderCompare(older, newer, regs) {
   const out = [];
-  const diffs = runDifferences(older.manifest, newer.manifest);
-  out.push(`Comparing ${older.folder} (build ${older.manifest.build?.short}) with ${newer.folder} (build ${newer.manifest.build?.short}).`);
+  const diffs = differences(older, newer);
+  out.push(`Comparing ${older.name} (build ${older.manifest.build?.short}) with ${newer.name} (build ${newer.manifest.build?.short}).`);
   if (diffs.length > 0) {
     out.push("These differ besides the build, so a change below may not be the product's:");
     for (const d of diffs) out.push(`- ${d}`);
@@ -225,13 +234,13 @@ function main() {
   }
   const s = summary(run);
   const regs = older ? regressions(older.samples, run.samples) : [];
-  const doc = { ...s, comparedWith: older ? { run: older.folder, build: older.manifest.build, differences: runDifferences(older.manifest, run.manifest), regressions: regs } : null };
+  const doc = { ...s, comparedWith: older ? { run: older.name, build: older.manifest.build, differences: differences(older, run), regressions: regs } : null };
   writeFileSync(join(run.folder, "score.json"), `${JSON.stringify(doc, null, 2)}\n`);
   if (json) console.log(JSON.stringify(doc, null, 2));
   else {
     console.log(render(s));
     if (older) console.log(`\n${renderCompare(older, run, regs)}`);
-    console.log(`\nSummary saved: ${join(run.folder, "score.json")}`);
+    console.log(`\nSummary saved: ${join(run.name, "score.json")}`);
   }
   process.exit(regs.length > 0 ? 1 : 0);
 }
