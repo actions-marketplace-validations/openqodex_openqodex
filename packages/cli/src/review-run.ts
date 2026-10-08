@@ -624,6 +624,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   if (o.reportDir === undefined) announceRepoFiles(repoRoot);
   else keepRunStateOutOfRepo();
   const settings = readReviewerSettings();
+  for (const w of settings.warnings) warn(`openqodex: ${w}`);
   const web = o.web ?? settings.web;
   const chosen = await chooseReviewer(o.reviewer ?? settings.reviewer, o.drivers ?? DRIVERS, repoRoot);
   const deadline = Date.now() + o.timeoutMs;

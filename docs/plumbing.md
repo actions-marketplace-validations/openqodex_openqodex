@@ -41,6 +41,8 @@ Prints the Node and git versions, the repository, the config, the OpenQodex home
 - `--install`: download every scanner that fits this machine, and wait for all of them.
 - `--json`: print the same facts as JSON.
 
+Under "Your settings" it prints each key of `~/.openqodex/config.yaml` (`update`, `reviewer`, `reviewer_web`, `skip_version`) with the value in force and where it comes from: the file, the default, or the environment variable that turns updates off. It names a key it does not know with the known key nearest to it.
+
 Under "Updates" it prints the running version and whether the launcher started it, the newest version the last check saw and when, the last check, whether updates are on (and why not), and the last update error. For a version not started through the launcher (npx, a project-scope file), it says when that pinned version is behind the newest one a check saw. Without a check on this machine, it says nothing about that.
 
 `doctor` always prints its table. It then exits 2 in three cases:
