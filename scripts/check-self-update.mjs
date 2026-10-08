@@ -1,90 +1,283 @@
 #!/usr/bin/env node
-// The release check for the self-update, run by a person after a publish:
-// installs openqodex@<from> from npm into a temp HOME with `init`, makes a
-// check due, runs a normal command through the launcher, waits for the
-// detached worker, then requires that the launcher runs <to>.
+// The release check for the self-update, run after every publish by the
+// release workflow and by a person when needed. Real npm packages, a temp
+// HOME, nothing faked.
 //
-//   node scripts/check-self-update.mjs --from 0.3.0 --to 0.3.1 [--now]
+//   node scripts/check-self-update.mjs --from <x.y.z | previous> --to <x.y.z> [--route daily|now|both]
 //
-// Without --now the worker keeps the 24 hour age rule, so run it once <to>
-// is a day old. With --now it runs `openqodex update --now` through the
-// launcher instead of waiting for the daily check (same verification).
-// Needs the network and the real registry; nothing is faked.
+// For each route, in a fresh HOME:
+//  1. installs openqodex@<from> with `init` for all four agents, in user
+//     scope (in one repository) and in project scope (in another);
+//  2. edits what a developer edits: an agent file of each agent in both
+//     scopes, the Claude Code settings, the global instruction files, the
+//     user config, the repo config and its instructions;
+//  3. records every file (sha256 and mode) in the HOME and both repositories;
+//  4. updates: `now` runs `openqodex update --now` through the launcher;
+//     `daily` runs `hook check` through the launcher and waits for the
+//     detached worker, with the test seam (OPENQODEX_E2E=1) only lifting the
+//     24 hour age rule, so a fresh release can be checked;
+//  5. fails on any change outside the runtime state (a new runtime folder,
+//     runtime/current, update.json): an update writes no agent file, no
+//     setting and nothing in a repository;
+//  6. when <from> and <to> declare the same contract (src/contract.ts),
+//     requires every command the active procedure (`guide skill`) gives the
+//     agent to be allowed by the recorded Claude Code permission rules, and
+//     names the files `init` would refresh when one is not. When they
+//     differ, the daily route must leave <to> waiting for a foreground
+//     update, and after `init` refreshes the files every rule must cover
+//     the procedure and every edit from step 2 must be byte for byte as it was.
+//
+// Needs the network and the real registry. Stops at the first failure and
+// keeps the temp HOME for a look.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const args = process.argv.slice(2);
 const value = (flag) => {
   const i = args.indexOf(flag);
   return i === -1 ? undefined : args[i + 1];
 };
-const from = value("--from");
 const to = value("--to");
-const now = args.includes("--now");
+const route = value("--route") ?? "both";
 const PLAIN = /^\d+\.\d+\.\d+$/;
-if (!PLAIN.test(from ?? "") || !PLAIN.test(to ?? "")) {
-  console.error("usage: node scripts/check-self-update.mjs --from <x.y.z> --to <x.y.z> [--now]");
+if ((!PLAIN.test(value("--from") ?? "") && value("--from") !== "previous") || !PLAIN.test(to ?? "") || !["daily", "now", "both"].includes(route)) {
+  console.error("usage: node scripts/check-self-update.mjs --from <x.y.z | previous> --to <x.y.z> [--route daily|now|both]");
   process.exit(2);
 }
 
-const top = realpathSync(mkdtempSync(join(tmpdir(), "oq-self-update-check-")));
-const home = join(top, "home");
-const oqHome = join(home, ".openqodex");
-const repo = join(top, "repo");
-mkdirSync(home, { recursive: true });
-mkdirSync(repo, { recursive: true });
-const env = { ...process.env, HOME: home, OPENQODEX_HOME: oqHome };
-for (const key of ["CI", "OPENQODEX_OFFLINE", "OPENQODEX_AUTO_UPDATE", "OPENQODEX_E2E", "OPENQODEX_UPDATE_AS", "OPENQODEX_UPDATE_MIN_AGE_MS", "OPENQODEX_LAUNCHER", "CODEX_HOME"]) delete env[key];
-
-function step(what, command, argv, input = "") {
-  const r = spawnSync(command, argv, { cwd: repo, env, input, encoding: "utf8", timeout: 600_000 });
-  process.stdout.write(`$ ${what}: exit ${r.status}\n${r.stdout}${r.stderr}`);
-  return r;
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let box = null;
 function fail(line) {
-  console.error(`FAIL: ${line}\nThe temp HOME is kept for a look: ${home}`);
+  console.error(`FAIL: ${line}${box === null ? "" : `\nThe temp HOME is kept for a look: ${box.home}`}`);
   process.exit(1);
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const launcher = join(oqHome, "bin/openqodex");
-// Line 1 of the active record is the version the launcher runs; line 2, when
-// there, is the one to roll back to.
-const current = () => (existsSync(join(oqHome, "runtime/current")) ? readFileSync(join(oqHome, "runtime/current"), "utf8").split("\n")[0] : null);
 
-step("git init", "git", ["init", "-q"]);
-const init = step(`install ${from}`, "npx", ["-y", `openqodex@${from}`, "init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo"]);
-if (init.status !== 0) fail(`openqodex@${from} init did not succeed`);
-if (current() !== from) fail(`after init the launcher points at ${current()}, not ${from}`);
-// No state: a check is due.
-rmSync(join(oqHome, "update.json"), { force: true });
+// The contract each version declares in the registry (src/contract.ts); null
+// for a release from before contracts.
+const metadata = await (await fetch("https://registry.npmjs.org/openqodex")).json();
+// `previous`: the newest release below <to>, as the release workflow asks.
+const parts = (v) => v.split(".").map(Number);
+const below = (a, b) => {
+  const [x, y] = [parts(a), parts(b)];
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+};
+const from =
+  value("--from") === "previous"
+    ? Object.keys(metadata.versions ?? {}).filter((v) => PLAIN.test(v) && below(v, to) < 0).sort(below).pop()
+    : value("--from");
+if (from === undefined) {
+  console.error(`FAIL: no release below ${to} on the registry`);
+  process.exit(1);
+}
+const contractOf = (v) => {
+  const block = metadata.versions?.[v]?.openqodex;
+  return block && Number.isInteger(block.agentContract) && Number.isInteger(block.configFormat) ? `${block.agentContract}/${block.configFormat}` : null;
+};
+if (metadata.versions?.[from] === undefined || metadata.versions?.[to] === undefined) fail(`${from} or ${to} is not on the registry`);
+const sameContract = contractOf(from) === contractOf(to);
+process.stdout.write(`contracts: ${from} ${contractOf(from) ?? "none"}, ${to} ${contractOf(to) ?? "none"}\n`);
 
-if (now) {
-  const r = step("update --now through the launcher", "sh", [launcher, "update", "--now"]);
-  if (r.status !== 0) fail("update --now failed");
-} else {
-  const started = Date.now();
-  const r = step("hook check through the launcher", "sh", [launcher, "hook", "check"], "{}");
-  process.stdout.write(`the command returned in ${Date.now() - started} ms\n`);
-  if (r.status !== 0) fail("hook check failed");
-  // The detached worker ends within ten minutes: wait for the switch, or
-  // for the error it records.
-  const lastError = () => {
-    try {
-      return JSON.parse(readFileSync(join(oqHome, "update.json"), "utf8")).lastError ?? null;
-    } catch {
-      return null;
-    }
-  };
-  const deadline = Date.now() + 10 * 60_000;
-  while (current() === from && lastError() === null && Date.now() < deadline) await sleep(1000);
+function setup(name) {
+  const top = realpathSync(mkdtempSync(join(tmpdir(), `oq-self-update-${name}-`)));
+  const b = { top, home: join(top, "home"), oqHome: join(top, "home", ".openqodex"), user: join(top, "user-repo"), project: join(top, "project-repo") };
+  for (const dir of [b.home, b.user, b.project]) mkdirSync(dir, { recursive: true });
+  const env = { ...process.env, HOME: b.home, OPENQODEX_HOME: b.oqHome, npm_config_cache: join(top, "npm-cache"), npm_config_update_notifier: "false" };
+  for (const key of ["CI", "OPENQODEX_OFFLINE", "OPENQODEX_AUTO_UPDATE", "OPENQODEX_E2E", "OPENQODEX_UPDATE_AS", "OPENQODEX_UPDATE_MIN_AGE_MS", "OPENQODEX_LAUNCHER", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CODEX_THREAD_ID", "CURSOR_AGENT"]) delete env[key];
+  b.env = env;
+  b.launcher = join(b.oqHome, "bin", "openqodex");
+  return b;
 }
 
-const state = existsSync(join(oqHome, "update.json")) ? readFileSync(join(oqHome, "update.json"), "utf8") : "(none)";
-process.stdout.write(`update.json:\n${state}\n`);
-if (current() !== to) fail(`the launcher points at ${current()}, not ${to}`);
-const version = step("--version through the launcher", "sh", [launcher, "--version"]);
-if (version.stdout.trim() !== to) fail(`the launcher printed ${version.stdout.trim()}, not ${to}`);
-process.stdout.write(`PASS: ${from} updated itself to ${to}\n`);
-rmSync(top, { recursive: true, force: true });
+function step(what, cwd, command, argv, extra = {}, input = "") {
+  const r = spawnSync(command, argv, { cwd, env: { ...box.env, ...extra }, input, encoding: "utf8", timeout: 600_000 });
+  process.stdout.write(`$ ${what}: exit ${r.status}\n${r.stdout ?? ""}${r.stderr ?? ""}`);
+  return r;
+}
+
+function git(cwd, ...argv) {
+  const r = spawnSync("git", argv, { cwd, encoding: "utf8" });
+  if (r.status !== 0) fail(`git ${argv.join(" ")}: ${r.stderr}`);
+}
+
+// init of <from>, with --no-review where that version knows it.
+function initFrom(cwd, extra) {
+  const base = ["-y", `openqodex@${from}`, "init", "--yes", "--agent", "all", ...extra];
+  let r = step(`init ${from} ${extra.join(" ")}`, cwd, "npx", [...base, "--no-review"]);
+  if (r.status !== 0 && /unknown argument: --no-review/.test(`${r.stdout}${r.stderr}`)) r = step(`init ${from} ${extra.join(" ")}`, cwd, "npx", base);
+  if (r.status !== 0) fail(`openqodex@${from} init ${extra.join(" ")} did not succeed`);
+}
+
+// Every regular file and link under the folders, by path: sha256 and mode.
+function inventory(b) {
+  const out = new Map();
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        const st = lstatSync(full);
+        const body = entry.isSymbolicLink() ? `link` : createHash("sha256").update(readFileSync(full)).digest("hex");
+        out.set(relative(b.top, full), `${body} ${(st.mode & 0o7777).toString(8)}`);
+      }
+    }
+  };
+  for (const dir of [b.home, b.user, b.project]) walk(dir);
+  return out;
+}
+
+// What an update may write: a runtime copy, the active record, its own state.
+const RUNTIME_STATE = /^home\/\.openqodex\/(runtime\/[0-9][0-9A-Za-z.+-]*\/|runtime\/current$|update\.json$)/;
+
+function changesOutsideRuntime(before, after) {
+  const changed = [];
+  for (const [path, sum] of after) if (before.get(path) !== sum && !RUNTIME_STATE.test(path)) changed.push(`${before.has(path) ? "changed" : "added"} ${path}`);
+  for (const path of before.keys()) if (!after.has(path) && !RUNTIME_STATE.test(path)) changed.push(`removed ${path}`);
+  return changed;
+}
+
+// What a developer edits after installing, in every agent's files, both scopes.
+const EDITS = [
+  ["home/.openqodex/config.yaml", (p) => writeFileSync(p, "# my laptop\nupdate: on # keep me current\nreviewer_web: off\n")],
+  ["home/.claude/CLAUDE.md", (p) => appendFileSync(p, "\nMy own rule for Claude.\n")],
+  ["home/.codex/AGENTS.md", (p) => appendFileSync(p, "\nMy own rule for Codex.\n")],
+  ["home/.cursor/skills/openqodex/SKILL.md", (p) => appendFileSync(p, "\nMy own note for Cursor.\n")],
+  ["home/Documents/Cline/Rules/openqodex.md", (p) => appendFileSync(p, "\nMy own note for Cline.\n")],
+  [
+    "home/.claude/settings.json",
+    (p) => {
+      const s = JSON.parse(readFileSync(p, "utf8"));
+      s.model = "opus";
+      s.permissions = { ...s.permissions, allow: [...(s.permissions?.allow ?? []), "Bash(ls)"], deny: ["Bash(rm -rf *)"] };
+      s.hooks = { ...s.hooks, PostToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "true" }] }] };
+      writeFileSync(p, `${JSON.stringify(s, null, 2)}\n`);
+    },
+  ],
+  ["user-repo/CLAUDE.md", (p) => appendFileSync(p, "\nThe team's own rule.\n")],
+  ["user-repo/.openqodex/config.yaml", (p) => appendFileSync(p, "\n# chosen by the team\n")],
+  ["user-repo/.openqodex/custom-instructions.md", (p) => appendFileSync(p, "\nPayments code needs a second look.\n")],
+  ["project-repo/.claude/skills/openqodex/SKILL.md", (p) => appendFileSync(p, "\nThe team's note for Claude.\n")],
+  ["project-repo/.agents/skills/openqodex/SKILL.md", (p) => appendFileSync(p, "\nThe team's note for Codex and Cursor.\n")],
+  ["project-repo/.cursor/rules/openqodex.mdc", (p) => appendFileSync(p, "\nThe team's Cursor rule.\n")],
+  ["project-repo/.clinerules/openqodex.md", (p) => appendFileSync(p, "\nThe team's Cline rule.\n")],
+  ["project-repo/AGENTS.md", (p) => appendFileSync(p, "\nThe team's own rule.\n")],
+];
+
+const current = (b) => (existsSync(join(b.oqHome, "runtime/current")) ? readFileSync(join(b.oqHome, "runtime/current"), "utf8").split("\n")[0] : null);
+const state = (b) => {
+  try {
+    return JSON.parse(readFileSync(join(b.oqHome, "update.json"), "utf8"));
+  } catch {
+    return {};
+  }
+};
+
+// The commands the active procedure gives the agent to run, as an agent
+// runs them: review and guide lines, not a review of a named branch or pull
+// request, which no exact rule covers.
+function procedureCommands(b) {
+  const r = step("guide skill through the launcher", b.user, "sh", [b.launcher, "guide", "skill"]);
+  if (r.status !== 0) fail("guide skill failed");
+  const escaped = b.launcher.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const lines = [...r.stdout.matchAll(new RegExp(`'?${escaped}'? [^\`\\n]*`, "g"))].map((m) => m[0].trim().replace(/^'([^']+)'/, "$1"));
+  return [...new Set(lines.filter((l) => / (review|guide)\b/.test(l) && !l.includes("<") && !/ review [^-]/.test(l)))];
+}
+
+// Claude Code's matching as its permissions page states it: a rule without
+// `*` matches one exact command; a trailing " *" also matches the bare one.
+function uncovered(b, commands) {
+  const settings = JSON.parse(readFileSync(join(b.home, ".claude/settings.json"), "utf8"));
+  const rules = (settings.permissions?.allow ?? []).filter((r) => typeof r === "string" && r.startsWith("Bash(")).map((r) => r.slice(5, -1).replace(/^'([^']+)'/, "$1"));
+  const covers = (rule, c) => (rule.endsWith(" *") ? c === rule.slice(0, -2) || c.startsWith(rule.slice(0, -1)) : c === rule);
+  return commands.filter((c) => !rules.some((rule) => covers(rule, c)));
+}
+
+function wouldRefresh(b) {
+  const r = step("init --dry-run through the launcher", b.user, "sh", [b.launcher, "init", "--dry-run", "--agent", "all"]);
+  return r.stdout.split("\n").filter((l) => /^\s+(update|replace)\s/.test(l)).map((l) => l.trim());
+}
+
+async function check(name) {
+  box = setup(name);
+  const b = box;
+  process.stdout.write(`\n== route ${name}: ${from} to ${to} in ${b.top}\n`);
+  git(b.user, "init", "-q");
+  git(b.project, "init", "-q");
+  for (const repo of [b.user, b.project]) {
+    git(repo, "config", "maintenance.auto", "false");
+    git(repo, "-c", "user.email=check@example.com", "-c", "user.name=Check", "commit", "-q", "--allow-empty", "-m", "start");
+  }
+  initFrom(b.user, ["--hook", "pre-push"]);
+  initFrom(b.project, ["--project", "--hook", "none"]);
+  if (current(b) !== from) fail(`after init the launcher points at ${current(b)}, not ${from}`);
+  for (const [path, edit] of EDITS) {
+    const full = join(b.top, path);
+    if (!existsSync(full) && !path.endsWith("config.yaml")) fail(`${path} was not written by openqodex@${from} init`);
+    edit(full);
+  }
+  rmSync(join(b.oqHome, "update.json"), { force: true });
+  const before = inventory(b);
+  const edited = new Map(EDITS.map(([path]) => [path, before.get(path)]));
+
+  let expect = to;
+  if (name === "now") {
+    const r = step("update --now through the launcher", b.user, "sh", [b.launcher, "update", "--now"]);
+    if (r.status !== 0) fail("update --now failed");
+  } else {
+    // A worker that reads contracts leaves a release of another contract waiting.
+    const holds = !sameContract && contractOf(from) !== null;
+    if (holds) expect = from;
+    const r = step("hook check through the launcher", b.user, "sh", [b.launcher, "hook", "check"], { OPENQODEX_E2E: "1", OPENQODEX_UPDATE_MIN_AGE_MS: "0" }, "{}");
+    if (r.status !== 0) fail("hook check failed");
+    const deadline = Date.now() + 10 * 60_000;
+    while (Date.now() < deadline) {
+      const s = state(b);
+      if (current(b) !== from || s.lastError || (holds && s.held)) break;
+      await sleep(1000);
+    }
+    if (holds && state(b).held?.version !== to) fail(`the daily worker did not leave ${to}, of another contract, waiting: ${JSON.stringify(state(b))}`);
+  }
+  process.stdout.write(`update.json:\n${JSON.stringify(state(b), null, 2)}\n`);
+  if (current(b) !== expect) fail(`the launcher points at ${current(b)}, not ${expect}`);
+  const version = step("--version through the launcher", b.user, "sh", [b.launcher, "--version"]);
+  if (version.stdout.trim() !== expect) fail(`the launcher printed ${version.stdout.trim()}, not ${expect}`);
+
+  const outside = changesOutsideRuntime(before, inventory(b));
+  if (outside.length > 0) fail(`the update changed files outside the runtime state:\n  ${outside.join("\n  ")}`);
+  if (expect === from) return;
+
+  if (sameContract) {
+    const missing = uncovered(b, procedureCommands(b));
+    if (missing.length > 0) {
+      fail(`${to} keeps the contract of ${from}, but the permission rules do not allow what its procedure runs:\n  ${missing.join("\n  ")}\ninit would refresh:\n  ${wouldRefresh(b).join("\n  ")}`);
+    }
+    return;
+  }
+  // Another contract: the developer runs init, which refreshes the files
+  // OpenQodex wrote and keeps every edit.
+  process.stdout.write(`files init would refresh:\n  ${wouldRefresh(b).join("\n  ")}\n`);
+  const refresh = step("init through the launcher", b.user, "sh", [b.launcher, "init", "--yes", "--agent", "all", "--hook", "pre-push", "--no-review"]);
+  if (refresh.status !== 0) fail("init after the update failed");
+  const missing = uncovered(b, procedureCommands(b));
+  if (missing.length > 0) fail(`after init the permission rules do not allow what the procedure runs:\n  ${missing.join("\n  ")}`);
+  const after = inventory(b);
+  const lost = [...edited.keys()].filter((path) => !after.has(path));
+  const keptBytes = ["home/.cursor/skills/openqodex/SKILL.md", "home/Documents/Cline/Rules/openqodex.md", "home/.openqodex/config.yaml", "user-repo/.openqodex/config.yaml", "user-repo/.openqodex/custom-instructions.md"].filter((p) => after.get(p) !== edited.get(p));
+  if (lost.length + keptBytes.length > 0) fail(`init lost an edit:\n  ${[...lost, ...keptBytes].join("\n  ")}`);
+  for (const [path, mark] of [["home/.claude/CLAUDE.md", "My own rule for Claude."], ["home/.codex/AGENTS.md", "My own rule for Codex."], ["user-repo/CLAUDE.md", "The team's own rule."]]) {
+    if (!readFileSync(join(b.top, path), "utf8").includes(mark)) fail(`init lost the developer's text in ${path}`);
+  }
+  const settings = JSON.parse(readFileSync(join(b.home, ".claude/settings.json"), "utf8"));
+  if (settings.model !== "opus" || !settings.permissions?.deny?.includes("Bash(rm -rf *)") || !settings.permissions?.allow?.includes("Bash(ls)") || !settings.hooks?.PostToolUse) {
+    fail("init lost a setting the developer made in ~/.claude/settings.json");
+  }
+}
+
+for (const name of route === "both" ? ["daily", "now"] : [route]) {
+  await check(name);
+  rmSync(box.top, { recursive: true, force: true });
+  box = null;
+}
+process.stdout.write(`PASS: ${from} to ${to} (${route})\n`);

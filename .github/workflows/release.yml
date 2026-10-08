@@ -78,3 +78,17 @@ jobs:
           case "$major" in ''|*[!0-9]*) echo "cannot read the major version of $version; no major tag moved"; exit 1 ;; esac
           git tag -f "v$major"
           git push --force origin "refs/tags/v$major"
+      - name: Check the self-update into the new release
+        # Only after a publish, and only a check: nothing is merged, tagged or
+        # published by it. In a temp HOME it installs the release before this
+        # one for all four agents, edits their files the way a developer
+        # does, updates on the daily route and with update --now, and fails
+        # when an update wrote anything outside its runtime state, or left the
+        # agents' permission rules short of the new procedure.
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          version=$(node -e 'const p = JSON.parse(process.env.PUBLISHED).find((x) => x.name === "openqodex"); if (p) process.stdout.write(p.version)')
+          if [ -z "$version" ]; then echo "openqodex was not published in this run"; exit 0; fi
+          node scripts/check-self-update.mjs --from previous --to "$version" --route both
