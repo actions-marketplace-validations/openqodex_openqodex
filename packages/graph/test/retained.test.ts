@@ -18,8 +18,13 @@
 // 8. A file the model looked for and did not find (`./configs/base` as
 //    written, while `configs/base.json` answered) appears and now wins, and
 //    the old index is loaded, because only files that were read count.
+// 9. A folder no file of git's list names (an empty folder a `file:`
+//    dependency's path walks through) becomes a link, the placement of the
+//    dependency changes, and the old index is loaded, because no listed
+//    file changed.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { buildGraph, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
@@ -151,5 +156,25 @@ describe("the retained index", () => {
     const second = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(loadedIndex(second)).toBe(false);
     expect(callSites(second, symbol(second, "other/x.ts", "f"))).toEqual(["src/use.ts:3"]);
+  });
+
+  it("is not loaded after a folder a file: path walks through becomes a link (9)", async () => {
+    const root = makeRepo({
+      "package.json": '{ "name": "root", "private": true, "workspaces": ["packages/*"] }\n',
+      "packages/shared/package.json": '{ "name": "shared", "main": "./index.ts" }\n',
+      "packages/shared/index.ts": "export function helper() {\n  return 1;\n}\n",
+      "packages/b/package.json": '{ "name": "b", "dependencies": { "shared": "file:../pivot/../shared" } }\n',
+      "packages/b/src/use.ts": 'import { helper } from "shared";\nexport function run() {\n  return helper();\n}\n',
+    });
+    repos.push(root);
+    mkdirSync(join(root, "packages/pivot"));
+    const st = await storeOf(root);
+    const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    expect(callSites(first, symbol(first, "packages/shared/index.ts", "helper"))).toEqual(["packages/b/src/use.ts:3"]);
+    rmdirSync(join(root, "packages/pivot"));
+    symlinkSync(join(root, "packages/shared"), join(root, "packages/pivot"));
+    const second = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    expect(loadedIndex(second)).toBe(false);
+    expect(callSites(second, symbol(second, "packages/shared/index.ts", "helper"))).toEqual([]);
   });
 });

@@ -219,6 +219,11 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     only: args.only ?? null,
     maxFileBytes,
     projects: traced.entries(),
+    // And what the model made of the work tree beyond the files it read:
+    // where each file: dependency leads (a folder walked by identity, which
+    // may become a link while no listed file changes) and why a file could
+    // not be read.
+    model: createHash("sha256").update(JSON.stringify(serializeModel(model))).digest("hex"),
     tooBig: [...inv.tooBig].sort(),
     unreadable: [...inv.unreadable].sort(),
   });

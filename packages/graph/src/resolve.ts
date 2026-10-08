@@ -37,7 +37,7 @@ export const EXPORT_WALK_STEPS = 4096;
 // back on itself, which no cache can shorten.
 export const EXPORT_LOOKUP_STEPS = 10_000;
 export const HUB_FILES = 8; // a name defined in more files never binds without evidence
-export const RESOLVER_VERSION = 6;
+export const RESOLVER_VERSION = 7;
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
