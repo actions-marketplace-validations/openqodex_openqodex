@@ -31,7 +31,19 @@ A step through inheritance is part of the proof: a method found on a base class 
 - The nearest `tsconfig.json` or `jsconfig.json` above a file governs it, with relative `extends` followed (up to five configs in one chain; an `extends` that names a package is read for the config's own options only). Its `paths` and `baseUrl` prove an import when its `files`, `include` and `exclude` list the file; otherwise the binding is likely.
 - Python absolute imports search the importing file's own folders, every `src` folder that holds a package, every folder with a `pyproject.toml`, `setup.cfg` or `setup.py`, and namespace packages without `__init__.py`. A module found in two places (next to the importer, or under two roots) is not bound and is recorded as ambiguous. A module file or a regular package wins over a namespace package, as in Python.
 - Manifests and tsconfig files are read as text, each up to 1 MB, and lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`) up to 16 MB; a larger file is not read. Each is read in one pass, so a crafted file cannot make the graph hang. Nothing in the repository is run.
-- A manifest, lockfile or tsconfig the graph cannot read, parse or follow (over its cap, not valid JSON, a link, a relative `extends` that names a file not in the repository) is never dropped quietly. It becomes an unknown that names the file and what failed, the build is partial and is not kept as complete, and caller lists in the folder it governs are floors when its loss can hide a call. A file that git lists but the work tree no longer holds is no failure.
+- A manifest, lockfile or tsconfig the graph cannot read, parse or follow (over its cap, not valid JSON, a link, a relative `extends` that names a file not in the repository) is never dropped quietly. It becomes an unknown that names the file and what failed, and a reason line of the build. A file that git lists but the work tree no longer holds is no failure. What else follows depends on what its loss can hide:
+
+| File | Its loss can hide | Then |
+| --- | --- | --- |
+| `package.json` | calls, inheritance and imports | caller lists in its folder are floors; the build is partial and keeps no index |
+| `tsconfig.json`, `jsconfig.json` | calls, inheritance and imports | the same |
+| `pnpm-workspace.yaml` | calls, inheritance and imports | the same |
+| `go.mod` | calls and imports | the same |
+| `pyproject.toml`, `setup.cfg`, `requirements*.txt` | nothing: imports of what it declares read as misses | the build stays complete |
+| `Gemfile` | nothing: requires of the gems it names read as misses | the build stays complete |
+| `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock` | nothing: a binding through it is only less sure | the build stays complete |
+
+  A kept index is matched by the content of each of these files, so it is never reused once one of them changes.
 
 ## What it cannot see
 
@@ -45,6 +57,7 @@ A call no rule can bind is kept as an unknown with its cause, never dropped:
 - miss: the evidence names a place where no such symbol exists now.
 - ambiguous: several definitions could be meant and nothing picks one.
 - budget: the time budget ran out before the file's calls were resolved.
+- export-chain-too-deep: the name is re-exported or aliased through more than 8 modules, and the graph stops following it there.
 - unsupported-rule: the evidence leads somewhere no rule binds through, such as a `file:` dependency into a folder of the repository that is no workspace package.
 - metadata-unreadable: a manifest, lockfile or tsconfig the graph could not read, parse or follow; the note names the file and what failed.
 
@@ -55,6 +68,12 @@ Every cut is recorded with what it left out: a symbol with more than 40 callers 
 Languages: TypeScript, TSX, JavaScript, Python, Go and Ruby. Files under `node_modules`, `dist`, `build`, `out`, `vendor` and the like, declaration files and minified files are left out.
 
 A file is listed as not read, with the reason, when it is over `graph.max_file_bytes`, past the `graph.max_files` parse cap, past the time budget or the memory bound, or when its parse takes over two seconds (the parser is slow on some broken files). Every one of these holds for the changed files too: they are read first, so a cap reached late never loses them.
+
+## Limits
+
+- A dependency that a lockfile links by path (a pnpm `link:` entry, `link: true` in `package-lock.json`) or that yarn declares as `workspace:<path>` is bound to the workspace package of its name, not by where the path leads.
+- A tsconfig `extends` given as a list (TypeScript 5) is not followed: it is a metadata-unreadable unknown, and the build is partial.
+- A facts file in `.openqodex/graph/` is trusted when you own it and only you can write it, so facts planted with your own user, for example by an archive you extracted over the repository, are read as the graph's own.
 
 ## The graph's folder
 
