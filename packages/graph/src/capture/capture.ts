@@ -4,13 +4,23 @@
 // store keeps the tree alive under refs/openqodex/graph/<tree> while a
 // generation built from it is kept (PLAN.md 3.2.0, decision 11).
 //
-// Neither function touches the developer's index: each works on a copy in
-// a temporary folder. Every git call goes through safeGit, so no hook,
-// filter or fetch runs.
-import { copyFileSync, existsSync, lstatSync, mkdtempSync, rmSync } from "node:fs";
+// Only the files of the captured tree are stored, and only from inside the
+// folder captured: a symbolic link is stored as a link (its target text),
+// never followed; a path is read only when every folder on the way is a
+// real folder; nothing outside the root is read into an object. Neither
+// function touches the developer's index: each works on a copy in a
+// temporary folder. Every git call goes through safeGit, so no hook, filter
+// or fetch runs, and no path from the repository is placed where git reads
+// an option.
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { safeGit } from "@openqodex/core";
+import { RepoReader } from "../safe-fs.js";
+import { isRepoRelative, isSha } from "./git.js";
+
+// A snapshot file larger than this is left out of the capture's tree.
+const MAX_CAPTURE_FILE_BYTES = 64 * 1024 * 1024;
 
 async function gitPath(root: string, name: string): Promise<string> {
   const r = await safeGit(root, ["rev-parse", "--git-path", name]);
@@ -25,24 +35,31 @@ async function ok(root: string, args: string[], env: Record<string, string>, inp
   return r.stdout;
 }
 
-async function withIndexCopy<T>(root: string, run: (env: Record<string, string>) => Promise<T>): Promise<T> {
+async function withIndexCopy<T>(root: string, run: (env: Record<string, string>, tmp: string) => Promise<T>): Promise<T> {
   const tmp = mkdtempSync(join(tmpdir(), "openqodex-capture-"));
   try {
     const index = await gitPath(root, "index");
     const copy = join(tmp, "index");
     if (existsSync(index)) copyFileSync(index, copy);
-    return await run({ GIT_INDEX_FILE: copy });
+    return await run({ GIT_INDEX_FILE: copy }, tmp);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 }
 
+const tree = (b: Buffer): string => {
+  const sha = b.toString("utf8").trim();
+  if (!isSha(sha)) throw new Error("git write-tree gave no tree id");
+  return sha;
+};
+
 // The work tree of `root` as it is now: tracked, changed and untracked files
 // (not ignored ones), their blobs written into the repository's objects.
+// git add stores a link as a link and adds nothing beyond one.
 export async function captureWorkingTree(root: string): Promise<string> {
   return withIndexCopy(root, async (env) => {
     await ok(root, ["add", "-A", "--", "."], env);
-    return (await ok(root, ["write-tree"], env)).toString("utf8").trim();
+    return tree(await ok(root, ["write-tree"], env));
   });
 }
 
@@ -51,13 +68,14 @@ export async function captureWorkingTree(root: string): Promise<string> {
 // every file it holds now, with the blobs the repository does not have yet
 // (changed, untracked and redacted files) written into its objects.
 export async function captureSnapshot(snapshot: string): Promise<string> {
-  return withIndexCopy(snapshot, async (env) => {
+  const reader = new RepoReader(snapshot);
+  return withIndexCopy(snapshot, async (env, tmp) => {
     const split = (b: Buffer) => b.toString("utf8").split("\0").filter(Boolean);
     const staged = new Map<string, string>();
     for (const rec of split(await ok(snapshot, ["ls-files", "-s", "-z"], env))) {
       const tab = rec.indexOf("\t");
       const [mode, id] = rec.slice(0, tab).split(" ");
-      if ((mode === "100644" || mode === "100755") && id) staged.set(rec.slice(tab + 1), id);
+      if ((mode === "100644" || mode === "100755" || mode === "120000") && id && isSha(id)) staged.set(rec.slice(tab + 1), id);
     }
     // Blobs the repository's objects lack: the snapshot's index names them,
     // but they were written to the temporary folder the change source removed.
@@ -69,34 +87,51 @@ export async function captureSnapshot(snapshot: string): Promise<string> {
     }
     const changed = new Set(split(await ok(snapshot, ["diff-files", "--name-only", "-z", "--no-ext-diff"], env)));
     for (const [path, id] of staged) if (missing.has(id)) changed.add(path);
-    const present: string[] = [];
-    const lines: string[] = [];
+    // Each changed path's bytes, read here with no link followed, copied to
+    // a temporary file of our own naming; git hashes those copies. A path
+    // that fails its check, or a file that is not a regular file or a link,
+    // leaves the tree.
+    const records: string[] = [];
+    const copies: { path: string; mode: string; file: string }[] = [];
     for (const path of changed) {
-      let st;
+      let st = null;
       try {
-        st = lstatSync(join(snapshot, path));
+        st = isRepoRelative(path) ? lstatSync(join(snapshot, path)) : null;
       } catch {
         st = null;
       }
-      if (st?.isFile()) present.push(path);
-      else lines.push(`0 ${"0".repeat(40)}\t${path}`); // removed from the snapshot (redaction): out of the tree
+      const file = join(tmp, `blob-${copies.length}`);
+      if (st?.isSymbolicLink()) {
+        writeFileSync(file, readlinkSync(join(snapshot, path)), { flag: "wx" });
+        copies.push({ path, mode: "120000", file });
+        continue;
+      }
+      const bytes = st?.isFile() ? reader.readBytes(path, MAX_CAPTURE_FILE_BYTES) : null;
+      if (bytes === null) {
+        records.push(`0 ${"0".repeat(40)}\t${path}`);
+        continue;
+      }
+      writeFileSync(file, bytes, { flag: "wx" });
+      copies.push({ path, mode: ((st?.mode ?? 0) & 0o111) !== 0 ? "100755" : "100644", file });
     }
-    if (present.length > 0) {
-      const written = (await ok(snapshot, ["hash-object", "-w", "--no-filters", "--stdin-paths"], env, `${present.join("\n")}\n`)).toString("utf8").trim().split("\n");
-      present.forEach((path, i) => {
-        const exec = (lstatSync(join(snapshot, path)).mode & 0o111) !== 0;
-        lines.push(`${exec ? "100755" : "100644"} ${written[i]}\t${path}`);
+    if (copies.length > 0) {
+      const written = (await ok(snapshot, ["hash-object", "-w", "--no-filters", "--stdin-paths"], env, `${copies.map((c) => c.file).join("\n")}\n`)).toString("utf8").trim().split("\n");
+      copies.forEach((c, i) => {
+        const id = written[i] ?? "";
+        if (!isSha(id)) throw new Error("git hash-object gave no blob id");
+        records.push(`${c.mode} ${id}\t${c.path}`);
       });
     }
-    if (lines.length > 0) await ok(snapshot, ["update-index", "-z", "--index-info"], env, `${lines.join("\0")}\0`);
-    return (await ok(snapshot, ["write-tree"], env)).toString("utf8").trim();
+    if (records.length > 0) await ok(snapshot, ["update-index", "-z", "--index-info"], env, `${records.join("\0")}\0`);
+    return tree(await ok(snapshot, ["write-tree"], env));
   });
 }
 
-// The content id of each path in a tree, for the paths asked.
-export async function treeBlobs(root: string, tree: string): Promise<Map<string, string>> {
+// The content id of each path in a tree.
+export async function treeBlobs(root: string, treeSha: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const r = await safeGit(root, ["ls-tree", "-r", "-z", "--full-tree", tree]);
+  if (!isSha(treeSha)) throw new Error("not a tree id");
+  const r = await safeGit(root, ["ls-tree", "-r", "-z", "--full-tree", treeSha]);
   if (r.code !== 0) throw new Error(`git ls-tree failed: ${r.stderr.trim()}`);
   for (const rec of r.stdout.toString("utf8").split("\0")) {
     if (rec === "") continue;
