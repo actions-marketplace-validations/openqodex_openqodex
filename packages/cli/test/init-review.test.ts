@@ -20,6 +20,8 @@
 //  9. A work tree nested inside its bare repository (/x/repo.git/main) lies
 //     under the shared git folder, so no file in it counts as a work tree
 //     file and the files init writes enter the review after init.
+// 10. Answering no to "Write these files?" still runs the review, which
+//     writes the repo folder and the report: a cancelled install goes on.
 import { appendFileSync, chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -29,7 +31,7 @@ import { gitDirs, gitPath, inWorkTree, repoRootOf } from "../src/agents/git.js";
 import { reviewAfterInit } from "../src/commands/init-review.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
-import { cli, sandbox } from "./init-helpers.js";
+import { cli, inTerminal, sandbox, snapshot } from "./init-helpers.js";
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -214,6 +216,20 @@ describe("init as a subprocess", () => {
       expect(r.stdout).not.toContain("Reviewing your change now");
       expect(r.stdout).not.toContain("No change to review here");
     }
+  });
+});
+
+describe("10. a declined install", () => {
+  it("writes nothing and starts no review, with a change waiting", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "notes.txt"), "one line\n");
+    const before = snapshot(s);
+    const r = inTerminal(s, ["init", "--agent", "claude-code"], [["Write these files?", "n"]], { review: true });
+    expect(r.status, r.stdout).toBe(0);
+    expect(r.stdout).toContain("Nothing was written.");
+    expect(r.stdout).not.toContain("Reviewing your change now");
+    expect(r.stdout).not.toContain("Full review unavailable");
+    expect(snapshot(s)).toEqual(before);
   });
 });
 

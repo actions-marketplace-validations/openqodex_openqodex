@@ -255,7 +255,11 @@ function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: strin
   }
 }
 
-async function runLocked(s: Setup): Promise<number> {
+// How the install step ended, beside its exit code. Only "written" and
+// "unchanged" go on to the review: a declined plan ("cancelled") stops there.
+type Outcome = { code: number; ended: "written" | "unchanged" | "cancelled" | "stopped" | "dry-run" | "removed" };
+
+async function runLocked(s: Setup): Promise<Outcome> {
   const record = loadRecord(s.oqHome);
   const recordBefore = serialize(record);
   const { targets, notes } = collectTargets(s);
@@ -324,7 +328,7 @@ async function runLocked(s: Setup): Promise<number> {
     if ([...runtimeActions].some((a) => a.failed)) {
       printInstallPlan(s, mine, team, notes, targets, teamActions);
       process.stderr.write("openqodex init: nothing was written; the launcher hooks call cannot be set up (see above)\n");
-      return EXIT_TOOL_FAILED;
+      return { code: EXIT_TOOL_FAILED, ended: "stopped" };
     }
   }
 
@@ -346,13 +350,13 @@ async function runLocked(s: Setup): Promise<number> {
 
   if (s.flags.dryRun) {
     out(work.length === 0 ? "Nothing to change." : "Dry run: nothing was written.");
-    return failed ? EXIT_TOOL_FAILED : EXIT_OK;
+    return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "dry-run" };
   }
   if (work.length === 0) {
     saveRecord(s.oqHome, record, recordBefore);
     out(s.flags.uninstall ? "Nothing to remove." : "Nothing to change: OpenQodex is already installed.");
     if (!s.flags.uninstall) closingRepoLines(s, rootConfig);
-    return failed ? EXIT_TOOL_FAILED : EXIT_OK;
+    return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: s.flags.uninstall ? "removed" : "unchanged" };
   }
   // One consent for the whole plan: --yes, else the answer in a terminal,
   // else the agent this runs inside (its shell has no terminal, and the
@@ -362,7 +366,7 @@ async function runLocked(s: Setup): Promise<number> {
     if (interactive()) {
       if (!(await confirm(s.flags.uninstall ? "Remove these?" : WRITE_QUESTION))) {
         out("Nothing was written.");
-        return EXIT_OK;
+        return { code: EXIT_OK, ended: "cancelled" };
       }
     } else if (host !== null && !s.flags.uninstall) {
       out(`Running inside ${HOST_NAMES[host]} with no terminal to ask in: writing the plan above.`);
@@ -373,7 +377,7 @@ async function runLocked(s: Setup): Promise<number> {
           : "openqodex init: no terminal to confirm in, and no agent to act for; nothing was written.\n" +
               "Run it again with --yes to write the plan above. To change the plan: --hook none (no git pre-push hook), --no-repo (no team review section), --project (everything inside the repo, for the team to commit), --agent <name> (only that agent).\n",
       );
-      return EXIT_TOOL_FAILED;
+      return { code: EXIT_TOOL_FAILED, ended: "stopped" };
     }
   }
 
@@ -405,7 +409,7 @@ async function runLocked(s: Setup): Promise<number> {
         failed = true;
         failedPaths.add(a.path);
         // A hook must never point at a launcher that does not work.
-        if (runtimeActions.has(a) && !s.flags.uninstall) return EXIT_TOOL_FAILED;
+        if (runtimeActions.has(a) && !s.flags.uninstall) return { code: EXIT_TOOL_FAILED, ended: "stopped" };
         if (a.agent) brokenAgents.add(a.agent);
       }
     }
@@ -417,7 +421,7 @@ async function runLocked(s: Setup): Promise<number> {
   if (s.flags.uninstall) {
     out("OpenQodex was removed from the files above.");
     out(`Scanners stay in ${join(s.oqHome, "tools")}; delete that folder to remove them too.`);
-    return failed ? EXIT_TOOL_FAILED : EXIT_OK;
+    return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "removed" };
   }
 
   if (s.repoRoot !== null) await startScannerInstalls(s.repoRoot);
@@ -432,7 +436,7 @@ async function runLocked(s: Setup): Promise<number> {
   }
   if (s.repoRoot !== null && hookChoice === "pre-push") out("Every push from this repo is now checked for a review through the git pre-push hook.");
   out(`To undo: npx openqodex init --uninstall${s.flags.project ? " --project" : ""}`);
-  return failed ? EXIT_TOOL_FAILED : EXIT_OK;
+  return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "written" };
 }
 
 // Names the two team files in the repo and what to do with them.
@@ -482,20 +486,22 @@ export async function run(args: string[]): Promise<number> {
   try {
     // A dry run writes nothing and takes no lock. Otherwise everything runs
     // inside the commit boundary, so no update switches versions meanwhile.
-    if (flags.dryRun) return await runLocked(setup);
-    const code = await withBoundary(setup.oqHome, { wait: 60_000 }, async () => {
+    if (flags.dryRun) return (await runLocked(setup)).code;
+    const outcome = await withBoundary(setup.oqHome, { wait: 60_000 }, async () => {
       removeOldLocks(setup.oqHome);
-      const code = await runLocked(setup);
+      const outcome = await runLocked(setup);
       if (!flags.uninstall) pruneRuntimes(setup.oqHome);
       pruneHomeReceipts(setup.oqHome);
-      return code;
+      return outcome;
     });
     // After the boundary is released, so the review holds no install lock.
-    if (code === EXIT_OK && !flags.uninstall && !flags.noReview && repoRoot !== null) {
+    // A declined or stopped install reviews nothing.
+    const installed = outcome.ended === "written" || outcome.ended === "unchanged";
+    if (outcome.code === EXIT_OK && installed && !flags.noReview && repoRoot !== null) {
       const runner = flags.project ? `npx -y openqodex@${setup.version}` : launcherRunner(launcherPath(setup.oqHome));
       await reviewAfterInit({ repoRoot, runner, interactive: interactive() && !flags.yes, initFiles: setup.before });
     }
-    return code;
+    return outcome.code;
   } catch (error) {
     process.stderr.write(`openqodex init: ${message(error)}\n`);
     return EXIT_TOOL_FAILED;
