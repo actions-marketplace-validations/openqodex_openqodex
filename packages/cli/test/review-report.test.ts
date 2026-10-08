@@ -40,7 +40,10 @@
 //     points; the refusal comes after something was written; a report file
 //     in the folder that is a link overwrites what it points at (a file of
 //     the repository); a link owned by root but not one of the system's own
-//     aliases lets the folder lead anywhere.
+//     aliases lets the folder lead anywhere; a folder inside the repository
+//     swapped during the run for a link to its own renamed copy (the same
+//     folder by identity) is written through, though the repository holds
+//     that link.
 // 15. A home record is read through a record folder that is a link into
 //     the repository, so the repository supplies the record.
 // 16. Finalize redacts with the fingerprints of a scan.json the run record
@@ -52,7 +55,7 @@
 //     report.json or the receipt without the redaction: a line of a private
 //     key quoted in the summary, a secret in a suggested change, a dropped
 //     reason or a file name, or a secret in the repository's absolute path.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -63,7 +66,7 @@ import { parseFlags } from "../src/flags.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { runReview } from "../src/review-run.js";
-import { redactStored, reviewOutputs, systemAlias } from "../src/pipeline.js";
+import { redactStored, reportFolderWriter, reviewOutputs, systemAlias } from "../src/pipeline.js";
 import { readHomeLastReview, readHomeReceipt, readHomeRun } from "../src/receipts.js";
 import { run as findings } from "../src/commands/findings.js";
 import { cli, sandbox } from "./init-helpers.js";
@@ -441,6 +444,20 @@ describe("13. a report folder reached through a link", () => {
     expect(systemAlias("/opt/reports", "/home/user/current", "darwin")).toBe(false);
     expect(systemAlias("/var", "private/var", "linux")).toBe(false);
     expect(systemAlias("/private/var", "private/var", "darwin")).toBe(false);
+  });
+
+  it("13. a report folder in the repository swapped during the run for a link to its own renamed copy is refused at the next write, and nothing is written through the link", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    const reviews = join(s.repo, ".openqodex", "reviews");
+    const folder = join(reviews, "old");
+    mkdirSync(folder, { recursive: true });
+    const write = reportFolderWriter(folder, s.repo);
+    write({ "report.md": "first\n" });
+    // The same folder by identity, now reached through a link the repository holds.
+    renameSync(folder, join(reviews, "moved"));
+    symlinkSync("moved", folder);
+    expect(() => write({ "report.json": "{}\n" })).toThrow(/link/);
+    expect(readdirSync(join(reviews, "moved"))).toEqual(["report.md"]);
   });
 });
 

@@ -33,8 +33,10 @@
 //     record and starts the review.
 // 11. init says it is set up when no reviewer can start, then the first
 //     review fails; or it ends without saying how the first review ended
-//     (finished, incomplete, skipped, unavailable) and which reviewer was found.
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+//     (finished, incomplete, skipped, unavailable) and which reviewer was found;
+//     or a review that ran but could not write report.html is called skipped,
+//     with "nothing to review".
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -127,6 +129,28 @@ describe("the review init ends with", () => {
     };
     await expect(reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [driver] })).resolves.toBe("incomplete");
     expect(out).toContain("First review: incomplete.");
+  });
+
+  it("11. a first review that ran but could not write report.html ends as First review: incomplete with the reason, not skipped", async () => {
+    const dir = repo(true);
+    const driver = fake();
+    const start = driver.start.bind(driver);
+    driver.start = (opts) => {
+      const session = start(opts);
+      return {
+        ...session,
+        send: async (text: string) => {
+          // A folder where report.html goes, in this run's folder: the page cannot be written.
+          const reviews = join(dir, ".openqodex", "reviews");
+          const run = readdirSync(reviews).sort().pop()!;
+          mkdirSync(join(reviews, run, "report.html"), { recursive: true });
+          return session.send(text);
+        },
+      };
+    };
+    await expect(reviewAfterInit({ repoRoot: dir, runner: "openqodex", interactive: false, drivers: [driver] })).resolves.toBe("incomplete");
+    expect(out).toContain("First review: incomplete (report.html could not be written).");
+    expect(out).not.toContain("nothing to review");
   });
 
   it("12. joins a scanner download in progress for its bound, then names it as still downloading", async () => {

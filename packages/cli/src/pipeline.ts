@@ -1,13 +1,14 @@
 // The scan pipeline every command shares: find the repo, load the config,
 // work out the change, run the scanners on it. Progress goes to stderr.
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, lstatSync, openSync, readSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, lstatSync, openSync, readSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import {
   DIFF_CAP_BYTES,
   OpenQodexError,
   STATE_DIR,
   DEFAULT_CONFIG,
+  closeWider,
   findRepoRoot,
   getChange,
   isRepoState,
@@ -382,7 +383,14 @@ function writeOutFile(out: string, repoRoot: string, text: string, mode = 0o600)
 // The writer that comes back holds a guard (agents/guarded-fs.ts) whose one
 // root is that folder, as it is now: every file is written through a
 // checked handle into that very folder, so a link swapped in later, at the
-// folder or at a file in it, that leads anywhere else is refused.
+// folder or at a file in it, that leads anywhere else is refused. The
+// repository's link rule holds on every write too, as for its own
+// .openqodex files: a link whose own place lies in the work tree is never
+// followed, even one that leads back to this very folder.
+//
+// Each file is created 0600, and a folder made for it 0700. A folder that
+// was there already (a run folder reused) and that other users could open
+// is closed to 0700 at the first write, and named once on stderr.
 const SYSTEM_ALIASES: Record<string, string> = { "/var": "/private/var", "/tmp": "/private/tmp", "/etc": "/private/etc" };
 
 // Whether the link at `path` reading `target` is one of the system's own aliases.
@@ -422,20 +430,28 @@ export function checkReportFolder(folder: string): string {
   return dir;
 }
 
-export function reportFolderWriter(folder: string): (files: Record<string, string>) => void {
+export function reportFolderWriter(folder: string, repoRoot: string | null): (files: Record<string, string>) => void {
   const dir = checkReportFolder(folder);
-  const guard = new Guard({ repoRoot: null, gitFolders: [], roots: [dir] });
+  const guard = new Guard({ repoRoot, gitFolders: [], roots: [dir], writeRepo: false });
+  // Named by its real path: the write reports the folder as it really lies.
+  let shownFrom = dir;
+  try {
+    shownFrom = realpathSync(dir);
+  } catch {
+    // not made yet: the write makes it 0700 and has nothing to report
+  }
+  const wider = closeWider(guard, shownFrom);
   return (files) => {
     for (const [name, text] of Object.entries(files)) {
       if (name !== basename(name) || name.startsWith(".")) throw new Error(`not a plain file name: ${name}`);
       if (lstatSync(join(dir, name), { throwIfNoEntry: false })?.isSymbolicLink()) throw new OpenQodexError(`--report-dir ${folder}: ${join(dir, name)} is a symbolic link; openqodex does not write through it`);
-      guard.write(join(dir, name), text, { mode: 0o600 });
+      guard.write(join(dir, name), text, { mode: 0o600, folderMode: 0o700, wider });
     }
   };
 }
 
-export function writeReportCopies(folder: string, files: Record<string, string>): void {
-  reportFolderWriter(folder)(files);
+export function writeReportCopies(folder: string, repoRoot: string | null, files: Record<string, string>): void {
+  reportFolderWriter(folder, repoRoot)(files);
 }
 
 export function exitFor(report: Report): number {

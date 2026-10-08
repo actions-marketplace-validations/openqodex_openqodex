@@ -87,7 +87,7 @@ async function firstReview(o: Parameters<typeof reviewAfterInit>[0]): Promise<{ 
       const end: ReviewEnd = { ended: "nothing", installing: [] };
       await runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000, drivers: o.drivers, end, installBudgetMs, ...extra });
       if (end.installing.length > 0) out(`Still downloading: ${end.installing.join(", ")}. The next review includes them once they finish.`);
-      return end.ended === "nothing" ? { ended: "skipped", why: "nothing to review" } : { ended: end.ended };
+      return end.ended === "nothing" ? { ended: "skipped", why: "nothing to review" } : { ended: end.ended, why: end.why };
     };
     const { config } = loadConfig(o.repoRoot, undefined, { runtimeVersion: __OPENQODEX_VERSION__ });
     const overlay = [...(o.initFiles ?? new Map<string, string | null>())]

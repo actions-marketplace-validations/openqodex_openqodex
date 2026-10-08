@@ -176,8 +176,9 @@ export async function reviewerReadiness(repoRoot: string, drivers: ReviewerDrive
 }
 
 // How a review ended, for the caller that must say so (init's first review),
-// and the scanners it left out because they were still downloading.
-export type ReviewEnd = { ended: "finished" | "incomplete" | "unavailable" | "nothing"; installing: string[] };
+// why when that is not plain from `ended`, and the scanners it left out
+// because they were still downloading.
+export type ReviewEnd = { ended: "finished" | "incomplete" | "unavailable" | "nothing"; why?: string; installing: string[] };
 
 // Every regular file under `dir` but the work tree's .git link file, by
 // path relative to `dir`. Links (there are none: they were written as
@@ -649,7 +650,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
   // A --report-dir reached through a link stops the run here, before
   // anything is made, scanned or written.
-  const reportWriter = o.reportDir === undefined ? null : reportFolderWriter(o.reportDir);
+  const reportWriter = o.reportDir === undefined ? null : reportFolderWriter(o.reportDir, repoRoot);
   if (o.reportDir === undefined) announceRepoFiles(repoRoot);
   else keepRunStateOutOfRepo();
   const settings = readReviewerSettings();
@@ -853,7 +854,13 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       "submission.json": `${JSON.stringify(redactStored(talk.submission, p.secrets), null, 2)}\n`,
       "trace.json": `${JSON.stringify(redactStored(talk.trace, p.secrets), null, 2)}\n`,
     });
-    if (!writeReportHtml(folder.write, html!)) return EXIT_TOOL_FAILED;
+    if (!writeReportHtml(folder.write, html!)) {
+      if (o.end) {
+        o.end.ended = "incomplete";
+        o.end.why = "report.html could not be written";
+      }
+      return EXIT_TOOL_FAILED;
+    }
     const receipt: Latest = {
       dir: folder.shown,
       change_id: change.id,

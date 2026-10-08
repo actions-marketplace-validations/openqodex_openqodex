@@ -21,8 +21,9 @@
 //     home, or a record read through it into a record OpenQodex never wrote.
 //  4. A receipt, or a report written where --output or --report-dir
 //     names, is created readable by other users, or in a folder made for it
-//     that they can open (core/test/private-modes.test.ts covers the repo's
-//     own .openqodex files).
+//     that they can open; or a --report-dir folder an earlier run left that
+//     they can open (0755, with 0644 files in it) stays open to them
+//     (core/test/private-modes.test.ts covers the repo's own .openqodex files).
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -175,6 +176,23 @@ describe("4. a report written where the developer names is readable by them only
     expect(d.status, d.stderr).not.toBe(2);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     for (const f of readdirSync(dir)) expect(statSync(join(dir, f)).mode & 0o777, f).toBe(0o600);
+  });
+
+  it("a reused --report-dir folder other users could open (0755, an older 0644 file in it) is closed to 0700 and named once on stderr", () => {
+    const s = sandbox({ "app.py": "print('hello')\n" });
+    writeFileSync(join(s.repo, "app.py"), "print('changed')\n");
+    for (const dir of [join(s.repo, ".openqodex", "reviews", "old"), join(s.root, "reports", "old")]) {
+      mkdirSync(dir, { recursive: true });
+      chmodSync(dir, 0o755);
+      writeFileSync(join(dir, "older.md"), "an earlier run\n");
+      chmodSync(join(dir, "older.md"), 0o644);
+      const r = cli(s, ["scan", "--no-install", "--offline", "--report-dir", dir]);
+      expect(r.status, r.stderr).not.toBe(2);
+      expect(statSync(dir).mode & 0o777, dir).toBe(0o700);
+      for (const f of readdirSync(dir).filter((f) => f !== "older.md")) expect(statSync(join(dir, f)).mode & 0o777, f).toBe(0o600);
+      const named = r.stderr.split("\n").filter((l) => /could be read by other users \(mode 0755\); it is now 0700/.test(l));
+      expect(named, r.stderr).toHaveLength(1);
+    }
   });
 });
 

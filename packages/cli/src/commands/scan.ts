@@ -67,7 +67,7 @@ export function reportScan(p: PipelineResult, flags: GlobalFlags, reportDir?: st
   const files = reportFiles(report);
   if (reportDir !== undefined) {
     const dir = resolve(reportDir);
-    writeReportCopies(dir, { "scan.json": `${JSON.stringify(p.scan, null, 2)}\n`, ...files });
+    writeReportCopies(dir, p.repoRoot, { "scan.json": `${JSON.stringify(p.scan, null, 2)}\n`, ...files });
     emitReport(report, flags, p.repoRoot);
     return { exitCode: exitFor(report), report, dir };
   }

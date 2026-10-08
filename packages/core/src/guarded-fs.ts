@@ -143,6 +143,10 @@ export type Roots = {
   // Every other folder init may write: the home folder, the agents' own
   // folders, OpenQodex's home.
   roots: string[];
+  // false: the work tree and its git folders only decide which links are
+  // refused, and nothing is written there but under `roots` (a --report-dir
+  // writer). Default true: they are folders this guard writes too.
+  writeRepo?: boolean;
 };
 
 export class Guard {
@@ -156,10 +160,11 @@ export class Guard {
   constructor(r: Roots & { noLinks?: boolean }) {
     this.noLinks = r.noLinks === true;
     const none = (): void => undefined;
+    const writeRepo = r.writeRepo !== false;
     if (r.repoRoot !== null) {
       const w = walk(r.repoRoot, true, none, true);
       if (w.pending.length === 0) this.tree = w.chain[w.chain.length - 1]!.id;
-      this.add(r.repoRoot);
+      if (writeRepo) this.add(r.repoRoot);
     }
     for (const g of r.gitFolders) {
       const w = walk(g, true, none, true);
@@ -168,7 +173,7 @@ export class Guard {
       const at = ids.findIndex((id) => same(id, this.tree));
       // Inside the work tree, and not the work tree itself.
       if (at !== -1 && at < ids.length - 1) this.exempt.push(ids[ids.length - 1]!);
-      this.add(g);
+      if (writeRepo) this.add(g);
     }
     for (const root of r.roots) this.add(root);
   }
@@ -309,9 +314,16 @@ export class Guard {
 
   // Takes from the existing folder `path` every permission `mode` does not
   // give, through a handle on the folder checked by identity; never follows
-  // a link. Returns the mode it had when it took any, else null.
+  // a link. The folder lies under a root, or is a root itself as it stood
+  // when the guard was made (the one folder a --report-dir writer writes):
+  // taking permissions away from it widens nothing. Returns the mode it had
+  // when it took any, else null.
   narrowFolder(path: string, mode: number): number | null {
-    const w = this.check(path, false);
+    const w = walk(path, false, this.refuseRepoLink);
+    const isRoot = w.stat !== null && this.roots.some((r) => r.tail.length === 0 && same(r.anchor, idOf(w.stat)));
+    if (!isRoot && !this.under(w.chain, w.pending.slice(0, -1))) {
+      throw new Error(`${path} lands in ${w.dir}, outside every folder openqodex writes to`);
+    }
     if (w.stat === null || !w.stat.isDirectory()) return null;
     const had = Number(w.stat.mode & 0o777n);
     if ((had & ~mode) === 0) return null;
