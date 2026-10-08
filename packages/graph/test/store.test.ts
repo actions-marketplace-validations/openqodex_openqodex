@@ -80,6 +80,9 @@
 //     fail, forever; or one that is safe to remove (yours, not a link,
 //     past the stale window) is kept, or one that is not is removed, or the
 //     build does not say why it was not saved.
+// 26. A folder named like a build made in the future (a clock that ran
+//     ahead, or a planted name) and holding no valid manifest is never
+//     removed: its age is taken from the time in its name.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -1022,5 +1025,19 @@ describe("trust", () => {
     const elsewhere = await storeOf(root, { home: outside() });
     expect(ids(elsewhere)).toEqual([]);
     expect(elsewhere.open("current")).toBeNull();
+  });
+});
+
+describe("future builds", () => {
+  it("26. a folder named like a build from the future, with no valid manifest, is removed once its files are an hour old", async () => {
+    const root = repo();
+    const store = await storeOf(root);
+    ok(await store.publish(publishInput({ tag: "a" })));
+    const future = `${(Date.now() + 10 * 365 * 24 * HOUR).toString(36).padStart(9, "0")}0000-1-deadbeef`;
+    const folder = join(store.dir, "generations", future);
+    mkdirSync(folder, { mode: 0o700 });
+    writeFileSync(join(folder, "inventory.json"), "{}", { mode: 0o600 });
+    await (await storeOf(root, { now: later(2 * HOUR) })).collect();
+    expect(there(folder)).toBe(false);
   });
 });

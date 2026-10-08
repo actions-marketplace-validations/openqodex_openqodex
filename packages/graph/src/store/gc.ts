@@ -187,7 +187,10 @@ export async function collectLocked(ctx: CollectorContext, incoming: BuildId | n
       continue;
     }
     // A folder without a valid manifest may still be written by its build.
-    const removable = valid.has(g.name) || old(isId ? Math.max(buildIdTime(g.name), g.mtimeMs) : g.mtimeMs);
+    // A name's time later than now (a clock that ran ahead, a planted name)
+    // says nothing: the folder's own time decides.
+    const named = isId ? buildIdTime(g.name) : Number.NaN;
+    const removable = valid.has(g.name) || old(isId && named <= now ? Math.max(named, g.mtimeMs) : g.mtimeMs);
     if (removable && remove(g)) {
       valid.delete(g.name);
       if (isId) removedGenerations.push(g.name);
