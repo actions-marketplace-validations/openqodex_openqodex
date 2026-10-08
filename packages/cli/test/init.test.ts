@@ -41,7 +41,9 @@
 //     keeps everything inside the repo.
 // 28. A write compares places by their spelling while the filesystem acts on
 //     identity: a repo with no letter in its name, a name in the other
-//     Unicode normalisation, a common git folder that holds the work tree
+//     Unicode normalisation (on a volume that keeps case or normalisation,
+//     the other spelling is another folder, never the repository), a common
+//     git folder that holds the work tree
 //     exempting its links, OpenQodex's own install.json or runtime folder
 //     as a link that sends a write or a delete outside, a terminal run that
 //     changes the record without asking, or a skill holding the placeholder
@@ -49,7 +51,8 @@
 // 27. A write decides from the path's spelling, not where it really lands:
 //     `.` and `..` folded before the links on the way are followed, a work
 //     tree name that starts with two dots taken for outside the repository,
-//     the repository spelled in another case on a volume that folds case, a
+//     the repository spelled in another case on a volume that folds case (on
+//     one that keeps case, another folder, never the repository), a
 //     sibling folder sharing a root's name prefix taken for inside it, or a
 //     path that lands outside every folder init may write.
 // 26. A file init writes outside the repository's rules follows a link the
@@ -85,6 +88,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -92,9 +96,37 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BIN, cli, env, git, inTerminal, promptsAsked, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
+
+// What the volume does with another spelling of an existing folder, by the
+// evidence the write check itself uses: whether that spelling reaches the
+// same folder by identity (device and inode). macOS volumes fold case and
+// Unicode normalisation by default; Linux ext4 and a case-sensitive APFS
+// image keep them, and there the other spelling is another folder.
+function sameFolder(a: string, b: string): boolean {
+  const x = lstatSync(a, { throwIfNoEntry: false });
+  const y = lstatSync(b, { throwIfNoEntry: false });
+  return x !== undefined && y !== undefined && x.dev === y.dev && x.ino === y.ino;
+}
+
+// After an init whose agent folder was another spelling of the repository:
+// on a folding volume that is the repository, and its link to `outside` is
+// refused (exit 2); on one that keeps the spelling it is a folder of its own
+// outside the repository, the folder Claude Code reads there, and init
+// writes the skill into it (exit 0). Either way nothing lands through the
+// repository's link, which is left as it was.
+function expectSpelling(r: ReturnType<typeof cli>, folds: boolean, agentFolder: string, link: string, outside: string): void {
+  if (folds) {
+    expect(r.status, r.stderr).toBe(2);
+  } else {
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(agentFolder, "skills/openqodex/SKILL.md"))).toBe(true);
+  }
+  expect(readdirSync(outside)).toEqual([]);
+  expect(readlinkSync(link)).toBe(outside);
+}
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 const isRoot = process.getuid?.() === 0;
@@ -934,17 +966,14 @@ describe("27. a write decides from where the path really lands, not from its spe
     expect(readFileSync(join(sibling, "settings.json"), "utf8")).toBe("{}\n");
   });
 
-  it("the repository spelled in another case, on a volume that folds case, keeps the repository's rule", () => {
+  it("the repository spelled in another case keeps the repository's rule on a volume that folds case, and is another folder on one that keeps it", () => {
     const s = sandbox();
     const outside = join(s.root, "outside");
     mkdirSync(outside);
     symlinkSync(outside, join(s.repo, ".claude"));
     const flipped = join(s.root, "THE REPO");
-    // Folding or not, nothing may land outside: on a folding volume this is
-    // the repository and its link is refused; on an exact one it is a folder
-    // outside every root init may write.
-    expect(initWith(s, join(flipped, ".claude")).status).toBe(2);
-    expect(readdirSync(outside)).toEqual([]);
+    const folds = sameFolder(s.repo, flipped);
+    expectSpelling(initWith(s, join(flipped, ".claude")), folds, join(flipped, ".claude"), join(s.repo, ".claude"), outside);
   });
 });
 
@@ -959,29 +988,33 @@ describe("28. writes decide by filesystem identity, through checked handles", ()
   }
   const flipCase = (p: string): string => [...p].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join("");
 
-  it("a repo named with digits only, its config folder spelled in another case: the repo's link is refused", () => {
+  it("a repo named with digits only, its config folder spelled in another case: the repo's link is refused where the volume folds case, and the other spelling is another folder where it keeps it", () => {
     const s = sandbox();
     const repo = namedRepo(s, "123");
     const outside = join(s.root, "outside");
     mkdirSync(outside);
     symlinkSync(outside, join(repo, ".claude"));
-    // Only the sandbox root above the repo has letters to flip.
-    const spelled = join(flipCase(s.root), "123", ".claude");
+    // Only the sandbox root above the repo has letters to flip; its own name
+    // only, so the other spelling can be made where the volume keeps case.
+    const root = join(dirname(s.root), flipCase(basename(s.root)));
+    const folds = sameFolder(repo, join(root, "123"));
+    const spelled = join(root, "123", ".claude");
     const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { cwd: repo, env: { CLAUDE_CONFIG_DIR: spelled } });
-    expect(r.status).toBe(2);
-    expect(readdirSync(outside)).toEqual([]);
+    expectSpelling(r, folds, spelled, join(repo, ".claude"), outside);
   });
 
-  it("an accented repo name spelled in the other Unicode normalisation: the repo's link is refused", () => {
+  it("an accented repo name spelled in the other Unicode normalisation: the repo's link is refused where the volume folds it, and the other spelling is another folder where it keeps it", () => {
     const s = sandbox();
-    const repo = namedRepo(s, "café");
+    // The name in NFC, then spelled in NFD.
+    const repo = namedRepo(s, "caf\u00e9");
     const outside = join(s.root, "outside");
     mkdirSync(outside);
     symlinkSync(outside, join(repo, ".claude"));
-    const spelled = join(s.root, "café", ".claude");
+    const other = join(s.root, "cafe\u0301");
+    const folds = sameFolder(repo, other);
+    const spelled = join(other, ".claude");
     const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { cwd: repo, env: { CLAUDE_CONFIG_DIR: spelled } });
-    expect(r.status).toBe(2);
-    expect(readdirSync(outside)).toEqual([]);
+    expectSpelling(r, folds, spelled, join(repo, ".claude"), outside);
   });
 
   it("a work tree inside its bare repository: the common git folder does not exempt the work tree's links", () => {
