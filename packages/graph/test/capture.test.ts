@@ -12,6 +12,9 @@
 //    settings.
 // 4. A value from the repository (a tree id, a path) reaches git's
 //    arguments without a strict check.
+// 5. A tracked path under a folder the snapshot now holds as a link is
+//    looked at through that link, so the target text of a link outside the
+//    repository is stored in the repository's objects as the path's link.
 import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -109,6 +112,22 @@ describe("the capture", () => {
     expect([...graph.removed.values()].flat().map((n) => n.name)).toContain("g");
     expect(readdirSync(repo).sort()).toEqual(before);
     expect(existsSync(join(process.cwd(), "x"))).toBe(false);
+  });
+
+  it("stores nothing found through a folder the snapshot holds as a link, not even the text of a link outside (5)", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+    dirs.push(outside);
+    const text = `/outside/only/${Math.random()}`;
+    symlinkSync(text, join(outside, "x.ts"));
+    const repo = makeRepo({ "a.ts": "export function a() {}\n", "dir/x.ts": "export function x() {}\n" });
+    dirs.push(repo);
+    commitAll(repo);
+    const snap = snapshotOf(repo);
+    rmSync(join(snap, "dir"), { recursive: true });
+    symlinkSync(outside, join(snap, "dir"));
+    const tree = await captureSnapshot(snap);
+    expect(hasObject(repo, blobId(Buffer.from(text)))).toBe(false);
+    expect((await treeBlobs(repo, tree)).has("dir/x.ts")).toBe(false);
   });
 
   it("puts only checked values into git's arguments (4)", async () => {

@@ -12,7 +12,7 @@
 // temporary folder. Every git call goes through safeGit, so no hook, filter
 // or fetch runs, and no path from the repository is placed where git reads
 // an option.
-import { copyFileSync, existsSync, lstatSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { safeGit } from "@openqodex/core";
@@ -94,25 +94,41 @@ export async function captureSnapshot(snapshot: string): Promise<string> {
     const records: string[] = [];
     const copies: { path: string; mode: string; file: string }[] = [];
     for (const path of changed) {
-      let st = null;
-      try {
-        st = isRepoRelative(path) ? lstatSync(join(snapshot, path)) : null;
-      } catch {
-        st = null;
-      }
+      // Looked at by identity, never by the spelled path: a name on the way
+      // that is not a real folder (a folder the snapshot holds as a link)
+      // leaves the path out of the tree.
+      const looked = isRepoRelative(path) ? reader.entry(path) : null;
+      const st = looked?.ok ? looked.stat : null;
+      const leave = () => records.push(`0 ${"0".repeat(40)}\t${path}`);
       const file = join(tmp, `blob-${copies.length}`);
       if (st?.isSymbolicLink()) {
-        writeFileSync(file, readlinkSync(join(snapshot, path)), { flag: "wx" });
+        let target: string;
+        try {
+          target = readlinkSync(join(snapshot, path));
+        } catch {
+          leave();
+          continue;
+        }
+        // readlink goes by path, so after it the same link must stand at
+        // that name under the same real folders. A folder swapped for a link
+        // and back again within the readlink itself is not seen: Node has no
+        // readlinkat(2).
+        const again = reader.entry(path);
+        if (!again.ok || again.stat.dev !== st.dev || again.stat.ino !== st.ino) {
+          leave();
+          continue;
+        }
+        writeFileSync(file, target, { flag: "wx" });
         copies.push({ path, mode: "120000", file });
         continue;
       }
       const bytes = st?.isFile() ? reader.readBytes(path, MAX_CAPTURE_FILE_BYTES) : null;
       if (bytes === null) {
-        records.push(`0 ${"0".repeat(40)}\t${path}`);
+        leave();
         continue;
       }
       writeFileSync(file, bytes, { flag: "wx" });
-      copies.push({ path, mode: ((st?.mode ?? 0) & 0o111) !== 0 ? "100755" : "100644", file });
+      copies.push({ path, mode: (Number(st?.mode ?? 0) & 0o111) !== 0 ? "100755" : "100644", file });
     }
     if (copies.length > 0) {
       const written = (await ok(snapshot, ["hash-object", "-w", "--no-filters", "--stdin-paths"], env, `${copies.map((c) => c.file).join("\n")}\n`)).toString("utf8").trim().split("\n");
