@@ -33,6 +33,7 @@ import type {
 import { describeFailure, execTool, isOffline, runInChunks } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
+import { suchAs } from "./words.js";
 import { readRepoFile } from "./read.js";
 
 const OSV_TIMEOUT_MS = 90_000;
@@ -164,7 +165,8 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
 
 export const osvScanner: Adapter = {
   source: "osv-scanner",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isLockfilePath)).length > 0,
+  files: (changedPaths) => safeFileArgs(changedPaths.filter(isLockfilePath)),
+  why: (files) => `lockfiles, ${suchAs(files)}`,
   skip: offlineReason,
   run: (args) => runOsvScanner(args),
 };

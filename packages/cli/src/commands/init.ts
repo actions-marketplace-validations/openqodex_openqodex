@@ -7,10 +7,11 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
-import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, repoStat } from "@openqodex/core";
+import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
+import type { BuiltinScanner } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
 import { readText } from "../agents/files.js";
-import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoRootOf, trackedFiles } from "../agents/git.js";
+import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoRootOf } from "../agents/git.js";
 import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
@@ -124,18 +125,47 @@ function planTeam(s: Setup, record: InstallRecord): Action[] {
   }
 }
 
+// The scanners this repo will need, with one line each saying why: the
+// selector a review uses, over every tracked and untracked file, less the
+// config's excludes and the scanners it switches off. The files init itself
+// just wrote are not the developer's code and call for nothing.
+async function scannerPlan(repoRoot: string, written: string[] = []): Promise<{ downloads: BuiltinScanner[]; lines: string[] }> {
+  const { choiceLine, downloadsFor, repoInventory, selectScanners } = await import("@openqodex/scanners");
+  const { config } = loadConfig(repoRoot);
+  const ours = new Set(written.map((p) => relative(repoRoot, p)));
+  const paths = (await repoInventory(repoRoot, config)).filter((p) => !ours.has(p));
+  const choices = selectScanners({ repoDir: repoRoot, paths, config });
+  const downloads = downloadsFor(choices);
+  return { downloads, lines: choices.filter((c) => downloads.includes(c.scanner)).map((c) => `  ${choiceLine(c)}`) };
+}
+
 // Starts the scanner installs this repo will need, outside any agent sandbox.
 // Never fails init: the review installs on first use anyway.
-async function startScannerInstalls(repoRoot: string): Promise<void> {
+async function startScannerInstalls(repoRoot: string, written: string[]): Promise<void> {
   try {
-    const { ADAPTERS, installToolsDetached } = await import("@openqodex/scanners");
-    const files = await trackedFiles(repoRoot);
-    const wanted = ADAPTERS.filter((a) => a.wants(files, repoRoot)).map((a) => a.source);
-    if (wanted.length === 0) return;
-    installToolsDetached(wanted);
-    out(`Installing the scanners this repo needs in the background: ${wanted.join(", ")}.`);
+    const { installToolsDetached } = await import("@openqodex/scanners");
+    const plan = await scannerPlan(repoRoot, written);
+    if (plan.downloads.length === 0) return;
+    installToolsDetached(plan.downloads);
+    out("Downloading the scanners this repo needs in the background:");
+    for (const line of plan.lines) out(line);
   } catch (error) {
     process.stderr.write(`openqodex: could not start the scanner installs (${message(error)}); they install on first review instead\n`);
+  }
+}
+
+// `init --dry-run`: the same lines, and nothing downloaded.
+async function printScannerPlan(repoRoot: string): Promise<void> {
+  try {
+    const plan = await scannerPlan(repoRoot);
+    if (plan.downloads.length === 0) {
+      out("Scanners: none to download for this repo.");
+      return;
+    }
+    out("Scanners init would download for this repo:");
+    for (const line of plan.lines) out(line);
+  } catch (error) {
+    process.stderr.write(`openqodex: could not work out the scanners this repo needs (${message(error)})\n`);
   }
 }
 
@@ -336,6 +366,7 @@ async function runLocked(s: Setup): Promise<number> {
   const work = actions.filter((a) => a.apply !== undefined);
 
   if (s.flags.dryRun) {
+    if (!s.flags.uninstall && s.repoRoot !== null) await printScannerPlan(s.repoRoot);
     out(work.length === 0 ? "Nothing to change." : "Dry run: nothing was written.");
     return failed ? EXIT_TOOL_FAILED : EXIT_OK;
   }
@@ -399,7 +430,7 @@ async function runLocked(s: Setup): Promise<number> {
     return failed ? EXIT_TOOL_FAILED : EXIT_OK;
   }
 
-  if (s.repoRoot !== null) await startScannerInstalls(s.repoRoot);
+  if (s.repoRoot !== null) await startScannerInstalls(s.repoRoot, s.written);
   out(`OpenQodex is set up for ${s.agents.map((a) => AGENT_NAMES[a]).join(", ")}.`);
   out('Say this to your agent: "review my change with openqodex". Each agent\'s instructions now say to run the review when a feature or fix is done.');
   if (s.agents.includes("codex")) out("Codex: run /hooks once inside Codex and trust the new OpenQodex hook, or Codex will not run it.");

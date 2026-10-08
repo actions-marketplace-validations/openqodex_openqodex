@@ -138,7 +138,8 @@ async function removeDir(dir: string): Promise<void> {
 
 export const gitleaks: Adapter = {
   source: "gitleaks",
-  wants: (changedPaths) => changedPaths.length > 0,
+  files: (changedPaths) => changedPaths,
+  why: () => "any file",
   run: (args) => runGitleaks(args),
 };
 

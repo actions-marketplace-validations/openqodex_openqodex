@@ -1,8 +1,9 @@
 // Runs the scanner ensemble against the developer's working tree and turns
 // what survives into review candidates.
 //
-// Order of work: each builtin scanner is gated on the change (`wants`), the
-// tool is resolved only for the ones that want it, everything runs in
+// Order of work: the selector (select.ts) decides which builtin scanners
+// the change calls for, from the files, the project each file is in and the
+// config; the tool is resolved only for those, everything runs in
 // parallel, then one pipeline: paths rebased to repo-relative, the
 // changed-line filter, the fixture filter, `disabled_rules`, cross-scanner
 // dedup, a severity sort, candidate ids. Custom scanners join after the
@@ -40,6 +41,8 @@ import type {
   StaticFinding,
 } from "@openqodex/core";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
+import { repoFacts, type RepoFacts } from "./detect.js";
+import { DISABLED_REASON, selectScanners, type ScannerChoice } from "./select.js";
 import type { SettingsFile } from "./adapters/index.js";
 import { readRepoFile, repoFileOrReason } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
@@ -61,6 +64,9 @@ export type RunScannersResult = {
   scan: ScanResult;
   // Raw matched secrets, in memory only, for redacting the brief. Never persist.
   secrets: string[];
+  // The rules scanners that ran checked, token to files: what lets a review
+  // pattern (lens) the rule covers stand down.
+  checked: Map<string, Set<string>>;
 };
 
 // One scanner's run before the shared pipeline.
@@ -70,6 +76,7 @@ type Outcome = {
   summary: ScannerRunSummary;
   findings: StaticFinding[];
   secrets: string[];
+  checked?: { token: string; files: string[] }[];
 };
 
 export async function runScanners(args: {
@@ -92,8 +99,14 @@ export async function runScanners(args: {
   const selected = (source: ScannerSource): boolean =>
     (!args.only || args.only.includes(source)) && !(args.skip ?? []).includes(source);
 
+  // Read once for the whole run: every scanner and the suppression check ask
+  // the same questions about the same files.
+  const facts = repoFacts(args.repoDir);
+  const choices = new Map(
+    selectScanners({ repoDir: args.repoDir, paths: args.changedPaths, config: args.config, facts }).map((c) => [c.scanner, c]),
+  );
   const builtins = ADAPTERS.filter((a) => selected(a.source)).map((adapter) =>
-    guard(adapter.source, () => runBuiltin(adapter, args)),
+    guard(adapter.source, () => runBuiltin(adapter, choices.get(adapter.source)!, facts, args)),
   );
   const customs = (args.custom ?? [])
     .filter((c) => selected(c.source))
@@ -128,7 +141,7 @@ export async function runScanners(args: {
         baseText: args.baseText,
         wanted,
       }),
-      await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted }),
+      await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted, facts }),
     );
   }
 
@@ -177,15 +190,34 @@ export async function runScanners(args: {
   }));
   args.onProgress?.(stageLine(scanners, candidates.length));
 
+  const checked = new Map<string, Set<string>>();
+  for (const o of outcomes) {
+    if (o.summary.status !== "ran") continue;
+    for (const c of o.checked ?? []) checked.set(c.token, new Set([...(checked.get(c.token) ?? []), ...c.files]));
+  }
+
   return {
     scan: {
       candidates,
       scanners,
       fixturesDropped,
       secretFingerprints: fingerprintSecrets(secrets),
+      projects: projectsOf(args.changedPaths, facts),
     },
     secrets,
+    checked,
   };
+}
+
+// The projects the changed files belong to, with their frameworks, for the
+// scan record. A file in no project adds nothing.
+function projectsOf(paths: string[], facts: RepoFacts): { root: string; frameworks: string[] }[] {
+  const seen = new Map<string, string[]>();
+  for (const p of paths) {
+    const project = facts.project(p);
+    if (project && !seen.has(project.root)) seen.set(project.root, project.frameworks);
+  }
+  return [...seen].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, frameworks]) => ({ root, frameworks }));
 }
 
 // The line ranges (1-based, inclusive) of every `[tool.ruff...]` table.
@@ -298,13 +330,14 @@ async function suppressionFindings(args: {
   changedPaths: string[];
   coverage: DiffCoverage;
   wanted: (s: BuiltinScanner) => boolean;
+  facts: RepoFacts;
 }): Promise<StaticFinding[]> {
   const out: StaticFinding[] = [];
   for (const filePath of args.changedPaths) {
     const added = args.coverage.get(filePath);
     if (added === undefined || added.size === 0) continue;
     let scanners = ADAPTERS.filter(
-      (a) => SUPPRESSION_MARKERS[a.source] !== undefined && args.wanted(a.source) && a.wants([filePath], args.repoDir),
+      (a) => SUPPRESSION_MARKERS[a.source] !== undefined && args.wanted(a.source) && a.files([filePath], args.facts).length > 0,
     ).map((a) => a.source);
     if (scanners.length === 0) continue;
     let text: string;
@@ -339,8 +372,11 @@ async function suppressionFindings(args: {
   return out;
 }
 
+// One builtin scanner, as the selector chose it for this change.
 async function runBuiltin(
   adapter: Adapter,
+  choice: ScannerChoice,
+  facts: RepoFacts,
   args: {
     repoDir: string;
     changedPaths: string[];
@@ -351,14 +387,9 @@ async function runBuiltin(
 ): Promise<Outcome> {
   const started = Date.now();
   const source = adapter.source;
-  if (args.config.disabledScanners.includes(source)) {
-    return skippedOutcome(source, "disabled", "disabled in .openqodex/config.yaml", started);
-  }
-  if (!adapter.wants(args.changedPaths, args.repoDir)) {
-    return skippedOutcome(source, "no_matching_files", null, started);
-  }
-  const skipReason = adapter.skip?.() ?? null;
-  if (skipReason) return skippedOutcome(source, "disabled", skipReason, started);
+  if (choice.skip === DISABLED_REASON) return skippedOutcome(source, "disabled", DISABLED_REASON, started);
+  if (choice.paths.length === 0) return skippedOutcome(source, "no_matching_files", null, started);
+  if (!choice.wanted) return skippedOutcome(source, "disabled", choice.skip, started);
 
   let tool = null;
   if (!IN_PROCESS.has(source)) {
@@ -373,6 +404,7 @@ async function runBuiltin(
     changedPaths: args.changedPaths,
     tool,
     coverage: args.coverage,
+    facts,
   });
   return ranOutcome(source, result, tool?.version ?? null, ranFrom);
 }
@@ -438,6 +470,7 @@ function ranOutcome(
     },
     findings: result.findings,
     secrets: result.secrets ?? [],
+    checked: failed ? [] : result.checked,
   };
 }
 

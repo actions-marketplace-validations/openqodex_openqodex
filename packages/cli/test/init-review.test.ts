@@ -48,6 +48,10 @@ function repo(change: boolean): string {
   return dir;
 }
 
+// A repo config that switches off the two scanners any file calls for, so
+// init starts no scanner download from a test.
+const NO_DOWNLOADS = { ".openqodex/config.yaml": "scanners:\n  disable: [semgrep, gitleaks]\n" };
+
 // The model provider stand-in: an empty, valid submission after reading the change.
 function fake(): ReviewerDriver & { started: number } {
   const driver = {
@@ -168,7 +172,7 @@ function standIn(): string {
 
 describe("init as a subprocess", () => {
   it("2, 4. with a change and no reviewer: exit 0, says the review is unavailable, prints the plan once", () => {
-    const s = sandbox({ "README.md": "hello\n" });
+    const s = sandbox({ "README.md": "hello\n", ...NO_DOWNLOADS });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
     const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo"], { env: { PATH: noClaude }, review: true });
     expect(r.status, r.stderr).toBe(0);

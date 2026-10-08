@@ -22,7 +22,7 @@ import {
   selectLensesForDiff,
   writeRepoFile,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, HotSpot, ImpactSummary, Report, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
+import type { Change, ChangeScope, Config, HotSpot, ImpactSummary, Report, RuleCoverage, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
 import { buildGraph, detectImpact, emptyImpact, hotSymbols, langOf } from "@openqodex/graph";
 import type { Graph } from "@openqodex/graph";
 import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
@@ -56,7 +56,15 @@ export type PipelineResult = {
   scan: ScanResult | null;
   // Raw matched secrets, in memory only. Never written or printed.
   secrets: string[];
+  // The rules scanners that ran checked, token to files, for the lenses.
+  checked: Map<string, Set<string>>;
 };
+
+// Whether a scanner rule ran on a file in this run: a lens that rule covers
+// stands down for that file.
+export function ruleCoverage(p: PipelineResult): RuleCoverage {
+  return (token, file) => p.checked.get(token)?.has(file) ?? false;
+}
 
 // `checkoutSettings` false (`--report-dir`): without `--config` the built-in
 // defaults, never the repository's own file, so nothing under .openqodex/
@@ -95,10 +103,10 @@ export async function scanChange<C extends Change>(args: {
 }): Promise<PipelineResult & { change: C }> {
   const { repoRoot, config, change, flags } = args;
   const workDir = args.workDir ?? repoRoot;
-  if (change.files.length === 0) return { repoRoot, workDir, config, change, scan: null, secrets: [] };
+  if (change.files.length === 0) return { repoRoot, workDir, config, change, scan: null, secrets: [], checked: new Map() };
 
   const onProgress = progress(flags);
-  const { scan, secrets } = await runScanners({
+  const { scan, secrets, checked } = await runScanners({
     repoDir: workDir,
     changedPaths: change.changedPaths,
     coverage: args.wholeRepo ? undefined : change.coverage,
@@ -121,7 +129,7 @@ export async function scanChange<C extends Change>(args: {
     onProgress,
   });
   noteScan(repoRoot, scan);
-  return { repoRoot, workDir, config, change, scan: redactStored(scan, secrets), secrets };
+  return { repoRoot, workDir, config, change, scan: redactStored(scan, secrets), secrets, checked };
 }
 
 // Every string in the scan passes through the secret redaction before it is
@@ -301,7 +309,7 @@ export function ownersInstructions(repoRoot: string, secrets: string[], path?: s
 // one; the matches are then ranked and capped as for a change.
 const LENS_SAMPLE_MIN_BYTES = 1024;
 
-export function wholeRepoLenses(change: WholeRepo): SelectedLens[] {
+export function wholeRepoLenses(change: WholeRepo, covered?: RuleCoverage): SelectedLens[] {
   const text = [...change.lines.keys()];
   const share = Math.max(LENS_SAMPLE_MIN_BYTES, Math.floor(DIFF_CAP_BYTES / Math.max(1, text.length)));
   const buf = Buffer.alloc(share);
@@ -323,5 +331,5 @@ export function wholeRepoLenses(change: WholeRepo): SelectedLens[] {
     }
     for (const line of buf.subarray(0, read).toString("utf8").split("\n")) diff += `+${line}\n`;
   }
-  return selectLensesForDiff({ diff, files: change.changedPaths, catalog: loadLensCatalog() });
+  return selectLensesForDiff({ diff, files: change.changedPaths, catalog: loadLensCatalog(), covered });
 }

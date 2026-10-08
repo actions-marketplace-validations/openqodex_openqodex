@@ -5,3 +5,5 @@ export * from "./toolchain/index.js";
 export * from "./formats/sarif.js";
 export * from "./formats/json-map.js";
 export * from "./custom/index.js";
+export * from "./detect.js";
+export * from "./select.js";

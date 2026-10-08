@@ -22,6 +22,7 @@ import type {
 import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
+import { suchAs } from "./words.js";
 
 const ACTIONLINT_TIMEOUT_MS = 60_000;
 const ACTIONLINT_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
@@ -87,7 +88,8 @@ async function execActionlint(tool: ResolvedTool, cliArgs: string[], cwd: string
 
 export const actionlint: Adapter = {
   source: "actionlint",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isWorkflowPath)).length > 0,
+  files: (changedPaths) => safeFileArgs(changedPaths.filter(isWorkflowPath)),
+  why: (files) => `GitHub workflow files, ${suchAs(files)}`,
   run: (args) => runActionlint(args),
 };
 

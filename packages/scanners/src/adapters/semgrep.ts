@@ -114,7 +114,8 @@ async function execSemgrep(tool: ResolvedTool, cliArgs: string[], cwd: string, t
 
 export const semgrep: Adapter = {
   source: "semgrep",
-  wants: (changedPaths) => safeFileArgs(changedPaths).length > 0,
+  files: (changedPaths) => safeFileArgs(changedPaths),
+  why: () => "any file",
   skip: offlineReason,
   run: (args) => runSemgrep(args),
 };

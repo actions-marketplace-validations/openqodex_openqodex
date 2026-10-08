@@ -8,6 +8,14 @@
 // (flake8-bandit) for shell=True, hardcoded passwords, and unsafe
 // deserialization.
 //
+// For a file in a Django, FastAPI or Airflow project (detect.ts reads the
+// project's pyproject.toml, requirements files or Pipfile), ruff's own DJ,
+// FAST or AIR rules are added with --extend-select, on top of the repo's
+// own selection. Measured with ruff 0.8.4: a selection on the command line
+// comes after the repo's config, so its `ignore` does not take these
+// families off again; `# noqa`, per-file-ignores and review.disabled_rules
+// do.
+//
 // We invoke it only on changed .py / .pyi files so a change without
 // Python is a no-op. Ruff emits a JSON array (one object per diagnostic)
 // with a location row we anchor on; it has no severity field of its own,
@@ -24,7 +32,9 @@ import type {
 } from "@openqodex/core";
 import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
+import type { RepoFacts } from "../detect.js";
 import type { Adapter } from "./index.js";
+import { folderList, listAnd, suchAs } from "./words.js";
 
 const RUFF_TIMEOUT_MS = 60_000;
 const RUFF_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
@@ -33,12 +43,40 @@ function isPythonPath(p: string): boolean {
   return /\.pyi?$/i.test(p);
 }
 
+const pythonFiles = (changedPaths: string[]): string[] => safeFileArgs(changedPaths.filter(isPythonPath));
+
+const FAMILIES = [
+  ["django", "DJ", "Django"],
+  ["fastapi", "FAST", "FastAPI"],
+  ["airflow", "AIR", "Airflow"],
+] as const;
+
+// The rule families ruff adds for a file, from its project's frameworks.
+export function ruffFamilies(p: string, facts: RepoFacts): string[] {
+  const frameworks = facts.project(p)?.frameworks ?? [];
+  return FAMILIES.filter(([framework]) => frameworks.includes(framework)).map(([, family]) => family);
+}
+
+function familyProjects(files: string[], facts: RepoFacts): string[] {
+  return [...new Set(files.filter((p) => ruffFamilies(p, facts).length > 0).map((p) => facts.project(p)!.root))].sort();
+}
+
+function ruffWhy(files: string[], facts: RepoFacts): string {
+  const projects = familyProjects(files, facts);
+  const base = `Python files, ${suchAs(files)}`;
+  if (projects.length === 0) return base;
+  const families = new Set(files.flatMap((p) => ruffFamilies(p, facts)));
+  const names = FAMILIES.filter(([, family]) => families.has(family)).map(([, , name]) => name);
+  return `${base}; ${listAnd(names)} rules in ${folderList(projects)}`;
+}
+
 export async function runRuff(args: {
   repoDir: string;
   changedPaths: string[];
   tool: ResolvedTool | null;
+  facts: RepoFacts;
 }): Promise<AdapterResult> {
-  const pyFiles = safeFileArgs(args.changedPaths.filter(isPythonPath));
+  const pyFiles = pythonFiles(args.changedPaths);
   if (pyFiles.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
 
@@ -49,7 +87,7 @@ export async function runRuff(args: {
   // json: the stable machine shape. We let Ruff honor the repo's own
   // pyproject/ruff.toml when present (near-zero config), but pass the
   // changed files positionally so it lints only those.
-  const cliArgs = (files: string[]): string[] => [
+  const cliArgs = (files: string[], families: string): string[] => [
     "check",
     "--output-format",
     "json",
@@ -57,23 +95,35 @@ export async function runRuff(args: {
     "--no-fix-only",
     "--no-cache",
     "--quiet",
+    ...(families === "" ? [] : ["--extend-select", families]),
     "--",
     ...files,
   ];
 
-  // One process per chunk of files, so a whole-repo file list stays under
-  // the argument limit; the findings of every chunk are merged.
+  // Files grouped by the families they get: one process per group, and per
+  // chunk of a group, so a whole-repo file list stays under the argument
+  // limit; the findings of every run are merged.
+  const groups = new Map<string, string[]>();
+  for (const p of pyFiles) {
+    const key = ruffFamilies(p, args.facts).join(",");
+    groups.set(key, [...(groups.get(key) ?? []), p]);
+  }
   const tool = args.tool;
   try {
-    const findings = await runInChunks("ruff", pyFiles, RUFF_TIMEOUT_MS, async (chunk, left) => {
-      const stdout = await execRuff(tool, cliArgs(chunk), args.repoDir, left);
-      try {
-        return parseRuffJson(stdout);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`parse: ${message.slice(0, 200)}`);
-      }
-    });
+    const findings: StaticFinding[] = [];
+    for (const [families, files] of groups) {
+      findings.push(
+        ...(await runInChunks("ruff", files, RUFF_TIMEOUT_MS, async (chunk, left) => {
+          const stdout = await execRuff(tool, cliArgs(chunk, families), args.repoDir, left);
+          try {
+            return parseRuffJson(stdout);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(`parse: ${message.slice(0, 200)}`);
+          }
+        })),
+      );
+    }
     return { findings, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -100,7 +150,9 @@ async function execRuff(tool: ResolvedTool, cliArgs: string[], cwd: string, time
 
 export const ruff: Adapter = {
   source: "ruff",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isPythonPath)).length > 0,
+  files: pythonFiles,
+  why: ruffWhy,
+  projects: familyProjects,
   run: (args) => runRuff(args),
 };
 

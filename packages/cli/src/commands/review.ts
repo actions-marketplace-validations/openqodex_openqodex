@@ -63,6 +63,7 @@ import {
   redactStored,
   reportFiles,
   progress,
+  ruleCoverage,
   runPipeline,
   scanChange,
   warn,
@@ -211,7 +212,7 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
   // same file. Over the size limit it is refused, never cut.
   const instructions = ownersInstructions(p.repoRoot, p.secrets);
 
-  const lenses = selectLenses(p.change);
+  const lenses = selectLenses(p.change, undefined, ruleCoverage(p));
   const dir = openReportDir(p.repoRoot, p.change.shortId);
   const runId = target ? basename(dir) : undefined;
   const manifest: RunManifest = {
@@ -377,7 +378,7 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
   }
 
   const instructions = ownersInstructions(repoRoot, p.secrets);
-  const lenses = wholeRepoLenses(p.change);
+  const lenses = wholeRepoLenses(p.change, ruleCoverage(p));
   const dir = openReportDir(repoRoot, p.change.shortId);
   writeManifest(repoRoot, dir, {
     version: MANIFEST_VERSION,

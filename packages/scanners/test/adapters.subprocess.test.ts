@@ -15,6 +15,17 @@ process.env.OPENQODEX_HOME = scannerHome;
 process.env.HOME = mkdtempSync(join(tmpdir(), "oq-adapter-user-"));
 
 const generatedSecret = `sk_live_${randomBytes(12).toString("hex")}`;
+// A React page whose effect reads `id` and leaves it out of its dependencies.
+const REACT_PAGE = `import { useEffect, useState } from "react";
+export default function Page({ id }: { id: string }) {
+  const [data, setData] = useState<string | null>(null);
+  useEffect(() => {
+    fetch(\`/api/\${id}\`).then((r) => r.text()).then(setData);
+  }, []);
+  return <p>{data}</p>;
+}
+`;
+
 // runtime: the language runtime a scanner needs that this machine may lack, and
 // the reason the product must give when it is missing.
 type Case = { scanner: BuiltinScanner; rule: string; files: Record<string, string>; anchor: string; runtime?: RegExp; network?: true };
@@ -37,6 +48,10 @@ def query():
   { scanner: "rubocop", rule: "Lint/UselessAssignment", files: { "app.rb": "unused = 1\n" }, anchor: "app.rb", runtime: /^needs Ruby/ },
   { scanner: "bandit", rule: "B608", files: { "search.py": "def query(user):\n    return f'SELECT * FROM users WHERE name = {user}'\n" }, anchor: "search.py" },
   { scanner: "oxlint", rule: "eslint/no-debugger", files: { "main.js": "debugger;\n" }, anchor: "main.js" },
+  // Framework rules the project's manifest switches on (detect.ts): oxlint's
+  // react plugin in a React project, ruff's DJ rules in a Django one.
+  { scanner: "oxlint", rule: "react-hooks/exhaustive-deps", files: { "web/package.json": JSON.stringify({ dependencies: { react: "18.3.1" } }), "web/page.tsx": REACT_PAGE }, anchor: "web/page.tsx" },
+  { scanner: "ruff", rule: "DJ001", files: { "requirements.txt": "Django==5.0\n", "shop/models.py": "from django.db import models\n\n\nclass Item(models.Model):\n    name = models.CharField(max_length=10, null=True)\n\n    def __str__(self):\n        return self.name\n" }, anchor: "shop/models.py" },
   { scanner: "golangci", rule: "gosec", files: { "go.mod": "module example.com/tiny\n\ngo 1.22\n", "main.go": "package main\nimport \"crypto/md5\"\nfunc main() { _ = md5.New() }\n" }, anchor: "main.go", runtime: /^needs Go/ },
 ];
 
@@ -80,6 +95,25 @@ describe("builtin scanner subprocesses", () => {
     if (first.scan.scanners[0]!.status === "not_installed") { process.stdout.write(`golangci: ${first.scan.scanners[0]!.reason}\n`); return; }
     const second = await scan(spec);
     expect(second.scan.candidates).toContainEqual(expect.objectContaining({ source: "golangci", ruleId: spec.rule, filePath: spec.anchor }));
+  }, 300_000);
+
+  it("oxlint's React rules stay off for a file outside a React project, and the run says which files had them", async () => {
+    const spec: Case = {
+      scanner: "oxlint",
+      rule: "",
+      files: {
+        "web/package.json": JSON.stringify({ dependencies: { react: "18.3.1" } }),
+        "web/page.tsx": REACT_PAGE,
+        "api/package.json": JSON.stringify({ dependencies: { express: "4.21.0" } }),
+        "api/hooks.tsx": REACT_PAGE,
+      },
+      anchor: "",
+    };
+    const result = await scan(spec);
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    const deps = result.scan.candidates.filter((c) => c.ruleId === "react-hooks/exhaustive-deps").map((c) => c.filePath);
+    expect(deps).toEqual(["web/page.tsx"]);
+    expect([...(result.checked.get("oxlint:react-hooks/exhaustive-deps") ?? [])]).toEqual(["web/page.tsx"]);
   }, 300_000);
 
   it("gitleaks finds a secret and never puts its value in the scan result", async () => {

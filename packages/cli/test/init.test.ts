@@ -23,6 +23,9 @@
 // 14. Uninstall leaves the global instruction section behind, or removes the
 //     developer's own text around it.
 // 15. --project leaves the section out of the repo's CLAUDE.md or AGENTS.md.
+// 16. The scanners init downloads ignore the repo's config (scanners.disable,
+//     review.paths.exclude), take a React Native app's CocoaPods Gemfile for
+//     a Rails app, give no reason line per scanner, or --dry-run downloads.
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -359,12 +362,36 @@ function lockTools(s: Sandbox): void {
 }
 
 describe("init, after writing", () => {
-  it("starts the scanner installs this repo wants", () => {
+  it("starts the scanner installs this repo wants, one reason line each", () => {
     const s = sandbox({ "deploy.sh": "#!/bin/sh\necho hi\n" });
     lockTools(s);
     const r = cli(s, ["init", "--yes", "--agent", "cursor"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/background: .*shellcheck/);
+    expect(r.stdout).toContain("Downloading the scanners this repo needs in the background:\n");
+    expect(r.stdout).toContain("\n  shellcheck: shell scripts, such as deploy.sh\n");
+  });
+
+  it("downloads what the repo's files and config call for, says why, and --dry-run downloads nothing (16)", () => {
+    const s = sandbox({
+      "package.json": JSON.stringify({ dependencies: { expo: "~52.0.0", react: "18.3.1", "react-native": "0.76.0" } }),
+      "app/index.tsx": "export default function Home() { return null; }\n",
+      Gemfile: "source 'https://rubygems.org'\ngem 'cocoapods', '>= 1.13'\n",
+      "deploy.sh": "#!/bin/sh\necho hi\n",
+      "vendor/tool.py": "import os\n",
+      ".openqodex/config.yaml": "scanners:\n  disable: [shellcheck]\nreview:\n  paths:\n    exclude: [\"vendor/**\"]\n",
+    });
+    const dry = cli(s, ["init", "--dry-run", "--agent", "cursor"]);
+    expect(dry.status, dry.stderr).toBe(0);
+    const lines = dry.stdout.split("\n");
+    const at = lines.indexOf("Scanners init would download for this repo:");
+    expect(at, dry.stdout).toBeGreaterThan(-1);
+    expect(lines.slice(at + 1, at + 4)).toEqual([
+      "  semgrep: any file",
+      "  gitleaks: any file",
+      "  oxlint: JavaScript or TypeScript files, such as app/index.tsx; React and accessibility rules in the repository root",
+    ]);
+    expect(lines[at + 4]).not.toMatch(/^  /);
+    expect(existsSync(join(s.oqHome, "tools"))).toBe(false);
   });
 });
 
