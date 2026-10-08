@@ -1,0 +1,1 @@
+wrap(_fn) ignores _fn and returns `() => 1`. setup calls `wrap(handler)`. The change edits handler. A graph that treats every function passed to an in-repo function as maybe called lists setup as a possible caller of handler, a claim wrap's body disproves: nothing calls _fn. The argument must stay a certain uses_value reference and must never be a may_invoke edge.

@@ -1,0 +1,68 @@
+{
+  "guards": "lists every class that implements an interface as a possible callee of a call on a parameter typed by it, beside the certain call to the interface member",
+  "callers": [
+    {
+      "to": "src/repo.ts#Repo.find",
+      "site": "src/run.ts:4",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/sql-repo.ts#SqlRepo.find",
+      "site": "src/run.ts:4",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "src/mem-repo.ts#MemRepo.find",
+      "site": "src/run.ts:4",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "src/repo.ts#Repo",
+      "site": "src/sql-repo.ts:3",
+      "tier": "certain",
+      "kind": "implements"
+    },
+    {
+      "to": "src/repo.ts#Repo",
+      "site": "src/mem-repo.ts:3",
+      "tier": "certain",
+      "kind": "implements"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "src/run.ts:4",
+      "candidates": [
+        "src/sql-repo.ts#SqlRepo.find",
+        "src/mem-repo.ts#MemRepo.find"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "to": "src/repo.ts#Repo.find",
+      "site": "src/sql-repo.ts:4",
+      "kind": "overrides",
+      "tier": "certain"
+    },
+    {
+      "to": "src/repo.ts#Repo",
+      "site": "src/run.ts:3",
+      "kind": "uses_type",
+      "tier": "certain"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/run.ts",
+      "line": 4,
+      "cause": "unsupported-rule"
+    }
+  ],
+  "floor": {
+    "src/sql-repo.ts#SqlRepo.find": true
+  }
+}

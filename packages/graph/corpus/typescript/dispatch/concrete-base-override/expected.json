@@ -1,0 +1,42 @@
+{
+  "guards": "dispatches a call on this in a concrete base class to the override a subclass defines",
+  "callers": [
+    {
+      "to": "src/base.ts#Base.save",
+      "site": "src/base.ts:7",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/child.ts#Child.save",
+      "site": "src/base.ts:7",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "src/base.ts:7",
+      "candidates": [
+        "src/child.ts#Child.save"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "to": "src/base.ts#Base.save",
+      "site": "src/child.ts:4",
+      "kind": "overrides",
+      "tier": "certain"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "src/base.ts",
+      "line": 7
+    }
+  ],
+  "floor": {
+    "src/child.ts#Child.save": true
+  }
+}

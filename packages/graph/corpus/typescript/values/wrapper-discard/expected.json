@@ -1,0 +1,26 @@
+{
+  "guards": "never lists a function passed to a wrapper that discards it as a possible callee, and keeps the value use",
+  "callers": [
+    {
+      "to": "src/wrap.ts#wrap",
+      "site": "src/app.ts:5",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
+  "notReached": [
+    {
+      "to": "src/handler.ts#handler",
+      "site": "src/app.ts:5",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/handler.ts#handler",
+      "site": "src/app.ts:5",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ]
+}

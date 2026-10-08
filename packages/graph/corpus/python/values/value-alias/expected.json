@@ -1,0 +1,28 @@
+{
+  "guards": "follows a Python name assigned a function once to its call as a possible caller, and leaves no unknown at the call",
+  "callers": [
+    {
+      "to": "pkg/steps.py#helper",
+      "site": "pkg/run.py:6",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "pkg/steps.py#helper",
+      "site": "pkg/run.py:5",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "pkg/run.py",
+      "line": 6
+    }
+  ],
+  "floor": {
+    "pkg/steps.py#helper": true
+  }
+}

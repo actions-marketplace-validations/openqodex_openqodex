@@ -1,0 +1,26 @@
+{
+  "guards": "binds a method call on a Python diamond to the definition C3 order picks, never to the one a depth-first walk finds",
+  "callers": [
+    {
+      "to": "pkg/classes.py#C.m",
+      "site": "pkg/use.py:5",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
+  "notReached": [
+    {
+      "to": "pkg/classes.py#A.m",
+      "site": "pkg/use.py:5"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "pkg/use.py",
+      "line": 5
+    }
+  ],
+  "floor": {
+    "pkg/classes.py#C.m": false
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "guards": "dispatches a call on a Go interface parameter to every type in other packages whose method set covers it, with pointer and value receivers",
+  "callers": [
+    {
+      "to": "store/repo.go#Repo.Find",
+      "site": "app/run.go:6",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "impl/sql.go#Sql.Find",
+      "site": "app/run.go:6",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "impl/mem.go#Mem.Find",
+      "site": "app/run.go:6",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/repo.go#Repo",
+      "site": "impl/sql.go:3",
+      "tier": "likely",
+      "kind": "implements"
+    },
+    {
+      "to": "store/repo.go#Repo",
+      "site": "impl/mem.go:3",
+      "tier": "likely",
+      "kind": "implements"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "app/run.go:6",
+      "candidates": [
+        "impl/sql.go#Sql.Find",
+        "impl/mem.go#Mem.Find"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "to": "store/repo.go#Repo.Find",
+      "site": "impl/sql.go:5",
+      "kind": "overrides",
+      "tier": "likely"
+    },
+    {
+      "to": "store/repo.go#Repo",
+      "site": "app/run.go:5",
+      "kind": "uses_type",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "impl/sql.go#Sql.Find": true
+  }
+}

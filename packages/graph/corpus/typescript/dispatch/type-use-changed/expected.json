@@ -1,0 +1,23 @@
+{
+  "guards": "lists every annotation, return type and cast that names a changed interface as a certain type use",
+  "references": [
+    {
+      "to": "src/options.ts#Options",
+      "site": "src/configure.ts:3",
+      "kind": "uses_type",
+      "tier": "certain"
+    },
+    {
+      "to": "src/options.ts#Options",
+      "site": "src/defaults.ts:3",
+      "kind": "uses_type",
+      "tier": "certain"
+    },
+    {
+      "to": "src/options.ts#Options",
+      "site": "src/parse.ts:4",
+      "kind": "uses_type",
+      "tier": "certain"
+    }
+  ]
+}

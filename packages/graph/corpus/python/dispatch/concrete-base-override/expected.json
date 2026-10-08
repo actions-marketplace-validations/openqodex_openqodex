@@ -1,0 +1,42 @@
+{
+  "guards": "dispatches a call on self in a concrete Python base class to the override a subclass defines",
+  "callers": [
+    {
+      "to": "pkg/base.py#Base.step",
+      "site": "pkg/base.py:6",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "pkg/sub.py#Sub.step",
+      "site": "pkg/base.py:6",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "pkg/base.py:6",
+      "candidates": [
+        "pkg/sub.py#Sub.step"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "to": "pkg/base.py#Base.step",
+      "site": "pkg/sub.py:5",
+      "kind": "overrides",
+      "tier": "certain"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "pkg/base.py",
+      "line": 6
+    }
+  ],
+  "floor": {
+    "pkg/sub.py#Sub.step": true
+  }
+}

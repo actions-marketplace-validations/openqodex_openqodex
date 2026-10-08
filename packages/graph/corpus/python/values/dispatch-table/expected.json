@@ -1,0 +1,42 @@
+{
+  "guards": "lists each function of a Python module dict as a possible callee of a computed call on it, and keeps the call's gap narrowed to the file",
+  "callers": [
+    {
+      "to": "pkg/handlers.py#on_save",
+      "site": "pkg/router.py:7",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "pkg/handlers.py#on_remove",
+      "site": "pkg/router.py:7",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "pkg/handlers.py#on_save",
+      "site": "pkg/router.py:3",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "pkg/handlers.py#on_remove",
+      "site": "pkg/router.py:3",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "pkg/router.py",
+      "line": 7,
+      "cause": "dynamic",
+      "scope": "file"
+    }
+  ],
+  "floor": {
+    "pkg/handlers.py#on_save": true
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "guards": "follows a const alias of a function to its call as a possible caller, and leaves no unknown at the call",
+  "callers": [
+    {
+      "to": "src/steps.ts#helper",
+      "site": "src/run.ts:5",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/steps.ts#helper",
+      "site": "src/run.ts:4",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "src/run.ts",
+      "line": 5
+    }
+  ],
+  "floor": {
+    "src/steps.ts#helper": true
+  }
+}
