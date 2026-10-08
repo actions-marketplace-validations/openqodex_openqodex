@@ -1,6 +1,6 @@
 // The code graph's own types. What the brief and the report see is
 // ImpactSummary in @openqodex/core; these are the pieces it is built from.
-import type { ImpactExportChange, ImpactKind, ImpactSite, ImpactSymbol } from "@openqodex/core";
+import type { ImpactEdgeKind, ImpactExportChange, ImpactKind, ImpactSite, ImpactSymbol } from "@openqodex/core";
 import type { ProjectModel } from "./discovery/projects.js";
 import type { Cause, Cut, Shape, Tier } from "./model/records.js";
 
@@ -23,7 +23,22 @@ export function familyOf(lang: Lang): Family {
 // `declared`: from a type annotation, so a reassignment cannot change it.
 // `bound`: the head name (`name`, or the first part of `qualifier`) is
 // bound by a scoped import where the type was read.
-export type TypeRef = { name: string; qualifier: string | null; line: number; column: number; result?: number; elem?: boolean; declared?: boolean; bound?: BoundImport };
+// On a base: `rel` is how the class takes it (absent: extends, a
+// superclass, a Go embedded field or interface). `args`: TypeScript
+// generic arguments written as plain names (`Repo<User>`), so a
+// dispatch candidate whose own arguments are proved different is left out.
+export type TypeRef = {
+  name: string;
+  qualifier: string | null;
+  line: number;
+  column: number;
+  result?: number;
+  elem?: boolean;
+  declared?: boolean;
+  bound?: BoundImport;
+  rel?: "implements" | "include" | "prepend" | "extend";
+  args?: TypeRef[];
+};
 
 export type DefFact = {
   name: string;
@@ -43,7 +58,50 @@ export type DefFact = {
   bodyHash?: string;
   // A TypeScript type alias: the type it stands for (`type Loose = any`).
   alias?: TypeRef;
+  // A member declared without a body that runs: a TypeScript interface
+  // member or `abstract` method, a Go interface method, a Python method
+  // marked @abstractmethod or whose body (after a docstring) is only
+  // `raise NotImplementedError` or `...`. Calls bind to it as the declared
+  // member; it is never a dispatch target.
+  abstract?: boolean;
+  iface?: boolean; // a TypeScript interface or a Go interface type
+  pointer?: boolean; // a Go method with a pointer receiver
+  // Functions and methods: the parameter names in order (a Python method
+  // without its self or cls), the ones the body calls (at any depth of
+  // nested functions), and the value references it returns (indices into
+  // FileFacts.values). The invocation summary of phase 2.
+  params?: string[];
+  invokes?: number[];
+  returns?: number[];
 };
+
+// A name in value position: an argument, the right side of an assignment,
+// a returned value, a property value, an element of a list. Bound like a
+// call (`recv` is what stands before the dot, `local`, `shadowed` and
+// `bound` as on CallFact); one that resolves to a function or a method is
+// a use of it as a value. A name of a local variable is never recorded.
+export type ValueRef = {
+  name: string;
+  line: number;
+  column: number;
+  caller: number; // index into defs, -1 for the file's top level
+  recv: Receiver;
+  local?: number;
+  bound?: BoundImport;
+  role: "arg" | "assign" | "return" | "property" | "element";
+  call?: number; // an argument: the call (index into calls) it is passed to
+  arg?: number; // its position among the arguments
+  key?: string; // a Python keyword argument's name
+};
+
+// A type named in an annotation, a cast, `satisfies`, `instanceof` or
+// `isinstance`, once per enclosing definition and name.
+export type TypeUse = { ref: TypeRef; caller: number };
+
+// An object, dict or map literal bound to a name: the value references of
+// its entries. A computed call on the name (`handlers[key]()`) may call
+// any of them.
+export type TableFact = { name: string; line: number; values: number[] };
 
 // A name bound by an import made inside a function or a block, in that
 // scope only: the import (an index into FileFacts.imports) and the name it
@@ -79,6 +137,14 @@ export type CallFact = {
   static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
   // A computed callee (`table[key]()`): no name to bind. `name` is empty.
   dynamic?: boolean;
+  // A bare call of a local given one value once (`const fn = helper`):
+  // the value reference it holds (index into FileFacts.values).
+  alias?: number;
+  // A call of what a call returned: `pick(k)()`, or a local given that
+  // value once (`const h = pick(k); h()`): the inner call (index into calls).
+  result?: number;
+  // A computed call on a name bound to a literal table (index into FileFacts.tables).
+  table?: number;
 };
 
 export type ImportFact = {
@@ -101,6 +167,9 @@ export type FileFacts = {
   lang: Lang;
   defs: DefFact[];
   calls: CallFact[];
+  values: ValueRef[];
+  types: TypeUse[];
+  tables: TableFact[];
   imports: ImportFact[];
   exportsLocal: { local: string; exported: string; line?: number }[]; // `export { a as b }` without a source
   defaultExport: string | null; // the local name `export default` names
@@ -113,13 +182,42 @@ export type GraphNode = ImpactSymbol & { exported: boolean; lang: Lang | null; b
 
 export type GraphSite = ImpactSite;
 
+export type EdgeKind = ImpactEdgeKind;
+
+// The edges a caller list walks (Graph.in and Graph.out); the other kinds
+// are uses that are not calls (Graph.refsIn and Graph.refsOut).
+export const CALLER_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["calls", "inherits", "implements", "dispatches_to", "may_invoke"]);
+
 export type GraphEdge = {
   from: string;
   to: string;
-  kind: "calls" | "inherits" | "imports";
+  kind: EdgeKind;
   tier: Tier; // the strongest tier among its sites
   sites: GraphSite[];
 };
+
+// A call through an interface or a base type: the member it binds to and
+// the implementations or overrides it may reach, each a possible
+// dispatches_to edge. At most DISPATCH_CAP candidates are kept, in path
+// order; `total` counts every one, and the rest is an unknown
+// fan-out-capped at the site.
+export type DispatchSite = {
+  file: string;
+  line: number;
+  column: number;
+  caller: string; // symbol id, or the file for top-level code
+  name: string; // the member called
+  declared: string[]; // the definition the call binds to
+  candidates: string[]; // ids of the implementations or overrides kept
+  total: number;
+  rule: "dispatch-implements" | "dispatch-override";
+};
+
+// What a function does with its parameters and what it returns, read from
+// its body: the parameters it calls and the functions it returns by name.
+// Kept for functions that do either; a framework rule reads it to decide
+// whether a wrapped handler may run (never that it does).
+export type InvocationSummary = { params: string[]; invokes: number[]; returns: string[] };
 
 // A call site whose evidence named a place (a file, a class, a Go package)
 // where no symbol of that name exists now. A removed symbol's surviving
@@ -169,9 +267,16 @@ export type GraphStatus = {
 export type Graph = {
   repoRoot: string; // the folder the files were read from
   nodes: Map<string, GraphNode>;
-  edges: GraphEdge[];
+  edges: GraphEdge[]; // the callers profile: calls, inherits, implements, dispatches_to, may_invoke
   in: Map<string, GraphEdge[]>;
   out: Map<string, GraphEdge[]>;
+  // Uses that are not calls: overrides, uses_value, uses_type.
+  references: GraphEdge[];
+  refsIn: Map<string, GraphEdge[]>;
+  refsOut: Map<string, GraphEdge[]>;
+  dispatch: DispatchSite[]; // every call that fanned out, with its candidates
+  summaries: Map<string, InvocationSummary>; // per function id
+
   importers: Map<string, GraphEdge[]>; // target file or Go package folder to its import edges
   defsByFile: Map<string, GraphNode[]>; // current symbols per file
   removed: Map<string, GraphNode[]>; // per changed file: symbols in the base version and gone now; `movedTo` on a move the build found

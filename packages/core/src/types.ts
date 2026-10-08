@@ -252,7 +252,10 @@ export type ImpactSymbol = {
 // "certain": an import, a definition in the same scope or a known receiver
 // type proves the call, and every step it rests on is proved. "likely": a
 // stated convention picked the one target; `note` says which. "possible":
-// one of a set (not produced before phase 2).
+// the call may reach this definition and nothing proves it does: a call
+// through an interface or a base type to one of its implementations, or a
+// function used as a value that a callee, an alias, a table or a returned
+// value may call.
 export type ImpactTier = "certain" | "likely" | "possible";
 
 export type ImpactSite = {
@@ -262,7 +265,9 @@ export type ImpactSite = {
   tier: ImpactTier;
   // What proved it: same-scope, import, ts-paths, workspace-package,
   // py-root, go-module, receiver-constructor, receiver-annotation,
-  // receiver-result, receiver-field, receiver-self or autoload.
+  // receiver-result, receiver-field, receiver-self or autoload; for a
+  // possible site, dispatch-implements, dispatch-override, method-set,
+  // invocation-summary, value-alias, value-table or returned-value.
   evidence: string;
   // The import line that proved a binding through a module.
   via: { file: string; line: number; spec: string | null } | null;
@@ -270,10 +275,17 @@ export type ImpactSite = {
   rule: string;
 };
 
+// The relations of the code graph. A caller list walks calls, inherits,
+// implements, dispatches_to (a call through an interface or a base type to
+// an implementation) and may_invoke (a function value a callee, an alias, a
+// table or a returned value may call). The other uses of a symbol are
+// overrides, uses_value and uses_type.
+export type ImpactEdgeKind = "calls" | "inherits" | "implements" | "dispatches_to" | "may_invoke" | "overrides" | "uses_value" | "uses_type" | "imports";
+
 export type ImpactEdge = {
   from: string; // symbol id
   to: string; // symbol id
-  kind: "calls" | "inherits" | "imports";
+  kind: ImpactEdgeKind;
   sites: ImpactSite[]; // every site, never only the first
 };
 
@@ -337,7 +349,15 @@ export type ImpactSummary = {
   symbols: ImpactSymbol[];
   touched: string[]; // symbol ids whose span overlaps a changed line
   removed: string[]; // symbol ids present in the base version of a changed file and gone now; a moved one has `movedTo`
-  callers: ImpactPath[];
+  callers: ImpactPath[]; // every step certain or likely
+  // Callers that may reach the touched code and are not proved to, one or
+  // two hops: a path with a possible step (dispatches_to, may_invoke) is
+  // here, never in `callers`. Absent before the graph knew dispatch.
+  possible?: ImpactPath[];
+  // Uses of the touched and removed symbols that are not calls, one hop:
+  // used as a value, named as a type, implemented or overridden. Absent
+  // before the graph knew them.
+  references?: { seed: string; edge: ImpactEdge }[];
   callees: ImpactPath[];
   importers: ImpactEdge[]; // files that import a changed file
   hubs: { symbol: string; callers: number; sites: number; files: number }[];
