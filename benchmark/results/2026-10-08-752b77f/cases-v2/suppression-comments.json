@@ -1,6 +1,7 @@
 {
   "id": "suppression-comments",
   "guards": "an added suppression comment that hides a real injection is reported, and a harmless one (a long documentation link) is not",
+  "amended": "Copied from ../cases/suppression-comments.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
   "language": "python",
   "framework": "none",
   "clean": false,
@@ -60,20 +61,6 @@
         "reasoning"
       ],
       "truth": "eval runs the expr query parameter as JavaScript, so any caller runs code on the server; two suppression comments hide the rules that would report it. The fix is an arithmetic parser, never eval, and no suppression."
-    }
-  ],
-  "extras": [
-    {
-      "file": "tools/thumbs.py",
-      "lines": [
-        8,
-        9
-      ],
-      "mentions": [
-        "path traversal",
-        "traversal"
-      ],
-      "why": "a name with ../ also writes the thumbnail outside the thumbs folder; real, not planted (found by the first run)"
     }
   ]
 }

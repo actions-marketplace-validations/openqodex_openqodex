@@ -12,7 +12,12 @@
 //    for them, and the caller stops the run at once.
 // 3. The probe hangs: it has a timeout and counts as failed.
 // 4. The probe costs more than a few tokens: one short prompt, no tools.
+// 5. The Codex model is guessed, or taken from a variable Codex never reads:
+//    it is read from the header Codex prints, or recorded as unknown.
 import { execFile, spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -92,13 +97,40 @@ export async function probeClaude({ env = process.env, timeoutMs = 120_000 } = {
   return { ok, blocked: !ok && BLOCKED.test(text), version, model: models.length === 1 ? models[0] : models.length === 0 ? null : models, text: text.slice(0, 500), costUsd: result.total_cost_usd ?? null };
 }
 
-export async function probeCodex({ env = process.env } = {}) {
+// The environment the Codex reviewer gets (packages/cli/src/reviewers/codex.ts codexEnv).
+const CODEX_ALWAYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "TERM", "TZ", "CODEX_HOME", "CODEX_CA_CERTIFICATE", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "SSL_CERT_FILE"];
+
+export function codexEnv(env = process.env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && (CODEX_ALWAYS.includes(k) || k.startsWith("LC_"))) out[k] = v;
+  return out;
+}
+
+// Codex's model comes from its own output: the reviewer runs with
+// --ignore-user-config and its JSON stream never names the model, so the
+// probe runs one tiny `codex exec` the same way (user config ignored) and
+// reads the `model:` line of the header Codex prints. The benchmark cannot
+// set the Codex model: the driver takes no model setting (run.mjs refuses
+// --model with Codex).
+export async function probeCodex({ env = process.env, timeoutMs = 120_000 } = {}) {
+  const e = codexEnv(env);
+  let version = null;
   try {
-    const { stdout } = await run("codex", ["--version"], { env, timeout: 20_000 });
-    return { ok: true, blocked: false, version: /\d+\.\d+\.\d+/.exec(stdout)?.[0] ?? stdout.trim(), model: env.OPENQODEX_BENCH_CODEX_MODEL ?? null, text: "" };
+    const { stdout } = await run("codex", ["--version"], { env: e, timeout: 20_000 });
+    version = /\d+\.\d+\.\d+/.exec(stdout)?.[0] ?? stdout.trim();
   } catch (error) {
-    return { ok: false, blocked: false, version: null, model: null, text: `codex --version failed: ${String(error.message).split("\n")[0]}` };
+    return { ok: false, blocked: false, version, model: null, text: `codex --version failed: ${String(error.message).split("\n")[0]}` };
   }
+  const dir = mkdtempSync(join(tmpdir(), "oq-bench-codex-"));
+  const args = ["exec", "--color", "never", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "-C", dir, "-c", 'approval_policy="never"', "-s", "read-only", "-"];
+  const r = await withInput("codex", args, "Reply with the single word ok.", e, timeoutMs);
+  const ok = r.code === 0 && /\bok\b/i.test(r.stdout);
+  const model = codexModelFrom(r.stderr);
+  return { ok, blocked: !ok && BLOCKED.test(`${r.stderr} ${r.stdout}`), version, model, text: ok ? "ok" : `${r.error ?? `exit ${r.code}`}: ${r.stderr.trim().split("\n").slice(-3).join(" | ")}` };
+}
+
+export function codexModelFrom(header) {
+  return /^model:\s*(\S+)\s*$/m.exec(String(header ?? ""))?.[1] ?? "unknown";
 }
 
 export function probeReviewer(name, opts) {

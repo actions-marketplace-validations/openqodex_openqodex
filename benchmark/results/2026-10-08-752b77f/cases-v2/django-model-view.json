@@ -1,6 +1,7 @@
 {
   "id": "django-model-view",
   "guards": "a Django change with a model bug, a missing migration and two view bugs (an order readable by any user, CSRF turned off on a POST) is reviewed as a Django change",
+  "amended": "Copied from ../cases/django-model-view.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
   "language": "python",
   "framework": "django",
   "clean": false,

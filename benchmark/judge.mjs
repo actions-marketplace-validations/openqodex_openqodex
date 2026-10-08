@@ -8,6 +8,10 @@
 //
 //   node benchmark/judge.mjs <results folder> [--model claude-sonnet-5]
 //                            [--configs a,b] [--limit <reviews>] [--resume]
+//                            [--specs <folder of <case>.json>]
+//
+// The findings judged are those the scorer matches to a planted bug, by the
+// run's own specs unless --specs names others (as score.mjs does).
 //
 // Writes judge.json into the results folder (raw answers in judge-raw/).
 //
@@ -122,12 +126,14 @@ async function main() {
   let configs = null;
   let limit = Infinity;
   let resumeRun = false;
+  let specsDir = null;
   const pos = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--model") model = args[++i];
     else if (args[i] === "--configs") configs = args[++i].split(",");
     else if (args[i] === "--limit") limit = Number(args[++i]);
     else if (args[i] === "--resume") resumeRun = true;
+    else if (args[i] === "--specs") specsDir = resolve(args[++i]);
     else pos.push(args[i]);
   }
   if (pos.length !== 1 || !model || !(limit > 0)) {
@@ -142,12 +148,12 @@ async function main() {
   }
   const outPath = join(folder, "judge.json");
   const earlier = resumeRun ? readJson(outPath) : null;
-  const doc = earlier ?? { version: 1, model, reviewerModel: manifest.reviewer?.model ?? null, at: new Date().toISOString(), samples: [] };
+  const doc = earlier ?? { version: 1, specs: specsDir ?? "the run's own cases/", model, reviewerModel: manifest.reviewer?.model ?? null, at: new Date().toISOString(), samples: [] };
   const judged = new Set(doc.samples.map((s) => `${s.case}/${s.config}/${s.repeat}`));
 
   const work = [];
   for (const c of dirs(join(folder, "samples"))) {
-    const spec = readJson(join(folder, "cases", `${c}.json`));
+    const spec = readJson(join(specsDir ?? join(folder, "cases"), `${c}.json`));
     if (!spec) continue;
     for (const config of dirs(join(folder, "samples", c))) {
       if (configs && !configs.includes(config)) continue;

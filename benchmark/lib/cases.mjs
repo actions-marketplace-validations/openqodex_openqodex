@@ -63,6 +63,7 @@ export function listCases(root = casesRoot) {
     .sort();
 }
 
+const isWords = (w) => Array.isArray(w) && w.length > 0 && w.every((m) => typeof m === "string" && m.trim() !== "");
 const isRange = (r) => Array.isArray(r) && r.length === 2 && r.every((n) => Number.isInteger(n) && n >= 1) && r[0] <= r[1];
 
 // Every problem with a spec, one line each; empty when it is sound.
@@ -95,11 +96,14 @@ export function specProblems(spec, id) {
     need(SEVERITIES.includes(b.severity), `${at}: severity must be one of ${SEVERITIES.join(", ")}`);
     need(Array.isArray(b.found_by) && b.found_by.length > 0 && b.found_by.every((f) => FINDERS.includes(f)), `${at}: found_by must be a non-empty list of ${FINDERS.join(", ")}`);
     need(typeof b.truth === "string" && b.truth.length > 0, `${at}: truth is missing (what is wrong and the fix)`);
-    need(b.mentions === undefined || (Array.isArray(b.mentions) && b.mentions.length > 0 && b.mentions.every((m) => typeof m === "string" && m !== "")), `${at}: mentions must be a non-empty list of words`);
+    // The words that name the issue: without them no finding can match it (lib/score.mjs).
+    need(isWords(b.mentions), `${at}: mentions must be a non-empty list of words that name the issue`);
     need(b.also === undefined || (Array.isArray(b.also) && b.also.every((a) => typeof a.file === "string" && isRange(a.lines))), `${at}: also must be a list of { file, lines }`);
   }
   for (const [i, x] of (spec.extras ?? []).entries()) {
-    need(typeof x.file === "string" && isRange(x.lines) && typeof x.why === "string", `extras[${i}]: must be { file, lines, why }`);
+    need(typeof x.file === "string" && isRange(x.lines) && typeof x.why === "string", `extras[${i}]: must be { file, lines, mentions, why }`);
+    need(isWords(x.mentions), `extras[${i}]: mentions must be a non-empty list of words that name the side issue`);
+    need(x.kind === undefined || (Array.isArray(x.kind) && x.kind.every((k) => CATEGORIES.includes(k))), `extras[${i}]: kind must be a list of ${CATEGORIES.join(", ")}`);
   }
   const g = spec.graph ?? {};
   for (const [i, u] of (g.gaps ?? []).entries()) need(typeof u.file === "string" && Number.isInteger(u.line) && typeof u.cause === "string", `graph.gaps[${i}]: must be { file, line, cause }`);

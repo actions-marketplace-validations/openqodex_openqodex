@@ -3,6 +3,7 @@
 // the real built CLI and the real reviewer. A script, never a model, decides
 // what runs; the scores come later, from the saved files (score.mjs).
 //
+//   node benchmark/build-cli.mjs      build the CLI and record where it came from
 //   node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on]
 //                          [--reviewers claude[,codex]] [--concurrency 1]
 //                          [--timeout 900] [--out <folder>] [--resume]
@@ -10,25 +11,33 @@
 //
 // One results folder per run, benchmark/results/<date>-<commit>/ unless
 // --out names another:
-//   manifest.json                     the build, versions, machine, date, plan, how the run ended
+//   manifest.json                     the build and where it came from, the machine, the
+//                                     reviewers with their versions and models, the
+//                                     settings, the plan, how the first invocation ended
+//   resumes.jsonl                     one line when a resume starts and one when it ends
 //   cases/<case>.json                 the specs this run used (the scorer reads these)
-//   samples/<case>/<config>/<n>/      one review: report/ (the CLI's --report-dir),
-//                                     receipt.txt (what it printed), stderr.txt, sample.json
-//   rows.jsonl                        one line per finished review
+//   samples/<case>/<config>/<n>/      one attempt at one review: report/ (the CLI's
+//                                     --report-dir), receipt.txt (what it printed),
+//                                     stderr.txt, sample.json; a second attempt of the
+//                                     same review is <n>-attempt2/
+//   rows.jsonl                        one line per attempt
 //
 // Failure list, written before the code:
-// 1. A stale or edited build is benchmarked under the commit's name: the
-//    manifest records the commit, whether the tree had uncommitted changes,
-//    the CLI's version and the sha256 of the bundle that ran.
+// 1. A stale or edited build is benchmarked under a commit it was not built
+//    from: benchmark/build-cli.mjs records the commit, the tree the build
+//    read and a hash of the bundle; the run refuses a bundle with another
+//    hash, and "dirty" means that tree differs from the commit's.
 // 2. The reviewer quietly falls back to another agent: --reviewer is always
 //    passed, and the reviewer each review used is read from its reviewer.json.
 // 3. A usage limit, a rate limit or a login wall turns every later review
 //    into a failure: the reviewer is probed before the run, and again after
 //    any review whose reviewer failed; a probe that fails stops the run at
 //    once with its exact text.
-// 4. A crash or a hang of one review: it is run once more; the same failure
-//    twice stops the run, and what is done is kept.
-// 5. Two reviews share a repository or a graph cache: each review gets its
+// 4. A failed, timed-out or stopped review leaves no row, or a retry writes
+//    over it: every attempt has its own folder and is saved as a scored
+//    sample before anything halts. A reviewer failure gets one more
+//    attempt; the same failure twice stops the run, and what is done is kept.
+// 5. Two reviews share a repository or a graph cache: each attempt gets its
 //    own freshly built repository, and --report-dir keeps every file of the
 //    run out of that repository.
 // 6. The developer's own settings shape the review (a repo config, custom
@@ -41,25 +50,35 @@
 // 8. A saved file holds the generated secret or this machine's paths: the
 //    receipt's paths are replaced by placeholders, and every saved file is
 //    checked for the generated value; one found stops the run.
-// 9. An earlier run's folder is overwritten: a folder that holds samples is
-//    refused unless --resume, which keeps every saved review and the specs
-//    it copied, runs the rest, and refuses a different CLI bundle, an
-//    edited case or another reviewer model.
+// 9. An earlier run is overwritten or mixed with a new one: a folder that
+//    holds samples is refused unless --resume; a resume keeps every saved
+//    attempt, the specs the run copied and its manifest untouched, runs the
+//    reviews that have no attempt, and is refused when the bundle, the
+//    machine, a reviewer's version or model, web access, the timeout, the
+//    concurrency, the cases, the configurations or the repeats differ.
 // 10. Wall time includes building the case: the clock runs from the start
 //    of the CLI to its exit only.
 // 11. The run spends more than asked: more than three repeats needs
 //    --allow-more, and the plan is printed before anything starts.
 // 12. A review outlives the script after Ctrl-C: running reviews are
-//    stopped, and the manifest says the run stopped and why.
+//    stopped, saved as stopped attempts, and the run says why it stopped.
 // 13. Parallel reviews slow each other, which reads as a slower build: the
 //    manifest records the concurrency, and the default is one at a time.
-import { spawn, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+// 14. A model is recorded that the reviewer never used: Claude Code's model
+//    is read from its own answer and must equal a requested one; Codex's is
+//    read from the header Codex prints, or recorded as unknown.
+// 15. A requested model is passed in a way the reviewer ignores: --model
+//    reaches Claude Code through ANTHROPIC_MODEL, which its driver passes
+//    on; Codex runs with --ignore-user-config and takes no model setting, so
+//    --model with Codex is refused.
+import { spawn } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 import { benchRoot, buildCase, caseHash, casesRoot, generatedValue, listCases, readCase, repoRoot } from "./lib/cases.mjs";
-import { probeReviewer, REVIEWER_FAILED, BLOCKED } from "./lib/reviewers.mjs";
+import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
+import { attemptDir, bundleHash, failureOf, provenanceProblems, resumeProblems, sampleRecord } from "./lib/runner.mjs";
 
 const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run]";
 
@@ -94,34 +113,39 @@ function parseArgs(argv) {
   if (o.graph.some((g) => g !== "off" && g !== "on")) throw new Error("--graph takes off, on or off,on");
   if (o.reviewers.some((r) => r !== "claude" && r !== "codex")) throw new Error("--reviewers takes claude, codex or both");
   if (o.web !== "on" && o.web !== "off") throw new Error("--web takes on or off");
+  if (o.model !== null && o.reviewers.includes("codex")) {
+    throw new Error("--model cannot be used with Codex: the Codex reviewer runs with --ignore-user-config and takes no model setting; run without --model, and the run records the model Codex names in its own output");
+  }
   const all = listCases();
   for (const c of o.cases ?? []) if (!all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
   o.cases ??= all;
   return o;
 }
 
-const sh = (cmd, args, cwd = repoRoot) => {
+const readJson = (path) => {
   try {
-    return execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    return JSON.parse(readFileSync(path, "utf8"));
   } catch {
     return null;
   }
 };
 
+// The build as benchmark/build-cli.mjs recorded it, checked against the
+// bundle that is there now (failure 1).
 function buildInfo(cli) {
-  const commit = sh("git", ["rev-parse", "HEAD"]);
-  // Only what goes into the bundle: an edit to the benchmark itself does not change the build.
-  const status = sh("git", ["status", "--porcelain", "--untracked-files=no", "--", "packages", "scripts", "package.json", "pnpm-lock.yaml"]);
-  const bundle = existsSync(cli) ? createHash("sha256").update(readFileSync(cli)).digest("hex") : null;
+  const provenance = readJson(join(benchRoot, ".build", "provenance.json"));
+  const now = existsSync(cli) ? bundleHash(dirname(dirname(cli))) : null;
+  const problems = now === null ? [`no built CLI at ${cli}; run node benchmark/build-cli.mjs`] : provenanceProblems(provenance, now);
+  if (problems.length > 0) return { problems, build: null };
+  let cliVersion = null;
+  try {
+    cliVersion = execFileSync(process.execPath, [cli, "--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch {
+    cliVersion = null;
+  }
   return {
-    commit,
-    short: commit ? commit.slice(0, 7) : "unknown",
-    branch: sh("git", ["rev-parse", "--abbrev-ref", "HEAD"]),
-    dirty: status === null ? null : status !== "",
-    cli: relative(repoRoot, cli),
-    cliVersion: sh(process.execPath, [cli, "--version"]),
-    bundleSha256: bundle,
-    bundleBuiltAt: existsSync(cli) ? statSync(cli).mtime.toISOString() : null,
+    problems: [],
+    build: { commit: provenance.commit, short: provenance.commit.slice(0, 7), tree: provenance.tree, commitTree: provenance.commitTree, dirty: provenance.dirty, bundleHash: provenance.bundleHash, builtAt: provenance.builtAt, builtWithNode: provenance.node, cli: relative(repoRoot, cli), cliVersion },
   };
 }
 
@@ -143,8 +167,6 @@ function plan(o) {
   return { configs, jobs };
 }
 
-const sampleDir = (out, job) => join(out, "samples", job.case, job.config, String(job.repeat));
-
 function sanitize(text, replacements) {
   let out = text;
   for (const [from, to] of replacements) if (from) out = out.split(from).join(to);
@@ -155,14 +177,6 @@ function filesUnder(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name));
 }
-
-const readJson = (path) => {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-};
 
 const children = new Set();
 
@@ -183,6 +197,7 @@ function runCli(cli, args, env, cwd, timeoutMs) {
         // gone already
       }
     }, timeoutMs + 120_000);
+    child.on("error", (e) => (stderr += `\ncould not start the CLI: ${e.message}`));
     child.on("close", (code, signal) => {
       clearTimeout(timer);
       children.delete(child);
@@ -201,21 +216,6 @@ function killAll() {
   }
 }
 
-// Why a review did not end complete, in one line, and whether the reviewer
-// itself failed (as opposed to the product judging the review incomplete).
-function failureOf(result, report) {
-  const missing = report?.completion?.missing ?? [];
-  const reviewerFailed = missing.find((m) => REVIEWER_FAILED.test(m));
-  if (report === null) {
-    const last = result.stderr.trim().split("\n").slice(-6).join(" | ");
-    const unavailable = /Full review unavailable|could not start a reviewer/.test(result.stderr);
-    return { cause: unavailable ? `no reviewer could start: ${last}` : `no report.json (exit ${result.code ?? result.signal}): ${last}`, infra: true, unavailable };
-  }
-  if (reviewerFailed) return { cause: reviewerFailed, infra: true, unavailable: false };
-  if (report.completion?.status !== "complete") return { cause: missing.join("; ") || "incomplete", infra: false, unavailable: false };
-  return null;
-}
-
 async function main() {
   let o;
   try {
@@ -224,30 +224,31 @@ async function main() {
     console.error(`${error.message}\n${USAGE}`);
     process.exit(2);
   }
-  if (!existsSync(o.cli)) {
-    console.error(`no built CLI at ${o.cli}; run pnpm build first`);
+  const { problems, build } = buildInfo(o.cli);
+  if (problems.length > 0) {
+    for (const p of problems) console.error(p);
     process.exit(2);
   }
-  const build = buildInfo(o.cli);
   const date = new Date().toISOString().slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}`);
   const { configs, jobs } = plan(o);
   const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
-  const saved = (job) => existsSync(join(sampleDir(out, job), "sample.json"));
+  // A review counts as done once its first attempt is saved, failed or not.
+  const saved = (job) => existsSync(join(attemptDir(out, job, 1), "sample.json"));
   if (existsSync(join(out, "samples")) && !o.resume) {
     console.error(`${out} already holds samples; pass --resume to finish that run, or --out for a new folder`);
     process.exit(2);
   }
   const todo = jobs.filter((j) => !saved(j));
   console.log(`Benchmark: ${o.cases.length} cases x ${configs.length} configurations (${configs.map((c) => c.id).join(", ")}) x ${o.repeat} repeats = ${jobs.length} reviews; ${todo.length} to run, ${o.concurrency} at a time.`);
-  console.log(`Build ${build.short}${build.dirty ? " with uncommitted source changes" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
-  if (build.dirty) console.log("Warning: the CLI's source has uncommitted changes; the run is not tied to one commit.");
+  console.log(`Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
   if (o.dryRun) {
     for (const j of todo) console.log(`  ${j.case} ${j.config} #${j.repeat}`);
     return;
   }
 
-  // The reviewers, before anything is spent (failure 3).
+  // The reviewers, before anything is spent (failure 3), with the model each
+  // one really answers with (failure 14).
   const env = { ...process.env, OPENQODEX_AUTO_UPDATE: "0", NO_COLOR: "1" };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_") || k === "FORCE_COLOR") delete env[k];
   if (o.model) env.ANTHROPIC_MODEL = o.model;
@@ -258,36 +259,18 @@ async function main() {
       console.error(`The ${name} reviewer cannot run: ${p.text}`);
       process.exit(2);
     }
-    reviewers[name] = { name, version: p.version, model: p.model };
+    if (o.model && name === "claude" && p.model !== o.model) {
+      console.error(`Asked for the model ${o.model}, but Claude Code answered with ${JSON.stringify(p.model)}; nothing runs.`);
+      process.exit(2);
+    }
+    reviewers[name] = { name, version: p.version, model: p.model, modelFrom: name === "claude" ? "the model Claude Code names in its answer" : "the model line of the header Codex prints" };
     console.log(`Reviewer ${name} ${p.version}, model ${JSON.stringify(p.model)}`);
   }
 
   const manifestPath = join(out, "manifest.json");
-  const earlier = readJson(manifestPath);
+  const resumesPath = join(out, "resumes.jsonl");
   const hashes = Object.fromEntries(o.cases.map((c) => [c, caseHash(c)]));
-  // A resumed run must review the same build and the same cases with the
-  // same model, or its samples mix two runs under one name (failure 9).
-  if (earlier) {
-    const differs = [];
-    if (earlier.build?.bundleSha256 !== build.bundleSha256) differs.push("CLI bundle");
-    for (const c of o.cases) {
-      const saved = join(out, "cases", `${c}.json`);
-      const specChanged = existsSync(saved) && readFileSync(saved, "utf8") !== readFileSync(join(casesRoot, c, "case.json"), "utf8");
-      if (specChanged || (earlier.caseHashes?.[c] !== undefined && earlier.caseHashes[c] !== hashes[c])) differs.push(`case ${c}`);
-    }
-    for (const name of o.reviewers) if (JSON.stringify(earlier.reviewers?.[name]?.model ?? null) !== JSON.stringify(reviewers[name].model)) differs.push(`${name} model`);
-    if (differs.length > 0) {
-      console.error(`${shown(out)} was run with a different ${differs.join(", ")}; resuming would mix two runs. Start a new run with --out.`);
-      process.exit(2);
-    }
-  }
-  // The specs this run scores against; a resume keeps the copies it made first.
-  mkdirSync(join(out, "cases"), { recursive: true });
-  for (const c of o.cases) if (!existsSync(join(out, "cases", `${c}.json`))) cpSync(join(casesRoot, c, "case.json"), join(out, "cases", `${c}.json`));
-  const manifest = {
-    version: 1,
-    started_at: earlier?.started_at ?? new Date().toISOString(),
-    resumed_at: earlier ? [...(earlier.resumed_at ?? []), new Date().toISOString()] : [],
+  const settings = {
     build,
     machine: machine(),
     reviewer: o.reviewers.length === 1 ? reviewers[o.reviewers[0]] : null,
@@ -299,11 +282,33 @@ async function main() {
     configs: configs.map((c) => c.id),
     repeat: o.repeat,
     concurrency: o.concurrency,
-    planned: jobs.length,
-    ended: null,
   };
-  const writeManifest = () => writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  writeManifest();
+  let manifest = null;
+  if (o.resume) {
+    const earlier = readJson(manifestPath);
+    if (!earlier) {
+      console.error(`${shown(out)} has no manifest.json; there is no run to resume`);
+      process.exit(2);
+    }
+    const differ = resumeProblems(earlier, settings);
+    for (const c of o.cases) {
+      const copy = join(out, "cases", `${c}.json`);
+      if (existsSync(copy) && readFileSync(copy, "utf8") !== readFileSync(join(casesRoot, c, "case.json"), "utf8")) differ.push(`case ${c}: its spec differs from the copy the run saved`);
+    }
+    if (differ.length > 0) {
+      console.error(`${shown(out)} cannot be resumed: resuming would mix two runs. Start a new run with --out.`);
+      for (const d of differ) console.error(`- ${d}`);
+      process.exit(2);
+    }
+    appendFileSync(resumesPath, `${JSON.stringify({ event: "resumed", at: new Date().toISOString(), toRun: todo.length })}\n`);
+  } else {
+    manifest = { version: 2, started_at: new Date().toISOString(), ...settings, planned: jobs.length, ended: null };
+    mkdirSync(out, { recursive: true });
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  // The specs this run scores against; a resume keeps the copies it made first.
+  mkdirSync(join(out, "cases"), { recursive: true });
+  for (const c of o.cases) if (!existsSync(join(out, "cases", `${c}.json`))) cpSync(join(casesRoot, c, "case.json"), join(out, "cases", `${c}.json`));
 
   const tempRoot = mkdtempSync(join(tmpdir(), "oq-bench-run-"));
   console.log(`Case repositories: ${tempRoot}`);
@@ -320,9 +325,10 @@ async function main() {
   process.on("SIGINT", () => halt("stopped by Ctrl-C"));
   process.on("SIGTERM", () => halt("stopped by SIGTERM"));
 
-  const once = async (job, attempt) => {
-    const dir = sampleDir(out, job);
-    const caseDir = join(tempRoot, `${job.case}-${job.config}-${job.repeat}-${attempt}`);
+  // One attempt, saved as its own scored sample whatever happened (failure 4).
+  const attempt = async (job, k) => {
+    const dir = attemptDir(out, job, k);
+    const caseDir = join(tempRoot, `${job.case}-${job.config}-${job.repeat}-${k}`);
     const { dir: repo } = buildCase(job.case, join(caseDir, "repo"));
     const reportDir = join(dir, "report");
     mkdirSync(dir, { recursive: true });
@@ -335,63 +341,32 @@ async function main() {
     writeFileSync(join(dir, "stderr.txt"), sanitize(result.stderr, replacements));
     const report = readJson(join(reportDir, "report.json"));
     const who = readJson(join(reportDir, "reviewer.json"));
-    return { result, report, who, startedAt };
+    const stoppedHere = stop;
+    const failure = stoppedHere !== null && !report ? { cause: `stopped by the run: ${stoppedHere}`, infra: false, unavailable: false } : failureOf(result, report);
+    const rec = sampleRecord({ job, attempt: k, result, report, who, startedAt, failure, stopped: stoppedHere });
+    writeFileSync(join(dir, "sample.json"), `${JSON.stringify(rec, null, 2)}\n`);
+    appendFileSync(join(out, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
+    const cost = rec.usage?.cost_usd;
+    console.log(`  ${job.case} ${job.config} #${job.repeat}${k > 1 ? ` attempt ${k}` : ""}: ${rec.status}, ${rec.findings ?? "no"} findings, ${(rec.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(2)}` : ""}${rec.failure ? ` (${rec.failure.slice(0, 160)})` : ""}`);
+    for (const file of filesUnder(dir)) {
+      const text = readFileSync(file, "utf8");
+      for (const s of secrets) if (text.includes(s)) halt(`the generated secret is in ${relative(out, file)}; nothing more runs until that is fixed`);
+    }
+    return failure;
   };
 
   const runJob = async (job) => {
-    let attempt = 1;
-    let r = await once(job, attempt);
-    let failure = failureOf(r.result, r.report);
+    const first = await attempt(job, 1);
     if (stop !== null) return;
-    if (failure?.unavailable) return halt(`${job.case} ${job.config}: ${failure.cause}`);
-    if (failure?.infra) {
-      const p = await probeReviewer(job.reviewer, { env });
-      if (!p.ok) return halt(`${job.case} ${job.config}: the reviewer failed (${failure.cause}) and the probe says: ${p.text}${p.blocked ? " (a limit or login wall)" : ""}`);
-      if (BLOCKED.test(failure.cause)) return halt(`${job.case} ${job.config}: ${failure.cause}`);
-      attempt = 2;
-      console.log(`  ${job.case} ${job.config} #${job.repeat}: reviewer failed (${failure.cause}); running it once more`);
-      const first = failure.cause;
-      r = await once(job, attempt);
-      failure = failureOf(r.result, r.report);
-      if (stop !== null) return;
-      if (failure?.infra) {
-        const same = failure.cause.split(":")[0] === first.split(":")[0];
-        if (same) return halt(`${job.case} ${job.config}: the same reviewer failure twice: ${failure.cause}`);
-      }
-    }
-    const dir = sampleDir(out, job);
-    for (const file of filesUnder(dir)) {
-      const text = readFileSync(file, "utf8");
-      for (const s of secrets) if (text.includes(s)) return halt(`the generated secret is in ${relative(out, file)}; nothing more runs until that is fixed`);
-    }
-    const report = r.report;
-    const sample = {
-      case: job.case,
-      config: job.config,
-      reviewer: job.reviewer,
-      graph: job.graph ? "on" : "off",
-      repeat: job.repeat,
-      attempts: attempt,
-      started_at: r.startedAt,
-      exit: r.result.code,
-      signal: r.result.signal,
-      wallMs: r.result.wallMs,
-      status: report === null ? "failed" : report.completion?.status ?? "unknown",
-      failure: failure?.cause ?? null,
-      verdict: report?.verdict ?? null,
-      reviewerUsed: r.who ?? null,
-      findings: report ? report.findings.length + (report.outside_change?.length ?? 0) : null,
-      usage: report?.completion?.reviewer?.usage ?? null,
-      reviewerMs: report?.completion?.reviewer?.duration_ms ?? null,
-      rounds: report?.completion?.reviewer?.rounds ?? null,
-      graphStatus: report?.impact?.status ?? null,
-      graphMs: report?.impact?.build?.durationMs ?? null,
-      scanners: (report?.scanners ?? []).map((s) => ({ scanner: s.scanner, status: s.status, version: s.version, kept: s.keptCount, ms: s.durationMs })),
-    };
-    writeFileSync(join(dir, "sample.json"), `${JSON.stringify(sample, null, 2)}\n`);
-    appendFileSync(join(out, "rows.jsonl"), `${JSON.stringify(sample)}\n`);
-    const cost = sample.usage?.cost_usd;
-    console.log(`  ${job.case} ${job.config} #${job.repeat}: ${sample.status}, ${sample.findings ?? "no"} findings, ${(sample.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(2)}` : ""}${sample.failure ? ` (${sample.failure.slice(0, 160)})` : ""}`);
+    if (first?.unavailable) return halt(`${job.case} ${job.config}: ${first.cause}`);
+    if (!first?.infra) return;
+    const p = await probeReviewer(job.reviewer, { env });
+    if (!p.ok) return halt(`${job.case} ${job.config}: the reviewer failed (${first.cause}) and the probe says: ${p.text}${p.blocked ? " (a limit or login wall)" : ""}`);
+    if (BLOCKED.test(first.cause)) return halt(`${job.case} ${job.config}: ${first.cause}`);
+    console.log(`  ${job.case} ${job.config} #${job.repeat}: reviewer failed (${first.cause}); running it once more`);
+    const second = await attempt(job, 2);
+    if (stop !== null) return;
+    if (second?.infra && second.cause.split(":")[0] === first.cause.split(":")[0]) halt(`${job.case} ${job.config}: the same reviewer failure twice: ${second.cause}`);
   };
 
   const queue = [...todo];
@@ -411,8 +386,12 @@ async function main() {
   await Promise.all(Array.from({ length: Math.min(o.concurrency, todo.length) }, worker));
 
   const finished = jobs.filter(saved).length;
-  manifest.ended = { at: new Date().toISOString(), how: stop === null ? "finished" : "stopped", why: stop, samples: finished };
-  writeManifest();
+  const ended = { at: new Date().toISOString(), how: stop === null ? "finished" : "stopped", why: stop, reviewsWithAnAttempt: finished, planned: jobs.length };
+  // The manifest is the first invocation's; a resume never writes it (failure 9).
+  if (manifest) {
+    manifest.ended = ended;
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  } else appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended })}\n`);
   console.log(stop === null ? `Done: ${finished} reviews saved in ${shown(out)}` : `Stopped after ${finished} of ${jobs.length} reviews: ${stop}`);
   console.log(`Score it: node benchmark/score.mjs ${shown(out)}`);
   process.exit(stop === null ? 0 : 1);

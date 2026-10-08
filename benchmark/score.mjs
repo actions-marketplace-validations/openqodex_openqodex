@@ -2,7 +2,13 @@
 // Scores a saved benchmark run, from its files only, and compares it with
 // an earlier run when asked:
 //
-//   node benchmark/score.mjs <results folder> [--against <earlier folder>] [--json]
+//   node benchmark/score.mjs <results folder> [--against <earlier folder>]
+//                            [--specs <folder of <case>.json>] [--json]
+//
+// The specs are the run's own copies (cases/ in the run). --specs scores the
+// saved reviews against other specs, such as an amended copy; the output and
+// score.json then name that folder and every case whose spec differs from
+// the run's own. No review is run again either way.
 //
 // Prints markdown tables (or, with --json, the summary as JSON) and writes
 // score.json into the results folder. The exit code is information, never a
@@ -12,19 +18,24 @@
 //
 // Failure list, written before the code (the matching rules and their own
 // failure list are in lib/score.mjs):
-// 1. A sample folder without sample.json (a review the run did not finish)
-//    is scored as a failed review: it is left out and counted as not run;
-//    a review that ran and wrote no report is scored as failed.
-// 2. The specs of today are used for an old run: the specs come from the
-//    run's own cases/ folder; a case missing there stops the scoring.
-// 3. Two runs with different models or case sets are compared as builds:
+// 1. A review leaves no row and the run looks better than it was: every
+//    attempt folder is scored, a failed or stopped one as a failure, and one
+//    the runner never finished recording (no sample.json) as a failure too,
+//    counted apart as unrecorded.
+// 2. The specs of today are used for an old run without saying so: the
+//    specs come from the run's own cases/ folder unless --specs names
+//    another, and then every difference is printed and saved.
+// 3. A spec that breaks the matching rules (a plant without its words) is
+//    scored anyway: every spec is checked first, and one that fails stops
+//    the scoring with its problems.
+// 4. Two runs with different models or case sets are compared as builds:
 //    every difference is printed above the comparison.
-// 4. A table hides how many samples a number rests on: every ratio is
+// 5. A table hides how many samples a number rests on: every ratio is
 //    printed as hits/checks, every time and cost with its count.
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { repoRoot } from "./lib/cases.mjs";
+import { repoRoot, specProblems } from "./lib/cases.mjs";
 import { SEVERITY_ORDER, bugStability, groupBy, regressions, runDifferences, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 
 const readJson = (path) => {
@@ -43,23 +54,30 @@ const readText = (path) => {
 };
 const dirs = (path) => (existsSync(path) ? readdirSync(path, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : []);
 
-export function loadRun(folder) {
+export function loadRun(folder, { specsDir = null } = {}) {
   const manifest = readJson(join(folder, "manifest.json"));
   if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
+  const from = specsDir ?? join(folder, "cases");
   const specs = {};
+  const ownSpecs = {};
+  const problems = [];
   const samples = [];
-  let notRun = 0;
+  let unrecorded = 0;
   for (const c of dirs(join(folder, "samples"))) {
-    const spec = readJson(join(folder, "cases", `${c}.json`));
-    if (!spec) throw new Error(`${folder}/cases/${c}.json is missing; the run's own spec is needed to score it`);
+    const spec = readJson(join(from, `${c}.json`));
+    if (!spec) throw new Error(`${join(from, `${c}.json`)} is missing; a spec is needed to score ${c}`);
+    problems.push(...specProblems(spec, c));
     specs[c] = spec;
+    ownSpecs[c] = readJson(join(folder, "cases", `${c}.json`));
     for (const config of dirs(join(folder, "samples", c))) {
       for (const n of dirs(join(folder, "samples", c, config))) {
         const dir = join(folder, "samples", c, config, n);
-        const row = readJson(join(dir, "sample.json"));
+        let row = readJson(join(dir, "sample.json"));
+        // An attempt the runner never finished recording is still a review that happened.
         if (!row) {
-          notRun++;
-          continue;
+          unrecorded++;
+          const [repeat, attempt] = n.split("-attempt");
+          row = { case: c, config, repeat: Number(repeat), attempt: attempt === undefined ? 1 : Number(attempt), unrecorded: true };
         }
         const report = readJson(join(dir, "report", "report.json"));
         const brief = readText(join(dir, "report", "brief.md"));
@@ -67,10 +85,17 @@ export function loadRun(folder) {
       }
     }
   }
+  if (problems.length > 0) throw new Error(`the specs in ${from} cannot be scored with:\n${problems.join("\n")}${specsDir ? "" : "\nScore against amended specs with --specs <folder>."}`);
+  const resumes = existsSync(join(folder, "resumes.jsonl")) ? readFileSync(join(folder, "resumes.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const specsDiffer = specsDir ? Object.keys(specs).filter((c) => JSON.stringify(specs[c]) !== JSON.stringify(ownSpecs[c])) : [];
   // Shown and saved relative to the repository when the run lies in it, so no machine path is published.
   const inside = relative(repoRoot, folder);
   const name = inside !== "" && !inside.startsWith("..") && !isAbsolute(inside) ? inside : folder;
-  return { folder, name, manifest, specs, samples, notRun };
+  const specsName = specsDir === null ? null : (() => {
+    const r = relative(repoRoot, specsDir);
+    return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : specsDir;
+  })();
+  return { folder, name, manifest, specs, samples, unrecorded, resumes, specsFrom: specsName, specsDiffer };
 }
 
 const pct = (r) => `${r.hit}/${r.of}${r.of > 0 ? ` (${Math.round(value(r) * 100)}%)` : ""}`;
@@ -103,8 +128,12 @@ export function summary(run) {
     repeat: run.manifest.repeat,
     planned: run.manifest.planned,
     saved: run.samples.length,
-    notRun: run.notRun,
+    secondAttempts: run.samples.filter((x) => x.attempt > 1).length,
+    unrecorded: run.unrecorded,
     ended: run.manifest.ended,
+    resumes: run.resumes,
+    specsFrom: run.specsFrom ?? "the run's own cases/",
+    specsDiffer: run.specsDiffer,
     byConfig,
     byCase,
     stability,
@@ -118,7 +147,9 @@ export function render(s) {
   const out = [];
   const model = s.reviewer?.model ?? (s.reviewer && typeof s.reviewer === "object" ? Object.values(s.reviewer).map((r) => `${r.name} ${JSON.stringify(r.model)}`).join(", ") : "unknown");
   out.push(`Run ${s.run}`);
-  out.push(`Build ${s.build?.short} (openqodex ${s.build?.cliVersion}${s.build?.dirty ? ", uncommitted source changes" : ""}); reviewer ${s.reviewer?.name ?? ""} ${s.reviewer?.version ?? ""}, model ${JSON.stringify(model)}; ${s.saved} of ${s.planned} reviews saved${s.ended?.how === "stopped" ? `; the run stopped: ${s.ended.why}` : ""}.`);
+  const lastEnd = [...(s.resumes ?? [])].reverse().find((r) => r.event === "ended") ?? s.ended;
+  out.push(`Build ${s.build?.short} (openqodex ${s.build?.cliVersion}${s.build?.dirty ? ", built from a tree the commit does not hold" : ""}); reviewer ${s.reviewer?.name ?? ""} ${s.reviewer?.version ?? ""}, model ${JSON.stringify(model)}; ${s.saved} attempts saved for ${s.planned} planned reviews (${s.secondAttempts} second attempts, ${s.unrecorded} unrecorded)${lastEnd?.how === "stopped" ? `; the run stopped: ${lastEnd.why}` : ""}.`);
+  if (s.specsFrom !== "the run's own cases/") out.push(`Scored against the specs in ${s.specsFrom}, not the run's own; they differ for: ${s.specsDiffer.join(", ") || "no case"}.`);
   out.push("");
   const rows = [
     ["Planted bugs found (recall)", (c) => pct(c.recall)],
@@ -126,6 +157,7 @@ export function render(s) {
     ["Findings that are planted bugs (precision)", (c) => pct(c.precision)],
     ["False findings", (c) => String(c.falseFindings)],
     ["Near misses / wrong kind (not hits either)", (c) => `${c.nearMisses} / ${c.wrongKinds}`],
+    ["Duplicate hits on a bug already found (not counted)", (c) => String(c.duplicates)],
     ["Accepted side issues (not counted)", (c) => String(c.accepted)],
     ["Findings that only ask for a test (not counted)", (c) => String(c.testGaps)],
     ["Clean changes with no finding", (c) => pct(c.controls)],
@@ -213,21 +245,23 @@ export function renderCompare(older, newer, regs) {
 function main() {
   const args = process.argv.slice(2);
   let against = null;
+  let specsDir = null;
   let json = false;
   const pos = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--against") against = args[++i];
     else if (args[i] === "--json") json = true;
+    else if (args[i] === "--specs") specsDir = args[++i];
     else pos.push(args[i]);
   }
-  if (pos.length !== 1 || (against !== null && against === undefined)) {
-    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--json]");
+  if (pos.length !== 1 || against === undefined || specsDir === undefined) {
+    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--specs <folder of <case>.json>] [--json]");
     process.exit(2);
   }
   let run;
   let older = null;
   try {
-    run = loadRun(resolve(pos[0]));
+    run = loadRun(resolve(pos[0]), { specsDir: specsDir === null ? null : resolve(specsDir) });
     if (against) older = loadRun(resolve(against));
   } catch (error) {
     console.error(error.message);
@@ -236,12 +270,15 @@ function main() {
   const s = summary(run);
   const regs = older ? regressions(older.samples, run.samples) : [];
   const doc = { ...s, comparedWith: older ? { run: older.name, build: older.manifest.build, differences: differences(older, run), regressions: regs } : null };
-  writeFileSync(join(run.folder, "score.json"), `${JSON.stringify(doc, null, 2)}\n`);
+  // Scored against other specs, the summary gets its own file, so the score
+  // against the run's own specs is never overwritten.
+  const outName = specsDir === null ? "score.json" : `score-${basename(resolve(specsDir))}.json`;
+  writeFileSync(join(run.folder, outName), `${JSON.stringify(doc, null, 2)}\n`);
   if (json) console.log(JSON.stringify(doc, null, 2));
   else {
     console.log(render(s));
     if (older) console.log(`\n${renderCompare(older, run, regs)}`);
-    console.log(`\nSummary saved: ${join(run.name, "score.json")}`);
+    console.log(`\nSummary saved: ${join(run.name, outName)}`);
   }
   process.exit(regs.length > 0 ? 1 : 0);
 }

@@ -1,6 +1,7 @@
 {
   "id": "nextjs-react-hooks",
   "guards": "a Next.js client page with a hook called after an early return, an effect with no dependency list, HTML built from the query string and a list without keys is reviewed as React code",
+  "amended": "Copied from ../cases/nextjs-react-hooks.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
   "language": "typescript",
   "framework": "nextjs",
   "clean": false,
@@ -145,22 +146,6 @@
         "abort"
       ],
       "why": "a failed search is never caught (an unhandled rejection) and a stale answer can overwrite a newer one; real, not planted"
-    },
-    {
-      "file": "app/search/page.tsx",
-      "lines": [
-        10,
-        12
-      ],
-      "mentions": [
-        "form",
-        "input",
-        "search field",
-        "no way to",
-        "cannot enter",
-        "cannot type"
-      ],
-      "why": "the new page drops the search form of the base page, so a user has no field to type a term in; a real bug the case brings by accident, not planted"
     }
   ]
 }

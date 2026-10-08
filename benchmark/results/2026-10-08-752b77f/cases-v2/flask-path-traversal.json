@@ -1,6 +1,7 @@
 {
   "id": "flask-path-traversal",
   "guards": "a Flask download route that joins a request parameter into a file path, and a debug server opened to the network, are reported",
+  "amended": "Copied from ../cases/flask-path-traversal.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
   "language": "python",
   "framework": "flask",
   "clean": false,

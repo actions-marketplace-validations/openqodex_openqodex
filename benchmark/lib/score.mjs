@@ -6,53 +6,66 @@
 // are the same where the meaning is the same: precision, recall, gaps,
 // controls, failures.
 //
-// Matching one finding (file, line range, category, text) to a planted bug:
-//   hit          same file, the ranges overlap, the category is one of the
-//                bug's kinds, and, when the bug lists `mentions`, the
-//                finding's text names one of them (case does not matter)
-//   wrong-kind   a hit in every way but the category
-//   near         a hit in every way but the lines: within NEAR_LINES lines
-//                of the range, not on it
-//   accepted     on a side issue the spec lists in `extras` (real, not
-//                planted): left out of precision
-//   test-gap     on a planted case, a finding whose title only asks for a
-//                test (the brief hints at missing tests, and the planted
-//                cases ship none by design, so it is true and not planted):
-//                counted apart and left out of precision; on a clean case,
-//                which ships its tests, it is false
-//   false        anything else; on a clean case every finding is false
-// A bug's `also` locations count as its own. When a finding could be a hit
-// for two bugs, a bug whose `mentions` it satisfies wins over one with no
-// `mentions`, then the bug whose anchor line is nearest, then the first.
+// A finding matches a planted bug only when three things hold: its place
+// (same file, line ranges that overlap), its kind (a category the bug lists)
+// and its words (the finding's text names one of the bug's `mentions` at the
+// start of a word; case does not matter). Every plant and every accepted side
+// issue lists `mentions`; one without them can never be matched. The checks
+// run in this order, and the first that holds decides:
+//   1. test-only   a finding of kind maintainability or style whose title
+//                  asks for a test ("has no covering test", "lacks tests",
+//                  "untested"). On a planted case it is true and not
+//                  planted (the planted cases ship no tests by design), so it
+//                  is counted apart, as test-gap, and left out of precision.
+//                  On a clean case, which ships its tests, it is false.
+//   2. accepted    a side issue the spec lists in `extras` (real, not
+//                  planted), matched by place and words (and kind, when the
+//                  extra lists kinds): left out of precision
+//   3. hit         a planted bug, matched by place, kind and words. A second
+//                  hit on a bug already hit in the same review is a
+//                  duplicate: reported apart, never counted in precision.
+//   4. near        a hit in every way but the lines: within NEAR_LINES lines
+//      wrong-kind  of the range, not on it; or a hit in every way but the
+//                  kind. Neither is a hit; both count against precision.
+//   5. false       anything else; on a clean case every finding is false.
+// A bug's `also` locations count as its own. When a finding is a hit for two
+// bugs, the bug whose anchor line is nearest wins, then the first.
 //
 // Failure list, written before the code:
 // 1. A finding one line off counts as found, or silently as false: it is a
 //    near miss, listed with its distance, and not a hit.
-// 2. A finding on the right line about something else counts as found: a
-//    wrong category is a wrong-kind, not a hit.
+// 2. A finding on the right line about something else counts as found: it
+//    must name the issue (its words) and be of a planted kind; a wrong kind
+//    is a wrong-kind, other words are false.
 // 3. One finding is counted for two bugs whose ranges overlap: each finding
 //    goes to one bug at most, by the order above.
-// 4. Two findings for one bug count as two bugs found: recall counts bugs;
-//    the second finding is a duplicate, still correct for precision.
+// 4. Two findings for one bug count as two bugs found, or raise precision:
+//    recall counts bugs; the second finding is a duplicate, left out of
+//    precision and reported apart.
 // 5. A real issue the spec did not plant counts as false although the spec
-//    lists it: extras are left out of precision.
-// 6. A clean case scores well because it has nothing to miss: every finding
-//    there is false, and its control fails.
-// 7. A missing or incomplete report is left out, so a crash looks perfect:
+//    lists it: extras are matched first and left out of precision.
+// 6. A request for a test is scored as a wrong kind or a near miss of the
+//    plant whose lines it spans: requests for tests are checked first.
+// 7. A clean case scores well because it has nothing to miss: every finding
+//    there is false, and its control passes only when the review completed
+//    with no finding; an incomplete or missing review fails it.
+// 8. A missing or incomplete report is left out, so a crash looks perfect:
 //    a missing report misses every bug and is counted as failed; an
 //    incomplete one is scored on what it holds and counted as incomplete.
-// 8. Gap disclosure is read from data the reviewer never saw: it is read
+// 9. Gap disclosure is read from data the reviewer never saw: it is read
 //    from the saved brief, the text the reviewer was given.
-// 9. A run with the graph off gets credit for gaps its brief never named:
+// 10. A run with the graph off gets credit for gaps its brief never named:
 //    gaps are counted from the brief's text only, so graph off scores 0.
-// 10. A spec edited after a run changes that run's score: the scorer takes
-//    the specs the run copied into its own folder.
-// 11. Paths written differently (./a.py, a\b.py) do not match: both sides
+// 11. A spec edited after a run changes that run's score: the scorer takes
+//    the specs the run copied into its own folder, unless told otherwise,
+//    and then says so.
+// 12. Paths written differently (./a.py, a\b.py) do not match: both sides
 //    are normalised.
-// 12. Averages of averages over different sample counts mislead: ratios are
+// 13. Averages of averages over different sample counts mislead: ratios are
 //    summed hits over summed checks; times and costs carry their count.
-// 13. Two runs with different models, case sets or repeats read as a product
-//    change: the comparison names every such difference above its table.
+// 14. Two runs with different models, reviewers, machines or settings read
+//    as a product change: the comparison names every such difference above
+//    its table.
 export const NEAR_LINES = 3;
 export const SEVERITY_ORDER = ["critical", "major", "minor", "nitpick", "info"];
 
@@ -61,6 +74,8 @@ export const value = (r) => (r.of === 0 ? 1 : r.hit / r.of);
 const add = (a, b) => ({ hit: a.hit + b.hit, of: a.of + b.of });
 
 export const normPath = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
+
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function findingText(f) {
   return [f.title, f.problem, f.consequence, f.fix, f.description, f.suggested_change].filter((x) => typeof x === "string").join("\n").toLowerCase();
@@ -77,52 +92,61 @@ function gap(start, end, lines) {
   return 0;
 }
 
-function mentionsOk(bug, text) {
-  return !bug.mentions || bug.mentions.some((m) => text.includes(m.toLowerCase()));
+// Whether the text names one of the words, each at the start of a word.
+// No words, no match: a plant without its words can never be found.
+export function names(words, text) {
+  if (!Array.isArray(words) || words.length === 0) return false;
+  return words.some((w) => new RegExp(`(^|[^a-z0-9])${escape(w.toLowerCase())}`).test(text));
 }
 
-// The outcome of one finding against a spec.
+// A title that asks for a test, and the kinds such a request comes in.
+export const TEST_ONLY = /\b(no|missing|lacks?|lacking|without|needs?|add)\b[^.]{0,60}\btests?\b|\buntested\b|\btest coverage\b|\bnot covered by (any |a )?tests?\b/i;
+export const TEST_ONLY_KINDS = ["maintainability", "style"];
+
+// The outcome of one finding against a spec. Duplicates are decided per
+// review (scoreSample), since they depend on the other findings.
 export function classify(finding, spec) {
   const file = normPath(finding.file_path);
   const start = finding.line_number;
   const end = Math.max(finding.line_end ?? start, start);
   const text = findingText(finding);
   const bugs = spec.bugs ?? [];
+
+  if (TEST_ONLY_KINDS.includes(finding.category) && TEST_ONLY.test(String(finding.title ?? ""))) {
+    return spec.clean ? { outcome: "false", testOnly: true } : { outcome: "test-gap" };
+  }
+
+  const extra = (spec.extras ?? []).find((x) => normPath(x.file) === file && gap(start, end, x.lines) === 0 && names(x.mentions, text) && (!x.kind || x.kind.includes(finding.category)));
+  if (extra) return { outcome: "accepted", why: extra.why };
+
   const dist = (bug) => {
     const ds = locations(bug).filter((l) => l.file === file).map((l) => gap(start, end, l.lines));
     return ds.length === 0 ? null : Math.min(...ds);
   };
   const kindOk = (bug) => bug.kind.includes(finding.category);
+  const said = (bug) => names(bug.mentions, text);
   const hits = bugs
     .map((bug, order) => ({ bug, order, d: dist(bug) }))
-    .filter(({ bug, d }) => d === 0 && kindOk(bug) && mentionsOk(bug, text));
+    .filter(({ bug, d }) => d === 0 && kindOk(bug) && said(bug));
   if (hits.length > 0) {
     const anchorGap = (bug) => (normPath(bug.file) === file ? Math.abs(start - bug.anchor.line) : 0);
-    hits.sort((a, b) => Number(Boolean(b.bug.mentions)) - Number(Boolean(a.bug.mentions)) || anchorGap(a.bug) - anchorGap(b.bug) || a.order - b.order);
+    hits.sort((a, b) => anchorGap(a.bug) - anchorGap(b.bug) || a.order - b.order);
     return { outcome: "hit", bug: hits[0].bug.id };
   }
-  // A request for a test is about the missing test, not about a planted
-  // bug whose lines it happens to span.
-  if (!spec.clean && TEST_GAP.test(String(finding.title ?? ""))) return { outcome: "test-gap" };
-  const wrong = bugs.find((bug) => dist(bug) === 0 && mentionsOk(bug, text) && !kindOk(bug));
-  if (wrong) return { outcome: "wrong-kind", bug: wrong.id, expected: wrong.kind };
+
   const near = bugs
     .map((bug) => ({ bug, d: dist(bug) }))
-    .filter(({ bug, d }) => d !== null && d > 0 && d <= NEAR_LINES && kindOk(bug) && mentionsOk(bug, text))
+    .filter(({ bug, d }) => d !== null && d > 0 && d <= NEAR_LINES && kindOk(bug) && said(bug))
     .sort((a, b) => a.d - b.d)[0];
+  const wrong = bugs.find((bug) => dist(bug) === 0 && said(bug) && !kindOk(bug));
+  if (wrong) return { outcome: "wrong-kind", bug: wrong.id, expected: wrong.kind };
   if (near) return { outcome: "near", bug: near.bug.id, distance: near.d };
-  const extra = (spec.extras ?? []).find((x) => normPath(x.file) === file && gap(start, end, x.lines) === 0);
-  if (extra) return { outcome: "accepted", why: extra.why };
   return { outcome: "false" };
 }
 
-// A title that asks for a test: "has no covering test", "Missing tests for
-// X", "X is untested", "no test coverage".
-export const TEST_GAP = /\b(tests?|untested|coverage)\b/i;
 // Outcomes left out of precision.
-const UNCOUNTED = new Set(["accepted", "test-gap"]);
+const UNCOUNTED = new Set(["accepted", "test-gap", "duplicate"]);
 
-const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // The part of the brief the code graph wrote, or null when the graph did
 // not run (its block then starts with a line saying so).
@@ -186,12 +210,19 @@ export function scoreSample({ spec, report, brief, row = {} }) {
     title: f.title,
     ...classify(f, spec),
   }));
+  // A second hit on a bug already hit in this review is a duplicate.
+  const hitBugs = new Set();
+  for (const f of findings) {
+    if (f.outcome !== "hit") continue;
+    if (hitBugs.has(f.bug)) f.outcome = "duplicate";
+    else hitBugs.add(f.bug);
+  }
   const status = report === null ? "failed" : report.completion?.status === "complete" ? "complete" : "incomplete";
   const recall = ratio();
   const bySeverity = Object.fromEntries(SEVERITY_ORDER.map((s) => [s, ratio()]));
   const bugs = (spec.bugs ?? []).map((bug) => {
     const mine = findings.filter((f) => f.bug === bug.id);
-    const hits = mine.filter((f) => f.outcome === "hit");
+    const hits = mine.filter((f) => f.outcome === "hit" || f.outcome === "duplicate");
     const found = hits.length > 0;
     recall.of++;
     bySeverity[bug.severity].of++;
@@ -207,7 +238,7 @@ export function scoreSample({ spec, report, brief, row = {} }) {
       id: bug.id,
       severity: bug.severity,
       found,
-      findings: hits.length,
+      duplicates: mine.filter((f) => f.outcome === "duplicate").length,
       // The severity the reviewer gave the first finding that found it.
       given: found ? hits[0].severity : null,
       // Raised from a scanner candidate, or the reviewer's own.
@@ -225,13 +256,15 @@ export function scoreSample({ spec, report, brief, row = {} }) {
     if (f.outcome === "hit") precision.hit++;
   }
   const counted = findings.filter((f) => !UNCOUNTED.has(f.outcome)).length;
-  const controls = spec.clean ? { hit: status !== "failed" && counted === 0 ? 1 : 0, of: 1 } : ratio();
+  // A clean change passes only a review that completed with no finding.
+  const controls = spec.clean ? { hit: status === "complete" && counted === 0 ? 1 : 0, of: 1 } : ratio();
   const brief_ = scoreBrief(spec, brief);
   const usage = report?.completion?.reviewer?.usage ?? null;
   return {
     case: spec.id,
     config: row.config ?? null,
     repeat: row.repeat ?? null,
+    attempt: row.attempt ?? 1,
     status,
     verdict: report?.verdict ?? null,
     exit: row.exit ?? null,
@@ -246,6 +279,7 @@ export function scoreSample({ spec, report, brief, row = {} }) {
     nearMisses: findings.filter((f) => f.outcome === "near").length,
     wrongKinds: findings.filter((f) => f.outcome === "wrong-kind").length,
     accepted: findings.filter((f) => f.outcome === "accepted").length,
+    duplicates: findings.filter((f) => f.outcome === "duplicate").length,
     testGaps: findings.filter((f) => f.outcome === "test-gap").length,
     controls,
     gaps: brief_.gaps,
@@ -289,6 +323,7 @@ export function summarize(samples) {
     nearMisses: 0,
     wrongKinds: 0,
     accepted: 0,
+    duplicates: 0,
     testGaps: 0,
     wallMs: stats(samples.map((s) => s.wallMs)),
     reviewerMs: stats(samples.map((s) => s.reviewerMs)),
@@ -308,6 +343,7 @@ export function summarize(samples) {
     out.nearMisses += s.nearMisses;
     out.wrongKinds += s.wrongKinds;
     out.accepted += s.accepted;
+    out.duplicates += s.duplicates;
     out.testGaps += s.testGaps;
   }
   return out;
@@ -352,8 +388,13 @@ export function runDifferences(a, b) {
   const same = (label, x, y) => {
     if (JSON.stringify(x ?? null) !== JSON.stringify(y ?? null)) out.push(`${label}: ${JSON.stringify(x ?? null)} then ${JSON.stringify(y ?? null)}`);
   };
-  same("reviewer model", a.reviewer?.model, b.reviewer?.model);
-  same("reviewer", `${a.reviewer?.name} ${a.reviewer?.version}`, `${b.reviewer?.name} ${b.reviewer?.version}`);
+  // Every reviewer with its version and model, the machine and the review settings.
+  const reviewers = (m) => m.reviewers ?? (m.reviewer ? { [m.reviewer.name]: m.reviewer } : null);
+  same("reviewers (name, version, model)", reviewers(a), reviewers(b));
+  same("machine", a.machine, b.machine);
+  same("concurrency", a.concurrency, b.concurrency);
+  same("reviewer web access", a.review?.web, b.review?.web);
+  same("review timeout in seconds", a.review?.timeoutSeconds, b.review?.timeoutSeconds);
   same("cases", [...(a.cases ?? [])].sort(), [...(b.cases ?? [])].sort());
   same("repeats", a.repeat, b.repeat);
   same("configurations", a.configs, b.configs);

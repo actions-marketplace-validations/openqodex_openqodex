@@ -1,6 +1,7 @@
 {
   "id": "express-admin-routes",
   "guards": "an Express admin route added without the admin check its siblings use, and a purge that answers before its deletions run, are reported",
+  "amended": "Copied from ../cases/express-admin-routes.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
   "language": "javascript",
   "framework": "express",
   "clean": false,

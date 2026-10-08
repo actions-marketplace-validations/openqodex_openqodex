@@ -1,6 +1,7 @@
 {
   "id": "demo-polyglot",
   "guards": "the demo repository's planted bugs across Python, Docker, shell, a workflow and a lockfile are all reported, by scanners and by reading",
+  "amended": "Copied from ../cases/demo-polyglot.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
   "language": "python",
   "framework": "flask",
   "base": "../../../examples/demo-repo/baseline",

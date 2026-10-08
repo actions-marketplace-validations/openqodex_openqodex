@@ -68,4 +68,16 @@ describe("the benchmark corpus", () => {
     const outside = specProblems({ id: "x", guards: "g", language: "python", framework: "none", clean: false, bugs: [{ ...bug, lines: [1, 3], kind: ["bug"] }] }, "x");
     expect(outside.join("\n")).toMatch(/anchor line is outside lines/);
   });
+
+  it("refuses a plant or an accepted side issue without the words that name it", () => {
+    const sound = { id: "b", file: "a.py", lines: [1, 3], anchor: { line: 1, text: "x" }, mentions: ["injection"], kind: ["security"], severity: "major", found_by: ["reasoning"], truth: "t" };
+    const base = { id: "x", guards: "g", language: "python", framework: "none", clean: false };
+    expect(specProblems({ ...base, bugs: [sound] }, "x")).toEqual([]);
+    expect(specProblems({ ...base, bugs: [{ ...sound, mentions: undefined }] }, "x").join("\n")).toMatch(/mentions/);
+    expect(specProblems({ ...base, bugs: [sound], extras: [{ file: "a.py", lines: [5, 6], why: "w" }] }, "x").join("\n")).toMatch(/extras\[0\].*mentions/);
+  });
+
+  it("gives every plant in the corpus its words", () => {
+    for (const id of ids) for (const b of readCase(id).bugs) expect(b.mentions?.length, `${id}/${b.id}`).toBeGreaterThan(0);
+  });
 });

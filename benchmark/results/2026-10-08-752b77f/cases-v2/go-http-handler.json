@@ -1,6 +1,7 @@
 {
   "id": "go-http-handler",
   "guards": "a Go HTTP change with SQL built from a query parameter, a mutex left locked on an early return and a response body closed before the error check is reviewed as Go code",
+  "amended": "Copied from ../cases/go-http-handler.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
   "language": "go",
   "framework": "net-http",
   "clean": false,
