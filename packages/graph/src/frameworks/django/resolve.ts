@@ -192,6 +192,7 @@ function ev(kind: FrameworkEvidenceKind, tier: Tier, site: Site, rule: Rule, not
 }
 
 const siteOf = (file: string, f: { line: number; column: number }): Site => ({ file, line: f.line, column: f.column });
+const joinNote = (a: string | null, b: string) => (a ? `${a} ${b}` : b);
 const show = (ref: Ref) => ref.join(".");
 
 // Symbols of a file by what they are, built once per file.
@@ -302,11 +303,34 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   const capped = (app: string | null) => (perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP || (walkSteps.get(app ?? "-") ?? 0) >= MAX_WALK_STEPS;
 
   // ---------- views ----------
-  const bindHandler = (reg: Registration, file: string, entry: Of<"url"> | Of<"register">, ref: Ref, asView: boolean, rule: Rule): void => {
+  // How a view is written: a name, `Class.as_view()`, or `Class()` (an instance).
+  type ViewShape = "ref" | "as_view" | "instance";
+  const bindHandler = (reg: Registration, file: string, entry: Of<"url"> | Of<"register">, ref: Ref, shape: ViewShape, rule: Rule): void => {
     const site = siteOf(file, entry);
     const lk: Lookup = index.lookup(file, ref);
-    reg.handler.written = asView ? `${show(ref)}.as_view()` : show(ref);
+    reg.handler.written = shape === "as_view" ? `${show(ref)}.as_view()` : shape === "instance" ? `${show(ref)}()` : show(ref);
     const scope = reg.app ? { app: reg.app } : { file };
+    if (lk.kind === "symbol" && shape === "instance") {
+      const classes = lk.ids.map((id) => index.node(id)).filter((n): n is GraphNode => n !== null && n.kind === "class");
+      if (classes.length === 0) {
+        reg.handler.status = "dynamic";
+        out.gap({ site, scope, affects: ["handles"], cause: "dynamic", name: show(ref), note: `the view is what calling ${show(ref)} returns, which the graph does not follow` });
+        return;
+      }
+      reg.handler.status = "bound";
+      for (const cls of classes.slice(0, MAX_FAN_OUT)) {
+        reg.handler.targets.push(cls.id);
+        const tier: Tier = lk.tier === "certain" ? "likely" : lk.tier;
+        const e = ev("route-table", tier, site, rule, joinNote(lk.note, "an instance of this class is the view; its __call__ method, here or in a base class, answers requests"), lk.via, [reg.id]);
+        out.edge({ from: reg.id, to: cls.id, kind: "handles", plugin: PLUGIN, app: reg.app, evidence: e });
+        out.role(cls.id, "route_handler", "instance-view", reg.app, e);
+        for (const m of methodsOf(index, cls)) {
+          if (m.name !== "__call__") continue;
+          out.edge({ from: reg.id, to: m.id, kind: "handles", plugin: PLUGIN, app: reg.app, evidence: ev("route-table", "possible", site, rule, "the instance's __call__ method answers requests", lk.via, [reg.id, cls.id]) });
+        }
+      }
+      return;
+    }
     if (lk.kind === "symbol") {
       reg.handler.status = "bound";
       for (const id of lk.ids.slice(0, MAX_FAN_OUT)) {
@@ -391,7 +415,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         const methods = [...new Set(VIEWSET_ACTIONS.filter(([, , s]) => s === shape).map(([, m]) => m))];
         const r = newRegistration(app, file, reg, parts, suffix, [...namespaces, `${base}-${shape}`].join(":"), via, `:${shape}`, methods);
         if (!r) return true;
-        if (reg.view) bindHandler(r, file, reg, reg.view, false, RULES.drf);
+        if (reg.view) bindHandler(r, file, reg, reg.view, "ref", RULES.drf);
         else {
           r.handler.status = "dynamic";
           out.gap({ site, scope: app ? { app } : { file }, affects: ["handles"], cause: "dynamic", name: null, note: "the viewset is not a name the graph can bind" });
@@ -485,7 +509,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       const name = typeof f.name === "string" ? [...namespaces, f.name].join(":") : null;
       const reg = newRegistration(app, file, f, parts, written, name, via, "");
       if (!reg) return;
-      if (v.t === "ref" || v.t === "as_view") bindHandler(reg, file, f, v.ref, v.t === "as_view", RULES.urls);
+      if (v.t === "ref" || v.t === "as_view" || v.t === "instance") bindHandler(reg, file, f, v.ref, v.t, RULES.urls);
       else {
         reg.handler.status = "dynamic";
         reg.handler.written = "(computed)";
@@ -607,10 +631,13 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const dir = posix.dirname(file);
     return posix.basename(dir) === "models" || posix.basename(dir) === "migrations" ? posix.dirname(dir) : dir;
   };
+  // Every model by app folder first: a field may name by string a model defined later.
   const modelsByApp = new Map<string, Map<string, GraphNode>>(); // app folder to lower-case model name to its class
   for (const m of models.values()) {
     const dir = appDirOf(m.file);
     (modelsByApp.get(dir) ?? modelsByApp.set(dir, new Map()).get(dir))?.set(m.node.name.toLowerCase(), m.node);
+  }
+  for (const m of models.values()) {
     const site: Site = { file: m.file, line: m.node.startLine, column: 0 };
     const app = appOf(m.file);
     out.role(m.node.id, "model", null, app, ev("role-base", m.tier, site, RULES.models, m.note ?? "the base class is a model by the resolver's convention"));
@@ -637,6 +664,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         const [label, modelName] = f.related.includes(".") ? (f.related.split(".") as [string, string]) : [null, f.related];
         const dirs = [...modelsByApp.keys()].filter((d) => (label === null ? d === appDirOf(m.file) : posix.basename(d) === label));
         const target = dirs.map((d) => modelsByApp.get(d)?.get(modelName.toLowerCase())).find((x) => x !== undefined);
+        // "auth.User": a label no app folder of the repository has names an installed app outside it.
+        if (!target && label !== null && dirs.length === 0) continue;
         if (target) out.edge({ from: m.node.id, to: target.id, kind: "uses_type", plugin: PLUGIN, app, evidence: ev("association", "likely", fsite, RULES.models, `the model is named by the string "${f.related}", matched by its app folder and name`) });
         else out.gap({ site: fsite, scope: { file: m.file }, affects: ["uses_type"], cause: "miss", name: f.related, note: `no model named ${f.related} was found` });
         continue;
@@ -645,7 +674,6 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       if (lk.kind === "symbol") for (const id2 of lk.ids) out.edge({ from: m.node.id, to: id2, kind: "uses_type", plugin: PLUGIN, app, evidence: ev("declaration", lk.tier, fsite, RULES.models, lk.note, lk.via) });
     }
   }
-  // Models defined after their first use (the fixed point above) get fields too: the loop reads every model once.
 
   // ---------- migrations ----------
   for (const file of index.factFiles()) {

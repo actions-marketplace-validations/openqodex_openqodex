@@ -14,6 +14,7 @@ export type Ref = string[];
 export type View =
   | { t: "ref"; ref: Ref } // views.index
   | { t: "as_view"; ref: Ref } // views.PostList.as_view()
+  | { t: "instance"; ref: Ref } // feeds.LatestEntries(): an instance of a class is the view
   | { t: "include"; fn: Ref; module: Lit; ref: Ref | null; inline: boolean } // include("blog.urls"), include(router.urls), include([...])
   | { t: "other" }; // anything computed
 
@@ -154,6 +155,10 @@ export function djangoFacts(root: Node): DjangoFact[] {
         return { view: { t: "include", fn, module: DYNAMIC, ref: null, inline: false }, ns };
       }
       if (last(fn) === "as_view" && fn && fn.length >= 2) return { view: { t: "as_view", ref: fn.slice(0, -1) }, ns: null };
+      // A class called with no arguments: an instance whose __call__ answers requests.
+      const head = last(fn);
+      const args = node.childForFieldName("arguments");
+      if (fn && head && head[0] !== undefined && head[0] >= "A" && head[0] <= "Z" && args !== null && args.namedChildCount === 0) return { view: { t: "instance", ref: fn }, ns: null };
       return { view: { t: "other" }, ns: null };
     }
     const ref = dotted(node);
@@ -448,7 +453,7 @@ const isStr = (v: unknown): v is string => typeof v === "string";
 function isView(v: unknown): v is View {
   if (typeof v !== "object" || v === null) return false;
   const x = v as Record<string, unknown>;
-  if (x.t === "ref" || x.t === "as_view") return isRef(x.ref);
+  if (x.t === "ref" || x.t === "as_view" || x.t === "instance") return isRef(x.ref);
   if (x.t === "include") return isRef(x.fn) && isLit(x.module) && optRef(x.ref) && typeof x.inline === "boolean";
   return x.t === "other";
 }

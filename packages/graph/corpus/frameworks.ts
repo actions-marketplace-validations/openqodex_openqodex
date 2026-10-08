@@ -21,6 +21,7 @@ export type FrameworkExpected = {
   edges?: { kind: FrameworkEdgeKind; from: string; to: string; tier?: Tier; category?: TestCategory }[];
   roles?: { target: string; role: Role; detail?: string }[];
   unknowns?: { file: string; line?: number; cause: string }[];
+  notUnknowns?: { file: string; line: number; cause: string }[]; // gaps that must not be reported (a relation outside the repository is not a miss)
   // Kinds the plugin must emit none of: an edge kind, an entity kind, or
   // "role" for any role at all.
   none?: string[];
@@ -157,6 +158,12 @@ export function scoreFrameworks(expected: FrameworkExpected | undefined, graph: 
         : [...mine.edges.filter((e) => e.kind === kind).map((e) => `${e.kind} ${show(e.from)} to ${show(e.to)}`), ...mine.entities.filter((e) => e.kind === kind).map((e) => show(e.id))];
     if (bad.length === 0) out.controls.hit++;
     else out.failures.push(`negative control broken: the ${expected.plugin} plugin emitted ${kind}: ${bad.slice(0, 4).join("; ")}`);
+  }
+  for (const n of expected.notUnknowns ?? []) {
+    out.controls.of++;
+    const bad = mine.unknowns.filter((x) => x.cause === n.cause && x.site?.file === n.file && x.site.line === n.line);
+    if (bad.length === 0) out.controls.hit++;
+    else out.failures.push(`negative control broken: ${n.file}:${n.line} is reported as ${n.cause}: ${bad[0]?.note ?? ""}`);
   }
   for (const file of expected.noRegistrationsIn ?? []) {
     out.controls.of++;

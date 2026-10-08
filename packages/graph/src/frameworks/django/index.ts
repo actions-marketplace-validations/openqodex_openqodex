@@ -34,9 +34,9 @@ export const django: FrameworkPlugin<DjangoFact> = {
       {
         id: RULES.urls.id,
         version: RULES.urls.version,
-        description: "Each path, re_path or url entry of a urlpatterns list reached from ROOT_URLCONF is a registration bound to its view through the resolver; a class view's HTTP methods are possible handlers.",
+        description: "Each path, re_path or url entry of a urlpatterns list reached from ROOT_URLCONF is a registration bound to its view through the resolver; a class view's HTTP methods and a class instance's __call__ are possible handlers.",
         emits: ["registration", "handles", "route_handler", "route_table"],
-        fixtures: { positive: ["blog-app"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic"], metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["blog-app", "real-code-shapes"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.include.id,
@@ -64,7 +64,7 @@ export const django: FrameworkPlugin<DjangoFact> = {
         version: RULES.models.version,
         description: "A class whose base binds to django.db.models.Model, or to such a class, is a model with its fields, its relations and its table.",
         emits: ["model", "declares_field", "uses_type", "maps_to", "model_field", "table"],
-        fixtures: { positive: ["models-migrations"], aliased: ["models-migrations"], unrelatedSameName: ["models-migrations"], dynamic: { none: "a model base is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["models-migrations", "real-code-shapes"], aliased: ["models-migrations"], unrelatedSameName: ["models-migrations"], dynamic: { none: "a model base is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.migrations.id,

@@ -1,0 +1,41 @@
+{
+  "guards": "binds a class-instance view, a string foreign key to a model defined later, and never reports a relation to an installed Django app as missing",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "mysite/urls.py:6",
+        "pattern": "rss/issues/",
+        "handler": "tracker/feeds.py#LatestIssues",
+        "status": "bound"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "handles",
+        "from": "registration:mysite/urls.py:6",
+        "to": "tracker/feeds.py#LatestIssues",
+        "tier": "likely"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:mysite/urls.py:6",
+        "to": "tracker/feeds.py#LatestIssues.__call__",
+        "tier": "possible"
+      },
+      {
+        "kind": "uses_type",
+        "from": "tracker/models.py#IssueRelease",
+        "to": "tracker/models.py#Issue",
+        "tier": "likely"
+      }
+    ],
+    "notUnknowns": [
+      {
+        "file": "tracker/models.py",
+        "line": 9,
+        "cause": "miss"
+      }
+    ]
+  }
+}
