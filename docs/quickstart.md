@@ -9,7 +9,7 @@ Then tell me the verdict and the findings, or what its last lines say is missing
 
 The agent runs `init` for itself: the same install as the steps below, the push check included, with no question (`--yes`). Then `init` reviews your change and the agent tells you the result. The steps below do the same by hand.
 
-Codex runs commands in a sandbox that cannot write outside the project or download: from Codex, run the line in your own terminal instead.
+Codex runs commands in a sandbox that by default cannot write outside the project or reach the network: from Codex, run the line in your own terminal instead.
 
 The skill alone, with no push check, launcher or scanner download: `npx skills add openqodex/openqodex -g`. A later `init` replaces it with the skill it keeps up to date.
 

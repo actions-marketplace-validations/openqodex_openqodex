@@ -34,7 +34,7 @@ Install OpenQodex for yourself with `npx -y openqodex@0.8.1 init --yes --agent <
 Then tell me the verdict and the findings, or what its last lines say is missing.
 ```
 
-Codex runs commands in a sandbox that cannot write outside the project or download: from Codex, run the line in your own terminal instead.
+Codex runs commands in a sandbox that by default cannot write outside the project or reach the network: from Codex, run the line in your own terminal instead.
 
 The skill alone, with no push check, launcher or scanner download: `npx skills add openqodex/openqodex -g`. A later `init` replaces it with the skill it keeps up to date.
 

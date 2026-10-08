@@ -20,8 +20,8 @@ export type Choice = { kind: "all" } | { kind: "target"; target: string } | null
 
 // How long the first review waits for a scanner still downloading. A
 // review's usual 45 seconds left semgrep, osv-scanner and hadolint out of the
-// demo's first run on a Mac (Fable's audit, 2026-10-07): the first review had
-// the fewest scanners of any. Two minutes covers the big downloads on an
+// demo's first run on an Apple Silicon Mac (measured 2026-10-07): the first
+// review had the fewest scanners of any. Two minutes covers the big downloads on an
 // ordinary line and still bounds the wait; the review itself takes one to three.
 export const FIRST_REVIEW_INSTALL_WAIT_MS = 120_000;
 
