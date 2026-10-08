@@ -197,7 +197,9 @@ function isManifest(v: unknown, id: BuildId): v is GenerationManifest {
   const files = v.files;
   return (
     filePathsOk(Object.keys(files)) &&
-    Object.values(files).every((f) => isObj(f) && isCount(f.bytes) && (f.bytes as number) <= GENERATION_FILE_MAX_BYTES && typeof f.sha256 === "string" && SHA256.test(f.sha256))
+    Object.values(files).every(
+      (f) => isObj(f) && isCount(f.bytes) && (f.bytes as number) <= GENERATION_FILE_MAX_BYTES && typeof f.sha256 === "string" && SHA256.test(f.sha256) && (f.stamp === undefined || (typeof f.stamp === "string" && f.stamp.length <= 128)),
+    )
   );
 }
 
@@ -213,6 +215,13 @@ function inputProblem(input: PublishInput): string | null {
     if (Buffer.byteLength(text, "utf8") > GENERATION_FILE_MAX_BYTES) return `the generation file ${path} is over ${GENERATION_FILE_MAX_BYTES / 1024 / 1024} MiB`;
   }
   return null;
+}
+
+// A file's size, modification time and inode, by lstat; null when it is
+// not a regular file. Any write to the file changes it.
+function stampOf(abs: string): string | null {
+  const st = lstatBig(abs);
+  return st?.isFile() ? `${st.size}:${st.mtimeNs}:${st.ino}` : null;
 }
 
 // ---------- the store ----------
@@ -288,6 +297,10 @@ class Store implements GraphStore {
     }
     if (!isManifest(manifest, id)) return null;
     for (const [path, f] of Object.entries(manifest.files)) {
+      // A file with the stamp it was published with is as published: no
+      // read. Any other is read and hashed; every read checks it again.
+      const abs = this.folderOk(`generations/${id}`);
+      if (f.stamp !== undefined && abs !== null && stampOf(join(abs, ...path.split("/"))) === f.stamp) continue;
       const data = this.readRel(`generations/${id}/${path}`, f.bytes);
       if (data === null || data.length !== f.bytes || sha256(data) !== f.sha256) return null;
     }
@@ -524,7 +537,8 @@ class Store implements GraphStore {
         const data = Buffer.from(text, "utf8");
         const cut = path.lastIndexOf("/");
         this.writeFast(cut === -1 ? folder : join(folder, ...path.slice(0, cut).split("/")), path.slice(cut + 1), data);
-        files.push([path, { bytes: data.length, sha256: sha256(data) }]);
+        const stamp = stampOf(join(folder, ...path.split("/")));
+        files.push([path, { bytes: data.length, sha256: sha256(data), ...(stamp !== null ? { stamp } : {}) }]);
       }
     } catch (error) {
       this.discard(folder);

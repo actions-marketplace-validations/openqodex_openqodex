@@ -37,7 +37,7 @@ import type { FileInput, Resolved, World } from "./resolve.js";
 import { asPredictMeta, decideMode, predictMs, recordBuild } from "./runtime/predict.js";
 import type { Mode } from "./runtime/predict.js";
 import { RepoReader } from "./safe-fs.js";
-import { readIndex, serializeModel, writeIndex } from "./store/graph-files.js";
+import { INDEX_FORMAT, readIndex, serializeModel, writeIndex } from "./store/graph-files.js";
 import type { GraphStore } from "./store/types.js";
 import type { DefFact, FileFacts, Graph, GraphEdge, GraphNode, Lang, NotRead, UnknownSite } from "./types.js";
 
@@ -191,7 +191,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const decided = args.mode ? { mode: args.mode, streak: 0 } : decideMode(meta, predicted);
   const config = { budgetMs, maxFiles, maxFileBytes, maxHeapMb: Math.round(maxHeap / 1024 / 1024) };
   const versions = { model: MODEL_VERSION, extractor: EXTRACTOR_VERSION, resolver: RESOLVER_VERSION, policy: POLICY_VERSION };
-  const digest = inventoryDigest(inv.entries, { versions, only: args.only ?? null });
+  // The index format is part of what a kept build is the same as.
+  const digest = inventoryDigest(inv.entries, { versions, index: INDEX_FORMAT, only: args.only ?? null });
   stage("predict");
 
   // Retained: the same capture's index, when a complete one is kept.

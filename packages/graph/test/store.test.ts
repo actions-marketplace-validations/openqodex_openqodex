@@ -53,6 +53,9 @@
 // 18. A cache entry of the layout before this one (`graph/<sha1>.json`) or
 //     a temp file a crash left in the graph folder stays forever and counts
 //     against the size bound; or the folder's own files are removed.
+// 19. Listing the builds reads every file of every build (seconds once a
+//     build holds a 100 MB index), although a file left as it was published
+//     needs no new check before it is read.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -709,4 +712,24 @@ describe("meta", () => {
     writeFileSync(join(store.dir, "meta.json"), "[1, 2]");
     expect(store.readMeta()).toBeNull();
   }, 60_000);
+});
+
+describe("listing", () => {
+  it("19. lists a build without reading its files while they are as published, and still refuses one that changed", async () => {
+    const root = repo();
+    const store = await storeOf(root);
+    const a = ok(await store.publish(publishInput({ tag: "a" })));
+    const projects = join(store.dir, "generations", a, "projects.json");
+    // Unreadable but untouched: listing it needs no read, reading it fails.
+    chmodSync(projects, 0o000);
+    try {
+      expect(ids(store)).toEqual([a]);
+      expect(store.open({ id: a })?.read("projects.json")).toBeNull();
+    } finally {
+      chmodSync(projects, 0o600);
+    }
+    // Changed in place, length kept: refused again.
+    writeFileSync(projects, readFileSync(projects, "utf8").replace('"a"', '"z"'));
+    expect(ids(store)).toEqual([]);
+  });
 });

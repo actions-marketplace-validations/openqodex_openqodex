@@ -75,7 +75,9 @@ export type GenerationManifest = {
   // Every other file of the generation folder, by its path in the folder:
   // byte length and sha256. A file missing or different makes the
   // generation unusable.
-  files: Record<string, { bytes: number; sha256: string }>;
+  // `stamp`: the file's size, modification time and inode when written; a
+  // file that still has it is as published and is listed without a read.
+  files: Record<string, { bytes: number; sha256: string; stamp?: string }>;
 };
 
 // What publish takes: the manifest without the fields the store fills in,

@@ -57,7 +57,13 @@ describe("reopening a kept build", () => {
     expect(built.status.generation).not.toBeNull();
     const gen = st.open({ id: built.status.generation as string });
     expect(gen?.manifest.hasIndex).toBe(true);
-    expect(shape(graphOf(st, gen!) as Graph)).toEqual(shape(built));
+    const back = graphOf(st, gen!) as Graph;
+    expect(shape(back)).toEqual(shape(built));
+    // Every field, notes and the import lines that proved each site included.
+    expect(back.edges).toEqual(built.edges);
+    expect(back.unknowns).toEqual(built.unknowns);
+    expect(back.misses).toEqual(built.misses);
+    expect([...back.nodes.values()]).toEqual([...built.nodes.values()]);
   });
 
   it("resolves a build kept without an index from its facts to the same graph (2)", async () => {
