@@ -1,0 +1,133 @@
+{
+  "report_md": ".openqodex/reviews/20261003-215230-2ef34fbe8470/report.md",
+  "files": [
+    {
+      "path": ".github/workflows/release.yml",
+      "old_path": null,
+      "status": "modified",
+      "omitted": null,
+      "hunks": [
+        {
+          "old_start": 62,
+          "new_start": 62,
+          "context": "jobs:",
+          "lines": [
+            [" ", "        with:"],
+            [" ", "          publish: pnpm release"],
+            [" ", "          version: pnpm changeset version"],
+            [" ", "        env:"],
+            [" ", "          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"],
+            [" ", "          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}"],
+            ["+", "      - name: Move the v0 tag to this release"],
+            ["+", "        if: steps.changesets.outputs.published == 'true'"],
+            ["+", "        run: |"],
+            ["+", "          version=$(node -p \"require('./packages/cli/package.json').version\")"],
+            ["+", "          git config user.name \"github-actions[bot]\""],
+            ["+", "          git config user.email \"github-actions[bot]@users.noreply.github.com\""],
+            ["+", "          # Action users pin openqodex/openqodex@v0; keep it on the newest release."],
+            ["+", "          git tag -f v0"],
+            ["+", "          git push --force origin refs/tags/v0"]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "README.md",
+      "old_path": null,
+      "status": "modified",
+      "omitted": null,
+      "hunks": [
+        {
+          "old_start": 124,
+          "new_start": 124,
+          "context": "",
+          "lines": [
+            [" ", ""],
+            ["+", "## Updates"],
+            ["+", ""],
+            ["+", "An install made with `npx openqodex init` from 0.3.0 on keeps itself up to date. At most once a day, after a review, a scan or a push check, a background process looks for a new release. The command never waits for it. A release is installed only when it is at least 24 hours old and its signed build record (npm provenance) shows it was built by this repository's release workflow. It goes into a folder of its own beside the version you run, and the switch is one rename of a small file, so a failed or interrupted update leaves the working version in place. The next command says once which version it moved to. `openqodex update --rollback` goes back."],
+            ["+", ""],
+            ["+", "Turn it off with `openqodex update --off`, `update: off` in `~/.openqodex/config.yaml` or `OPENQODEX_AUTO_UPDATE=0`. It is also off with `--offline` and when `CI` is set."],
+            ["+", ""],
+            ["+", "These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add`, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made with 0.1.0 or 0.2.0 needs one `npx openqodex init` to start updating."],
+            ["+", ""],
+            [" ", "## Packages"]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "docs/cli.md",
+      "old_path": null,
+      "status": "modified",
+      "omitted": null,
+      "hunks": [
+        {
+          "old_start": 96,
+          "new_start": 96,
+          "context": "## init",
+          "lines": [
+            [" ", "Flags:"],
+            [" ", ""],
+            [" ", "- `--project`: write the hook and the agent files into this repository."],
+            [" ", "- `--user`: write the agent files into your home folder, for every repository."],
+            ["-", "- `--yes`, `-y`: do not ask; add the pre-push hook unless this repository answered no before."],
+            ["+", "- `--yes`, `-y`: do not ask; add the pre-push hook and the team review section unless this repository answered no before. Without a terminal, `init` needs this flag."],
+            ["+", "- `--team`: add the review section to this repository's `CLAUDE.md` and `AGENTS.md`; `--no-team` leaves them alone."],
+            [" ", "- `--reviewer claude|codex|auto`: which reviewer later reviews run with; the default is `auto`."]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "packages/cli/src/update/worker.ts",
+      "old_path": null,
+      "status": "modified",
+      "omitted": null,
+      "hunks": [
+        {
+          "old_start": 41,
+          "new_start": 44,
+          "context": "export async function main(): Promise<void> {",
+          "lines": [
+            [" ", "  const home = realHome();"],
+            [" ", "  const record = await readRecord(home);"],
+            ["+", "  // A stuck download must not hold the lock past the next daily check."],
+            ["+", "  const deadline = setTimeout(() => process.exit(2), 10 * 60 * 1000);"],
+            ["+", "  deadline.unref();"],
+            [" ", "  const release = await candidate(home, record);"],
+            [" ", "  if (!release) return;"]
+          ]
+        },
+        {
+          "old_start": 182,
+          "new_start": 185,
+          "context": "export async function install(home: string, release: Release): Promise<string> {",
+          "lines": [
+            [" ", "  const runtime = join(home, \"runtime\");"],
+            [" ", "  const final = join(runtime, release.version);"],
+            [" ", "  if (existsSync(final)) return final;"],
+            ["-", "  const tmp = join(runtime, `${release.version}.tmp`);"],
+            ["-", "  rmSync(tmp, { recursive: true, force: true });"],
+            ["+", "  // One folder per worker, so two checks on the same day never share a tree."],
+            ["+", "  const tmp = join(runtime, `${release.version}.tmp-${process.pid}`);"],
+            [" ", "  mkdirSync(tmp, { recursive: true });"],
+            [" ", "  const tarball = join(tmp, \"package.tgz\");"],
+            [" ", "  await download(release.tarball, tarball);"],
+            ["-", "  await verify(tarball, release.attestation);"],
+            ["+", "  const attested = await verifyOffline(tarball, release.provenance);"],
+            ["+", "  if (!attested.ok) {"],
+            ["+", "    rmSync(tmp, { recursive: true, force: true });"],
+            ["+", "    throw new UpdateError(`provenance check failed: ${attested.reason}`);"],
+            ["+", "  }"],
+            [" ", "  await unpack(tarball, join(tmp, \"package\"));"],
+            [" ", "  renameSync(join(tmp, \"package\"), final);"],
+            [" ", "  rmSync(tmp, { recursive: true, force: true });"],
+            [" ", "  return final;"],
+            [" ", "}"]
+          ]
+        }
+      ]
+    }
+  ]
+}

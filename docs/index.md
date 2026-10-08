@@ -12,7 +12,8 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - Finding: one problem at one place in the code, with a severity.
 - Candidate: a scanner finding on a changed line, waiting for the agent to verify it.
 - Brief: the text `openqodex review` gives its reviewer to review from.
-- Report: the result of a scan or a review, written as `report.md`, `report.json` and `report.sarif`.
+- Report: the result of a scan or a review, written as `report.md`, `report.json` and `report.sarif`, and for a review also as `report.html`, a page that shows each finding under its line of code.
+- Receipt: what `review` prints when it ends: the verdict, one line per finding and the absolute paths of `report.html` and `report.md`.
 - Verdict: `passed` or `blocked`.
 
 ## Pages

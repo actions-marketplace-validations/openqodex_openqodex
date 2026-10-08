@@ -1,10 +1,10 @@
 # OpenQodex for Claude Code
 
-OpenQodex is open source AI code review that runs before you push. One command runs the scanners that fit your change on the lines you changed, then starts a separate reviewer: a fresh Claude Code or Codex process that checks every scanner finding and is given every changed line. Scripts check the reviewer's answer and print one report.
+OpenQodex is open source AI code review that runs before you push. One command runs the scanners that fit your change on the lines you changed, then starts a separate reviewer: a fresh Claude Code or Codex process that checks every scanner finding and is given every changed line. Scripts check the reviewer's answer, write one report, and print a short receipt with the path of `report.html`.
 
 ## What the plugin installs
 
-- The `openqodex` skill. It tells Claude to run one command, `openqodex review`, wait for it, and show you the report exactly as printed. Claude does not review the change itself.
+- The `openqodex` skill. It tells Claude to run one command, `openqodex review`, wait for it, show you the receipt it prints (the verdict, one line per finding and the path of `report.html`), ask "Fix all, or tell me which?", and fix only the findings you name. Claude does not review the change itself.
 - A push hook. Before Claude runs `git push`, the hook runs `openqodex hook check` through npx, pinned to the plugin's version. It looks for a review of exactly what is pushed; it does not scan or review by itself. By default it never stops a push: it adds a line saying whether the change was reviewed. When `.openqodex/config.yaml` sets `review.block_on_severity`, it denies the push unless a finished review of the current change passed.
 
 ## How to use it

@@ -23,6 +23,7 @@ Inside a repository, `init` also asks: "Add the git pre-push hook, so every push
 ## Review with OpenQodex
 - When a feature or fix is done, and before any push, review it with the openqodex skill: "review my change with openqodex".
 - OpenQodex starts its own reviewer process for the review: the agent that wrote the code does not judge its own work.
+- After the review, show the developer the receipt with the path of `report.html`, ask "Fix all, or tell me which?", and fix only the findings they name.
 - Do not push on a blocked verdict unless the developer says so after seeing the findings.
 - The report is in `.openqodex/reviews/`.
 <!-- openqodex:end -->
@@ -40,7 +41,7 @@ The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository,
 <!-- openqodex:start -->
 ## Review with OpenQodex before you push
 - Before any `git push`, run `npx -y openqodex@<version> review` from the repository root. It takes one to three minutes: allow it up to ten minutes, or run it in the background and wait for it to exit.
-- Show the developer the report it prints, exactly as printed. OpenQodex starts its own reviewer process: the agent that wrote the code does not judge its own work.
+- Show the developer the receipt it prints: the verdict, one line per finding and the absolute path of `report.html`. Ask: "Fix all, or tell me which?" Fix only the findings they name (`npx -y openqodex@<version> findings 1,3` prints them in full), then review again and show the new receipt. OpenQodex starts its own reviewer process: the agent that wrote the code does not judge its own work.
 - Do not push on a blocked verdict unless the developer says so after seeing the findings.
 - The report is in `.openqodex/reviews/`.
 <!-- openqodex:end -->
@@ -50,7 +51,7 @@ The two files show in `git status`, and `init` says to commit them. When git ign
 
 ## The review runs in its own reviewer process
 
-The skill tells the agent to run one command, `review`, wait for it, and show you the report exactly as printed. The agent does not review the change itself and starts no subagent. `review` starts a fresh reviewer process with no memory of the agent's session, inside a frozen copy of the change. Claude Code starts with none of your settings or instruction files and read, search and list tools only. Codex starts in a read-only sandbox with none of your config or the repository's instruction files; it still loads your global `~/.codex/AGENTS.md`. The report says which reviewer ran; the tool writes that line, never the model.
+The skill tells the agent to run one command, `review`, wait for it, and show you what it prints: a receipt with the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. The agent then asks you "Fix all, or tell me which?" and fixes only the findings you name; `findings <numbers>` prints those in full for it. When you already said what to fix, such as "review and fix everything", it does that without asking again. This is an instruction to the agent, not a lock: the agent can open the report files, and the push gate and your own permission prompts still apply. The agent does not review the change itself and starts no subagent. `review` starts a fresh reviewer process with no memory of the agent's session, inside a frozen copy of the change. Claude Code starts with none of your settings or instruction files and read, search and list tools only. Codex starts in a read-only sandbox with none of your config or the repository's instruction files; it still loads your global `~/.codex/AGENTS.md`. The report says which reviewer ran; the tool writes that line, never the model.
 
 A review takes one to three minutes. Agents often stop a command after two minutes, so the skill tells the agent to allow up to ten minutes or run it in the background; `review` prints a line every 15 seconds while the reviewer works.
 
@@ -102,7 +103,7 @@ In project scope, the hooks, the skill and the rules call `npx -y openqodex@<ver
 
 The hook is one `PreToolUse` entry. It matches the `Bash` tool and runs only for `git push` commands. It calls `openqodex hook check`.
 
-In user scope, `init` adds rules so Claude Code runs these review commands without asking, and the agent can review unattended: `<launcher> review` and `review --all`, each also with ` --offline` at the end, plus `guide`, `guide skill` and `guide <topic>`. Each rule matches one exact line, so the same command with any other flag, such as `--output` or `--config`, a branch or a pull request, or chained with `&&`, still asks you. `scan`, `doctor`, `trust`, `update`, `init` and `report` still ask you. The rules of earlier versions for `review --agent` and `review --finalize` are removed by the next `init`. Project scope writes no permission rule: a committed settings file would decide for every teammate. A rule you already had is left alone, and `init --uninstall` removes only the rules `init` added. When a later version grants a different set, the next `init` removes the rules an earlier version added and adds the new ones. When your home path holds a space or another character the shell would read, the launcher is written in single quotes in the skill and in the rules alike. When the launcher's path holds `*`, which Claude Code reads as a wildcard, `init` writes no rule and says so in one line; Claude Code then asks before each review command.
+In user scope, `init` adds rules so Claude Code runs these review commands without asking, and the agent can review unattended: `<launcher> review` and `review --all`, each also with ` --offline` at the end, plus `guide`, `guide skill` and `guide <topic>`, and `findings` with any numbers (it only reads the last review's report and prints it). Each review rule matches one exact line, so the same command with any other flag, such as `--output` or `--config`, a branch or a pull request, or chained with `&&`, still asks you. `scan`, `doctor`, `trust`, `update`, `init` and `report` still ask you. The rules of earlier versions for `review --agent` and `review --finalize` are removed by the next `init`. Project scope writes no permission rule: a committed settings file would decide for every teammate. A rule you already had is left alone, and `init --uninstall` removes only the rules `init` added. When a later version grants a different set, the next `init` removes the rules an earlier version added and adds the new ones. When your home path holds a space or another character the shell would read, the launcher is written in single quotes in the skill and in the rules alike. When the launcher's path holds `*`, which Claude Code reads as a wildcard, `init` writes no rule and says so in one line; Claude Code then asks before each review command.
 
 A skill, rule or permission rule an earlier `init` wrote, such as the full-text skill of 0.2.1, is replaced by the next `init` only while it is still exactly as written. One you edited is left as it is, and `init` says so.
 
@@ -147,7 +148,7 @@ OpenQodex writes no Cline hook. The rule carries the instruction section and ask
 The gate runs in Claude Code and Codex, through the hooks above, and in the git pre-push hook below. It looks for the record `review` wrote for exactly the change being pushed, in your own `~/.openqodex/receipts/`. Report files a branch carries under `.openqodex/` never count. It never scans, never starts a review, and never approves a push for you: your agent's own permission prompt for `git push` still applies.
 
 - A complete review of this change that passed: the gate says nothing.
-- A complete review of this change that is blocked: the gate denies the push when `review.block_on_severity` is set, with the counts and the report path.
+- A complete review of this change that is blocked: the gate denies the push when `review.block_on_severity` is set, with the counts and the absolute path of `report.html`, and tells the agent to ask you "fix all, or tell me which?" and to fix only the findings you name.
 - No review of this change: one line asking you to run `openqodex review`. With `review.block_on_severity` set, the gate denies the push, so an agent runs the review and tries again.
 - An incomplete review of this change: one line saying so. It never blocks.
 - A review from the older two-step protocol (`review --agent`, then `--finalize`): it counts as reviewed, with one line naming who reviewed.

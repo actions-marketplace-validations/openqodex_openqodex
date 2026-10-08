@@ -5,7 +5,7 @@
 // tests run the built CLI with no reviewer on PATH.
 //
 // Ways it could fail, written before the code:
-//  1. `init` with a change prints no report.
+//  1. `init` with a change prints no receipt, or a review whose report names no reviewer.
 //  2. `init` fails (exit not 0) because the review was unavailable.
 //  3. `init --yes`, or init without a terminal, with no change waits for an
 //     answer instead of printing the three commands.
@@ -89,12 +89,14 @@ afterEach(() => {
 });
 
 describe("the review init ends with", () => {
-  it("1. with a change, prints the standard report of a complete review", async () => {
+  it("1. with a change, prints the receipt of a complete review, whose report names the reviewer", async () => {
     const driver = fake();
     await reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [driver] });
     expect(driver.started).toBe(1);
     expect(out).toContain("Passed");
-    expect(out).toContain("Reviewer: claude 9.9.9");
+    const md = /^Markdown: (\/.+\/report\.md)$/m.exec(out)?.[1];
+    expect(md, out).toBeDefined();
+    expect(readFileSync(md!, "utf8")).toContain("Reviewer: claude 9.9.9");
   });
 
   it("3. with no change and no terminal, prints the three commands and asks nothing", async () => {
@@ -185,7 +187,9 @@ describe("init as a subprocess", () => {
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(true);
     expect(readFileSync(join(s.repo, ".git/info/exclude"), "utf8")).toContain(".cursor");
     expect(r.stderr).not.toContain("did not run");
-    expect(r.stdout).toContain("Reviewer: claude 9.9.9");
+    const md = /^Markdown: (\/.+\/report\.md)$/m.exec(r.stdout)?.[1];
+    expect(md, r.stdout).toBeDefined();
+    expect(readFileSync(md!, "utf8")).toContain("Reviewer: claude 9.9.9");
   });
 
   it("3. --yes with no change prints the three commands and exits without waiting", () => {

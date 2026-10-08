@@ -31,16 +31,21 @@
 // 13. The coverage labels say "Files not read" beside a full coverage, which
 //     reads as a hole in the review.
 // 14. The reviewer's summary is kept in report.json but never shown.
+// 15. The port drifts from the designer's reference renderer (render.py):
+//     for the same sample it gives another element, class, id, link, line
+//     number or text, or other code in a diff cell.
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { getChange } from "../change.js";
 import { makeChange, makeScan } from "../test-fixtures.js";
 import type { Change, CompletionRecord, Report, ReportFinding } from "../types.js";
 import { DISPLAY_MAX_ROWS, buildDisplay, checkDisplay } from "./display.js";
+import type { Display, DisplayRow } from "./display.js";
 import { renderHtml } from "./html.js";
 import { renderReceipt, renderReview } from "./review.js";
 
@@ -159,17 +164,21 @@ describe("report.html", () => {
 
     const named = { ...change, files: [{ path: `app/a"b'<c>.py`, status: "added" as const, oldPath: null, binary: false }], diffs: [] };
     const out = page(report(named, { findings: [agentFinding({ file_path: `app/a"b'<c>.py`, line_number: 1, line_end: 1 })] }), named);
-    expect(out).toContain("app/a&quot;b&#39;&lt;c&gt;.py");
+    expect(out).toContain("app/a&quot;b&#x27;&lt;c&gt;.py");
     expect(out).not.toContain(`a"b'<c>`);
     // Anchors are generated, never built from a path.
     expect(out).not.toMatch(/id="[^"]*app\//);
   });
 
-  it("2. loads nothing and runs nothing: no script, no source, no outgoing link, no style attribute, a policy that allows its own stylesheet only", () => {
+  it("2. loads nothing and runs nothing: no script, no source, one outgoing link with no referrer, no style attribute, a policy that allows its own stylesheet only", () => {
     const change = fixtureChange();
     const html = page(report(change), change);
     expect(html).not.toMatch(/<script|<link|<img|<iframe|<object|<embed|<form|<base/i);
-    expect(html).not.toMatch(/\s(src|href|action|formaction|srcset)=["']?(https?:|\/\/|data:|javascript:)/i);
+    expect(html).not.toMatch(/\s(src|action|formaction|srcset)=/i);
+    // The closing line's link is the one address on the page, and it sends no referrer.
+    expect(html.match(/href="(?!#)[^"]*"/g)).toEqual(['href="https://qodex.ai"']);
+    expect(html).toContain('<a href="https://qodex.ai" rel="noreferrer">');
+    expect(html).toContain('<meta name="referrer" content="no-referrer">');
     expect(html).not.toMatch(/\sstyle=/i);
     expect(html).not.toMatch(/\son[a-z]+=/i);
     const css = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? "";
@@ -180,8 +189,8 @@ describe("report.html", () => {
     expect(policy).toContain(`style-src 'sha256-${hash}'`);
     expect(policy).not.toContain("unsafe-inline");
     expect(policy).toContain("script-src 'none'");
-    // Every href is an anchor in the page.
-    for (const href of html.match(/href="([^"]*)"/g) ?? []) expect(href).toMatch(/^href="#[a-z0-9-]+"$/);
+    // Every other href is an anchor in the page.
+    for (const href of html.match(/href="#([^"]*)"/g) ?? []) expect(href).toMatch(/^href="#[a-z0-9-]+"$/);
   });
 
   it("3. redacts a multi-line secret on both sides of the diff, keeping every line number", async () => {
@@ -226,22 +235,23 @@ describe("report.html", () => {
   it("4. shows each finding once, right under the line it cites", () => {
     const change = fixtureChange();
     const html = page(report(change), change);
-    expect(count(html, 'id="finding-1"')).toBe(1);
-    const row = html.indexOf('data-new="14"');
-    const card = html.indexOf('id="finding-1"');
+    expect(count(html, 'id="f1"')).toBe(1);
+    const row = html.indexOf('num-new" data-n="14"');
+    const card = html.indexOf('id="f1"');
     expect(row).toBeGreaterThan(-1);
     expect(card).toBeGreaterThan(row);
-    expect(html.indexOf('data-new="15"')).toBeGreaterThan(card);
+    expect(html.indexOf('num-new" data-n="15"')).toBeGreaterThan(card);
+    // The cited line is marked with the finding's severity.
+    expect(html).toMatch(/<tr class="line line-add line-flagged sev-major"><td class="num num-old"><\/td><td class="num num-new" data-n="14">/);
   });
 
   it("5. puts a finding on a line the page does not show in a labelled group of its file", () => {
     const change = fixtureChange();
     const html = page(report(change, { findings: [agentFinding({ line_number: 40, line_end: 41 })] }), change);
-    expect(count(html, 'id="finding-1"')).toBe(1);
-    const group = html.indexOf("Findings on lines this page does not show");
-    expect(group).toBeGreaterThan(-1);
-    expect(html.indexOf('id="finding-1"')).toBeGreaterThan(group);
-    expect(html.indexOf('id="finding-1"')).toBeLessThan(html.indexOf('data-new="12"'));
+    expect(count(html, 'id="f1"')).toBe(1);
+    const group = html.indexOf("Not on a line shown above");
+    expect(group).toBeGreaterThan(html.indexOf('num-new" data-n="15"'));
+    expect(html.indexOf('id="f1"')).toBeGreaterThan(group);
     expect(html).toContain("app/search.py:40-41");
   });
 
@@ -250,7 +260,7 @@ describe("report.html", () => {
     const html = page(report(change, { findings: [] }), change);
     expect(html).toContain("Passed: no findings");
     expect(html).toContain("No findings on the changed lines.");
-    expect(html).not.toContain('id="finding-1"');
+    expect(html).not.toContain('id="f1"');
     expect(html).toContain('id="file-1"');
   });
 
@@ -289,9 +299,9 @@ describe("report.html", () => {
     };
     const html = page(report(change, { findings: [] }), change);
     for (const path of ["logo.png", "new/name.py", "old/name.py", "big.json"]) expect(html).toContain(path);
-    expect(html).toContain("Binary file");
-    expect(html).toContain("Renamed");
-    expect(html).toContain("over the size");
+    expect(html).toContain("Diff not shown: binary file");
+    expect(html).toContain("renamed from old/name.py");
+    expect(html).toContain("Diff not shown: the change to this file is over the size the review takes");
   });
 
   it("10. keeps no more source rows than its bound and names the files left out", () => {
@@ -374,5 +384,89 @@ describe("the standard report", () => {
     const out = renderReview(report(change), { format: "markdown" }).split("\n").filter((l) => l !== "");
     const at = out.findIndex((l) => l.startsWith("Change "));
     expect(out[at + 1]).toBe("Summary: Builds the search query from the request and adds a settings module.");
+  });
+});
+
+// The designer's sample, in test/fixtures/report-html: a review of this
+// repository (sample-report.json, its blast radius cut to a slice), the diff
+// fixture the designer's reference renderer reads (sample-diff.json), and
+// that renderer's own output for the two (expected.html), written by
+// `python3 render.py sample-report.json sample-diff.json expected.html`.
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "test", "fixtures", "report-html");
+
+type SampleDiff = {
+  report_md?: string;
+  files: { path: string; old_path: string | null; status: "added" | "modified" | "deleted" | "renamed"; omitted: string | null; hunks: { old_start: number; new_start: number; context?: string; lines: [string, string][] }[] }[];
+};
+
+// The fixture's files as the display model, numbered the way render.py
+// numbers them (its number_hunk).
+function displayOf(diff: SampleDiff, changeId: string): Display {
+  const files = diff.files.map((f) => ({
+    path: f.path,
+    old_path: f.old_path,
+    status: f.status,
+    binary: false,
+    additions: null,
+    deletions: null,
+    note: f.omitted,
+    hunks: f.hunks.map((h) => {
+      let old = h.old_start;
+      let nu = h.new_start;
+      const rows: DisplayRow[] = h.lines.map(([sign, line]): DisplayRow =>
+        sign === "+" ? { kind: "add", old: null, new: nu++, text: line } : sign === "-" ? { kind: "del", old: old++, new: null, text: line } : { kind: "context", old: old++, new: nu++, text: line },
+      );
+      return { old_start: h.old_start, old_lines: rows.filter((r) => r.old !== null).length, new_start: h.new_start, new_lines: rows.filter((r) => r.new !== null).length, section: h.context ?? "", rows };
+    }),
+  }));
+  return { version: 1, change_id: changeId, kind: "change", files, rows: files.reduce((n, f) => n + f.hunks.reduce((k, h) => k + h.rows.length, 0), 0) };
+}
+
+const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"' };
+const decode = (s: string): string =>
+  s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot);/gi, (_, e: string) => (e[0] === "#" ? String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : (NAMED[e.toLowerCase()] ?? e)));
+
+// The body as a list of start tags (with the attributes that carry meaning:
+// class, id, href, rel, colspan, data-n, aria-label), end tags and text,
+// whitespace runs folded; the stylesheet and the title are compared apart.
+function structure(html: string): string[] {
+  const body = html.slice(html.indexOf("<body>"), html.indexOf("</body>") + "</body>".length);
+  const keep = new Set(["class", "id", "href", "rel", "colspan", "data-n", "aria-label"]);
+  const out: string[] = [];
+  for (const m of body.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>|([^<]+)/g)) {
+    if (m[4] !== undefined) {
+      const t = decode(m[4]).replace(/\s+/g, " ").trim();
+      if (t !== "") out.push(`text: ${t}`);
+    } else if (m[1] === "/") {
+      out.push(`</${m[2]}>`);
+    } else {
+      const attrs = [...(m[3] ?? "").matchAll(/([a-zA-Z-]+)="([^"]*)"/g)].filter((a) => keep.has(a[1]!)).map((a) => `${a[1]}="${decode(a[2]!)}"`).sort();
+      out.push(`<${m[2]}${attrs.length > 0 ? ` ${attrs.join(" ")}` : ""}>`);
+    }
+  }
+  return out;
+}
+
+const codeCells = (html: string): string[] => [...html.matchAll(/<td class="code">([\s\S]*?)<\/td>/g)].map((m) => m[1]!);
+const styleOf = (html: string): string | undefined => /<style>([\s\S]*?)<\/style>/.exec(html)?.[1];
+
+describe("the port of the designer's page", () => {
+  it("15. renders the designer's sample with the same elements, classes, ids, links, line numbers and text as render.py, and the same stylesheet", () => {
+    const sample = JSON.parse(readFileSync(join(FIXTURES, "sample-report.json"), "utf8")) as Report;
+    const diff = JSON.parse(readFileSync(join(FIXTURES, "sample-diff.json"), "utf8")) as SampleDiff;
+    const expected = readFileSync(join(FIXTURES, "expected.html"), "utf8");
+    const ours = renderHtml({ report: sample, display: displayOf(diff, sample.change_id), reportMd: diff.report_md });
+    // One wording differs on purpose: the coverage label says "opened", since
+    // the changed lines were in the brief whether or not the reviewer opened a file.
+    const want = structure(expected).map((t) => (t === "text: Files the reviewer read" ? "text: Files the reviewer opened" : t));
+    // The whole page is compared: every file, card and table of the sample.
+    expect(want.length).toBeGreaterThan(2000);
+    expect(want.filter((t) => t.startsWith("<article")).length).toBe(4);
+    expect(structure(ours)).toEqual(want);
+    // The code in every diff cell, exactly, indentation included.
+    expect(codeCells(ours)).toEqual(codeCells(expected));
+    // The stylesheet is the designer's, byte for byte, and so is the title.
+    expect(styleOf(ours)).toBe(styleOf(expected));
+    expect(/<title>(.*)<\/title>/.exec(ours)?.[1]).toBe(/<title>(.*)<\/title>/.exec(expected)?.[1]);
   });
 });

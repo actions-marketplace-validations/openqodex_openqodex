@@ -43,7 +43,7 @@ The review writes only inside `.openqodex/`. Its `.gitignore` keeps the reports 
 
 ## Where are the reports?
 
-In `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest one.
+In `.openqodex/reviews/<time>-<id>/` in the repository: `report.html` to open in a browser, `report.md` to read as text, `report.json` and `report.sarif` for tools. A review prints the absolute paths of `report.html` and `report.md` when it ends. `.openqodex/latest.json` points at the newest one.
 
 ## Does it work on Windows?
 

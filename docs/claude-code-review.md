@@ -38,7 +38,7 @@ Say to Claude Code:
 review my change with openqodex
 ```
 
-The skill tells Claude Code to run one command, `openqodex review`, wait for it, and show you the report exactly as printed. Claude Code does not review the change itself and starts no subagent. You can also run `openqodex review` in your own terminal.
+The skill tells Claude Code to run one command, `openqodex review`, wait for it, and show you the receipt it prints: the verdict, one line per finding and the absolute path of `report.html`. Then Claude Code asks "Fix all, or tell me which?" and fixes only the findings you name. Claude Code does not review the change itself and starts no subagent. You can also run `openqodex review` in your own terminal.
 
 A review takes one to three minutes and uses your own Claude Code plan. `review` prints a line every 15 seconds while the reviewer works. `openqodex review --all` reviews the whole repository instead of one change.
 
@@ -74,7 +74,7 @@ By default the gate only warns:
 - No review of this change: one line asking you to run `openqodex review`.
 - An incomplete review of this change: one line saying so. It never blocks.
 
-The gate blocks only when `.openqodex/config.yaml` sets `review.block_on_severity`. Then it denies a push with no review of the change, so Claude Code runs the review and tries again. It also denies a push whose review is blocked, with the counts and the report path. `config` explains how to block pushes at a severity.
+The gate blocks only when `.openqodex/config.yaml` sets `review.block_on_severity`. Then it denies a push with no review of the change, so Claude Code runs the review and tries again. It also denies a push whose review is blocked, with the counts and the absolute path of `report.html`, and tells Claude Code to ask you which findings to fix. `config` explains how to block pushes at a severity.
 
 `OPENQODEX_SKIP=1` in the environment lets the push through and says so. It is your switch, not your agent's.
 
@@ -105,9 +105,11 @@ Add the key as a repository secret named `ANTHROPIC_API_KEY`, and set it on the 
 
 ## Where the report goes
 
-Claude Code shows you the report as OpenQodex printed it: the verdict (`passed` or `blocked`), the counts, and for each finding where it is, the problem, why it matters and the fix. The report says which reviewer ran.
+Claude Code shows you the receipt OpenQodex printed: the verdict (`passed` or `blocked`), the reviewer's summary, one line per finding with its number, severity, category, title, file and line, and the absolute paths of `report.html` and `report.md`.
 
-The same report is in `.openqodex/reviews/<time>-<id>/` in your repository, as `report.md`, `report.json` and `report.sarif`. `.openqodex/.gitignore` keeps the reports out of git.
+Open `report.html` in a browser to read the review. It shows each changed file as a diff with each finding under its line: where it is, the problem, why it matters, the fix and its source. Below are the coverage, the scanners and the blast radius. The page runs no script and loads nothing. Then tell Claude Code which findings to fix, by number, or say "fix all".
+
+The same review is in `.openqodex/reviews/<time>-<id>/` in your repository, as `report.html`, `report.md`, `report.json` and `report.sarif`. `.openqodex/.gitignore` keeps the reports out of git.
 
 A complete review means every stage ran, every scanner finding was checked and every changed line was put in front of the reviewer. It does not mean nothing was missed. When a review is not complete, `review` prints "Review incomplete" with what is missing, and exits 2.
 

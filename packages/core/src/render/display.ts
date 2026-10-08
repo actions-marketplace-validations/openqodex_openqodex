@@ -54,7 +54,9 @@ export type DisplayFile = {
   additions: number | null;
   deletions: number | null;
   hunks: DisplayHunk[];
-  // Why no rows are shown, in one plain line; null when they are.
+  // Why the file's lines are left out, in a few plain words the page puts
+  // after "Diff not shown:"; null when its lines are shown, or when it has
+  // none to show (a rename or a mode change with no line changed).
   note: string | null;
 };
 
@@ -168,15 +170,12 @@ function cutRow(row: DisplayRow): DisplayRow {
   return row.text.length > DISPLAY_MAX_ROW_CHARS ? { ...row, text: row.text.slice(0, DISPLAY_MAX_ROW_CHARS), cut: true } : row;
 }
 
-const LIMIT_NOTE = `Not shown: the page holds at most ${DISPLAY_MAX_ROWS.toLocaleString("en-US")} lines of code, and this file is past that display limit.`;
+const LIMIT_NOTE = `this page holds at most ${DISPLAY_MAX_ROWS.toLocaleString("en-US")} lines of code, the display limit, and this file is past it`;
 
-function noteFor(f: ChangedFile, hasDiff: boolean, tooLarge: boolean): string | null {
-  if (f.binary) return "Binary file: there is no text to show.";
-  if (tooLarge) return "Not shown: the change to this file is over the size the review takes.";
-  if (!hasDiff) return "No lines to show.";
-  if (f.status === "renamed") return "Renamed, with no line changed.";
-  if (f.status === "deleted") return "Deleted, with no line to show.";
-  return "No line changed: only the file's mode or type changed.";
+function noteFor(f: ChangedFile, tooLarge: boolean): string | null {
+  if (f.binary) return "binary file";
+  if (tooLarge) return "the change to this file is over the size the review takes";
+  return null;
 }
 
 // The display of a change, from its per-file diffs, every row redacted.
@@ -193,7 +192,7 @@ export function buildDisplay(args: { change: Change; secrets: string[] }): Displ
     const hunks = f.binary || text === undefined ? [] : parseHunks(text).map((h) => redactHunk(h, secrets, pieces));
     const count = hunks.reduce((n, h) => n + h.rows.length, 0);
     const base = { path: red(f.path), old_path: f.oldPath === null ? null : red(f.oldPath), status: f.status, binary: f.binary };
-    if (hunks.length === 0) return { ...base, additions: null, deletions: null, hunks: [], note: noteFor(f, text !== undefined, tooLarge.has(f.path)) };
+    if (hunks.length === 0) return { ...base, additions: null, deletions: null, hunks: [], note: noteFor(f, tooLarge.has(f.path)) };
     const all = hunks.flatMap((h) => h.rows);
     const sums = { additions: all.filter((r) => r.kind === "add").length, deletions: all.filter((r) => r.kind === "del").length };
     if (rows + count > DISPLAY_MAX_ROWS) return { ...base, ...sums, hunks: [], note: LIMIT_NOTE };
@@ -225,7 +224,7 @@ export function buildExcerptDisplay(args: {
     const base = { path: redactPieces(redactSecrets(path, secrets), pieces), old_path: null, status: "modified" as const, binary: false, additions: null, deletions: null };
     const raw = args.read(path);
     if (raw === null) {
-      files.push({ ...base, hunks: [], note: "The file could not be read for this page." });
+      files.push({ ...base, hunks: [], note: "the file could not be read for this page" });
       continue;
     }
     const lines = redactSecretsKeepingLines(raw, secrets).split("\n");
@@ -252,7 +251,7 @@ export function buildExcerptDisplay(args: {
       continue;
     }
     rows += count;
-    files.push({ ...base, hunks, note: hunks.length === 0 ? "The cited lines are past the end of the file." : null });
+    files.push({ ...base, hunks, note: hunks.length === 0 ? "the cited lines are past the end of the file" : null });
   }
   return { version: DISPLAY_VERSION, change_id: args.changeId, kind: "excerpts", files, rows };
 }

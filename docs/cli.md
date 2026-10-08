@@ -1,6 +1,6 @@
 # Commands
 
-Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the four commands below: `init`, `review`, `update` and `trust`. The commands that hooks, the skill and the Action call (`scan`, `doctor`, `hook`, `guide`, `demo`, `report`) still work; `plumbing` describes them.
+Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the four commands below: `init`, `review`, `update` and `trust`. The commands that hooks, the skill and the Action call (`scan`, `doctor`, `hook`, `guide`, `findings`, `demo`, `report`) still work; `plumbing` describes them.
 
 ## Exit codes
 
@@ -30,7 +30,7 @@ A repository with no commits checks every file with `scan`; `review` needs a fir
 
 - `--cwd <dir>`: find the repository from `<dir>`. A relative `--output` path still resolves from the folder you ran the command in.
 - `--config <path>`: read this config file instead of the repo's `.openqodex/config.yaml`.
-- `--format <terminal|markdown|json|sarif>`: the report format. The default is `terminal`. Only `scan` and `review` use it.
+- `--format <terminal|markdown|json|sarif>`: the report format. The default is `terminal`. Only `scan` and `review` use it. For `review`, `terminal` is the receipt; `markdown`, `json` and `sarif` print the whole report in that format, and the paths of `report.html` and `report.md` go to stderr, even with `--quiet`.
 - `--output <file>`: write the report to `<file>` instead of stdout. Only `scan` and `review` use it.
 - `--no-color`: no colour. `NO_COLOR` set in the environment does the same.
 - `--quiet`: no progress lines on stderr.
@@ -40,7 +40,7 @@ A repository with no commits checks every file with `scan`; `review` needs a fir
 
 `doctor --install` together with `--offline` or `--no-install` exits 2.
 
-Progress goes to stderr. The report goes to stdout.
+Progress goes to stderr. A scan's report goes to stdout; a review prints its receipt there.
 
 `openqodex --version` prints the version. `openqodex --help` lists the commands.
 
@@ -51,13 +51,13 @@ openqodex review [--all | --base <ref> | --uncommitted] [--reviewer auto|claude|
 openqodex review <branch | #number | pull request link> [--base <ref>] [--reviewer auto|claude|codex|cursor] [--reviewer-web on|off] [--timeout <seconds>] [--block-on-severity <severity>] [--instructions <file>] [--report-dir <folder>] [--no-graph] [--only <list>] [--skip <list>]
 ```
 
-- The whole review in one run. OpenQodex copies the change into a temporary snapshot in `~/.openqodex/checkouts/`, runs the scanners and the code graph on it, and starts a reviewer as a separate process with no window: Claude Code (`claude`), which can only read, search and list files in the snapshot, or Codex (`codex exec`), whose commands can read the snapshot and cannot write or reach the network. A script checks the reviewer's answer and sends problems back at most twice, with any changed lines the reviewer was not yet given. The report goes to stdout; progress goes to stderr: one line per stage (for the scanners, for example "Scanners: 6 ran, 5 had nothing to check, 14 candidates to check"), and a line every 15 seconds while the reviewer works. The snapshot is deleted at the end. A review is complete only when every scanner candidate was raised or dropped and every changed range was given to the reviewer; otherwise it says what is missing and exits 2. With no reviewer installed and logged in, it prints "Full review unavailable", what is missing, the path of a file with the unchecked scanner candidates, and a fallback: the `review --agent` command for the agent you are in to review the change itself, and exits 2. `docs/internal-reviewer-drivers.md` records how the reviewer is started and isolated.
+- The whole review in one run. OpenQodex copies the change into a temporary snapshot in `~/.openqodex/checkouts/`, runs the scanners and the code graph on it, and starts a reviewer as a separate process with no window: Claude Code (`claude`), which can only read, search and list files in the snapshot, or Codex (`codex exec`), whose commands can read the snapshot and cannot write or reach the network. A script checks the reviewer's answer and sends problems back at most twice, with any changed lines the reviewer was not yet given. The review is written to `report.html`, `report.md`, `report.json` and `report.sarif` in the run folder (see "The receipt and report.html" below), and stdout gets the receipt; progress goes to stderr: one line per stage (for the scanners, for example "Scanners: 6 ran, 5 had nothing to check, 14 candidates to check"), and a line every 15 seconds while the reviewer works. The snapshot is deleted at the end. A review is complete only when every scanner candidate was raised or dropped and every changed range was given to the reviewer; otherwise it says what is missing and exits 2. With no reviewer installed and logged in, it prints "Full review unavailable", what is missing, the path of a file with the unchecked scanner candidates, a fallback (the `review --agent` command for the agent you are in to review the change itself), and the path of a `report.html` that says the same and is not a review, and exits 2. `docs/internal-reviewer-drivers.md` records how the reviewer is started and isolated.
 - `--reviewer auto|claude|codex|cursor`: the reviewer to start. Without it, `reviewer:` in `~/.openqodex/config.yaml` decides, else `auto`. `auto` picks the agent running the command when it can tell (Claude Code or Codex) and its reviewer can start, else Claude Code, else Codex. `cursor` is not enabled: it says why and exits 2 ("Full review unavailable"). `codex` exits the same way when the command runs inside Codex's own sandbox, where a second Codex cannot start. The report names the reviewer and its version. With Codex it prints "not recorded by Codex" for file reads, because Codex's event stream does not show every command. The reviewer gets its agent's web tools by default (Claude Code's WebSearch and WebFetch, or Codex's cached web search); `reviewer_web: off` in the same file removes them (`security` says why you might).
 - `--reviewer-web on|off`: give the reviewer its agent's web tools for this run, or not, whatever `reviewer_web` in `~/.openqodex/config.yaml` says. The file is not changed. The GitHub Action passes `off`.
 - `--timeout <seconds>`: stop the reviewer after this long. The default is 600.
 - `--block-on-severity <severity>`: the severity that makes the review exit 1 (`info`, `nitpick`, `minor`, `major` or `critical`). It wins over `review.block_on_severity` in the config, as for `scan`.
 - `--instructions <file>`: read the owners' instructions from this file instead of `.openqodex/custom-instructions.md`, with the same 32 KB limit. An empty file means no instructions. The GitHub Action passes the base branch's copy, so a pull request cannot supply its own.
-- `--report-dir <folder>`: write every file of this run (`report.md`, `report.json`, `report.sarif`, the brief and the rest) to this folder instead of `.openqodex/reviews/`, readable by you only, plus `reviewer.json`, which says whether a reviewer started and which (`{"started": true, "driver": "claude", "version": "2.1.289"}`) or, when none could, why (`{"started": false, "reasons": [...]}`). With it, `review` creates, reads and writes nothing under `.openqodex/` in the repository: no run folder, no `latest.json`, no team files, and without `--config` and `--instructions` the built-in defaults and no custom instructions instead of the repository's files. It still writes the record the push hooks read in your OpenQodex home. Nothing is written when there is nothing to review. The GitHub Action names a new folder of its own, so a report or a link a branch committed under `.openqodex/` is never read and cannot stop the run, and it tells a review that stopped from one that never began by `reviewer.json`.
+- `--report-dir <folder>`: write every file of this run (`report.html`, `report.md`, `report.json`, `report.sarif`, the brief and the rest) to this folder instead of `.openqodex/reviews/`, readable by you only, plus `reviewer.json`, which says whether a reviewer started and which (`{"started": true, "driver": "claude", "version": "2.1.289"}`) or, when none could, why (`{"started": false, "reasons": [...]}`). With it, `review` creates, reads and writes nothing under `.openqodex/` in the repository: no run folder, no `latest.json`, no team files, and without `--config` and `--instructions` the built-in defaults and no custom instructions instead of the repository's files. It still writes the record the push hooks read in your OpenQodex home. Nothing is written when there is nothing to review. The GitHub Action names a new folder of its own, so a report or a link a branch committed under `.openqodex/` is never read and cannot stop the run, and it tells a review that stopped from one that never began by `reviewer.json`.
 - `<branch>`, `#<number>` or a pull request link: review that branch or pull request instead of your own change. See "Reviewing a branch or a pull request".
 - `--base`, `--uncommitted`: see "Which change is checked".
 - `--all`: review the whole repository instead of the change. See "Reviewing the whole repository".
@@ -68,6 +68,25 @@ openqodex review <branch | #number | pull request link> [--base <ref>] [--review
 A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a custom scanner.
 
 `review --agent` and `review --finalize`, the two-step protocol of earlier versions, still work for skills installed before this one and are the fallback `review` names when no reviewer can start: `plumbing` describes them. A review finished that way is recorded as a legacy review, which the push hooks accept, with a line naming who reviewed.
+
+### The receipt and report.html
+
+When a review ends, stdout gets a receipt, not the whole report:
+
+```
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 2ef34fbe8470 against origin/main, 4 files, +38 -14
+Summary: Adds a search endpoint and a settings module.
+1. Critical security: Search query built from request input (app/search.py:14)
+2. Major bug: Pagination skips the first page (app/server.py:23)
+3. Minor maintainability: Base image no longer pinned (Dockerfile:1)
+Report: /home/you/repo/.openqodex/reviews/20261007-101500-2ef34fbe8470/report.html
+Markdown: /home/you/repo/.openqodex/reviews/20261007-101500-2ef34fbe8470/report.md
+```
+
+The receipt holds the verdict, the change, the reviewer's summary, one line per finding (its number, severity, category, title, file and line) and the absolute paths of `report.html` and `report.md`. An incomplete review adds one `Missing:` line. Each finding's problem, consequence and fix are in the report files, so you read them and name what to fix. The numbers are the same in the receipt, `report.md`, `report.html` and `findings`. The two path lines are results, not progress: `--quiet` keeps them, and with `--cwd` they name the run folder of that repository.
+
+`report.html` is one file beside `report.md`, readable by you only. It shows the verdict and the summary on top, then each changed file as a unified diff with old and new line numbers, each finding as a card under the line it cites (with a suggested change, when the reviewer gave one, folded), and the dropped scanner candidates folded under their lines. A finding on a line the page does not show is listed under its file. Below come the coverage, the review accounting, the scanners and the blast radius. It has no script and loads nothing: every string is escaped, its content policy allows only its own stylesheet, and the secrets the scanners found are redacted on both sides of the diff. A review of the whole repository shows a few lines around each cited line instead of a diff. The page is written before the receipt is printed; when it cannot be written, the review prints no receipt, records no review for the push hooks, and exits 2.
 
 ### Deleted lines
 
@@ -115,7 +134,7 @@ The brief includes `.openqodex/custom-instructions.md` when the repo has one; a 
 openqodex init [--agent <name>]... [--project] [--hook <pre-push|none>] [--no-repo] [--no-review] [--yes] [--uninstall] [--dry-run]
 ```
 
-Installs OpenQodex into your coding agents, then reviews. After the install, inside a repository: when there is a change, it runs `review` and prints the report; when there is none, it asks what to review (the whole repository, a pull request, a branch, or not now). With `--yes` or without a terminal it prints the three commands instead of asking. This review uses the scanners already installed, starts no download, and never changes the exit code of `init`, which is about the install.
+Installs OpenQodex into your coding agents, then reviews. After the install, inside a repository: when there is a change, it runs `review` and prints its receipt; when there is none, it asks what to review (the whole repository, a pull request, a branch, or not now). With `--yes` or without a terminal it prints the three commands instead of asking. This review uses the scanners already installed, starts no download, and never changes the exit code of `init`, which is about the install.
 
 - `--agent <name>`: `claude-code`, `cursor`, `codex`, `cline` or `all`. Repeat it for several. Without it, `init` uses every agent it finds.
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.

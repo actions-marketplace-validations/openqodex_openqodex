@@ -28,6 +28,9 @@
 //  9. `findings` reads a report a branch planted under .openqodex/reviews/
 //     (a folder named newer than any real run) instead of the last review
 //     run on this machine.
+// 10. A review of the whole repository, which has no diff, gets a page with
+//     no code, or one that claims a diff or lists every file of the
+//     repository as a changed file left out.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -220,8 +223,8 @@ describe("report.html", () => {
     const html = readFileSync(path, "utf8");
     const report = JSON.parse(readFileSync(path.replace(/report\.html$/, "report.json"), "utf8")) as Report;
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    for (const n of [1, 2, 3]) expect(html.split(`id="finding-${n}"`).length - 1).toBe(1);
-    expect(html.split('id="finding-4"').length - 1).toBe(0);
+    for (const n of [1, 2, 3]) expect(html.split(`id="f${n}"`).length - 1).toBe(1);
+    expect(html.split('id="f4"').length - 1).toBe(0);
     expect(html).toContain("db/x.sql");
     expect(html).toContain("README.md");
     expect(html).toContain("CREATE OR REPLACE FUNCTION public.admin_get_hygiene()");
@@ -238,6 +241,21 @@ describe("report.html", () => {
     const html = readFileSync(pathOf("Report", out), "utf8");
     expect(html).toContain("No findings on the changed lines.");
     expect(html).toContain("db/x.sql");
+  });
+
+  it("10. for a review of the whole repository, shows the lines around each cited line from the snapshot, and no diff", async () => {
+    const dir = repo();
+    const answer: Answer = (brief) => ({
+      finalText: JSON.stringify({ version: 2, change_id: changeIdOf(brief), summary: "The repository holds one SQL function.", findings: [finding({ source: "sqllint:function-default-public-execute", candidate: "c1" })], dropped: [] }),
+    });
+    const { global } = parseFlags(["--cwd", dir, "--no-color"], {});
+    expect(await runReview({ flags: global, scope: {}, all: true, noGraph: true, only: "sqllint", reviewer: "auto", timeoutMs: 60_000, drivers: [fake([answer])] }), err).toBe(0);
+    const html = readFileSync(pathOf("Report", out), "utf8");
+    expect(html.split('id="f1"').length - 1).toBe(1);
+    expect(html).toContain("lines 1 to 2");
+    expect(html).toContain("CREATE OR REPLACE FUNCTION public.admin_get_hygiene()");
+    expect(html).not.toContain("@@ -");
+    expect(html).not.toContain("Diffs for");
   });
 
   it("6. with no reviewer, the page says the review is unavailable and nothing claims a review", async () => {
@@ -277,7 +295,7 @@ describe("7. the two-step review", () => {
     expect(done.stdout).toContain("1. Minor maintainability: Notes have no heading (notes.txt:1)");
     const page = readFileSync(html, "utf8");
     expect(page).toContain("first line of the notes");
-    expect(page.split('id="finding-1"').length - 1).toBe(1);
+    expect(page.split('id="f1"').length - 1).toBe(1);
 
     const saved = JSON.parse(readFileSync(join(dir, "display.json"), "utf8")) as { change_id: string };
     writeFileSync(join(dir, "display.json"), JSON.stringify({ ...saved, change_id: "f".repeat(64) }));

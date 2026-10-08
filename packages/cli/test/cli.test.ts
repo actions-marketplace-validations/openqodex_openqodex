@@ -240,7 +240,9 @@ describe("review --agent and --finalize", () => {
     expect(report.verdict).toBe("passed");
     expect(report.findings.map((f) => f.title)).toEqual(["Returns the wrong value"]);
     expect(report.outside_change.map((f) => f.title)).toEqual(["Elsewhere"]);
-    expect(r.stdout).toContain("Outside the changed lines");
+    expect(readFileSync(join(dir, "report.md"), "utf8")).toContain("Outside the changed lines");
+    expect(r.stdout).toMatch(/^Report: \/.+\/report\.html$/m);
+    expect(existsSync(join(dir, "report.html"))).toBe(true);
     const latest = JSON.parse(readFileSync(join(repo, ".openqodex", "latest.json"), "utf8")) as {
       finalized: boolean;
       verdict: string;

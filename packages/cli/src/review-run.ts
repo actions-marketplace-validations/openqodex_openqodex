@@ -18,7 +18,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   MANIFEST_VERSION,
   OpenQodexError,
@@ -797,8 +797,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
           secrets: p.secrets,
         })
       : buildDisplay({ change, secrets: p.secrets });
-    const html = renderHtml({ report: redactStored(report, p.secrets), display, version: __OPENQODEX_VERSION__, runId: basename(dir) });
     const paths = { html: join(dir, "report.html"), md: join(dir, "report.md") };
+    const html = renderHtml({ report: redactStored(report, p.secrets), display, version: __OPENQODEX_VERSION__, reportMd: paths.md });
 
     folder.write({
       ...reportFiles(report),

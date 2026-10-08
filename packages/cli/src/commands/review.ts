@@ -626,7 +626,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   };
 
   writeReportFiles(repoRoot, dir, reportFiles(report));
-  const html = renderHtml({ report, display: savedDisplay(repoRoot, dir, change, target === undefined && whole === null), version: __OPENQODEX_VERSION__, runId: basename(dir) });
+  const html = renderHtml({ report, display: savedDisplay(repoRoot, dir, change, target === undefined && whole === null), version: __OPENQODEX_VERSION__, reportMd: join(dir, "report.md") });
   if (!writeReportHtml((files) => writeReportFiles(repoRoot, dir, files, PRIVATE), html)) {
     await discard();
     return EXIT_TOOL_FAILED;
