@@ -21,6 +21,15 @@
 //   9. --proposal, the sha256 the workflow compares between the job that ran
 //      the gate and the job that opens the pull request, misses a change to
 //      a file the bump wrote.
+// Added after the code review:
+//  10. A release whose project publishes a checksum file is pinned on that
+//      file alone, without GitHub's digest; or the run does not say whether
+//      the project published one.
+//  11. An asset past the size limit is read to its end before the limit
+//      stops it.
+//  12. With --locks (the job that opens the pull request), a PyPI pin starts
+//      uv, or takes lock files whose sha256 differs from the one the gate
+//      job recorded, or that name a hash PyPI does not publish.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -39,6 +48,9 @@ const DAY = 24 * 60 * 60 * 1000;
 
 type Release = {
   tag: string;
+  noDigest?: boolean;
+  // Bytes streamed for one asset instead of `bytes`, in 64 KiB chunks.
+  streamBytes?: number;
   ageDays: number;
   // Bytes served per asset name; `digest` overrides the digest the API gives.
   bytes: (name: string) => Buffer;
@@ -69,7 +81,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     const names = assetNames(version);
     const assets = names.map((name) => ({
       name,
-      digest: `sha256:${release.digest ? release.digest(name) : sha(release.bytes(name))}`,
+      digest: release.noDigest ? undefined : `sha256:${release.digest ? release.digest(name) : sha(release.bytes(name))}`,
       browser_download_url: `${origin}/${release.assetUrlRepo ?? "acme/demo"}/releases/download/${release.tag}/${name}`,
     }));
     if (release.checksums) {
@@ -87,14 +99,44 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   const blob = /^\/blob\/([^/]+)$/.exec(url.pathname);
+  if (blob && release.streamBytes !== undefined && !blob[1]!.endsWith("_checksums.txt")) {
+    // A large asset sent slowly; `sent` counts what left before the client
+    // hung up.
+    res.writeHead(200);
+    const chunk = Buffer.alloc(64 * 1024, 1);
+    const tick = setInterval(() => {
+      if (res.destroyed || sent >= release.streamBytes!) {
+        clearInterval(tick);
+        res.end();
+        return;
+      }
+      sent += chunk.length;
+      res.write(chunk);
+    }, 2);
+    res.on("close", () => clearInterval(tick));
+    return;
+  }
   if (blob) {
     const name = blob[1]!;
     const names = assetNames(version);
     res.writeHead(200).end(name.endsWith("_checksums.txt") && release.checksums ? release.checksums(names) : release.bytes(name));
     return;
   }
+  const pypi = /^\/pypi\/([^/]+)\/(?:([^/]+)\/)?json$/.exec(url.pathname);
+  if (pypi) {
+    const [, name, version] = pypi as unknown as [string, string, string | undefined];
+    const day = (n: number) => new Date(Date.now() - n * DAY).toISOString();
+    if (version === undefined) {
+      res.writeHead(200).end(JSON.stringify({ releases: { "1.0.0": [{ upload_time_iso_8601: day(90) }], "2.0.0": [{ upload_time_iso_8601: day(30) }] } }));
+    } else {
+      res.writeHead(200).end(JSON.stringify({ urls: [{ digests: { sha256: sha(`${name}-${version}.whl`) } }] }));
+    }
+    return;
+  }
   res.writeHead(404).end();
 }
+
+let sent = 0;
 
 async function listen(): Promise<string> {
   const server = createServer(handle);
@@ -140,8 +182,8 @@ function files(root: string): string[] {
   return out.sort();
 }
 
-async function bump(root: string, args = ["--apply", "demo"]): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const options = { root, api: origin, web: origin, assetOrigins: [origin] };
+async function bump(root: string, args = ["--apply", "demo"], extra: Record<string, unknown> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const options = { root, api: origin, web: origin, assetOrigins: [origin], pypi: origin, ...extra };
   const child = spawn(process.execPath, [runner, JSON.stringify(options), ...args], { stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
@@ -227,5 +269,76 @@ describe("the proposal sha256 (9)", () => {
     expect((await bump(root, ["--proposal", "demo"])).stdout).toBe(first.stdout);
     writeFileSync(changeset, `${readFileSync(changeset, "utf8")}x`);
     expect((await bump(root, ["--proposal", "demo"])).stdout).not.toBe(first.stdout);
+  });
+});
+
+describe("what the code review found in pin-bump", () => {
+  it("refuses a checksum file without GitHub's digest, and says which sums matched (10)", async () => {
+    release = { ...good(), noDigest: true };
+    const refused = repoRoot();
+    const r = await bump(refused.root);
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.stderr).toMatch(/GitHub publishes no sha256/);
+    expect(readFileSync(refused.table, "utf8")).toBe(refused.before);
+
+    release = good();
+    expect((await bump(repoRoot().root)).stdout).toMatch(/^sums=checksum-file-and-digest$/m);
+    release = { ...good(), checksums: undefined };
+    expect((await bump(repoRoot().root)).stdout).toMatch(/^sums=digest-only$/m);
+  });
+
+  it("stops reading an asset at the size limit instead of after it (11)", async () => {
+    sent = 0;
+    release = { ...good(), checksums: undefined, streamBytes: 64 * 1024 * 1024 };
+    const { root, table, before } = repoRoot();
+    const r = await bump(root, ["--apply", "demo"], { maxAssetBytes: 1024 * 1024 });
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.stderr).toMatch(/larger than/);
+    expect(sent).toBeLessThan(16 * 1024 * 1024);
+    expect(readFileSync(table, "utf8")).toBe(before);
+  });
+
+  it("with --locks takes a PyPI pin's lock files only by the recorded sha256 and PyPI's hashes, and starts no uv (12)", async () => {
+    const make = () => {
+      const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-uv-"));
+      mkdirSync(join(root, "packages", "scanners", "locks"), { recursive: true });
+      mkdirSync(join(root, ".changeset"));
+      const table = join(root, "packages", "scanners", "toolchain.json");
+      const before = `${JSON.stringify({ schema: 1, tools: { pydemo: { version: "1.0.0", method: "uv", package: "pydemo", python: "3.11", binary: "pydemo" } } }, null, 2)}\n`;
+      writeFileSync(table, before);
+      const given = mkdtempSync(join(tmpdir(), "oq-locks-"));
+      return { root, table, before, given };
+    };
+    const lock = (hash: string) => `dep==1.2 \\\n    --hash=sha256:${sha("dep-1.2.whl")}\npydemo==2.0.0 \\\n    --hash=sha256:${hash}\n`;
+    const write = (given: string, text: string) => {
+      for (const p of Object.keys(PLATFORMS)) writeFileSync(join(given, `pydemo-${p}.txt`), text);
+    };
+    const digest = (given: string) => {
+      const h = createHash("sha256");
+      for (const p of Object.keys(PLATFORMS).sort()) h.update(`pydemo-${p}.txt\0`).update(readFileSync(join(given, `pydemo-${p}.txt`))).update("\0");
+      return h.digest("hex");
+    };
+    const apply = (root: string, given: string, recorded: string) => bump(root, ["--apply", "pydemo", "--locks", given, "--locks-sha256", recorded]);
+
+    // Good: the recorded sha256 and every hash PyPI publishes. No uv exists here, so a uv start would fail.
+    const ok = make();
+    write(ok.given, lock(sha("pydemo-2.0.0.whl")));
+    const r = await apply(ok.root, ok.given, digest(ok.given));
+    expect(r.code, r.stderr).toBe(0);
+    expect(readFileSync(join(ok.root, "packages", "scanners", "locks", "pydemo-linux-x64.txt"), "utf8")).toBe(lock(sha("pydemo-2.0.0.whl")));
+    expect(JSON.parse(readFileSync(ok.table, "utf8")).tools.pydemo.version).toBe("2.0.0");
+
+    // A sha256 other than the recorded one, and a hash PyPI does not publish.
+    for (const [text, recorded] of [
+      [lock(sha("pydemo-2.0.0.whl")), "0".repeat(64)],
+      [lock("f".repeat(64)), null],
+    ] as const) {
+      const bad = make();
+      write(bad.given, text);
+      const out = await apply(bad.root, bad.given, recorded ?? digest(bad.given));
+      expect(out.code, out.stderr).toBe(2);
+      expect(readFileSync(bad.table, "utf8")).toBe(bad.before);
+      expect(files(bad.root)).toEqual(["packages/scanners/toolchain.json"]);
+    }
   });
 });

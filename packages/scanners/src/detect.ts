@@ -6,7 +6,8 @@
 //
 // Offline and bounded. Nothing in the repo is run, loaded or evaluated: a
 // Gemfile or a pyproject.toml is read as text, never as Ruby or TOML code.
-// Every read is a regular file inside the repo, never through a link, under
+// Every read is a regular file inside the repo, never through a link (in the
+// file's name or in any folder on the way, even one inside the repo), under
 // a size cap, and past a count cap a file counts as unknown. Unknown never
 // switches a check off; it only keeps a framework's own scanner (brakeman)
 // and its rule switches from running.
@@ -19,7 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { readRepoPrefixSync } from "./adapters/read.js";
+import { noLinkOnTheWay, readRepoPrefixSync } from "./adapters/read.js";
 
 export type Framework = "rails" | "react" | "react-native" | "nextjs" | "django" | "fastapi" | "airflow";
 
@@ -94,9 +95,10 @@ export function repoFacts(repoDir: string): RepoFacts {
     let found: string[] | null = null;
     try {
       const abs = path.join(repoDir, folder);
-      // A folder reached through a link out of the repo is not the repo's.
+      // A folder that is a link, or is reached through one, is not looked in.
+      const linked = folder !== "" && (!noLinkOnTheWay(repoDir, `${folder}/x`) || fs.lstatSync(abs).isSymbolicLink());
       const real = fs.realpathSync(abs);
-      if (real === realRepo || real.startsWith(realRepo + path.sep)) {
+      if (!linked && (real === realRepo || real.startsWith(realRepo + path.sep))) {
         const names = fs
           .readdirSync(abs, { withFileTypes: true })
           .filter((e) => e.isFile() && isManifest(e.name))
@@ -243,22 +245,38 @@ const lines = (text: string): string[] => text.split("\n").map((l) => (l.endsWit
 const NAME = /^[A-Za-z0-9_.-]+/;
 const nameAt = (text: string): string | null => NAME.exec(text)?.[0] ?? null;
 
-// `gem "rails", "~> 7.1"` and `gem("rails")` lines; the Gemfile is never
-// evaluated.
+// `gem "rails", "~> 7.1"`, `gem("rails")`, and `gem(` with the name on a
+// later line (blank and comment lines between allowed); the Gemfile is never
+// evaluated. One pass: a `gem(` with nothing after it waits for the next line
+// that holds code.
 function gemfileGems(text: string | null): string[] {
   if (text === null) return [];
   const out: string[] = [];
+  const quotedName = (rest: string) => {
+    const quote = rest[0];
+    if (quote !== '"' && quote !== "'") return;
+    const name = nameAt(rest.slice(1));
+    if (name !== null && rest[1 + name.length] === quote) out.push(name);
+  };
+  let waiting = false;
   for (const line of lines(text)) {
     const t = line.trimStart();
+    if (waiting) {
+      if (t === "" || t.startsWith("#")) continue;
+      waiting = false;
+      if (t[0] === '"' || t[0] === "'") {
+        quotedName(t);
+        continue;
+      }
+    }
     if (!t.startsWith("gem")) continue;
     let rest = t.slice(3);
     if (!(rest.startsWith(" ") || rest.startsWith("\t") || rest.startsWith("("))) continue;
     rest = rest.trimStart();
-    if (rest.startsWith("(")) rest = rest.slice(1).trimStart();
-    const quote = rest[0];
-    if (quote !== '"' && quote !== "'") continue;
-    const name = nameAt(rest.slice(1));
-    if (name !== null && rest[1 + name.length] === quote) out.push(name);
+    const paren = rest.startsWith("(");
+    if (paren) rest = rest.slice(1).trimStart();
+    if (paren && (rest === "" || rest.startsWith("#"))) waiting = true;
+    else quotedName(rest);
   }
   return out;
 }
@@ -355,10 +373,11 @@ function pyprojectDeps(text: string | null): string[] {
   };
   let table = "";
   let inArray = false;
+  let depth = { braces: 0 };
   for (const raw of lines(text)) {
     const line = raw.trimStart();
     if (inArray) {
-      const part = arrayPart(line);
+      const part = arrayPart(line, depth);
       add(part.strings);
       inArray = !part.closed;
       continue;
@@ -373,7 +392,8 @@ function pyprojectDeps(text: string | null): string[] {
     const depsArray =
       (table === "project" && kv.key === "dependencies") || table === "project.optional-dependencies" || table === "dependency-groups";
     if (depsArray && kv.value.startsWith("[")) {
-      const part = arrayPart(kv.value.slice(1));
+      depth = { braces: 0 };
+      const part = arrayPart(kv.value.slice(1), depth);
       add(part.strings);
       inArray = !part.closed;
       continue;
@@ -392,8 +412,11 @@ function isPoetryDeps(table: string): boolean {
 }
 
 // The quoted strings on one line of a TOML array, and whether the array
-// closes on it. A bracket or a # inside a string is part of the string.
-function arrayPart(line: string): { strings: string[]; closed: boolean } {
+// closes on it. A bracket or a # inside a string is part of the string. A
+// string inside an inline table, such as `{include-group = "django"}` in
+// [dependency-groups], is a reference, not a requirement, and is left out;
+// `depth` carries an inline table open across lines.
+function arrayPart(line: string, depth = { braces: 0 }): { strings: string[]; closed: boolean } {
   const strings: string[] = [];
   let quote: string | null = null;
   let current = "";
@@ -404,14 +427,16 @@ function arrayPart(line: string): { strings: string[]; closed: boolean } {
         current += line[i + 1] ?? "";
         i += 1;
       } else if (c === quote) {
-        strings.push(current);
+        if (depth.braces === 0) strings.push(current);
         quote = null;
         current = "";
       } else current += c;
       continue;
     }
     if (c === '"' || c === "'") quote = c;
-    else if (c === "]") return { strings, closed: true };
+    else if (c === "{") depth.braces += 1;
+    else if (c === "}") depth.braces = Math.max(0, depth.braces - 1);
+    else if (c === "]" && depth.braces === 0) return { strings, closed: true };
     else if (c === "#") break;
   }
   return { strings, closed: false };

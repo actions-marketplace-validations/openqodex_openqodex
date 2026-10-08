@@ -34,6 +34,7 @@
 // no reviewer: the cases with the real Claude Code are in
 // tests/e2e/action-review.test.ts.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -251,7 +252,7 @@ function pullRequest(baseConfig: string | null, headConfig: string | null, extra
 describe("the plan step and the scanner cache (14)", () => {
   const keyOf = (outputs: string) => /^cache-key=(.*)$/m.exec(outputs)?.[1];
 
-  it("keys the cache on the pinned table and the scanners the repository needs, never on the version", () => {
+  it("keys the cache on the pinned table, its lock files and the scanners the repository needs, and on nothing else", () => {
     expect(step(PLAN_STEP)?.env?.OPENQODEX_STEP).toBe("plan");
     expect(action.runs.steps.find((s) => s.uses?.startsWith("actions/cache@"))?.with?.key).toBe("${{ steps.plan.outputs.cache-key }}");
     const { dir, git } = gitRepo();
@@ -271,8 +272,17 @@ describe("the plan step and the scanner cache (14)", () => {
     expect(a.stdout).not.toContain("rubocop");
     // Only doctor ran: nothing installed, nothing scanned.
     expect(readFileSync(calls, "utf8")).toBe("doctor key=\n");
-    // Another openqodex release with the same pins keeps the key.
-    expect(keyOf(runStep(dir, { ...runner, OPENQODEX_VERSION: "0.0.1" }).outputs)).toBe(key);
+    // The key is made of exactly these, so a release that pins nothing new
+    // keeps it. (The stand-in npx runs this build whatever the version asks
+    // for, so a second run with another version proves nothing: the key's
+    // parts are checked instead.)
+    const scanners = join(here, "..", "..", "scanners");
+    const table = createHash("sha256").update(readFileSync(join(scanners, "toolchain.json")));
+    for (const name of readdirSync(join(scanners, "locks")).filter((f) => f.endsWith(".txt")).sort()) {
+      table.update(`\0${name}\0`).update(readFileSync(join(scanners, "locks", name)));
+    }
+    const part = (t: string) => createHash("sha256").update(t).digest("hex").slice(0, 16);
+    expect(key).toBe(`openqodex-tools-Linux-X64-${table.digest("hex").slice(0, 16)}-${part("gitleaks,oxlint,semgrep")}`);
     // A Python file calls for ruff and bandit: another key.
     writeFileSync(join(dir, "tool.py"), "import os\n");
     git("add", "-A");

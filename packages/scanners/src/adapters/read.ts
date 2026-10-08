@@ -47,13 +47,33 @@ export async function readRepoFile(repoDir: string, rel: string, maxBytes: numbe
   }
 }
 
-// The same checks, synchronous, for at most the first `maxBytes` of a file.
-// `whole`: the file must fit in `maxBytes`, or nothing is read. Null for
-// anything that is not a regular file inside the repo, or that cannot be
-// read. `realRepo` is the repo's real path, computed once by the caller.
+// True when every folder from the repo root down to `rel`'s own is a real
+// folder, never a link, even one that stays inside the repo.
+export function noLinkOnTheWay(repoDir: string, rel: string): boolean {
+  const parts = path.normalize(rel).split(path.sep).slice(0, -1);
+  let at = repoDir;
+  for (const part of parts) {
+    at = path.join(at, part);
+    try {
+      const stat = lstatSync(at);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The same checks, synchronous, for at most the first `maxBytes` of a file,
+// and stricter: no link anywhere on the way, not even one that stays inside
+// the repo. `whole`: the file must fit in `maxBytes`, or nothing is read.
+// Null for anything that is not a regular file inside the repo, or that
+// cannot be read. `realRepo` is the repo's real path, computed once by the
+// caller.
 export function readRepoPrefixSync(realRepo: string, repoDir: string, rel: string, maxBytes: number, whole = false): Buffer | null {
   const normalized = path.normalize(rel);
   if (path.isAbsolute(normalized) || normalized === ".." || normalized.startsWith(`..${path.sep}`)) return null;
+  if (!noLinkOnTheWay(repoDir, normalized)) return null;
   const abs = path.join(repoDir, normalized);
   let fd: number | null = null;
   try {

@@ -34,6 +34,7 @@ import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { RepoFacts } from "../detect.js";
 import type { Adapter } from "./index.js";
+import { groupBy } from "./group.js";
 import { folderList, listAnd, suchAs } from "./words.js";
 
 const RUFF_TIMEOUT_MS = 60_000;
@@ -55,6 +56,12 @@ const FAMILIES = [
 export function ruffFamilies(p: string, facts: RepoFacts): string[] {
   const frameworks = facts.project(p)?.frameworks ?? [];
   return FAMILIES.filter(([framework]) => frameworks.includes(framework)).map(([, family]) => family);
+}
+
+// Files grouped by the families they get ("DJ,FAST"; "" for none): one ruff
+// run per group.
+export function ruffGroups(files: string[], facts: RepoFacts): Map<string, string[]> {
+  return groupBy(files, (p) => ruffFamilies(p, facts).join(","));
 }
 
 function familyProjects(files: string[], facts: RepoFacts): string[] {
@@ -103,11 +110,7 @@ export async function runRuff(args: {
   // Files grouped by the families they get: one process per group, and per
   // chunk of a group, so a whole-repo file list stays under the argument
   // limit; the findings of every run are merged.
-  const groups = new Map<string, string[]>();
-  for (const p of pyFiles) {
-    const key = ruffFamilies(p, args.facts).join(",");
-    groups.set(key, [...(groups.get(key) ?? []), p]);
-  }
+  const groups = ruffGroups(pyFiles, args.facts);
   const tool = args.tool;
   try {
     const findings: StaticFinding[] = [];

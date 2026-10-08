@@ -10,11 +10,20 @@
 //   node scripts/pin-bump.mjs --apply <tool>  moves that scanner's pin to its
 //                                             newest release at least 7 days
 //                                             old, and writes a changeset
+//   node scripts/pin-bump.mjs --apply <tool> --locks <folder> --locks-sha256 <hex>
+//                                             the same, for the job that holds
+//                                             the write token: a PyPI or
+//                                             RubyGems pin takes its lock files
+//                                             from <folder> instead of
+//                                             re-locking, which would start uv
 //   node scripts/pin-bump.mjs --proposal <tool>
 //                                             the sha256 of the files a bump
 //                                             of that scanner wrote: the
 //                                             table, its lock files and its
 //                                             changeset
+//   node scripts/pin-bump.mjs --lock-digest <tool>
+//                                             the sha256 of that scanner's
+//                                             lock files alone
 //
 // What --apply trusts, and how:
 // - The source is the owner and repository (or registry package) already in
@@ -22,13 +31,18 @@
 //   redirects a renamed or transferred repository, which could swap the
 //   source. A release asset whose URL is outside that repository's
 //   releases is refused.
-// - A GitHub release asset is downloaded and its sha256 computed from its
-//   bytes. That sha256 must equal the one GitHub publishes for the asset and,
-//   when the project publishes a checksum file, the one in that file. A
-//   download may redirect only to GitHub's own asset host.
+// - A GitHub release asset is downloaded, never past the size limit, and its
+//   sha256 computed from its bytes. That sha256 must equal the one GitHub
+//   publishes for the asset, always, and, when the project publishes a
+//   checksum file, the one in that file too. The last line of --apply says
+//   which: sums=checksum-file-and-digest or sums=digest-only. A download may
+//   redirect only to GitHub's own asset host.
 // - A PyPI or RubyGems pin is re-locked by scripts/lock-scanners.mjs, which
-//   checks each gem's download against RubyGems' sha256; a gem's lowest Ruby
-//   comes from its own metadata.
+//   starts the pinned uv and checks each gem's download against RubyGems'
+//   sha256; a gem's lowest Ruby comes from its own metadata. With --locks
+//   nothing is started: the lock files given must have the sha256 the job
+//   that made them recorded, read as locks line by line, and name only
+//   hashes PyPI or RubyGems publishes for those exact versions.
 // - A release must be newer than the pin and at least 7 days old.
 // - It writes toolchain.json, the scanner's lock files and one changeset,
 //   and nothing else. Any refusal exits 2 with the reason and puts every
@@ -38,12 +52,19 @@
 // only.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-// The upstream origins. Only an import (the tests) can change them; nothing
-// in the environment does.
+const MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const PLATFORM_COUNT_LIMIT = 16;
+const MAX_REDIRECTS = 5;
+const MAX_ASSET_BYTES = 500 * 1024 * 1024;
+const MAX_JSON_BYTES = 32 * 1024 * 1024;
+const MAX_LOCK_BYTES = 1024 * 1024;
+
+// The upstream origins and the asset size limit. Only an import (the tests)
+// can change them; nothing in the environment does.
 const UPSTREAM = {
   root: dirname(dirname(fileURLToPath(import.meta.url))),
   api: "https://api.github.com",
@@ -52,11 +73,8 @@ const UPSTREAM = {
   assetOrigins: ["https://github.com", "https://release-assets.githubusercontent.com", "https://objects.githubusercontent.com"],
   pypi: "https://pypi.org",
   rubygems: "https://rubygems.org",
+  maxAssetBytes: MAX_ASSET_BYTES,
 };
-const MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const PLATFORM_COUNT_LIMIT = 16;
-const MAX_REDIRECTS = 5;
-const MAX_ASSET_BYTES = 500 * 1024 * 1024;
 
 class Refused extends Error {}
 
@@ -72,19 +90,43 @@ function compare(a, b) {
 }
 const newest = (list) => list.sort((a, b) => compare(b.version, a.version))[0] ?? null;
 
+// The body of a response, read as it arrives and given up, connection and
+// all, the moment it passes `maxBytes`.
+async function readCapped(response, url, maxBytes) {
+  const chunks = [];
+  let size = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return Buffer.concat(chunks);
+    size += value.length;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Refused(`${url}: larger than ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+}
+
 // One GET, with one retry for a connection that drops, never following a
 // redirect itself. A failure names the URL and its cause.
-async function get(url, headers = {}) {
+async function get(url, maxBytes, headers = {}) {
   for (let attempt = 0; ; attempt++) {
+    let response;
     try {
-      const response = await fetch(url, { headers, redirect: "manual" });
-      return { response, bytes: response.status >= 300 && response.status < 400 ? null : Buffer.from(await response.arrayBuffer()) };
+      response = await fetch(url, { headers, redirect: "manual" });
     } catch (error) {
       if (attempt > 0) {
         const cause = error instanceof Error ? (error.cause?.code ?? error.cause?.message ?? error.message) : String(error);
         throw new Refused(`${url}: ${cause}`);
       }
+      continue;
     }
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel().catch(() => undefined);
+      return { response, bytes: null };
+    }
+    return { response, bytes: await readCapped(response, url, maxBytes) };
   }
 }
 
@@ -92,7 +134,7 @@ async function get(url, headers = {}) {
 async function getJson(url, github) {
   const headers = { accept: "application/json" };
   if (github && process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  const { response, bytes } = await get(url, headers);
+  const { response, bytes } = await get(url, MAX_JSON_BYTES, headers);
   if (response.status >= 300 && response.status < 400) {
     throw new Refused(`${url} answered with a redirect to ${response.headers.get("location") ?? "nowhere"}; a renamed or moved source is not followed`);
   }
@@ -101,13 +143,13 @@ async function getJson(url, github) {
 }
 
 // The bytes of a release asset, following redirects only to the asset
-// origins.
-async function download(url, origins) {
+// origins, and never more than `maxBytes` of them.
+async function download(url, origins, maxBytes = MAX_ASSET_BYTES) {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const at = new URL(current);
     if (!origins.includes(at.origin)) throw new Refused(`refusing to download from ${at.origin}: a redirect may lead only to ${origins.join(", ")}`);
-    const { response, bytes } = await get(current);
+    const { response, bytes } = await get(current, maxBytes);
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) throw new Refused(`${current}: a redirect with no location`);
@@ -115,7 +157,6 @@ async function download(url, origins) {
       continue;
     }
     if (!response.ok) throw new Refused(`${current}: HTTP ${response.status}`);
-    if (bytes.length > MAX_ASSET_BYTES) throw new Refused(`${url}: larger than ${MAX_ASSET_BYTES} bytes`);
     return bytes;
   }
   throw new Refused(`${url}: more than ${MAX_REDIRECTS} redirects`);
@@ -193,7 +234,7 @@ async function verifiedAssets(tool, recipe, found, up) {
   const fetchText = async (name) => {
     const a = listed.get(name);
     if (typeof a.browser_download_url !== "string" || a.browser_download_url !== `${base}${name}`) throw new Refused(`${tool}: ${name} is outside ${base}`);
-    return (await download(a.browser_download_url, up.assetOrigins)).toString("utf8");
+    return (await download(a.browser_download_url, up.assetOrigins, up.maxAssetBytes)).toString("utf8");
   };
   // The project's checksum file for the whole release, when it has one.
   const sumText = new Map();
@@ -203,6 +244,7 @@ async function verifiedAssets(tool, recipe, found, up) {
   const entries = Object.entries(recipe.assets);
   if (entries.length > PLATFORM_COUNT_LIMIT) throw new Refused(`${tool}: too many platforms`);
   const assets = {};
+  let withFile = 0;
   for (const [platform, asset] of entries) {
     if (!asset) {
       assets[platform] = asset;
@@ -214,9 +256,10 @@ async function verifiedAssets(tool, recipe, found, up) {
     if (typeof a.browser_download_url !== "string" || !a.browser_download_url.startsWith(base) || a.browser_download_url.slice(base.length) !== name) {
       throw new Refused(`${tool} ${version}: ${name} is outside ${base}`);
     }
-    const actual = sha256(await download(a.browser_download_url, up.assetOrigins));
     const published = /^sha256:([0-9a-f]{64})$/.exec(a.digest ?? "")?.[1] ?? null;
-    if (published !== null && published !== actual) throw new Refused(`${tool} ${version}: ${name} has sha256 ${actual}, GitHub publishes ${published}`);
+    if (published === null) throw new Refused(`${tool} ${version}: GitHub publishes no sha256 for ${name}; pin it by hand`);
+    const actual = sha256(await download(a.browser_download_url, up.assetOrigins, up.maxAssetBytes));
+    if (published !== actual) throw new Refused(`${tool} ${version}: ${name} has sha256 ${actual}, GitHub publishes ${published}`);
     // The release's checksum file, or a checksum file of this asset alone
     // (`<name>.sha256`, as ruff, uv and hadolint publish).
     let inFile = null;
@@ -230,10 +273,14 @@ async function verifiedAssets(tool, recipe, found, up) {
     }
     if ((sumText.size > 0 || own !== null) && inFile === null) throw new Refused(`${tool} ${version}: the checksum file names no sha256 for ${name}`);
     if (inFile !== null && inFile !== actual) throw new Refused(`${tool} ${version}: ${name} has sha256 ${actual}, the checksum file says ${inFile}`);
-    if (published === null && inFile === null) throw new Refused(`${tool} ${version}: GitHub and the project publish no sha256 for ${name}; pin it by hand`);
+    withFile += inFile === null ? 0 : 1;
     assets[platform] = { ...asset, name, url: a.browser_download_url, sha256: actual, binaryPath: asset.binaryPath.split(recipe.version).join(version) };
   }
-  return assets;
+  const pinned = Object.values(assets).filter(Boolean).length;
+  // Never silently one of two: either every asset matched a checksum file of
+  // the project's and GitHub's digest, or the project publishes none at all.
+  if (withFile !== 0 && withFile !== pinned) throw new Refused(`${tool} ${version}: the project publishes a checksum for some assets only; pin it by hand`);
+  return { assets, sums: withFile === 0 ? "digest-only" : "checksum-file-and-digest" };
 }
 
 async function report(table, up, now) {
@@ -246,7 +293,106 @@ async function report(table, up, now) {
   return rows;
 }
 
-async function apply(tool, table, up, now) {
+// The lock files of `tool` in `folder`, one per platform, name order: the
+// bytes the --lock-digest sha256 covers.
+function lockFiles(folder, tool) {
+  return Object.keys(PLATFORM_TRIPLES)
+    .sort()
+    .map((p) => `${tool}-${p}.txt`)
+    .filter((name) => existsSync(join(folder, name)));
+}
+
+function lockDigest(folder, tool) {
+  const hash = createHash("sha256");
+  for (const name of lockFiles(folder, tool)) hash.update(`${name}\0`).update(readFileSync(join(folder, name))).update("\0");
+  return hash.digest("hex");
+}
+
+// A uv lock read line by line: `name==version \` then `    --hash=sha256:<hex>`
+// lines. Any other line refuses it. Returns name==version -> hashes.
+function readUvLock(text, file) {
+  const pins = new Map();
+  let current = null;
+  for (const line of text.split("\n")) {
+    if (line === "") continue;
+    const pin = /^([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][0-9A-Za-z.+!]*) \\$/.exec(line);
+    if (pin) {
+      current = `${pin[1].toLowerCase().replace(/[-_.]+/g, "-")}==${pin[2]}`;
+      pins.set(current, []);
+      continue;
+    }
+    const hash = /^ {4}--hash=sha256:([0-9a-f]{64})( \\)?$/.exec(line);
+    if (hash && current !== null) {
+      pins.get(current).push(hash[1]);
+      continue;
+    }
+    throw new Refused(`${file}: not a lock line: ${line.slice(0, 80)}`);
+  }
+  for (const [pin, hashes] of pins) if (hashes.length === 0) throw new Refused(`${file}: ${pin} has no hash`);
+  return pins;
+}
+
+// The lock files given for a PyPI or RubyGems pin, checked before any is
+// used: the recorded sha256, the shape of every line, the recipe's own pins
+// in them, and every hash against what the registry publishes for that
+// exact version.
+async function checkGivenLocks(tool, next, folder, recorded, up) {
+  if (!/^[0-9a-f]{64}$/.test(recorded ?? "")) throw new Refused("--locks needs --locks-sha256 <hex>");
+  const names = lockFiles(folder, tool);
+  if (next.method === "github-release") {
+    if (names.length !== 0) throw new Refused(`${tool}: a GitHub release pin takes no lock files`);
+    return new Map();
+  }
+  if (names.length !== Object.keys(PLATFORM_TRIPLES).length) throw new Refused(`${tool}: --locks must hold one lock file per platform`);
+  for (const name of names) {
+    const st = lstatSync(join(folder, name));
+    if (!st.isFile() || st.size > MAX_LOCK_BYTES) throw new Refused(`${tool}: ${name} is not a lock file`);
+  }
+  if (lockDigest(folder, tool) !== recorded) throw new Refused(`${tool}: the lock files given do not have the sha256 the job that made them recorded`);
+  const texts = new Map(names.map((name) => [name, readFileSync(join(folder, name), "utf8")]));
+  const checked = new Map();
+  const pyName = (n) => n.toLowerCase().replace(/[-_.]+/g, "-");
+  for (const [name, text] of texts) {
+    if (next.method === "uv") {
+      const pins = readUvLock(text, name);
+      for (const want of [`${next.package}==${next.version}`, ...(next.with ?? [])]) {
+        const [n, v] = want.split("==");
+        if (!pins.has(`${pyName(n)}==${v}`)) throw new Refused(`${name}: does not pin ${want}`);
+      }
+      for (const [pin, hashes] of pins) {
+        if (!checked.has(pin)) {
+          const [n, v] = pin.split("==");
+          const info = await getJson(`${up.pypi}/pypi/${encodeURIComponent(n)}/${encodeURIComponent(v)}/json`, false);
+          checked.set(pin, new Set((info.urls ?? []).map((u) => u?.digests?.sha256).filter((h) => typeof h === "string")));
+        }
+        for (const h of hashes) if (!checked.get(pin).has(h)) throw new Refused(`${name}: PyPI publishes no file of ${pin} with sha256 ${h}`);
+      }
+    } else {
+      const gems = [];
+      for (const line of text.split("\n")) {
+        if (line === "" || line.startsWith("#")) continue;
+        const m = /^([A-Za-z0-9_.-]+) ([0-9][0-9.]*) sha256:([0-9a-f]{64})$/.exec(line);
+        if (!m) throw new Refused(`${name}: not a lock line: ${line.slice(0, 80)}`);
+        gems.push({ gem: m[1], version: m[2], sha: m[3] });
+      }
+      for (const spec of next.gems) {
+        const [g, v] = spec.split(":");
+        if (!gems.some((x) => x.gem === g && x.version === v)) throw new Refused(`${name}: does not pin ${spec}`);
+      }
+      for (const { gem, version, sha } of gems) {
+        const key = `${gem}@${version}`;
+        if (!checked.has(key)) {
+          const info = await getJson(`${up.rubygems}/api/v2/rubygems/${encodeURIComponent(gem)}/versions/${encodeURIComponent(version)}.json`, false);
+          checked.set(key, info.sha);
+        }
+        if (checked.get(key) !== sha) throw new Refused(`${name}: RubyGems publishes another sha256 for ${gem} ${version}`);
+      }
+    }
+  }
+  return texts;
+}
+
+async function apply(tool, table, up, now, given) {
   const tablePath = join(up.root, "packages", "scanners", "toolchain.json");
   const recipe = table.tools[tool];
   if (!recipe) throw new Refused(`${tool} is not in the toolchain table`);
@@ -257,8 +403,11 @@ async function apply(tool, table, up, now) {
   }
   const from = recipe.version;
   const next = { ...recipe, version: found.version };
+  let sums = "registry";
   if (recipe.method === "github-release") {
-    next.assets = await verifiedAssets(tool, recipe, found, up);
+    const verified = await verifiedAssets(tool, recipe, found, up);
+    next.assets = verified.assets;
+    sums = verified.sums;
     next.tag = found.release.tag_name;
   } else if (recipe.method === "gem") {
     next.gems = found.gems.map((g) => `${g.gem}:${g.version}`);
@@ -266,13 +415,17 @@ async function apply(tool, table, up, now) {
     if (lowest) next.needs = `ruby>=${lowest}`;
   }
 
+  const givenLocks = given ? await checkGivenLocks(tool, next, given.folder, given.sha256, up) : null;
+
   // Everything checked: write, and put every file back if a step after fails.
   const locks = Object.keys(PLATFORM_TRIPLES).map((p) => join(up.root, "packages", "scanners", "locks", `${tool}-${p}.txt`));
   const before = new Map([tablePath, ...locks].map((f) => [f, existsSync(f) ? readFileSync(f) : null]));
   const changeset = join(up.root, ".changeset", `pin-${tool}-${found.version.split(".").join("-")}.md`);
   try {
     writeFileSync(tablePath, `${JSON.stringify({ ...table, tools: { ...table.tools, [tool]: next } }, null, 2)}\n`);
-    if (recipe.method !== "github-release") {
+    if (givenLocks !== null) {
+      for (const [name, text] of givenLocks) writeFileSync(join(up.root, "packages", "scanners", "locks", name), text);
+    } else if (recipe.method !== "github-release") {
       execFileSync(process.execPath, [join(up.root, "scripts", "lock-scanners.mjs"), tool], { stdio: "inherit" });
     }
     writeFileSync(changeset, `---\n"openqodex": patch\n---\n\nThe built-in ${tool} scanner moves from ${from} to ${found.version}, released ${found.date.slice(0, 10)}.\n`);
@@ -284,7 +437,7 @@ async function apply(tool, table, up, now) {
     rmSync(changeset, { force: true });
     throw new Refused(`${tool}: ${error instanceof Error ? error.message : String(error)}; every file is back as it was`);
   }
-  process.stdout.write(`${tool}: ${from} -> ${found.version}\n`);
+  process.stdout.write(`${tool}: ${from} -> ${found.version}\nsums=${sums}\n`);
 }
 
 const PLATFORM_TRIPLES = { "darwin-arm64": 1, "darwin-x64": 1, "linux-x64": 1, "linux-arm64": 1 };
@@ -311,18 +464,28 @@ export async function run(argv, options = {}) {
   const now = Date.now();
   try {
     const table = JSON.parse(readFileSync(join(up.root, "packages", "scanners", "toolchain.json"), "utf8"));
-    const [mode, arg] = argv;
+    const [mode, arg, ...rest] = argv;
+    let given = null;
+    if (mode === "--apply" && rest.length > 0) {
+      if (rest.length !== 4 || rest[0] !== "--locks" || rest[2] !== "--locks-sha256") throw new Refused("usage: --apply <tool> --locks <folder> --locks-sha256 <hex>");
+      given = { folder: rest[1], sha256: rest[3] };
+    } else if (rest.length > 0) {
+      throw new Refused(`unknown arguments: ${rest.join(" ")}`);
+    }
     if (mode === "--report" && arg === undefined) {
       process.stdout.write("| Scanner | Pinned | Newest 7 days old | Released | Bump due |\n|---|---|---|---|---|\n");
       for (const r of await report(table, up, now)) process.stdout.write(`| ${r.tool} | ${r.pinned} | ${r.latest} | ${r.released} | ${r.due ? "yes" : "no"} |\n`);
     } else if (mode === "--matrix" && arg === undefined) {
       process.stdout.write(`${JSON.stringify((await report(table, up, now)).filter((r) => r.due).map((r) => r.tool))}\n`);
     } else if (mode === "--apply" && arg !== undefined) {
-      await apply(arg, table, up, now);
+      await apply(arg, table, up, now, given);
     } else if (mode === "--proposal" && arg !== undefined) {
       process.stdout.write(`${proposal(arg, up)}\n`);
+    } else if (mode === "--lock-digest" && arg !== undefined) {
+      if (!/^[a-z0-9-]+$/.test(arg)) throw new Refused(`${arg} is not a scanner name`);
+      process.stdout.write(`${lockDigest(join(up.root, "packages", "scanners", "locks"), arg)}\n`);
     } else {
-      process.stderr.write("usage: node scripts/pin-bump.mjs --report | --matrix | --apply <tool> | --proposal <tool>\n");
+      process.stderr.write("usage: node scripts/pin-bump.mjs --report | --matrix | --apply <tool> [--locks <folder> --locks-sha256 <hex>] | --proposal <tool> | --lock-digest <tool>\n");
       return 2;
     }
     return 0;

@@ -36,6 +36,17 @@
 //  14. A hostile manifest, script or YAML file from the repo (long runs of
 //      blanks with no closing quote, bracket or comment) makes a pattern
 //      backtrack without bound, so reading it hangs the review.
+// Added after the code review:
+//  15. A Gemfile that declares rails over several lines (`gem(` then the
+//      name on the next line) is missed, so a Rails app without a lockfile
+//      loses brakeman.
+//  16. An `{include-group = "django"}` reference in [dependency-groups] is
+//      read as the package django.
+//  17. A link in a folder on the way to a manifest or a marker
+//      (backend/config -> ../shared) supplies it, though the docs say never
+//      through a link.
+//  18. Grouping the files of a whole repository by their framework rules
+//      takes time that grows with the square of the file count.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -45,6 +56,8 @@ import { parseConfig } from "@openqodex/core";
 import type { Config } from "@openqodex/core";
 import { MAX_MANIFEST_BYTES, repoFacts } from "../src/detect.js";
 import { choiceLine, repoInventory, selectScanners } from "../src/select.js";
+import { oxlintGroups } from "../src/adapters/oxlint.js";
+import { ruffGroups } from "../src/adapters/ruff.js";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -254,6 +267,7 @@ describe("hostile files read in linear time (14)", () => {
     ["pyproject.toml", { "pyproject.toml": `[a${blanks(N / 2)}x\n[project]\ndependencies = [\n"a${blanks(N / 2)}x"\n` }, "a.py"],
     ["requirements.txt", { "requirements.txt": `a${blanks(N)}x\n` }, "a.py"],
     ["Pipfile", { Pipfile: `[packages]\n"a${blanks(N)}x\n` }, "a.py"],
+    ["Gemfile of gem( lines", { Gemfile: "gem(\n".repeat(N / 5) }, "a.rb"],
   ];
   for (const [kind, files, file] of hostile) {
     it(`a hostile ${kind} of 1 MB is read in well under a second`, () => {
@@ -273,6 +287,60 @@ describe("hostile files read in linear time (14)", () => {
     expect(facts.content("k8s/a.yaml")).toBeNull();
     expect(facts.content("k8s/b.yaml")).toBeNull();
     expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe("what the code review found in the readers", () => {
+  it("a Gemfile that declares rails over several lines, with no lockfile, still makes a Rails app (15)", () => {
+    const dir = repo({
+      Gemfile: "source 'https://rubygems.org'\ngem(\n  # the framework\n  \"rails\",\n  \"~> 7.1\"\n)\ngem 'puma'\n",
+      "config/application.rb": "require 'rails/all'\n",
+      "app/models/user.rb": "class User; end\n",
+    });
+    expect(repoFacts(dir).project("app/models/user.rb")).toMatchObject({ frameworks: ["rails"] });
+    expect(wanted(dir, ["app/models/user.rb"])).toContain("brakeman");
+  });
+
+  it("an include-group reference in [dependency-groups] is not a package, while the strings beside it are (16)", () => {
+    const dir = repo({
+      "a/pyproject.toml": '[project]\nname = "a"\n\n[dependency-groups]\ndjango = ["pytest"]\ndev = [{include-group = "django"}, "fastapi>=0.110"]\n',
+      "a/x.py": "x = 1\n",
+    });
+    expect(repoFacts(dir).project("a/x.py")).toMatchObject({ frameworks: ["fastapi"] });
+  });
+
+  it("a link in any folder on the way to a manifest or a marker supplies nothing (17)", () => {
+    const dir = repo({
+      "backend/Gemfile": "gem 'rails'\n",
+      "backend/app/models/user.rb": "class User; end\n",
+      "shared/application.rb": "require 'rails/all'\n",
+      "app/package.json": JSON.stringify({ dependencies: { react: "18" } }),
+      "app/page.tsx": "x\n",
+    });
+    fs.symlinkSync("../shared", path.join(dir, "backend/config"));
+    fs.symlinkSync("app", path.join(dir, "web"));
+    const facts = repoFacts(dir);
+    expect(facts.project("backend/app/models/user.rb")).toMatchObject({ root: "backend", frameworks: [] });
+    expect(facts.project("app/page.tsx")).toMatchObject({ root: "app", frameworks: ["react"] });
+    expect(facts.project("web/page.tsx")).toBeNull();
+  });
+
+  it("groups 100,000 files by their framework rules in well under a second (18)", () => {
+    const dir = repo({
+      "web/package.json": JSON.stringify({ dependencies: { react: "18" } }),
+      "ml/requirements.txt": "django==5.0\n",
+    });
+    const facts = repoFacts(dir);
+    const js = Array.from({ length: 100_000 }, (_, i) => `${i % 2 === 0 ? "web" : "lib"}/f${i}.ts`);
+    const py = Array.from({ length: 100_000 }, (_, i) => `${i % 2 === 0 ? "ml" : "lib"}/f${i}.py`);
+    const started = performance.now();
+    const ox = oxlintGroups(js, facts);
+    const rf = ruffGroups(py, facts);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(ox.get("react,jsx-a11y")).toHaveLength(50_000);
+    expect(ox.get("")).toHaveLength(50_000);
+    expect(rf.get("DJ")).toHaveLength(50_000);
+    expect(rf.get("")).toHaveLength(50_000);
   });
 });
 

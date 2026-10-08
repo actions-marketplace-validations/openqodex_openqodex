@@ -21,6 +21,11 @@
 //      through `${{ }}`, or an environment variable carries one in.
 //   9. The pull request's body or branch uses a value the script did not
 //      check, or the job never checks the gate job's claim against its own.
+// Added after the code review:
+//  10. The job with the write token starts a program it downloaded: uv,
+//      through lock-scanners.mjs, while re-locking a PyPI pin.
+//  11. The lock files it takes from the gate job were written after the
+//      gate started there, or are taken without --locks and its checks.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,6 +109,20 @@ describe("the pin bump workflow", () => {
       .filter((l) => /^\s*(branch|body|result)=|gh pr create/.test(l))
       .flatMap((l) => [...l.matchAll(/\$\{?([A-Za-z_]+)/g)].map((m) => m[1]!));
     expect(used.length).toBeGreaterThan(0);
-    expect([...new Set(used)].sort()).toEqual(["TOOL", "body", "branch", "result", "version"]);
+    expect([...new Set(used)].sort()).toEqual(["TOOL", "body", "branch", "result", "sums", "version"]);
+  });
+
+  it("starts no downloaded program in the job with the write token, and takes lock files only through --locks (10, 11)", () => {
+    const [, job] = writer[0]!;
+    const runs = job.steps.map((s) => s.run ?? "").join("\n");
+    expect(runs).not.toMatch(/lock-scanners|\buv\b|installTool/);
+    expect(runs).toMatch(/node scripts\/pin-bump\.mjs --apply "\$TOOL" --locks "\$CLAIMS\/locks" --locks-sha256 "\$locksum"/);
+    const gate = workflow.jobs.gate!.steps;
+    const recorded = gate.findIndex((s) => /--lock-digest "\$TOOL"/.test(s.run ?? ""));
+    const uploaded = gate.findIndex((s, i) => i > recorded && s.uses?.startsWith("actions/upload-artifact@") && String(s.with?.name).startsWith("proposal-"));
+    const started = gate.findIndex((s) => /\b(pnpm|npm|npx)\b|scripts\/gate\.sh/.test(s.run ?? ""));
+    expect(recorded).toBeGreaterThan(-1);
+    expect(uploaded).toBeGreaterThan(recorded);
+    expect(started).toBeGreaterThan(uploaded);
   });
 });

@@ -70,7 +70,7 @@ async function pinnedUv() {
     const response = await fetch(url, { redirect: "manual" });
     if (response.status >= 300 && response.status < 400) url = new URL(response.headers.get("location") ?? "", url).href;
     else if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-    else bytes = Buffer.from(await response.arrayBuffer());
+    else bytes = await readCapped(response, url, 200 * 1024 * 1024);
   }
   if (bytes === null) throw new Error(`${asset.url}: too many redirects`);
   const actual = createHash("sha256").update(bytes).digest("hex");
@@ -84,6 +84,24 @@ async function pinnedUv() {
 }
 
 // ---------- gems ----------
+
+// A download's bytes, read as they arrive and given up, connection and all,
+// the moment they pass `maxBytes`.
+async function readCapped(response, url, maxBytes) {
+  const chunks = [];
+  let size = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return Buffer.concat(chunks);
+    size += value.length;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`${url}: larger than ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+}
 
 // RubyGems answers, never through a redirect: a moved source is not followed.
 async function json(url) {
@@ -100,7 +118,7 @@ async function checkGem(gem, version, published) {
   const response = await fetch(url, { redirect: "manual" });
   if (response.status >= 300 && response.status < 400) throw new Error(`${url}: answered with a redirect; a moved source is not followed`);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  const actual = createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");
+  const actual = createHash("sha256").update(await readCapped(response, url, 64 * 1024 * 1024)).digest("hex");
   if (actual !== published) throw new Error(`${gem} ${version}: the .gem has sha256 ${actual}, RubyGems publishes ${published}`);
 }
 

@@ -32,6 +32,7 @@ import { safeFileArgs } from "../safe-args.js";
 import type { RepoFacts } from "../detect.js";
 import type { Adapter } from "./index.js";
 import { withOwnedConfig } from "./owned-config.js";
+import { groupBy } from "./group.js";
 import { folderList, listAnd, suchAs } from "./words.js";
 
 const OXLINT_TIMEOUT_MS = 60_000;
@@ -59,14 +60,10 @@ export function oxlintPlugins(p: string, facts: RepoFacts): OxlintPlugin[] {
 // plugin on, oxlint checks it, so the lens stands down for those files.
 export const OXLINT_EXHAUSTIVE_DEPS = "oxlint:react-hooks/exhaustive-deps";
 
-// Files grouped by the plugins they get: one oxlint run per group.
-function byPlugins(files: string[], facts: RepoFacts): Map<string, string[]> {
-  const groups = new Map<string, string[]>();
-  for (const p of files) {
-    const key = oxlintPlugins(p, facts).join(",");
-    groups.set(key, [...(groups.get(key) ?? []), p]);
-  }
-  return groups;
+// Files grouped by the plugins they get ("react,jsx-a11y"; "" for none): one
+// oxlint run per group.
+export function oxlintGroups(files: string[], facts: RepoFacts): Map<string, string[]> {
+  return groupBy(files, (p) => oxlintPlugins(p, facts).join(","));
 }
 
 // The projects with plugins on, and the plugins, for the selection line.
@@ -106,7 +103,7 @@ export async function runOxlint(args: {
     // the findings of every run are merged.
     return await withOwnedConfig("oxlintrc.json", "{}\n", async (configPath) => {
       const findings: StaticFinding[] = [];
-      for (const [key, files] of byPlugins(jsFiles, args.facts)) {
+      for (const [key, files] of oxlintGroups(jsFiles, args.facts)) {
         const flags = key === "" ? [] : key.split(",").map((plugin) => `--${plugin}-plugin`);
         findings.push(
           ...(await runInChunks("oxlint", files, OXLINT_TIMEOUT_MS, async (chunk, left) => {
