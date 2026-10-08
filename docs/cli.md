@@ -38,7 +38,7 @@ A repository with no commits checks every file with `scan`; `review` needs a fir
 - `--no-install`: do not download missing scanners. The report lists them as not installed.
 - `--offline`: no built-in scanner goes online. osv-scanner and semgrep are skipped and listed as disabled. Scanner downloads are off. The daily version check does not start after this run.
 
-`doctor --install` together with `--offline` or `--no-install` exits 2.
+`doctor --install` together with `--offline` or `--no-install` exits 2, and so does `--all-scanners` without `--install`.
 
 Progress goes to stderr. The report goes to stdout.
 
@@ -124,7 +124,7 @@ Installs OpenQodex into your coding agents, then reviews. After the install, ins
 - `--yes`, `-y`: do not ask. It adds the team review section, even where this repository answered no before (only `--no-repo` keeps it out), and adds the pre-push hook unless this repository answered no to it before or `--hook none` says so. Without a terminal, `init` needs this flag.
 - `--no-review`: end after the install, with no review and no question.
 - `--uninstall`: remove what `init` wrote. A file you edited after `init` is left in place.
-- `--dry-run`: print the plan and write nothing.
+- `--dry-run`: print the plan, with the scanners `init` would download and why, and write and download nothing.
 
 `init` does not take the flags listed under "Flags every command below accepts". `agents` lists each file it writes.
 

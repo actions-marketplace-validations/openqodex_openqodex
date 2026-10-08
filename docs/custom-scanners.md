@@ -12,7 +12,7 @@ Two lines in your repository's `.openqodex/config.yaml`:
 scanners:
   custom:
     - source: https://github.com/aquasecurity/trivy
-      run: trivy config --format sarif --output {report} {target}
+      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
 ```
 
 - `source`: the scanner's GitHub repository.
@@ -56,7 +56,7 @@ When no asset matches, or more than one does, `trust` stops. It prints the candi
 
 ```yaml
     - source: https://github.com/aquasecurity/trivy
-      run: trivy config --format sarif --output {report} {target}
+      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
       install:
         asset: "trivy_{version}_{os}-{arch}.tar.gz"
 ```
@@ -109,13 +109,14 @@ trivy checks infrastructure files such as Terraform and Kubernetes manifests.
 scanners:
   custom:
     - source: https://github.com/aquasecurity/trivy
-      run: trivy config --format sarif --output {report} {target}
+      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
       paths: ["**/*.tf", "*.tf", "**/*.yaml", "*.yaml"]
       target: repo
 ```
 
 - `paths` limits the scanner to changes that hold Terraform or YAML files.
 - `target: repo` passes the repository root, because `trivy config` scans a folder.
+- `--disable-telemetry`, `--skip-version-check` and `--skip-check-update` stop trivy sending usage data, checking for a newer trivy and downloading a newer checks bundle; it uses the checks built into its binary. Check what any scanner you add sends before you approve it.
 - Findings appear in the report as `custom:trivy:<rule id>`.
 
 ### json-map

@@ -33,13 +33,14 @@ A review finished this way is a legacy review: the agent that ran it reviewed th
 For you, when a scanner is missing or slow to install. The skill asks you to run `doctor --install` once when the agent runs in a sandbox.
 
 ```
-openqodex doctor [--install] [--json]
+openqodex doctor [--install [--all-scanners]] [--json]
 ```
 
-Prints the Node and git versions, the repository, the config, the OpenQodex home folder and the state of each scanner. It lists custom scanners with their approval state.
+Prints the Node and git versions, the repository, the config, the OpenQodex home folder and the state of each scanner. Inside a repository it lists, under "This repository needs", each scanner the repository's files call for with the reason, such as `brakeman: Rails app in backend/`, and names the rest. It lists custom scanners with their approval state.
 
-- `--install`: download every scanner that fits this machine, and wait for all of them.
-- `--json`: print the same facts as JSON.
+- `--install`: download the scanners this repository's files call for (every tracked and untracked file, less `review.paths.exclude` and `scanners.disable`), and wait for all of them. Outside a repository it downloads every scanner that fits this machine.
+- `--all-scanners`: with `--install`, download every scanner that fits this machine, whatever the repository holds.
+- `--json`: print the same facts as JSON: `selection` (each scanner, whether it is needed, its line), `downloads` (what `--install` downloads here, or null for every scanner) and `toolchain` (the sha256 of the pinned scanner table and its lock files).
 
 Under "Updates" it prints the running version and whether the launcher started it, the newest version the last check saw and when, the last check, whether updates are on (and why not), and the last update error. For a version not started through the launcher (npx, a project-scope file), it says when that pinned version is behind the newest one a check saw. Without a check on this machine, it says nothing about that.
 

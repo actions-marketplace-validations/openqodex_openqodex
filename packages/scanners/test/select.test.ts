@@ -281,6 +281,8 @@ describe("the reason lines", () => {
     const dir = repo({ "bad\u001b[31mname\n.sh": "echo hi\n" });
     const lines = selectScanners({ repoDir: dir, paths: ["bad\u001b[31mname\n.sh"], config: config() }).map(choiceLine);
     for (const line of lines) {
+      // Matching control characters is the point here.
+      // oxlint-disable-next-line no-control-regex
       expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
     }
     expect(lines.find((l) => l.startsWith("shellcheck:"))).toContain("shell scripts");

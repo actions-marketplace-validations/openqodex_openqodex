@@ -32,7 +32,7 @@ Inside a repository, `init` also:
 - adds a short section to each agent's instruction file, such as `~/.claude/CLAUDE.md` for Claude Code: when a feature or fix is done, review it with openqodex. It prints the section before writing it.
 - creates `.openqodex/config.yaml` and `.openqodex/custom-instructions.md`. Commit both. Write in `custom-instructions.md` what a reviewer of your repository must know: conventions, what never to flag, what always to check. The review brief carries it word for word.
 
-`init` also starts the scanner downloads that your repo needs, in the background. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
+`init` also starts the scanner downloads that your repo needs, in the background, and prints one line per scanner saying why, such as `oxlint: JavaScript or TypeScript files, such as app/index.tsx`. `init --dry-run` prints those lines and downloads nothing. Running it outside the agent matters: some agents run commands in a sandbox that cannot download.
 
 Last, `init` reviews: when the repository has a change, it runs `openqodex review` and prints the report. When it has none, it asks what to review: the whole repository, a pull request, a branch, or not now. With `--yes` or without a terminal it prints the three commands instead of asking. `--no-review` skips this step. The review uses the scanners already installed and never fails `init`.
 
@@ -91,15 +91,17 @@ npx openqodex review
 
 ## First run
 
-Scanners download on first use into `~/.openqodex/tools/`. Only the scanners your change needs download. A scanner still installing after 45 seconds keeps going in the background. The report lists it as installing. It joins the next run.
+Scanners download on first use into `~/.openqodex/tools/`. A review downloads only the scanners its changed files call for. A scanner still installing after 45 seconds keeps going in the background. The report lists it as installing. It joins the next run.
 
 One measured first run: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners the demo needs. They take about 700 MB of disk.
 
-To download every scanner now:
+To download what this repository needs now, run this inside it:
 
 ```
 npx openqodex doctor --install
 ```
+
+`--all-scanners` downloads every scanner.
 
 ## Next
 
