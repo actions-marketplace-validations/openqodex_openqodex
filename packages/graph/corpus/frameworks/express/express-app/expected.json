@@ -21,7 +21,6 @@
       { "site": "src/routes/users.ts:10", "methods": ["DELETE"], "pattern": "/users/:id", "handler": null, "status": "missing" },
       { "site": "src/routes/items.ts:7", "methods": ["GET"], "pattern": "/items", "handler": "src/handlers/items.ts#listItems" },
       { "site": "src/routes/items.ts:8", "methods": ["GET"], "pattern": "/items/:id", "handler": null, "status": "unresolved" },
-      { "site": "src/app.ts:17", "methods": ["GET"], "pattern": null, "handler": "src/handlers/health.ts#status", "status": "bound" },
       { "site": "src/routes/orphan.ts:11", "methods": ["GET"], "pattern": "/lost", "handler": "src/routes/orphan.ts#lost", "mounted": false }
     ],
     "edges": [
@@ -48,7 +47,8 @@
       { "kind": "mounts", "from": "fw:express:app:src/admin.ts:5" },
       { "kind": "handles", "from": "registration:src/cache.ts:9" },
       { "kind": "applies_middleware", "from": "registration:src/admin.ts:11" },
-      { "kind": "handles", "to": "src/handlers/items.ts#getItem" }
+      { "kind": "handles", "to": "src/handlers/items.ts#getItem" },
+      { "kind": "handles", "from": "registration:src/app.ts:17" }
     ]
   }
 }

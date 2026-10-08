@@ -8,7 +8,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
 import type { Expr } from "./js.js";
-import { exported, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, pos, readExpr, stringValue, walk } from "./js.js";
+import { exported, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, pos, readExpr, stringValue, walk } from "./js.js";
 
 // The member calls watched: the routing methods of an application and a
 // router, `use`, `route`, `listen`, and the requests of a test agent.
@@ -33,10 +33,17 @@ export type ExpressFact =
   // A test block: `describe(...)`, `it(...)`, `test(...)` with a literal name.
   | (FrameworkFactBase & { kind: "test-block"; fn: string; name: string | null })
   // The file is larger than MAX_SOURCE_BYTES and was not read.
-  | (FrameworkFactBase & { kind: "too-large"; bytes: number });
+  | (FrameworkFactBase & { kind: "too-large"; bytes: number })
+  // The file has regions the parser could not read (the first at `line`):
+  // nothing in them is a fact.
+  | (FrameworkFactBase & { kind: "syntax-error"; regions: number });
 
-export function wants(source: string): boolean {
-  return source.includes("express") || source.includes("supertest") || source.includes("createServer") || source.includes("module.exports");
+// Every file is read: a route can be registered on an imported application
+// in a file that never names express, and a name can be spelled with an
+// escape, so no test on the text can tell which files hold none. The facts
+// come from the tree the core already parsed.
+export function wants(): boolean {
+  return true;
 }
 
 const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
@@ -44,15 +51,20 @@ const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
 export function readFacts(root: Node): ExpressFact[] {
   if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
   const out: ExpressFact[] = [];
-  walk(root, (node, scope) => {
+  let firstBroken = 0;
+  let broken = 0;
+  const visit = (node: Node, scope: number): void => {
     switch (node.type) {
       case "call_expression": {
+        // A call the parser had to repair (a missing parenthesis) is no fact.
+        if (node.hasError) return;
         const fn = node.childForFieldName("function");
         const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((c) => c.type !== "comment");
         if (fn?.type === "member_expression") {
           const prop = fn.childForFieldName("property");
-          if (prop && WATCHED.has(prop.text)) {
-            out.push({ kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: prop.text, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
+          const name = prop?.type === "property_identifier" ? identifierName(prop.text) : null;
+          if (name !== null && WATCHED.has(name)) {
+            out.push({ kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: name, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
           }
         }
         const path = namePath(fn);
@@ -63,14 +75,15 @@ export function readFacts(root: Node): ExpressFact[] {
       case "variable_declarator": {
         const name = node.childForFieldName("name");
         const value = node.childForFieldName("value");
-        if (name?.type !== "identifier" || !value) return;
-        out.push({ kind: "value", ...pos(node), name: name.text, value: readExpr(value), scope, top: scope === 0 && node.parent?.parent?.type !== "for_statement", exported: exported(node) });
+        const id = name?.type === "identifier" ? identifierName(name.text) : null;
+        if (id === null || !value || node.hasError) return;
+        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && node.parent?.parent?.type !== "for_statement", exported: exported(node) });
         return;
       }
       case "assignment_expression": {
         const left = node.childForFieldName("left");
         const right = node.childForFieldName("right");
-        if (!left || !right) return;
+        if (!left || !right || node.hasError) return;
         const path = namePath(left);
         if (!path) return;
         if (path[0] === "module" && path[1] === "exports") {
@@ -90,29 +103,50 @@ export function readFacts(root: Node): ExpressFact[] {
       case "optional_parameter": {
         const pattern = node.childForFieldName("pattern");
         const ann = node.childForFieldName("type")?.firstNamedChild ?? null;
-        if (pattern?.type !== "identifier" || !ann) return;
+        const id = pattern?.type === "identifier" ? identifierName(pattern.text) : null;
+        if (id === null || !ann) return;
         const type = typeName(ann);
-        if (type) out.push({ kind: "param", ...pos(node), name: pattern.text, type, scope: node.parent?.parent ? node.parent.parent.startPosition.row + 1 : 0 });
+        if (type) out.push({ kind: "param", ...pos(node), name: id, type, scope: node.parent?.parent ? node.parent.parent.startPosition.row + 1 : 0 });
         return;
       }
       case "function_declaration": {
         const name = node.childForFieldName("name");
-        if (name && scope === 0) out.push({ kind: "function", ...pos(node), name: name.text, params: paramCount(node) });
+        const id = name ? identifierName(name.text) : null;
+        if (id !== null && scope === 0) out.push({ kind: "function", ...pos(node), name: id, params: paramCount(node) });
         return;
       }
     }
+  };
+  walk(root, visit, (line) => {
+    if (broken++ === 0) firstBroken = line;
   });
+  if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
   return out;
 }
 
-// A type written as a name or a qualified name: `Express`, `express.Router`.
+// A type written as a name or a qualified name: `Express`, `express.Router`,
+// read from the tree's own parts.
 function typeName(node: Node): string[] | null {
-  if (node.type === "type_identifier" || node.type === "identifier") return [node.text];
-  if (node.type === "nested_type_identifier") {
-    const parts = node.text.split(".").map((s) => s.trim());
-    return parts.every((p) => /^[A-Za-z_$][\w$]*$/.test(p)) ? parts : null;
+  const parts: string[] = [];
+  let n: Node | null = node;
+  for (let steps = 0; n && steps < 8; steps++) {
+    if (n.type === "generic_type") {
+      n = n.firstNamedChild;
+      continue;
+    }
+    if (n.type === "type_identifier" || n.type === "identifier") {
+      const id = identifierName(n.text);
+      if (id === null) return null;
+      parts.unshift(id);
+      return parts;
+    }
+    if (n.type !== "nested_type_identifier" && n.type !== "nested_identifier" && n.type !== "member_expression") return null;
+    const last = n.lastNamedChild;
+    const id = last && (last.type === "type_identifier" || last.type === "property_identifier" || last.type === "identifier") ? identifierName(last.text) : null;
+    if (id === null) return null;
+    parts.unshift(id);
+    n = n.firstNamedChild;
   }
-  if (node.type === "generic_type") return typeName(node.firstNamedChild as Node);
   return null;
 }
 
@@ -139,6 +173,8 @@ export function isExpressFact(v: unknown): v is ExpressFact {
       return typeof f.fn === "string" && (f.name === null || typeof f.name === "string");
     case "too-large":
       return Number.isInteger(f.bytes);
+    case "syntax-error":
+      return Number.isInteger(f.regions);
     default:
       return false;
   }

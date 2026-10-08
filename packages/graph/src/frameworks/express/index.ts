@@ -20,7 +20,7 @@ export const express: FrameworkPlugin<ExpressFact> = {
   supportedVersions: "Express 4 and 5",
   languages: ["javascript", "typescript", "tsx"],
   inputs: { paths: [], dependencies: { npm: ["express", "supertest"] } },
-  wants: (source) => wants(source),
+  wants: () => wants(),
   facts: (root) => readFacts(root),
   isFact: (v): v is ExpressFact => isExpressFact(v),
   detect: (index) => analyse(index).apps,

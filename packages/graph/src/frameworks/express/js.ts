@@ -54,44 +54,146 @@ export const MAX_NAME_PARTS = 16; // parts of a name chain `a.b.c`
 export const MAX_STRING = 2048; // characters of a string literal kept
 const MAX_PARTS = 32; // pieces of a computed string
 
+// ---------- reading names and strings as the language does ----------
+//
+// Everything below reads the tree-sitter nodes the core already parsed,
+// never the file's text a second way. Where the language gives a token a
+// meaning its text does not show (an escape in a string or in a name), the
+// token is decoded by the language's own rules; a token those rules reject
+// is not read as a literal at all.
+
+const HEX = (c: number): number => (c >= 48 && c <= 57 ? c - 48 : c >= 65 && c <= 70 ? c - 55 : c >= 97 && c <= 102 ? c - 87 : -1);
+
+// The code point of `\uHHHH` or `\u{H...}` at `at` (the backslash), and
+// where it ends; null when it is not a valid unicode escape.
+function unicodeEscape(s: string, at: number): { cp: number; end: number } | null {
+  if (s[at] !== "\\" || s[at + 1] !== "u") return null;
+  if (s[at + 2] === "{") {
+    let cp = 0;
+    let i = at + 3;
+    for (; i < s.length && s[i] !== "}"; i++) {
+      const d = HEX(s.charCodeAt(i));
+      if (d < 0 || i - at > 10) return null;
+      cp = cp * 16 + d;
+    }
+    if (s[i] !== "}" || i === at + 3 || cp > 0x10ffff) return null;
+    return { cp, end: i + 1 };
+  }
+  let cp = 0;
+  for (let i = at + 2; i < at + 6; i++) {
+    const d = HEX(s.charCodeAt(i));
+    if (d < 0) return null;
+    cp = cp * 16 + d;
+  }
+  return { cp, end: at + 6 };
+}
+
+// One escape sequence of a string or template, as JavaScript decodes it; null
+// for one a module would reject (a legacy octal escape) or that is malformed.
+export function decodeEscape(seq: string): string | null {
+  if (seq.length < 2 || seq[0] !== "\\") return null;
+  const c = seq[1] as string;
+  switch (c) {
+    case "n":
+      return "\n";
+    case "t":
+      return "\t";
+    case "r":
+      return "\r";
+    case "b":
+      return "\b";
+    case "f":
+      return "\f";
+    case "v":
+      return "\v";
+    case "\n":
+    case "\r":
+    case " ":
+    case " ":
+      return ""; // a backslash before a line break joins the lines
+    case "x": {
+      if (seq.length !== 4) return null;
+      const hi = HEX(seq.charCodeAt(2));
+      const lo = HEX(seq.charCodeAt(3));
+      return hi < 0 || lo < 0 ? null : String.fromCharCode(hi * 16 + lo);
+    }
+    case "u": {
+      const u = unicodeEscape(seq, 0);
+      return u && u.end === seq.length ? String.fromCodePoint(u.cp) : null;
+    }
+    case "0":
+      return seq.length === 2 ? "\0" : null;
+    default:
+      if (c >= "1" && c <= "9") return null;
+      return seq.length === 2 ? c : null;
+  }
+}
+
+// An identifier's name as the language reads it: `get` is `get`. Null
+// for a malformed escape.
+export function identifierName(text: string): string | null {
+  if (!text.includes("\\")) return text;
+  let out = "";
+  for (let i = 0; i < text.length; ) {
+    if (text[i] === "\\") {
+      const u = unicodeEscape(text, i);
+      if (!u) return null;
+      out += String.fromCodePoint(u.cp);
+      i = u.end;
+    } else {
+      out += text[i];
+      i++;
+    }
+  }
+  return out;
+}
+
 // A name chain `a.b.c`, or null when any part is not a plain name or the
 // chain is longer than MAX_NAME_PARTS. Walks down the object side in a loop.
 export function namePath(start: Node | null): string[] | null {
   const parts: string[] = [];
   let node = start;
   while (node) {
-    if (parts.length >= MAX_NAME_PARTS) return null;
+    if (parts.length >= MAX_NAME_PARTS || node.hasError) return null;
     if (node.type === "parenthesized_expression") {
       node = node.firstNamedChild;
       continue;
     }
     if (node.type === "identifier" || node.type === "property_identifier" || node.type === "this") {
-      parts.push(node.text);
+      const name = identifierName(node.text);
+      if (name === null) return null;
+      parts.push(name);
       return parts.reverse();
     }
     if (node.type !== "member_expression") return null;
     const prop = node.childForFieldName("property");
     if (!prop || prop.type !== "property_identifier") return null;
-    parts.push(prop.text);
+    const name = identifierName(prop.text);
+    if (name === null) return null;
+    parts.push(name);
     node = node.childForFieldName("object");
   }
   return null;
 }
 
-// The content of a string literal, or null when the node is not one or is
-// longer than MAX_STRING.
+// The value of a string literal, or of a template with no substitution, as
+// JavaScript decodes it; null when the node is not one, holds a syntax error
+// or an escape the language rejects, or is longer than MAX_STRING.
 export function stringValue(node: Node | null): string | null {
   if (!node) return null;
   if (node.type !== "string" && node.type !== "template_string") return null;
-  if (node.endIndex - node.startIndex > MAX_STRING + 2) return null;
-  const parts = node.namedChildren;
-  if (node.type === "template_string" && parts.some((c) => c.type === "template_substitution")) return null;
-  return parts.map((c) => (c.type === "escape_sequence" ? unescape(c.text) : c.text)).join("");
-}
-
-function unescape(seq: string): string {
-  const simple: Record<string, string> = { "\\n": "\n", "\\t": "\t", "\\r": "\r", "\\'": "'", '\\"': '"', "\\\\": "\\", "\\`": "`", "\\/": "/" };
-  return simple[seq] ?? seq.slice(1);
+  if (node.hasError || node.endIndex - node.startIndex > MAX_STRING + 2) return null;
+  let out = "";
+  for (const c of node.namedChildren) {
+    if (c.type === "template_substitution") return null;
+    if (c.type === "escape_sequence") {
+      const d = decodeEscape(c.text);
+      if (d === null) return null;
+      out += d;
+    } else if (c.type === "string_fragment") out += c.text;
+    else if (c.type !== "comment") return null;
+  }
+  return out;
 }
 
 type Part = { s: string } | { ref: string[] };
@@ -127,14 +229,19 @@ function stringParts(start: Node): Part[] | null {
       continue;
     }
     if (node.type === "template_string") {
-      if (node.endIndex - node.startIndex > MAX_STRING) return null;
+      if (node.hasError || node.endIndex - node.startIndex > MAX_STRING) return null;
       for (const c of node.namedChildren) {
         if (c.type === "template_substitution") {
           const inner = c.firstNamedChild;
           const p = inner ? namePath(inner) : null;
           if (!p) return null;
           out.push({ ref: p });
-        } else out.push({ s: c.type === "escape_sequence" ? unescape(c.text) : c.text });
+        } else if (c.type === "escape_sequence") {
+          const d = decodeEscape(c.text);
+          if (d === null) return null;
+          out.push({ s: d });
+        } else if (c.type === "string_fragment") out.push({ s: c.text });
+        else return null;
       }
       continue;
     }
@@ -248,13 +355,20 @@ function read(node: Node | null, depth: number, budget: { left: number }): Expr 
 // of the innermost function around it (0 at module level), kept on a stack
 // as the walk enters and leaves functions, never found by climbing the
 // parents. It returns false to skip the children of a node.
-export function walk(root: Node, visit: (node: Node, scope: number) => boolean | void): void {
+//
+// A region the parser could not read (an ERROR node) is never visited: the
+// language would not run such a file, so nothing in it is a fact. `broken`
+// is told the line of each such region.
+export function walk(root: Node, visit: (node: Node, scope: number) => boolean | void, broken?: (line: number) => void): void {
   const cursor = root.walk();
   const scopes: { depth: number; line: number }[] = [];
   let depth = 0;
   for (;;) {
     let descend = true;
-    if (cursor.nodeIsNamed) {
+    if (cursor.nodeType === "ERROR" || cursor.nodeIsMissing) {
+      descend = false;
+      broken?.(cursor.startPosition.row + 1);
+    } else if (cursor.nodeIsNamed) {
       const node = cursor.currentNode;
       descend = visit(node, scopes.length > 0 ? (scopes[scopes.length - 1] as { line: number }).line : 0) !== false;
       if (descend && SCOPE_TYPES.has(node.type)) scopes.push({ depth, line: node.startPosition.row + 1 });
@@ -272,6 +386,23 @@ export function walk(root: Node, visit: (node: Node, scope: number) => boolean |
     }
   }
 }
+
+const JS_EXTS = new Set(["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"]);
+
+// A test file by the JavaScript runners' own default rule: under
+// `__tests__`, or named `<name>.test.<ext>` or `<name>.spec.<ext>`. Plain
+// string checks, no pattern.
+export function isTestFile(file: string): boolean {
+  const parts = file.split("/");
+  if (parts.slice(0, -1).includes("__tests__")) return true;
+  const bits = (parts[parts.length - 1] ?? "").split(".");
+  if (bits.length < 3) return false;
+  const kind = bits[bits.length - 2];
+  return (kind === "test" || kind === "spec") && JS_EXTS.has(bits[bits.length - 1] as string);
+}
+
+// The test runners whose declared dependency lets a test file be a test.
+export const JS_RUNNERS: readonly string[] = ["vitest", "jest", "mocha", "ava", "@jest/globals", "uvu", "tap"];
 
 // Whether a declaration sits under an `export` statement: its declaration
 // statement's parent, two steps up at most.

@@ -14,40 +14,59 @@
 // Every registration is kept with its site, apart from its handler: a
 // handler that is missing, computed, wrapped, inline or external leaves the
 // registration in place with the handler's status and an unknown that says
-// why. A route path computed at run time leaves the pattern null with an
-// unknown of cause "dynamic". Two applications never share a registration:
-// a router mounted on both yields one registration per application.
+// why. A route whose own path is computed at run time is no registration:
+// it is an unknown of cause "dynamic" naming its handler, and no edge. A
+// route under a mount path computed at run time keeps its registration with
+// the pattern null. Two applications never share a registration: a router
+// mounted on both yields one registration per application.
 //
 // The route files are the repository's, so a stranger controls them. Every
-// walk here is bounded and says where it stopped: mounts are followed
-// MAX_MOUNT_DEPTH levels deep and MAX_MOUNTS_PER_APP times per application
-// (a diamond of routers cannot multiply), an application keeps
-// MAX_REGISTRATIONS_PER_APP registrations and the build MAX_REGISTRATIONS, a
-// route keeps MAX_MIDDLEWARE_CHAIN middleware, and test requests are
-// matched within MAX_MATCH_WORK steps. Patterns are matched segment by
-// segment, never by a regular expression built from the repository's text.
+// cap below counts the work actually done across the whole build (facts
+// read, lookups made, mounts followed, registrations made, middleware edges,
+// test requests and pattern steps), is checked where that work is done, and
+// once reached stops that work for the rest of the build with one unknown.
+// No counter restarts per application, file or router. Two caps bound one
+// item instead: a mount branch stops MAX_MOUNT_DEPTH routers deep, and one
+// route keeps MAX_MIDDLEWARE_CHAIN middleware. Patterns are matched segment
+// by segment, never by a regular expression built from the repository's
+// text.
 import type { Detection, Entity, FrameworkEdge, FrameworkEvidence, FrameworkEvidenceKind, FrameworkUnknown, HandlerStatus, Lookup, PluginIndex, PluginOutput, Registration, RoleAssignment, Site } from "../plugin.js";
 import { appId, entityId } from "../plugin.js";
 import type { Tier } from "../../model/records.js";
 import type { ExpressFact } from "./facts.js";
 import { HTTP_METHODS } from "./facts.js";
 import type { Expr } from "./js.js";
-import { evaluate, MAX_SOURCE_BYTES, show } from "./js.js";
+import { evaluate, isTestFile, JS_RUNNERS, MAX_SOURCE_BYTES, show } from "./js.js";
 
 export const PLUGIN = "express";
 export const RULE_VERSION = 1;
 const rule = (id: string) => ({ id, version: RULE_VERSION });
 
-// The caps, each with an unknown when it stops a walk.
-export const MAX_MOUNT_DEPTH = 8; // routers deep under an application
-export const MAX_MOUNTS_PER_APP = 500; // router expansions under one application
-export const MAX_REGISTRATIONS_PER_APP = 5000;
-export const MAX_REGISTRATIONS = 10000; // in one build, every application together
-export const MAX_MIDDLEWARE_CHAIN = 64; // middleware kept per application, router and route
-export const MAX_MIDDLEWARE_EDGES = 100_000; // middleware edges in one build
-export const MAX_TEST_REQUESTS = 2000; // supertest requests matched in one build
-export const MAX_PATTERN_SEGMENTS = 64; // segments of a pattern or a request path matched
-export const MAX_MATCH_WORK = 4_000_000; // pattern-by-path steps in one build
+// Caps on one item.
+export const MAX_MOUNT_DEPTH = 8; // routers deep under an application: past it that branch stops
+export const MAX_MIDDLEWARE_CHAIN = 64; // middleware kept for one route
+export const MAX_PATTERN_SEGMENTS = 64; // segments of one pattern or request path matched
+
+// Budgets for the whole build.
+export const MAX_FACTS_READ = 400_000; // facts of every file together
+export const MAX_LOOKUPS = 200_000; // names looked up through the index
+export const MAX_MOUNTS = 2000; // router mounts followed, every application together
+export const MAX_REGISTRATIONS = 10000; // registrations made, every application together
+export const MAX_MIDDLEWARE_EDGES = 100_000; // middleware edges made
+export const MAX_TEST_REQUESTS = 2000; // supertest requests matched
+export const MAX_MATCH_WORK = 4_000_000; // pattern-by-path steps
+export const MAX_UNKNOWNS = 5000; // unknowns kept; past it one more says how many were left out
+
+type Spend = "facts" | "lookups" | "mounts" | "registrations" | "middlewareEdges" | "requests" | "matchWork";
+const LIMIT: Record<Spend, number> = {
+  facts: MAX_FACTS_READ,
+  lookups: MAX_LOOKUPS,
+  mounts: MAX_MOUNTS,
+  registrations: MAX_REGISTRATIONS,
+  middlewareEdges: MAX_MIDDLEWARE_EDGES,
+  requests: MAX_TEST_REQUESTS,
+  matchWork: MAX_MATCH_WORK,
+};
 
 type Fact<K extends ExpressFact["kind"]> = Extract<ExpressFact, { kind: K }>;
 
@@ -80,24 +99,13 @@ type FileIndex = {
   servers: Fact<"server">[];
   testBlocks: number;
   tooLarge: Fact<"too-large"> | null;
+  syntaxError: Fact<"syntax-error"> | null;
+  unread: boolean; // the build's fact budget ran out before this file
 };
 
 const METHOD_SET = new Set<string>([...HTTP_METHODS, "del"]);
 const TYPE_NAMES = new Set(["Express", "Router", "Application", "IRouter"]);
 const HTTP_MODULES = new Set(["http", "https", "node:http", "node:https", "http2", "node:http2"]);
-const RUNNERS = ["vitest", "jest", "mocha", "ava", "@jest/globals", "uvu", "tap"];
-const JS_EXTS = new Set(["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"]);
-
-// A test file by the runners' own default rule: under `__tests__`, or named
-// `<name>.test.<ext>` or `<name>.spec.<ext>`. Plain string checks.
-export function isTestFile(file: string): boolean {
-  const parts = file.split("/");
-  if (parts.slice(0, -1).includes("__tests__")) return true;
-  const bits = (parts[parts.length - 1] ?? "").split(".");
-  if (bits.length < 3) return false;
-  const kind = bits[bits.length - 2];
-  return (kind === "test" || kind === "spec") && JS_EXTS.has(bits[bits.length - 1] as string);
-}
 
 export type Analysis = {
   apps: Detection[];
@@ -127,6 +135,33 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   const registrations: Registration[] = [];
   const apps: Detection[] = [];
 
+  // ---------- the build's budgets ----------
+  const spent: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, matchWork: 0 };
+  const refused: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, matchWork: 0 };
+  const take = (k: Spend, n = 1): boolean => {
+    if (spent[k] + n > LIMIT[k]) {
+      refused[k] += n;
+      return false;
+    }
+    spent[k] += n;
+    return true;
+  };
+  // A budget is gone once it has refused some work: what it allowed was all done.
+  const exhausted = (k: Spend): boolean => refused[k] > 0;
+  let unknownsLeftOut = 0;
+  const seenUnknown = new Set<string>();
+  const addUnknown = (u: FrameworkUnknown) => {
+    const key = `${u.cause}\0${u.site ? `${u.site.file}:${u.site.line}:${u.site.column}` : JSON.stringify(u.scope)}\0${u.note}`;
+    if (seenUnknown.has(key)) return;
+    seenUnknown.add(key);
+    if (unknowns.length >= MAX_UNKNOWNS) unknownsLeftOut++;
+    else unknowns.push(u);
+  };
+  const lookup = (file: string, path: readonly string[]): Lookup => {
+    if (!take("lookups")) return { kind: "gap", cause: "budget", note: `the Express plugin makes at most ${MAX_LOOKUPS} lookups in one build`, candidates: null };
+    return index.lookup(file, path);
+  };
+
   const enabled = new Map<string, boolean>();
   const isEnabled = (file: string): boolean => {
     const project = index.projectOf(file);
@@ -142,8 +177,14 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   const fx = (file: string): FileIndex => {
     let f = fileIndexes.get(file);
     if (f) return f;
-    f = { values: new Map(), params: new Map(), cjs: new Map(), functions: new Map(), calls: [], servers: [], testBlocks: 0, tooLarge: null };
-    for (const fact of index.factsOf(file)) {
+    f = { values: new Map(), params: new Map(), cjs: new Map(), functions: new Map(), calls: [], servers: [], testBlocks: 0, tooLarge: null, syntaxError: null, unread: false };
+    fileIndexes.set(file, f);
+    const list = index.factsOf(file);
+    if (!take("facts", list.length)) {
+      f.unread = true;
+      return f;
+    }
+    for (const fact of list) {
       switch (fact.kind) {
         case "value":
           push(f.values, fact.name, fact);
@@ -169,9 +210,11 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
         case "too-large":
           f.tooLarge = fact;
           break;
+        case "syntax-error":
+          f.syntaxError = fact;
+          break;
       }
     }
-    fileIndexes.set(file, f);
     return f;
   };
 
@@ -184,7 +227,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     identities.set(file, id);
     const lf = index.languageFacts(file);
     if (!lf) return id;
-    const outside = (spec: string) => index.module(file, spec).kind === "external";
+    const outside = (spec: string) => take("lookups") && index.module(file, spec).kind === "external";
     for (const imp of lf.imports) {
       if (imp.scoped) continue;
       const local = [...imp.names.filter((n) => n.imported === "default").map((n) => n.local), ...(imp.namespace ? [imp.namespace] : [])];
@@ -270,11 +313,11 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   };
 
   const fromImport = (file: string, path: readonly string[], depth: number): Val | Param | null => {
-    let found: Lookup = index.lookup(file, path);
+    let found: Lookup = lookup(file, path);
     let target: { file: string; name: string } | null = null;
     if (found.kind === "miss") target = { file: found.target, name: found.name };
     else if (found.kind === "none" && path.length === 2) {
-      found = index.lookup(file, [path[0] as string]);
+      found = lookup(file, [path[0] as string]);
       if (found.kind === "module") target = { file: found.file, name: path[1] as string };
     }
     if (!target || !index.languageFacts(target.file)) return null;
@@ -322,12 +365,19 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   };
 
   const files = index.factFiles().filter(isEnabled);
+  let unreadFiles = 0;
   for (const file of files) {
-    const big = fx(file).tooLarge;
-    if (big) {
-      unknowns.push({ plugin: PLUGIN, site: { file, line: 1, column: 1 }, scope: { file }, affects: ["handles", "mounts", "applies_middleware", "tests"], cause: "file-not-parsed", name: null, note: `the file is ${big.bytes} bytes, over the ${MAX_SOURCE_BYTES}-byte cap of the Express plugin, so its routes were not read`, count: null, exact: false });
+    const fi = fx(file);
+    if (fi.unread) {
+      unreadFiles++;
       continue;
     }
+    const big = fi.tooLarge;
+    if (big) {
+      addUnknown({ plugin: PLUGIN, site: { file, line: 1, column: 1 }, scope: { file }, affects: ["handles", "mounts", "applies_middleware", "tests"], cause: "file-not-parsed", name: null, note: `the file is ${big.bytes} bytes, over the ${MAX_SOURCE_BYTES}-byte cap of the Express plugin, so its routes were not read`, count: null, exact: false });
+      continue;
+    }
+    if (fi.syntaxError) addUnknown({ plugin: PLUGIN, site: { file, line: fi.syntaxError.line, column: 1 }, scope: { file }, affects: ["handles", "mounts", "applies_middleware", "tests"], cause: "file-not-parsed", name: null, note: `the file has ${fi.syntaxError.regions} region(s) the parser could not read, the first at line ${fi.syntaxError.line}; no route was read from them`, count: fi.syntaxError.regions, exact: true });
     for (const list of fx(file).values.values()) {
       for (const v of list) {
         const c = classify(file, v);
@@ -364,7 +414,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   };
 
   for (const file of files) {
-    if (fx(file).tooLarge) continue;
+    if (fx(file).tooLarge || fx(file).unread) continue;
     for (const f of fx(file).calls) {
       const site: Site = { file, line: f.line, column: f.column };
       const base = baseOf(file, f.recv, f.scope, f.line);
@@ -427,14 +477,14 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
       const inner = e.args.find((a) => a.t === "ref");
       const wrapper = show(e.fn);
       if (role === "middleware") {
-        const fn = e.fn.t === "ref" ? index.lookup(file, e.fn.path) : null;
+        const fn = e.fn.t === "ref" ? lookup(file, e.fn.path) : null;
         if (fn?.kind === "symbol") return { status: "bound", targets: fn.ids, tier: "possible", kind: "route-call", via: fn.via, note: `the middleware is the value ${show(e)} returns`, why: null };
         return none(fn?.kind === "external" ? "external" : "unresolved", fn?.kind === "external" ? "external" : "unsupported-rule", `the middleware is the value ${show(e)} returns`, null);
       }
       return none("unresolved", "unsupported-rule", `the handler is the value ${show(e)} returns; whether ${wrapper} calls ${inner ? show(inner) : "what it is given"} is not proved, so the handler is not bound`, inner ? show(inner) : wrapper);
     }
     if (e.t !== "ref") return none("dynamic", "dynamic", `the ${role} is computed (${show(e)})`, null);
-    const found = index.lookup(file, e.path);
+    const found = lookup(file, e.path);
     switch (found.kind) {
       case "symbol":
         return { status: "bound", targets: found.ids, tier: found.tier, kind: "route-call", via: found.via, note: found.tier === "certain" ? null : (found.note ?? `the ${role}'s binding is ${found.tier}`), why: null };
@@ -469,10 +519,6 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
 
   // ---------- composition: every route each application serves ----------
   type Mw = { prefix: string | null; site: Site; file: string; expr: Expr; scope: number };
-  // One root of the composition (an application, or a router no
-  // application reaches) and what its walk has spent.
-  type Walk = { app: string | null; root: string; mounts: number; regs: number; stopped: "mounts" | "registrations" | "total" | null; mwOmitted: number; depthCut: number };
-  let totalRegs = 0;
   const segs = (p: string): string[] => p.split("/").filter((s) => s !== "");
   const joinPath = (a: string, b: string): string => `/${[...segs(a), ...segs(b)].join("/")}`;
   const under = (pattern: string | null, prefix: string | null): boolean => {
@@ -482,7 +528,9 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     const q = segs(pattern);
     return p.length <= q.length && p.every((s, i) => s === q[i]);
   };
-  const scopeOf = (w: Walk, file: string): FrameworkUnknown["scope"] => (w.app ? { app: w.app } : { file });
+  const scopeOf = (app: string | null, file: string): FrameworkUnknown["scope"] => (app ? { app } : { file });
+  // The walk stops everywhere once a build budget it spends is gone.
+  const halted = (): boolean => exhausted("mounts") || exhausted("registrations");
 
   const reached = new Set<string>(); // routers some application reaches
   const mountedBy = new Map<string, number>(); // routers mounted anywhere, application or not
@@ -497,90 +545,87 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     }
   }
 
-  let middlewareEdges = 0;
-  let middlewareEdgesOmitted = 0;
-  const compose = (w: Walk, val: Val & { kind: "app" | "router" }, prefix: string | null, inherited: Mw[], via: Site[], stack: readonly string[], depth: number) => {
-    if (w.app) reached.add(val.id);
+  let middlewareOmitted = 0; // middleware past MAX_MIDDLEWARE_CHAIN in one chain
+  const depthCut = new Map<string, number>(); // per application root: mounts past MAX_MOUNT_DEPTH
+
+  // A route whose own path is computed: an unknown naming its handler, no registration.
+  const computedRoute = (e: RouteEvent, h: Expr) => {
+    addUnknown({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles"], cause: "dynamic", name: show(h), note: `the route path ${show(e.path)} is computed at run time, so the route that ${show(h)} handles is not known; it is not listed as a route`, count: null, exact: false });
+  };
+
+  const compose = (app: string | null, val: Val & { kind: "app" | "router" }, prefix: string | null, inherited: Mw[], via: Site[], stack: readonly string[], depth: number) => {
+    if (app) reached.add(val.id);
     const mw: Mw[] = [...inherited];
     for (const e of events.get(val.id) ?? []) {
-      if (w.stopped) return;
+      if (halted()) return;
       if (e.type === "use") {
         const own = e.prefix === null ? null : evaluate(e.prefix, constant(e.file));
         if (e.prefix !== null && own === null) {
-          unknowns.push({ plugin: PLUGIN, site: e.site, scope: scopeOf(w, e.file), affects: ["mounts", "handles", "applies_middleware"], cause: "dynamic", name: show(e.prefix), note: `the mount path ${show(e.prefix)} is computed at run time, so the routes under it have no known pattern`, count: null, exact: false });
+          addUnknown({ plugin: PLUGIN, site: e.site, scope: scopeOf(app, e.file), affects: ["mounts", "handles", "applies_middleware"], cause: "dynamic", name: show(e.prefix), note: `the mount path ${show(e.prefix)} is computed at run time, so the routes under it have no known pattern`, count: null, exact: false });
         }
         const at = e.prefix === null ? prefix : own === null ? null : joinPath(prefix ?? "", own);
         const known = e.prefix === null || own !== null;
         for (const a of e.args) {
-          if (w.stopped) return;
+          if (halted()) return;
           const target = a.t === "ref" ? valueIn(e.file, a.path, e.scope, e.site.line) : null;
           if (target && target.kind === "router") {
             // A mount that loops back to a router on the way here ends the loop.
             if (stack.includes(target.id)) continue;
             if (depth >= MAX_MOUNT_DEPTH) {
-              w.depthCut++;
+              const root = stack[0] as string;
+              depthCut.set(root, (depthCut.get(root) ?? 0) + 1);
               continue;
             }
-            if (w.mounts >= MAX_MOUNTS_PER_APP) {
-              w.stopped = "mounts";
-              return;
-            }
-            w.mounts++;
-            edges.push({ from: val.id, to: target.id, kind: "mounts", plugin: PLUGIN, app: w.app, evidence: { kind: "mount", tier: "certain", site: e.site, via: null, premises: [], rule: rule("express-mount"), note: null } });
-            compose(w, target, known ? (at ?? "") : null, mw.filter((m) => under(at, m.prefix)), [...via, e.site], [...stack, target.id], depth + 1);
+            if (!take("mounts")) return;
+            edges.push({ from: val.id, to: target.id, kind: "mounts", plugin: PLUGIN, app, evidence: { kind: "mount", tier: "certain", site: e.site, via: null, premises: [], rule: rule("express-mount"), note: null } });
+            compose(app, target, known ? (at ?? "") : null, mw.filter((m) => under(at, m.prefix)), [...via, e.site], [...stack, target.id], depth + 1);
             continue;
           }
           if (target && target.kind === "app") continue; // a sub-application: its own routes, its own identity
           if (mw.length >= MAX_MIDDLEWARE_CHAIN) {
-            w.mwOmitted++;
+            middlewareOmitted++;
             continue;
           }
           mw.push({ prefix: known ? at : null, site: e.site, file: e.file, expr: a, scope: e.scope });
           // Every function given to use is middleware, whether or not a route follows it.
           const b = bindFn(e.file, a, e.scope, e.site.line, "middleware");
-          for (const t of b.targets) addRole(t, "middleware", errorHandler(t) ? "error-handler" : "express", w.app, { kind: "route-call", tier: b.tier, site: e.site, via: b.via, premises: [], rule: rule("express-middleware"), note: b.note });
+          for (const t of b.targets) addRole(t, "middleware", errorHandler(t) ? "error-handler" : "express", app, { kind: "route-call", tier: b.tier, site: e.site, via: b.via, premises: [], rule: rule("express-middleware"), note: b.note });
         }
         continue;
       }
       // A route.
-      if (w.regs >= MAX_REGISTRATIONS_PER_APP) {
-        w.stopped = "registrations";
-        return;
-      }
-      if (totalRegs >= MAX_REGISTRATIONS) {
-        w.stopped = "total";
-        return;
-      }
-      w.regs++;
-      totalRegs++;
+      const h = e.handlers[e.handlers.length - 1] as Expr;
       const written = evaluate(e.path, constant(e.file));
+      if (written === null) {
+        computedRoute(e, h);
+        continue;
+      }
+      if (!take("registrations")) return;
       // A router no application reaches keeps its pattern as written; one
       // under a computed mount path has none.
-      const pattern = written === null ? null : prefix === null ? (via.length > 0 ? null : written) : joinPath(prefix, written);
+      const pattern = prefix === null ? (via.length > 0 ? null : written) : joinPath(prefix, written);
       const key = `${e.file}:${e.site.line}:${e.site.column}${via.map((s) => `@${s.file}:${s.line}:${s.column}`).join("")}`;
-      const id = entityId(PLUGIN, w.app, "registration", key);
-      const h = e.handlers[e.handlers.length - 1] as Expr;
+      const id = entityId(PLUGIN, app, "registration", key);
       const bound = bindFn(e.file, h, e.scope, e.site.line, "handler");
       registrations.push({
         kind: "registration",
         id,
         plugin: PLUGIN,
-        app: w.app,
+        app,
         methods: e.methods,
         pattern,
         written,
         name: null,
         site: e.site,
         mountedVia: via,
-        mounted: w.app !== null,
+        mounted: app !== null,
         handler: { written: show(h), status: bound.status, targets: bound.targets },
       });
-      if (written === null) unknowns.push({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles"], cause: "dynamic", name: show(e.path), note: `the route path ${show(e.path)} is computed at run time, so this registration has no known pattern`, count: null, exact: false });
-      if (bound.why) unknowns.push({ plugin: PLUGIN, site: { file: e.file, line: h.line, column: h.column }, scope: { file: e.file }, affects: ["handles"], cause: bound.why.cause, name: bound.why.name, note: bound.why.note, count: null, exact: false });
+      if (bound.why) addUnknown({ plugin: PLUGIN, site: { file: e.file, line: h.line, column: h.column }, scope: { file: e.file }, affects: ["handles"], cause: bound.why.cause, name: bound.why.name, note: bound.why.note, count: null, exact: false });
       for (const t of bound.targets) {
         const ev: FrameworkEvidence = { kind: bound.kind, tier: bound.tier, site: e.site, via: bound.via, premises: [], rule: rule("express-route"), note: bound.note };
-        edges.push({ from: id, to: t, kind: "handles", plugin: PLUGIN, app: w.app, evidence: ev });
-        addRole(t, "route_handler", "express", w.app, ev);
+        edges.push({ from: id, to: t, kind: "handles", plugin: PLUGIN, app, evidence: ev });
+        addRole(t, "route_handler", "express", app, ev);
       }
       // Middleware: the application's and routers' own in effect here, then the route's.
       const own: Mw[] = [];
@@ -588,41 +633,24 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
         for (const item of x.t === "array" ? x.items : [x]) own.push({ prefix: null, site: e.site, file: e.file, expr: item, scope: e.scope });
       }
       const chain = [...mw.filter((m) => under(pattern, m.prefix)), ...own];
-      if (chain.length > MAX_MIDDLEWARE_CHAIN) w.mwOmitted += chain.length - MAX_MIDDLEWARE_CHAIN;
+      if (chain.length > MAX_MIDDLEWARE_CHAIN) middlewareOmitted += chain.length - MAX_MIDDLEWARE_CHAIN;
       let order = 0;
       for (const m of chain.slice(0, MAX_MIDDLEWARE_CHAIN)) {
         const b = bindFn(m.file, m.expr, m.scope, m.site.line, "middleware");
         for (const t of b.targets) {
           const ev: FrameworkEvidence = { kind: "route-call", tier: b.tier, site: m.site, via: b.via, premises: [], rule: rule("express-middleware"), note: b.note };
-          addRole(t, "middleware", errorHandler(t) ? "error-handler" : "express", w.app, ev);
-          if (middlewareEdges >= MAX_MIDDLEWARE_EDGES) {
-            middlewareEdgesOmitted++;
-            continue;
-          }
-          edges.push({ from: id, to: t, kind: "applies_middleware", plugin: PLUGIN, app: w.app, evidence: ev, order });
-          middlewareEdges++;
+          addRole(t, "middleware", errorHandler(t) ? "error-handler" : "express", app, ev);
+          if (take("middlewareEdges")) edges.push({ from: id, to: t, kind: "applies_middleware", plugin: PLUGIN, app, evidence: ev, order });
         }
         order++;
       }
     }
   };
 
-  // What a walk left out, as unknowns on its root.
-  const report = (w: Walk, file: string) => {
-    const scope = scopeOf(w, file);
-    if (w.depthCut > 0) unknowns.push({ plugin: PLUGIN, site: null, scope, affects: ["mounts", "handles"], cause: "fan-out-capped", name: null, note: `routers mounted more than ${MAX_MOUNT_DEPTH} levels deep were not followed (${w.depthCut} mounts); their routes are not listed`, count: w.depthCut, exact: true });
-    if (w.stopped === "mounts") unknowns.push({ plugin: PLUGIN, site: null, scope, affects: ["mounts", "handles", "applies_middleware"], cause: "fan-out-capped", name: null, note: `the walk stopped after ${MAX_MOUNTS_PER_APP} router mounts under one application; the routes past it are not listed`, count: null, exact: false });
-    if (w.stopped === "registrations") unknowns.push({ plugin: PLUGIN, site: null, scope, affects: ["handles", "applies_middleware"], cause: "fan-out-capped", name: null, note: `the walk stopped after ${MAX_REGISTRATIONS_PER_APP} registrations under one application; the routes past it are not listed`, count: null, exact: false });
-    if (w.stopped === "total") unknowns.push({ plugin: PLUGIN, site: null, scope, affects: ["handles", "applies_middleware"], cause: "fan-out-capped", name: null, note: `the plugin keeps at most ${MAX_REGISTRATIONS} registrations in one build; the routes past it are not listed`, count: null, exact: false });
-    if (w.mwOmitted > 0) unknowns.push({ plugin: PLUGIN, site: null, scope, affects: ["applies_middleware"], cause: "fan-out-capped", name: null, note: `middleware past ${MAX_MIDDLEWARE_CHAIN} in one chain was left out (${w.mwOmitted} entries)`, count: w.mwOmitted, exact: true });
-  };
-
   for (const v of vals.values()) {
     if (v.kind !== "app") continue;
     const id = v.id;
-    const w: Walk = { app: id, root: id, mounts: 0, regs: 0, stopped: null, mwOmitted: 0, depthCut: 0 };
-    compose(w, v, "", [], [], [id], 0);
-    report(w, v.file);
+    compose(id, v, "", [], [], [id], 0);
     const version = index.model().node.find((p) => p.dir === index.projectOf(v.file))?.pkg.deps.get("express") ?? null;
     const servedAt = served.get(id) ?? [];
     apps.push({
@@ -639,21 +667,22 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   // Routers no application reaches: their routes are kept, relative and not served.
   for (const v of vals.values()) {
     if (v.kind !== "router" || reached.has(v.id) || (mountedBy.get(v.id) ?? 0) > 0) continue;
-    const w: Walk = { app: null, root: v.id, mounts: 0, regs: 0, stopped: null, mwOmitted: 0, depthCut: 0 };
-    compose(w, v, null, [], [], [v.id], 0);
-    report(w, v.file);
+    compose(null, v, null, [], [], [v.id], 0);
   }
   // Routes on a parameter typed as an application or a router.
   for (const { param, event: e } of paramRoutes) {
-    if (totalRegs >= MAX_REGISTRATIONS) break;
-    totalRegs++;
-    const written = evaluate(e.path, constant(e.file));
     const h = e.handlers[e.handlers.length - 1] as Expr;
+    const written = evaluate(e.path, constant(e.file));
+    if (written === null) {
+      computedRoute(e, h);
+      continue;
+    }
+    if (!take("registrations")) break;
     const bound = bindFn(e.file, h, e.scope, e.site.line, "handler");
     const id = entityId(PLUGIN, null, "registration", `${e.file}:${e.site.line}:${e.site.column}`);
     registrations.push({ kind: "registration", id, plugin: PLUGIN, app: null, methods: e.methods, pattern: written, written, name: null, site: e.site, mountedVia: [], mounted: false, handler: { written: show(h), status: bound.status, targets: bound.targets } });
-    unknowns.push({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles", "mounts"], cause: "dynamic", name: param.name, note: `the route is registered on the parameter ${param.name} (${param.type}); which application it lands on, and under which prefix, is decided by the caller`, count: null, exact: false });
-    if (bound.why) unknowns.push({ plugin: PLUGIN, site: { file: e.file, line: h.line, column: h.column }, scope: { file: e.file }, affects: ["handles"], cause: bound.why.cause, name: bound.why.name, note: bound.why.note, count: null, exact: false });
+    addUnknown({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles", "mounts"], cause: "dynamic", name: param.name, note: `the route is registered on the parameter ${param.name} (${param.type}); which application it lands on, and under which prefix, is decided by the caller`, count: null, exact: false });
+    if (bound.why) addUnknown({ plugin: PLUGIN, site: { file: e.file, line: h.line, column: h.column }, scope: { file: e.file }, affects: ["handles"], cause: bound.why.cause, name: bound.why.name, note: bound.why.note, count: null, exact: false });
     for (const t of bound.targets) {
       const ev: FrameworkEvidence = { kind: "route-call", tier: bound.tier, site: e.site, via: bound.via, premises: [], rule: rule("express-route"), note: bound.note };
       edges.push({ from: id, to: t, kind: "handles", plugin: PLUGIN, app: null, evidence: ev });
@@ -670,22 +699,19 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     if (p) push(byApp, r.app, { reg: r, pattern: p });
   }
   const testFiles = new Set<string>();
-  let work = 0;
-  let unmatched = 0;
-  let requestsSeen = 0;
+  let unmatched = 0; // requests the budget left unmatched
   for (const r of requests) {
-    if (requestsSeen >= MAX_TEST_REQUESTS || work >= MAX_MATCH_WORK) {
+    if (exhausted("matchWork") || !take("requests")) {
       unmatched++;
       continue;
     }
-    requestsSeen++;
     const target = r.agent.target;
     const app = target.t === "ref" ? valueIn(r.agent.file, target.path, r.agent.scope, r.agent.line) : null;
     if (!app || app.kind !== "app") continue;
     testFiles.add(r.file);
     const path = evaluate(r.path, constant(r.file));
     if (path === null) {
-      unknowns.push({ plugin: PLUGIN, site: r.site, scope: { file: r.file }, affects: ["tests"], cause: "dynamic", name: show(r.path), note: `the test requests a computed path (${show(r.path)}), so the route it reaches is not known`, count: null, exact: false });
+      addUnknown({ plugin: PLUGIN, site: r.site, scope: { file: r.file }, affects: ["tests"], cause: "dynamic", name: show(r.path), note: `the test requests a computed path (${show(r.path)}), so the route it reaches is not known`, count: null, exact: false });
       continue;
     }
     const clean = (path.split("?")[0] as string).split("#")[0] as string;
@@ -694,21 +720,35 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     const from = index.enclosing(r.file, r.site.line)?.id ?? r.file;
     for (const { reg, pattern } of byApp.get(app.id) ?? []) {
       if (!reg.methods.includes("*") && !reg.methods.includes(r.method) && !(r.method === "HEAD" && reg.methods.includes("GET"))) continue;
-      work += (pattern.length + 1) * (asked.length + 1);
+      if (!take("matchWork", (pattern.length + 1) * (asked.length + 1))) {
+        unmatched++;
+        break;
+      }
       if (!matchSegments(pattern, asked)) continue;
       edges.push({ from, to: reg.id, kind: "tests", plugin: PLUGIN, app: app.id, category: "route-request", evidence: { kind: "test-route-request", tier: "likely", site: r.site, via: null, premises: [reg.id], rule: rule("express-test-request"), note: `the test requests ${r.method} ${clean} from ${app.name}, which this route's pattern ${reg.pattern} matches` } });
     }
   }
-  if (unmatched > 0) unknowns.push({ plugin: PLUGIN, site: null, scope: { project: "" }, affects: ["tests"], cause: "budget", name: null, note: `${unmatched} test requests were not matched to routes: the plugin matches at most ${MAX_TEST_REQUESTS} requests and ${MAX_MATCH_WORK} pattern steps in one build`, count: unmatched, exact: true });
   for (const file of files) {
     if (!isTestFile(file) || fx(file).testBlocks === 0) continue;
     const project = index.projectOf(file);
-    const runner = RUNNERS.some((n) => index.declares(project, "npm", n)) || (index.languageFacts(file)?.imports.some((i) => i.spec === "node:test") ?? false);
+    const runner = JS_RUNNERS.some((n) => index.declares(project, "npm", n)) || (index.languageFacts(file)?.imports.some((i) => i.spec === "node:test") ?? false);
     if (!runner || (!testFiles.has(file) && identity(file).supertest.size === 0)) continue;
     addRole(file, "test", "supertest", null, { kind: "role-path", tier: "certain", site: { file, line: 1, column: 1 }, via: null, premises: [], rule: rule("express-test-file"), note: null });
   }
 
-  if (middlewareEdgesOmitted > 0) unknowns.push({ plugin: PLUGIN, site: null, scope: { project: "" }, affects: ["applies_middleware"], cause: "fan-out-capped", name: null, note: `the plugin keeps at most ${MAX_MIDDLEWARE_EDGES} middleware edges in one build; ${middlewareEdgesOmitted} more were left out`, count: middlewareEdgesOmitted, exact: true });
+  // ---------- what the caps and budgets left out ----------
+  const whole = { project: "" } as const;
+  for (const [root, n] of depthCut) addUnknown({ plugin: PLUGIN, site: null, scope: root.startsWith("fw:express:app:") ? { app: root } : whole, affects: ["mounts", "handles"], cause: "fan-out-capped", name: null, note: `routers mounted more than ${MAX_MOUNT_DEPTH} levels deep were not followed (${n} mounts); their routes are not listed`, count: n, exact: true });
+  // These always fit: they are the record of what the caps and budgets cut.
+  const cut = (affects: FrameworkUnknown["affects"], cause: FrameworkUnknown["cause"], count: number | null, note: string) => unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects, cause, name: null, note, count, exact: count !== null });
+  if (unreadFiles > 0) cut(["handles", "mounts", "applies_middleware", "tests"], "budget", unreadFiles, `${unreadFiles} files were not read: the Express plugin reads at most ${MAX_FACTS_READ} facts in one build`);
+  if (refused.lookups > 0) cut(["handles", "mounts", "applies_middleware"], "budget", refused.lookups, `${refused.lookups} names were not looked up: the Express plugin makes at most ${MAX_LOOKUPS} lookups in one build`);
+  if (refused.mounts > 0) cut(["mounts", "handles", "applies_middleware"], "fan-out-capped", null, `the walk stopped after ${MAX_MOUNTS} router mounts in this build; the routes past it are not listed`);
+  if (refused.registrations > 0) cut(["handles", "applies_middleware"], "fan-out-capped", null, `the walk stopped after ${MAX_REGISTRATIONS} registrations in this build; the routes past it are not listed`);
+  if (refused.middlewareEdges > 0) cut(["applies_middleware"], "fan-out-capped", refused.middlewareEdges, `${refused.middlewareEdges} middleware edges were left out: the Express plugin keeps at most ${MAX_MIDDLEWARE_EDGES} in one build`);
+  if (middlewareOmitted > 0) cut(["applies_middleware"], "fan-out-capped", middlewareOmitted, `${middlewareOmitted} middleware entries past ${MAX_MIDDLEWARE_CHAIN} in one chain were left out`);
+  if (unmatched > 0) cut(["tests"], "budget", unmatched, `${unmatched} test requests were not matched to routes: the Express plugin matches at most ${MAX_TEST_REQUESTS} requests and ${MAX_MATCH_WORK} pattern steps in one build`);
+  if (unknownsLeftOut > 0) unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects: ["handles", "mounts", "applies_middleware", "tests"], cause: "fan-out-capped", name: null, note: `${unknownsLeftOut} more unknowns past the first ${MAX_UNKNOWNS} were left out`, count: unknownsLeftOut, exact: true });
   const entities: Entity[] = registrations;
   return { apps, output: { roles, entities, edges, unknowns } };
 }
