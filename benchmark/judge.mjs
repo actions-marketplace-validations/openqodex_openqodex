@@ -32,8 +32,9 @@
 // 8. A second pass judges everything again: --resume keeps every review
 //    already judged.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { classify, ratio, value } from "./lib/score.mjs";
 import { BLOCKED, claudeEnv } from "./lib/reviewers.mjs";
 
@@ -81,6 +82,11 @@ function ask(model, text) {
     const timer = setTimeout(() => child.kill("SIGTERM"), 300_000);
     child.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
     child.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
+    // claude missing or not startable: an answer with the reason, not a crash.
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      done({ code: null, stdout: "", stderr: `could not start claude: ${e.message}` });
+    });
     child.on("close", (code) => {
       clearTimeout(timer);
       done({ code, stdout, stderr });
@@ -228,4 +234,5 @@ async function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) await main();
+// Run as a script, not imported: Node gives import.meta.url the real path, so argv[1] is compared by its real path.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

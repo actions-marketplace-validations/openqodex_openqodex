@@ -21,8 +21,9 @@
 //    every difference is printed above the comparison.
 // 4. A table hides how many samples a number rests on: every ratio is
 //    printed as hits/checks, every time and cost with its count.
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { repoRoot } from "./lib/cases.mjs";
 import { SEVERITY_ORDER, bugStability, groupBy, regressions, runDifferences, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 
@@ -245,4 +246,5 @@ function main() {
   process.exit(regs.length > 0 ? 1 : 0);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) main();
+// Run as a script, not imported: Node gives import.meta.url the real path, so argv[1] is compared by its real path.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();

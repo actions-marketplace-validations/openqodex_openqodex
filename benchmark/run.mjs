@@ -42,7 +42,9 @@
 //    receipt's paths are replaced by placeholders, and every saved file is
 //    checked for the generated value; one found stops the run.
 // 9. An earlier run's folder is overwritten: a folder that holds samples is
-//    refused unless --resume, which keeps every saved review and runs the rest.
+//    refused unless --resume, which keeps every saved review and the specs
+//    it copied, runs the rest, and refuses a different CLI bundle, an
+//    edited case or another reviewer model.
 // 10. Wall time includes building the case: the clock runs from the start
 //    of the CLI to its exit only.
 // 11. The run spends more than asked: more than three repeats needs
@@ -260,10 +262,28 @@ async function main() {
     console.log(`Reviewer ${name} ${p.version}, model ${JSON.stringify(p.model)}`);
   }
 
-  mkdirSync(join(out, "cases"), { recursive: true });
-  for (const c of o.cases) cpSync(join(casesRoot, c, "case.json"), join(out, "cases", `${c}.json`));
   const manifestPath = join(out, "manifest.json");
   const earlier = readJson(manifestPath);
+  const hashes = Object.fromEntries(o.cases.map((c) => [c, caseHash(c)]));
+  // A resumed run must review the same build and the same cases with the
+  // same model, or its samples mix two runs under one name (failure 9).
+  if (earlier) {
+    const differs = [];
+    if (earlier.build?.bundleSha256 !== build.bundleSha256) differs.push("CLI bundle");
+    for (const c of o.cases) {
+      const saved = join(out, "cases", `${c}.json`);
+      const specChanged = existsSync(saved) && readFileSync(saved, "utf8") !== readFileSync(join(casesRoot, c, "case.json"), "utf8");
+      if (specChanged || (earlier.caseHashes?.[c] !== undefined && earlier.caseHashes[c] !== hashes[c])) differs.push(`case ${c}`);
+    }
+    for (const name of o.reviewers) if (JSON.stringify(earlier.reviewers?.[name]?.model ?? null) !== JSON.stringify(reviewers[name].model)) differs.push(`${name} model`);
+    if (differs.length > 0) {
+      console.error(`${shown(out)} was run with a different ${differs.join(", ")}; resuming would mix two runs. Start a new run with --out.`);
+      process.exit(2);
+    }
+  }
+  // The specs this run scores against; a resume keeps the copies it made first.
+  mkdirSync(join(out, "cases"), { recursive: true });
+  for (const c of o.cases) if (!existsSync(join(out, "cases", `${c}.json`))) cpSync(join(casesRoot, c, "case.json"), join(out, "cases", `${c}.json`));
   const manifest = {
     version: 1,
     started_at: earlier?.started_at ?? new Date().toISOString(),
@@ -275,7 +295,7 @@ async function main() {
     review: { web: o.web, timeoutSeconds: o.timeout, reportDir: true, flags: "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]" },
     cases: o.cases,
     // What each case was built from, so a comparison can tell an edited case from a product change.
-    caseHashes: Object.fromEntries(o.cases.map((c) => [c, caseHash(c)])),
+    caseHashes: hashes,
     configs: configs.map((c) => c.id),
     repeat: o.repeat,
     concurrency: o.concurrency,
