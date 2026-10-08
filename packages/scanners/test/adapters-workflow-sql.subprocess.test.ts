@@ -27,7 +27,11 @@ jobs:
 // An index built without CONCURRENTLY, which blocks writes to the table.
 const BLOCKING_INDEX = "CREATE INDEX orders_customer_idx ON orders (customer_id);\n";
 
+// A comparison with NULL by `=`, which is never true.
+const NULL_COMPARISON = "SELECT id FROM users WHERE deleted_at = NULL;\n";
+
 const cases: Case[] = [
+  { scanner: "sqlfluff", rule: "CV05", files: { "reports/active_users.sql": NULL_COMPARISON }, anchor: "reports/active_users.sql" },
   { scanner: "squawk", rule: "require-concurrent-index-creation", files: { "db/migrations/0002_orders.sql": BLOCKING_INDEX }, anchor: "db/migrations/0002_orders.sql" },
   { scanner: "zizmor", rule: "template-injection", files: { ".github/workflows/greet.yml": INJECTED_WORKFLOW }, anchor: ".github/workflows/greet.yml" },
   {
@@ -170,5 +174,58 @@ describe("workflow and SQL scanner subprocesses", () => {
     const repo = mkdtempSync(join(tmpdir(), "oq-adapter-squawk-glob-"));
     const result = await scanAt(repo, "squawk", { "db/[1]x.sql": BLOCKING_INDEX, "db/1x.sql": "SELECT 1;\n" }, ["db/[1]x.sql"]);
     expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "squawk", ruleId: "require-concurrent-index-creation", filePath: "db/[1]x.sql" }));
+  }, 300_000);
+
+  it("sqlfluff opens no connection", async () => {
+    await resolveFirst("sqlfluff");
+    const { result, hosts } = await withLoggingProxy(() => scan(cases.find((c) => c.scanner === "sqlfluff")!));
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    expect(hosts).toEqual([]);
+  }, 300_000);
+
+  // With SQLFluff's defaults, a .sqlfluff naming the jinja templater and a
+  // library_path makes it import the library's Python files: this one would
+  // write a marker outside the repo and leave bytecode inside it.
+  it("sqlfluff never runs a library a repo's settings name, and writes nothing", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-config-"));
+    const marker = join(mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-marker-")), "ran");
+    const plant = `import pathlib\npathlib.Path(${JSON.stringify(marker)}).write_text("ran")\n`;
+    const files = {
+      ".sqlfluff": "[sqlfluff]\ntemplater = jinja\ndialect = postgres\n\n[sqlfluff:templater:jinja]\nlibrary_path = lib\n",
+      "lib/__init__.py": plant,
+      "lib/macros.py": plant,
+      "reports/active_users.sql": NULL_COMPARISON,
+    };
+    const result = await scanAt(repo, "sqlfluff", files, [".sqlfluff", "reports/active_users.sql"]);
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "sqlfluff", ruleId: "CV05", filePath: "reports/active_users.sql" }));
+    expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "sqlfluff", ruleId: "settings-file", filePath: ".sqlfluff" }));
+    expect(listFiles(dirname(marker))).toEqual([]);
+    expect(listFiles(repo)).toEqual(Object.keys(files).sort());
+  }, 300_000);
+
+  // The dialect comes from the repo's settings where they name one, and is
+  // postgres elsewhere; a file it cannot parse gives no parse-error flood.
+  it("sqlfluff reads the dialect a folder's settings name, uses postgres elsewhere, and drops parse errors", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-dialect-"));
+    const mysql = "SELECT `id` FROM `users` WHERE `deleted_at` = NULL;\nSELECT `name` FROM `users`;\n";
+    const files = {
+      "mysql/.sqlfluff": "[sqlfluff]\ndialect = mysql\n",
+      "mysql/active.sql": mysql,
+      "pg/active.sql": NULL_COMPARISON,
+      "unset/active.sql": mysql,
+    };
+    const result = await scanAt(repo, "sqlfluff", files, ["mysql/active.sql", "pg/active.sql", "unset/active.sql"]);
+    expect(result.scan.scanners[0]).toMatchObject({ status: "ran", reason: null });
+    const found = result.scan.candidates.filter((c) => c.source === "sqlfluff").map((c) => `${c.filePath}:${c.ruleId}`).sort();
+    expect(found).toEqual(["mysql/active.sql:CV05", "pg/active.sql:CV05"]);
+  }, 300_000);
+
+  // A review runs it on every changed .sql file; a slow start would stall it.
+  it("sqlfluff checks a small file in under 10 seconds once installed", async () => {
+    await resolveFirst("sqlfluff");
+    const result = await scan(cases.find((c) => c.scanner === "sqlfluff")!);
+    process.stdout.write(`sqlfluff on one small file: ${result.scan.scanners[0]!.durationMs} ms\n`);
+    expect(result.scan.scanners[0]!.durationMs).toBeLessThan(10_000);
   }, 300_000);
 });

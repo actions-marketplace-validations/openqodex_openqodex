@@ -62,7 +62,7 @@ A scanner problem never changes the exit code.
 
 ## Changed scanner settings
 
-Several scanners read settings or an ignore list from the repository, as OpenQodex runs them. At the repository root only: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`; semgrep `.semgrepignore`; hadolint `.hadolint.yaml` and `.hadolint.yml`; actionlint `.github/actionlint.yaml` and `.github/actionlint.yml`; zizmor `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` and `zizmor.yaml`; squawk `.squawk.toml`. In any folder: ruff `ruff.toml` and `.ruff.toml`, and `pyproject.toml` when the change touches its `[tool.ruff` table; shellcheck `.shellcheckrc` and `shellcheckrc`; osv-scanner `osv-scanner.toml`. A change to one of them can hide that scanner's findings.
+Several scanners read settings or an ignore list from the repository, as OpenQodex runs them. At the repository root only: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`; semgrep `.semgrepignore`; hadolint `.hadolint.yaml` and `.hadolint.yml`; actionlint `.github/actionlint.yaml` and `.github/actionlint.yml`; zizmor `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` and `zizmor.yaml`; squawk `.squawk.toml`. In any folder: ruff `ruff.toml` and `.ruff.toml`, and `pyproject.toml` when the change touches its `[tool.ruff` table; shellcheck `.shellcheckrc` and `shellcheckrc`; osv-scanner `osv-scanner.toml`; sqlfluff `.sqlfluff` and `.sqlfluffignore`. A change to one of them can hide that scanner's findings.
 
 In a review, each such changed file is a major candidate of that scanner, rule `settings-file`, on its first changed line; the reviewer verifies it and raises it or drops it with a reason. In a scan (`scan`, which the pre-commit hook and the Action run) nobody can clear it, so it is a minor finding and counts toward the verdict. The scanner still reads the changed file. `scanners.disable` leaves it out with its scanner. `--only` and `--skip` do not, since they pick scanners for one run and the file still silences the scanner in every other run. A changed settings file in a fixture folder is listed too: a config outside the folder can extend it (ruff's `extend`), so it can hide findings in code that is not a fixture.
 
@@ -89,6 +89,7 @@ A comment counts where its scanner reads it, and the match is never narrower tha
 | rubocop | `# rubocop:disable` and `# rubocop:todo` with a cop name or `all` | a Ruby comment, `=begin` blocks included | source only: [directive_comment.rb](https://github.com/rubocop/rubocop/blob/v1.69.2/lib/rubocop/directive_comment.rb) |
 | zizmor | `# zizmor: ignore[` and a rule list, with one blank after the `#` and after the colon | anywhere on the line: zizmor reads each line of a finding from its first `#`, so for some of its audits it obeys the comment inside a `run:` block or a quoted value too | the 1.30.1 binary; [location.rs](https://github.com/zizmorcore/zizmor/blob/v1.30.1/crates/zizmor/src/finding/location.rs) |
 | squawk | `squawk-ignore` and `squawk-ignore-file`, with a rule list or without; `squawk-disable-assume-in-transaction` | the start of a `--` or `/* */` comment, after blanks; never in a string, a dollar-quoted body or a quoted identifier. Block comments nest, as Postgres reads them | the 2.66.0 binary; [ignore.rs](https://github.com/sbdchd/squawk/blob/v2.66.0/crates/squawk_linter/src/ignore.rs) |
+| sqlfluff | `noqa`, `noqa:` with rules, `noqa: disable=` and `noqa: enable=` | anywhere on the line after `--`, `#` or `/*`, and at the start of a line: SQLFluff reads it at the start of a comment or after the comment's last `--`, and which text is a comment depends on the dialect | the 4.3.0 binary; [noqa.py](https://github.com/sqlfluff/sqlfluff/blob/4.3.0/src/sqlfluff/core/rules/noqa.py) |
 
 Where OpenQodex is wider than the scanner, it errs towards a candidate the reviewer drops: semgrep's marker also counts without the space before it and in any comment form, ruff's `# isort: off` with extra blanks, a `disable=` inside a quoted value or a trailing note of a shellcheck directive, a hadolint or rubocop comment whose rule list the scanner would reject, a `# ruff: noqa` or generated-file comment the scanner reads differently, the text of JSX or a Ruby `__END__` block read as code, and everything after an opener left open. hadolint 2.15.1 cannot parse a Dockerfile with a heredoc at all and reports only a parse error, so its comments there are moot.
 
@@ -256,7 +257,16 @@ The comments are found by a small reader per comment family, not a full parser. 
 
 ## sqlfluff
 
-- PLACEHOLDER sqlfluff: the builder of this scanner replaces this line.
+- Version: 4.3.0.
+- Runs when: a `.sql` file changed, the files sqllint checks.
+- Needs: Python 3.11, which OpenQodex downloads through uv, as for semgrep and bandit. About 4.6 MB of packages on Apple Silicon, 6.0 MB on Linux x64.
+- Finds queries that return a wrong result or hold dead code: a comparison with `NULL` by `=` (CV05), a set query whose sides return different numbers of columns (AM07), a join with no condition (AM08), a reference to a table that is not in `FROM` (RF01), a table alias used twice (AL04), a column alias used twice (AL08), a CTE never used (ST03), an outer-joined table never used (ST11). Only these rules run, whatever the repo's settings select: SQLFluff's layout, capitalisation and quoting rules fire on almost every line of hand-written SQL.
+- Severity: CV05, AM07, AM08, RF01 and AL04 rank medium; AL08, ST03 and ST11 rank low; a rule the repo's settings list under `warnings` ranks info.
+- Reads SQLFluff's settings as SQLFluff finds them, in the folder of each changed file and the folders above it: `.sqlfluff`, the `[sqlfluff` sections of `setup.cfg`, `tox.ini`, `pep8.ini` and `pyproject.toml`, and `.sqlfluffignore`. They choose the dialect, the rules left out and the rules that only warn. Where none names a dialect, it reads the file as `postgres`. Your own SQLFluff settings folder (`~/Library/Application Support/sqlfluff` or `~/.config/sqlfluff`) is not read.
+- Never runs code from the repo: it always uses SQLFluff's raw templater with no library path, whatever the settings name, so a Jinja macro library or a dbt project is never loaded. Jinja and dbt templates are not expanded.
+- A statement it cannot parse in the dialect is not checked, and its parse error is not reported. A file over 20,000 bytes is skipped, as SQLFluff does unless its settings raise the limit.
+- Sends: nothing.
+- Licence: MIT ([LICENSE.md](https://github.com/sqlfluff/sqlfluff/blob/4.3.0/LICENSE.md)).
 
 ## Choosing scanners
 

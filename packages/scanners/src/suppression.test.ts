@@ -633,6 +633,13 @@ describe("lines and names", () => {
 //      a quoted identifier, a block comment) hides every marker after it.
 //  S7. Many unclosed openers, many distinct dollar tags or deep block
 //      comments take more than linear time.
+//  F1. A SQLFluff marker is missed. SQLFluff reads `noqa` at the start of a
+//      comment or after its last `--`, in `--`, `/* */` and, in dialects such
+//      as ansi and mysql, `#` comments; which strings and comments exist
+//      depends on the repo's dialect, so the marker counts anywhere on the
+//      line.
+//  F2. A form SQLFluff rejects is raised: text between the opener and
+//      `noqa`, upper case.
 describe("zizmor, # zizmor: ignore[...] anywhere on the line", () => {
   it("finds it in a comment, a block scalar body and a quoted value, as zizmor obeys it there (Z1)", () => {
     const text = src(
@@ -739,6 +746,31 @@ describe("squawk, -- squawk-ignore at the start of a SQL comment", () => {
 
   it("counts lines in a file with CRLF line ends", () => {
     expect(at(`SELECT 1;\r\n-- ${IGNORE}\r\n`)).toEqual([[2, "-- squawk-ignore"]]);
+  });
+});
+
+describe("SQLFluff, noqa anywhere on the line", () => {
+  const at = (text: string) => findMarkers(text, ["sqlfluff"]).map((m) => m.line);
+
+  it("finds the forms SQLFluff obeys in every dialect (F1)", () => {
+    const q = "SELECT id FROM users WHERE x = NULL;";
+    const text = src(
+      `${q} -- noqa`,
+      `${q} -- noqa: CV05`,
+      `${q} --noqa`,
+      `${q} /* noqa */`,
+      `${q} -- why -- noqa: CV05`,
+      "-- noqa: disable=CV05",
+      "/* noqa: enable=all */",
+      `${q} # noqa`,
+      "/*",
+      "noqa: disable=all */",
+    );
+    expect(at(text)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 10]);
+  });
+
+  it("raises nothing for the forms SQLFluff rejects (F2)", () => {
+    expect(at(src("SELECT 1; -- this noqa", "SELECT 1; -- NOQA", "SELECT 1; -- no qa"))).toEqual([]);
   });
 });
 

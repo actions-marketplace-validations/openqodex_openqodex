@@ -134,6 +134,20 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
       { name: "-- squawk-disable-assume-in-transaction", pattern: /^(?:--|\/\*)\s*(?<at>squawk-disable-assume-in-transaction)/dg },
     ],
   },
+  // SQLFluff reads `noqa` at the start of a comment, or after the comment's
+  // last `--` (sqlfluff/core/rules/noqa.py, _parse_noqa), lower case only.
+  // Which text is a comment depends on the dialect the repo names: `#`
+  // starts one in ansi and mysql, not in postgres, and strings differ too.
+  // So the marker counts anywhere on the line after `--`, `#` or `/*`, and
+  // at the start of a line, for a block comment whose `noqa` is on the line
+  // after its opener: wider than SQLFluff in every dialect.
+  sqlfluff: {
+    family: "line",
+    markers: [
+      { name: "-- noqa", pattern: /(?:--|#|\/\*)[ \t]*(?<at>noqa)/dg },
+      { name: "-- noqa", pattern: /^[ \t]*(?<at>noqa)/dg },
+    ],
+  },
 };
 
 export type MarkerHit = { scanner: BuiltinScanner; line: number; name: string };

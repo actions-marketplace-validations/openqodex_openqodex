@@ -445,6 +445,13 @@
           "binaryPath": "squawk-linux-arm64"
         }
       }
+    },
+    "sqlfluff": {
+      "version": "4.3.0",
+      "method": "uv",
+      "package": "sqlfluff",
+      "python": "3.11",
+      "binary": "sqlfluff"
     }
   }
 }
