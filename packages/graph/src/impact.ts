@@ -178,6 +178,8 @@ export function floorReasons(graph: Graph, seed: { id: string; name: string; fil
   const budgetFiles = budgetFilesOf(graph);
   const importersUnresolved = (graph.importers.get(seed.file) ?? []).filter((e) => budgetFiles.has(e.from)).length;
   if (importersUnresolved > 0) reasons.push(`the calls of ${importersUnresolved} ${importersUnresolved === 1 ? "file" : "files"} that import it were not resolved: the budget ran out`);
+  // A manifest or tsconfig governing its folder that could not be read, when its loss can hide a call.
+  for (const g of graph.model.unreadable) if (g.affects.length > 0 && (g.dir === "" || seed.file.startsWith(`${g.dir}/`))) reasons.push(g.note);
   if (cutAt.has(seed.id)) reasons.push("the walk was cut at it");
   return reasons;
 }

@@ -7,8 +7,17 @@
 //
 // Every read is bounded (1 MB) and goes through the RepoReader, so no link
 // below the repository root is followed. Nothing here fetches or executes.
-import { posix } from "node:path";
+//
+// A file the model needs that cannot be read, parsed or followed is never
+// dropped quietly: it is kept as a gap (`unreadable`), which the resolver
+// turns into an unknown, the impact walk into a floor for the folder the
+// file governs, and the build into a partial status. Why a read was
+// refused is told from the file's own entry (lstat), never by following it.
+import { lstatSync } from "node:fs";
+import { join as joinPath, posix } from "node:path";
+import type { Relation } from "../model/records.js";
 import type { RepoReader } from "../safe-fs.js";
+import type { UnknownSite } from "../types.js";
 import { globMatch } from "./glob.js";
 import { LOCKFILE_BYTES, MANIFEST_BYTES, gemfileGems, goModRequires, normalisePy, parseJsonc, pnpmLinks, pnpmPackages, pyprojectDeps, requirementsDeps, setupCfgRequires, yarnLock } from "./manifests.js";
 import type { Linkage } from "./manifests.js";
@@ -63,7 +72,49 @@ export type ProjectModel = {
   npmLock: Map<string, Linkage>; // "<importer>/node_modules/<name>" or "node_modules/<name>" to linkage
   yarnWorkspace: Set<string>; // names yarn.lock resolves to a workspace
   yarnPublished: Set<string>; // names yarn.lock resolves from a registry
+  unreadable: MetadataGap[];
 };
+
+// A manifest, lockfile or tsconfig the model needs and could not read,
+// parse or follow. `dir`: the folder whose files it governs ("" for the
+// whole repository). `affects`: the relations its loss can hide; empty
+// when it only decides whether an import from outside the repository is a
+// declared dependency, or how sure a workspace binding is. `note`: the
+// file, what failed and what the model lacks for it.
+export type MetadataGap = { file: string; dir: string; affects: Relation[]; note: string };
+
+const ALL_RELATIONS: Relation[] = ["calls", "inherits", "imports"];
+
+// The unknown record of a gap, for the project the file governs.
+export function metadataUnknown(g: MetadataGap): UnknownSite {
+  return { file: g.file, line: 0, column: 0, name: "", cause: "metadata-unreadable", shape: "other", caller: g.file, scope: "project", note: g.note };
+}
+
+// A file the model reads: its text, why it could not be read, or null
+// when it is not there at all (removed since git listed it), which is no
+// failure.
+type Got = { text: string } | { failed: string } | null;
+
+function get(reader: RepoReader, path: string, max: number): Got {
+  let text: string | null = null;
+  try {
+    text = reader.read(path, max);
+  } catch {
+    text = null;
+  }
+  // A byte order mark is no part of the text (TypeScript, npm and Python read past it).
+  if (text !== null) return { text: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text };
+  try {
+    const st = lstatSync(joinPath(reader.root, path));
+    if (st.isSymbolicLink()) return { failed: "is a link, which the graph does not follow" };
+    if (!st.isFile()) return { failed: "is not a regular file" };
+    if (st.size > max) return { failed: `is over ${max / (1024 * 1024)} MB` };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+  }
+  return { failed: "could not be read" };
+}
 
 const dirOf = (path: string): string => {
   const d = posix.dirname(path);
@@ -83,14 +134,19 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const strList = (v: unknown): string[] | null => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null);
 
-function readPackageJson(text: string): PackageJson | null {
+// A package.json whose text could not be read or parsed: its folder is
+// still a package (so its files keep their project), with nothing known.
+const unknownPackage = (): PackageJson => ({ name: null, version: null, main: null, module: null, exports: null, type: "commonjs", deps: new Map(), workspaces: null });
+
+// The package, or what failed.
+function readPackageJson(text: string): PackageJson | string {
   let v: unknown;
   try {
     v = JSON.parse(text);
   } catch {
-    return null;
+    return "is not valid JSON";
   }
-  if (!isObj(v)) return null;
+  if (!isObj(v)) return "is not a JSON object";
   const deps = new Map<string, string>();
   for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
     const d = v[field];
@@ -120,9 +176,14 @@ function membersOf(globs: string[], declaredIn: string, projects: NodeProject[])
   return projects.filter((p) => p.dir !== base && pos.some((g) => globMatch(p.dir, g)) && !neg.some((g) => globMatch(p.dir, g)));
 }
 
-// tsconfig.json, following relative `extends` (at most five hops). A config
-// whose `extends` names a package is read for its own options only.
-function readTsconfig(reader: RepoReader, file: string, known: ReadonlySet<string>): TsConfig | null {
+const TS_CHAIN = 5; // configs one tsconfig and its relative `extends` may read
+
+// tsconfig.json, following relative `extends` (at most five configs). A
+// config whose `extends` names a package is read for its own options only.
+// What could not be read, parsed or followed is passed to `fail` as a
+// clause about `file` ("is not valid JSON"); what was read is kept. Null
+// only when `file` itself is not there.
+function readTsconfig(reader: RepoReader, file: string, known: ReadonlySet<string>, fail: (clause: string) => void): TsConfig | null {
   const dir = dirOf(file);
   const out: TsConfig = {
     file,
@@ -141,16 +202,27 @@ function readTsconfig(reader: RepoReader, file: string, known: ReadonlySet<strin
   let at = file;
   let pathsSet = false;
   let baseUrlSet = false;
-  for (let hop = 0; hop < 5 && known.has(at); hop++) {
-    let config: unknown;
-    try {
-      const text = reader.read(at, MANIFEST_BYTES);
-      if (text === null) break;
-      config = parseJsonc(text);
-    } catch {
+  // How `at` is reached from `file` ("extends ./base.json"), for a failure past it.
+  let reached = "";
+  const seen = new Set<string>([file]);
+  for (let hop = 1; ; hop++) {
+    const got = get(reader, at, MANIFEST_BYTES);
+    if (got === null && at === file) return null;
+    let config: unknown = null;
+    let failed: string | null = got === null ? "is not there" : "failed" in got ? got.failed : null;
+    if (got !== null && "text" in got) {
+      try {
+        config = parseJsonc(got.text);
+        if (!isObj(config)) failed = "is not a JSON object";
+      } catch {
+        failed = "is not valid JSON";
+      }
+    }
+    if (failed !== null || !isObj(config)) {
+      const why = failed ?? "is not a JSON object";
+      fail(reached === "" ? why : `${reached}, which ${why}`);
       break;
     }
-    if (!isObj(config)) break;
     const here = dirOf(at);
     const opts = isObj(config.compilerOptions) ? config.compilerOptions : {};
     // The nearest config's own values win over what it extends.
@@ -179,9 +251,33 @@ function readTsconfig(reader: RepoReader, file: string, known: ReadonlySet<strin
         out.references.push(last.startsWith("tsconfig") && last.endsWith(".json") ? dirOf(ref) : ref);
       }
     }
-    if (typeof config.extends !== "string" || !config.extends.startsWith(".")) break;
-    const next = join(here, config.extends);
-    at = next.endsWith(".json") ? next : `${next}.json`;
+    const ext = config.extends;
+    const by = at === file ? "" : `extends ${at}, which `;
+    if (Array.isArray(ext)) {
+      if (ext.some((e) => typeof e === "string" && e.startsWith("."))) fail(`${by}extends a list of configs, which the graph does not follow`);
+      break;
+    }
+    // No `extends`, or one that names a package: nothing more to read.
+    if (typeof ext !== "string" || !ext.startsWith(".")) break;
+    // As TypeScript resolves it: the path as written, else with `.json` added.
+    const next = join(here, ext);
+    const target = (next.endsWith(".json") ? [next] : [next, `${next}.json`]).find((c) => known.has(c));
+    const step = `${by}extends ${ext}`;
+    if (target === undefined) {
+      fail(`${step}, which ${next === ".." || next.startsWith("../") ? "is outside the repository" : "is not in the repository"}`);
+      break;
+    }
+    if (seen.has(target)) {
+      fail(`${step}, which it already extends`);
+      break;
+    }
+    if (hop >= TS_CHAIN) {
+      fail(`${step}, past the ${TS_CHAIN} configs the graph follows in one chain`);
+      break;
+    }
+    seen.add(target);
+    at = target;
+    reached = step;
   }
   return out;
 }
@@ -204,15 +300,17 @@ export function tsAdmits(config: TsConfig, path: string): boolean {
   return !exclude.some((g) => under(g, path));
 }
 
-function npmLock(text: string): Map<string, Linkage> {
+// The links package-lock.json resolved, or what failed.
+function npmLock(text: string): Map<string, Linkage> | string {
   const out = new Map<string, Linkage>();
   let v: unknown;
   try {
     v = JSON.parse(text);
   } catch {
-    return out;
+    return "is not valid JSON";
   }
-  if (!isObj(v) || !isObj(v.packages)) return out;
+  if (!isObj(v)) return "is not a JSON object";
+  if (!isObj(v.packages)) return out;
   for (const [key, entry] of Object.entries(v.packages)) {
     if (!key.includes("node_modules/") || !isObj(entry)) continue;
     const resolved = str(entry.resolved) ?? "";
@@ -225,14 +323,19 @@ function npmLock(text: string): Map<string, Linkage> {
 // the tree they are in.
 export function discoverProjects(all: readonly string[], reader: RepoReader): ProjectModel {
   const known = new Set(all);
-  // A manifest over its cap is not read at all.
-  const read = (path: string, max = MANIFEST_BYTES): string | null => {
-    try {
-      return reader.read(path, max);
-    } catch {
-      return null;
-    }
+  const unreadable: MetadataGap[] = [];
+  // A file the model needs that is over its cap (never read at all),
+  // unreadable, not valid or cannot be followed is kept as a gap: what
+  // failed, and what the model lacks for it. `read` gives the text of a
+  // file a line reader reads, "" when it is not there or failed.
+  const gap = (file: string, dir: string, affects: Relation[], failed: string, lacks: string) => unreadable.push({ file, dir, affects, note: `${file} ${failed}, so ${lacks}` });
+  const read = (path: string, max: number, dir: string, affects: Relation[], lacks: string): string => {
+    const got = get(reader, path, max);
+    if (got !== null && "failed" in got) gap(path, dir, affects, got.failed, lacks);
+    return got !== null && "text" in got ? got.text : "";
   };
+  const PY_LACKS = "the dependencies it declares are not known and imports of them read as misses";
+  const LOCK_LACKS = "which dependencies link workspace packages is not known";
   const model: ProjectModel = {
     node: [],
     members: new Map(),
@@ -246,37 +349,42 @@ export function discoverProjects(all: readonly string[], reader: RepoReader): Pr
     npmLock: new Map(),
     yarnWorkspace: new Set(),
     yarnPublished: new Set(),
+    unreadable,
   };
   const pyRoots = new Set<string>();
   const pyPackageDirs = new Set<string>(); // folders holding .py files
   for (const path of all) {
     if (skipped(path)) continue;
     const base = posix.basename(path);
+    const dir = dirOf(path);
     if (base === "package.json") {
-      const text = read(path);
-      const pkg = text === null ? null : readPackageJson(text);
-      if (pkg) model.node.push({ dir: dirOf(path), file: path, pkg });
-    } else if (base === "tsconfig.json" || base === "jsconfig.json") {
-      const config = readTsconfig(reader, path, known);
-      // tsconfig.json wins over jsconfig.json in one folder.
-      if (config && (base === "tsconfig.json" || !model.tsconfigs.has(config.dir))) model.tsconfigs.set(config.dir, config);
+      const got = get(reader, path, MANIFEST_BYTES);
+      const pkg = got === null ? null : "failed" in got ? got.failed : readPackageJson(got.text);
+      if (typeof pkg === "string") gap(path, dir, ALL_RELATIONS, pkg, "its package's name, dependencies and workspaces are not known");
+      if (pkg !== null) model.node.push({ dir, file: path, pkg: typeof pkg === "string" ? unknownPackage() : pkg });
+    } else if (base === "tsconfig.json" || (base === "jsconfig.json" && !known.has(join(dir, "tsconfig.json")))) {
+      // tsconfig.json wins over jsconfig.json in one folder: that jsconfig.json is never read.
+      const config = readTsconfig(reader, path, known, (clause) => gap(path, dir, ALL_RELATIONS, clause, "imports through its paths and baseUrl may be missing"));
+      if (config) model.tsconfigs.set(config.dir, config);
     } else if (base === "pyproject.toml" || base === "setup.cfg" || base === "setup.py") {
-      pyRoots.add(dirOf(path));
-      const text = read(path) ?? "";
-      if (base === "pyproject.toml") for (const n of pyprojectDeps(text)) model.pyDeclared.add(n);
-      else if (base === "setup.cfg") for (const n of setupCfgRequires(text)) model.pyDeclared.add(n);
+      pyRoots.add(dir);
+      if (base === "pyproject.toml") for (const n of pyprojectDeps(read(path, MANIFEST_BYTES, dir, [], PY_LACKS))) model.pyDeclared.add(n);
+      else if (base === "setup.cfg") for (const n of setupCfgRequires(read(path, MANIFEST_BYTES, dir, [], PY_LACKS))) model.pyDeclared.add(n);
     } else if (base.startsWith("requirements") && base.endsWith(".txt")) {
-      for (const n of requirementsDeps(read(path) ?? "")) model.pyDeclared.add(n);
+      for (const n of requirementsDeps(read(path, MANIFEST_BYTES, dir, [], PY_LACKS))) model.pyDeclared.add(n);
     } else if (base === "go.mod") {
-      model.goRequires.push(...goModRequires(read(path) ?? ""));
+      model.goRequires.push(...goModRequires(read(path, MANIFEST_BYTES, dir, ["calls", "imports"], "the module it names and the modules it requires are not known")));
     } else if (base === "Gemfile") {
-      for (const g of gemfileGems(read(path) ?? "")) model.gems.add(g);
-    } else if (base === "pnpm-lock.yaml" && dirOf(path) === "") {
-      model.pnpmLinks = pnpmLinks(read(path, LOCKFILE_BYTES) ?? "");
-    } else if (base === "package-lock.json" && dirOf(path) === "") {
-      model.npmLock = npmLock(read(path, LOCKFILE_BYTES) ?? "");
-    } else if (base === "yarn.lock" && dirOf(path) === "") {
-      const y = yarnLock(read(path, LOCKFILE_BYTES) ?? "");
+      for (const g of gemfileGems(read(path, MANIFEST_BYTES, dir, [], "the gems it names are not known and requires of them read as misses"))) model.gems.add(g);
+    } else if (base === "pnpm-lock.yaml" && dir === "") {
+      model.pnpmLinks = pnpmLinks(read(path, LOCKFILE_BYTES, "", [], LOCK_LACKS));
+    } else if (base === "package-lock.json" && dir === "") {
+      const got = get(reader, path, LOCKFILE_BYTES);
+      const lock = got === null ? null : "failed" in got ? got.failed : npmLock(got.text);
+      if (typeof lock === "string") gap(path, "", [], lock, LOCK_LACKS);
+      else if (lock !== null) model.npmLock = lock;
+    } else if (base === "yarn.lock" && dir === "") {
+      const y = yarnLock(read(path, LOCKFILE_BYTES, "", [], LOCK_LACKS));
       model.yarnWorkspace = y.workspace;
       model.yarnPublished = y.published;
     }
@@ -295,7 +403,7 @@ export function discoverProjects(all: readonly string[], reader: RepoReader): Pr
   for (const path of all) {
     if (skipped(path)) continue;
     if (posix.basename(path) === "pnpm-workspace.yaml") {
-      const globs = pnpmPackages(read(path) ?? "");
+      const globs = pnpmPackages(read(path, MANIFEST_BYTES, dirOf(path), ALL_RELATIONS, "the workspace packages it lists are not known"));
       if (globs.length > 0) {
         model.workspaceFiles.push(path);
         for (const m of membersOf(globs, path, model.node)) memberSet.add(m);

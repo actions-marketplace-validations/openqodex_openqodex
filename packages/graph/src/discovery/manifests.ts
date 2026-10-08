@@ -41,7 +41,9 @@ export function beforeComment(line: string): string {
 
 // JSON with comments and trailing commas, as tsconfig.json is written. One
 // pass: comments are skipped and a comma followed (past blanks and
-// comments) by `}` or `]` is dropped, never inside a string.
+// comments) by `}` or `]` is dropped, never inside a string. A text of
+// only blanks and comments is an empty object, as TypeScript reads an
+// empty tsconfig.json.
 export function parseJsonc(text: string): unknown {
   const out: string[] = [];
   let pendingComma = -1; // index in `out` of a comma whose fate is not known yet
@@ -74,7 +76,8 @@ export function parseJsonc(text: string): unknown {
     if (c === ",") pendingComma = out.length;
     out.push(c);
   }
-  return JSON.parse(out.join(""));
+  const json = out.join("");
+  return json.trim() === "" ? {} : JSON.parse(json);
 }
 
 // The `packages:` list of pnpm-workspace.yaml: a block list or a flow list.

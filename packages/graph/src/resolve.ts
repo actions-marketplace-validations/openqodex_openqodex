@@ -21,7 +21,7 @@
 import { dirname, posix } from "node:path";
 import type { ImpactKind } from "@openqodex/core";
 import type { ProjectModel } from "./discovery/projects.js";
-import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, nodeProjectOf, normalisePy, packageName, pathLinkOff } from "./discovery/projects.js";
+import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, metadataUnknown, nodeProjectOf, normalisePy, packageName, pathLinkOff } from "./discovery/projects.js";
 import type { Cause, Cut, EvidenceKind, Shape, Tier, Via } from "./model/records.js";
 import { weakest } from "./model/records.js";
 import type { BoundImport, CallFact, DefFact, Family, FileFacts, GraphEdge, GraphNode, GraphSite, Miss, TypeRef, UnknownSite } from "./types.js";
@@ -1209,6 +1209,9 @@ export function createWorld(input: ResolveInput): World {
         push(importers, key, { from: path, to: key, kind: "imports", tier: site.tier, sites: [site] } as GraphEdge);
       }
     }
+
+    // A manifest or tsconfig the model could not read, parse or follow: one unknown each.
+    for (const g of model.unreadable) unknowns.push(metadataUnknown(g));
 
     return { nodes, edges: [...edgeMap.values()], importers, defsByFile, misses, unknowns, unresolvedSites, externalSites, budgetFiles };
   };

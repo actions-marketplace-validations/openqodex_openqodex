@@ -382,7 +382,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     const valueCalls = new Map<string, number>();
     for (const u of unknowns) {
       if (u.name !== "") unknownNames.set(u.name, (unknownNames.get(u.name) ?? 0) + 1);
-      if (u.scope === "project") {
+      if (u.scope === "project" && u.cause !== "metadata-unreadable") {
         const p = projectOf(u.file);
         valueCalls.set(p, (valueCalls.get(p) ?? 0) + 1);
       }
@@ -411,6 +411,9 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     }
     const parseErrors = notRead.filter((n) => n.reason === "parse-error" || n.reason === "unreadable").length;
     if (parseErrors > 0) reasons.push(`${plural(parseErrors, "file")} could not be read or parsed`);
+    const gaps = model.unreadable;
+    const firstGap = gaps[0];
+    if (firstGap) reasons.push(gaps.length === 1 ? firstGap.note : `${plural(gaps.length, "manifest or tsconfig file")} could not be read, parsed or followed, the first: ${firstGap.note}`);
     if (changedDuringBuild > 0) reasons.push(`${plural(changedDuringBuild, "file")} changed while the graph was built; their facts are from what was read`);
     if (storageRefused > 0) {
       reasons.push(`the graph folder reached its ${Math.round((store?.boundBytes ?? 0) / 1024 / 1024)} MB bound: the facts of ${plural(storageRefused, "file")} were not saved and will be parsed again`);
@@ -437,7 +440,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       projectOf,
       exportChanges: exportsDiff,
       status: {
-        status: skipped > 0 || removalUnchecked > 0 || resolved.budgetFiles.length > 0 ? "partial" : "ok",
+        status: skipped > 0 || removalUnchecked > 0 || resolved.budgetFiles.length > 0 || gaps.length > 0 ? "partial" : "ok",
         reason: reasons[0] ?? null,
         reasons,
         filesParsed: inputs.length,
@@ -461,9 +464,11 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     // Complete: nothing a later build of the same files could add. A file
     // over the size cap, or one the parser rejects, is left out the same way
     // every time; one cut by the budget, the parse cap, the memory bound or
-    // a slow parse, or one that vanished while it was read, is not.
+    // a slow parse, or one that vanished while it was read, is not. Nor is
+    // a build whose project model lacks a manifest or tsconfig it could not
+    // read: its index is never loaded as if nothing were missing.
     const later = new Set<NotRead["reason"]>(["budget", "parse-cap", "memory", "slow-parse", "unreadable"]);
-    const complete = !notRead.some((n) => later.has(n.reason)) && resolved.budgetFiles.length === 0;
+    const complete = !notRead.some((n) => later.has(n.reason)) && resolved.budgetFiles.length === 0 && gaps.length === 0;
     const withIndex = decided.mode === "retained" && complete;
     // A kept build of the same capture and configuration is the same graph:
     // it is named, and nothing new is written.

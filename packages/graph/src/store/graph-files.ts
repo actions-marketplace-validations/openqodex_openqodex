@@ -23,6 +23,7 @@ export function serializeModel(m: ProjectModel): Plain {
     npmLock: [...m.npmLock],
     yarnWorkspace: [...m.yarnWorkspace],
     yarnPublished: [...m.yarnPublished],
+    unreadable: m.unreadable,
   };
 }
 
@@ -42,6 +43,7 @@ export function deserializeModel(v: Plain): ProjectModel {
     npmLock: new Map(v.npmLock as [string, "workspace" | "published" | "unknown"][]),
     yarnWorkspace: new Set(v.yarnWorkspace as string[]),
     yarnPublished: new Set(v.yarnPublished as string[]),
+    unreadable: (v.unreadable as ProjectModel["unreadable"] | undefined) ?? [],
   };
 }
 
@@ -195,7 +197,7 @@ export function assemble(
   const valueCalls = new Map<string, number>();
   for (const u of unknowns) {
     if (u.name !== "") unknownNames.set(u.name, (unknownNames.get(u.name) ?? 0) + 1);
-    if (u.scope === "project") valueCalls.set(projectOf(u.file), (valueCalls.get(projectOf(u.file)) ?? 0) + 1);
+    if (u.scope === "project" && u.cause !== "metadata-unreadable") valueCalls.set(projectOf(u.file), (valueCalls.get(projectOf(u.file)) ?? 0) + 1);
   }
   return {
     repoRoot: "",

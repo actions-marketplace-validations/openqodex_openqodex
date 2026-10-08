@@ -10,11 +10,27 @@
 //    workspace package of that name instead of staying external.
 // 4. A `file:` dependency into a folder of the repository that is no
 //    workspace package is called external, so its callers vanish.
+// 5. A tsconfig.json that is not valid JSON drops its `paths` with nothing
+//    said: no unknown, no floor, and the build counts as complete. Its
+//    files must still never fall to the tsconfig above it, whose `paths`
+//    would bind them certainly to the wrong code.
+// 6. A package.json over the 1 MB cap drops its package with nothing said,
+//    so the calls into it read as external.
+// 7. A tsconfig whose relative `extends` names a file that is not there
+//    drops what it inherits with nothing said.
+// 8. A lockfile that cannot be read is said nowhere; it cannot hide a
+//    caller (without it a binding is only less sure), so it gives no floor.
+// 9. A tsconfig TypeScript reads without complaint (comments, trailing
+//    commas, a byte order mark, an empty file, an `extends` that names a
+//    package) or one git lists but the work tree no longer holds is
+//    reported as a failure (the negative control).
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
-import { buildGraph } from "../src/index.js";
+import { rmSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { buildGraph, floorReasons, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
-import { at, callSites, makeRepo, symbol } from "./helpers.js";
+import { graphOf } from "../src/session.js";
+import { at, callSites, commitAll, makeRepo, symbol } from "./helpers.js";
 
 const repos: string[] = [];
 afterAll(() => {
@@ -26,10 +42,13 @@ function repo(files: Record<string, string>): string {
   return root;
 }
 
+const MiB = 1024 * 1024;
 const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
 const workspaceRoot = json({ name: "root", private: true, workspaces: ["packages/*"] });
 const helperCall = 'import { helper } from "shared";\nexport function run() {\n  return helper(); // CALL\n}\n';
 
+const metadata = (g: Graph) => g.unknowns.filter((u) => u.cause === "metadata-unreadable").map((u) => ({ file: u.file, scope: u.scope, note: u.note }));
+const floorOf = (g: Graph, file: string, name: string) => floorReasons(g, { id: symbol(g, file, name), name, file }, new Set());
 const unknownAt = (g: Graph, site: string) => g.unknowns.filter((u) => `${u.file}:${u.line}` === site).map((u) => ({ cause: u.cause, note: u.note }));
 
 describe("file: dependencies bind by where their path leads", () => {
@@ -80,5 +99,102 @@ describe("file: dependencies bind by where their path leads", () => {
     expect(unknownAt(g, at(files, "app/main.ts", "CALL"))).toEqual([
       { cause: "unsupported-rule", note: "app/package.json declares local as file:../tools/local, which leads to tools/local, a folder of this repository that is no workspace package" },
     ]);
+  });
+});
+
+describe("a manifest or tsconfig the graph cannot read is said, never dropped", () => {
+  it("names a tsconfig.json that is not valid JSON, floors its project's callers and keeps the build from counting as complete (5)", async () => {
+    const files = {
+      "tsconfig.json": json({ compilerOptions: { baseUrl: ".", paths: { "@app/*": ["src/*"] } } }),
+      "src/util.ts": "export function util() {\n  return 2;\n}\n",
+      "packages/app/package.json": json({ name: "app" }),
+      "packages/app/tsconfig.json": '{\n  "compilerOptions": {\n    "baseUrl": ".",\n    "paths": { "@app/*": ["src/*"] }\n',
+      "packages/app/src/util.ts": "export function util() {\n  return 1;\n}\n",
+      "packages/app/src/main.ts": 'import { util } from "@app/util";\nexport function run() {\n  return util();\n}\n',
+    };
+    const root = repo(files);
+    const opened = await openStore(root);
+    if (!opened.ok) throw new Error(opened.reason);
+    const st = opened.store;
+    const g = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    const note = "packages/app/tsconfig.json is not valid JSON, so imports through its paths and baseUrl may be missing";
+    expect(metadata(g)).toEqual([{ file: "packages/app/tsconfig.json", scope: "project", note }]);
+    expect(floorOf(g, "packages/app/src/util.ts", "util")).toContain(note);
+    expect(callSites(g, symbol(g, "src/util.ts", "util"))).toEqual([]);
+    expect(g.status.status).toBe("partial");
+    expect(g.status.reasons).toContain(note);
+    // Not kept as a complete index: a later build of the same files does not load it.
+    const kept = st.open({ id: g.status.generation as string });
+    expect(kept?.manifest).toMatchObject({ complete: false, hasIndex: false });
+    const again = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
+    expect(Object.keys(again.status.stages)).not.toContain("load-index");
+    // Reopened from its facts, the build says the same.
+    const reopened = graphOf(st, kept!) as Graph;
+    expect(metadata(reopened)).toEqual(metadata(g));
+    expect(floorOf(reopened, "packages/app/src/util.ts", "util")).toEqual(floorOf(g, "packages/app/src/util.ts", "util"));
+  });
+
+  it("names a package.json over 1 MB and floors the callers of its package, whose calls would otherwise read as external (6)", async () => {
+    const files = {
+      "package.json": workspaceRoot,
+      "packages/core/package.json": json({ name: "@x/core", main: "src/index.ts", description: "x".repeat(MiB) }),
+      "packages/core/src/index.ts": "export function helper() {\n  return 1;\n}\n",
+      "packages/app/package.json": json({ name: "app", dependencies: { "@x/core": "workspace:*" } }),
+      "packages/app/src/main.ts": 'import { helper } from "@x/core";\nexport function run() {\n  return helper();\n}\n',
+    };
+    const g = await buildGraph({ repoRoot: repo(files), store: null });
+    const note = "packages/core/package.json is over 1 MB, so its package's name, dependencies and workspaces are not known";
+    expect(metadata(g)).toEqual([{ file: "packages/core/package.json", scope: "project", note }]);
+    expect(floorOf(g, "packages/core/src/index.ts", "helper")).toEqual([note]);
+    expect(g.status.status).toBe("partial");
+  });
+
+  it("names a tsconfig whose relative extends names a file that is not there, and floors its project's callers (7)", async () => {
+    const files = {
+      "packages/app/package.json": json({ name: "app" }),
+      "packages/app/tsconfig.json": json({ extends: "./tsconfig.base.json", include: ["src"] }),
+      "packages/app/src/util.ts": "export function util() {\n  return 1;\n}\n",
+      "packages/app/src/main.ts": 'import { util } from "@app/util";\nexport function run() {\n  return util();\n}\n',
+    };
+    const g = await buildGraph({ repoRoot: repo(files), store: null });
+    const note = "packages/app/tsconfig.json extends ./tsconfig.base.json, which is not in the repository, so imports through its paths and baseUrl may be missing";
+    expect(metadata(g)).toEqual([{ file: "packages/app/tsconfig.json", scope: "project", note }]);
+    expect(floorOf(g, "packages/app/src/util.ts", "util")).toContain(note);
+    expect(g.status.status).toBe("partial");
+  });
+
+  it("names a package-lock.json that is not valid JSON, with no floor: without it a binding is only less sure (8)", async () => {
+    const files = {
+      "package.json": json({ name: "app", dependencies: { left: "^1.0.0" } }),
+      "package-lock.json": '{ "packages": { "node_modules/left": { "version": "1.0.0" }',
+      "src/util.ts": "export function util() {\n  return 1;\n}\n",
+      "src/main.ts": 'import { util } from "./util";\nexport function run() {\n  return util();\n}\n',
+    };
+    const g = await buildGraph({ repoRoot: repo(files), store: null });
+    const note = "package-lock.json is not valid JSON, so which dependencies link workspace packages is not known";
+    expect(metadata(g)).toEqual([{ file: "package-lock.json", scope: "project", note }]);
+    expect(floorOf(g, "src/util.ts", "util")).toEqual([]);
+    expect(g.status.status).toBe("partial");
+  });
+
+  it("reads every tsconfig TypeScript reads without complaint, and a file git lists but the work tree no longer holds, as no failure (9)", async () => {
+    const files = {
+      "a/tsconfig.json": '// settings\n{\n  "compilerOptions": {\n    "baseUrl": ".", /* the folder */\n    "paths": { "@a/*": ["src/*"], },\n  },\n}\n',
+      "b/tsconfig.json": `﻿${json({ compilerOptions: { strict: true } })}`,
+      "c/jsconfig.json": "",
+      "d/tsconfig.json": json({ extends: "@tsconfig/node22/tsconfig.json" }),
+      "e/tsconfig.json": json({ compilerOptions: {} }),
+      "e/package.json": json({ name: "e" }),
+      "a/src/util.ts": "export function util() {\n  return 1;\n}\n",
+      "a/src/main.ts": 'import { util } from "@a/util";\nexport function run() {\n  return util();\n}\n',
+    };
+    const root = repo(files);
+    commitAll(root);
+    unlinkSync(join(root, "e/tsconfig.json"));
+    unlinkSync(join(root, "e/package.json"));
+    const g = await buildGraph({ repoRoot: root, store: null });
+    expect(metadata(g)).toEqual([]);
+    expect(g.status.status).toBe("ok");
+    expect(callSites(g, symbol(g, "a/src/util.ts", "util"))).toEqual(["a/src/main.ts:3"]);
   });
 });
