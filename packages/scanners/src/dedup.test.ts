@@ -150,39 +150,71 @@ describe("dedupByRuleClass", () => {
   });
 });
 
+
 // Rules of different scanners that name one problem (same-problem.ts) merge
-// when their spans overlap, since each scanner reports its own span: a
-// whole `run:` block, one line, one expression.
+// only on the same file and lines, like every other class; the finding kept
+// records the tokens of the ones merged into it. Failure list:
+//   1. Findings of one problem on different spans merge, so a wide span
+//      hides a finding on lines it does not cover.
+//   2. Text a repository controls (a workflow expression inside a scanner's
+//      message) moves a finding of another problem into a group, where a
+//      finding of higher severity drops it.
+//   3. Two scanners' findings on one line with rules of different meaning
+//      (trivy and Checkov, or a new scanner's rule whose id merely holds a
+//      word such as "secret") merge.
+//   4. An added suppression comment or a changed settings file on the line
+//      is dropped by a merge.
+//   5. The finding kept does not say which scanners also reported it.
 describe("dedupByRuleClass, one problem named by several scanners", () => {
   const workflow = ".github/workflows/ci.yml";
-  const semgrep = fakeFinding({ source: "semgrep", ruleId: "yaml.github-actions.security.run-shell-injection.run-shell-injection", filePath: workflow, lineStart: 14, lineEnd: 15, severity: "high" });
-  const actionlint = fakeFinding({ source: "actionlint", ruleId: "expression", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "high", message: '"github.event.pull_request.title" is potentially untrusted. avoid using it directly in inline scripts' });
+  const untrusted = '"github.event.pull_request.title" is potentially untrusted. avoid using it directly in inline scripts. instead, pass it through an environment variable.';
+  const semgrep = fakeFinding({ source: "semgrep", ruleId: "yaml.github-actions.security.run-shell-injection.run-shell-injection", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "high" });
+  const actionlint = fakeFinding({ source: "actionlint", ruleId: "expression", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "high", message: untrusted });
   const zizmor = fakeFinding({ source: "zizmor", ruleId: "template-injection", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "high" });
 
-  it("keeps one finding for a workflow injection three scanners report on overlapping lines", () => {
-    expect(dedupByRuleClass([semgrep, actionlint, zizmor])).toEqual([semgrep]);
+  it("keeps one finding for a workflow injection three scanners report on one line, and records the other two (5)", () => {
+    const merged = new Map<StaticFinding, string[]>();
+    expect(dedupByRuleClass([semgrep, actionlint, zizmor], merged)).toEqual([semgrep]);
+    expect(merged.get(semgrep)).toEqual(["actionlint:expression", "zizmor:template-injection"]);
   });
 
-  it("keeps the higher severity across the group", () => {
+  it("keeps the higher severity across the group, with the others recorded", () => {
     const critical = { ...zizmor, severity: "critical" as const };
-    expect(dedupByRuleClass([semgrep, actionlint, critical])).toEqual([critical]);
+    const merged = new Map<StaticFinding, string[]>();
+    expect(dedupByRuleClass([semgrep, actionlint, critical], merged)).toEqual([critical]);
+    expect(merged.get(critical)).toEqual(["semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection", "actionlint:expression"]);
   });
 
-  it("does not merge a rule id that covers other problems when its message names another one", () => {
-    const typeError = { ...actionlint, message: 'property "titel" is not defined in object type' };
-    expect(dedupByRuleClass([typeError, zizmor])).toEqual([typeError, zizmor]);
+  it("keeps findings of one problem apart when their lines differ, even where they overlap (1)", () => {
+    const block = { ...semgrep, lineStart: 14, lineEnd: 18 };
+    const later = { ...zizmor, lineStart: 17, lineEnd: 17 };
+    expect(dedupByRuleClass([block, actionlint, later])).toEqual([block, actionlint, later]);
   });
 
-  it("keeps the group's findings apart on lines that do not overlap, or in another file", () => {
-    const later = { ...zizmor, lineStart: 30, lineEnd: 30 };
-    const elsewhere = { ...actionlint, filePath: "release.yml" };
-    expect(dedupByRuleClass([semgrep, later, elsewhere])).toEqual([semgrep, later, elsewhere]);
+  it("never moves an actionlint finding into the group on text a workflow controls (2)", () => {
+    const crafted = { ...actionlint, severity: "medium" as const, message: 'property "x is potentially untrusted. avoid using it directly in inline scripts" is not defined in object type' };
+    expect(ruleClassFor(crafted)).toBe("actionlint:expression");
+    expect(dedupByRuleClass([crafted, zizmor])).toEqual([crafted, zizmor]);
   });
 
-  it("merges a chain of overlapping spans into one", () => {
-    const wide = { ...semgrep, lineStart: 10, lineEnd: 20 };
-    const a = { ...actionlint, lineStart: 12, lineEnd: 12 };
-    const b = { ...zizmor, lineStart: 19, lineEnd: 22 };
-    expect(dedupByRuleClass([wide, a, b])).toEqual([wide]);
+  it("keeps a trivy and a Checkov finding on one line when their rules name different problems (3)", () => {
+    const trivy = fakeFinding({ source: "trivy", ruleId: "AVD-AWS-0124", filePath: "main.tf", lineStart: 9, lineEnd: 9 });
+    const checkov = fakeFinding({ source: "checkov", ruleId: "CKV_AWS_382", filePath: "main.tf", lineStart: 9, lineEnd: 9 });
+    expect(dedupByRuleClass([trivy, checkov])).toEqual([trivy, checkov]);
+  });
+
+  it("never merges a new scanner's rule into the secret, injection or access classes by a word in its id (3)", () => {
+    const leak = fakeFinding({ source: "gitleaks", ruleId: "generic-api-key", filePath: "k8s/app.yaml", lineStart: 20, lineEnd: 20 });
+    const kubeLinter = fakeFinding({ source: "kube-linter", ruleId: "env-var-secret", filePath: "k8s/app.yaml", lineStart: 20, lineEnd: 20 });
+    const zizmorPermissions = fakeFinding({ source: "zizmor", ruleId: "excessive-permissions", filePath: workflow, lineStart: 5, lineEnd: 5 });
+    const actionlintPermissions = fakeFinding({ source: "actionlint", ruleId: "permissions", filePath: workflow, lineStart: 5, lineEnd: 5 });
+    expect(ruleClassFor(kubeLinter)).toBe("kube-linter:env-var-secret");
+    expect(dedupByRuleClass([leak, kubeLinter, actionlintPermissions, zizmorPermissions])).toEqual([leak, kubeLinter, actionlintPermissions, zizmorPermissions]);
+  });
+
+  it("keeps an added suppression comment and a changed settings file on a line where findings merge (4)", () => {
+    const suppression = fakeFinding({ source: "zizmor", ruleId: "openqodex.suppression-added", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "medium" });
+    const settings = fakeFinding({ source: "actionlint", ruleId: "settings-file", filePath: workflow, lineStart: 15, lineEnd: 15, severity: "high" });
+    expect(dedupByRuleClass([semgrep, actionlint, zizmor, suppression, settings])).toEqual([semgrep, suppression, settings]);
   });
 });

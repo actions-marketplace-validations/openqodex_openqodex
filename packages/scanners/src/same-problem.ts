@@ -1,13 +1,12 @@
 // Rules of different scanners that name one problem. When two of them report
-// it on overlapping lines of one file, the report keeps one finding: the
-// higher severity, or on a tie the scanner earlier in the ensemble
-// (adapters/index.ts). Rules outside this table merge only as run.ts
-// classes them, on the very same lines.
+// it on the same lines of one file, the report keeps one finding: the higher
+// severity, or on a tie the scanner earlier in the ensemble
+// (adapters/index.ts); the finding kept names the others. Findings on
+// different lines never merge, even where their spans overlap: a wide span
+// (a whole resource) must not hide a narrower finding it does not name.
 //
 // Each group was checked on a planted case through the real binaries at
-// their pinned versions; the spans each scanner reports differ (a whole
-// resource, one attribute, one expression), so a group merges on overlap,
-// not on equal lines.
+// their pinned versions.
 
 import type { BuiltinScanner, StaticFinding } from "@openqodex/core";
 
@@ -16,7 +15,8 @@ type Member = {
   // The rule id, exactly or by pattern.
   rule: string | RegExp;
   // For a rule id that covers several problems (actionlint's `expression`),
-  // the message that names this one.
+  // the message that names this one, anchored to the scanner's own words: a
+  // message can quote text from the repository.
   message?: RegExp;
 };
 
@@ -29,7 +29,13 @@ export const SAME_PROBLEM: readonly Group[] = [
     name: "workflow-untrusted-input-in-script",
     members: [
       { source: "semgrep", rule: "yaml.github-actions.security.run-shell-injection.run-shell-injection" },
-      { source: "actionlint", rule: "expression", message: /potentially untrusted/i },
+      // actionlint 1.7.7 expr_insecure.go, its two messages for this check:
+      // "%q is potentially untrusted. avoid using it directly in inline
+      // scripts...", where %q escapes every quote and backslash inside the
+      // property path, and "object filter extracts potentially untrusted
+      // properties %s...", whose start no other check writes.
+      { source: "actionlint", rule: "expression", message: /^"(?:[^"\\]|\\.)*" is potentially untrusted\. avoid using it directly in inline scripts\./ },
+      { source: "actionlint", rule: "expression", message: /^object filter extracts potentially untrusted properties / },
       { source: "zizmor", rule: "template-injection" },
     ],
   },
