@@ -24,6 +24,7 @@ import type { ProjectModel } from "./discovery/projects.js";
 import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, metadataUnknown, nodeProjectOf, normalisePy, packageName, pathLinkOff } from "./discovery/projects.js";
 import type { Cause, Cut, EvidenceKind, Shape, Tier, Via } from "./model/records.js";
 import { weakest } from "./model/records.js";
+import type { Lookup } from "./frameworks/plugin.js";
 import type { BoundImport, CallFact, DefFact, Family, FileFacts, GraphEdge, GraphNode, GraphSite, Miss, TypeRef, UnknownSite } from "./types.js";
 import { familyOf } from "./types.js";
 
@@ -179,6 +180,11 @@ export type World = {
   node(idOrKey: string): GraphNode | null;
   // The cuts the walk of `export *` made in this world (at most one).
   walkCuts(): Cut[];
+  // For the framework layer (frameworks/plugin.ts, PluginIndex): what a
+  // dotted name means at the top level of a file, and which file a module
+  // specifier names from a file. Read-only; the same rules as call binding.
+  lookup(file: string, path: readonly string[]): Lookup;
+  moduleLookup(file: string, spec: string): Lookup;
 };
 
 export function symbolId(file: string, d: Pick<DefFact, "owner" | "name" | "line" | "column">): string {
@@ -1520,7 +1526,55 @@ export function createWorld(input: ResolveInput): World {
     return byKey.get(idOrKey) ?? null;
   };
 
-  return { resolveAll, trace, surface, importsOf, node, walkCuts: () => [walkCut, lookupCut].filter((c): c is Cut => c !== null) };
+  // ---------- lookups for the framework layer ----------
+  const viaOut = (ev: Ev) => (ev.via ? { file: ev.via.file, line: ev.via.line, spec: ev.via.spec } : null);
+  const modLookup = (mod: Mod | { ns: string; ev: Ev }): Lookup => {
+    if (mod === null) return { kind: "none" };
+    if ("ext" in mod) return { kind: "external" };
+    if ("gap" in mod) return { kind: "gap", cause: mod.gap, note: mod.note, candidates: mod.candidates };
+    if ("ns" in mod) return { kind: "module", file: mod.ns, tier: mod.ev.tier, via: viaOut(mod.ev), note: mod.ev.note };
+    return { kind: "module", file: mod.file, tier: mod.ev.tier, via: viaOut(mod.ev), note: mod.ev.note };
+  };
+  const valueLookup = (v: Value | null): Lookup => {
+    if (v === null) return { kind: "none" };
+    switch (v.v) {
+      case "sym":
+        return { kind: "symbol", ids: [...v.ids], tier: v.ev.tier, evidence: v.ev.kind, via: viaOut(v.ev), note: v.ev.note };
+      case "mod":
+        return { kind: "module", file: v.file, tier: v.ev.tier, via: viaOut(v.ev), note: v.ev.note };
+      case "pkg":
+      case "pyns":
+        return { kind: "module", file: v.dir, tier: v.ev.tier, via: viaOut(v.ev), note: v.ev.note };
+      case "pymod":
+        return modLookup(pySpec(v.from, 0, v.dotted));
+      case "ext":
+        return { kind: "external" };
+      case "gap":
+        return { kind: "gap", cause: v.cause, note: v.note, candidates: v.candidates };
+      case "miss":
+        return { kind: "miss", target: v.target, name: v.name };
+    }
+  };
+  const lookup = (file: string, path: readonly string[]): Lookup => {
+    const [head, ...rest] = path;
+    if (head === undefined) return { kind: "none" };
+    let v = resolveLocal(file, head);
+    for (const name of rest) {
+      if (v === null || v.v === "ext" || v.v === "gap" || v.v === "miss") break;
+      const before: Value = v;
+      v = attr(v, name);
+      // A name a module or a class does not hold: a miss where it was looked up.
+      if (v === null && (before.v === "mod" || before.v === "sym")) return { kind: "miss", target: before.v === "mod" ? before.file : (classOfId.get(before.ids[0] as string) ?? (before.ids[0] as string)), name };
+    }
+    return valueLookup(v);
+  };
+  const moduleLookup = (file: string, spec: string): Lookup => {
+    const f = facts.get(file);
+    if (!f) return { kind: "none" };
+    return modLookup(moduleOf(file, familyOf(f.lang), { spec, line: 0 }));
+  };
+
+  return { resolveAll, trace, surface, importsOf, node, walkCuts: () => [walkCut, lookupCut].filter((c): c is Cut => c !== null), lookup, moduleLookup };
 }
 
 // The name an unaliased Go import is used by when its package is not in the

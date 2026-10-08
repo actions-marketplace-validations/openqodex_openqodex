@@ -3,6 +3,7 @@
 import type { ImpactExportChange, ImpactKind, ImpactSite, ImpactSymbol } from "@openqodex/core";
 import type { ProjectModel } from "./discovery/projects.js";
 import type { FrameworkFileFacts } from "./frameworks/plugin.js";
+import type { FrameworkData } from "./frameworks/stage.js";
 import type { Cause, Cut, Shape, Tier } from "./model/records.js";
 
 export type Lang = "typescript" | "tsx" | "javascript" | "python" | "go" | "ruby";
@@ -189,6 +190,9 @@ export type Graph = {
   projectOf(file: string): string;
   exportChanges: ImpactExportChange[]; // set when the build compared a base; every consumer, never cut
   status: GraphStatus;
+  // What the framework plugins found (frameworks/stage.ts); absent when the
+  // framework stage did not run. Read through frameworks/layer.ts.
+  frameworks?: FrameworkData;
 };
 
 export type HotSymbol = { symbol: GraphNode; callers: number; sites: number; files: number };

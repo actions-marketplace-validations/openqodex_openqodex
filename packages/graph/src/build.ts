@@ -30,6 +30,9 @@ import { discoverProjects } from "./discovery/projects.js";
 import { traceReads } from "./discovery/trace.js";
 import type { ProjectModel } from "./discovery/projects.js";
 import { EXTRACTOR_VERSION, extract } from "./extract.js";
+import { frameworkFacts } from "./frameworks/facts.js";
+import { contextFingerprint, runFrameworks } from "./frameworks/stage.js";
+import { pluginsKey } from "./frameworks/registry.js";
 import { MODEL_VERSION } from "./model/records.js";
 import type { Cut } from "./model/records.js";
 import { grammarVersion, parserFor } from "./parser.js";
@@ -88,8 +91,10 @@ export type BuildArgs = {
 };
 
 // The key of a file's facts: the extractor, the grammar and the content.
+// The framework plugins are part of it: a plugin added or bumped re-reads
+// every file (frameworks/registry.ts).
 export function factsKey(lang: Lang, blob: string): string {
-  return createHash("sha1").update(`${EXTRACTOR_VERSION}\0${lang}\0${grammarVersion(lang)}\0${blob}`).digest("hex");
+  return createHash("sha1").update(`${EXTRACTOR_VERSION}\0${lang}\0${grammarVersion(lang)}\0${pluginsKey()}\0${blob}`).digest("hex");
 }
 
 function readGoModules(reader: RepoReader, all: string[]): [string, string][] {
@@ -142,7 +147,10 @@ class Parsers {
       return null;
     }
     try {
-      return extract(tree, lang);
+      const facts = extract(tree, lang);
+      const frameworks = frameworkFacts(tree.rootNode, lang, content);
+      if (frameworks) facts.frameworks = frameworks;
+      return facts;
     } finally {
       tree.delete();
     }
@@ -227,6 +235,9 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     model: createHash("sha256").update(JSON.stringify(serializeModel(model))).digest("hex"),
     tooBig: [...inv.tooBig].sort(),
     unreadable: [...inv.unreadable].sort(),
+    // The framework plugins and the paths their output depends on
+    // (templates, view files, marker files), which no source entry names.
+    frameworks: contextFingerprint(inv.all),
   });
   stage("predict");
 
@@ -361,6 +372,13 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     if (resolved.budgetFiles.length > 0) stoppedBy ??= "budget";
     stage("resolve");
 
+    // ---------- frameworks ----------
+    // After symbol resolution, on every build: a file whose content did not
+    // change is re-read when a framework is newly detected around it.
+    const frameworks = runFrameworks({ files: inputs, paths: inv.all, nodes: resolved.nodes, defsByFile: resolved.defsByFile, edges: resolved.edges, world, model, projectOf, stop: overBudget });
+    for (const p of frameworks.plugins) if (p.status === "failed" || (p.status === "stopped" && inputs.some((i) => i.facts.frameworks?.[p.id]))) reasons.push(p.reason ?? `the ${p.id} plugin did not run`);
+    stage("frameworks");
+
     // ---------- removed, moved and the export surface ----------
     const removed = removedSymbols(args.base?.files ?? [], baseFacts, resolved);
     let exportsDiff: ImpactExportChange[] = [];
@@ -466,6 +484,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       model,
       projectOf,
       exportChanges: exportsDiff,
+      frameworks,
       status: {
         status: skipped > 0 || removalUnchecked > 0 || resolved.budgetFiles.length > 0 || hidingGaps.length > 0 ? "partial" : "ok",
         reason: reasons[0] ?? null,
