@@ -85,6 +85,25 @@ export type MetadataGap = { file: string; dir: string; affects: Relation[]; note
 
 const ALL_RELATIONS: Relation[] = ["calls", "inherits", "imports"];
 
+// What the loss of each kind of metadata file can hide, and what the model
+// lacks without it: the one table the gap rule reads (docs/graph.md shows
+// it). A gap that can hide a relation floors the callers under its folder
+// and makes the build partial, so no index of it is kept. A gap that can
+// hide none (it only makes a binding less sure, or turns a call into a
+// declared module into a miss) is said as an unknown and a reason, and the
+// build stays complete: the index digest covers the file, so a kept index
+// is never reused once it changes.
+export type MetadataKind = "package.json" | "tsconfig" | "pnpm-workspace.yaml" | "go.mod" | "python-manifest" | "Gemfile" | "lockfile";
+export const GAP_RULES: Record<MetadataKind, { affects: Relation[]; lacks: string }> = {
+  "package.json": { affects: ALL_RELATIONS, lacks: "its package's name, dependencies and workspaces are not known" },
+  tsconfig: { affects: ALL_RELATIONS, lacks: "imports through its paths and baseUrl may be missing" },
+  "pnpm-workspace.yaml": { affects: ALL_RELATIONS, lacks: "the workspace packages it lists are not known" },
+  "go.mod": { affects: ["calls", "imports"], lacks: "the module it names and the modules it requires are not known" },
+  "python-manifest": { affects: [], lacks: "the dependencies it declares are not known and imports of them read as misses" },
+  Gemfile: { affects: [], lacks: "the gems it names are not known and requires of them read as misses" },
+  lockfile: { affects: [], lacks: "which dependencies link workspace packages is not known" },
+};
+
 // The unknown record of a gap, for the project the file governs.
 export function metadataUnknown(g: MetadataGap): UnknownSite {
   return { file: g.file, line: 0, column: 0, name: "", cause: "metadata-unreadable", shape: "other", caller: g.file, scope: "project", note: g.note };
@@ -328,14 +347,12 @@ export function discoverProjects(all: readonly string[], reader: RepoReader): Pr
   // unreadable, not valid or cannot be followed is kept as a gap: what
   // failed, and what the model lacks for it. `read` gives the text of a
   // file a line reader reads, "" when it is not there or failed.
-  const gap = (file: string, dir: string, affects: Relation[], failed: string, lacks: string) => unreadable.push({ file, dir, affects, note: `${file} ${failed}, so ${lacks}` });
-  const read = (path: string, max: number, dir: string, affects: Relation[], lacks: string): string => {
+  const gap = (file: string, dir: string, kind: MetadataKind, failed: string) => unreadable.push({ file, dir, affects: GAP_RULES[kind].affects, note: `${file} ${failed}, so ${GAP_RULES[kind].lacks}` });
+  const read = (path: string, max: number, dir: string, kind: MetadataKind): string => {
     const got = get(reader, path, max);
-    if (got !== null && "failed" in got) gap(path, dir, affects, got.failed, lacks);
+    if (got !== null && "failed" in got) gap(path, dir, kind, got.failed);
     return got !== null && "text" in got ? got.text : "";
   };
-  const PY_LACKS = "the dependencies it declares are not known and imports of them read as misses";
-  const LOCK_LACKS = "which dependencies link workspace packages is not known";
   const model: ProjectModel = {
     node: [],
     members: new Map(),
@@ -360,31 +377,31 @@ export function discoverProjects(all: readonly string[], reader: RepoReader): Pr
     if (base === "package.json") {
       const got = get(reader, path, MANIFEST_BYTES);
       const pkg = got === null ? null : "failed" in got ? got.failed : readPackageJson(got.text);
-      if (typeof pkg === "string") gap(path, dir, ALL_RELATIONS, pkg, "its package's name, dependencies and workspaces are not known");
+      if (typeof pkg === "string") gap(path, dir, "package.json", pkg);
       if (pkg !== null) model.node.push({ dir, file: path, pkg: typeof pkg === "string" ? unknownPackage() : pkg });
     } else if (base === "tsconfig.json" || (base === "jsconfig.json" && !known.has(join(dir, "tsconfig.json")))) {
       // tsconfig.json wins over jsconfig.json in one folder: that jsconfig.json is never read.
-      const config = readTsconfig(reader, path, known, (clause) => gap(path, dir, ALL_RELATIONS, clause, "imports through its paths and baseUrl may be missing"));
+      const config = readTsconfig(reader, path, known, (clause) => gap(path, dir, "tsconfig", clause));
       if (config) model.tsconfigs.set(config.dir, config);
     } else if (base === "pyproject.toml" || base === "setup.cfg" || base === "setup.py") {
       pyRoots.add(dir);
-      if (base === "pyproject.toml") for (const n of pyprojectDeps(read(path, MANIFEST_BYTES, dir, [], PY_LACKS))) model.pyDeclared.add(n);
-      else if (base === "setup.cfg") for (const n of setupCfgRequires(read(path, MANIFEST_BYTES, dir, [], PY_LACKS))) model.pyDeclared.add(n);
+      if (base === "pyproject.toml") for (const n of pyprojectDeps(read(path, MANIFEST_BYTES, dir, "python-manifest"))) model.pyDeclared.add(n);
+      else if (base === "setup.cfg") for (const n of setupCfgRequires(read(path, MANIFEST_BYTES, dir, "python-manifest"))) model.pyDeclared.add(n);
     } else if (base.startsWith("requirements") && base.endsWith(".txt")) {
-      for (const n of requirementsDeps(read(path, MANIFEST_BYTES, dir, [], PY_LACKS))) model.pyDeclared.add(n);
+      for (const n of requirementsDeps(read(path, MANIFEST_BYTES, dir, "python-manifest"))) model.pyDeclared.add(n);
     } else if (base === "go.mod") {
-      model.goRequires.push(...goModRequires(read(path, MANIFEST_BYTES, dir, ["calls", "imports"], "the module it names and the modules it requires are not known")));
+      model.goRequires.push(...goModRequires(read(path, MANIFEST_BYTES, dir, "go.mod")));
     } else if (base === "Gemfile") {
-      for (const g of gemfileGems(read(path, MANIFEST_BYTES, dir, [], "the gems it names are not known and requires of them read as misses"))) model.gems.add(g);
+      for (const g of gemfileGems(read(path, MANIFEST_BYTES, dir, "Gemfile"))) model.gems.add(g);
     } else if (base === "pnpm-lock.yaml" && dir === "") {
-      model.pnpmLinks = pnpmLinks(read(path, LOCKFILE_BYTES, "", [], LOCK_LACKS));
+      model.pnpmLinks = pnpmLinks(read(path, LOCKFILE_BYTES, "", "lockfile"));
     } else if (base === "package-lock.json" && dir === "") {
       const got = get(reader, path, LOCKFILE_BYTES);
       const lock = got === null ? null : "failed" in got ? got.failed : npmLock(got.text);
-      if (typeof lock === "string") gap(path, "", [], lock, LOCK_LACKS);
+      if (typeof lock === "string") gap(path, "", "lockfile", lock);
       else if (lock !== null) model.npmLock = lock;
     } else if (base === "yarn.lock" && dir === "") {
-      const y = yarnLock(read(path, LOCKFILE_BYTES, "", [], LOCK_LACKS));
+      const y = yarnLock(read(path, LOCKFILE_BYTES, "", "lockfile"));
       model.yarnWorkspace = y.workspace;
       model.yarnPublished = y.published;
     }
@@ -403,7 +420,7 @@ export function discoverProjects(all: readonly string[], reader: RepoReader): Pr
   for (const path of all) {
     if (skipped(path)) continue;
     if (posix.basename(path) === "pnpm-workspace.yaml") {
-      const globs = pnpmPackages(read(path, MANIFEST_BYTES, dirOf(path), ALL_RELATIONS, "the workspace packages it lists are not known"));
+      const globs = pnpmPackages(read(path, MANIFEST_BYTES, dirOf(path), "pnpm-workspace.yaml"));
       if (globs.length > 0) {
         model.workspaceFiles.push(path);
         for (const m of membersOf(globs, path, model.node)) memberSet.add(m);

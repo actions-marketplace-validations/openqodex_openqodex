@@ -19,7 +19,9 @@
 // 7. A tsconfig whose relative `extends` names a file that is not there
 //    drops what it inherits with nothing said.
 // 8. A lockfile that cannot be read is said nowhere; it cannot hide a
-//    caller (without it a binding is only less sure), so it gives no floor.
+//    caller (without it a binding is only less sure), so it gives no floor,
+//    and it never stops the build from being complete: a repository whose
+//    lockfile is over its cap would otherwise keep no index at all.
 // 9. A tsconfig TypeScript reads without complaint (comments, trailing
 //    commas, a byte order mark, an empty file, an `extends` that names a
 //    package) or one git lists but the work tree no longer holds is
@@ -168,18 +170,27 @@ describe("a manifest or tsconfig the graph cannot read is said, never dropped", 
     expect(g.status.status).toBe("partial");
   });
 
-  it("names a package-lock.json that is not valid JSON, with no floor: without it a binding is only less sure (8)", async () => {
+  it("names a package-lock.json that is not valid JSON, with no floor, and keeps the build complete with its index: without it a binding is only less sure (8)", async () => {
     const files = {
       "package.json": json({ name: "app", dependencies: { left: "^1.0.0" } }),
       "package-lock.json": '{ "packages": { "node_modules/left": { "version": "1.0.0" }',
       "src/util.ts": "export function util() {\n  return 1;\n}\n",
       "src/main.ts": 'import { util } from "./util";\nexport function run() {\n  return util();\n}\n',
     };
-    const g = await buildGraph({ repoRoot: repo(files), store: null });
+    const root = repo(files);
+    const opened = await openStore(root, { home });
+    if (!opened.ok) throw new Error(opened.reason);
+    const g = await buildGraph({ repoRoot: root, store: opened.store, mode: "retained" });
     const note = "package-lock.json is not valid JSON, so which dependencies link workspace packages is not known";
     expect(metadata(g)).toEqual([{ file: "package-lock.json", scope: "project", note }]);
     expect(floorOf(g, "src/util.ts", "util")).toEqual([]);
-    expect(g.status.status).toBe("partial");
+    expect(g.status.status).toBe("ok");
+    expect(g.status.reasons).toContain(note);
+    expect(opened.store.open({ id: g.status.generation as string })?.manifest).toMatchObject({ complete: true, hasIndex: true });
+    // The next build loads that index and still names the gap.
+    const again = await buildGraph({ repoRoot: root, store: opened.store, mode: "retained" });
+    expect(Object.keys(again.status.stages)).toContain("load-index");
+    expect(metadata(again)).toEqual([{ file: "package-lock.json", scope: "project", note }]);
   });
 
   it("reads every tsconfig TypeScript reads without complaint, and a file git lists but the work tree no longer holds, as no failure (9)", async () => {
