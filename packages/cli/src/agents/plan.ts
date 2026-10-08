@@ -194,7 +194,7 @@ export function planInstall(t: Target, ctx: Ctx): Action {
       if (ownedFile(record, t.path, before)) return { ...base, verb: "update", note: t.label, apply: write };
       // A skill as some version shipped it (npx skills add copies it as it
       // is) is ours: left in place it would never update. An edited one is not.
-      if (t.skill && isShippedSkill(before)) {
+      if (t.skillRunner !== undefined && isShippedSkill(before, t.skillRunner)) {
         return { ...base, verb: "replace", note: `${t.label}, in place of a copy of the shipped skill, which never updates`, apply: write };
       }
       const recorded = record.files.some((f) => f.path === t.path);

@@ -11,9 +11,9 @@ import shippedSkills from "./shipped-skills.json";
 export type Scope = "user" | "project";
 
 export type Target =
-  // A whole file (rule or skill). `skill`: a file holding any text the
-  // skill was ever shipped with counts as ours (isShippedSkill).
-  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean; skill?: boolean }
+  // A whole file (rule or skill). `skillRunner`, on a skill: the command an
+  // init here writes for OpenQodex, so a shipped skill text is recognised (isShippedSkill).
+  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean; skillRunner?: string }
   // One hook group merged under hooks.PreToolUse of a JSON settings file.
   | { kind: "hook-json"; agent: AgentId; label: string; path: string; group: HookGroup; inRepo: boolean; usesLauncher: boolean }
   // A section between the openqodex markers in a markdown file.
@@ -82,21 +82,33 @@ export function renderSkill(runner: string): string {
   return shippedSkill().replace(LAUNCHER_PARAGRAPH, "").replace(PINNED_NPX, () => runner);
 }
 
-// A skill text with what differs between copies of one shipped text taken
-// out: the launcher paragraph, which project-scope copies drop, and the
-// pinned version. scripts/validate-skill.mjs computes the same key.
+// The key of one exact skill text, with the two things that differ between
+// copies of one shipped text written as placeholders: the version a pin
+// names, and the command that runs OpenQodex (`npx -y openqodex@<version>`,
+// or `runner`, the launcher or pinned npx form an init on this machine
+// writes in its place). Nothing else is taken out: an edit anywhere, the
+// launcher paragraph included, changes the key. scripts/validate-skill.mjs
+// computes the same key.
 const ANY_PIN = /openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
-export function shippedSkillKey(text: string): string {
-  return createHash("sha256").update(text.replace(LAUNCHER_PARAGRAPH, "").replace(ANY_PIN, "openqodex@<version>")).digest("hex");
+function skillKey(text: string, runner: string | null): string {
+  const own = runner === null ? text : text.replaceAll(runner, "<runner>");
+  return createHash("sha256").update(own.replace(ANY_PIN, "openqodex@<version>").replaceAll("npx -y openqodex@<version>", "<runner>")).digest("hex");
 }
 
-// True when `text` is the skill as some version shipped it: a copy `npx
-// skills add` made (it copies the file as it is on main), or a project-scope
-// copy an earlier init wrote. Such a file is OpenQodex's, not the
-// developer's, so init replaces it; a copy the developer edited matches none.
+// The keys a shipped text adds to shipped-skills.json: the file as shipped
+// (what `npx skills add` copies), and the file without its launcher
+// paragraph (what an earlier init wrote, in either scope).
+export function shippedSkillKeys(shipped: string): string[] {
+  return [skillKey(shipped, null), skillKey(shipped.replace(LAUNCHER_PARAGRAPH, ""), null)];
+}
+
+// True when `text` is exactly the skill as some version shipped it, or as
+// an earlier init wrote it with `runner` in place of npx. Such a file is
+// OpenQodex's, not the developer's, so init replaces it; a copy the
+// developer edited anywhere matches none.
 const SHIPPED = new Set(shippedSkills.sha256);
-export function isShippedSkill(text: string): boolean {
-  return SHIPPED.has(shippedSkillKey(text));
+export function isShippedSkill(text: string, runner: string): boolean {
+  return SHIPPED.has(skillKey(text, runner));
 }
 
 // One level-2 section of the shipped skill, heading included.
@@ -211,7 +223,7 @@ export function targetsFor(args: {
   const codex = (...p: string[]): string => (user ? join(codexHome(home), ...p) : at(".codex", ...p));
   const skillText = user ? skillStub(runner) : fill(renderSkill(runner), version);
   // A user-scope skill calls the launcher, so the launcher stays while it is installed.
-  const skillTarget = (label: string, path: string): Target => ({ kind: "file", agent, label, path, content: skillText, inRepo: !user, usesLauncher: user, skill: true });
+  const skillTarget = (label: string, path: string): Target => ({ kind: "file", agent, label, path, content: skillText, inRepo: !user, usesLauncher: user, skillRunner: runner });
 
   switch (agent) {
     case "claude-code":

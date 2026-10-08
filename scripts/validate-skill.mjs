@@ -37,14 +37,18 @@ if (present(skill)) {
   }
   // The procedure is one command: the agent writes no findings file and runs no finalize step.
   if (/agent-findings\.json|--finalize|review --agent/.test(text)) errors.push(`${skill}: still describes the two-step protocol (a findings file, --agent or --finalize)`);
-  // init counts a copy of any text the skill shipped with as its own and
-  // replaces it (shippedSkillKey in targets.ts computes the same key). A text
-  // missing from the list would be kept as the developer's and never update.
-  const key = createHash("sha256")
-    .update(text.replace(/^When the file `~\/\.openqodex\/bin\/openqodex` exists[^\n]*\n\n/m, "").replace(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g, "openqodex@<version>"))
-    .digest("hex");
+  // init counts an exact copy of any text the skill shipped with as its own
+  // and replaces it (shippedSkillKeys in targets.ts computes the same two
+  // keys). A text missing from the list would be kept as the developer's
+  // and never update.
+  const key = (t) =>
+    createHash("sha256")
+      .update(t.replace(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g, "openqodex@<version>").replaceAll("npx -y openqodex@<version>", "<runner>"))
+      .digest("hex");
+  const keys = [key(text), key(text.replace(/^When the file `~\/\.openqodex\/bin\/openqodex` exists[^\n]*\n\n/m, ""))];
   const shipped = readJson("packages/cli/src/agents/shipped-skills.json");
-  if (!shipped?.sha256?.includes(key)) errors.push(`${skill}: its text is not in packages/cli/src/agents/shipped-skills.json; add "${key}" to the list`);
+  const missing = keys.filter((k) => !shipped?.sha256?.includes(k));
+  if (missing.length) errors.push(`${skill}: its text is not in packages/cli/src/agents/shipped-skills.json; add ${missing.map((k) => `"${k}"`).join(" and ")} to the list`);
   if (!errors.length) console.log(`ok: ${skill}`);
 }
 

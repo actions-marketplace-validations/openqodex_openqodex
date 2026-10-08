@@ -292,6 +292,35 @@ describe("init, files the developer owns or edited", () => {
     expect(r.stdout).toContain("left alone");
   });
 
+  it("17. keeps a shipped copy whose launcher paragraph the developer edited", () => {
+    const shipped = readFileSync(join(BIN, "..", "..", "skills/openqodex/SKILL.md"), "utf8");
+    const paragraph = /^When the file `~\/\.openqodex\/bin\/openqodex` exists[^\n]*/m;
+    expect(shipped).toMatch(paragraph);
+    const edited = shipped.replace(paragraph, (p) => `${p} Company rule: use the launcher in CI too.`);
+    const s = sandbox();
+    const skill = join(s.home, ".claude/skills/openqodex/SKILL.md");
+    mkdirSync(join(skill, ".."), { recursive: true });
+    writeFileSync(skill, edited);
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(skill, "utf8")).toBe(edited);
+    expect(r.stdout).toContain("left alone");
+  });
+
+  it("17. replaces the full skill an earlier init wrote in user scope, with the launcher in place of npx", () => {
+    const shipped = readFileSync(join(BIN, "..", "..", "skills/openqodex/SKILL.md"), "utf8");
+    const s = sandbox();
+    const launcher = `'${join(s.oqHome, "bin/openqodex")}'`;
+    const rendered = shipped.replace(/^When the file `~\/\.openqodex\/bin\/openqodex` exists[^\n]*\n\n/m, "").replace(/npx -y openqodex@\d+\.\d+\.\d+/g, launcher);
+    const skill = join(s.home, ".claude/skills/openqodex/SKILL.md");
+    mkdirSync(join(skill, ".."), { recursive: true });
+    writeFileSync(skill, rendered);
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(skill, "utf8")).toContain("guide skill");
+    expect(readFileSync(skill, "utf8")).not.toBe(rendered);
+  });
+
   it("does not overwrite or remove a foreign rule file with the same name", () => {
     const s = sandbox();
     const rule = join(s.home, "Documents/Cline/Rules/openqodex.md");
