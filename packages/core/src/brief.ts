@@ -252,7 +252,7 @@ function doneBlock(findingsPath: string, finalizeCommand: string): string {
     "",
     `1. Write the JSON to \`${findingsPath}\`.`,
     `2. From the repository root, run \`${finalizeCommand}\`.`,
-    "3. Show the developer the report finalize prints, exactly as printed.",
+    "3. Show the developer the receipt finalize prints, as printed: the verdict, one line per finding and the absolute path of `report.html`, which shows each finding under its line of code. Then ask them: \"Fix all, or tell me which?\" Fix only the findings they name, run the review again, and show the new receipt.",
     "",
     "Finalize checks the file without a model and never repairs a finding. If it names an invalid field, fix that field and run it again. If it says the change moved, the code changed since this brief: run the review again.",
   ].join("\n");

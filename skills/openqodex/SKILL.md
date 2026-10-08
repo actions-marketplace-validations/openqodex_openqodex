@@ -38,11 +38,21 @@ When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y op
 
 2. Wait for it. A review takes one to three minutes. Many agents stop a command after two minutes, so give it up to ten minutes, or run it in the background and wait until it exits. While the reviewer works, it prints a progress line every 15 seconds on stderr. Do not start it a second time while one runs.
 
-3. Show the developer the report it printed, exactly as printed. Do not reword it, shorten it or add findings of your own. The same report is saved as `report.md`; its path is on the last progress line.
+3. Show the developer the receipt it printed, as printed: the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. Do not reword it, shorten it or add findings of your own. Give them the `report.html` path: that page shows each changed file with each finding under its line of code.
 
-4. Act on the exit code:
+4. Ask the developer: "Fix all, or tell me which?" Do not change any code before they answer. If they already told you what to fix, for example "review and fix everything", do that without asking again.
+
+5. Fix only the findings they name. This prints those findings in full (where, the problem, why it matters, the fix and the source), by their numbers in the receipt:
+
+   ```
+   npx -y openqodex@0.8.1 findings 1,3
+   ```
+
+   `findings all` prints every finding. When the fixes are done, run the review again and show the developer the new receipt.
+
+6. Act on the exit code:
    - 0: the review is complete and nothing blocks the push.
-   - 1: the review is complete and its verdict is `blocked`. Do not push. Show the developer the findings; push only if they say so after seeing them.
+   - 1: the review is complete and its verdict is `blocked`. Do not push. Show the developer the receipt and ask which findings to fix; push only if they say so after seeing the findings.
    - 2: there is no complete review. The output says what is missing (for example "Full review unavailable" when no reviewer could start, or "Review incomplete" with the reasons). Tell the developer exactly that. Never present the scanner output as a review.
 
 ## Reviewing a branch or a pull request
@@ -58,7 +68,7 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 
 ## Rules
 
-- Never edit code during the review. Review first, show the report, then fix only what the developer asks you to fix.
+- Never edit code during the review. Review first, show the receipt, ask "Fix all, or tell me which?", then fix only the findings the developer names.
 - Never run `openqodex trust` without asking the developer first. It approves a custom scanner, which is a command that runs on their machine.
 - Never set `OPENQODEX_SKIP`. It is the developer's switch, not yours.
 - When the verdict is `blocked`, do not push unless the developer says so after seeing the findings.
@@ -66,7 +76,7 @@ Quote `#42`: in a shell `#` starts a comment. A pull request link works too. Ope
 
 ## Reading the report
 
-- The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.md` to read, `report.json` and `report.sarif` for tools. `.openqodex/latest.json` points at the newest review. The reports never show in `git status`: `.openqodex/.gitignore` keeps them out. The two other files in that folder, `config.yaml` and `custom-instructions.md`, are the team's and are meant to be committed.
+- The report is in `.openqodex/reviews/<time>-<id>/` in the repository: `report.html` to open in a browser (each changed file as a diff, each finding under its line, then coverage, the scanners and the blast radius), `report.md` to read as text, `report.json` and `report.sarif` for tools. The receipt gives the absolute paths of `report.html` and `report.md`. `.openqodex/latest.json` points at the newest review. The reports never show in `git status`: `.openqodex/.gitignore` keeps them out. The two other files in that folder, `config.yaml` and `custom-instructions.md`, are the team's and are meant to be committed.
 - The verdict is `passed` (with or without warnings) or `blocked`. It is `blocked` only when the repository's config (`.openqodex/config.yaml`, or `.openqodex.yaml` at the root) sets `block_on_severity` and a finding is at or above it. With no config, OpenQodex warns and never blocks.
 - A complete review means every stage ran, every scanner finding was checked and every changed line was put in front of the reviewer; anything not covered is named in the report. It does not mean nothing was missed: no review finds everything.
 - The coverage list says, for each scanner, whether it ran. A scanner that did not run has a one-line reason:

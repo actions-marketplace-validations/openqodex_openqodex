@@ -134,8 +134,11 @@ function userRule(text: string, runner: string): string {
 // `init`, `report`; `hook check` runs from Claude Code's hook system, which
 // needs no Bash rule. The two-step lines of older versions (`review --agent`,
 // `review --finalize`) are no longer granted; init removes the ones it recorded.
+// `findings *` is the other wildcard: its argument is whichever numbers the
+// developer named, which no exact line can list, and findings only reads the
+// last review's report and prints it (it takes no flag but --cwd).
 const REVIEW_LINES = ["review", "review --all"];
-const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *"];
+const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *", "findings *"];
 
 export function allowRules(runner: string): string[] {
   return ALLOWED_LINES.map((l) => `Bash(${runner} ${l})`);

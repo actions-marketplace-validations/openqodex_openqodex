@@ -15,6 +15,7 @@ import {
   redactSecrets,
   renderJson,
   renderMarkdown,
+  renderReceipt,
   renderReview,
   renderSarif,
   renderTerminal,
@@ -246,6 +247,38 @@ export function emitReport(report: Report, flags: GlobalFlags, repoRoot: string)
             : renderTerminal(report, { color });
   if (flags.output !== undefined) writeOutFile(resolve(flags.output), repoRoot, text);
   else process.stdout.write(text);
+}
+
+// What a finished review prints. The default terminal format is the
+// receipt: the verdict, one line per finding and the absolute paths of
+// report.html and report.md, so the developer reads the review there and
+// names what to fix. An explicit markdown, json or sarif format is the whole
+// report in that format, as before (the Action and scripts read it), and the
+// two paths go to stderr, where --quiet keeps them: they are results, not
+// progress. --output writes the chosen text to a file instead of stdout.
+export function emitReview(report: Report, flags: GlobalFlags, repoRoot: string, paths: { html: string; md: string }): void {
+  if (flags.format !== "terminal") {
+    emitReport(report, flags, repoRoot);
+    warn(`Report: ${paths.html}`);
+    warn(`Markdown: ${paths.md}`);
+    return;
+  }
+  const text = renderReceipt(report, { ...paths, color: flags.color && flags.output === undefined });
+  if (flags.output !== undefined) writeOutFile(resolve(flags.output), repoRoot, text);
+  else process.stdout.write(text);
+}
+
+// report.html, written before anything announces the review. False, with
+// one line on stderr, when it could not be written: the caller then records
+// no review, prints no receipt and exits 2.
+export function writeReportHtml(write: (files: Record<string, string>) => void, html: string): boolean {
+  try {
+    write({ "report.html": html });
+    return true;
+  } catch (error) {
+    warn(`openqodex: could not write report.html (${(error as Error).message.split("\n")[0]}); report.md and report.json beside it hold the review, which is not recorded for the push hooks`);
+    return false;
+  }
 }
 
 // A temp file beside it, then a rename: an existing entry, a symbolic link

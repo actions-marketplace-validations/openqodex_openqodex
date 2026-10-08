@@ -18,11 +18,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import {
   MANIFEST_VERSION,
   OpenQodexError,
   STATE_DIR,
+  buildDisplay,
+  buildExcerptDisplay,
   buildInventory,
   buildReviewerBrief,
   checkSubmission,
@@ -38,6 +40,8 @@ import {
   readCoverage,
   redactSecrets,
   redactSecretsKeepingLines,
+  renderHtml,
+  renderUnavailableHtml,
   safeGit,
   selectLenses,
   writeLatest,
@@ -51,11 +55,11 @@ import type { Checkout } from "./checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
-import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses, writeReportCopies } from "./pipeline.js";
+import { buildHotSpots, buildImpact, emitReview, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses, writeReportCopies, writeReportHtml } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
 import { keepRunStateOutOfRepo } from "./feedback.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
-import { writeHomeReceipt } from "./receipts.js";
+import { writeHomeLastReview, writeHomeReceipt } from "./receipts.js";
 import { claudeDriver } from "./reviewers/claude.js";
 import { codexDriver } from "./reviewers/codex.js";
 import { cursorDriver } from "./reviewers/cursor.js";
@@ -242,6 +246,27 @@ function lineCounter(dir: string): (path: string) => number | null {
     }
     cache.set(path, n);
     return n;
+  };
+}
+
+// The text of a snapshot file, for the lines report.html shows around a
+// finding of a whole-repository review: null for a path outside the
+// snapshot, a link, a file over MAX_FILE_BYTES or one that is not UTF-8 text.
+// The snapshot is already redacted (redactSnapshot).
+function snapshotText(dir: string): (path: string) => string | null {
+  return (path) => {
+    const full = resolve(dir, path);
+    const rel = relative(dir, full);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || rel === ".git") return null;
+    try {
+      const st = lstatSync(full);
+      if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
+      const buf = readFileSync(full);
+      const text = buf.toString("utf8");
+      return buf.includes(0) || !Buffer.from(text, "utf8").equals(buf) ? null : text;
+    } catch {
+      return null;
+    }
   };
 }
 
@@ -634,16 +659,20 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
     // No reviewer can start: the scanner candidates are saved as unchecked,
     // never as a review, and the fallback through the agent the developer is in is named.
+    // report.html then says the review is unavailable and why; it is not a review.
     const unavailable = (reasons: string[]): number => {
       const path = join(dir, "unchecked-candidates.json");
+      const fallback = fallbackCommand(o);
       folder.write({
         "unchecked-candidates.json": `${JSON.stringify({ label: "unchecked scanner candidates, not a review: no reviewer checked them", change_id: change.id, candidates: scan.candidates }, null, 2)}\n`,
+        "report.html": renderUnavailableHtml({ changeId: change.id, reasons: redactStored(reasons, p.secrets), candidatesPath: path, fallback, version: __OPENQODEX_VERSION__ }),
       });
       noteReviewer({ started: false, reasons });
       warn("Full review unavailable: openqodex could not start a reviewer.");
       for (const line of reasons) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
-      warn(`To review with the agent you are in instead, run \`${fallbackCommand(o)}\` and follow the brief it prints.`);
+      warn(`To review with the agent you are in instead, run \`${fallback}\` and follow the brief it prints.`);
+      warn(`Status page: ${join(dir, "report.html")}`);
       return EXIT_TOOL_FAILED;
     };
     if ("unavailable" in chosen) return unavailable(chosen.unavailable);
@@ -754,11 +783,29 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     };
     if (completion.status !== "complete") report.verdict = "incomplete";
 
+    // report.html's code, while the diff and the matched secrets are still
+    // in memory: the change as a diff, or for the whole repository a few
+    // lines of the redacted snapshot around each cited line.
+    const display = prep.whole
+      ? buildExcerptDisplay({
+          changeId: change.id,
+          cited: [
+            ...report.findings,
+            ...report.dropped.map((d) => (d.cited ? { ...d.cited, line_end: d.cited.line_number } : { file_path: d.candidate.filePath, line_number: d.candidate.lineStart, line_end: d.candidate.lineEnd })),
+          ],
+          read: snapshotText(prep.snapshot.tree),
+          secrets: p.secrets,
+        })
+      : buildDisplay({ change, secrets: p.secrets });
+    const html = renderHtml({ report: redactStored(report, p.secrets), display, version: __OPENQODEX_VERSION__, runId: basename(dir) });
+    const paths = { html: join(dir, "report.html"), md: join(dir, "report.md") };
+
     folder.write({
       ...reportFiles(report),
       "submission.json": `${JSON.stringify(redactStored(talk.submission, p.secrets), null, 2)}\n`,
       "trace.json": `${JSON.stringify(redactStored(talk.trace, p.secrets), null, 2)}\n`,
     });
+    if (!writeReportHtml(folder.write, html)) return EXIT_TOOL_FAILED;
     const receipt: Latest = {
       dir: folder.shown,
       change_id: change.id,
@@ -787,13 +834,18 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       // The record the push hooks trust, in the developer's home: a branch
       // cannot plant it the way it can carry files under .openqodex/.
       try {
-        writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, completion.status, folder.shown));
+        writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, completion.status, folder.shown, paths.html));
       } catch (error) {
         warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
       }
     }
-    emitReport(report, o.flags, repoRoot);
-    say(`Report: ${inCheckout ? relative(repoRoot, join(dir, "report.md")) : join(dir, "report.md")}`);
+    // The review `openqodex findings` reads, whatever kind it was.
+    try {
+      writeHomeLastReview(openqodexHomeDir(), repoRoot, dir, change.id);
+    } catch (error) {
+      warn(`openqodex: could not record this review for openqodex findings: ${(error as Error).message.split("\n")[0]}`);
+    }
+    emitReview(report, o.flags, repoRoot, paths);
     return exitFor(report);
   } finally {
     process.off("SIGINT", onSignal);

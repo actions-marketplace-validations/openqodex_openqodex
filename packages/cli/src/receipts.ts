@@ -8,6 +8,7 @@
 //   <home>/receipts/<repo id>/<change id>.json   one per reviewed change
 //   <home>/receipts/<repo id>/latest.json        the newest, for its base
 //   <home>/runs/<repo id>/<run id>.json          one per `review --agent` run
+//   <home>/last-review/<repo id>/last-review.json  the run `openqodex findings` reads
 //
 // A run record binds a legacy run (`review --agent`, then `review
 // --finalize`) to this machine: the change id, the config and instructions
@@ -39,6 +40,9 @@ export type RunRecord = {
   scan_sha256: string;
   candidates_sha256: string;
   run_sha256: string;
+  // display.json, the code report.html shows; absent in records written
+  // before it existed. Finalize shows the code only when it still matches.
+  display_sha256?: string;
   written_at: string;
 };
 
@@ -97,6 +101,29 @@ export function writeHomeReceipt(home: string, repoRoot: string, receipt: GateRe
   writeRecord(home, "receipts", repoRoot, [`${receipt.change_id}.json`, "latest.json"], receipt);
 }
 
+// The last review of a repository run on this machine, of any kind (the
+// developer's change, a branch or pull request, the whole repository, a
+// two-step review): its run folder, absolute, and its change id. `openqodex
+// findings` reads that review's report.json, never the newest folder under
+// .openqodex/reviews/, which a branch can plant with any name.
+//
+//   <home>/last-review/<repo id>/last-review.json
+export type LastReview = { version: 1; dir: string; change_id: string; written_at: string };
+
+const LAST_REVIEW_KIND = "last-review";
+const LAST_REVIEW = "last-review.json";
+
+export function writeHomeLastReview(home: string, repoRoot: string, dir: string, changeId: string): void {
+  const record: LastReview = { version: 1, dir, change_id: changeId, written_at: new Date().toISOString() };
+  writeRecord(home, LAST_REVIEW_KIND, repoRoot, [LAST_REVIEW], record);
+}
+
+export function readHomeLastReview(home: string, repoRoot: string): LastReview | null {
+  const value = readRecord(join(home, LAST_REVIEW_KIND, repoId(repoRoot), LAST_REVIEW)) as Partial<LastReview> | null;
+  const ok = value !== null && value.version === 1 && typeof value.dir === "string" && typeof value.change_id === "string";
+  return ok ? (value as LastReview) : null;
+}
+
 export function homeRunPath(home: string, repoRoot: string, runId: string): string {
   return join(home, "runs", repoId(repoRoot), `${runId}.json`);
 }
@@ -126,6 +153,7 @@ export function readHomeReceipt(home: string, repoRoot: string, changeId: string
     (changeId === "latest" || value.change_id === changeId) &&
     (value.kind === "complete" || value.kind === "incomplete" || value.kind === "legacy") &&
     typeof value.report === "string" &&
+    (value.html === undefined || typeof value.html === "string") &&
     typeof value.base?.sha === "string" &&
     typeof value.base?.ref === "string";
   return ok ? (value as GateReceipt) : null;
@@ -165,7 +193,7 @@ export function readHomeReceipts(home: string, repoRoot: string, limit: number):
 // Removes receipts and run records not written for 30 days, and repo
 // folders left empty. Run by init and the foreground update, never by a hook.
 export function pruneHomeReceipts(home: string, now = Date.now()): void {
-  for (const kind of ["receipts", "runs"]) pruneFolder(join(home, kind), now);
+  for (const kind of ["receipts", "runs", LAST_REVIEW_KIND]) pruneFolder(join(home, kind), now);
 }
 
 function pruneFolder(root: string, now: number): void {

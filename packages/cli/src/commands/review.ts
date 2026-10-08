@@ -12,13 +12,17 @@ import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
+  DISPLAY_MAX_BYTES,
   MANIFEST_VERSION,
   OpenQodexError,
   INVENTORY_FILE,
   buildBrief,
+  buildDisplay,
   buildInventory,
   buildWholeRepoBrief,
+  checkDisplay,
   configHash,
+  displayJson,
   finalizeReview,
   gateReceipt,
   findRepoRoot,
@@ -29,6 +33,7 @@ import {
   openReportDir,
   readLatest,
   readRepoFile,
+  renderHtml,
   repoStat,
   SEVERITIES,
   STATE_DIR,
@@ -38,7 +43,7 @@ import {
   writeReportFiles,
   writeScan,
 } from "@openqodex/core";
-import type { ChangeScope, Config, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, Severity, WholeRepo } from "@openqodex/core";
+import type { Change, ChangeScope, Config, Display, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, Severity, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { announceRepoFiles } from "../agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, checkoutsDir, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
@@ -46,7 +51,7 @@ import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
 import { HANDED_OFF } from "../update/trigger.js";
 import { readInstructions } from "../instructions.js";
-import { readHomeRun, writeHomeReceipt, writeHomeRun } from "../receipts.js";
+import { readHomeRun, writeHomeLastReview, writeHomeReceipt, writeHomeRun } from "../receipts.js";
 import type { RunRecord } from "../receipts.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
 import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
@@ -54,7 +59,7 @@ import type { GlobalFlags } from "../flags.js";
 import {
   buildHotSpots,
   buildImpact,
-  emitReport,
+  emitReview,
   exitFor,
   instructionsHash,
   loadRepo,
@@ -67,6 +72,7 @@ import {
   scanChange,
   warn,
   wholeRepoLenses,
+  writeReportHtml,
 } from "../pipeline.js";
 import type { PipelineResult } from "../pipeline.js";
 import { dropTempRef, resolveTarget, sweepTempRefs } from "../target.js";
@@ -76,6 +82,11 @@ import { SCOPE_BOOLS, SCOPE_VALUES, scopeFrom } from "./scan.js";
 const FINDINGS_FILE = "agent-findings.json";
 const IMPACT_FILE = "impact.json";
 const RUN_FILE = "run.json";
+// The code report.html shows, captured with the brief while the matched
+// secrets are in memory, since finalize has only their fingerprints.
+const DISPLAY_FILE = "display.json";
+// Files that quote the code under review.
+const PRIVATE = 0o600;
 const RUN_AGAIN = "run openqodex review --agent first";
 
 // run.json beside the manifest: the scope the brief was made with, so
@@ -246,14 +257,17 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
     [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
   };
+  const display = displayJson(buildDisplay({ change: p.change, secrets: p.secrets }));
   writeReportFiles(p.repoRoot, dir, {
     ...bound,
     [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
     "brief.md": brief,
   });
+  // It quotes the code under review: readable by the developer only.
+  writeReportFiles(p.repoRoot, dir, { [DISPLAY_FILE]: display }, PRIVATE);
   // The run record in the developer's home: finalize issues a push receipt
   // only for a run this machine scanned, with these files unchanged.
-  if (!target) recordRun(p.repoRoot, dir, manifest, bound);
+  if (!target) recordRun(p.repoRoot, dir, manifest, bound, display);
   if (!target) {
     writeLatest(p.repoRoot, {
       dir: relative(p.repoRoot, dir),
@@ -612,6 +626,12 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   };
 
   writeReportFiles(repoRoot, dir, reportFiles(report));
+  const html = renderHtml({ report, display: savedDisplay(repoRoot, dir, change, target === undefined && whole === null), version: __OPENQODEX_VERSION__, runId: basename(dir) });
+  if (!writeReportHtml((files) => writeReportFiles(repoRoot, dir, files, PRIVATE), html)) {
+    await discard();
+    return EXIT_TOOL_FAILED;
+  }
+  const paths = { html: join(dir, "report.html"), md: join(dir, "report.md") };
   const receipt: Latest = {
     dir: relative(repoRoot, dir),
     change_id: change.id,
@@ -626,15 +646,46 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     // A legacy record in the developer's home, so the push hooks accept this
     // review as before; only for a run this machine scanned (recordRun).
     try {
-      if (runMatches(readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)), { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts })) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir)));
+      if (runMatches(readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)), { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts })) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, "legacy", relative(repoRoot, dir), paths.html));
       else warn("openqodex: this review is not recorded for the push hooks: its scan was not run by review --agent on this machine, or its files changed since; run openqodex review");
     } catch (error) {
       warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
     }
   }
+  try {
+    writeHomeLastReview(openqodexHomeDir(), repoRoot, dir, change.id);
+  } catch (error) {
+    warn(`openqodex: could not record this review for openqodex findings: ${(error as Error).message.split("\n")[0]}`);
+  }
   await discard();
-  emitReport(report, flags, repoRoot);
+  emitReview(report, flags, repoRoot, paths);
   return exitFor(report);
+}
+
+// The code report.html shows for a two-step review: display.json as review
+// --agent wrote it, used only when it is in the saved shape, was made for
+// this very change, and (for a run this machine scanned, `bound`) still has
+// the hash the run record holds. Otherwise the page shows the findings
+// without code, and one line says why. A whole-repository run saved none.
+function savedDisplay(repoRoot: string, dir: string, change: Change, bound: boolean): Display | null {
+  let text: string | null;
+  try {
+    text = readRepoFile(repoRoot, join(dir, DISPLAY_FILE), DISPLAY_MAX_BYTES + 1);
+  } catch {
+    text = "";
+  }
+  if (text === null) return null;
+  let value: unknown = null;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    value = null;
+  }
+  const record = bound ? readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)) : null;
+  const same = record?.display_sha256 === undefined || record.display_sha256 === sha256Of(text);
+  const display = same ? checkDisplay(value, change.id) : null;
+  if (display === null) warn("openqodex: the saved code of this run does not match the change it was made for, so report.html shows the findings without the code");
+  return display;
 }
 
 const sha256Of = (text: string | null): string | null => (text === null ? null : createHash("sha256").update(text, "utf8").digest("hex"));
@@ -644,7 +695,7 @@ const sha256Of = (text: string | null): string | null => (text === null ? null :
 // reads, from the text this process wrote (never read back from the folder,
 // which the repository and the agent can write too). A failure is one
 // warning line: the run then finalizes with no push receipt.
-function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: Record<"manifest.json" | "scan.json" | "candidates.json" | "run.json", string>): void {
+function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: Record<"manifest.json" | "scan.json" | "candidates.json" | "run.json", string>, display: string): void {
   try {
     writeHomeRun(openqodexHomeDir(), repoRoot, basename(dir), {
       version: 1,
@@ -655,6 +706,7 @@ function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: 
       scan_sha256: sha256Of(files["scan.json"])!,
       candidates_sha256: sha256Of(files["candidates.json"])!,
       run_sha256: sha256Of(files["run.json"])!,
+      display_sha256: sha256Of(display)!,
       written_at: new Date().toISOString(),
     });
   } catch (error) {
