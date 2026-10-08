@@ -18,6 +18,9 @@
 //   7. A run that stops leaves toolchain.json changed or a changeset behind.
 //   8. A good release is not pinned at the sha256 of its downloaded bytes, or
 //      a file other than toolchain.json and one changeset changes.
+//   9. --proposal, the sha256 the workflow compares between the job that ran
+//      the gate and the job that opens the pull request, misses a change to
+//      a file the bump wrote.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -137,13 +140,15 @@ function files(root: string): string[] {
   return out.sort();
 }
 
-async function bump(root: string): Promise<{ code: number | null; stderr: string }> {
+async function bump(root: string, args = ["--apply", "demo"]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const options = { root, api: origin, web: origin, assetOrigins: [origin] };
-  const child = spawn(process.execPath, [runner, JSON.stringify(options), "--apply", "demo"], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [runner, JSON.stringify(options), ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
   let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d));
   child.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d));
   const code = await new Promise<number | null>((done) => child.on("close", done));
-  return { code, stderr };
+  return { code, stdout, stderr };
 }
 
 const good = (): Release => ({
@@ -203,5 +208,24 @@ describe("pin-bump pins a good release (8)", () => {
       binaryPath: "demo",
     });
     expect(files(root)).toEqual([".changeset/pin-demo-2-0-0.md", "packages/scanners/toolchain.json"]);
+  });
+});
+
+describe("the proposal sha256 (9)", () => {
+  it("covers the table and the changeset the bump wrote, and changes with either", async () => {
+    release = good();
+    const { root, table } = repoRoot();
+    expect((await bump(root)).code).toBe(0);
+    const first = await bump(root, ["--proposal", "demo"]);
+    expect(first.code, first.stderr).toBe(0);
+    expect(first.stdout.trim()).toMatch(/^[0-9a-f]{64}$/);
+    expect((await bump(root, ["--proposal", "demo"])).stdout).toBe(first.stdout);
+    writeFileSync(table, readFileSync(table, "utf8").replace("acme/demo", "acme/other"));
+    expect((await bump(root, ["--proposal", "demo"])).stdout).not.toBe(first.stdout);
+    const changeset = join(root, ".changeset", "pin-demo-2-0-0.md");
+    writeFileSync(table, readFileSync(table, "utf8").replace("acme/other", "acme/demo"));
+    expect((await bump(root, ["--proposal", "demo"])).stdout).toBe(first.stdout);
+    writeFileSync(changeset, `${readFileSync(changeset, "utf8")}x`);
+    expect((await bump(root, ["--proposal", "demo"])).stdout).not.toBe(first.stdout);
   });
 });

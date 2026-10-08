@@ -13,12 +13,12 @@
 // newest release that meets every requirement on it and runs on the recipe's
 // lowest Ruby; its sha256 is the one RubyGems publishes, checked against the
 // downloaded .gem. uv takes each wheel's sha256 from PyPI's index, and the
-// installer checks every download against it. Needs uv (on PATH, or
-// the file $UV names) and the network; reads nothing from any repository
-// under review.
+// installer checks every download against it. Uses the uv pinned in the
+// table, downloaded and checked against its sha256 (or the file $UV names),
+// and the network; reads nothing from any repository under review.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,19 +40,47 @@ if (wanted.length > 0 && tools.length !== wanted.length) {
   process.exit(2);
 }
 
-function uvLock(recipe, triple, file) {
+function uvLock(uv, recipe, triple, file) {
   const dir = mkdtempSync(join(tmpdir(), "openqodex-lock-"));
   try {
     const input = join(dir, "requirements.in");
     writeFileSync(input, [`${recipe.package}==${recipe.version}`, ...(recipe.with ?? [])].join("\n") + "\n");
     execFileSync(
-      process.env.UV ?? "uv",
+      uv,
       ["pip", "compile", "--quiet", "--generate-hashes", "--no-header", "--no-annotate", "--python-version", recipe.python, "--python-platform", triple, "--only-binary", ":all:", "--index-url", "https://pypi.org/simple", input, "-o", file],
       { stdio: ["ignore", "inherit", "inherit"] },
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// The uv the table pins, for this machine: its GitHub release asset,
+// downloaded (redirects only to GitHub's asset hosts) and checked against the
+// pinned sha256 before it is unpacked. Returns the path of the binary.
+async function pinnedUv() {
+  const platform = { "darwin:arm64": "darwin-arm64", "darwin:x64": "darwin-x64", "linux:x64": "linux-x64", "linux:arm64": "linux-arm64" }[`${process.platform}:${process.arch}`];
+  const asset = platform ? table.tools.uv?.assets?.[platform] : null;
+  if (!asset) throw new Error("no pinned uv for this machine; name one with UV=<file>");
+  const origins = ["https://github.com", "https://release-assets.githubusercontent.com", "https://objects.githubusercontent.com"];
+  let url = asset.url;
+  let bytes = null;
+  for (let hop = 0; hop <= 5 && bytes === null; hop++) {
+    if (!origins.includes(new URL(url).origin)) throw new Error(`refusing to download uv from ${new URL(url).origin}`);
+    const response = await fetch(url, { redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) url = new URL(response.headers.get("location") ?? "", url).href;
+    else if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    else bytes = Buffer.from(await response.arrayBuffer());
+  }
+  if (bytes === null) throw new Error(`${asset.url}: too many redirects`);
+  const actual = createHash("sha256").update(bytes).digest("hex");
+  if (actual !== asset.sha256) throw new Error(`uv: the download has sha256 ${actual}, the table pins ${asset.sha256}`);
+  const dir = mkdtempSync(join(tmpdir(), "openqodex-uv-"));
+  writeFileSync(join(dir, asset.name), bytes);
+  execFileSync("tar", ["-xzf", join(dir, asset.name), "-C", dir, "--no-same-owner"]);
+  const bin = join(dir, asset.binaryPath);
+  chmodSync(bin, 0o755);
+  return bin;
 }
 
 // ---------- gems ----------
@@ -177,11 +205,12 @@ async function gemLock(name, recipe) {
 }
 
 mkdirSync(locks, { recursive: true });
+const uv = tools.some(([, r]) => r.method === "uv") ? (process.env.UV ?? (await pinnedUv())) : null;
 for (const [name, recipe] of tools) {
   const text = recipe.method === "uv" ? null : await gemLock(name, recipe);
   for (const [platform, triple] of Object.entries(PLATFORMS)) {
     const file = join(locks, `${name}-${platform}.txt`);
-    if (recipe.method === "uv") uvLock(recipe, triple, file);
+    if (recipe.method === "uv") uvLock(uv, recipe, triple, file);
     else writeFileSync(file, text);
     const packages = readFileSync(file, "utf8").split("\n").filter((l) => l !== "" && !l.startsWith(" ") && !l.startsWith("#")).length;
     process.stdout.write(`${name} ${platform}: ${packages} packages\n`);

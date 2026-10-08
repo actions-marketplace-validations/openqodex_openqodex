@@ -10,6 +10,11 @@
 //   node scripts/pin-bump.mjs --apply <tool>  moves that scanner's pin to its
 //                                             newest release at least 7 days
 //                                             old, and writes a changeset
+//   node scripts/pin-bump.mjs --proposal <tool>
+//                                             the sha256 of the files a bump
+//                                             of that scanner wrote: the
+//                                             table, its lock files and its
+//                                             changeset
 //
 // What --apply trusts, and how:
 // - The source is the owner and repository (or registry package) already in
@@ -33,7 +38,7 @@
 // only.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -284,6 +289,21 @@ async function apply(tool, table, up, now) {
 
 const PLATFORM_TRIPLES = { "darwin-arm64": 1, "darwin-x64": 1, "linux-x64": 1, "linux-arm64": 1 };
 
+// One sha256 over every file a bump of `tool` writes, name and bytes, in
+// name order. The workflow compares it between the job that ran the gate and
+// the job that makes the bump again and opens the pull request.
+function proposal(tool, up) {
+  if (!/^[a-z0-9-]+$/.test(tool)) throw new Refused(`${tool} is not a scanner name`);
+  const files = ["packages/scanners/toolchain.json"];
+  const locks = join(up.root, "packages", "scanners", "locks");
+  if (existsSync(locks)) for (const f of readdirSync(locks)) if (f.startsWith(`${tool}-`) && f.endsWith(".txt")) files.push(`packages/scanners/locks/${f}`);
+  const changesets = join(up.root, ".changeset");
+  if (existsSync(changesets)) for (const f of readdirSync(changesets)) if (f.startsWith(`pin-${tool}-`) && f.endsWith(".md")) files.push(`.changeset/${f}`);
+  const hash = createHash("sha256");
+  for (const f of files.sort()) hash.update(`${f}\0`).update(readFileSync(join(up.root, f))).update("\0");
+  return hash.digest("hex");
+}
+
 // The command line. Returns the exit code: 0 done or nothing due, 2 refused
 // or wrong usage.
 export async function run(argv, options = {}) {
@@ -299,8 +319,10 @@ export async function run(argv, options = {}) {
       process.stdout.write(`${JSON.stringify((await report(table, up, now)).filter((r) => r.due).map((r) => r.tool))}\n`);
     } else if (mode === "--apply" && arg !== undefined) {
       await apply(arg, table, up, now);
+    } else if (mode === "--proposal" && arg !== undefined) {
+      process.stdout.write(`${proposal(arg, up)}\n`);
     } else {
-      process.stderr.write("usage: node scripts/pin-bump.mjs --report | --matrix | --apply <tool>\n");
+      process.stderr.write("usage: node scripts/pin-bump.mjs --report | --matrix | --apply <tool> | --proposal <tool>\n");
       return 2;
     }
     return 0;
