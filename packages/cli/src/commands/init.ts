@@ -156,7 +156,7 @@ async function startScannerInstalls(repoRoot: string, written: string[]): Promis
     const { installToolsDetached, scannersToInstall } = await import("@openqodex/scanners");
     const ours = new Set(written.map((p) => relative(repoRoot, p)));
     const files = (await repoFiles(repoRoot)).filter((p) => !ours.has(p));
-    const wanted = scannersToInstall(files, repoRoot, loadConfig(repoRoot).config);
+    const wanted = scannersToInstall(files, repoRoot, loadConfig(repoRoot, undefined, { runtimeVersion: __OPENQODEX_VERSION__ }).config);
     if (wanted.length === 0) return;
     installToolsDetached(wanted);
     out(`Downloading the scanners this repo needs in the background: ${wanted.join(", ")}.`);

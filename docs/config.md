@@ -5,7 +5,9 @@ OpenQodex reads `.openqodex/config.yaml` in the repository. Every key is optiona
 - `.openqodex.yaml` at the root, the 0.1.0 location, is still read when `.openqodex/config.yaml` does not exist. With both, OpenQodex reads `.openqodex/config.yaml` only and warns.
 - `--config <path>` reads another file instead of either.
 
-An unknown key prints a warning and is ignored. A value of the wrong type stops the run with exit 2 and names the key.
+An unknown key prints a warning and is ignored. A name in `scanners.disable` that this version does not know is ignored too, with a warning that names the scanner it is near, since a newer version may know it. Any other value of the wrong type or outside its list, an unknown `block_on_severity` included, stops the run with exit 2 and names the key.
+
+`init`, and the first review in a repository, write `.openqodex/config.yaml` with `version: 1` set and every other key as a comment that shows its default. The default lives in OpenQodex, so a release that changes one reaches every repository that never set the key. To set a key, remove the `# ` at the start of its line and of the lines of the blocks above it. A file `init` wrote up to 0.8.1 holds every default as a set value. OpenQodex never rewrites it, and when a later release changes a default it still holds, it says so in a warning.
 
 ## Every key
 
@@ -13,6 +15,7 @@ An unknown key prints a warning and is ignored. A value of the wrong type stops 
 | Key | Default | What it does |
 | --- | --- | --- |
 | `version` | `1` | The file format version. 1 is the only one. |
+| `min_version` | `null` | The oldest openqodex that may read this file, such as 0.9.0; an older one stops with exit 2 and names the version it needs. |
 | `review.severity_threshold` | `minor` | Findings below this severity stay out of the report; one at or above block_on_severity is always shown. |
 | `review.block_on_severity` | `null` | Exit 1 and deny the push when a finding on a changed line is at or above this severity; null never blocks. |
 | `review.paths.exclude` | `[]` | Globs of files left out of the change. |
@@ -55,6 +58,25 @@ The keys mirror the `.qodex.yaml` file of the hosted Qodex review where the mean
 - `pr_review` is read as `review`, with a warning. A file with both is refused.
 - These keys are used by the hosted review only. Each prints a warning naming it and is ignored: `review.enabled`, `review.block_pr_merge`, `review.allow_approve`, `review.authors`, `review.base_branches`, `review.style_placement_threshold` and the whole `probes` block. `review.base_branches` there picks which pull requests are reviewed; `review.default_base` is the local key for the branch a change is compared with.
 
+## Changes between versions
+
+Each rename, removal and default change of a key, and the move of the file, is one row below. OpenQodex reads an old name or place with a warning. `openqodex config migrate` prints the rewrite these rows ask for and writes nothing; `openqodex config migrate --write` writes it and keeps every comment. Nothing rewrites the file unasked, and a rewrite that would change what the config does is refused.
+
+<!-- config-changes:start -->
+| Change | Since | What happens |
+| --- | --- | --- |
+| `.openqodex.yaml` moved to `.openqodex/config.yaml` | 0.2.0 | The old file is still read while the new one is absent. `config migrate` moves it. |
+| `pr_review` renamed to `review` | 0.1.0 | It is the hosted name of the review block. Read as `review`, with a warning; a file with both is refused. `config migrate` renames it. |
+| `review.enabled` of the hosted review | | Ignored, with a warning. `config migrate` keeps it, so one file can serve both. |
+| `review.block_pr_merge` of the hosted review | | Ignored, with a warning. `config migrate` keeps it, so one file can serve both. |
+| `review.allow_approve` of the hosted review | | Ignored, with a warning. `config migrate` keeps it, so one file can serve both. |
+| `review.authors` of the hosted review | | Ignored, with a warning. `config migrate` keeps it, so one file can serve both. |
+| `review.base_branches` of the hosted review | | Ignored, with a warning. `config migrate` keeps it, so one file can serve both. |
+| `review.style_placement_threshold` of the hosted review | | Ignored, with a warning. `config migrate` keeps it, so one file can serve both. |
+| `probes` of the hosted review | | Ignored, with a warning. `config migrate` keeps it, so one file can serve both. |
+| `review.severity_threshold` default `info` to `minor` | 0.2.0 | A file an earlier `init` wrote with every default set that still holds `info` gets a warning. A file at the old place that leaves it unset gets one too. |
+<!-- config-changes:end -->
+
 ## Severity
 
 OpenQodex uses one scale: `critical`, `major`, `minor`, `nitpick`, `info`. Scanner severities map onto it:
@@ -68,6 +90,10 @@ OpenQodex uses one scale: `critical`, `major`, `minor`, `nitpick`, `info`. Scann
 ## version
 
 `1`, the only version. Optional.
+
+## min_version
+
+A version such as `0.9.0`. Optional. An older OpenQodex stops with exit 2 and one line that names the version this repository needs and says to run `openqodex update`. Set it when the config uses something only a newer version reads. Versions 0.8.1 and earlier do not know the key: they warn that it is unknown and go on.
 
 ## review.severity_threshold
 
@@ -121,7 +147,7 @@ With `false`, scanner findings in test fixtures, mocks, stubs, fakes and snapsho
 
 ## scanners.disable
 
-A list of built-in scanner names to switch off. The names are `semgrep`, `gitleaks`, `sqllint`, `osv-scanner`, `actionlint`, `hadolint`, `shellcheck`, `ruff`, `brakeman`, `rubocop`, `bandit`, `oxlint` and `golangci`. A disabled scanner is listed in the report as disabled.
+A list of built-in scanner names to switch off. The names are `semgrep`, `gitleaks`, `sqllint`, `osv-scanner`, `actionlint`, `hadolint`, `shellcheck`, `ruff`, `brakeman`, `rubocop`, `bandit`, `oxlint` and `golangci`. A disabled scanner is listed in the report as disabled. A name this version does not know is ignored, with a warning that names the scanner it is near, or every name when none is near.
 
 ## scanners.custom
 

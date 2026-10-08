@@ -90,6 +90,16 @@ openqodex demo [dir]
 
 Builds the demo repository in `<dir>`, or in a new temporary folder. A relative `<dir>` resolves from the folder you run the command in. The folder must be empty or new. The demo commits a clean baseline, then adds a change with planted bugs and leaves it uncommitted. It scans that change and prints the report. When some scanners are still installing, it says so and asks you to run `scan` again. The secret in the demo is generated each time and works nowhere.
 
+## config migrate
+
+For you, after a release renames or removes a key of the repo config, or for a repository that still has the 0.1.0 root `.openqodex.yaml`.
+
+```
+openqodex config migrate [--write]
+```
+
+Prints each change the table in `config` ("Changes between versions") asks of this repository's config, and the file as it would be, and writes nothing. With `--write` it writes that file: a renamed key gets its new name in place, a removed key is taken out, every comment stays, and the root `.openqodex.yaml` moves to `.openqodex/config.yaml`. A rewrite that would change what the config does is refused with exit 2. With nothing to change, it says so.
+
 ## report
 
 Offered by OpenQodex itself after an internal failure.

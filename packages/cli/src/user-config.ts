@@ -14,6 +14,7 @@
 // one cannot honour.
 import { join } from "node:path";
 import { isScalar, parseDocument, type Document } from "yaml";
+import { nearestName } from "@openqodex/core";
 import { readText } from "./agents/files.js";
 
 export const USER_KEYS = ["update", "reviewer", "reviewer_web", "skip_version"] as const;
@@ -40,31 +41,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function distance(a: string, b: string): number {
-  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let diagonal = row[0]!;
-    row[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const above = row[j]!;
-      row[j] = Math.min(row[j]! + 1, row[j - 1]! + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
-      diagonal = above;
-    }
-  }
-  return row[b.length]!;
-}
-
-// The known key a misspelled one most likely meant: the same key in another
-// case or with `-` or a space for `_`, else one at most two letters away.
+// The known key a misspelled one most likely meant (core's nearestName).
 export function nearestKey(key: string, known: readonly string[] = USER_KEYS): string | null {
-  const plain = key.toLowerCase().replace(/[-\s]/g, "_");
-  if (known.includes(plain)) return plain;
-  let best: { key: string; d: number } | null = null;
-  for (const k of known) {
-    const d = distance(plain, k);
-    if (d <= 2 && (best === null || d < best.d)) best = { key: k, d };
-  }
-  return best?.key ?? null;
+  return nearestName(key, known);
 }
 
 export function readUserConfig(home: string): UserConfig {

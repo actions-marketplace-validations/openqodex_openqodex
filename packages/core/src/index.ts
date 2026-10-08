@@ -5,6 +5,8 @@ export * from "./diff.js";
 export * from "./glob.js";
 export * from "./change.js";
 export * from "./config.js";
+export * from "./config-migrate.js";
+export { nearestName } from "./names.js";
 export * from "./lenses.js";
 export * from "./missing-tests.js";
 export * from "./brief.js";

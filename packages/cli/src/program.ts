@@ -25,6 +25,7 @@ const commands: Record<string, { summary: string; usage?: string; hidden?: true;
   guide: { summary: "Print the docs", hidden: true, load: () => import("./commands/guide.js") },
   demo: { summary: "Build the demo repo with planted bugs", hidden: true, load: () => import("./commands/demo.js") },
   report: { summary: "Report a problem with OpenQodex as a GitHub issue", hidden: true, load: () => import("./commands/report.js") },
+  config: { summary: "Rewrite the repo config for this version", usage: "migrate [--write]", hidden: true, load: () => import("./commands/config.js") },
 };
 
 // The hook check must stay silent, and report shows its own offer.

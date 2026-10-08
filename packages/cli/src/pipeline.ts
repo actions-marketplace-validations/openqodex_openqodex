@@ -64,7 +64,7 @@ export type PipelineResult = {
 export async function loadRepo(flags: GlobalFlags, checkoutSettings = true): Promise<{ repoRoot: string; config: Config }> {
   const repoRoot = await findRepoRoot(flags.cwd);
   if (!checkoutSettings && flags.config === undefined) return { repoRoot, config: structuredClone(DEFAULT_CONFIG) };
-  const loaded = loadConfig(repoRoot, flags.config);
+  const loaded = loadConfig(repoRoot, flags.config, { runtimeVersion: __OPENQODEX_VERSION__ });
   for (const w of loaded.warnings) warn(`openqodex: ${w}`);
   return { repoRoot, config: loaded.config };
 }

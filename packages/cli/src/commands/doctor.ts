@@ -137,7 +137,7 @@ export async function run(args: string[]): Promise<number> {
   const custom: Report["custom"] = [];
   if (repo !== null) {
     try {
-      const loaded = loadConfig(repo, global.config);
+      const loaded = loadConfig(repo, global.config, { runtimeVersion: __OPENQODEX_VERSION__ });
       const n = loaded.config.custom.length;
       configLine = loaded.path === null ? "no config, defaults in use" : `ok, ${n} custom scanner${n === 1 ? "" : "s"}`;
       if (loaded.warnings.length > 0) configLine += ` (${loaded.warnings.join("; ")})`;
