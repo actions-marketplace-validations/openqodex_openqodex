@@ -360,6 +360,57 @@ export type ImpactSummary = {
   // The folder the reviewer opens for everything the brief leaves out,
   // relative to the root it reads (the review snapshot); null when none was written.
   packet: string | null;
+  // What the framework plugins say about the change: the routes that reach
+  // it, the templates it renders, the migrations of a changed model, the
+  // tests that reference, call or may request it. Absent when the framework
+  // stage did not run.
+  frameworks?: ImpactFrameworks;
+};
+
+// A route registration listed for a change: because it reaches touched code
+// (`reach`), because it is declared on a changed line (`declared`), or
+// because its handler is gone (`status` other than "bound").
+export type ImpactFrameworkRoute = {
+  plugin: string;
+  app: string | null;
+  registration: string;
+  methods: string[];
+  pattern: string | null; // null when computed
+  name: string | null;
+  site: { file: string; line: number };
+  handler: string; // as written at the registration
+  status: "bound" | "missing" | "dynamic" | "external" | "ambiguous" | "unresolved";
+  mounted: boolean; // false when no application root includes its route table
+  reach: { seed: string; seedName: string; hops: number; tier: ImpactTier; note: string | null } | null;
+  declared: boolean;
+};
+
+// A static association between a test and the touched code. Never coverage.
+export type ImpactFrameworkTest = {
+  test: string;
+  testName: string;
+  target: string;
+  targetName: string;
+  category: string; // direct-call, route-request, route-name, subject, component-render, type-or-value-reference
+  through: string | null; // the route the test requests or names, as "GET blog/<int:pk>/"
+  tier: ImpactTier;
+  note: string | null;
+  site: { file: string; line: number };
+};
+
+export type ImpactFrameworks = {
+  plugins: { id: string; status: string; reason: string | null; apps: number }[];
+  routes: ImpactFrameworkRoute[];
+  routesTotal: number;
+  renders: { from: string; fromName: string; template: string; file: string | null; tier: ImpactTier; note: string | null; site: { file: string; line: number } }[];
+  renderedBy: { template: string; by: string; byName: string; site: { file: string; line: number } }[];
+  models: { model: string; name: string; migrations: { file: string; line: number; operation: string }[] }[];
+  migrations: { file: string; operations: string[]; models: string[] }[];
+  tests: ImpactFrameworkTest[];
+  testsTotal: number;
+  roles: { target: string; name: string; role: string; detail: string | null }[];
+  unknown: { file: string | null; line: number | null; cause: string; note: string }[];
+  unknownTotal: number;
 };
 
 // ---------- review ----------

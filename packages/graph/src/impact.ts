@@ -12,6 +12,7 @@
 // lists from the graph, never from this summary.
 import { dirname } from "node:path";
 import type { Change, ImpactCut, ImpactEdge, ImpactPath, ImpactSummary, ImpactSymbol, ImpactUnknown } from "@openqodex/core";
+import { frameworkImpact } from "./frameworks/impact.js";
 import type { Graph, GraphEdge, GraphNode, HotSymbol, Miss, UnknownSite } from "./types.js";
 
 export const HUB_CALLERS = 40; // a symbol with more direct callers is a hub
@@ -354,6 +355,9 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     return { ...e, consumers: e.consumers.slice(0, SUMMARY_CONSUMERS) };
   });
 
+  // What the framework plugins say about the touched code (frameworks/impact.ts).
+  const frameworks = frameworkImpact(graph, change, touched, removed);
+
   return {
     version: 2,
     status: s.status,
@@ -396,6 +400,7 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
       omittedSites: totalSites > INLINE_SITES ? totalSites - INLINE_SITES : null,
     },
     packet: null,
+    ...(frameworks ? { frameworks } : {}),
   };
 }
 
