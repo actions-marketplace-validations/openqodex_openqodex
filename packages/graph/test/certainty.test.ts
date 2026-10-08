@@ -16,6 +16,9 @@
 // 6. A caller two hops out is printed in the brief as certain because its
 //    own call is, while the step it reaches the change through is only
 //    likely.
+// 7. A name re-exported through more modules than the graph follows is
+//    recorded as a call on a value of unknown type (no-receiver-type) or a
+//    miss, not as what it is: a chain cut by the graph's depth limit.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -133,5 +136,21 @@ describe("certainty", () => {
     const block = renderImpactBlock(detectImpact(g, change));
     const line = block.split("\n").find((l) => l.startsWith("- packages/b/src/top.ts:3"));
     expect(line).toMatch(/\(2 hops, likely: /);
+  });
+
+  it("names a call through a re-export chain past the depth limit as export-chain-too-deep (7)", async () => {
+    const chain = (link: (i: number) => string): Record<string, string> => {
+      const files: Record<string, string> = { "x.ts": "export function f() {\n  return 1;\n}\n" };
+      for (let i = 1; i <= 12; i++) files[`b${i}.ts`] = link(i);
+      files["use.ts"] = 'import { f } from "./b12";\nexport function run() {\n  return f();\n}\n';
+      return files;
+    };
+    const from = (i: number) => (i === 1 ? "./x" : `./b${i - 1}`);
+    const named = await graphOf(chain((i) => `export { f } from "${from(i)}";\n`));
+    const starred = await graphOf(chain((i) => `export * from "${from(i)}";\n`));
+    for (const g of [named, starred]) {
+      expect(g.unknowns.filter((u) => u.file === "use.ts").map((u) => `${u.name} ${u.cause}`)).toEqual(["f export-chain-too-deep"]);
+      expect(tiers(g, symbol(g, "x.ts", "f"))).toEqual([]);
+    }
   });
 });

@@ -80,6 +80,7 @@ export type Cause =
   | "unsupported-language"
   | "unsupported-rule"
   | "budget"
+  | "export-chain-too-deep" // re-exported or aliased through more modules than the graph follows
   | "memory"
   | "variant-excluded"
   | "redacted";
@@ -98,6 +99,7 @@ export const CAUSES: readonly Cause[] = [
   "unsupported-language",
   "unsupported-rule",
   "budget",
+  "export-chain-too-deep",
   "memory",
   "variant-excluded",
   "redacted",

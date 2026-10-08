@@ -33,7 +33,7 @@ const MAX_DEPTH = 8; // re-export and base-class chains
 // barrel chain longer than any real repository holds.
 export const EXPORT_WALK_STEPS = 4096;
 export const HUB_FILES = 8; // a name defined in more files never binds without evidence
-export const RESOLVER_VERSION = 3;
+export const RESOLVER_VERSION = 4;
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -85,6 +85,11 @@ export type FileInput = { path: string; facts: FileFacts };
 type Ev = { kind: EvidenceKind; tier: Tier; via: Via | null; note: string | null; rule: string };
 
 const SAME_SCOPE: Ev = { kind: "same-scope", tier: "certain", via: null, note: null, rule: "same-scope" };
+
+// A name followed through more re-exports or aliases than MAX_DEPTH: the
+// graph stops there and says so, never a miss or an untyped value.
+const TOO_DEEP = { v: "gap", cause: "export-chain-too-deep", note: `the name is re-exported or aliased through more than ${MAX_DEPTH} modules; the graph stops following it there`, candidates: null } as const;
+const tooDeep = (v: { v: string; cause?: string } | null): boolean => v?.v === "gap" && v.cause === "export-chain-too-deep";
 
 // A step through a module: the outer binding (the import the call read)
 // keeps its kind and line; the tier is the weaker of the two and the notes
@@ -647,7 +652,7 @@ export function createWorld(input: ResolveInput): World {
 
     // A name a module offers to importers.
     exports(file: string, name: string, depth: number): Value | null {
-      if (depth > MAX_DEPTH) return null;
+      if (depth > MAX_DEPTH) return TOO_DEEP;
       if (reading) reading.add(`${file}\0${name}`);
       const f = facts.get(file);
       if (!f) return known.has(file) ? { v: "miss", target: file, name, ev: SAME_SCOPE } : null;
@@ -664,6 +669,7 @@ export function createWorld(input: ResolveInput): World {
         // Every `export *` that offers the name: one definition binds; two
         // different ones are ambiguous (JavaScript exports neither).
         const starHits: { v: Value; spec: string }[] = [];
+        let deep: Value | null = null; // a star whose chain passed the depth limit
         for (const imp of f.imports) {
           if (!imp.reexport) continue;
           const named = imp.names.find((n) => n.local === name);
@@ -684,10 +690,11 @@ export function createWorld(input: ResolveInput): World {
           if (named) return named.imported === "*" ? { v: "mod", file: mod.file, ev: mod.ev } : withEv(index.exports(mod.file, named.imported, depth + 1), mod.ev);
           if (imp.star) {
             const hit = withEv(index.exports(mod.file, name, depth + 1), mod.ev);
-            if (hit && hit.v !== "miss") starHits.push({ v: hit, spec: imp.spec });
+            if (tooDeep(hit)) deep ??= hit;
+            else if (hit && hit.v !== "miss") starHits.push({ v: hit, spec: imp.spec });
           }
         }
-        return starValue(file, name, starHits) ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
+        return starValue(file, name, starHits) ?? deep ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
       }
       // Python: definitions, then names the module imported, then submodules of a package.
       const top = topByFile.get(file)?.get(name);
@@ -697,12 +704,14 @@ export function createWorld(input: ResolveInput): World {
         const sub = pyModule(join(dirOf(file), name));
         if (sub) return { v: "mod", file: sub, ev: { kind: "import", tier: "certain", via: null, note: null, rule: "py-submodule" } };
       }
+      let deep: Value | null = null;
       for (const star of index.bindings(file).stars) {
         if (star === null || !("file" in star)) continue;
         const hit = index.exports(star.file, name, depth + 1);
-        if (hit && hit.v !== "miss") return withEv(hit, star.ev);
+        if (tooDeep(hit)) deep ??= hit;
+        else if (hit && hit.v !== "miss") return withEv(hit, star.ev);
       }
-      return { v: "miss", target: file, name, ev: SAME_SCOPE };
+      return deep ?? { v: "miss", target: file, name, ev: SAME_SCOPE };
     },
 
     // The method and the evidence of the inheritance steps to the class
@@ -778,7 +787,8 @@ export function createWorld(input: ResolveInput): World {
   // What a bare name means in a file.
   const resolveLocal = (file: string, name: string, depth = 0): Value | null => {
     const f = facts.get(file);
-    if (!f || depth > MAX_DEPTH) return null;
+    if (!f) return null;
+    if (depth > MAX_DEPTH) return TOO_DEEP;
     const family = familyOf(f.lang);
     if (family === "go") {
       const ids = pkgTop.get(pkgOf(file))?.get(name);
@@ -789,11 +799,14 @@ export function createWorld(input: ResolveInput): World {
     }
     const b = index.bindings(file).names.get(name);
     if (b) return bindingValue(file, family, name, b, depth);
+    let deep: Value | null = null;
     for (const star of index.bindings(file).stars) {
       if (star === null || !("file" in star)) continue;
       const hit = index.exports(star.file, name, depth + 1);
-      if (hit && hit.v !== "miss") return withEv(hit, star.ev);
+      if (tooDeep(hit)) deep ??= hit;
+      else if (hit && hit.v !== "miss") return withEv(hit, star.ev);
     }
+    if (deep) return deep;
     if (family === "go") {
       // Dot imports bring a package's names into scope.
       for (const star of index.bindings(file).stars) if (star !== null && "ext" in star) return { v: "ext" };
