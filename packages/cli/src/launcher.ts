@@ -353,8 +353,8 @@ export function tempRuntimes(home: string, all: boolean, now = Date.now()): stri
 export const KEEP_YOUNG_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Removes openqodex runtime folders older than 7 days, except the baked-in,
-// current and previous ones. Run by init and the foreground update, inside
-// the commit boundary; never by the worker. Never fails its caller.
+// current and previous ones. Run inside the commit boundary by init, the
+// foreground update and the worker right after a switch. Never fails its caller.
 // Each removal goes through the guard, which never follows a link and
 // refuses a folder that is not, by identity, under OpenQodex's home: a
 // runtime/ folder that is a link to somewhere else loses nothing there.

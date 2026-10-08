@@ -12,10 +12,10 @@ import { extractArchive, openqodexHome } from "@openqodex/scanners";
 import { BoundaryError, withBoundary } from "../agents/lock.js";
 import { homeGuard } from "../agents/guarded-fs.js";
 import { contractOf, contractText, runningContract, sameContract, type Contract } from "../contract.js";
-import { activeVersion, checkRuns, identicalTree, launcherPath, launcherRunner, runtimeDir, tempRuntimes, writeActive } from "../launcher.js";
+import { activeVersion, checkRuns, identicalTree, launcherPath, launcherRunner, pruneRuntimes, runtimeDir, tempRuntimes, writeActive } from "../launcher.js";
 import { byContract, contractChange, MIN_AGE_MS, selectCandidates } from "./candidate.js";
 import { fetchAttestations, fetchMetadata, fetchTarball } from "./fetch.js";
-import { readState, updateState, updatesAllowed, type UpdateState } from "./state.js";
+import { readState, skipVersion, updateState, updatesAllowed, type UpdateState } from "./state.js";
 import { verifyRelease } from "./verify.js";
 
 // The whole worker ends by this deadline, whatever it is doing.
@@ -169,6 +169,10 @@ export async function activateUnpacked(opts: {
       } catch {
         // the notice is lost; the switch stands
       }
+      // Inside the boundary it holds, as init and the foreground update do:
+      // runtimes older than 7 days other than the baked-in, current and
+      // previous ones. Never fails the switch.
+      pruneRuntimes(home, Date.now(), guard);
       return { outcome: "activated", reason: `Updated to ${version} (was ${active}).` };
     });
   } catch (error) {
@@ -257,7 +261,7 @@ async function work(home: string, env: NodeJS.ProcessEnv, anyAge: boolean, wait:
   // selectCandidates applies the 24 hour rule itself; a shorter rule is
   // the same as asking it later.
   const minAge = anyAge ? 0 : (test.minAge ?? MIN_AGE_MS);
-  const all = selectCandidates(metadata, { current: running, now: now + (MIN_AGE_MS - minAge), nodeVersion: process.versions.node });
+  const all = selectCandidates(metadata, { current: running, now: now + (MIN_AGE_MS - minAge), nodeVersion: process.versions.node, skip: skipVersion(home) });
   // The contract this install keeps: this build's, or under the test seam
   // the one the registry says `running` declares.
   const versions = (metadata as { versions?: Record<string, unknown> } | null)?.versions;

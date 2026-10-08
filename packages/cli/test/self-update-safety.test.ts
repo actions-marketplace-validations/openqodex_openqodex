@@ -9,7 +9,7 @@
 //     checked again inside the boundary.
 //  2. A worker paused after its last eligibility check, then
 //     `update --rollback`, then the worker resumes: the rolled-back version
-//     is replaced, or updates come back on.
+//     is replaced, or the release rolled back from is not skipped.
 //  3. The same with `init --uninstall`: the resumed worker leaves a runtime,
 //     the active record or an update file in the home folder.
 //  4. A worker killed while it holds the boundary leaves state that makes
@@ -24,7 +24,8 @@
 //  8. A crash between publishing the runtime folder and writing the active
 //     record leaves the launcher on a half-switched version, or blocks the
 //     next run from finishing the switch.
-//  9. Rollback reports success while `update: off` could not be written.
+//  9. Rollback reports success while skip_version (or `update: off`) could
+//     not be written.
 // 10. Uninstall leaves files in the home folder that were not there before init.
 // 11. A permission rule is written for a launcher path holding `*`, which
 //     Claude Code reads as a wildcard.
@@ -166,7 +167,7 @@ describe("1. two workers with different candidates", () => {
 });
 
 describe("2. rollback while a worker waits at the boundary", () => {
-  it("the resumed worker leaves the rolled-back version active and updates off", async () => {
+  it("the resumed worker leaves the rolled-back version active, and the release left is skipped", async () => {
     const s = installed();
     expect((await activation(s, OLDER, version).done).out).toMatch(/"outcome":"activated"/);
     const a = activation(s, NEWER, OLDER, pause("before-boundary"));
@@ -176,7 +177,7 @@ describe("2. rollback while a worker waits at the boundary", () => {
     resume(s);
     expect((await a.done).out).toMatch(/"outcome":"refused"/);
     expect(active(s)[0]).toBe(version);
-    expect(readFileSync(join(s.oqHome, "config.yaml"), "utf8")).toMatch(/^update: off$/m);
+    expect(readFileSync(join(s.oqHome, "config.yaml"), "utf8")).toMatch(new RegExp(`^skip_version: ${OLDER.replaceAll(".", "\\.")}$`, "m"));
     expect(launch(s, ["--version"]).stdout.trim()).toBe(version);
   }, 120_000);
 });
@@ -318,7 +319,7 @@ describe("8. a crash between publishing the runtime and writing the active recor
   });
 });
 
-describe("9. rollback when the off switch cannot be written", () => {
+describe("9. rollback when skip_version cannot be written", () => {
   it("fails and changes nothing", async () => {
     const s = installed();
     expect((await activation(s, NEWER, version).done).out).toMatch(/"outcome":"activated"/);

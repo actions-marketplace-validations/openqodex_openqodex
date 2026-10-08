@@ -72,12 +72,14 @@ function record(value: unknown): Record<string, unknown> | null {
 
 // The versions eligible to install, highest first. The caller tries them in
 // order and skips one that fails verification, so a bad high version does
-// not block a good lower one.
+// not block a good lower one. `skip`: the release `update --rollback` left
+// (skip_version); neither it nor an older one is offered.
 export function selectCandidates(
   metadata: unknown,
-  opts: { current: string; now: number | Date; nodeVersion: string },
+  opts: { current: string; now: number | Date; nodeVersion: string; skip?: string | null },
 ): UpdateCandidate[] {
   const current = parseVersion(opts.current);
+  const skip = opts.skip === undefined || opts.skip === null ? null : parseVersion(opts.skip);
   const node = parseVersion(opts.nodeVersion.replace(/^v/, ""));
   const now = opts.now instanceof Date ? opts.now.getTime() : opts.now;
   const doc = record(metadata);
@@ -89,6 +91,7 @@ export function selectCandidates(
   for (const [version, raw] of Object.entries(versions)) {
     const parsed = parseVersion(version);
     if (parsed === null || compare(parsed, current) <= 0) continue;
+    if (skip !== null && compare(parsed, skip) <= 0) continue;
     // Same major only. While the major is 0 that is any higher 0.x.
     if (parsed[0] !== current[0]) continue;
 

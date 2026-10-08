@@ -21,6 +21,9 @@
 //      would install an older one or could not fall back to the next.
 //  11. A release's declared contract (package.json "openqodex") is misread,
 //      or a release from before contracts reads as having one.
+//  13. A release at or below the skip_version a rollback left is offered,
+//      so the update brings back the release just rolled back from; or one
+//      above it is not, so updates stop.
 //  12. The background worker installs a release that changes the agent
 //      contract or the config format, or does not leave the newest such
 //      release for a foreground update while it installs a lower one that
@@ -59,7 +62,7 @@ function metadata(entries: Array<[ReturnType<typeof release>, string]>) {
 }
 
 const opts = { current: "0.2.0", now, nodeVersion: "22.23.3" };
-const versions = (m: unknown, o = opts) => selectCandidates(m, o).map((c) => c.version);
+const versions = (m: unknown, o: Parameters<typeof selectCandidates>[1] = opts) => selectCandidates(m, o).map((c) => c.version);
 
 describe("selectCandidates", () => {
   it("a release 23 hours old is not offered and one 25 hours old is (failure 1)", () => {
@@ -146,6 +149,16 @@ describe("selectCandidates", () => {
     ]);
     const found = Object.fromEntries(selectCandidates(m, opts).map((c) => [c.version, c.contract]));
     expect(found).toEqual({ "0.3.0": null, "0.4.0": { agent: 2, config: 1 }, "0.5.0": null, "0.6.0": null });
+  });
+});
+
+describe("skip_version", () => {
+  it("a release at or below the one a rollback left is not offered, and the next one above it is (failure 13)", () => {
+    // Updated to 0.3.1, rolled back to 0.3.0: skip_version is 0.3.1.
+    const m = metadata([[release("0.3.1"), ago(72)], [release("0.3.2"), ago(48)]]);
+    expect(versions(m, { ...opts, current: "0.3.0", skip: "0.3.1" })).toEqual(["0.3.2"]);
+    expect(versions(m, { ...opts, current: "0.3.0", skip: "0.3.2" })).toEqual([]);
+    expect(versions(m, { ...opts, current: "0.3.0", skip: null })).toEqual(["0.3.2", "0.3.1"]);
   });
 });
 

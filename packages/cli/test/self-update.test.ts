@@ -15,7 +15,13 @@
 //  6. The "updated" notice prints twice.
 // 11. Old runtimes are deleted while they are the baked-in, current or previous one.
 // 12. Rollback leaves the launcher pointing at a missing runtime.
-// 13. --rollback does not turn updating off.
+// 13. --rollback turns updating off, so the release after the bad one never
+//     comes; or it leaves the rolled-back release eligible again. (Reverses
+//     the plan's R9, 2026-10-07: rollback skips the version, updates stay on.)
+// 21. A rollback to a runtime that cannot read skip_version leaves updates
+//     on, and that runtime installs the release just rolled back from.
+// 22. A background switch leaves old runtimes behind for good: only init and
+//     a foreground update pruned them. (Reverses the plan's R7, 2026-10-07.)
 // 14. Finalize after an activation runs the new version on an old brief.
 // 15. Finalize executes a path taken from the manifest.
 // 16. The brief's finalize command names a runner other than the launcher,
@@ -219,16 +225,54 @@ describe("the contract a release declares", () => {
   }, 120_000);
 });
 
+describe("runtimes kept by a background switch", () => {
+  it("the switch removes openqodex runtimes older than 7 days except the baked-in, current and previous ones (failure 22)", async () => {
+    const s = installed();
+    const rt = (v: string) => join(s.oqHome, "runtime", v);
+    for (const v of ["0.0.5", "0.0.6", "0.0.8"]) copyRuntime(s, v);
+    for (const v of [version, "0.0.5", "0.0.8"]) age(rt(v), 8);
+    await activateCopy(s, NEWER, version);
+    expect(current(s)).toBe(NEWER);
+    expect(existsSync(rt(version)), "baked-in and previous").toBe(true);
+    expect(existsSync(rt(NEWER)), "current").toBe(true);
+    expect(existsSync(rt("0.0.6")), "younger than 7 days").toBe(true);
+    expect(existsSync(rt("0.0.5"))).toBe(false);
+    expect(existsSync(rt("0.0.8"))).toBe(false);
+  }, 120_000);
+});
+
 describe("rollback", () => {
-  it("points back at the previous runtime and turns updating off (failures 12 and 13)", async () => {
+  it("points back at the previous runtime, keeps updates on and skips the release it left (failures 12 and 13)", async () => {
     const s = installed();
     await activateCopy(s, NEWER, version);
     const r = launch(s, ["update", "--rollback"]);
     expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`${NEWER} and every older release`);
     expect(current(s)).toBe(version);
     expect(launch(s, ["--version"]).stdout.trim()).toBe(version);
+    const config = readFileSync(join(s.oqHome, "config.yaml"), "utf8");
+    expect(config).toMatch(new RegExp(`^skip_version: ${NEWER.replaceAll(".", "\\.")}$`, "m"));
+    expect(config).not.toMatch(/^update:/m);
+    const status = launch(s, ["update", "--status"]).stdout;
+    expect(status).toMatch(/^updates +on$/m);
+    expect(status).toMatch(new RegExp(`^skipped +${NEWER.replaceAll(".", "\\.")} and every older release`, "m"));
+  }, 120_000);
+
+  it("a rollback to a runtime that cannot read skip_version turns updates off instead (failure 21)", () => {
+    const s = installed();
+    // 0.98.0 stands for a release from before skip_version: its package.json declares no contract.
+    copyRuntime(s, "0.98.0", (dir) => {
+      const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as Record<string, unknown>;
+      delete pkg.openqodex;
+      writeFileSync(join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+    });
+    copyRuntime(s, NEWER);
+    writeFileSync(join(s.oqHome, "runtime/current"), `${NEWER}\n0.98.0\n`);
+    const r = launch(s, ["update", "--rollback"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(current(s)).toBe("0.98.0");
     expect(readFileSync(join(s.oqHome, "config.yaml"), "utf8")).toMatch(/^update: off$/m);
-    expect(launch(s, ["update", "--status"]).stdout).toMatch(/off/);
+    expect(r.stdout).toMatch(/updates are off/i);
   }, 120_000);
 
   it("refuses when the previous runtime is gone and leaves the record alone (failure 12)", () => {
