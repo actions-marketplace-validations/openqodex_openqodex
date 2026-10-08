@@ -1,0 +1,3 @@
+# Rails: a through association names the class of its source association
+
+Guards against reading a `through:` association's name as its class. `has_many :voters, through: :votes, source: :user` reaches `User` (the `user` association of `Vote`), `has_many :voted_stories, through: :votes, source: :story` reaches `Story`, and `has_many :tags, through: :taggings` reaches `Tag` through `Tagging`'s `tag` association, declared after it. No class `Voter` or `VotedStory` is looked for. `has_many :ghosts, through: :votes` names no association of `Vote`: there is no edge and no miss, only a gap that says the through chain could not be followed.

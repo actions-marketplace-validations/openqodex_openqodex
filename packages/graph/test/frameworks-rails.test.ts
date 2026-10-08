@@ -273,6 +273,19 @@ describe("the Rails plugin on a small application", () => {
     expect(layerOf(g).rolesOf("spec/requests/posts_spec.rb").map((r) => r.role)).toEqual(["test"]);
   });
 
+  it("keeps the known part of a route whose prefix is computed for display, and never matches it as a pattern", async () => {
+    const g = await built({
+      ...APP,
+      "config/routes.rb": 'Rails.application.routes.draw do\n  scope ENV["PREFIX"] do\n    get "/posts", to: "posts#index"\n    resources :comments, only: :create\n  end\nend\n',
+    });
+    const shown = registrations(g).map((r) => [r.methods.join("|"), r.pattern, r.partial ?? null]);
+    expect(shown).toEqual([
+      ["GET", null, "/{computed}/posts"],
+      ["POST", null, "/{computed}/comments"],
+    ]);
+    expect(registrations(g)[0]?.handler.status).toBe("bound");
+  });
+
   it("finds the routes of unchanged files once rails is added to the Gemfile, from cached facts, never from a stale build", async () => {
     const root = makeRepo({ ...APP, Gemfile: 'source "https://rubygems.org"\n\ngem "sinatra"\n' });
     commitAll(root);

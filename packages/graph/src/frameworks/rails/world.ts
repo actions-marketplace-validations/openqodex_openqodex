@@ -75,6 +75,7 @@ export class RailsWorld {
   private readonly viewsCache = new Map<string, Map<string, string[]>>();
   private readonly methodsCache = new Map<string, { id: string; def: DefFact; file: string }[]>();
   private readonly byClassCache = new Map<string, Map<number, RailsFact[]>>();
+  private subclassMap: Map<string, ClassInfo[]> | null = null;
   private readonly spanCache = new Map<string, { symbols: Int32Array; classes: Int32Array; ids: string[] }>();
 
   constructor(
@@ -272,6 +273,41 @@ export class RailsWorld {
       cur = next;
     }
     return null;
+  }
+
+  // The classes of the repository that inherit from a class, nearest first,
+  // at most MAX_CHAIN levels down and `cap` classes in all; `cut` is set when
+  // the cap stopped the walk.
+  descendants(cls: ClassInfo, cap: number): { list: ClassInfo[]; cut: boolean } {
+    if (!this.subclassMap) {
+      const m = new Map<string, ClassInfo[]>();
+      for (const list of this.classesByName.values()) {
+        for (const c of list) {
+          if (c.base === null || c.module) continue;
+          const parent = this.resolveConst(c.base, c.def.owner ?? null, this.appOf(c.file));
+          if (!parent || parent.id === c.id) continue;
+          (m.get(parent.id) ?? m.set(parent.id, []).get(parent.id))?.push(c);
+        }
+      }
+      this.subclassMap = m;
+    }
+    const out: ClassInfo[] = [];
+    const seen = new Set<string>([cls.id]);
+    let level = [cls];
+    for (let depth = 0; depth < MAX_CHAIN && level.length > 0; depth++) {
+      const next: ClassInfo[] = [];
+      for (const c of level) {
+        for (const sub of this.subclassMap.get(c.id) ?? []) {
+          if (seen.has(sub.id)) continue;
+          if (out.length >= cap) return { list: out, cut: true };
+          seen.add(sub.id);
+          out.push(sub);
+          next.push(sub);
+        }
+      }
+      level = next;
+    }
+    return { list: out, cut: false };
   }
 
   includesAny(cls: ClassInfo, names: ReadonlySet<string>): string | null {

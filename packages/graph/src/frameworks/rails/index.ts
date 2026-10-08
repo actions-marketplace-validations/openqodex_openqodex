@@ -33,9 +33,9 @@ export function railsCapabilities(): CapabilityReport {
       {
         id: RULES.routes,
         version: 1,
-        description: "Reads get, post, put, patch, delete, match, root, namespace, scope and controller calls inside a routes draw block into registrations with composed paths and Rails names.",
+        description: "Reads get, post, put, patch, delete, match, root, namespace, scope, controller and draw calls in config/routes.rb and config/routes/ into registrations with composed paths, controllers, actions and Rails names.",
         emits: ["registration", "route_table"],
-        fixtures: { positive: ["routes-sample", "namespace-scope"], aliased: { none: NO_IMPORT }, unrelatedSameName: ["neg-outside-draw"], dynamic: ["dynamic-values"], metadataEdit: ["routes-edit"] },
+        fixtures: { positive: ["routes-sample", "namespace-scope", "scope-defaults"], aliased: { none: NO_IMPORT }, unrelatedSameName: ["neg-outside-draw", "draw-outside-route-files"], dynamic: ["dynamic-values"], metadataEdit: ["routes-edit"] },
       },
       {
         id: RULES.resources,
@@ -68,9 +68,9 @@ export function railsCapabilities(): CapabilityReport {
       {
         id: RULES.callbacks,
         version: 1,
-        description: "Links a controller to the methods its before, around and after action callbacks name, in order.",
+        description: "Links a controller to the methods its before, around and after action callbacks name, in order, and to the definitions in its subclasses when it defines none.",
         emits: ["applies_middleware"],
-        fixtures: { positive: ["routes-sample"], aliased: { none: NO_IMPORT }, unrelatedSameName: ["neg-unrelated-controller"], dynamic: ["dynamic-values"], metadataEdit: { none: "callbacks are declared in the controller's own source" } },
+        fixtures: { positive: ["routes-sample", "callback-in-subclass"], aliased: { none: NO_IMPORT }, unrelatedSameName: ["neg-unrelated-controller"], dynamic: ["dynamic-values"], metadataEdit: { none: "callbacks are declared in the controller's own source" } },
       },
       {
         id: RULES.views,
@@ -89,9 +89,9 @@ export function railsCapabilities(): CapabilityReport {
       {
         id: RULES.associations,
         version: 1,
-        description: "Links a model to the models its has_many, has_one, belongs_to and has_and_belongs_to_many associations name, with class_name honoured.",
+        description: "Links a model to the models its has_many, has_one, belongs_to and has_and_belongs_to_many associations name, with class_name honoured and through associations followed to their source.",
         emits: ["uses_type"],
-        fixtures: { positive: ["models-migrations"], aliased: { none: NO_IMPORT }, unrelatedSameName: { none: "an association is read only inside a model class" }, dynamic: ["dynamic-values"], metadataEdit: { none: "associations are declared in the model's own source" } },
+        fixtures: { positive: ["models-migrations", "association-through"], aliased: { none: NO_IMPORT }, unrelatedSameName: { none: "an association is read only inside a model class" }, dynamic: ["dynamic-values"], metadataEdit: { none: "associations are declared in the model's own source" } },
       },
       {
         id: RULES.migrations,

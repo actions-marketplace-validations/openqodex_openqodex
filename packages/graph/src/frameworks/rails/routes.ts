@@ -58,7 +58,14 @@ export type Draft = {
   handler: HandlerSpec;
   handlerWritten: string;
   action: string | null; // the resource action ("show") or null
+  // When the pattern is computed: the pattern with each computed part
+  // shown as "{computed}", for display only; null when nothing is known.
+  partial: string | null;
 };
+
+const COMPUTED = "{computed}";
+// A display pattern worth showing: one that knows more than a computed part.
+const partialOf = (p: string | null) => (p === null || p === `/${COMPUTED}` ? null : p);
 
 export type RouteGap = { site: Site; scope: { file: string } | { app: string }; cause: Cause; affects: FrameworkEdgeKind[]; name: string | null; note: string };
 
@@ -68,6 +75,8 @@ type Res = {
   memberName: string;
   collectionPath: string;
   memberPath: string;
+  shownCollection: string; // the paths with computed parts shown as {computed}
+  shownMember: string;
   outerAs: string | null;
   memberAs: string | null;
 };
@@ -76,6 +85,7 @@ type Level = "default" | "nested" | "member" | "collection" | "new";
 
 type Scope = {
   path: string;
+  shown: string; // the path with each computed part shown as {computed}
   module: string | null;
   as: string | null;
   controller: string | null; // as written, before the module is applied
@@ -273,6 +283,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
             walk(kids, {
               ...S,
               path: joinPath(S.path, nsPath),
+              shown: joinPath(S.shown, text(o.path) ?? name ?? COMPUTED),
               module: nsModule ? joinModule(S.module, nsModule) : S.module,
               as: joinName(S.as, nsAs),
               shallowPath: joinPath(S.shallowPath, text(o.shallow_path) ?? nsPath),
@@ -285,16 +296,13 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
           }
           case "scope": {
             let path = "";
+            let shown = "";
             let dyn: string | null = null;
-            for (const a of f.args) {
+            for (const a of [...f.args, ...(o.path !== undefined ? [o.path] : [])]) {
               const t = text(a);
               if (t === null) dyn = "the scope path is computed";
-              else path = `${path}/${t}`;
-            }
-            if (o.path !== undefined) {
-              const t = text(o.path);
-              if (t === null) dyn = "the scope path is computed";
-              else path = `${path}/${t}`;
+              path = t === null ? path : `${path}/${t}`;
+              shown = `${shown}/${t ?? COMPUTED}`;
             }
             if (isDyn(o.module) || isDyn(o.as) || isDyn(o.controller) || isDyn(o.action)) dyn = dyn ?? "a scope option is computed";
             if (dyn) gap(f, "dynamic", `a computed scope: ${dyn}`);
@@ -302,6 +310,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
             walk(kids, {
               ...S,
               path: joinPath(S.path, path),
+              shown: joinPath(S.shown, shown),
               module: mod ? joinModule(S.module, mod) : S.module,
               as: joinName(S.as, text(o.as)),
               controller: text(o.controller) ?? fromHash(o.defaults, "controller") ?? S.controller,
@@ -328,7 +337,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               gap(f, "unsupported-rule", `${f.call} outside a resources block is not read`);
               return;
             }
-            walk(kids, { ...S, level: f.call, path: f.call === "member" ? S.res.memberPath : S.res.collectionPath, as: S.res.outerAs });
+            walk(kids, { ...S, level: f.call, path: f.call === "member" ? S.res.memberPath : S.res.collectionPath, shown: f.call === "member" ? S.res.shownMember : S.res.shownCollection, as: S.res.outerAs });
             return;
           }
           case "resources":
@@ -439,6 +448,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
           emit(f, {
             methods,
             pattern: dyn !== null || local === null ? null : root ? normalizePath(S.path) : joinPath(base, local),
+            partial: dyn === null && local !== null ? null : level !== S.level ? null : partialOf(root ? normalizePath(S.shown) : joinPath(S.shown, local ?? COMPUTED)),
             written: local === null ? null : root ? "/" : local,
             name,
             handler,
@@ -505,6 +515,8 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
           const param = text(o.param) ?? "id";
           const one = singular ? asName : singularize(asName);
           const collectionPath = joinPath(S.path, seg);
+          // A path as shown: the scope's shown prefix in place of its path.
+          const shownOf = (p: string) => (S.dynamic === null ? p : p.startsWith(S.path) ? joinPath(S.shown, p.slice(S.path.length)) : `/${COMPUTED}`);
           const memberBase = shallow && !singular ? { path: S.shallowPath, as: S.shallowPrefix } : { path: S.path, as: S.as };
           const memberPath = singular ? collectionPath : joinPath(joinPath(memberBase.path, seg), `:${param}`);
           const collectionName = joinName(S.as, singular ? asName : asName);
@@ -525,7 +537,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
             const r = routes[action] as { methods: string[]; path: string; name: string | null };
             const handler: HandlerSpec = dyn !== null && (isDyn(o.controller) || isDyn(o.module)) ? { kind: "dynamic", note: "the resource's controller is computed" } : { kind: "action", controller, action };
             if (r.name !== null) taken.add(r.name);
-            emit(f, { methods: r.methods, pattern: dyn === null ? r.path : null, written: dyn === null ? local(r.path) : null, name: r.name, handler, handlerWritten: written(handler), action });
+            emit(f, { methods: r.methods, pattern: dyn === null ? r.path : null, written: dyn === null ? local(r.path) : null, name: r.name, handler, handlerWritten: written(handler), action, partial: dyn === null || isDyn(o.path) ? null : partialOf(shownOf(r.path)) });
           }
           if (i !== names.length - 1 || !kids) return;
           const res: Res = {
@@ -534,11 +546,13 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
             memberName: one,
             collectionPath,
             memberPath,
+            shownCollection: shownOf(collectionPath),
+            shownMember: shownOf(memberPath),
             outerAs: S.as,
             memberAs: singular ? S.as : memberBase.as,
           };
           const nestedPath = singular ? collectionPath : joinPath(collectionPath, `:${one}_${param}`);
-          walk(kids, { ...S, path: nestedPath, as: joinName(S.as, one), controller: null, level: "nested", res, shallow, dynamic: dyn });
+          walk(kids, { ...S, path: nestedPath, shown: shownOf(nestedPath), as: joinName(S.as, one), controller: null, level: "nested", res, shallow, dynamic: dyn });
         });
       };
 
@@ -593,6 +607,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
         emit(f, {
           methods: ["*"],
           pattern: path === null || S.dynamic !== null ? null : joinPath(S.path, path),
+          partial: path !== null && S.dynamic === null ? null : partialOf(joinPath(S.shown, path ?? COMPUTED)),
           written: path,
           name: as === null ? null : nameOf(joinName(S.as, normName(as)), true),
           handler,
@@ -603,6 +618,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
 
       const rootScope: Scope = {
         path: "/",
+        shown: "/",
         module: app?.kind === "engine" && app.isolate ? underscore(app.isolate) : null,
         as: null,
         controller: null,

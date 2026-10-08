@@ -65,7 +65,10 @@ export type ClassFact = FrameworkFactBase & { kind: "class"; name: string; modul
 export type CallbackFact = FrameworkFactBase & { kind: "callback"; cls: number; call: string; targets: string[]; dynamic: boolean; only: string[] | null; except: string[] | null };
 // `private` alone (names null) or `private :a` and `private def a` (names).
 export type VisibilityFact = FrameworkFactBase & { kind: "visibility"; cls: number; value: "private" | "protected" | "public"; names: string[] | null };
-export type AssocFact = FrameworkFactBase & { kind: "assoc"; cls: number; macro: string; name: string | null; className: string | null; classNameDynamic: boolean; polymorphic: boolean };
+// `through` and `source` name associations, not classes: the class of a
+// through association is the class of its source association on the
+// through model.
+export type AssocFact = FrameworkFactBase & { kind: "assoc"; cls: number; macro: string; name: string | null; className: string | null; classNameDynamic: boolean; polymorphic: boolean; through: string | null; source: string | null };
 export type TableNameFact = FrameworkFactBase & { kind: "table-name"; cls: number; value: string | null };
 export type AbstractFact = FrameworkFactBase & { kind: "abstract"; cls: number };
 export type IsolateFact = FrameworkFactBase & { kind: "isolate"; cls: number; name: string | null };
@@ -491,6 +494,10 @@ export function railsFacts(root: Node): RailsFact[] {
           const cn = opts.get("class_name");
           const cnLit = cn ? litOf(cn) : null;
           const poly = opts.get("polymorphic");
+          const word = (key: string) => {
+            const x = litOf(opts.get(key));
+            return x.t === "sym" || x.t === "str" ? x.v : null;
+          };
           out.push({
             kind: "assoc",
             line: line(n),
@@ -501,6 +508,8 @@ export function railsFacts(root: Node): RailsFact[] {
             className: cnLit && (cnLit.t === "str" || cnLit.t === "sym" || cnLit.t === "const") ? cnLit.v : null,
             classNameDynamic: cnLit !== null && cnLit.t !== "str" && cnLit.t !== "sym" && cnLit.t !== "const",
             polymorphic: poly !== undefined && poly.type === "true",
+            through: word("through"),
+            source: word("source"),
           });
           return;
         }
@@ -856,7 +865,7 @@ export function isRailsFact(v: unknown): v is RailsFact {
     case "visibility":
       return isInt(r.cls) && (r.value === "private" || r.value === "protected" || r.value === "public") && isStrListOrNull(r.names);
     case "assoc":
-      return isInt(r.cls) && isStr(r.macro) && isStrOrNull(r.name) && isStrOrNull(r.className) && typeof r.classNameDynamic === "boolean" && typeof r.polymorphic === "boolean";
+      return isInt(r.cls) && isStr(r.macro) && isStrOrNull(r.name) && isStrOrNull(r.className) && typeof r.classNameDynamic === "boolean" && typeof r.polymorphic === "boolean" && isStrOrNull(r.through) && isStrOrNull(r.source);
     case "table-name":
       return isInt(r.cls) && isStrOrNull(r.value);
     case "abstract":

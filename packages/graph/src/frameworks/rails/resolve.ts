@@ -10,7 +10,7 @@ import { weakest } from "../../model/records.js";
 import { entityId } from "../plugin.js";
 import type { Detection, Entity, FrameworkEdgeKind, FrameworkEvidence, FrameworkEvidenceKind, PluginIndex, PluginOutput, Registration, Role, Site, TestCategory } from "../plugin.js";
 import type { AssocFact, CallbackFact, ConfigDefineFact, ConfigReadFact, DescribeFact, EnqueueFact, MailFact, MigrationOpFact, RenderFact, RequestFact, RouteNameFact, TableNameFact } from "./facts.js";
-import { camelize, classify, demodulize, tableize, underscore } from "./inflect.js";
+import { camelize, classify, demodulize, singularize, tableize, underscore } from "./inflect.js";
 import type { Compiled } from "./match.js";
 import { compilePattern, firstLiterals, matches, requestSegments, stripPrefix } from "./match.js";
 import type { Draft } from "./routes.js";
@@ -20,6 +20,10 @@ import { PLUGIN, RailsWorld, appsFrom, relTo, under } from "./world.js";
 
 // Work units one resolve may spend on route expansion and request matching.
 export const WORK_BUDGET = 2_000_000;
+// The most subclasses searched for a callback a base class names.
+export const MAX_SUBCLASSES = 32;
+// How many through associations deep a through chain is followed.
+const MAX_THROUGH = 4;
 
 export const RULES = {
   application: "rails-application",
@@ -200,6 +204,7 @@ class Resolver {
       mountedVia: d.app ? (this.engineMounts.get(d.app.id) ?? []).map((m) => m.site) : [],
       mounted: d.app !== null,
       handler: { written: d.handlerWritten, status: "unresolved", targets: [] },
+      partial: d.pattern === null ? d.partial : null,
     };
     this.entity(reg);
     this.registrations.push(reg);
@@ -359,7 +364,17 @@ class Resolver {
         order++;
         const hit = this.w.findMethod(cls, t);
         if (!("id" in hit)) {
-          this.unknown(site, { file: cls.file }, hit.status === "external" ? "external" : "miss", ["applies_middleware"], t, `the ${f.call} callback ${t} is not defined: ${hit.note}`);
+          // Rails calls the callback on the instance: a subclass that defines it runs its own.
+          const subs = this.w.descendants(cls, MAX_SUBCLASSES);
+          let found = 0;
+          for (const sub of subs.list) {
+            const own = this.w.ownMethods(sub).find((m) => m.def.name === t);
+            if (!own) continue;
+            found++;
+            this.edge(cls.id, own.id, "applies_middleware", app, this.ev("declaration", "possible", site, RULES.callbacks, `${t} is not defined in ${cls.name}; ${sub.name}, which inherits from it, defines it, and Rails calls it on the instance${scope ? `; runs${scope}` : ""}`), { order });
+          }
+          if (subs.cut) this.unknown(site, { file: cls.file }, "fan-out-capped", ["applies_middleware"], t, `${cls.name} has more than ${MAX_SUBCLASSES} subclasses; the rest are not searched for ${t}`);
+          if (found === 0) this.unknown(site, { file: cls.file }, hit.status === "external" ? "external" : "miss", ["applies_middleware"], t, `the ${f.call} callback ${t} is not defined: ${hit.note}`);
           continue;
         }
         const own = hit.via === "own";
@@ -509,16 +524,46 @@ class Resolver {
         this.unknown(site, { file: cls.file }, "dynamic", ["uses_type"], f.name, `${f.macro} :${f.name} is polymorphic: the class comes from the data`);
         continue;
       }
-      const plural = f.macro === "has_many" || f.macro === "has_and_belongs_to_many";
-      const target = f.className ?? (plural ? classify(f.name) : camelize(f.name));
-      const hit = this.w.resolveConst(target, cls.name, app);
-      if (!hit) {
-        this.unknown(site, { file: cls.file }, "miss", ["uses_type"], target, `${f.macro} :${f.name} names ${target}, which no class in the repository defines`);
+      const r = this.assocTarget(cls, app, f, 0);
+      if ("gap" in r) {
+        this.unknown(site, { file: cls.file }, r.gap, ["uses_type"], r.name, r.note);
         continue;
       }
-      const how = f.className ? `class_name names ${f.className}` : `${f.macro} :${f.name} names ${target} by the Rails naming convention`;
-      this.edge(cls.id, hit.id, "uses_type", app, this.ev("association", "likely", site, RULES.associations, `${how}; the class is found by the autoload convention`));
+      this.edge(cls.id, r.hit.id, "uses_type", app, this.ev("association", "likely", site, RULES.associations, `${r.how}; the class is found by the autoload convention`));
     }
+  }
+
+  // The class an association names: its `class_name:`; for a `through:`
+  // association, the class of the source association (`source:`, else the
+  // association's own name, singular then plural) on the through model;
+  // else the class named after the association by Rails' convention.
+  private assocTarget(cls: ClassInfo, app: App, f: AssocFact, depth: number): { hit: ClassInfo; how: string } | { gap: Cause; name: string | null; note: string } {
+    const name = f.name ?? "";
+    if (f.className !== null) {
+      const hit = this.w.resolveConst(f.className, cls.name, app);
+      return hit ? { hit, how: `class_name names ${f.className}` } : { gap: "miss", name: f.className, note: `${f.macro} :${name} names ${f.className}, which no class in the repository defines` };
+    }
+    if (f.through !== null) {
+      const chain = { gap: "unsupported-rule" as Cause, name: `${name} through ${f.through}`, note: `${f.macro} :${name} goes through :${f.through}, and the plugin could not follow that chain to a class` };
+      if (depth >= MAX_THROUGH) return chain;
+      const via = this.assocsOf(cls).find((a) => a.name === f.through);
+      const mid = via ? this.assocTarget(cls, app, via, depth + 1) : null;
+      if (!mid || !("hit" in mid)) return chain;
+      const names = f.source !== null ? [f.source] : [singularize(name), name];
+      const source = this.assocsOf(mid.hit).find((a) => a.name !== null && names.includes(a.name));
+      if (!source || source.polymorphic || source.name === null) return chain;
+      const end = this.assocTarget(mid.hit, app, source, depth + 1);
+      if (!("hit" in end)) return chain;
+      return { hit: end.hit, how: `${f.macro} :${name} goes through :${f.through} to the ${source.name} association of ${mid.hit.name}` };
+    }
+    const plural = f.macro === "has_many" || f.macro === "has_and_belongs_to_many";
+    const target = plural ? classify(name) : camelize(name);
+    const hit = this.w.resolveConst(target, cls.name, app);
+    return hit ? { hit, how: `${f.macro} :${name} names ${target} by the Rails naming convention` } : { gap: "miss", name: target, note: `${f.macro} :${name} names ${target}, which no class in the repository defines` };
+  }
+
+  private assocsOf(cls: ClassInfo): AssocFact[] {
+    return (this.w.byClass(cls.file, "assoc").get(cls.line) ?? []) as AssocFact[];
   }
 
   // ---------- migrations ----------
