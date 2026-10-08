@@ -14,9 +14,12 @@
 // they may belong to a build that has not published yet.
 //
 // Over the size bound, oldest first: facts no kept inventory names, then
-// facts no leased generation names. A kept or leased generation, a folder
-// still being written, and facts a leased or publishing generation names
-// are never removed; when they alone exceed the bound the report says so.
+// the older kept generations no lease, publish or `current` holds, then
+// the facts only those generations named, then the facts of the kept
+// generations no one holds. A leased, publishing or current generation, a
+// folder still being written, and facts a leased or publishing generation
+// names are never removed; when they alone exceed the bound the report
+// says so.
 //
 // Only folders the store verified (no link from the repo root down) are
 // listed, and every removal goes through the Guard, which never follows a
