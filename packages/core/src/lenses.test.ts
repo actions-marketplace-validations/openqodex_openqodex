@@ -8,6 +8,9 @@
 // 5. More than four lenses are selected, or the ranking is not most specific
 //    first, then lowest floor, then name.
 // 6. A shipped lens still carries an em dash or private wording.
+// 7. A lens a scanner rule covers is still handed to the reviewer though the
+//    rule ran on every changed file the lens matches; or it stands down when
+//    the rule ran on only some of them, or not at all.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -154,6 +157,23 @@ describe("selectLensesForDiff with file globs", () => {
     expect(select(migration, ["migrations/20260610120000_x.sql"])).toContain("sql-migration-references-later-object");
     const ui = `--- a/ui/App.tsx\n+++ b/ui/App.tsx\n@@\n+const x = 1;\n`;
     expect(select(ui, ["ui/App.tsx"])).not.toContain("sql-migration-references-later-object");
+  });
+});
+
+describe("a lens a scanner rule covers (7)", () => {
+  const TSX_DIFF = "--- a/web/a.tsx\n+++ b/web/a.tsx\n@@\n+useEffect(() => load(id), []);\n";
+  const catalog = () => loadLensCatalog().filter((l) => l.name === "react-use-effect-missing-deps");
+  const ranOn = (files: string[]) => (token: string, file: string) => token === "oxlint:react-hooks/exhaustive-deps" && files.includes(file);
+
+  it("stands down when oxlint's react rule ran on every changed file the lens matches", () => {
+    const out = selectLensesForDiff({ diff: TSX_DIFF, files: ["web/a.tsx", "web/util.ts"], catalog: catalog(), covered: ranOn(["web/a.tsx"]) });
+    expect(out).toEqual([]);
+  });
+
+  it("is kept when the rule ran on only some of them, or did not run", () => {
+    const files = ["web/a.tsx", "legacy/b.jsx"];
+    expect(selectLensesForDiff({ diff: TSX_DIFF, files, catalog: catalog(), covered: ranOn(["web/a.tsx"]) }).map((l) => l.name)).toEqual(["react-use-effect-missing-deps"]);
+    expect(selectLensesForDiff({ diff: TSX_DIFF, files, catalog: catalog() }).map((l) => l.name)).toEqual(["react-use-effect-missing-deps"]);
   });
 });
 

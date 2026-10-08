@@ -1,6 +1,10 @@
 // Writes the CLI package version into every file that pins it: the skill, its
-// plugin copies, the three plugin manifests and the plugin hook. Run after `changeset
+// plugin copies, the three plugin manifests, the plugin hook, and the agent
+// install line in the README and the quickstart. Run after `changeset
 // version`; the gate fails when any of them differs from the package version.
+// It also gives each release notice marked "next" (packages/cli/src/notices.ts)
+// the version changesets just chose, so the notice prints after the update
+// to that release.
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +18,8 @@ for (const rel of [
   "plugins/codex/skills/openqodex/SKILL.md",
   "plugins/claude-code/hooks/hooks.json",
   ".pre-commit-hooks.yaml",
+  "README.md",
+  "docs/quickstart.md",
 ]) {
   const file = join(root, rel);
   const before = readFileSync(file, "utf8");
@@ -46,4 +52,14 @@ for (const rel of [
     writeFileSync(pluginFile, `${JSON.stringify(plugin, null, 2)}\n`);
     console.log(`updated: ${rel}`);
   }
+}
+
+// The release notices of changes this release carries.
+{
+  const rel = "packages/cli/src/notices.ts";
+  const file = join(root, rel);
+  const before = readFileSync(file, "utf8");
+  const after = before.replace(/version: "next",/g, `version: "${version}",`);
+  if (after !== before) writeFileSync(file, after);
+  console.log(`${after === before ? "unchanged" : "updated"}: ${rel}`);
 }

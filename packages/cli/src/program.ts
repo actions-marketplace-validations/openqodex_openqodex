@@ -23,8 +23,10 @@ const commands: Record<string, { summary: string; usage?: string; hidden?: true;
   doctor: { summary: "Show which scanners are installed", hidden: true, load: () => import("./commands/doctor.js") },
   hook: { summary: "Run as a git hook", hidden: true, load: () => import("./commands/hook.js") },
   guide: { summary: "Print the docs", hidden: true, load: () => import("./commands/guide.js") },
+  findings: { summary: "Print the named findings of the last review in full", usage: "<numbers | all>", hidden: true, load: () => import("./commands/findings.js") },
   demo: { summary: "Build the demo repo with planted bugs", hidden: true, load: () => import("./commands/demo.js") },
   report: { summary: "Report a problem with OpenQodex as a GitHub issue", hidden: true, load: () => import("./commands/report.js") },
+  config: { summary: "Rewrite the repo config for this version", usage: "migrate [--write]", hidden: true, load: () => import("./commands/config.js") },
 };
 
 // The hook check must stay silent, and report shows its own offer.

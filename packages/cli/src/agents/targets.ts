@@ -1,15 +1,19 @@
 // What `init` writes for each agent, in which scope. The paths and their
 // sources are listed in templates/README.md; this file follows it exactly.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { assetPath } from "../assets.js";
 import type { AgentId } from "./detect.js";
+import { claudeHome, codexHome } from "./homes.js";
+import shippedSkills from "./shipped-skills.json";
 
 export type Scope = "user" | "project";
 
 export type Target =
-  // A whole file (rule or skill).
-  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean }
+  // A whole file (rule or skill). `skillRunner`, on a skill: the command an
+  // init here writes for OpenQodex, so a shipped skill text is recognised (isShippedSkill).
+  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean; skillRunner?: string }
   // One hook group merged under hooks.PreToolUse of a JSON settings file.
   | { kind: "hook-json"; agent: AgentId; label: string; path: string; group: HookGroup; inRepo: boolean; usesLauncher: boolean }
   // A section between the openqodex markers in a markdown file.
@@ -34,21 +38,39 @@ function fill(text: string, version: string): string {
 }
 
 // The marked section that tells an agent to review with openqodex when a
-// feature or fix is done. The same text goes into every agent's global
-// instruction file, the project CLAUDE.md and AGENTS.md, and the Cursor and
-// Cline rules.
+// feature or fix is done. It goes into the project CLAUDE.md and AGENTS.md
+// and into the Cursor and Cline rules. It says when, never how or who: the
+// user-scope rules carry it, and an update never rewrites them.
 export function instructionSection(): string {
   return template("instructions-section.md").trimEnd();
 }
 
-function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
-  return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo };
+// The instruction section as versions 0.5.0 to 0.8.1 wrote it, which said
+// who reviews: found exactly as written, init puts the current one in its
+// place even where no record names it (a teammate's machine).
+const PREVIOUS_INSTRUCTION_SECTIONS = [
+  [
+    SECTION_START,
+    "## Review with OpenQodex",
+    '- When a feature or fix is done, and before any push, review it with the openqodex skill: "review my change with openqodex".',
+    "- OpenQodex starts its own reviewer process for the review: the agent that wrote the code does not judge its own work.",
+    "- Do not push on a blocked verdict unless the developer says so after seeing the findings.",
+    "- The report is in `.openqodex/reviews/`.",
+    SECTION_END,
+  ].join("\n"),
+];
+
+// The marked section for each agent's global instruction file: one line
+// that names the skill. The global file is read in every repository, so it
+// carries only the trigger; the skill holds the procedure, and a repo's own
+// team section says how that repo reviews.
+export function globalSection(): string {
+  return template("global-section.md").trimEnd();
 }
 
-// Codex reads its home folder from CODEX_HOME, ~/.codex by default.
-function codexHome(home: string): string {
-  const fromEnv = process.env.CODEX_HOME;
-  return fromEnv !== undefined && fromEnv !== "" ? fromEnv : join(home, ".codex");
+function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
+  if (!inRepo) return { kind: "md-section", agent, label, path, section: globalSection(), inRepo };
+  return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo, replaces: PREVIOUS_INSTRUCTION_SECTIONS };
 }
 
 // The hook group from a JSON template, with the command put in after
@@ -77,49 +99,57 @@ export function renderSkill(runner: string): string {
   return shippedSkill().replace(LAUNCHER_PARAGRAPH, "").replace(PINNED_NPX, () => runner);
 }
 
-// One level-2 section of the shipped skill, heading included.
-function section(text: string, heading: string): string {
-  const start = text.indexOf(`\n## ${heading}\n`);
-  if (start === -1) throw new Error(`the shipped skill has no "${heading}" section`);
-  const end = text.indexOf("\n## ", start + 1);
-  return text.slice(start + 1, end === -1 ? undefined : end).trimEnd();
+// The key of one exact skill text, with the two things that differ between
+// copies of one shipped text written as placeholders: the version a pin
+// names, and the command that runs OpenQodex (`npx -y openqodex@<version>`,
+// or `runner`, the launcher or pinned npx form an init on this machine
+// writes in its place). Nothing else is taken out: an edit anywhere, the
+// launcher paragraph included, changes the key. The placeholders hold a NUL,
+// which no skill file holds, so a file that spells a placeholder out is a
+// user edit and matches nothing (isShippedSkill refuses a NUL outright).
+// scripts/validate-skill.mjs computes the same key.
+const ANY_PIN = /openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
+const VERSION_TOKEN = "openqodex@\u0000version\u0000";
+const RUNNER_TOKEN = "\u0000runner\u0000";
+function skillKey(text: string, runner: string | null): string {
+  const own = runner === null ? text : text.replaceAll(runner, RUNNER_TOKEN);
+  return createHash("sha256").update(own.replace(ANY_PIN, VERSION_TOKEN).replaceAll(`npx -y ${VERSION_TOKEN}`, RUNNER_TOKEN)).digest("hex");
 }
 
-// The user-scope skill: the shipped frontmatter and title, when to run and
-// who reviews (so the main agent hands the review to a subagent before
-// reading the procedure), then the one command that prints the procedure of
-// whatever version the launcher runs. It names no version and no procedure,
-// so an update never has to rewrite it.
+// The keys a shipped text adds to shipped-skills.json: the file as shipped
+// (what `npx skills add` copies), and the file without its launcher
+// paragraph (what an earlier init wrote, in either scope).
+export function shippedSkillKeys(shipped: string): string[] {
+  return [skillKey(shipped, null), skillKey(shipped.replace(LAUNCHER_PARAGRAPH, ""), null)];
+}
+
+// True when `text` is exactly the skill as some version shipped it, or as
+// an earlier init wrote it with `runner` in place of npx. Such a file is
+// OpenQodex's, not the developer's, so init replaces it; a copy the
+// developer edited anywhere matches none.
+const SHIPPED = new Set(shippedSkills.sha256);
+export function isShippedSkill(text: string, runner: string): boolean {
+  return !text.includes("\u0000") && SHIPPED.has(skillKey(text, runner));
+}
+
+// The user-scope files carry no procedure, no reviewer and no version, so
+// an update never has to rewrite them: when to review, and the one command
+// that prints the procedure of whatever version the launcher runs. They
+// change only with a new agentContract (src/contract.ts), and
+// test/agent-contract.test.ts holds them to the copy checked in for it.
+function withLauncher(text: string, launcher: string): string {
+  return text.replaceAll("{{LAUNCHER}}", () => launcher).replaceAll("{{INSTRUCTIONS}}", () => instructionSection());
+}
+
+// The user-scope skill (templates/skill-stub.md).
 export function skillStub(launcher: string): string {
-  const text = shippedSkill();
-  const front = /^---\n[\s\S]*?\n---\n/.exec(text)?.[0];
-  const title = /^# .*$/m.exec(text)?.[0];
-  if (front === undefined || title === undefined) throw new Error("the shipped skill has no frontmatter or title");
-  return [
-    front,
-    title,
-    "",
-    section(text, "When to run"),
-    "",
-    section(text, "Who reviews"),
-    "",
-    "## Procedure",
-    "",
-    "Run this from the repository and follow what it prints, from step 1 of its procedure:",
-    "",
-    "```",
-    `${launcher} guide skill`,
-    "```",
-    "",
-    "It prints the full review procedure of the OpenQodex version installed here, with the exact commands to run. Read it each time: it changes when OpenQodex updates.",
-    "",
-  ].join("\n");
+  return withLauncher(template("skill-stub.md"), launcher);
 }
 
-// A user-scope rule calls the launcher, and prints the procedure with
-// `guide skill` where the project-scope rule says `guide`.
-function userRule(text: string, runner: string): string {
-  return text.replace(PINNED_NPX, () => runner).replaceAll(`${runner} guide\``, `${runner} guide skill\``);
+// The user-scope Cursor or Cline rule: the instruction section, then the
+// launcher's `guide skill`.
+function userRule(file: string, launcher: string): string {
+  return withLauncher(template(...file.split("/")), launcher);
 }
 
 // The exact command lines the skill tells the agent to run, allowed in
@@ -134,8 +164,11 @@ function userRule(text: string, runner: string): string {
 // `init`, `report`; `hook check` runs from Claude Code's hook system, which
 // needs no Bash rule. The two-step lines of older versions (`review --agent`,
 // `review --finalize`) are no longer granted; init removes the ones it recorded.
+// `findings *` is the other wildcard: its argument is whichever numbers the
+// developer named, which no exact line can list, and findings only reads the
+// last review's report and prints it (it takes no flag but --cwd).
 const REVIEW_LINES = ["review", "review --all"];
-const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *"];
+const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *", "findings *"];
 
 export function allowRules(runner: string): string[] {
   return ALLOWED_LINES.map((l) => `Bash(${runner} ${l})`);
@@ -162,8 +195,8 @@ export function teamSection(version: string): string {
 export function teamTargets(repoRoot: string, version: string): Target[] {
   const section = teamSection(version);
   return [
-    { kind: "md-section", agent: "claude-code", label: "team review section", path: join(repoRoot, "CLAUDE.md"), section, inRepo: true, replaces: [instructionSection()] },
-    { kind: "md-section", agent: "codex", label: "team review section", path: join(repoRoot, "AGENTS.md"), section, inRepo: true, replaces: [instructionSection()] },
+    { kind: "md-section", agent: "claude-code", label: "team review section", path: join(repoRoot, "CLAUDE.md"), section, inRepo: true, replaces: [instructionSection(), ...PREVIOUS_INSTRUCTION_SECTIONS] },
+    { kind: "md-section", agent: "codex", label: "team review section", path: join(repoRoot, "AGENTS.md"), section, inRepo: true, replaces: [instructionSection(), ...PREVIOUS_INSTRUCTION_SECTIONS] },
   ];
 }
 
@@ -184,23 +217,28 @@ export function targetsFor(args: {
   const base = user ? home : repoRoot;
   if (base === null) return { targets, skipped: [`${agent}: run init --project inside a git repository`] };
   const at = (...p: string[]): string => join(base, ...p);
+  // In user scope, Claude Code's and Codex's own folders, as homes.ts finds
+  // them, joined without folding `..`: the write check resolves the path the
+  // way the system does (real-path.ts).
+  const claude = (...p: string[]): string => (user ? [claudeHome(home), ...p].join(sep) : at(".claude", ...p));
+  const codex = (...p: string[]): string => (user ? [codexHome(home), ...p].join(sep) : at(".codex", ...p));
   const skillText = user ? skillStub(runner) : fill(renderSkill(runner), version);
   // A user-scope skill calls the launcher, so the launcher stays while it is installed.
-  const skillTarget = (label: string, path: string): Target => fileTarget(agent, label, path, skillText, !user, user);
+  const skillTarget = (label: string, path: string): Target => ({ kind: "file", agent, label, path, content: skillText, inRepo: !user, usesLauncher: user, skillRunner: runner });
 
   switch (agent) {
     case "claude-code":
-      targets.push(skillTarget("Claude Code skill", at(".claude", "skills", "openqodex", "SKILL.md")));
+      targets.push(skillTarget("Claude Code skill", claude("skills", "openqodex", "SKILL.md")));
       targets.push(
         user
-          ? sectionTarget(agent, "Claude Code global instructions", at(".claude", "CLAUDE.md"), false)
+          ? sectionTarget(agent, "Claude Code global instructions", claude("CLAUDE.md"), false)
           : sectionTarget(agent, "Claude Code project instructions", at("CLAUDE.md"), true),
       );
       targets.push({
         kind: "hook-json",
         agent,
         label: "Claude Code push hook",
-        path: at(".claude", "settings.json"),
+        path: claude("settings.json"),
         group: hookGroup("claude-code/settings-hook.json", runner),
         inRepo: !user,
         usesLauncher: user,
@@ -216,7 +254,7 @@ export function targetsFor(args: {
         kind: "allow-rules",
         agent,
         label: "Claude Code permission rules",
-        path: at(".claude", "settings.json"),
+        path: claude("settings.json"),
         rules: user && !hasRuleWildcard(runner) ? allowRules(runner) : [],
         inRepo: !user,
       });
@@ -225,14 +263,14 @@ export function targetsFor(args: {
       targets.push(skillTarget("Codex skill", at(".agents", "skills", "openqodex", "SKILL.md")));
       targets.push(
         user
-          ? sectionTarget(agent, "Codex global instructions", join(codexHome(home), "AGENTS.md"), false)
+          ? sectionTarget(agent, "Codex global instructions", codex("AGENTS.md"), false)
           : sectionTarget(agent, "Codex instructions", at("AGENTS.md"), true),
       );
       targets.push({
         kind: "hook-json",
         agent,
         label: "Codex push hook",
-        path: at(".codex", "hooks.json"),
+        path: codex("hooks.json"),
         group: hookGroup("codex/hooks.json", runner),
         inRepo: !user,
         usesLauncher: user,
@@ -241,8 +279,7 @@ export function targetsFor(args: {
     case "cursor": {
       targets.push(skillTarget("Cursor skill", user ? at(".cursor", "skills", "openqodex", "SKILL.md") : at(".agents", "skills", "openqodex", "SKILL.md")));
       // Cursor has no user-level rule file: the rule always goes in the repo.
-      const cursorRule = fill(template("cursor", "openqodex.mdc"), version);
-      const rule = user ? userRule(cursorRule, runner) : cursorRule;
+      const rule = user ? userRule("cursor/openqodex-user.mdc", runner) : fill(template("cursor", "openqodex.mdc"), version);
       if (repoRoot === null) skipped.push("Cursor rule: run openqodex init inside a git repository to add it there");
       // A user-scope rule calls the launcher, so the launcher stays while it is installed.
       else targets.push(fileTarget(agent, "Cursor rule", join(repoRoot, ".cursor", "rules", "openqodex.mdc"), rule, true, user));
@@ -255,7 +292,7 @@ export function targetsFor(args: {
           agent,
           "Cline rule",
           user ? at("Documents", "Cline", "Rules", "openqodex.md") : at(".clinerules", "openqodex.md"),
-          user ? userRule(fill(template("cline", "openqodex.md"), version), runner) : fill(template("cline", "openqodex.md"), version),
+          user ? userRule("cline/openqodex-user.md", runner) : fill(template("cline", "openqodex.md"), version),
           !user,
           user,
         ),

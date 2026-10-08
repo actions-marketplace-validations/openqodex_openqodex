@@ -1,13 +1,19 @@
-// OSV-Scanner adapter (dependency vulnerabilities). Runs
-// `osv-scanner --format json --lockfile <path> ...` against each changed
+// OSV-Scanner adapter (dependency vulnerabilities). Runs osv-scanner 2's
+// `scan source --format json --lockfile <path> ...` against each changed
 // lockfile in the working tree and normalizes the vendor JSON into
 // StaticFinding[]. This is the only scanner in the ensemble that sees
 // known vulnerabilities in third-party dependencies; the others scan
 // first-party source, not the dependency graph.
 //
 // osv-scanner asks osv.dev about the dependency names and versions it reads
-// from the lockfile (never the code). With OPENQODEX_OFFLINE=1 (set by the
-// CLI for --offline) it is skipped with a plain reason instead.
+// from the lockfile (never the code). Its other lookups are switched off:
+// --no-resolve (no transitive resolution through deps.dev for a manifest
+// such as pom.xml), --experimental-disable-plugins directory (no file hashes
+// sent to identify vendored C and C++ code) and --no-call-analysis all (no
+// reachability analysis, which runs the Go and Rust toolchains). Checked
+// with osv-scanner 2.6.0 through a proxy: the scan opens api.osv.dev only.
+// With OPENQODEX_OFFLINE=1 (set by the CLI for --offline) it is skipped with
+// a plain reason instead.
 //
 // OSV's JSON reports a vulnerability against a (package, version) pair,
 // NOT a source line. To anchor each advisory to a real diff line we
@@ -33,6 +39,7 @@ import type {
 import { describeFailure, execTool, isOffline, runInChunks } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
+import { suchAs } from "./words.js";
 import { readRepoFile } from "./read.js";
 
 const OSV_TIMEOUT_MS = 90_000;
@@ -55,29 +62,45 @@ function offlineReason(): string | null {
 // a glob so we don't pass random files to --lockfile and get a parse
 // error per file.
 //
-// NOT package.json. osv-scanner has no --lockfile extractor for a plain
-// manifest, and ONE path it cannot extract kills the whole run: the scan
-// exits with an empty stdout and "could not determine extractor suitable
-// to this file" on stderr, throwing away every package it had just read
-// from the lockfile beside it. A change to package.json alone scans
-// nothing; its real dependency change lands in the lockfile next to it.
+// NOT package.json, NOT go.sum. osv-scanner has no --lockfile extractor for
+// either (checked with osv-scanner 2.6.0), and ONE path it cannot extract
+// kills the whole run: the scan exits with an empty stdout and "could not
+// determine extractor suitable to this file" on stderr, throwing away every
+// package it had just read from the lockfile beside it. A change to
+// package.json alone scans nothing; its real dependency change lands in the
+// lockfile next to it, as go.sum's lands in go.mod.
 const LOCKFILE_BASENAMES = new Set<string>([
+  // JavaScript
   "package-lock.json",
   "pnpm-lock.yaml",
   "yarn.lock",
-  "Cargo.lock",
-  "go.mod",
-  "go.sum",
-  "requirements.txt",
+  "bun.lock",
+  // Python
   "Pipfile.lock",
   "poetry.lock",
+  "pdm.lock",
+  "uv.lock",
+  "pylock.toml",
+  // Ruby, PHP, Rust, Go
   "Gemfile.lock",
+  "gems.locked",
   "composer.lock",
+  "Cargo.lock",
+  "go.mod",
+  // Java
   "pom.xml",
   "gradle.lockfile",
+  "buildscript-gradle.lockfile",
+  // .NET (NuGet)
+  "packages.lock.json",
+  "packages.config",
+  // Dart, Elixir, C and C++, R, Haskell
   "pubspec.lock",
   "mix.lock",
   "conan.lock",
+  "renv.lock",
+  "cabal.project.freeze",
+  "stack.yaml.lock",
 ]);
 
 export type OsvScannerRunArgs = {
@@ -87,9 +110,20 @@ export type OsvScannerRunArgs = {
   coverage?: DiffCoverage;
 };
 
+// Besides the names above, the ones osv-scanner 2.6.0 matches by pattern:
+// a .txt file with "requirements" in its name (requirements-dev.txt), a
+// .NET `<app>.deps.json`, and Gradle's gradle/verification-metadata.xml.
 function isLockfilePath(p: string): boolean {
-  return LOCKFILE_BASENAMES.has(path.basename(p));
+  const base = path.basename(p);
+  if (LOCKFILE_BASENAMES.has(base)) return true;
+  if (base.endsWith(".txt") && base.includes("requirements")) return true;
+  if (base.endsWith(".deps.json") && base.length > ".deps.json".length) return true;
+  return p === "gradle/verification-metadata.xml" || p.endsWith("/gradle/verification-metadata.xml");
 }
+
+// The lookups osv-scanner 2 makes beyond names and versions to osv.dev,
+// switched off (see the top of this file).
+const LOOKUPS_OFF = ["--no-resolve", "--experimental-disable-plugins", "directory", "--no-call-analysis", "all"];
 
 export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterResult> {
   // safeFileArgs is defense in depth: each path is the value of a
@@ -119,7 +153,7 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
   const tool = args.tool;
   try {
     const findings = await runInChunks("osv-scanner", lockfiles, OSV_TIMEOUT_MS, async (chunk, left) => {
-      const cliArgs = ["--format", "json", ...chunk.flatMap((rel) => ["--lockfile", rel])];
+      const cliArgs = ["scan", "source", "--format", "json", ...LOOKUPS_OFF, ...chunk.flatMap((rel) => ["--lockfile", rel])];
       const run = await execTool(tool.path, cliArgs, {
         cwd: args.repoDir,
         timeoutMs: left,
@@ -149,8 +183,11 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
       }
 
       // A completed scan that printed no report at all, under an exit code
-      // that is not one of the two "I ran" codes, did not run.
+      // that is not one of the two "I ran" codes, did not run. Except 128:
+      // osv-scanner 2's "No package sources found", a lockfile that lists no
+      // package (a new project's package-lock.json), which has nothing to report.
       if (!run.stdout.trim() && run.exitCode !== null && run.exitCode > 1) {
+        if (run.exitCode === 128 && /No package sources found/.test(run.stderr)) return [];
         throw new Error(`osv-scanner exit ${run.exitCode}: ${run.stderr.trim().slice(-300)}`);
       }
       return found;
@@ -164,7 +201,8 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
 
 export const osvScanner: Adapter = {
   source: "osv-scanner",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isLockfilePath)).length > 0,
+  files: (changedPaths) => safeFileArgs(changedPaths.filter(isLockfilePath)),
+  why: (files) => `lockfiles, ${suchAs(files)}`,
   skip: offlineReason,
   run: (args) => runOsvScanner(args),
 };
@@ -178,7 +216,7 @@ type OsvVulnerability = {
   severity?: unknown;
   database_specific?: { severity?: unknown };
 };
-type OsvGroup = { ids?: unknown; max_severity?: unknown };
+type OsvGroup = { ids?: unknown; aliases?: unknown; max_severity?: unknown };
 type OsvPackageEntry = {
   package?: { name?: unknown; version?: unknown; ecosystem?: unknown };
   vulnerabilities?: unknown;
@@ -211,11 +249,16 @@ export function parseOsvScannerJson(
         typeof pkg.package?.version === "string" ? pkg.package.version : "";
       const range = entryRangeForPackage(lines, pkgName, pkgVersion, opts.coverage?.get(relPath));
       const maxSeverityByVulnId = groupSeverityById(pkg.groups);
+      const leaderOf = groupLeaders(pkg.groups);
       if (!Array.isArray(pkg.vulnerabilities)) continue;
       for (const vuln of pkg.vulnerabilities as OsvVulnerability[]) {
         if (!vuln || typeof vuln !== "object") continue;
         const id = typeof vuln.id === "string" ? vuln.id : "";
         if (!id) continue;
+        // osv-scanner groups advisories that alias one another (two GHSA
+        // ids for one CVE): one finding per group, under its first id.
+        const leader = leaderOf.get(id);
+        if (leader !== undefined && leader !== id) continue;
         const severity = severityForVuln(vuln, maxSeverityByVulnId.get(id));
         out.push({
           source: "osv-scanner",
@@ -339,6 +382,18 @@ function groupSeverityById(groups: unknown): Map<string, StaticFindingSeverity> 
     for (const id of g.ids) {
       if (typeof id === "string") map.set(id, sev);
     }
+  }
+  return map;
+}
+
+// For each advisory id in a group, the group's first id.
+function groupLeaders(groups: unknown): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!Array.isArray(groups)) return map;
+  for (const g of groups as OsvGroup[]) {
+    if (!g || typeof g !== "object" || !Array.isArray(g.ids)) continue;
+    const ids = (g.ids as unknown[]).filter((x): x is string => typeof x === "string");
+    for (const id of ids) map.set(id, ids[0]!);
   }
   return map;
 }

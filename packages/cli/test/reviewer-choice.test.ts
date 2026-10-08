@@ -13,6 +13,8 @@
 //     installed too.
 //  9. `auto` with only Codex available does not pick Codex.
 // 10. `auto` inside a Codex session does not pick Codex first.
+// 13. `auto` inside a Cursor session does not try Cursor first, so the reasons
+//     a review is unavailable do not start with the agent the developer is in.
 // 11. A driver whose per-run boundary check fails (Codex's sandbox probe)
 //     still starts the reviewer, or ends as "Review incomplete" instead of
 //     "Full review unavailable" with the reason and the fallback.
@@ -104,6 +106,7 @@ beforeEach(() => {
   vi.stubEnv("CLAUDECODE", "");
   vi.stubEnv("CODEX_THREAD_ID", "");
   vi.stubEnv("CODEX_SANDBOX", "");
+  vi.stubEnv("CURSOR_AGENT", "");
   vi.spyOn(process.stdout, "write").mockImplementation((s) => ((out += String(s)), true));
   vi.spyOn(process.stderr, "write").mockImplementation((s) => ((err += String(s)), true));
 });
@@ -165,6 +168,14 @@ describe("choosing the reviewer", () => {
     expect(await review([claude, codex])).toBe(0);
     expect(codex.starts).toHaveLength(1);
     expect(claude.starts).toHaveLength(0);
+  });
+
+  it("13. auto inside a Cursor session tries Cursor first, so its reason is the first one named", async () => {
+    vi.stubEnv("CURSOR_AGENT", "1");
+    expect(await review([fake([], "claude", false), cursorDriver])).toBe(2);
+    const reasons = err.split("\n").filter((l) => l.startsWith("- "));
+    expect(reasons[0]).toMatch(/^- cursor: not enabled/);
+    expect(reasons[1]).toMatch(/^- claude: /);
   });
 
   it("3. the config's reviewer: key picks the driver", async () => {

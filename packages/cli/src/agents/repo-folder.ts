@@ -15,15 +15,14 @@ import {
   ensureRepoFiles,
   listRepoDir,
   readRepoFile,
-  removeRepoFile,
   repoStat,
   safeGitEnv,
-  writeRepoFile,
   type RepoFiles,
 } from "@openqodex/core";
 import { assetPath } from "../assets.js";
 import { sha256 } from "./files.js";
 import { isTracked } from "./git.js";
+import type { Guard } from "./guarded-fs.js";
 import { ownedFile, type Action } from "./plan.js";
 import type { InstallRecord } from "./record.js";
 
@@ -61,7 +60,8 @@ export function commitLines(repoRoot: string, paths: string[]): string[] {
     else if (ignored === true) lines.push(`${p} is ignored by git in this repo (a .gitignore or exclude rule), so it is not shared with your team.`);
   }
   const them = commit.length > 1 ? "them" : "it";
-  return [...(commit.length > 0 ? [`Commit ${commit.join(" and ")} so your team shares ${them}.`] : []), ...lines];
+  const named = commit.length > 1 ? `${commit.slice(0, -1).join(", ")} and ${commit[commit.length - 1]}` : commit.join("");
+  return [...(commit.length > 0 ? [`Commit ${named} so your team shares ${them}.`] : []), ...lines];
 }
 
 // What a scan or review tells the developer about files it just created.
@@ -92,13 +92,13 @@ function repoFiles(repoRoot: string): { files: RepoFile[]; gitignore: RepoFile; 
 // Creates the file only when nothing is there (an exclusive open, never a
 // replacing rename), and records it as ours only when that create succeeded:
 // a first scan running at the same moment keeps its own file.
-function createOwned(repoRoot: string, record: InstallRecord, f: RepoFile): void {
-  if (!writeRepoFile(repoRoot, f.path, f.text, { exclusive: true })) return;
+function createOwned(guard: Guard, record: InstallRecord, f: RepoFile): void {
+  if (!guard.write(f.path, f.text, { exclusive: true })) return;
   record.files = record.files.filter((r) => r.path !== f.path);
   record.files.push({ path: f.path, sha256: sha256(f.text), usesLauncher: false });
 }
 
-export function planRepoFiles(repoRoot: string, record: InstallRecord): { actions: Action[]; rootConfig: boolean } {
+export function planRepoFiles(repoRoot: string, record: InstallRecord, guard: Guard): { actions: Action[]; rootConfig: boolean } {
   const { files, gitignore, rootConfig } = repoFiles(repoRoot);
   const actions: Action[] = [];
   // The .gitignore first, so the reports never show in git status.
@@ -114,7 +114,7 @@ export function planRepoFiles(repoRoot: string, record: InstallRecord): { action
         note: `${f.label}, in place of the old "*"`,
         guard: { path: f.path, before },
         apply: () => {
-          writeRepoFile(repoRoot, f.path, f.text);
+          guard.write(f.path, f.text, { keepMode: true });
           record.migrations = record.migrations.filter((m) => m.path !== f.path);
           record.migrations.push({ path: f.path, original: before, sha256: sha256(f.text) });
         },
@@ -125,14 +125,14 @@ export function planRepoFiles(repoRoot: string, record: InstallRecord): { action
       actions.push({ verb: "skip", path: f.path, note: f === gitignore ? "already there" : "already there; never changed by openqodex" });
       continue;
     }
-    actions.push({ verb: "create", path: f.path, note: f.label, guard: { path: f.path, before }, apply: () => createOwned(repoRoot, record, f) });
+    actions.push({ verb: "create", path: f.path, note: f.label, guard: { path: f.path, before }, apply: () => createOwned(guard, record, f) });
   }
   return { actions, rootConfig };
 }
 
 // Removes what init created there while it is unchanged and not committed;
 // the .gitignore and the folder go only when nothing else is left in it.
-export async function planRepoFilesRemoval(repoRoot: string, record: InstallRecord): Promise<Action[]> {
+export async function planRepoFilesRemoval(repoRoot: string, record: InstallRecord, guard: Guard): Promise<Action[]> {
   const dir = join(repoRoot, STATE_DIR);
   const { files, gitignore } = repoFiles(repoRoot);
   const actions: Action[] = [];
@@ -161,7 +161,7 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
       note: f.label,
       guard: { path: f.path, before },
       apply: () => {
-        removeRepoFile(repoRoot, f.path);
+        guard.remove(f.path);
         forget(f.path);
       },
     });
@@ -180,7 +180,7 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
         note: "the .gitignore as it was before init",
         guard: { path: gitignore.path, before: now },
         apply: () => {
-          writeRepoFile(repoRoot, gitignore.path, migration.original);
+          guard.write(gitignore.path, migration.original, { keepMode: true });
         },
       });
     }
@@ -195,7 +195,7 @@ export async function planRepoFilesRemoval(repoRoot: string, record: InstallReco
       last.apply = () => {
         inner();
         try {
-          removeRepoFile(repoRoot, dir);
+          guard.removeEmptyFolder(dir);
         } catch {
           // something else is there now; it is not ours
         }

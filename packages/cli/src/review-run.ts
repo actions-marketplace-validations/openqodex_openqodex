@@ -23,6 +23,8 @@ import {
   MANIFEST_VERSION,
   OpenQodexError,
   STATE_DIR,
+  buildDisplay,
+  buildExcerptDisplay,
   buildInventory,
   buildReviewerBrief,
   checkSubmission,
@@ -38,7 +40,9 @@ import {
   readCoverage,
   redactSecrets,
   redactSecretsKeepingLines,
+  renderUnavailableHtml,
   safeGit,
+  secretTexts,
   selectLenses,
   writeLatest,
   writeReportFiles,
@@ -51,11 +55,11 @@ import type { Checkout } from "./checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { scannerList } from "./flags.js";
 import type { GlobalFlags } from "./flags.js";
-import { buildHotSpots, buildImpact, emitReport, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFiles, scanChange, warn, wholeRepoLenses, writeReportCopies } from "./pipeline.js";
+import { buildHotSpots, buildImpact, emitReview, exitFor, loadRepo, nothingToReview, ownersInstructions, progress, redactStored, reportFolderWriter, reviewOutputs, ruleCoverage, scanChange, warn, wholeRepoLenses, writeReportHtml } from "./pipeline.js";
 import type { PipelineResult } from "./pipeline.js";
 import { keepRunStateOutOfRepo } from "./feedback.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
-import { writeHomeReceipt } from "./receipts.js";
+import { writeHomeLastReview, writeHomeReceipt } from "./receipts.js";
 import { claudeDriver } from "./reviewers/claude.js";
 import { codexDriver } from "./reviewers/codex.js";
 import { cursorDriver } from "./reviewers/cursor.js";
@@ -74,8 +78,6 @@ const MAX_ANSWER_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 // Snapshot files bigger than this cannot be checked for secrets and are removed from it.
 const MAX_REDACT_BYTES = 64 * 1024 * 1024;
-// redactSecrets ignores shorter matches; so does the byte check.
-const MIN_SECRET_LENGTH = 6;
 
 // The order `auto` tries them in, after the agent running the command.
 const DRIVERS: ReviewerDriver[] = [claudeDriver, codexDriver, cursorDriver];
@@ -117,6 +119,12 @@ export type ReviewOptions = {
   // --reviewer-web: the reviewer's web tools for this run, over the user
   // config's reviewer_web.
   web?: boolean;
+  // Filled with how the review ended, beside the exit code, which cannot
+  // tell an incomplete review from one that never had a reviewer.
+  end?: ReviewEnd;
+  // How long a scanner still downloading is waited for; the scan's default
+  // (INSTALL_BUDGET_MS) when left out.
+  installBudgetMs?: number;
 };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -126,15 +134,18 @@ type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unava
 // when detect() says its agent is installed, logged in and isolated; one
 // that is not (Cursor, or Codex inside its own sandbox) says why and is
 // passed by.
-async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoot: string): Promise<Chosen> {
+function reviewerOrder(choice: string, drivers: ReviewerDriver[]): ReviewerDriver[] {
   if (choice !== "auto" && !(REVIEWER_NAMES as readonly string[]).includes(choice)) {
     throw new OpenQodexError(`--reviewer must be auto or one of ${REVIEWER_NAMES.join(", ")}, not ${choice}`);
   }
   const host = hostAgent();
-  const order =
-    choice !== "auto"
-      ? drivers.filter((d) => d.name === choice)
-      : [...drivers.filter((d) => d.name === host), ...drivers.filter((d) => d.name !== host)];
+  return choice !== "auto"
+    ? drivers.filter((d) => d.name === choice)
+    : [...drivers.filter((d) => d.name === host), ...drivers.filter((d) => d.name !== host)];
+}
+
+async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoot: string): Promise<Chosen> {
+  const order = reviewerOrder(choice, drivers);
   const unavailable: string[] = [];
   for (const driver of order) {
     const d = await driver.detect(repoRoot);
@@ -143,6 +154,31 @@ async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoo
   }
   return { unavailable: unavailable.length > 0 ? unavailable : [`${choice}: no driver of that name`] };
 }
+
+// The agents' names as a developer knows them.
+export const REVIEWER_LABELS: Record<string, string> = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
+
+export type Readiness = { ready: { name: string; version: string } | null; reasons: string[] };
+
+// The reviewer a review started now would use, by the same choice and order
+// as `review`, with every driver's detect() run at once; or, when none can
+// start, each one's reason and fix. Nothing is started.
+export async function reviewerReadiness(repoRoot: string, drivers: ReviewerDriver[] = DRIVERS): Promise<Readiness> {
+  const choice = readReviewerSettings().reviewer;
+  const order = reviewerOrder(choice, drivers);
+  const found = await Promise.all(order.map((d) => d.detect(repoRoot)));
+  const reasons: string[] = [];
+  for (const [i, d] of found.entries()) {
+    if (d.ok) return { ready: { name: order[i].name, version: d.version }, reasons: [] };
+    reasons.push(`${order[i].name}: ${d.missing}; ${d.fix}`);
+  }
+  return { ready: null, reasons: reasons.length > 0 ? reasons : [`${choice}: no driver of that name`] };
+}
+
+// How a review ended, for the caller that must say so (init's first review),
+// why when that is not plain from `ended`, and the scanners it left out
+// because they were still downloading.
+export type ReviewEnd = { ended: "finished" | "incomplete" | "unavailable" | "nothing"; why?: string; installing: string[] };
 
 // Every regular file under `dir` but the work tree's .git link file, by
 // path relative to `dir`. Links (there are none: they were written as
@@ -174,7 +210,8 @@ function snapshotFiles(dir: string): string[] {
 // Names are not rewritten (the paths must match the change); the run refuses
 // to start the reviewer instead, since a listing would show the secret.
 export function redactSnapshot(dir: string, secrets: string[]): { redacted: number; removed: string[]; named: number } {
-  const usable = [...new Set(secrets)].filter((s) => s.length >= MIN_SECRET_LENGTH).map((s) => Buffer.from(s, "utf8"));
+  // Each secret and each line of a multi-line one, as every redaction looks for them.
+  const usable = secretTexts(secrets).map((s) => Buffer.from(s, "utf8"));
   const out = { redacted: 0, removed: [] as string[], named: 0 };
   if (usable.length === 0) return out;
   for (const path of snapshotFiles(dir)) {
@@ -242,6 +279,27 @@ function lineCounter(dir: string): (path: string) => number | null {
     }
     cache.set(path, n);
     return n;
+  };
+}
+
+// The text of a snapshot file, for the lines report.html shows around a
+// finding of a whole-repository review: null for a path outside the
+// snapshot, a link, a file over MAX_FILE_BYTES or one that is not UTF-8 text.
+// The snapshot is already redacted (redactSnapshot).
+function snapshotText(dir: string): (path: string) => string | null {
+  return (path) => {
+    const full = resolve(dir, path);
+    const rel = relative(dir, full);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || rel === ".git") return null;
+    try {
+      const st = lstatSync(full);
+      if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
+      const buf = readFileSync(full);
+      const text = buf.toString("utf8");
+      return buf.includes(0) || !Buffer.from(text, "utf8").equals(buf) ? null : text;
+    } catch {
+      return null;
+    }
   };
 }
 
@@ -343,7 +401,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
     }
   }
   const text = redactSecrets(out.join("\n").trimEnd(), args.secrets);
-  const usable = args.secrets.filter((x) => x.length >= MIN_SECRET_LENGTH);
+  const usable = secretTexts(args.secrets);
   if (usable.some((x) => text.includes(x)) || text !== out.join("\n").trimEnd()) return { text: "", delivered: [], left: args.unread, leak: true };
   return { text, delivered, left, leak: false };
 }
@@ -507,7 +565,7 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
       const lfs = await lfsPaths(snapshot.tree, change.changedPaths);
       if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
       const target: RunTarget = { spec: o.target, base_ref: t.baseRef, base_source: t.baseSource, base_sha: t.baseSha, merge_base: t.mergeBase, head_sha: t.headSha, repo_root: repoRoot, checkout: snapshot.tree };
-      const p = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, flags, only, skip });
+      const p = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, flags, only, skip, installBudgetMs: o.installBudgetMs });
       return { p, snapshot, tree: null, target };
     } finally {
       if (t.tmpRef !== null) await dropTempRef(repoRoot, t.tmpRef);
@@ -535,7 +593,7 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
     // The whole repository as the snapshot holds it, so nothing written in
     // the developer's folder from here on is part of the review.
     const whole = await getWholeRepo({ repoRoot: snap.tree, exclude: config.exclude });
-    const p = await scanChange<WholeRepo>({ repoRoot, workDir: snap.tree, config, change: whole, wholeRepo: true, flags, only, skip });
+    const p = await scanChange<WholeRepo>({ repoRoot, workDir: snap.tree, config, change: whole, wholeRepo: true, flags, only, skip, installBudgetMs: o.installBudgetMs });
     return p.scan === null ? null : { p, snapshot: snap, tree: treeSha, whole: p.change };
   }
   if (change.files.length === 0) {
@@ -543,7 +601,7 @@ async function prepare(o: ReviewOptions, repoRoot: string, config: Config, keep:
     return null;
   }
   progress(flags)(`Reviewing the change against ${change.baseRef}: ${change.stats.files} ${change.stats.files === 1 ? "file" : "files"}, +${change.stats.additions} -${change.stats.deletions}`);
-  const p = await scanChange({ repoRoot, workDir: snap.tree, config, change, flags, only, skip });
+  const p = await scanChange({ repoRoot, workDir: snap.tree, config, change, flags, only, skip, installBudgetMs: o.installBudgetMs });
   return { p, snapshot: snap, tree: treeSha };
 }
 
@@ -571,10 +629,12 @@ function fallbackCommand(o: ReviewOptions): string {
 // repository, or with --report-dir that folder alone, so nothing under
 // .openqodex/ in the checkout is created, read or written (a branch can
 // commit links there). `shown`: the folder as the receipts name it.
-function runFolder(o: ReviewOptions, repoRoot: string, shortId: string): { dir: string; shown: string; write: (files: Record<string, string>) => void } {
-  if (o.reportDir !== undefined) {
+// `reportWriter`: the --report-dir writer, made when the run began, so its
+// folder was checked before anything else ran.
+function runFolder(o: ReviewOptions, repoRoot: string, shortId: string, reportWriter: ((files: Record<string, string>) => void) | null): { dir: string; shown: string; write: (files: Record<string, string>) => void } {
+  if (o.reportDir !== undefined && reportWriter !== null) {
     const dir = resolve(o.reportDir);
-    return { dir, shown: dir, write: (files) => writeReportCopies(dir, repoRoot, files) };
+    return { dir, shown: dir, write: reportWriter };
   }
   const dir = openReportDir(repoRoot, shortId);
   return { dir, shown: relative(repoRoot, dir), write: (files) => writeReportFiles(repoRoot, dir, files, PRIVATE) };
@@ -588,9 +648,13 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const config: Config = o.blockOn === undefined ? loaded.config : { ...loaded.config, blockOnSeverity: o.blockOn };
   const owner = checkoutOwner(repoRoot);
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
+  // A --report-dir reached through a link stops the run here, before
+  // anything is made, scanned or written.
+  const reportWriter = o.reportDir === undefined ? null : reportFolderWriter(o.reportDir, repoRoot);
   if (o.reportDir === undefined) announceRepoFiles(repoRoot);
   else keepRunStateOutOfRepo();
   const settings = readReviewerSettings();
+  for (const w of settings.warnings) warn(`openqodex: ${w}`);
   const web = o.web ?? settings.web;
   const chosen = await chooseReviewer(o.reviewer ?? settings.reviewer, o.drivers ?? DRIVERS, repoRoot);
   const deadline = Date.now() + o.timeoutMs;
@@ -619,13 +683,18 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const prep = await prepare(o, repoRoot, config, (c) => (snapshot = c));
     if (prep === null) {
       if (o.all) warn("Nothing to review: the repository has no files");
+      if (o.end) o.end.ended = "nothing";
       return EXIT_OK;
     }
     const { p } = prep;
     const scan = p.scan as ScanResult;
+    if (o.end) o.end.installing = scan.scanners.filter((s) => s.status === "installing").map((s) => s.scanner);
     const change = p.change;
-    const folder = runFolder(o, repoRoot, change.shortId);
+    const folder = runFolder(o, repoRoot, change.shortId, reportWriter);
     const dir = folder.dir;
+    // The one redaction every output of this run goes through (redact.ts:
+    // each matched secret and each line of a multi-line one).
+    const redact = (text: string): string => redactSecrets(text, p.secrets);
     // --report-dir: whether a reviewer started, and which, so a caller tells
     // a review that stopped from one that never began without reading stderr.
     const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string }): void => {
@@ -634,23 +703,31 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
     // No reviewer can start: the scanner candidates are saved as unchecked,
     // never as a review, and the fallback through the agent the developer is in is named.
-    const unavailable = (reasons: string[]): number => {
-      const path = join(dir, "unchecked-candidates.json");
+    // report.html then says the review is unavailable and why; it is not a review.
+    // Paths and commands are printed and written through the same redaction
+    // as the report: a secret can sit in a folder name.
+    const unavailable = (raw: string[]): number => {
+      const reasons = redactStored(raw, p.secrets);
+      const path = redact(join(dir, "unchecked-candidates.json"));
+      const fallback = redact(fallbackCommand(o));
       folder.write({
         "unchecked-candidates.json": `${JSON.stringify({ label: "unchecked scanner candidates, not a review: no reviewer checked them", change_id: change.id, candidates: scan.candidates }, null, 2)}\n`,
+        "report.html": renderUnavailableHtml({ changeId: change.id, reasons, candidatesPath: path, fallback, version: __OPENQODEX_VERSION__ }),
       });
       noteReviewer({ started: false, reasons });
       warn("Full review unavailable: openqodex could not start a reviewer.");
       for (const line of reasons) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
-      warn(`To review with the agent you are in instead, run \`${fallbackCommand(o)}\` and follow the brief it prints.`);
+      warn(`To review with the agent you are in instead, run \`${fallback}\` and follow the brief it prints.`);
+      warn(`Status page: ${redact(join(dir, "report.html"))}`);
+      if (o.end) o.end.ended = "unavailable";
       return EXIT_TOOL_FAILED;
     };
     if ("unavailable" in chosen) return unavailable(chosen.unavailable);
 
     const redaction = redactSnapshot(prep.snapshot.tree, p.secrets);
     if (redaction.redacted > 0) say(`Redacted secrets in ${redaction.redacted} ${redaction.redacted === 1 ? "file" : "files"} of the snapshot`);
-    if (redaction.removed.length > 0) warn(`Left out of the review, too large to check for secrets: ${redaction.removed.join(", ")}`);
+    if (redaction.removed.length > 0) warn(redact(`Left out of the review, too large to check for secrets: ${redaction.removed.join(", ")}`));
     // --report-dir without --instructions: none, never the checkout's file.
     const instructions = o.reportDir !== undefined && o.instructions === undefined ? { text: "", hash: null } : ownersInstructions(repoRoot, p.secrets, o.instructions);
     let lenses: SelectedLens[];
@@ -659,11 +736,11 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     if (prep.whole) {
       const hot = await buildHotSpots(p, o.flags, o.noGraph);
       impact = hot.impact;
-      lenses = wholeRepoLenses(prep.whole);
+      lenses = wholeRepoLenses(prep.whole, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) } });
     } else {
       impact = await buildImpact(p, o.flags, o.noGraph);
-      lenses = selectLenses(change);
+      lenses = selectLenses(change, undefined, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, target: prep.target });
     }
     const manifest: RunManifest = {
@@ -754,11 +831,36 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     };
     if (completion.status !== "complete") report.verdict = "incomplete";
 
+    // report.html's code, while the diff and the matched secrets are still
+    // in memory: the change as a diff, or for the whole repository a few
+    // lines of the redacted snapshot around each cited line.
+    const display = prep.whole
+      ? buildExcerptDisplay({
+          changeId: change.id,
+          cited: [
+            ...report.findings,
+            ...report.dropped.map((d) => (d.cited ? { ...d.cited, line_end: d.cited.line_number } : { file_path: d.candidate.filePath, line_number: d.candidate.lineStart, line_end: d.candidate.lineEnd })),
+          ],
+          read: snapshotText(prep.snapshot.tree),
+          secrets: p.secrets,
+        })
+      : buildDisplay({ change, secrets: p.secrets });
+    // Every file, record and line printed from here on is drawn from `out`.
+    const out = reviewOutputs({ report, display, dir, redact, version: __OPENQODEX_VERSION__ });
+    const { "report.html": html, ...files } = out.files;
+
     folder.write({
-      ...reportFiles(report),
+      ...files,
       "submission.json": `${JSON.stringify(redactStored(talk.submission, p.secrets), null, 2)}\n`,
       "trace.json": `${JSON.stringify(redactStored(talk.trace, p.secrets), null, 2)}\n`,
     });
+    if (!writeReportHtml(folder.write, html!)) {
+      if (o.end) {
+        o.end.ended = "incomplete";
+        o.end.why = "report.html could not be written";
+      }
+      return EXIT_TOOL_FAILED;
+    }
     const receipt: Latest = {
       dir: folder.shown,
       change_id: change.id,
@@ -787,13 +889,20 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       // The record the push hooks trust, in the developer's home: a branch
       // cannot plant it the way it can carry files under .openqodex/.
       try {
-        writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(report, completion.status, folder.shown));
+        writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(out.report, completion.status, folder.shown, out.paths.html));
       } catch (error) {
         warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
       }
     }
-    emitReport(report, o.flags, repoRoot);
-    say(`Report: ${inCheckout ? relative(repoRoot, join(dir, "report.md")) : join(dir, "report.md")}`);
+    // The review `openqodex findings` reads, whatever kind it was, with the
+    // hash of the report.json it may print.
+    try {
+      writeHomeLastReview(openqodexHomeDir(), repoRoot, { dir, shown: redact(dir), changeId: change.id, reportSha256: out.reportSha256 });
+    } catch (error) {
+      warn(`openqodex: could not record this review for openqodex findings: ${(error as Error).message.split("\n")[0]}`);
+    }
+    emitReview(out.report, o.flags, repoRoot, out.paths);
+    if (o.end) o.end.ended = completion.status === "complete" ? "finished" : "incomplete";
     return exitFor(report);
   } finally {
     process.off("SIGINT", onSignal);

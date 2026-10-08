@@ -8,6 +8,7 @@
 //   <home>/receipts/<repo id>/<change id>.json   one per reviewed change
 //   <home>/receipts/<repo id>/latest.json        the newest, for its base
 //   <home>/runs/<repo id>/<run id>.json          one per `review --agent` run
+//   <home>/last-review/<repo id>/last-review.json  the run `openqodex findings` reads
 //
 // A run record binds a legacy run (`review --agent`, then `review
 // --finalize`) to this machine: the change id, the config and instructions
@@ -17,13 +18,17 @@
 // own gets no receipt.
 //
 // The repo id is the sha256 of the repository's real root path. Folders are
-// 0700 and real (never a link), files 0600, written to a fresh temporary
-// file and renamed into place. A file that is a link, too large, or not a
-// receipt reads as no record.
-import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+// made 0700, files 0600, each written through the home guard
+// (guarded-fs.ts): a temporary file renamed into place, in a folder that
+// lies, by identity, under OpenQodex's home, with no link anywhere on the
+// way. Each is read through the same guard: a record folder or file that is
+// a link, one too large, or not a receipt reads as no record.
+import { createHash } from "node:crypto";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { GateReceipt } from "@openqodex/core";
+import { closeWider } from "@openqodex/core";
+import { homeGuard, type Guard } from "./agents/guarded-fs.js";
 
 const MAX_BYTES = 64 * 1024;
 const KEEP_MS = 30 * 24 * 3600_000;
@@ -39,6 +44,9 @@ export type RunRecord = {
   scan_sha256: string;
   candidates_sha256: string;
   run_sha256: string;
+  // display.json, the code report.html shows; absent in records written
+  // before it existed. Finalize shows the code only when it still matches.
+  display_sha256?: string;
   written_at: string;
 };
 
@@ -60,33 +68,27 @@ export function homeReceiptPath(home: string, repoRoot: string, changeId: string
   return join(receiptsDir(home), repoId(repoRoot), `${changeId}.json`);
 }
 
-// A real folder made 0700, or an error: never written through a link.
-function realFolder(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  const st = lstatSync(path);
-  if (!st.isDirectory() || st.isSymbolicLink()) throw new Error(`${path} is not a real folder`);
-}
-
-// Each named file written 0600 into <home>/<kind>/<repo id>/.
+// Each named file written 0600 into <home>/<kind>/<repo id>/. A link
+// anywhere on the way, the file itself included, is refused, and so is a
+// path that leads outside OpenQodex's home.
 function writeRecord(home: string, kind: string, repoRoot: string, names: string[], value: unknown): void {
-  realFolder(home);
-  realFolder(join(home, kind));
+  const guard = homeGuard(home, true);
   const dir = join(home, kind, repoId(repoRoot));
-  realFolder(dir);
   const text = `${JSON.stringify(value, null, 2)}\n`;
-  for (const name of names) {
-    const tmp = join(dir, `.${name}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-    writeFileSync(tmp, text, { flag: "wx", mode: 0o600 });
-    renameSync(tmp, join(dir, name));
-  }
+  for (const name of names) guard.write(join(dir, name), text, { mode: 0o600, folderMode: 0o700, wider: closeWider(guard, home) });
 }
 
 // The parsed file, or null when it is not a regular file within the cap.
-function readRecord(path: string): unknown {
+// Read through the strict home guard that writes it (guarded-fs.ts): the
+// folder it lies in must be, by identity, under OpenQodex's home with no
+// link on the way, so a record folder that is a link (into a repository, or
+// to another folder of the home) is no record; and the file is read through
+// a handle opened without following a link and checked to be the file
+// walked to.
+function readRecord(home: string, path: string): unknown {
   try {
-    const st = lstatSync(path);
-    if (!st.isFile() || st.size > MAX_BYTES) return null;
-    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const buf = homeGuard(home, true).read(path, MAX_BYTES);
+    return buf === null ? null : (JSON.parse(buf.toString("utf8")) as unknown);
   } catch {
     return null;
   }
@@ -95,6 +97,37 @@ function readRecord(path: string): unknown {
 export function writeHomeReceipt(home: string, repoRoot: string, receipt: GateReceipt): void {
   if (!ID.test(receipt.change_id)) throw new Error("a receipt needs a full change id");
   writeRecord(home, "receipts", repoRoot, [`${receipt.change_id}.json`, "latest.json"], receipt);
+}
+
+// The last review of a repository run on this machine, of any kind (the
+// developer's change, a branch or pull request, the whole repository, a
+// two-step review): its run folder, absolute (`dir`, to read, and `shown`,
+// redacted, to print), its change id, and the sha256 of the report.json it
+// wrote. `openqodex findings` prints that report.json only while its text
+// still has that hash: the record vouches for the content, not only the
+// folder, which a branch can carry files into. It never reads the newest
+// folder under .openqodex/reviews/, which a branch can plant with any name.
+//
+//   <home>/last-review/<repo id>/last-review.json
+export type LastReview = { version: 2; dir: string; shown: string; change_id: string; report_sha256: string; written_at: string };
+
+const LAST_REVIEW_KIND = "last-review";
+const LAST_REVIEW = "last-review.json";
+// The record folders pruning keeps to 30 days.
+const PRUNED = ["receipts", "runs", LAST_REVIEW_KIND];
+
+export function writeHomeLastReview(home: string, repoRoot: string, run: { dir: string; shown: string; changeId: string; reportSha256: string }): void {
+  const record: LastReview = { version: 2, dir: run.dir, shown: run.shown, change_id: run.changeId, report_sha256: run.reportSha256, written_at: new Date().toISOString() };
+  writeRecord(home, LAST_REVIEW_KIND, repoRoot, [LAST_REVIEW], record);
+}
+
+// The record, or null when there is none. One in another shape (a record of
+// an earlier version, with no report hash) reads as `unverified`.
+export function readHomeLastReview(home: string, repoRoot: string): LastReview | "unverified" | null {
+  const value = readRecord(home, join(home, LAST_REVIEW_KIND, repoId(repoRoot), LAST_REVIEW)) as Partial<LastReview> | null;
+  if (value === null) return null;
+  const ok = value.version === 2 && typeof value.dir === "string" && typeof value.shown === "string" && typeof value.change_id === "string" && typeof value.report_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.report_sha256);
+  return ok ? (value as LastReview) : "unverified";
 }
 
 export function homeRunPath(home: string, repoRoot: string, runId: string): string {
@@ -109,7 +142,7 @@ export function writeHomeRun(home: string, repoRoot: string, runId: string, run:
 // The run record of `runId`, or null.
 export function readHomeRun(home: string, repoRoot: string, runId: string): RunRecord | null {
   if (!RUN_ID.test(runId)) return null;
-  const value = readRecord(homeRunPath(home, repoRoot, runId)) as Partial<RunRecord> | null;
+  const value = readRecord(home, homeRunPath(home, repoRoot, runId)) as Partial<RunRecord> | null;
   const text = ["change_id", "config_hash", "manifest_sha256", "scan_sha256", "candidates_sha256", "run_sha256"] as const;
   const ok = value !== null && value.version === 1 && text.every((k) => typeof value[k] === "string") && (value.instructions_hash === null || typeof value.instructions_hash === "string");
   return ok ? (value as RunRecord) : null;
@@ -118,7 +151,7 @@ export function readHomeRun(home: string, repoRoot: string, runId: string): RunR
 // The receipt of `changeId` ("latest" for the newest), or null.
 export function readHomeReceipt(home: string, repoRoot: string, changeId: string): GateReceipt | null {
   if (!ID.test(changeId)) return null;
-  const value = readRecord(homeReceiptPath(home, repoRoot, changeId)) as Partial<GateReceipt> | null;
+  const value = readRecord(home, homeReceiptPath(home, repoRoot, changeId)) as Partial<GateReceipt> | null;
   const ok =
     value !== null &&
     value.version === 1 &&
@@ -126,6 +159,7 @@ export function readHomeReceipt(home: string, repoRoot: string, changeId: string
     (changeId === "latest" || value.change_id === changeId) &&
     (value.kind === "complete" || value.kind === "incomplete" || value.kind === "legacy") &&
     typeof value.report === "string" &&
+    (value.html === undefined || typeof value.html === "string") &&
     typeof value.base?.sha === "string" &&
     typeof value.base?.ref === "string";
   return ok ? (value as GateReceipt) : null;
@@ -164,30 +198,51 @@ export function readHomeReceipts(home: string, repoRoot: string, limit: number):
 
 // Removes receipts and run records not written for 30 days, and repo
 // folders left empty. Run by init and the foreground update, never by a hook.
-export function pruneHomeReceipts(home: string, now = Date.now()): void {
-  for (const kind of ["receipts", "runs"]) pruneFolder(join(home, kind), now);
+// Each removal goes through the guard (guarded-fs.ts): it never follows a
+// link and removes only under OpenQodex's home, by identity.
+export function pruneHomeReceipts(home: string, now = Date.now(), guard: Guard = homeGuard(home)): void {
+  for (const kind of PRUNED) pruneFolder(join(home, kind), now, guard);
 }
 
-function pruneFolder(root: string, now: number): void {
-  let repos: string[];
+// The repo folders of receipts and run records, as pruning sees them; a
+// folder or root that is a link is not one.
+function repoFolders(root: string): string[] {
   try {
-    if (!lstatSync(root).isDirectory()) return;
-    repos = readdirSync(root);
+    if (!lstatSync(root).isDirectory()) return [];
+    return readdirSync(root)
+      .map((repo) => join(root, repo))
+      .filter((dir) => lstatSync(dir, { throwIfNoEntry: false })?.isDirectory() === true);
   } catch {
-    return;
+    return [];
   }
-  for (const repo of repos) {
-    const dir = join(root, repo);
+}
+
+// The receipts and run records pruneHomeReceipts would remove now.
+export function staleReceipts(home: string, now = Date.now()): string[] {
+  return PRUNED
+    .flatMap((kind) => repoFolders(join(home, kind)))
+    .flatMap((dir) => {
+      try {
+        return readdirSync(dir)
+          .map((name) => join(dir, name))
+          .filter((path) => now - lstatSync(path).mtimeMs > KEEP_MS);
+      } catch {
+        return [];
+      }
+    });
+}
+
+function pruneFolder(root: string, now: number, guard: Guard): void {
+  for (const dir of repoFolders(root)) {
     try {
-      if (!lstatSync(dir).isDirectory()) continue;
       for (const name of readdirSync(dir)) {
         const path = join(dir, name);
         const st = lstatSync(path);
-        if (now - st.mtimeMs > KEEP_MS) rmSync(path, { force: true });
+        if (now - st.mtimeMs > KEEP_MS) guard.remove(path);
       }
-      if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+      if (readdirSync(dir).length === 0) guard.removeEmptyFolder(dir);
     } catch {
-      // a folder that cannot be read is left alone
+      // a folder that cannot be read, or a removal refused, is left alone
     }
   }
 }

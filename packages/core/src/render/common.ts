@@ -6,6 +6,12 @@ import type { Candidate, Report, ReportFinding, ScannerRunSummary, Severity } fr
 // Highest first, the order findings are shown in.
 export const SEVERITIES_DESC: readonly Severity[] = [...SEVERITIES].reverse();
 
+// The findings in the one order every output numbers them by: highest
+// severity first, then as the report holds them. Finding n is element n - 1.
+export function orderFindings<F extends { severity: Severity }>(findings: readonly F[]): F[] {
+  return SEVERITIES_DESC.flatMap((s) => findings.filter((f) => f.severity === s));
+}
+
 // Text from a scanner or the agent made safe for a terminal: every run of
 // whitespace (line breaks included) becomes one space, and every remaining
 // C0 or C1 control character is dropped, so nothing can move the cursor,
@@ -68,6 +74,13 @@ export function verdictLine(report: Report): string {
   if (counted.length === 0) return "Passed: no findings";
   if (!threshold) return `Passed with warnings: ${what(counted.length)} (${severityBreakdown(counted)})`;
   return `Passed: nothing at or above ${threshold}, ${what(counted.length)} below it (${severityBreakdown(counted)})`;
+}
+
+// The coverage label for files the reviewer did not open. With every changed
+// range given to the reviewer, their changed lines were in front of it
+// without opening them, which "not read" would hide.
+export function notOpenedLabel(cov: { covered: number; hunks: number }): string {
+  return cov.covered === cov.hunks ? "Files not opened (their changed lines were in the brief)" : "Files not opened";
 }
 
 export function location(f: { file_path: string; line_number: number; line_end: number }): string {

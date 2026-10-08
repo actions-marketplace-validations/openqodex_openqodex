@@ -56,7 +56,7 @@
 //     line below it moves while scanner locations and citations do not.
 // 28. With a reviewer whose trace is not complete (Codex), a read it claims
 //     counts as coverage, or a command it ran outside the snapshot fails the
-//     review, or the report prints "Files not read" for reads it never measured.
+//     review, or the report lists files as not opened for reads it never measured.
 // 29. With such a reviewer, ranges the correction rounds could not carry are
 //     reported as read, or the run completes.
 // 30. A file pattern with a brace list whose every alternative is inside the
@@ -708,7 +708,7 @@ describe("28, 29. a reviewer whose trace is not complete (Codex)", () => {
     expect(report.completion?.coverage.files_not_read).toEqual([]);
     const md = readFileSync(join(runDir(dir), "report.md"), "utf8");
     expect(md).toContain("not recorded by Codex");
-    expect(md).not.toContain("Files not read");
+    expect(md).not.toContain("Files not opened");
     expect(readFileSync(join(runDir(dir), "trace.json"), "utf8")).toContain("cat /etc/hosts");
   });
 
@@ -874,7 +874,7 @@ describe("27. a fallback review", () => {
     expect(brief.status, brief.stderr).toBe(0);
     const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string; change_id: string };
     // Everything an agent with only the brief needs to finish.
-    for (const part of ["## How to review", "## Finding shape", "`dropped`: one entry per candidate", join(s.repo, latest.dir, "agent-findings.json"), "review --finalize", "Show the developer the report finalize prints"]) {
+    for (const part of ["## How to review", "## Finding shape", "`dropped`: one entry per candidate", join(s.repo, latest.dir, "agent-findings.json"), "review --finalize", "Show the developer the receipt finalize prints"]) {
       expect(brief.stdout).toContain(part);
     }
     const findings = { version: 1, change_id: latest.change_id, summary: "Adds a notes file.", reviewer: "same-agent", findings: [] };
@@ -932,7 +932,7 @@ describe("the Action's review flags", () => {
     writeFileSync(join(planted, "report.md"), "# PLANTED\n");
     const folder = join(mkdtempSync(join(tmpdir(), "oq-report-dir-")), "review");
     expect(await withOptions(dir, fake([good]), { reportDir: folder })).toBe(0);
-    expect(readdirSync(folder).sort()).toEqual(["brief.md", "impact.json", "manifest.json", "report.json", "report.md", "report.sarif", "reviewer.json", "scan.json", "submission.json", "trace.json"]);
+    expect(readdirSync(folder).sort()).toEqual(["brief.md", "impact.json", "manifest.json", "report.html", "report.json", "report.md", "report.sarif", "reviewer.json", "scan.json", "submission.json", "trace.json"]);
     const report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report;
     expect(report.completion?.status).toBe("complete");
     expect(report).toEqual(JSON.parse(out) as Report);
@@ -941,10 +941,10 @@ describe("the Action's review flags", () => {
     for (const f of readdirSync(folder)) expect(statSync(join(folder, f)).mode & 0o777).toBe(0o600);
     expect(readdirSync(join(dir, ".openqodex")).sort()).toEqual(["reviews"]);
     expect(readdirSync(join(dir, ".openqodex/reviews"))).toEqual(["20260101-000000-aaaaaaaaaaaa"]);
-    // No reviewer: no report, and reviewer.json says none started and why.
+    // No reviewer: no report, only a page that says so, and reviewer.json says none started and why.
     const none = join(mkdtempSync(join(tmpdir(), "oq-report-dir-")), "review");
     expect(await withOptions(dir, fake([good], false), { reportDir: none })).toBe(2);
-    expect(readdirSync(none).sort()).toEqual(["reviewer.json", "unchecked-candidates.json"]);
+    expect(readdirSync(none).sort()).toEqual(["report.html", "reviewer.json", "unchecked-candidates.json"]);
     expect(JSON.parse(readFileSync(join(none, "reviewer.json"), "utf8"))).toEqual({ started: false, reasons: ["claude: claude is not installed; install Claude Code"] });
     // Nothing to review: no folder.
     const empty = join(mkdtempSync(join(tmpdir(), "oq-report-dir-")), "review");

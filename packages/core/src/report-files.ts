@@ -15,7 +15,8 @@
 // the repo root, and every write is a temp file in the same folder, then a
 // rename, because an agent may read a file while a second run writes it.
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { closeWider, Guard } from "./guarded-fs.js";
 import { readRepoFile, repoStat, writeRepoFile } from "./repo-state.js";
 import type { Latest, Report, RunManifest, ScanResult } from "./types.js";
 
@@ -103,12 +104,19 @@ function timestamp(d: Date): string {
 export function openReportDir(repoRoot: string, shortId: string): string {
   if (!/^[0-9a-f]{12}$/.test(shortId)) throw new Error(`not a short change id: ${shortId}`);
   ensureStateDir(repoRoot);
-  mkdirSync(reviewsDir(repoRoot), { recursive: true });
+  // Made 0700, as the files in them are 0600: a report quotes the code. One
+  // an earlier version made 0755 is closed and named once.
+  mkdirSync(reviewsDir(repoRoot), { recursive: true, mode: 0o700 });
+  const had = repoStat(repoRoot, reviewsDir(repoRoot))!.mode & 0o777;
+  if ((had & 0o077) !== 0) {
+    const guard = new Guard({ repoRoot: resolve(repoRoot), gitFolders: [], roots: [] });
+    closeWider(guard, resolve(repoRoot))(reviewsDir(repoRoot), had, "folder");
+  }
   const stem = `${timestamp(new Date())}-${shortId}`;
   let name = stem;
   for (let n = 2; ; n++) {
     try {
-      mkdirSync(join(reviewsDir(repoRoot), name));
+      mkdirSync(join(reviewsDir(repoRoot), name), { mode: 0o700 });
       break;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;

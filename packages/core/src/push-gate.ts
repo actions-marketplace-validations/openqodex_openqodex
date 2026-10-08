@@ -11,6 +11,8 @@ import { countedSeverities, severityBreakdown } from "./render/common.js";
 import type { Config, PushDecision, Report, Severity, Verdict } from "./types.js";
 
 const REVIEW_STEP = "run openqodex review";
+// The developer chooses what to fix, as the skill says.
+const CHOOSE = 'Show the developer the findings and ask: "fix all, or tell me which?"';
 
 // "complete" or "incomplete" for a review `review` ran with its own reviewer
 // (its completion record decides); "legacy" for one finished with the older
@@ -28,6 +30,9 @@ export type GateReceipt = {
   base: { ref: string; sha: string };
   // The report.md path, relative to the repository.
   report: string;
+  // The absolute path of report.html; absent in receipts written before it
+  // existed, whose messages name `report`.
+  html?: string;
   // The counted findings by severity, or null for none.
   counts: string | null;
   // The first thing an incomplete review was missing.
@@ -35,8 +40,9 @@ export type GateReceipt = {
   written_at: string;
 };
 
-// The receipt of a finished run. `dir`: the run folder, relative to the repository.
-export function gateReceipt(report: Report, kind: ReceiptKind, dir: string): GateReceipt {
+// The receipt of a finished run. `dir`: the run folder, relative to the
+// repository. `html`: the absolute path of its report.html.
+export function gateReceipt(report: Report, kind: ReceiptKind, dir: string, html?: string): GateReceipt {
   const severities = countedSeverities(report);
   return {
     version: 1,
@@ -46,6 +52,7 @@ export function gateReceipt(report: Report, kind: ReceiptKind, dir: string): Gat
     block_on_severity: report.block_on_severity,
     base: { ref: report.base.ref, sha: report.base.sha },
     report: `${dir}/report.md`,
+    ...(html !== undefined ? { html } : {}),
     counts: kind === "incomplete" || severities.length === 0 ? null : severityBreakdown(severities),
     missing: kind === "incomplete" ? (report.completion?.missing[0] ?? null) : null,
     written_at: new Date().toISOString(),
@@ -67,7 +74,7 @@ export function checkPush(args: { currentChangeId: string; receipt: GateReceipt 
   if (sameId && receipt.kind === "incomplete") {
     return {
       decision: "abstain",
-      message: `OpenQodex: the last review of this change was incomplete${receipt.missing ? ` (${receipt.missing})` : ""}, so it does not block. To finish it, ${REVIEW_STEP}. Report: ${receipt.report}`,
+      message: `OpenQodex: the last review of this change was incomplete${receipt.missing ? ` (${receipt.missing})` : ""}, so it does not block. To finish it, ${REVIEW_STEP}. Report: ${receipt.html ?? receipt.report}`,
     };
   }
 
@@ -92,13 +99,15 @@ export function checkPush(args: { currentChangeId: string; receipt: GateReceipt 
 
   const legacy = receipt.kind === "legacy" ? " It was reviewed by the coding agent you are using." : "";
   if (threshold && receipt.verdict !== "passed") {
-    return {
-      decision: "deny",
-      message: `OpenQodex blocks this push: the review of this change found ${receipt.counts ?? "findings"}, at or above ${threshold} (see ${receipt.report}). Fix them, ${REVIEW_STEP} again, then push.${legacy}`,
-    };
+    // A receipt from before report.html keeps its message as it was.
+    const message =
+      receipt.html === undefined
+        ? `OpenQodex blocks this push: the review of this change found ${receipt.counts ?? "findings"}, at or above ${threshold} (see ${receipt.report}). Fix them, ${REVIEW_STEP} again, then push.${legacy}`
+        : `OpenQodex blocks this push: the review of this change found ${receipt.counts ?? "findings"}, at or above ${threshold}. See ${receipt.html}. ${CHOOSE} Fix only the findings they name, ${REVIEW_STEP} again, show the new receipt, then push.${legacy}`;
+    return { decision: "deny", message };
   }
   if (receipt.kind === "legacy") {
-    return { decision: "abstain", message: `OpenQodex review of this change: ${receipt.counts ?? "no findings"}. Report: ${receipt.report}.${legacy}` };
+    return { decision: "abstain", message: `OpenQodex review of this change: ${receipt.counts ?? "no findings"}. Report: ${receipt.html ?? receipt.report}.${legacy}` };
   }
   return { decision: "abstain", message: null };
 }

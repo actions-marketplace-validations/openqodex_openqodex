@@ -27,6 +27,7 @@ import {
   binaryPath,
   currentPlatform,
   loadToolchain,
+  lockFile,
   markerPath,
   openqodexHome,
   toolDir,
@@ -140,9 +141,6 @@ export async function resolvedTool(home: string, tool: string, recipe: Recipe): 
   if (recipe.method === "uv") {
     // semgrep's launcher starts pysemgrep from PATH; the tool's bin folder holds it.
     env.PATH = pathWith([join(dir, "bin")]);
-  } else if (recipe.method === "npm") {
-    // The npm launcher is `#!/usr/bin/env node`: run it on the node running openqodex.
-    env.PATH = pathWith([dirname(process.execPath)]);
   } else if (recipe.method === "gem") {
     const ruby = runtime.env.PATH ? [runtime.env.PATH.split(delimiter)[0]!] : [];
     env = { GEM_HOME: dir, GEM_PATH: dir, PATH: pathWith([join(dir, "bin"), ...ruby]) };
@@ -163,12 +161,11 @@ export function unsupportedReason(table: Toolchain, recipe: Recipe): string | nu
     const uv = table.tools.uv;
     return platform && uv?.method === "github-release" && uv.assets[platform] ? null : "no download for this platform";
   }
-  if (recipe.method === "npm") return npmCommand() ? null : "needs npm";
   return null;
 }
 
 export function cannotWriteReason(home: string): string {
-  return `cannot write ${home} here: run \`npx openqodex doctor --install\` in your own terminal`;
+  return `cannot write ${home} here: run \`npx openqodex doctor --install\` in this repository from your own terminal`;
 }
 
 // Creates the tool folder, or throws the plain reason it cannot be written.
@@ -395,10 +392,11 @@ export function npmCommand(): { file: string; args: string[] } | null {
 }
 
 // Installers run with the small environment plus what OpenQodex sets, in the
-// OpenQodex home folder, never the repo: a variable or a project config file
-// cannot change where they read from or write to.
-async function runInstaller(home: string, file: string, args: string[], extra: Record<string, string>): Promise<void> {
-  const out = await run(file, args, { cwd: home, env: smallEnv(extra), timeoutMs: INSTALL_TIMEOUT_MS });
+// OpenQodex home folder (or a folder of the install's own), never the repo: a
+// variable or a project config file cannot change where they read from or
+// write to.
+async function runInstaller(home: string, file: string, args: string[], extra: Record<string, string>, cwd = home): Promise<void> {
+  const out = await run(file, args, { cwd, env: smallEnv(extra), timeoutMs: INSTALL_TIMEOUT_MS });
   if (out.timedOut) throw new InstallError("failed", "install failed: not finished after 20 minutes");
   if (out.code !== 0) throw new InstallError("failed", `install failed: ${lastLine(out.stderr) || `exit ${out.code}`}`);
 }
@@ -412,56 +410,49 @@ async function installInPlace(home: string, tool: string, recipe: Recipe, table:
   chmodSync(dir, 0o755);
   try {
     if (recipe.method === "uv") {
+      const lock = lockFile(tool);
+      if (lock === null) throw new InstallError("not_installed", "no lock file for this platform");
       const uv = which("uv") ?? (await installTool("uv", { table })).path;
       const python = join(toolsDir(home), "uv-python");
-      const args = [
-        "tool",
-        "install",
-        "--python",
-        recipe.python,
-        ...(recipe.with ?? []).flatMap((pin) => ["--with", pin]),
-        `${recipe.package}==${recipe.version}`,
-      ];
-      await runInstaller(home, uv, args, {
+      const env = {
         UV_PYTHON_INSTALL_DIR: python,
         UV_PYTHON_BIN_DIR: join(python, "bin"),
         UV_PYTHON_PREFERENCE: "only-managed",
-        UV_TOOL_DIR: join(dir, "uv-tools"),
-        UV_TOOL_BIN_DIR: join(dir, "bin"),
         UV_CACHE_DIR: join(home, "cache", "uv"),
         UV_NO_PROGRESS: "1",
-      });
+      };
+      // A Python environment of the tool's own, then exactly the packages of
+      // the lock: --require-hashes refuses any file whose sha256 the lock
+      // does not name, --no-deps adds nothing the lock leaves out, and
+      // --only-binary installs wheels only, so no package's build script runs.
+      await runInstaller(home, uv, ["venv", "--quiet", "--allow-existing", "--python", recipe.python, dir], env);
+      await runInstaller(
+        home,
+        uv,
+        ["pip", "install", "--quiet", "--python", join(dir, "bin", "python"), "--require-hashes", "--no-deps", "--only-binary", ":all:", "-r", lock],
+        env,
+      );
     } else if (recipe.method === "gem") {
+      const lock = lockFile(tool);
+      if (lock === null) throw new InstallError("not_installed", "no lock file for this platform");
       const ruby = which("ruby");
       const gem = ruby && existsSync(join(dirname(ruby), "gem")) ? join(dirname(ruby), "gem") : which("gem");
       if (!gem) throw new InstallError("not_installed", "needs RubyGems");
-      const args = ["install", "--no-document", "--install-dir", dir, "--bindir", join(dir, "bin"), ...recipe.gems];
-      await runInstaller(home, gem, args, {
-        GEM_HOME: dir,
-        GEM_PATH: dir,
-        GEM_SPEC_CACHE: join(home, "cache", "gem-specs"),
-      });
-    } else if (recipe.method === "npm") {
-      const npm = npmCommand();
-      if (!npm) throw new InstallError("not_installed", "needs npm");
-      const args = [
-        ...npm.args,
-        "install",
-        "--prefix",
-        dir,
-        "--no-save",
-        "--no-package-lock",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-        "--loglevel=error",
-        "--cache",
-        join(home, "cache", "npm"),
-        `${recipe.package}@${recipe.version}`,
-      ];
-      await runInstaller(home, npm.file, args, {});
+      // Every gem of the lock, downloaded into a folder of this install's own
+      // and checked against its sha256; then `gem install --local` from that
+      // folder installs the recipe's gems, their dependencies taken from
+      // those files or from the gems Ruby ships, never from the network.
+      const files = join(dir, ".gems");
+      mkdirSync(files);
+      for (const entry of readGemLock(lock)) {
+        await downloadVerified(`https://rubygems.org/downloads/${entry.name}-${entry.version}.gem`, entry.sha256, join(files, `${entry.name}-${entry.version}.gem`));
+      }
+      const tops = recipe.gems.map((spec) => `${spec.replace(":", "-")}.gem`);
+      const args = ["install", "--local", "--no-document", "--install-dir", dir, "--bindir", join(dir, "bin"), ...tops];
+      await runInstaller(home, gem, args, { GEM_HOME: dir, GEM_PATH: dir, GEM_SPEC_CACHE: join(home, "cache", "gem-specs") }, files);
+      rmSync(files, { recursive: true, force: true });
     }
-    const bin = recipe.method === "npm" ? join(dir, "node_modules", ".bin", recipe.binary) : join(dir, "bin", recipe.binary);
+    const bin = join(dir, "bin", recipe.binary);
     if (!existsSync(bin)) throw new InstallError("failed", `install failed: ${recipe.binary} missing after install`);
     writeMarker(dir, recipe.version);
     return publishVersion(home, tool, recipe, dir, token, "link");
@@ -469,6 +460,22 @@ async function installInPlace(home: string, tool: string, recipe: Recipe, table:
     rmSync(dir, { recursive: true, force: true });
     throw error;
   }
+}
+
+// The gems of a gem lock: `<name> <version> sha256:<hex>` per line, `#`
+// lines are notes. A line in any other shape stops the install.
+export function readGemLock(file: string): { name: string; version: string; sha256: string }[] {
+  const out: { name: string; version: string; sha256: string }[] = [];
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (line.trim() === "" || line.startsWith("#")) continue;
+    const [name = "", version = "", hash = ""] = line.trim().split(" ");
+    const sha256 = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : "";
+    if (!/^[A-Za-z0-9_.-]+$/.test(name) || !/^[0-9][0-9.]*$/.test(version) || !/^[0-9a-f]{64}$/.test(sha256)) {
+      throw new InstallError("failed", `install failed: cannot read the lock line "${line.slice(0, 80)}"`);
+    }
+    out.push({ name, version, sha256 });
+  }
+  return out;
 }
 
 // Installs one tool from the table and returns it. Throws InstallError with the

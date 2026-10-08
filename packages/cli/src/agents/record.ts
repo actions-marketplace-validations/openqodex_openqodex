@@ -1,9 +1,9 @@
 // The installation record, <openqodex home>/install.json: what `init` and
 // `hook install` wrote, so a later run changes or removes only what is still
 // exactly as we wrote it. A developer's edit makes a thing theirs.
-import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { readText, writeAtomic } from "./files.js";
+import { readText } from "./files.js";
+import { homeGuard, type Guard } from "./guarded-fs.js";
 
 export type InstallRecord = {
   version: 1;
@@ -34,6 +34,10 @@ export type InstallRecord = {
   // Claude Code permission rules we added to a settings file's
   // permissions.allow; a rule that was there before is not listed.
   allowRules: { path: string; rule: string }[];
+  // The agentContract (src/contract.ts) of the init that last wrote files;
+  // absent in a record from before contracts. A version that reads it keeps
+  // it, and so does an older one, since every field is kept on load.
+  agentContract?: number;
 };
 
 export function emptyRecord(): InstallRecord {
@@ -87,11 +91,11 @@ export function isEmpty(record: InstallRecord): boolean {
 }
 
 // Writes the record when it changed; removes it when nothing is recorded.
-export function saveRecord(home: string, record: InstallRecord, before: string): void {
+export function saveRecord(home: string, record: InstallRecord, before: string, guard: Guard = homeGuard(home)): void {
   const next = `${JSON.stringify(record, null, 2)}\n`;
   if (next === before) return;
-  if (isEmpty(record)) rmSync(recordPath(home), { force: true });
-  else writeAtomic(recordPath(home), next, 0o600);
+  if (isEmpty(record)) guard.remove(recordPath(home));
+  else guard.write(recordPath(home), next, { mode: 0o600 });
 }
 
 export function serialize(record: InstallRecord): string {

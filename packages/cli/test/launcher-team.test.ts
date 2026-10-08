@@ -154,7 +154,7 @@ describe("the team section in the repo", () => {
     expect(status(s)).toContain("?? AGENTS.md\n");
     expect(status(s)).toContain("?? CLAUDE.md\n");
     expect(readFileSync(join(s.repo, ".git/info/exclude"), "utf8")).not.toMatch(/CLAUDE|AGENTS/);
-    expect(first.stdout).toMatch(/Commit CLAUDE\.md and AGENTS\.md/);
+    expect(first.stdout).toMatch(/Commit [^\n]*CLAUDE\.md and AGENTS\.md so/);
 
     const before = snapshot(s);
     const second = cli(s, ["init", "--yes", "--agent", "claude-code"]);

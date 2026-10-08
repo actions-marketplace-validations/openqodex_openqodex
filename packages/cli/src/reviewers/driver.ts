@@ -138,9 +138,12 @@ export const REVIEWER_NAMES = ["claude", "codex", "cursor"] as const;
 
 // The agent running this command, when its environment says so. Claude Code
 // sets CLAUDECODE=1 for its commands; Codex sets CODEX_THREAD_ID (seen with
-// codex-cli 0.160.0).
-export function hostAgent(env: NodeJS.ProcessEnv = process.env): string | null {
+// codex-cli 0.160.0); Cursor sets CURSOR_AGENT in its agent's shell (the
+// marker the skills CLI reads). `review` tries this agent first, and `init`
+// takes it as consent to its defaults when there is no terminal.
+export function hostAgent(env: NodeJS.ProcessEnv = process.env): (typeof REVIEWER_NAMES)[number] | null {
   if (env.CLAUDECODE === "1") return "claude";
   if (env.CODEX_THREAD_ID) return "codex";
+  if (env.CURSOR_AGENT) return "cursor";
   return null;
 }

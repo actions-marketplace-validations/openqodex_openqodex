@@ -9,7 +9,8 @@
 // We invoke it only on changed Ruby source files so a change without Ruby
 // is a no-op. The repo's own .rubocop.yml is never loaded (it can run
 // code), so only Lint / Security / Performance offenses are emitted,
-// skipping the Style / Layout opinions nobody opted into.
+// skipping the Style / Layout opinions nobody opted into. The Rails cops
+// are loaded only for files in a Rails app (detect.ts).
 //
 // All errors are captured into the result; the runner never throws on a
 // scanner failure: static analysis is additive context, not a gate.
@@ -22,8 +23,10 @@ import type {
   StaticFinding,
 } from "@openqodex/core";
 import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
+import type { RepoFacts } from "../detect.js";
 import type { Adapter } from "./index.js";
 import { withOwnedConfig } from "./owned-config.js";
+import { folderList, suchAs } from "./words.js";
 
 const RUBOCOP_TIMEOUT_MS = 60_000;
 const RUBOCOP_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
@@ -33,42 +36,63 @@ const RUBOCOP_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
 // formatting opinions a team has to explicitly opt into.
 const DEFAULT_DEPARTMENTS = new Set(["Lint", "Security", "Performance"]);
 
-// Files rubocop lints natively: .rb / .rake / .gemspec sources plus the
-// conventional extensionless Gemfile / Rakefile. We deliberately skip
-// .erb (needs erb_lint, not rubocop).
+// Ruby code rubocop lints: .rb / .rake / .gemspec sources and the
+// extensionless Rakefile. Not .erb (needs erb_lint, not rubocop). Not a
+// Gemfile: it declares gems, and the cops written for it (the Bundler
+// department) are outside the Lint, Security and Performance cops this
+// adapter keeps, so a Gemfile alone (a React Native app's CocoaPods one)
+// would install rubocop for nothing.
 function isRubyLintPath(p: string): boolean {
   if (/\.(rb|rake|gemspec)$/i.test(p)) return true;
-  const base = path.basename(p);
-  return base === "Gemfile" || base === "Rakefile";
+  return path.basename(p) === "Rakefile";
 }
 
-// OpenQodex's own rubocop config: the default cops plus the Rails and
-// Performance cops the toolchain installs. Passed with --config, so no repo
-// config (nested ones included) is loaded: a repo's .rubocop.yml can
-// `require` Ruby files and run ERB, which is code from the change running on
-// the developer's machine.
-const OWNED_CONFIG = [
-  "require:",
-  "  - rubocop-rails",
-  "  - rubocop-performance",
-  "AllCops:",
-  "  NewCops: disable",
-  "  SuggestExtensions: false",
-  "",
-].join("\n");
+const inRails = (p: string, facts: RepoFacts): boolean => facts.project(p)?.frameworks.includes("rails") ?? false;
+
+// OpenQodex's own rubocop config: the default cops plus the Performance cops
+// and, for a file in a Rails app, the Rails cops the toolchain installs.
+// Passed with --config, so no repo config (nested ones included) is loaded:
+// a repo's .rubocop.yml can `require` Ruby files and run ERB, which is code
+// from the change running on the developer's machine.
+function ownedConfig(rails: boolean): string {
+  return [
+    "require:",
+    ...(rails ? ["  - rubocop-rails"] : []),
+    "  - rubocop-performance",
+    "AllCops:",
+    "  NewCops: disable",
+    "  SuggestExtensions: false",
+    "",
+  ].join("\n");
+}
 
 export async function runRubocop(args: {
   repoDir: string;
   changedPaths: string[];
   tool: ResolvedTool | null;
+  facts: RepoFacts;
 }): Promise<AdapterResult> {
   const rubyFiles = args.changedPaths.filter(isRubyLintPath);
   if (rubyFiles.length === 0) return { findings: [], error: null };
   if (!args.tool) return { findings: [], error: "not installed" };
   const tool = args.tool;
 
+  // One run with the Rails cops for files in a Rails app, one without for
+  // the rest.
+  const findings: StaticFinding[] = [];
+  for (const rails of [true, false]) {
+    const files = rubyFiles.filter((p) => inRails(p, args.facts) === rails);
+    if (files.length === 0) continue;
+    const result = await runRubocopOn(tool, args.repoDir, files, ownedConfig(rails));
+    if (result.error !== null) return { findings: [], error: result.error };
+    findings.push(...result.findings);
+  }
+  return { findings, error: null };
+}
+
+async function runRubocopOn(tool: ResolvedTool, repoDir: string, rubyFiles: string[], config: string): Promise<AdapterResult> {
   try {
-    return await withOwnedConfig("rubocop.yml", OWNED_CONFIG, async (configPath, configDir) => {
+    return await withOwnedConfig("rubocop.yml", config, async (configPath, configDir) => {
       // rubocop also reads extra command-line arguments from a `.rubocop`
       // file in its working folder, so it runs from the temp folder, never
       // the repo, and gets absolute paths. --format json: stable machine
@@ -76,7 +100,7 @@ export async function runRubocop(args: {
       // files passed positionally. --cache false: no result cache written.
       // One process per chunk of files, so a whole-repo file list stays
       // under the argument limit; the findings of every chunk are merged.
-      const targets = rubyFiles.map((rel) => path.join(args.repoDir, rel));
+      const targets = rubyFiles.map((rel) => path.join(repoDir, rel));
       const findings = await runInChunks("rubocop", targets, RUBOCOP_TIMEOUT_MS, async (chunk, left) => {
         const cliArgs = ["--config", configPath, "--format", "json", "--force-exclusion", "--cache", "false", "--", ...chunk];
         const stdout = await execRubocop(tool, cliArgs, configDir, left);
@@ -116,7 +140,12 @@ async function execRubocop(tool: ResolvedTool, cliArgs: string[], cwd: string, t
 
 export const rubocop: Adapter = {
   source: "rubocop",
-  wants: (changedPaths) => changedPaths.some(isRubyLintPath),
+  files: (changedPaths) => changedPaths.filter(isRubyLintPath),
+  why: (files, facts) => {
+    const apps = [...new Set(files.filter((p) => inRails(p, facts)).map((p) => facts.project(p)!.root))].sort();
+    return `Ruby files, ${suchAs(files)}${apps.length > 0 ? `; Rails cops in ${folderList(apps)}` : ""}`;
+  },
+  projects: (files, facts) => [...new Set(files.filter((p) => inRails(p, facts)).map((p) => facts.project(p)!.root))].sort(),
   run: (args) => runRubocop(args),
 };
 

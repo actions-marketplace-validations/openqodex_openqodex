@@ -1,0 +1,2929 @@
+{
+ "version": 1,
+ "kind": "review",
+ "impact": {
+  "version": 1,
+  "status": "ok",
+  "reasons": [],
+  "risk": "high",
+  "build": {
+   "durationMs": 144,
+   "cacheHits": 216,
+   "eligibleFiles": 197,
+   "parsedFiles": 197,
+   "omittedFiles": 0,
+   "unresolvedSites": 5817
+  },
+  "symbols": [
+   {
+    "id": "packages/cli/src/agents/lock.ts#realHome@20:10",
+    "file": "packages/cli/src/agents/lock.ts",
+    "name": "realHome",
+    "kind": "function",
+    "startLine": 20,
+    "endLine": 28,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/lock.ts#boundaryPort@31:17",
+    "file": "packages/cli/src/agents/lock.ts",
+    "name": "boundaryPort",
+    "kind": "function",
+    "startLine": 31,
+    "endLine": 34,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/lock.ts#BoundaryError@38:14",
+    "file": "packages/cli/src/agents/lock.ts",
+    "name": "BoundaryError",
+    "kind": "class",
+    "startLine": 38,
+    "endLine": 45,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/lock.ts#listen@47:10",
+    "file": "packages/cli/src/agents/lock.ts",
+    "name": "listen",
+    "kind": "function",
+    "startLine": 47,
+    "endLine": 56,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/lock.ts#heldMessage@61:10",
+    "file": "packages/cli/src/agents/lock.ts",
+    "name": "heldMessage",
+    "kind": "function",
+    "startLine": 61,
+    "endLine": 63,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/lock.ts#sleep@65:7",
+    "file": "packages/cli/src/agents/lock.ts",
+    "name": "sleep",
+    "kind": "function",
+    "startLine": 65,
+    "endLine": 65,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "file": "packages/cli/src/agents/lock.ts",
+    "name": "withBoundary",
+    "kind": "function",
+    "startLine": 70,
+    "endLine": 87,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#Settings@32:6",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "Settings",
+    "kind": "type",
+    "startLine": 32,
+    "endLine": 36,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#parseSettings@48:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "parseSettings",
+    "kind": "function",
+    "startLine": 48,
+    "endLine": 66,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#removeAllow@90:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "removeAllow",
+    "kind": "function",
+    "startLine": 90,
+    "endLine": 101,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#ourRules@105:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "ourRules",
+    "kind": "function",
+    "startLine": 105,
+    "endLine": 107,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#writeSettings@115:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "writeSettings",
+    "kind": "function",
+    "startLine": 115,
+    "endLine": 118,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#removeSettings@120:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "removeSettings",
+    "kind": "function",
+    "startLine": 120,
+    "endLine": 123,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#unchangedSincePlan@125:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "unchangedSincePlan",
+    "kind": "function",
+    "startLine": 125,
+    "endLine": 131,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#writeMarkdown@171:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "writeMarkdown",
+    "kind": "function",
+    "startLine": 171,
+    "endLine": 174,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#removeMarkdown@176:10",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "removeMarkdown",
+    "kind": "function",
+    "startLine": 176,
+    "endLine": 179,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "planInstall",
+    "kind": "function",
+    "startLine": 181,
+    "endLine": 353,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#planInstall.forgetStale@270:13",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "forgetStale",
+    "kind": "function",
+    "startLine": 270,
+    "endLine": 272,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+    "file": "packages/cli/src/agents/plan.ts",
+    "name": "planUninstall",
+    "kind": "function",
+    "startLine": 356,
+    "endLine": 528,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/record.ts#InstallRecord@8:13",
+    "file": "packages/cli/src/agents/record.ts",
+    "name": "InstallRecord",
+    "kind": "type",
+    "startLine": 8,
+    "endLine": 37,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/record.ts#emptyRecord@39:17",
+    "file": "packages/cli/src/agents/record.ts",
+    "name": "emptyRecord",
+    "kind": "function",
+    "startLine": 39,
+    "endLine": 54,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/record.ts#isEmpty@72:17",
+    "file": "packages/cli/src/agents/record.ts",
+    "name": "isEmpty",
+    "kind": "function",
+    "startLine": 72,
+    "endLine": 87,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#Target@10:13",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "Target",
+    "kind": "type",
+    "startLine": 10,
+    "endLine": 20,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#shippedSkill@70:10",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "shippedSkill",
+    "kind": "function",
+    "startLine": 70,
+    "endLine": 72,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#renderSkill@76:17",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "renderSkill",
+    "kind": "function",
+    "startLine": 76,
+    "endLine": 78,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#section@81:10",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "section",
+    "kind": "function",
+    "startLine": 81,
+    "endLine": 86,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#skillStub@93:17",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "skillStub",
+    "kind": "function",
+    "startLine": 93,
+    "endLine": 117,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#userRule@121:10",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "userRule",
+    "kind": "function",
+    "startLine": 121,
+    "endLine": 123,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#allowRules@139:17",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "allowRules",
+    "kind": "function",
+    "startLine": 139,
+    "endLine": 141,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#hasRuleWildcard@146:17",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "hasRuleWildcard",
+    "kind": "function",
+    "startLine": 146,
+    "endLine": 148,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#fileTarget@150:10",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "fileTarget",
+    "kind": "function",
+    "startLine": 150,
+    "endLine": 152,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#teamSection@157:17",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "teamSection",
+    "kind": "function",
+    "startLine": 157,
+    "endLine": 159,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#teamTargets@161:17",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "teamTargets",
+    "kind": "function",
+    "startLine": 161,
+    "endLine": 167,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "targetsFor",
+    "kind": "function",
+    "startLine": 169,
+    "endLine": 265,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/agents/targets.ts#targetsFor.skillTarget@188:9",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "skillTarget",
+    "kind": "function",
+    "startLine": 188,
+    "endLine": 188,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/doctor.ts#Report@26:6",
+    "file": "packages/cli/src/commands/doctor.ts",
+    "name": "Report",
+    "kind": "type",
+    "startLine": 26,
+    "endLine": 35,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/doctor.ts#text@45:10",
+    "file": "packages/cli/src/commands/doctor.ts",
+    "name": "text",
+    "kind": "function",
+    "startLine": 45,
+    "endLine": 69,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/doctor.ts#run@71:23",
+    "file": "packages/cli/src/commands/doctor.ts",
+    "name": "run",
+    "kind": "function",
+    "startLine": 71,
+    "endLine": 128,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/guide.ts#run@24:23",
+    "file": "packages/cli/src/commands/guide.ts",
+    "name": "run",
+    "kind": "function",
+    "startLine": 24,
+    "endLine": 40,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/hook.ts#install@446:16",
+    "file": "packages/cli/src/commands/hook.ts",
+    "name": "install",
+    "kind": "function",
+    "startLine": 446,
+    "endLine": 491,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/hook.ts#uninstall@493:16",
+    "file": "packages/cli/src/commands/hook.ts",
+    "name": "uninstall",
+    "kind": "function",
+    "startLine": 493,
+    "endLine": 527,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#Flags@24:6",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "Flags",
+    "kind": "type",
+    "startLine": 24,
+    "endLine": 24,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#parseFlags@32:10",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "parseFlags",
+    "kind": "function",
+    "startLine": 32,
+    "endLine": 54,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#knownTeamChoice@85:10",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "knownTeamChoice",
+    "kind": "function",
+    "startLine": 85,
+    "endLine": 89,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#setTeamChoice@91:10",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "setTeamChoice",
+    "kind": "function",
+    "startLine": 91,
+    "endLine": 94,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#ignoredByGit@101:10",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "ignoredByGit",
+    "kind": "function",
+    "startLine": 101,
+    "endLine": 103,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#planTeam@105:10",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "planTeam",
+    "kind": "function",
+    "startLine": 105,
+    "endLine": 121,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#collectTargets@148:10",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "collectTargets",
+    "kind": "function",
+    "startLine": 148,
+    "endLine": 166,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#runLocked@218:16",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "runLocked",
+    "kind": "function",
+    "startLine": 218,
+    "endLine": 392,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/init.ts#run@404:23",
+    "file": "packages/cli/src/commands/init.ts",
+    "name": "run",
+    "kind": "function",
+    "startLine": 404,
+    "endLine": 450,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/review.ts#run@73:23",
+    "file": "packages/cli/src/commands/review.ts",
+    "name": "run",
+    "kind": "function",
+    "startLine": 73,
+    "endLine": 98,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/review.ts#finalizeCommand@114:10",
+    "file": "packages/cli/src/commands/review.ts",
+    "name": "finalizeCommand",
+    "kind": "function",
+    "startLine": 114,
+    "endLine": 123,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/review.ts#runAgent@138:16",
+    "file": "packages/cli/src/commands/review.ts",
+    "name": "runAgent",
+    "kind": "function",
+    "startLine": 138,
+    "endLine": 191,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/review.ts#runAll@233:16",
+    "file": "packages/cli/src/commands/review.ts",
+    "name": "runAll",
+    "kind": "function",
+    "startLine": 233,
+    "endLine": 302,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/review.ts#findRun@361:10",
+    "file": "packages/cli/src/commands/review.ts",
+    "name": "findRun",
+    "kind": "function",
+    "startLine": 361,
+    "endLine": 380,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/review.ts#runFinalize@412:16",
+    "file": "packages/cli/src/commands/review.ts",
+    "name": "runFinalize",
+    "kind": "function",
+    "startLine": 412,
+    "endLine": 460,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/update.ts#out@19:10",
+    "file": "packages/cli/src/commands/update.ts",
+    "name": "out",
+    "kind": "function",
+    "startLine": 19,
+    "endLine": 21,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/update.ts#fail@23:10",
+    "file": "packages/cli/src/commands/update.ts",
+    "name": "fail",
+    "kind": "function",
+    "startLine": 23,
+    "endLine": 26,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/update.ts#message@28:10",
+    "file": "packages/cli/src/commands/update.ts",
+    "name": "message",
+    "kind": "function",
+    "startLine": 28,
+    "endLine": 30,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/update.ts#rollback@61:16",
+    "file": "packages/cli/src/commands/update.ts",
+    "name": "rollback",
+    "kind": "function",
+    "startLine": 61,
+    "endLine": 77,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/commands/update.ts#run@79:23",
+    "file": "packages/cli/src/commands/update.ts",
+    "name": "run",
+    "kind": "function",
+    "startLine": 79,
+    "endLine": 115,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/launcher.ts#runtimeBin@39:17",
+    "file": "packages/cli/src/launcher.ts",
+    "name": "runtimeBin",
+    "kind": "function",
+    "startLine": 39,
+    "endLine": 41,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/launcher.ts#currentPath@43:17",
+    "file": "packages/cli/src/launcher.ts",
+    "name": "currentPath",
+    "kind": "function",
+    "startLine": 43,
+    "endLine": 45,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/launcher.ts#Active@51:13",
+    "file": "packages/cli/src/launcher.ts",
+    "name": "Active",
+    "kind": "type",
+    "startLine": 51,
+    "endLine": 51,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/program.ts#main@49:23",
+    "file": "packages/cli/src/program.ts",
+    "name": "main",
+    "kind": "function",
+    "startLine": 49,
+    "endLine": 119,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/candidate.test.ts#ago@28:7",
+    "file": "packages/cli/src/update/candidate.test.ts",
+    "name": "ago",
+    "kind": "function",
+    "startLine": 28,
+    "endLine": 28,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/candidate.test.ts#release@30:10",
+    "file": "packages/cli/src/update/candidate.test.ts",
+    "name": "release",
+    "kind": "function",
+    "startLine": 30,
+    "endLine": 45,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/candidate.test.ts#metadata@47:10",
+    "file": "packages/cli/src/update/candidate.test.ts",
+    "name": "metadata",
+    "kind": "function",
+    "startLine": 47,
+    "endLine": 53,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/candidate.ts#UpdateCandidate@5:13",
+    "file": "packages/cli/src/update/candidate.ts",
+    "name": "UpdateCandidate",
+    "kind": "type",
+    "startLine": 5,
+    "endLine": 11,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/candidate.ts#Version@20:6",
+    "file": "packages/cli/src/update/candidate.ts",
+    "name": "Version",
+    "kind": "type",
+    "startLine": 20,
+    "endLine": 20,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/candidate.ts#parseVersion@23:10",
+    "file": "packages/cli/src/update/candidate.ts",
+    "name": "parseVersion",
+    "kind": "function",
+    "startLine": 23,
+    "endLine": 29,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/fetch.test.ts#count@21:7",
+    "file": "packages/cli/src/update/fetch.test.ts",
+    "name": "count",
+    "kind": "function",
+    "startLine": 21,
+    "endLine": 23,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/fetch.ts#UpdateFetchError@16:14",
+    "file": "packages/cli/src/update/fetch.ts",
+    "name": "UpdateFetchError",
+    "kind": "class",
+    "startLine": 16,
+    "endLine": 21,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/fetch.ts#UpdateFetchError.constructor@17:3",
+    "file": "packages/cli/src/update/fetch.ts",
+    "name": "constructor",
+    "kind": "method",
+    "startLine": 17,
+    "endLine": 20,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/fetch.ts#registryUrl@23:10",
+    "file": "packages/cli/src/update/fetch.ts",
+    "name": "registryUrl",
+    "kind": "function",
+    "startLine": 23,
+    "endLine": 35,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/worker.ts#activateUnpacked@109:23",
+    "file": "packages/cli/src/update/worker.ts",
+    "name": "activateUnpacked",
+    "kind": "function",
+    "startLine": 109,
+    "endLine": 154,
+    "snapshot": "current"
+   },
+   {
+    "id": "packages/cli/src/update/worker.ts#note@161:16",
+    "file": "packages/cli/src/update/worker.ts",
+    "name": "note",
+    "kind": "function",
+    "startLine": 161,
+    "endLine": 174,
+    "snapshot": "current"
+   },
+   {
+    "id": "base:packages/cli/src/agents/record.ts#alive@78:10",
+    "file": "packages/cli/src/agents/record.ts",
+    "name": "alive",
+    "kind": "function",
+    "startLine": 78,
+    "endLine": 85,
+    "snapshot": "base"
+   },
+   {
+    "id": "base:packages/cli/src/agents/record.ts#sleep@87:7",
+    "file": "packages/cli/src/agents/record.ts",
+    "name": "sleep",
+    "kind": "function",
+    "startLine": 87,
+    "endLine": 87,
+    "snapshot": "base"
+   },
+   {
+    "id": "base:packages/cli/src/agents/record.ts#withLock@91:23",
+    "file": "packages/cli/src/agents/record.ts",
+    "name": "withLock",
+    "kind": "function",
+    "startLine": 91,
+    "endLine": 119,
+    "snapshot": "base"
+   },
+   {
+    "id": "base:packages/cli/src/agents/targets.ts#skill@59:10",
+    "file": "packages/cli/src/agents/targets.ts",
+    "name": "skill",
+    "kind": "function",
+    "startLine": 59,
+    "endLine": 61,
+    "snapshot": "base"
+   },
+   {
+    "id": "base:packages/cli/src/launcher.ts#treeHashes@64:10",
+    "file": "packages/cli/src/launcher.ts",
+    "name": "treeHashes",
+    "kind": "function",
+    "startLine": 64,
+    "endLine": 76,
+    "snapshot": "base"
+   },
+   {
+    "id": "base:packages/cli/src/launcher.ts#treeHashes.walk@66:9",
+    "file": "packages/cli/src/launcher.ts",
+    "name": "walk",
+    "kind": "function",
+    "startLine": 66,
+    "endLine": 73,
+    "snapshot": "base"
+   },
+   {
+    "id": "base:packages/cli/src/launcher.ts#sameTree@78:10",
+    "file": "packages/cli/src/launcher.ts",
+    "name": "sameTree",
+    "kind": "function",
+    "startLine": 78,
+    "endLine": 85,
+    "snapshot": "base"
+   }
+  ],
+  "touched": [
+   "packages/cli/src/agents/lock.ts#realHome@20:10",
+   "packages/cli/src/agents/lock.ts#boundaryPort@31:17",
+   "packages/cli/src/agents/lock.ts#BoundaryError@38:14",
+   "packages/cli/src/agents/plan.ts#Settings@32:6",
+   "packages/cli/src/agents/plan.ts#parseSettings@48:10",
+   "packages/cli/src/agents/plan.ts#removeAllow@90:10",
+   "packages/cli/src/agents/record.ts#InstallRecord@8:13",
+   "packages/cli/src/agents/record.ts#emptyRecord@39:17",
+   "packages/cli/src/agents/record.ts#isEmpty@72:17",
+   "packages/cli/src/agents/targets.ts#Target@10:13",
+   "packages/cli/src/agents/targets.ts#shippedSkill@70:10",
+   "packages/cli/src/agents/targets.ts#renderSkill@76:17",
+   "packages/cli/src/commands/doctor.ts#Report@26:6",
+   "packages/cli/src/commands/doctor.ts#text@45:10",
+   "packages/cli/src/commands/doctor.ts#run@71:23",
+   "packages/cli/src/commands/guide.ts#run@24:23",
+   "packages/cli/src/commands/hook.ts#install@446:16",
+   "packages/cli/src/commands/hook.ts#uninstall@493:16",
+   "packages/cli/src/commands/init.ts#Flags@24:6",
+   "packages/cli/src/commands/init.ts#parseFlags@32:10",
+   "packages/cli/src/commands/init.ts#knownTeamChoice@85:10",
+   "packages/cli/src/commands/review.ts#run@73:23",
+   "packages/cli/src/commands/review.ts#finalizeCommand@114:10",
+   "packages/cli/src/commands/review.ts#runAgent@138:16",
+   "packages/cli/src/commands/update.ts#out@19:10",
+   "packages/cli/src/commands/update.ts#fail@23:10",
+   "packages/cli/src/commands/update.ts#message@28:10",
+   "packages/cli/src/launcher.ts#runtimeBin@39:17",
+   "packages/cli/src/launcher.ts#currentPath@43:17",
+   "packages/cli/src/launcher.ts#Active@51:13",
+   "packages/cli/src/program.ts#main@49:23",
+   "packages/cli/src/update/candidate.test.ts#ago@28:7",
+   "packages/cli/src/update/candidate.test.ts#release@30:10",
+   "packages/cli/src/update/candidate.test.ts#metadata@47:10",
+   "packages/cli/src/update/candidate.ts#UpdateCandidate@5:13",
+   "packages/cli/src/update/candidate.ts#Version@20:6",
+   "packages/cli/src/update/candidate.ts#parseVersion@23:10",
+   "packages/cli/src/update/fetch.test.ts#count@21:7",
+   "packages/cli/src/update/fetch.ts#UpdateFetchError@16:14",
+   "packages/cli/src/update/fetch.ts#UpdateFetchError.constructor@17:3",
+   "packages/cli/src/update/fetch.ts#registryUrl@23:10"
+  ],
+  "removed": [
+   "base:packages/cli/src/agents/record.ts#alive@78:10",
+   "base:packages/cli/src/agents/record.ts#sleep@87:7",
+   "base:packages/cli/src/agents/record.ts#withLock@91:23",
+   "base:packages/cli/src/agents/targets.ts#skill@59:10",
+   "base:packages/cli/src/launcher.ts#treeHashes@64:10",
+   "base:packages/cli/src/launcher.ts#treeHashes.walk@66:9",
+   "base:packages/cli/src/launcher.ts#sameTree@78:10"
+  ],
+  "callers": [
+   {
+    "seed": "packages/cli/src/agents/lock.ts#realHome@20:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/lock.ts#boundaryPort@31:17",
+      "to": "packages/cli/src/agents/lock.ts#realHome@20:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 32,
+        "column": 46,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#boundaryPort@31:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "to": "packages/cli/src/agents/lock.ts#boundaryPort@31:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 71,
+        "column": 16,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#BoundaryError@38:14",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/lock.ts#listen@47:10",
+      "to": "packages/cli/src/agents/lock.ts#BoundaryError@38:14",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 52,
+        "column": 21,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#BoundaryError@38:14",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "to": "packages/cli/src/agents/lock.ts#BoundaryError@38:14",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 76,
+        "column": 17,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#listen@47:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "to": "packages/cli/src/agents/lock.ts#listen@47:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 73,
+        "column": 22,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 79,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#heldMessage@61:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "to": "packages/cli/src/agents/lock.ts#heldMessage@61:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 76,
+        "column": 31,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#sleep@65:7",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "to": "packages/cli/src/agents/lock.ts#sleep@65:7",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/lock.ts",
+        "line": 78,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/hook.ts#install@446:16",
+      "to": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/hook.ts",
+        "line": 462,
+        "column": 10,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/hook.ts#uninstall@493:16",
+      "to": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/hook.ts",
+        "line": 498,
+        "column": 10,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#run@404:23",
+      "to": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 440,
+        "column": 18,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/update.ts#rollback@61:16",
+      "to": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/update.ts",
+        "line": 62,
+        "column": 10,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/update.ts#run@79:23",
+      "to": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/update.ts",
+        "line": 93,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/commands/update.ts",
+        "line": 110,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "edges": [
+     {
+      "from": "packages/cli/src/update/worker.ts#activateUnpacked@109:23",
+      "to": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/update/worker.ts",
+        "line": 114,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+    "edges": [
+     {
+      "from": "packages/cli/src/update/worker.ts#note@161:16",
+      "to": "packages/cli/src/agents/lock.ts#withBoundary@70:23",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/update/worker.ts",
+        "line": 166,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#parseSettings@48:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "to": "packages/cli/src/agents/plan.ts#parseSettings@48:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 216,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 261,
+        "column": 43,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 290,
+        "column": 44,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#parseSettings@48:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#parseSettings@48:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 392,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 408,
+        "column": 55,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 457,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 471,
+        "column": 46,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#removeAllow@90:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "to": "packages/cli/src/agents/plan.ts#removeAllow@90:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 292,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#removeAllow@90:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#removeAllow@90:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 401,
+        "column": 7,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 476,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#ourRules@105:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "to": "packages/cli/src/agents/plan.ts#ourRules@105:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 266,
+        "column": 24,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#ourRules@105:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#ourRules@105:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 401,
+        "column": 25,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 449,
+        "column": 21,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#writeSettings@115:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "to": "packages/cli/src/agents/plan.ts#writeSettings@115:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 211,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 236,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 255,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 296,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#writeSettings@115:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#writeSettings@115:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 418,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 442,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 478,
+        "column": 18,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#removeSettings@120:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#removeSettings@120:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 432,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 477,
+        "column": 59,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#unchangedSincePlan@125:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "to": "packages/cli/src/agents/plan.ts#unchangedSincePlan@125:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 289,
+        "column": 24,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#unchangedSincePlan@125:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#unchangedSincePlan@125:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 470,
+        "column": 24,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#writeMarkdown@171:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "to": "packages/cli/src/agents/plan.ts#writeMarkdown@171:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 315,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 328,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 345,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#writeMarkdown@171:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#writeMarkdown@171:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 522,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#removeMarkdown@176:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "to": "packages/cli/src/agents/plan.ts#removeMarkdown@176:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 512,
+        "column": 13,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#planTeam@105:10",
+      "to": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 114,
+        "column": 61,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#planInstall.forgetStale@270:13",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/plan.ts#planInstall@181:17",
+      "to": "packages/cli/src/agents/plan.ts#planInstall.forgetStale@270:13",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 274,
+        "column": 9,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/plan.ts",
+        "line": 297,
+        "column": 11,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#planTeam@105:10",
+      "to": "packages/cli/src/agents/plan.ts#planUninstall@356:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 114,
+        "column": 37,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#shippedSkill@70:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#renderSkill@76:17",
+      "to": "packages/cli/src/agents/targets.ts#shippedSkill@70:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 77,
+        "column": 10,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#shippedSkill@70:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#skillStub@93:17",
+      "to": "packages/cli/src/agents/targets.ts#shippedSkill@70:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 94,
+        "column": 16,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#renderSkill@76:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "to": "packages/cli/src/agents/targets.ts#renderSkill@76:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 186,
+        "column": 53,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#renderSkill@76:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/guide.ts#run@24:23",
+      "to": "packages/cli/src/agents/targets.ts#renderSkill@76:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/guide.ts",
+        "line": 29,
+        "column": 26,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#section@81:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#skillStub@93:17",
+      "to": "packages/cli/src/agents/targets.ts#section@81:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 102,
+        "column": 5,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 104,
+        "column": 5,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#skillStub@93:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "to": "packages/cli/src/agents/targets.ts#skillStub@93:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 186,
+        "column": 28,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#userRule@121:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "to": "packages/cli/src/agents/targets.ts#userRule@121:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 244,
+        "column": 27,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 257,
+        "column": 18,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#allowRules@139:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "to": "packages/cli/src/agents/targets.ts#allowRules@139:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 219,
+        "column": 51,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#hasRuleWildcard@146:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "to": "packages/cli/src/agents/targets.ts#hasRuleWildcard@146:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 207,
+        "column": 19,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 219,
+        "column": 25,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#fileTarget@150:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor.skillTarget@188:9",
+      "to": "packages/cli/src/agents/targets.ts#fileTarget@150:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 188,
+        "column": 64,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#fileTarget@150:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "to": "packages/cli/src/agents/targets.ts#fileTarget@150:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 247,
+        "column": 25,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 253,
+        "column": 9,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#teamSection@157:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#teamTargets@161:17",
+      "to": "packages/cli/src/agents/targets.ts#teamSection@157:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 162,
+        "column": 19,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#teamSection@157:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#runLocked@218:16",
+      "to": "packages/cli/src/agents/targets.ts#teamSection@157:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 320,
+        "column": 28,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#teamTargets@161:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#planTeam@105:10",
+      "to": "packages/cli/src/agents/targets.ts#teamTargets@161:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 109,
+        "column": 21,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#collectTargets@148:10",
+      "to": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 154,
+        "column": 15,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/agents/targets.ts#targetsFor.skillTarget@188:9",
+    "edges": [
+     {
+      "from": "packages/cli/src/agents/targets.ts#targetsFor@169:17",
+      "to": "packages/cli/src/agents/targets.ts#targetsFor.skillTarget@188:9",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 192,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 224,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 241,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/agents/targets.ts",
+        "line": 251,
+        "column": 20,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/doctor.ts#text@45:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/doctor.ts#run@71:23",
+      "to": "packages/cli/src/commands/doctor.ts#text@45:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/doctor.ts",
+        "line": 126,
+        "column": 87,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/init.ts#parseFlags@32:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#run@404:23",
+      "to": "packages/cli/src/commands/init.ts#parseFlags@32:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 405,
+        "column": 18,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/init.ts#knownTeamChoice@85:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#runLocked@218:16",
+      "to": "packages/cli/src/commands/init.ts#knownTeamChoice@85:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 309,
+        "column": 17,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/init.ts#setTeamChoice@91:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#runLocked@218:16",
+      "to": "packages/cli/src/commands/init.ts#setTeamChoice@91:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 311,
+        "column": 44,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/init.ts#ignoredByGit@101:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#planTeam@105:10",
+      "to": "packages/cli/src/commands/init.ts#ignoredByGit@101:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 110,
+        "column": 33,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/init.ts#planTeam@105:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#runLocked@218:16",
+      "to": "packages/cli/src/commands/init.ts#planTeam@105:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 240,
+        "column": 25,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 315,
+        "column": 27,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/init.ts#collectTargets@148:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#runLocked@218:16",
+      "to": "packages/cli/src/commands/init.ts#collectTargets@148:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 221,
+        "column": 30,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/init.ts#runLocked@218:16",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/init.ts#run@404:23",
+      "to": "packages/cli/src/commands/init.ts#runLocked@218:16",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 439,
+        "column": 36,
+        "confidence": "high",
+        "evidence": "binding"
+       },
+       {
+        "file": "packages/cli/src/commands/init.ts",
+        "line": 442,
+        "column": 26,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/review.ts#finalizeCommand@114:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/review.ts#runAgent@138:16",
+      "to": "packages/cli/src/commands/review.ts#finalizeCommand@114:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/review.ts",
+        "line": 171,
+        "column": 22,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/review.ts#finalizeCommand@114:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/review.ts#runAll@233:16",
+      "to": "packages/cli/src/commands/review.ts#finalizeCommand@114:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/review.ts",
+        "line": 273,
+        "column": 22,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/review.ts#runAgent@138:16",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/review.ts#run@73:23",
+      "to": "packages/cli/src/commands/review.ts#runAgent@138:16",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/review.ts",
+        "line": 93,
+        "column": 21,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/review.ts#runAll@233:16",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/review.ts#run@73:23",
+      "to": "packages/cli/src/commands/review.ts#runAll@233:16",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/review.ts",
+        "line": 91,
+        "column": 30,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "seed": "packages/cli/src/commands/review.ts#findRun@361:10",
+    "edges": [
+     {
+      "from": "packages/cli/src/commands/review.ts#runFinalize@412:16",
+      "to": "packages/cli/src/commands/review.ts#findRun@361:10",
+      "kind": "calls",
+      "sites": [
+       {
+        "file": "packages/cli/src/commands/review.ts",
+        "line": 414,
+        "column": 45,
+        "confidence": "high",
+        "evidence": "binding"
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "callees": [],
+  "importers": [
+   {
+    "from": "packages/cli/src/commands/hook.ts",
+    "to": "packages/cli/src/agents/lock.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/hook.ts",
+      "line": 22,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/init.ts",
+    "to": "packages/cli/src/agents/lock.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/init.ts",
+      "line": 14,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/update.ts",
+    "to": "packages/cli/src/agents/lock.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/update.ts",
+      "line": 8,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/worker.ts",
+    "to": "packages/cli/src/agents/lock.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/worker.ts",
+      "line": 12,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/test/child-entry.ts",
+    "to": "packages/cli/src/agents/lock.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/test/child-entry.ts",
+      "line": 4,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/hook.ts",
+    "to": "packages/cli/src/agents/plan.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/hook.ts",
+      "line": 20,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/init.ts",
+    "to": "packages/cli/src/agents/plan.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/init.ts",
+      "line": 13,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/launcher.ts",
+    "to": "packages/cli/src/agents/plan.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/launcher.ts",
+      "line": 18,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/agents/git.ts",
+    "to": "packages/cli/src/agents/plan.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/agents/git.ts",
+      "line": 5,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/agents/repo-folder.ts",
+    "to": "packages/cli/src/agents/plan.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/agents/repo-folder.ts",
+      "line": 25,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/agents/plan.ts",
+    "to": "packages/cli/src/agents/record.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/agents/plan.ts",
+      "line": 11,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/hook.ts",
+    "to": "packages/cli/src/agents/record.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/hook.ts",
+      "line": 23,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/init.ts",
+    "to": "packages/cli/src/agents/record.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/init.ts",
+      "line": 15,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/launcher.ts",
+    "to": "packages/cli/src/agents/record.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/launcher.ts",
+      "line": 19,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/agents/git.ts",
+    "to": "packages/cli/src/agents/record.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/agents/git.ts",
+      "line": 7,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/agents/repo-folder.ts",
+    "to": "packages/cli/src/agents/record.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/agents/repo-folder.ts",
+      "line": 26,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/test/repo-folder.test.ts",
+    "to": "packages/cli/src/agents/record.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/test/repo-folder.test.ts",
+      "line": 22,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/agents/plan.ts",
+    "to": "packages/cli/src/agents/targets.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/agents/plan.ts",
+      "line": 12,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/guide.ts",
+    "to": "packages/cli/src/agents/targets.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/guide.ts",
+      "line": 8,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/init.ts",
+    "to": "packages/cli/src/agents/targets.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/init.ts",
+      "line": 17,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/init.ts",
+    "to": "packages/cli/src/commands/hook.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/init.ts",
+      "line": 20,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/doctor.ts",
+    "to": "packages/cli/src/commands/update.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/doctor.ts",
+      "line": 13,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/guide.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/guide.ts",
+      "line": 11,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/hook.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/hook.ts",
+      "line": 25,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/init.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/init.ts",
+      "line": 19,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/review.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/review.ts",
+      "line": 44,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/update.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/update.ts",
+      "line": 10,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/trigger.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/trigger.ts",
+      "line": 10,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/worker.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/worker.ts",
+      "line": 13,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/feedback.ts",
+    "to": "packages/cli/src/launcher.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/feedback.ts",
+      "line": 16,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/candidate.test.ts",
+    "to": "packages/cli/src/update/candidate.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/candidate.test.ts",
+      "line": 24,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/worker.ts",
+    "to": "packages/cli/src/update/candidate.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/worker.ts",
+      "line": 14,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/fetch.test.ts",
+    "to": "packages/cli/src/update/fetch.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/fetch.test.ts",
+      "line": 15,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/worker.ts",
+    "to": "packages/cli/src/update/fetch.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/worker.ts",
+      "line": 15,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "tests/e2e/update-verify.test.ts",
+    "to": "packages/cli/src/update/fetch.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "tests/e2e/update-verify.test.ts",
+      "line": 3,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/commands/update.ts",
+    "to": "packages/cli/src/update/state.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/commands/update.ts",
+      "line": 12,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/launcher.ts",
+    "to": "packages/cli/src/update/state.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/launcher.ts",
+      "line": 20,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/trigger.ts",
+    "to": "packages/cli/src/update/state.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/trigger.ts",
+      "line": 11,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/src/update/worker.ts",
+    "to": "packages/cli/src/update/state.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/src/update/worker.ts",
+      "line": 16,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   },
+   {
+    "from": "packages/cli/test/self-update.test.ts",
+    "to": "packages/cli/src/update/state.ts",
+    "kind": "imports",
+    "sites": [
+     {
+      "file": "packages/cli/test/self-update.test.ts",
+      "line": 28,
+      "column": 1,
+      "confidence": "high",
+      "evidence": "binding"
+     }
+    ]
+   }
+  ],
+  "hubs": [],
+  "truncated": {
+   "walk": true,
+   "inline": true,
+   "omittedSites": 265
+  }
+ },
+ "change_id": "2ef34fbe8470a462fdd7f3be7e4416cae1f9e0522e324b708e28a8dad5fbed02",
+ "base": {
+  "ref": "origin/main",
+  "sha": "129d5e23d0aaeb90944e92c7ce66db2411c98987"
+ },
+ "generated_at": "2026-10-03T21:52:30.475Z",
+ "verdict": "passed",
+ "block_on_severity": null,
+ "summary": "Reviewed by a separate subagent.\nAdds a self-updater: a daily background check through the launcher installs a newer npm release only after offline Sigstore verification of this repo's release workflow, into immutable runtime folders switched by one record file under a loopback-port lock. Also adds a stub user-scope skill, Claude Code allow rules, a team section in the repo's CLAUDE.md and AGENTS.md, a four-command help menu and a release step that moves the v0 tag. Reviewed twice: the first brief (667db30ba5e8) moved while the author edited the worktree; five findings from it (Cursor rule not counted as a launcher user, team-section hint that did not work, update.json rewritten after uninstall, a failed cache write reported as a failed switch, the finalize handoff with --) are fixed in this version and not raised again.",
+ "findings": [
+  {
+   "origin": "agent",
+   "severity": "minor",
+   "category": "bug",
+   "confidence": 0.75,
+   "file_path": "packages/cli/src/update/worker.ts",
+   "line_number": 189,
+   "line_end": 189,
+   "title": "Temp runtime folders left behind forever",
+   "description": "When the 10 minute deadline calls process.exit(2), or the worker is killed, during unpack or activation, `<home>/runtime/<version>.tmp-<pid>/` (the tarball plus the unpacked package) is never removed: pruneRuntimes only matches plain x.y.z names and uninstall only removes ourRuntimes, so the folder stays and also keeps `runtime/` from being removed on uninstall. Remove `*.tmp-<pid>` folders whose pid is not alive in pruneRuntimes and in uninstall.",
+   "suggested_change": null,
+   "source": null,
+   "candidate": null,
+   "notes": []
+  },
+  {
+   "origin": "agent",
+   "severity": "minor",
+   "category": "bug",
+   "confidence": 0.75,
+   "file_path": ".github/workflows/release.yml",
+   "line_number": 75,
+   "line_end": 76,
+   "title": "v0 tag moved by any major version",
+   "description": "The step moves v0 for every published version, so the first 1.0.0 release force-moves `openqodex/openqodex@v0` onto a breaking major for every Action user. Derive the tag from the major, or refuse to move v0 when the major is not 0.",
+   "suggested_change": "          major=\"v${version%%.*}\"\n          git tag -f \"$major\"\n          git push --force origin \"refs/tags/$major\"",
+   "source": null,
+   "candidate": null,
+   "notes": []
+  },
+  {
+   "origin": "agent",
+   "severity": "minor",
+   "category": "bug",
+   "confidence": 0.8,
+   "file_path": "README.md",
+   "line_number": 131,
+   "line_end": 131,
+   "title": "README omits 0.2.1 from the versions that need one init",
+   "description": "0.2.1 is the current published release and has no self-updater, yet the README names only 0.1.0 and 0.2.0 as needing one `npx openqodex init` to start updating, so a 0.2.1 user reads that they update on their own. Say 'before 0.3.0' instead of listing versions.",
+   "suggested_change": "These do not update: files committed with `init --project`, the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, the skill from `npx skills add`, the GitHub Action pin, and machines that are offline or stop background processes. An active install is usually one to two days behind a release. An install made before 0.3.0 needs one `npx openqodex init` to start updating.",
+   "source": null,
+   "candidate": null,
+   "notes": []
+  },
+  {
+   "origin": "agent",
+   "severity": "minor",
+   "category": "bug",
+   "confidence": 0.85,
+   "file_path": "docs/cli.md",
+   "line_number": 100,
+   "line_end": 100,
+   "title": "--yes description contradicts the team section order",
+   "description": "knownTeamChoice now lets --yes override a recorded no for the team section (and docs/agents.md says so), but this line says --yes adds the team section 'unless this repository answered no before'. That is still true for the pre-push hook only. Split the sentence so each answer is described as the code applies it.",
+   "suggested_change": "- `--yes`, `-y`: do not ask; add the pre-push hook unless this repository answered no before, and add the team review section even if it did. Without a terminal, `init` needs this flag.",
+   "source": null,
+   "candidate": null,
+   "notes": []
+  }
+ ],
+ "below_threshold": 0,
+ "outside_change": [],
+ "low_confidence": [],
+ "not_reviewed": [],
+ "dropped": [],
+ "scanners": [
+  {
+   "scanner": "semgrep",
+   "status": "ran",
+   "version": "1.94.0",
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 7948,
+   "reason": null
+  },
+  {
+   "scanner": "gitleaks",
+   "status": "ran",
+   "version": "8.21.2",
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 59,
+   "reason": null
+  },
+  {
+   "scanner": "sqllint",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  },
+  {
+   "scanner": "osv-scanner",
+   "status": "ran",
+   "version": "1.9.2",
+   "rawCount": 2,
+   "keptCount": 0,
+   "durationMs": 1277,
+   "reason": null
+  },
+  {
+   "scanner": "actionlint",
+   "status": "ran",
+   "version": "1.7.7",
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 3,
+   "reason": null
+  },
+  {
+   "scanner": "hadolint",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  },
+  {
+   "scanner": "shellcheck",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  },
+  {
+   "scanner": "ruff",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  },
+  {
+   "scanner": "brakeman",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  },
+  {
+   "scanner": "rubocop",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  },
+  {
+   "scanner": "bandit",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  },
+  {
+   "scanner": "oxlint",
+   "status": "ran",
+   "version": "1.71.0",
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 66,
+   "reason": null
+  },
+  {
+   "scanner": "golangci",
+   "status": "no_matching_files",
+   "version": null,
+   "rawCount": 0,
+   "keptCount": 0,
+   "durationMs": 0,
+   "reason": null
+  }
+ ],
+ "not_reviewed_paths": [],
+ "stats": {
+  "files": 58,
+  "additions": 4313,
+  "deletions": 289
+ }
+}

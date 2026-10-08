@@ -12,8 +12,15 @@ function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+// The texts redaction looks for: each secret, and each line of a secret that
+// spans several lines (a private key), trimmed, as a piece of its own. A
+// line of a key quoted alone (in a summary, a hunk that holds only part of
+// the key, a file the key was copied to) is still the secret. Every span of
+// every text is found on the original before any is replaced (replaceSpans),
+// so a short secret inside a longer piece never breaks the piece's match.
 function usable(secrets: string[]): string[] {
-  return [...new Set(secrets)].filter((s) => s.length >= MIN_SECRET_LENGTH);
+  const pieces = secrets.filter((s) => s.includes("\n")).flatMap((s) => s.split("\n").map((l) => l.replace(/\r$/, "").trim()));
+  return [...new Set([...secrets, ...pieces])].filter((s) => s.length >= MIN_SECRET_LENGTH);
 }
 
 // Replaces every span, merging spans that overlap or touch. All matches are
@@ -45,6 +52,12 @@ function spansOf(text: string, secrets: string[]): Span[] {
     }
   }
   return spans;
+}
+
+// The texts redactSecrets removes for these secrets: each secret and each
+// line of a multi-line one. A caller checks its output against these.
+export function secretTexts(secrets: string[]): string[] {
+  return usable(secrets);
 }
 
 // Replace every occurrence of each secret.

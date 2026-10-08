@@ -25,6 +25,7 @@ import type {
 import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Adapter } from "./index.js";
+import { suchAs } from "./words.js";
 
 const BANDIT_TIMEOUT_MS = 60_000;
 const BANDIT_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
@@ -93,7 +94,8 @@ async function execBandit(tool: ResolvedTool, cliArgs: string[], cwd: string, ti
 
 export const bandit: Adapter = {
   source: "bandit",
-  wants: (changedPaths) => safeFileArgs(changedPaths.filter(isPythonPath)).length > 0,
+  files: (changedPaths) => safeFileArgs(changedPaths.filter(isPythonPath)),
+  why: (files) => `Python files, ${suchAs(files)}`,
   run: (args) => runBandit(args),
 };
 
