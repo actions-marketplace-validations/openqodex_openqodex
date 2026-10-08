@@ -10,7 +10,7 @@ import type { AgentId } from "./detect.js";
 import { assertNoSymlinkInRepo, readText, sha256, writeAtomic, writeBackup } from "./files.js";
 import { canonical, type InstallRecord } from "./record.js";
 import type { Scope, Target } from "./targets.js";
-import { SECTION_END, SECTION_START } from "./targets.js";
+import { isShippedSkill, SECTION_END, SECTION_START } from "./targets.js";
 
 export type Verb = "create" | "update" | "merge" | "append" | "replace" | "remove" | "restore" | "skip" | "keep" | "refuse";
 
@@ -192,6 +192,11 @@ export function planInstall(t: Target, ctx: Ctx): Action {
       if (before === null) return { ...base, verb: "create", note: t.label, apply: write };
       if (before === t.content) return { ...base, verb: "skip", note: `${t.label} already present` };
       if (ownedFile(record, t.path, before)) return { ...base, verb: "update", note: t.label, apply: write };
+      // A skill as some version shipped it (npx skills add copies it as it
+      // is) is ours: left in place it would never update. An edited one is not.
+      if (t.skill && isShippedSkill(before)) {
+        return { ...base, verb: "replace", note: `${t.label}, in place of a copy of the shipped skill, which never updates`, apply: write };
+      }
       const recorded = record.files.some((f) => f.path === t.path);
       return {
         ...base,

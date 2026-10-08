@@ -26,7 +26,11 @@
 // 16. With CLAUDE_CONFIG_DIR or CODEX_HOME set, init reports success but puts
 //     the skill, instructions or push hook in a folder the agent does not
 //     read, or does not find an agent known only by that folder.
+// 17. A skill `npx skills add` copied over the stub (any version's shipped
+//     text) is kept as the developer's, so it never updates; or a copy the
+//     developer edited is replaced.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -228,6 +232,39 @@ describe("init, files the developer owns or edited", () => {
     const u = cli(s, ["init", "--uninstall", "--yes"]);
     expect(readFileSync(skill, "utf8")).toBe(edited);
     expect(u.stdout).toContain("edited");
+  });
+
+  it("17. replaces a copy of the shipped skill (npx skills add, this or an earlier version) with the stub and records it", () => {
+    const shipped = readFileSync(join(BIN, "..", "..", "skills/openqodex/SKILL.md"), "utf8");
+    const older = shipped.replace(/openqodex@\d+\.\d+\.\d+/g, "openqodex@0.7.1");
+    expect(older).not.toBe(shipped);
+    for (const copy of [shipped, older]) {
+      const s = sandbox();
+      const skill = join(s.home, ".claude/skills/openqodex/SKILL.md");
+      mkdirSync(join(skill, ".."), { recursive: true });
+      writeFileSync(skill, copy);
+      const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+      expect(r.status, r.stderr).toBe(0);
+      const now = readFileSync(skill, "utf8");
+      expect(now).toContain("guide skill");
+      expect(now).not.toContain("openqodex@");
+      const record = readJson<{ files: { path: string; sha256: string }[] }>(join(s.oqHome, "install.json"));
+      const sha = createHash("sha256").update(now).digest("hex");
+      expect(record.files).toContainEqual(expect.objectContaining({ path: skill, sha256: sha }));
+    }
+  });
+
+  it("17. keeps a copy of the shipped skill the developer edited", () => {
+    const shipped = readFileSync(join(BIN, "..", "..", "skills/openqodex/SKILL.md"), "utf8");
+    const s = sandbox();
+    const skill = join(s.home, ".claude/skills/openqodex/SKILL.md");
+    mkdirSync(join(skill, ".."), { recursive: true });
+    const edited = `${shipped}\nCompany rule: also check the changelog.\n`;
+    writeFileSync(skill, edited);
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(skill, "utf8")).toBe(edited);
+    expect(r.stdout).toContain("left alone");
   });
 
   it("does not overwrite or remove a foreign rule file with the same name", () => {

@@ -1,0 +1,23 @@
+{
+  "about": "The sha256 of every text skills/openqodex/SKILL.md has held on main, read with the launcher paragraph dropped and every pinned version written as openqodex@<version> (shippedSkillKey in targets.ts). init counts a skill file with one of these texts as OpenQodex's own. Add the current text's hash in the same change as any edit to the skill: scripts/validate-skill.mjs fails without it.",
+  "sha256": [
+    "865de8f3055c238e1ded4348d89c8c338abe87dbabf5e2a1ba70bfe46faf50e3",
+    "a019f77d34b1b6e7d2e4439c9267d7e41a3728911198d74c75e7d2122bc42b4a",
+    "cf5e04eb21abeb062b2ca6492aa68f74e2828590376757e487471888fb1bfc1d",
+    "c79f4de9b348e18b41e2229f04874749785b3da89f8b2caafecb27cb7b24a75a",
+    "6f13b4ef2ead9856433e582f14c364d448d7c3ccbb4bc6ab83332c3ade362898",
+    "cfdd7038a14e96130a79d3769cdfc2a167cc5ae33f1cd96e59f0604b05bd6cdb",
+    "a920980d148182f543e6e1af715f1a61a6f4a8cbe6ade50f347e6b1a6c4d5357",
+    "ff5b4f56b0f63f518da9041e44bd2cdc597c654bbc065699e38db679b2ae48d4",
+    "17df45b93b2d486c0d3d63786ad6e790773a9a811b50b2cb558283ddb242d55c",
+    "db8dc3bf996fb411d6d127204004c9964a440e0316883af6efec071ff9bd9904",
+    "af0162d14f87c8b214019b9493ee48ef9576d3ea9d2c9091e096004423b2b01c",
+    "35728cb9e7a862d0ec844d032e82f7d28aa9a3c3f20ad01e0fe45280d988a735",
+    "cf06649fe2d4d94f34d4a2c41e49e3f6efef913523a8be4269290d5e654f538c",
+    "99ff047ccc62f5b4d66a4d82836d44be0a40ee73b4eadedee309e17b67e16693",
+    "2bc8d2ef699de2a88b0194c5180b6193faeb9df0dfc555abd9f27239268c4fc6",
+    "7abc4bc0c37bc15e89fcae4325cd076521123e1477da0b7439a0e986205e6dbd",
+    "0298a74fc8946354370d4a1224ce281313f012b77874cf70a61435fe7f0bc272",
+    "f9e793ecc76008ea87d3ebe8324e2000f3cabd5d133484db948e0d9f54e89785"
+  ]
+}

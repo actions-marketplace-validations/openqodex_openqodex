@@ -1,16 +1,19 @@
 // What `init` writes for each agent, in which scope. The paths and their
 // sources are listed in templates/README.md; this file follows it exactly.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assetPath } from "../assets.js";
 import type { AgentId } from "./detect.js";
 import { claudeHome, codexHome } from "./homes.js";
+import shippedSkills from "./shipped-skills.json";
 
 export type Scope = "user" | "project";
 
 export type Target =
-  // A whole file (rule or skill).
-  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean }
+  // A whole file (rule or skill). `skill`: a file holding any text the
+  // skill was ever shipped with counts as ours (isShippedSkill).
+  | { kind: "file"; agent: AgentId; label: string; path: string; content: string; inRepo: boolean; usesLauncher?: boolean; skill?: boolean }
   // One hook group merged under hooks.PreToolUse of a JSON settings file.
   | { kind: "hook-json"; agent: AgentId; label: string; path: string; group: HookGroup; inRepo: boolean; usesLauncher: boolean }
   // A section between the openqodex markers in a markdown file.
@@ -70,6 +73,23 @@ function shippedSkill(): string {
 // replaced by `runner`: the launcher, or the pinned npx form of this version.
 export function renderSkill(runner: string): string {
   return shippedSkill().replace(LAUNCHER_PARAGRAPH, "").replace(PINNED_NPX, () => runner);
+}
+
+// A skill text with what differs between copies of one shipped text taken
+// out: the launcher paragraph, which project-scope copies drop, and the
+// pinned version. scripts/validate-skill.mjs computes the same key.
+const ANY_PIN = /openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
+export function shippedSkillKey(text: string): string {
+  return createHash("sha256").update(text.replace(LAUNCHER_PARAGRAPH, "").replace(ANY_PIN, "openqodex@<version>")).digest("hex");
+}
+
+// True when `text` is the skill as some version shipped it: a copy `npx
+// skills add` made (it copies the file as it is on main), or a project-scope
+// copy an earlier init wrote. Such a file is OpenQodex's, not the
+// developer's, so init replaces it; a copy the developer edited matches none.
+const SHIPPED = new Set(shippedSkills.sha256);
+export function isShippedSkill(text: string): boolean {
+  return SHIPPED.has(shippedSkillKey(text));
 }
 
 // One level-2 section of the shipped skill, heading included.
@@ -184,7 +204,7 @@ export function targetsFor(args: {
   const codex = (...p: string[]): string => (user ? join(codexHome(home), ...p) : at(".codex", ...p));
   const skillText = user ? skillStub(runner) : fill(renderSkill(runner), version);
   // A user-scope skill calls the launcher, so the launcher stays while it is installed.
-  const skillTarget = (label: string, path: string): Target => fileTarget(agent, label, path, skillText, !user, user);
+  const skillTarget = (label: string, path: string): Target => ({ kind: "file", agent, label, path, content: skillText, inRepo: !user, usesLauncher: user, skill: true });
 
   switch (agent) {
     case "claude-code":
