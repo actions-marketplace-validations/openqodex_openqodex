@@ -11,6 +11,7 @@ import { brakeman } from "./brakeman.js";
 import { gitleaks } from "./gitleaks.js";
 import { golangci } from "./golangci.js";
 import { hadolint } from "./hadolint.js";
+import { kubeLinter } from "./kube-linter.js";
 import { osvScanner } from "./osv-scanner.js";
 import { oxlint } from "./oxlint.js";
 import { rubocop } from "./rubocop.js";
@@ -64,6 +65,8 @@ export const ADAPTERS: readonly Adapter[] = [
   actionlint,
   // Dockerfiles.
   hadolint,
+  // Kubernetes objects: workload and RBAC checks.
+  kubeLinter,
   // .sh / .bash scripts.
   shellcheck,
   // Python lint.
