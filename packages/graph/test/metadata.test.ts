@@ -24,10 +24,14 @@
 //    commas, a byte order mark, an empty file, an `extends` that names a
 //    package) or one git lists but the work tree no longer holds is
 //    reported as a failure (the negative control).
+// 10. A manifest over the 1 MB cap is read in the base version (up to the
+//    16 MB lockfile cap) but not in the changed one, so a change to it
+//    reports every consumer of the package as broken.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync, unlinkSync } from "node:fs";
+import { rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildGraph, floorReasons, openStore } from "../src/index.js";
+import { getChange } from "@openqodex/core";
+import { buildGraph, detectImpact, floorReasons, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { graphOf } from "../src/session.js";
 import { at, callSites, commitAll, makeHome, makeRepo, symbol } from "./helpers.js";
@@ -197,5 +201,23 @@ describe("a manifest or tsconfig the graph cannot read is said, never dropped", 
     expect(metadata(g)).toEqual([]);
     expect(g.status.status).toBe("ok");
     expect(callSites(g, symbol(g, "a/src/util.ts", "util"))).toEqual(["a/src/main.ts:3"]);
+  });
+
+  it("reads a manifest over 1 MB as over its cap in the base version too, so changing it breaks no consumer (10)", async () => {
+    const core = (word: string) => json({ name: "@x/core", main: "src/index.ts", description: word.repeat(MiB) });
+    const files = {
+      "package.json": workspaceRoot,
+      "packages/core/package.json": core("x"),
+      "packages/core/src/index.ts": "export function helper() {\n  return 1;\n}\n",
+      "packages/app/package.json": json({ name: "app", dependencies: { "@x/core": "workspace:*" } }),
+      "packages/app/src/main.ts": 'import { helper } from "@x/core";\nexport function run() {\n  return helper();\n}\n',
+    };
+    const root = repo(files);
+    commitAll(root);
+    writeFileSync(join(root, "packages/core/package.json"), core("y"));
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const g = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const impact = detectImpact(g, change);
+    expect(impact.exports.flatMap((e) => e.consumers.filter((c) => c.now === "broken").map((c) => `${e.name} ${c.file}:${c.line}`))).toEqual([]);
   });
 });

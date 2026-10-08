@@ -652,10 +652,17 @@ async function compareWorlds(c: {
   let baseModel = c.model;
   const seeds: { manifest: string; files: string[] }[] = [];
   if (c.baseManifests.size > 0) {
+    // A base manifest is held to the same cap as the changed one, so a file
+    // over it is unreadable in both versions, never a change between them.
+    const baseText = (path: string, max: number): string | null => {
+      const t = c.baseManifests.get(path) ?? null;
+      return t !== null && Buffer.byteLength(t, "utf8") <= max ? t : null;
+    };
     const overlay = {
-      read: (path: string, max: number): string | null => (c.baseManifests.has(path) ? (c.baseManifests.get(path) ?? null) : c.reader.read(path, max)),
+      root: c.reader.root,
+      read: (path: string, max: number): string | null => (c.baseManifests.has(path) ? baseText(path, max) : c.reader.read(path, max)),
       readBytes: (path: string, max: number): Buffer | null => {
-        const t = c.baseManifests.has(path) ? (c.baseManifests.get(path) ?? null) : c.reader.read(path, max);
+        const t = c.baseManifests.has(path) ? baseText(path, max) : c.reader.read(path, max);
         return t === null ? null : Buffer.from(t);
       },
     } as unknown as RepoReader;
