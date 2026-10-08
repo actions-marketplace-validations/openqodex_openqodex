@@ -8,11 +8,13 @@ OpenQodex is open source AI code review. One command, `openqodex review`, works 
 
 ## Install
 
-Run this in your own terminal, not inside Claude Code:
+Run this in your own terminal:
 
 ```
 npx openqodex init
 ```
+
+Or ask Claude Code to run `npx -y openqodex@<version> init --yes --agent claude-code` (the README gives the current version): the same install, with no question.
 
 `init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints every file it will write and asks once. In the default user scope, it writes these for Claude Code:
 
@@ -26,7 +28,7 @@ npx openqodex init
 Other ways to install:
 
 - The Claude Code plugin. The openqodex/openqodex repository holds a plugin marketplace with an `openqodex` plugin. The plugin carries the skill and the push gate hook. Its hook calls `npx -y openqodex@<version>`.
-- The skill alone: `npx skills add openqodex/openqodex`. This writes the skill but no hook.
+- The skill alone: `npx skills add openqodex/openqodex -g`. This writes the skill but no hook, launcher or scanner download.
 
 OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows, use WSL.
 

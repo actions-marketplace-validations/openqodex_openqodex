@@ -3,11 +3,15 @@
 ## Paste this prompt into your agent
 
 ```
-Install the OpenQodex skill with `npx skills add openqodex/openqodex`.
-Then review my current change with openqodex and tell me the verdict and the findings.
+Install OpenQodex for yourself with `npx -y openqodex@0.8.1 init --yes --agent <host>`, where <host> is the agent you are: claude-code, codex, cursor or cline. Run it from this repository and allow it up to ten minutes: when a reviewer can start, it ends with a review of my current change.
+Then tell me the verdict and the findings, or what its last lines say is missing.
 ```
 
-The agent installs the skill, runs the review and tells you the result. The steps below do the same by hand.
+The agent runs `init` for itself: the same install as the steps below, the push check included, with no question (`--yes`). Then `init` reviews your change and the agent tells you the result. The steps below do the same by hand.
+
+Codex runs commands in a sandbox that cannot write outside the project or download: from Codex, run the line in your own terminal instead.
+
+The skill alone, with no push check, launcher or scanner download: `npx skills add openqodex/openqodex -g`. A later `init` replaces it with the skill it keeps up to date.
 
 ## Before you start
 
@@ -18,11 +22,13 @@ The agent installs the skill, runs the review and tells you the result. The step
 
 ## 1. Install into your agent
 
-Run this in your own terminal, not inside the agent:
+In your own terminal:
 
 ```
 npx openqodex init
 ```
+
+From inside an agent, the line is `npx -y openqodex@0.8.1 init --yes --agent <host>`, as in the prompt above.
 
 `init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints each file it will write, for you and for the team, then asks once: "Write these files?". `--yes` skips the question. `agents` lists every file for each agent.
 

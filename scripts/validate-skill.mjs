@@ -67,11 +67,19 @@ for (const copy of ["plugins/claude-code/assets/avatar-1024.png", "plugins/codex
     else console.log(`ok: ${copy} matches ${icon}`);
   }
 }
-for (const rel of [skill, ...pluginSkills, "plugins/claude-code/hooks/hooks.json", ".pre-commit-hooks.yaml"]) {
+for (const rel of [skill, ...pluginSkills, "plugins/claude-code/hooks/hooks.json", ".pre-commit-hooks.yaml", "README.md", "docs/quickstart.md"]) {
   if (!existsSync(join(root, rel))) continue;
   const pins = readFileSync(join(root, rel), "utf8").match(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g) ?? [];
   const wrong = [...new Set(pins)].filter((pin) => pin !== `openqodex@${version}`);
   if (wrong.length) errors.push(`${rel}: pins ${wrong.join(", ")} but the package is ${version}`);
+}
+
+// People and agents install the same way: the README, the quickstart and the
+// skill give agents one line, init with the agent named, never the skill
+// alone (which installs no push check).
+const agentLine = `npx -y openqodex@${version} init --yes --agent <host>`;
+for (const rel of [skill, "README.md", "docs/quickstart.md"]) {
+  if (existsSync(join(root, rel)) && !readFileSync(join(root, rel), "utf8").includes(agentLine)) errors.push(`${rel}: does not give agents the install line ${agentLine}`);
 }
 for (const pluginJson of [
   "plugins/claude-code/.claude-plugin/plugin.json",

@@ -4,11 +4,13 @@ OpenQodex runs from Claude Code, Cursor, Codex CLI and Cline. `openqodex init` i
 
 ## Run init
 
-Run it in your own terminal, not inside the agent:
+In your own terminal:
 
 ```
 npx openqodex init
 ```
+
+An agent installs OpenQodex for itself with the same command, naming itself and asking nothing: `npx -y openqodex@<version> init --yes --agent <host>`, where `<host>` is `claude-code`, `codex`, `cursor` or `cline`. The README and the quickstart give that line with the current version. Codex runs commands in a sandbox that cannot write outside the project or download, so from Codex, run it in your own terminal.
 
 `init` prints every file it will write and asks once: "Write these files?". The plan lists each file under the one it is for: "For you, on this machine" (the agent files in your home folder, the launcher, the git hook of this clone) and "For the team, in this repo" (the files to commit). `--agent <name>` picks agents by hand: `claude-code`, `cursor`, `codex`, `cline` or `all`. When `init` finds no agent, it asks which of the four to install into, before the plan. `--dry-run` prints the plan and writes nothing. `--yes` writes it without asking.
 
@@ -174,7 +176,7 @@ Before each push it runs `openqodex hook pre-push` through the launcher. For eac
 
 ## Other ways to install
 
-- The skill alone: `npx skills add openqodex/openqodex`. This writes the skill but no hook.
+- The skill alone: `npx skills add openqodex/openqodex -g` writes the skill for you, in every repository, and nothing else: no push check, no instruction section, no launcher, no scanner download. Without `-g` it writes the skill into the repository (`.agents/skills/openqodex/`, a `.claude/skills/openqodex` link and `skills-lock.json`) for a team to commit. A later `init` replaces a skill file that is still exactly as shipped with the one it keeps up to date.
 - Claude Code plugin: the repository holds a plugin marketplace with an `openqodex` plugin. The plugin carries the skill and the push gate hook. Its hook calls `npx -y openqodex@<version>`.
 - Codex plugin: `plugins/codex/` packages the skill alone for the OpenAI plugin directory. It writes no hook and no instruction file.
 - Cursor plugin: `.cursor-plugin/plugin.json` at the repository root makes the repository a Cursor plugin that carries the skill alone. It holds no rule. The rule that asks Cursor to review before every push comes from `init`, which writes `.cursor/rules/openqodex.mdc` in your repository. A rule shipped inside the plugin would go in a `rules/` folder at the repository root.

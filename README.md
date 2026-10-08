@@ -21,18 +21,22 @@ npx openqodex init
 
 `init` finds Claude Code, Cursor, Codex CLI and Cline on your machine. It prints every file it will write and asks once. Then it names the reviewer it found, or what to fix, and reviews your change, or asks what to review when there is none. After that, say to your agent "review my change with openqodex", or run `~/.openqodex/bin/openqodex review` yourself: `init` prints that full path, since an npx install puts no `openqodex` on your `PATH`.
 
-For agents:
+For agents, the same install, run by the agent for itself with no question:
 
 ```
-npx skills add openqodex/openqodex
+npx -y openqodex@0.8.1 init --yes --agent <host>
 ```
 
-Or paste this prompt into your agent:
+`<host>` is `claude-code`, `codex`, `cursor` or `cline`. Or paste this prompt into your agent:
 
 ```
-Install the OpenQodex skill with `npx skills add openqodex/openqodex`.
-Then review my current change with openqodex and tell me the verdict and the findings.
+Install OpenQodex for yourself with `npx -y openqodex@0.8.1 init --yes --agent <host>`, where <host> is the agent you are: claude-code, codex, cursor or cline. Run it from this repository and allow it up to ten minutes: when a reviewer can start, it ends with a review of my current change.
+Then tell me the verdict and the findings, or what its last lines say is missing.
 ```
+
+Codex runs commands in a sandbox that cannot write outside the project or download: from Codex, run the line in your own terminal instead.
+
+The skill alone, with no push check, launcher or scanner download: `npx skills add openqodex/openqodex -g`. A later `init` replaces it with the skill it keeps up to date.
 
 OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows, use WSL.
 

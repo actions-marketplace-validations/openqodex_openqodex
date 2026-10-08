@@ -22,7 +22,7 @@ If `review` says "Full review unavailable" and prints a way to review with the a
 
 ## Procedure
 
-When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed.
+When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed. When it does not exist, this skill was installed alone, with no push check: before the first review, run `npx -y openqodex@0.8.1 init --yes --agent <host>` once from the repository, where `<host>` is the agent you are (`claude-code`, `codex`, `cursor` or `cline`). It installs OpenQodex for you, then reviews the change when a reviewer can start, so it can take five minutes: allow it up to ten, or run it in the background and wait for it to exit. When it prints `First review: finished`, the report above that line is the review: show it as step 3 says.
 
 1. From the repository, run:
 
