@@ -168,7 +168,7 @@ export function unsupportedReason(table: Toolchain, recipe: Recipe): string | nu
 }
 
 export function cannotWriteReason(home: string): string {
-  return `cannot write ${home} here: run \`npx openqodex doctor --install\` in your own terminal`;
+  return `cannot write ${home} here: run \`npx openqodex doctor --install\` in this repository from your own terminal`;
 }
 
 // Creates the tool folder, or throws the plain reason it cannot be written.

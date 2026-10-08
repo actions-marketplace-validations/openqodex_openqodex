@@ -1,4 +1,5 @@
 // The pinned scanner table (toolchain.json) and where installed tools live.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -83,4 +84,11 @@ let cached: Toolchain | null = null;
 export function loadToolchain(): Toolchain {
   cached ??= JSON.parse(readFileSync(findTable(), "utf8")) as Toolchain;
   return cached;
+}
+
+// sha256 of the pinned table as shipped: it changes when any pin changes and
+// only then, so a cache of the tools folder keyed on it survives a release
+// that pins nothing new.
+export function toolchainHash(): string {
+  return createHash("sha256").update(readFileSync(findTable())).digest("hex");
 }

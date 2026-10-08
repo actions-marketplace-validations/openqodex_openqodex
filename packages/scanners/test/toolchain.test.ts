@@ -171,7 +171,7 @@ describe("toolchain", () => {
     expect(r).toEqual({
       ok: false,
       status: "not_installed",
-      reason: `cannot write ${home} here: run \`npx openqodex doctor --install\` in your own terminal`,
+      reason: `cannot write ${home} here: run \`npx openqodex doctor --install\` in this repository from your own terminal`,
     });
   });
 

@@ -24,6 +24,10 @@
 //     falls back to the built-in defaults, never to the head's file.
 // 10. A wrong config-from or block-on-severity input is taken silently.
 // 11. A pull request adds a custom scanner that then runs in CI.
+// 14. The scanner cache is keyed on the openqodex version, so every release
+//     misses it, instead of on the pinned scanner table and the scanners the
+//     repository's files call for; or the plan step that makes the key
+//     installs or scans anything, or fails the job on a config it cannot read.
 //
 // The review mode's failure list is tests/action-review-failures.md; the
 // tests below that guard one of its lines are named "R<n>". These run with
@@ -37,13 +41,14 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
-type Step = { name?: string; id?: string; if?: string; uses?: string; run?: string; env?: Record<string, string> };
+type Step = { name?: string; id?: string; if?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, string> };
 const here = dirname(fileURLToPath(import.meta.url));
 const action = parse(readFileSync(join(here, "..", "..", "..", "action.yml"), "utf8")) as { description: string; inputs: Record<string, { default?: string }>; outputs?: Record<string, { value: string }>; runs: { steps: Step[] } };
 const step = (name: string) => action.runs.steps.find((s) => s.name === name);
 const SCRIPT_PATH = join(here, "..", "..", "..", "scripts", "action-scan.sh");
 const SCRIPT = readFileSync(SCRIPT_PATH, "utf8");
 const RUN_STEP = "Review or scan the change";
+const PLAN_STEP = "Plan the scanner downloads";
 const FAIL_STEP = "Fail on blocking findings, a missing review or a tool failure";
 // A made-up key: never a real one. Every test that sets it checks it leaks nowhere.
 const KEY = "openqodex-test-placeholder-not-an-api-key";
@@ -243,10 +248,54 @@ function pullRequest(baseConfig: string | null, headConfig: string | null, extra
   return { dir, base };
 }
 
+describe("the plan step and the scanner cache (14)", () => {
+  const keyOf = (outputs: string) => /^cache-key=(.*)$/m.exec(outputs)?.[1];
+
+  it("keys the cache on the pinned table and the scanners the repository needs, never on the version", () => {
+    expect(step(PLAN_STEP)?.env?.OPENQODEX_STEP).toBe("plan");
+    expect(action.runs.steps.find((s) => s.uses?.startsWith("actions/cache@"))?.with?.key).toBe("${{ steps.plan.outputs.cache-key }}");
+    const { dir, git } = gitRepo();
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: { "react-native": "0.76.0", react: "18.3.1" } }));
+    writeFileSync(join(dir, "index.tsx"), "export const x = 1;\n");
+    writeFileSync(join(dir, "Gemfile"), "gem 'cocoapods'\n");
+    git("add", "-A");
+    git("commit", "-qm", "App");
+    const calls = join(mkdtempSync(join(tmpdir(), "oq-calls-")), "calls");
+    const runner = { OPENQODEX_STEP: "plan", RUNNER_OS: "Linux", RUNNER_ARCH: "X64" };
+    const a = runStep(dir, { ...runner, OQ_CALLS: calls });
+    expect(a.status, a.stderr).toBe(0);
+    const key = keyOf(a.outputs);
+    expect(key).toMatch(/^openqodex-tools-Linux-X64-[0-9a-f]{16}-[0-9a-f]{16}$/);
+    expect(a.stdout).toContain("oxlint: JavaScript or TypeScript files, such as index.tsx");
+    expect(a.stdout).not.toContain("brakeman");
+    expect(a.stdout).not.toContain("rubocop");
+    // Only doctor ran: nothing installed, nothing scanned.
+    expect(readFileSync(calls, "utf8")).toBe("doctor key=\n");
+    // Another openqodex release with the same pins keeps the key.
+    expect(keyOf(runStep(dir, { ...runner, OPENQODEX_VERSION: "0.0.1" }).outputs)).toBe(key);
+    // A Python file calls for ruff and bandit: another key.
+    writeFileSync(join(dir, "tool.py"), "import os\n");
+    git("add", "-A");
+    git("commit", "-qm", "Tool");
+    expect(keyOf(runStep(dir, runner).outputs)).not.toBe(key);
+  });
+
+  it("an unreadable config passes the step with a key for no download, as doctor --install then installs nothing", () => {
+    const { dir, git } = gitRepo();
+    writeFileSync(join(dir, ".openqodex.yaml"), "review: [\n");
+    git("add", "-A");
+    git("commit", "-qm", "Config");
+    const r = runStep(dir, { OPENQODEX_STEP: "plan", RUNNER_OS: "Linux", RUNNER_ARCH: "X64" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(keyOf(r.outputs)).toMatch(/^openqodex-tools-Linux-X64-[0-9a-f]{16}-[0-9a-f]{16}$/);
+    expect(r.stdout).not.toMatch(/^(semgrep|gitleaks):/m);
+  });
+});
+
 describe("the scan step, run", () => {
   it("7. every step that runs openqodex sits under the tool-failure policy: an unreadable config warns and passes", () => {
     const runs = action.runs.steps.filter((s) => s.run?.includes("openqodex@") || s.run?.includes("action-scan.sh"));
-    expect(runs.map((s) => s.name)).toEqual([RUN_STEP]);
+    expect(runs.map((s) => s.name)).toEqual([PLAN_STEP, RUN_STEP]);
     const { dir, git } = gitRepo();
     // Committed: the Action reads the config from the checked-out commit.
     writeFileSync(join(dir, ".openqodex.yaml"), "review: [\n");
