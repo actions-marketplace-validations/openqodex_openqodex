@@ -376,13 +376,20 @@ describe("leases", () => {
 describe("size bound", () => {
   it("7. over a 1 MB bound the oldest facts no build names go first, then facts no leased build names; leased and kept builds stay and the overrun is reported", async () => {
     // Two hours on, so no fact counts as written by a build still running.
-    const store = await storeOf(repo(), { maxCacheMb: 1, now: later(2 * HOUR) });
+    // The facts are written under a larger bound (a writer holds the bound
+    // as it writes); the 1 MB store then publishes and collects.
+    const root = repo();
+    const writer = await storeOf(root, { maxCacheMb: 64, now: later(2 * HOUR) });
+    const store = await storeOf(root, { maxCacheMb: 1, now: later(2 * HOUR) });
     const keys = Array.from({ length: 30 }, (_, i) => keyOf(`q${i}`));
     const base = Date.now() / 1000 - 3 * 3600;
     for (const [i, k] of keys.entries()) {
-      expect(store.writeFacts(k, factsOf(`q${i}`, 300))).toBe("ok");
+      expect(writer.writeFacts(k, factsOf(`q${i}`, 300))).toBe("ok");
       utimesSync(join(store.dir, "facts", k.slice(0, 2), `${k}.json`), base + i, base + i);
     }
+    // The 1 MB store writes nothing more: the folder is past its bound.
+    expect(store.writeFacts(keyOf("over"), factsOf("over", 300))).toBe("over-budget");
+    expect(store.hasFacts(keyOf("over"))).toBe(false);
     // A partial build names the five oldest; by the partial-build rule alone every fact would stay.
     const a = await store.publish(publishInput({ tag: "a", complete: false, keys: keys.slice(0, 5) }));
     const aId = ok(a);

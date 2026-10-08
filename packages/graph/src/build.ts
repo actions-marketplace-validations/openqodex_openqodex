@@ -17,14 +17,15 @@
 // tree is written into the repository's objects so its bytes stay readable.
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import { safeGit } from "@openqodex/core";
 import type { ImpactExportChange } from "@openqodex/core";
 import type { Parser } from "web-tree-sitter";
 import { captureSnapshot, captureWorkingTree } from "./capture/capture.js";
+import { showBlob } from "./capture/git.js";
 import { blobId, inventoryDigest, langOf, takeInventory } from "./capture/inventory.js";
 import type { InventoryEntry } from "./capture/inventory.js";
 import { exportChanges } from "./changes/exports.js";
 import type { ChangedFile } from "./changes/exports.js";
+import { goModule, LOCKFILE_BYTES, MANIFEST_BYTES } from "./discovery/manifests.js";
 import { discoverProjects } from "./discovery/projects.js";
 import type { ProjectModel } from "./discovery/projects.js";
 import { EXTRACTOR_VERSION, extract } from "./extract.js";
@@ -48,8 +49,6 @@ export const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 export const DEFAULT_MAX_HEAP_MB = 2048;
 export const POLICY_VERSION = 1;
 
-const META_BYTES = 1024 * 1024;
-const HEAP_CHECK_EVERY = 64;
 
 export type BuildArgs = {
   // The folder the files are read from: the repository, or the review's snapshot.
@@ -92,8 +91,8 @@ function readGoModules(reader: RepoReader, all: string[]): [string, string][] {
     if (f !== "go.mod" && !f.endsWith("/go.mod")) continue;
     if (f.split("/").some((part) => part === "node_modules" || part === "vendor")) continue;
     try {
-      const m = /^module\s+(\S+)/m.exec(reader.read(f, META_BYTES) ?? "");
-      if (m?.[1]) out.push([m[1].replace(/^"|"$/g, ""), posix.dirname(f) === "." ? "" : posix.dirname(f)]);
+      const mod = goModule(reader.read(f, MANIFEST_BYTES) ?? "");
+      if (mod) out.push([mod, posix.dirname(f) === "." ? "" : posix.dirname(f)]);
     } catch {
       // unreadable go.mod: its imports stay outside the repo
     }
@@ -101,28 +100,40 @@ function readGoModules(reader: RepoReader, all: string[]): [string, string][] {
   return out;
 }
 
-async function gitShowBytes(repoRoot: string, sha: string, path: string): Promise<Buffer | null> {
-  const r = await safeGit(repoRoot, ["show", "--no-textconv", "--no-ext-diff", `${sha}:${path}`]);
-  return r.code === 0 ? r.stdout : null;
-}
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 }
 
 // Parsers, one per language, closed after the build.
+// The longest one file's parse may take: tree-sitter's error recovery is
+// slow on some broken input (an unclosed comment of half a megabyte takes
+// minutes), so a parse past this, or past the build's budget, is stopped
+// and the file is listed as not read.
+export const MAX_PARSE_MS = 2000;
+
 class Parsers {
   private map = new Map<Lang, Parser>();
-  count = 0;
-  async facts(lang: Lang, content: string): Promise<FileFacts | null> {
+  count = 0; // parses started: what the parse cap counts
+  // "slow" when the last parse was stopped at MAX_PARSE_MS, "budget" when at the build's deadline.
+  stopped: "slow" | "budget" | null = null;
+  async facts(lang: Lang, content: string, deadline: number): Promise<FileFacts | null> {
     let parser = this.map.get(lang);
     if (!parser) {
       parser = await parserFor(lang);
       this.map.set(lang, parser);
     }
-    const tree = parser.parse(content);
-    if (!tree) return null;
     this.count++;
+    this.stopped = null;
+    const started = performance.now();
+    const limit = Math.min(started + MAX_PARSE_MS, deadline);
+    // Returning true from the progress callback cancels the parse.
+    const progressCallback = (() => performance.now() > limit) as unknown as (state: unknown) => void;
+    const tree = parser.parse(content, null, { progressCallback });
+    if (!tree) {
+      this.stopped = limit === deadline && deadline < started + MAX_PARSE_MS ? "budget" : "slow";
+      return null;
+    }
     try {
       return extract(tree, lang);
     } finally {
@@ -207,7 +218,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   let factsMs = 0;
   let parseMs = 0;
   const memo = new Map<string, FileFacts>(); // facts of this build, for the base side of unchanged content
-  const factsFor = async (lang: Lang, blob: string, read: () => Buffer | null, canParse: boolean): Promise<{ facts: FileFacts | null; key: string; blob: string; parsed: boolean }> => {
+  let storageRefused = 0;
+  const factsFor = async (lang: Lang, blob: string, read: () => Buffer | null, canParse: boolean): Promise<{ facts: FileFacts | null; key: string; blob: string; parsed: boolean; stopped?: "slow" | "budget" | null }> => {
     let key = factsKey(lang, blob);
     const t0 = performance.now();
     const hit = memo.get(key) ?? store?.readFacts(key) ?? null;
@@ -227,33 +239,39 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       blob = actual;
       key = factsKey(lang, blob);
     }
-    const facts = await parsers.facts(lang, bytes.toString("utf8"));
+    const facts = await parsers.facts(lang, bytes.toString("utf8"), deadline);
     parseMs += performance.now() - t1;
-    if (!facts) return { facts: null, key, blob, parsed: true };
+    if (!facts) return { facts: null, key, blob, parsed: true, stopped: parsers.stopped };
     memo.set(key, facts);
-    store?.writeFacts(key, facts);
+    // The graph folder's bound holds while the build writes, not only when it publishes.
+    if (store && store.writeFacts(key, facts) === "over-budget") storageRefused++;
     return { facts, key, blob, parsed: true };
   };
   try {
     for (const [i, e] of order.entries()) {
-      // Past the budget nothing more is admitted, cached facts included;
-      // the changed files come first, so they are in.
-      if (overBudget() && !firstSet.has(e.path)) {
+      // Every cap holds for every file, the changed ones too: they come
+      // first, so a cap reached late never loses them, and one reached early
+      // says so. Past the budget or the memory bound nothing more is
+      // admitted, cached facts included.
+      if (overBudget()) {
         stoppedBy = "budget";
         for (const rest of order.slice(i)) notRead.push({ file: rest.path, reason: "budget" });
         break;
       }
-      if (i % HEAP_CHECK_EVERY === 0 && process.memoryUsage().heapUsed > maxHeap && !firstSet.has(e.path)) {
+      if (process.memoryUsage().heapUsed > maxHeap) {
         stoppedBy = "memory";
         for (const rest of order.slice(i)) notRead.push({ file: rest.path, reason: "memory" });
         break;
       }
-      const canParse = parsers.count < maxFiles || firstSet.has(e.path);
+      const canParse = parsers.count < maxFiles;
       const got = await factsFor(e.lang, e.blob, () => reader.readBytes(e.path, maxFileBytes), canParse);
       if (!got.facts) {
         if (!canParse) {
           parseCapped++;
           notRead.push({ file: e.path, reason: "parse-cap" });
+        } else if (got.stopped) {
+          if (got.stopped === "budget") stoppedBy = "budget";
+          notRead.push({ file: e.path, reason: got.stopped === "slow" ? "slow-parse" : "budget" });
         } else notRead.push({ file: e.path, reason: got.parsed ? "parse-error" : "unreadable" });
         continue;
       }
@@ -272,16 +290,19 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       if (f.status === "added" || !args.base) continue;
       const basePath = f.oldPath ?? f.path;
       if (isManifest(basePath)) {
-        const bytes = await gitShowBytes(args.repoRoot, args.base.sha, basePath);
+        const bytes = await showBlob(args.repoRoot, args.base.sha, basePath, LOCKFILE_BYTES);
         baseManifests.set(basePath, bytes === null ? null : bytes.toString("utf8"));
       }
       const lang = langOf(basePath);
       if (!lang) continue;
       known.add(basePath);
       if (f.status !== "deleted" && !current.has(f.path)) continue;
-      const bytes = await gitShowBytes(args.repoRoot, args.base.sha, basePath);
-      // Base versions count against the same budget and parse cap.
-      const got = bytes === null || bytes.length > maxFileBytes ? null : await factsFor(lang, blobId(bytes), () => bytes, !overBudget() && parsers.count < maxFiles);
+      // Base versions count against the same caps: the size is asked
+      // before the bytes are read, and the budget, the memory bound and the
+      // parse cap hold.
+      const admitted = !overBudget() && process.memoryUsage().heapUsed <= maxHeap;
+      const bytes = admitted ? await showBlob(args.repoRoot, args.base.sha, basePath, maxFileBytes) : null;
+      const got = bytes === null ? null : await factsFor(lang, blobId(bytes), () => bytes, !overBudget() && parsers.count < maxFiles);
       if (!got?.facts) {
         removalUnchecked++;
         continue;
@@ -367,6 +388,10 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     const parseErrors = notRead.filter((n) => n.reason === "parse-error" || n.reason === "unreadable").length;
     if (parseErrors > 0) reasons.push(`${plural(parseErrors, "file")} could not be read or parsed`);
     if (changedDuringBuild > 0) reasons.push(`${plural(changedDuringBuild, "file")} changed while the graph was built; their facts are from what was read`);
+    if (storageRefused > 0) {
+      reasons.push(`the graph folder reached its ${Math.round((store?.boundBytes ?? 0) / 1024 / 1024)} MB bound: the facts of ${plural(storageRefused, "file")} were not saved and will be parsed again`);
+      cuts.push({ by: "storage", at: null, omitted: storageRefused, exact: true, unit: "files", note: "facts not saved: the graph folder is at its size bound" });
+    }
     if (store?.diskFull) reasons.push("the disk is full: the graph was not saved");
     stage("assemble");
 

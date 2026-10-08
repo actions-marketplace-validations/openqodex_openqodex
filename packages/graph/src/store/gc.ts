@@ -79,7 +79,7 @@ function lstatQuiet(abs: string): Stats | null {
 
 // Bytes of the files under `abs`, never following a link (a link counts
 // its own size).
-function treeBytes(abs: string, st = lstatQuiet(abs)): number {
+export function treeBytes(abs: string, st = lstatQuiet(abs)): number {
   if (st === null) return 0;
   if (!st.isDirectory()) return st.size;
   let names: string[];

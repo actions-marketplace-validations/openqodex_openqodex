@@ -124,7 +124,7 @@ export type Unknown = {
 // A cut a walk or a build made. `omitted` is exact when `exact`, else null
 // (a stop at a budget cannot count what lies past the frontier).
 export type Cut = {
-  by: "hub" | "second-hop" | "walk-limit" | "inline" | "budget" | "parse-cap" | "memory" | "size";
+  by: "hub" | "second-hop" | "walk-limit" | "inline" | "budget" | "parse-cap" | "memory" | "size" | "storage";
   at: string | null; // the symbol or file where the cut was made
   omitted: number | null;
   exact: boolean;

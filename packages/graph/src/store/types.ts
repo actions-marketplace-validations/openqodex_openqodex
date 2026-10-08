@@ -119,7 +119,8 @@ export type OpenGeneration = {
 
 export type GenerationSelector = { id: BuildId } | "current" | { tree: string };
 
-export type WriteFactsResult = "ok" | "disk-full" | "refused";
+// "over-budget": the write would take the folder past its size bound; nothing was written.
+export type WriteFactsResult = "ok" | "disk-full" | "refused" | "over-budget";
 
 export type Meta = Record<string, unknown>;
 
@@ -128,6 +129,8 @@ export interface GraphStore {
   readonly dir: string; // absolute path of .openqodex/graph
   // True after a write hit a full disk: the build stops writing and says so.
   readonly diskFull: boolean;
+  // The folder's size bound in bytes (graph.max_cache_mb).
+  readonly boundBytes: number;
 
   readFacts(key: string): FileFacts | null;
   writeFacts(key: string, facts: FileFacts): WriteFactsResult;

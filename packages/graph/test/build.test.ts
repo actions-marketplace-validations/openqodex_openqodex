@@ -155,11 +155,12 @@ describe("cache", () => {
     expect(edited.status.parses).toBe(1);
     expect(callSites(edited, symbol(edited, "a.py", "a"))).toEqual(["c.py:5"]);
 
-    const victim = factsFiles(root).sort()[0] as string;
-    writeFileSync(victim, "{not json");
+    // Every facts file corrupt: each one the build needs is parsed again and rewritten.
+    for (const f of factsFiles(root)) writeFileSync(f, "{not json");
     const repaired = await buildGraph({ repoRoot: root, store });
-    expect(repaired.status.parses).toBe(1);
-    expect(() => JSON.parse(readFileSync(victim, "utf8"))).not.toThrow();
+    expect(repaired.status.parses).toBe(3);
+    expect(callSites(repaired, symbol(repaired, "a.py", "a"))).toEqual(["c.py:5"]);
+    expect(factsFiles(root).filter((f) => { try { JSON.parse(readFileSync(f, "utf8")); return true; } catch { return false; } })).toHaveLength(3);
 
     unlinkSync(join(root, "d.go"));
     const after = await buildGraph({ repoRoot: root, store });

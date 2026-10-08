@@ -25,7 +25,7 @@ import { join, relative, resolve } from "node:path";
 import { ensureStateDir, Guard, safeGit } from "@openqodex/core";
 import { isFileFacts } from "../safe-fs.js";
 import type { FileFacts } from "../types.js";
-import { collectLocked, REF_PREFIX, type CollectorContext } from "./gc.js";
+import { collectLocked, REF_PREFIX, treeBytes, type CollectorContext } from "./gc.js";
 import { leaseFileName, type LeaseRecord } from "./leases.js";
 import { FolderLock, ownStart, type HeldLock } from "./lock.js";
 import {
@@ -231,7 +231,7 @@ class Store implements GraphStore {
     readonly repoRoot: string,
     private readonly guard: Guard,
     private readonly now: () => number,
-    private readonly boundBytes: number,
+    readonly boundBytes: number,
   ) {
     this.dir = join(repoRoot, ...STATE);
     this.lock = new FolderLock(guard, this.dir, (name) => this.readRel(name, LOCK_MAX_BYTES));
@@ -421,11 +421,21 @@ class Store implements GraphStore {
     return dir !== null && lstatBig(join(dir, `${key}.json`))?.isFile() === true;
   }
 
+  // Bytes under the folder, counted once and then kept up to date by the
+  // writes of this process; a publication or a collection counts again.
+  private used: number | null = null;
+
   writeFacts(key: string, facts: FileFacts): WriteFactsResult {
     if (this.diskFull) return "disk-full";
     if (!FACTS_KEY_PATTERN.test(key)) return "refused";
+    const data = Buffer.from(JSON.stringify({ key, facts }), "utf8");
+    // The size bound holds while a build writes: a write that would pass
+    // it is not made.
+    this.used ??= treeBytes(this.dir);
+    if (this.used + data.length > this.boundBytes) return "over-budget";
     try {
-      this.writeFast(join(this.dir, "facts", key.slice(0, 2)), `${key}.json`, Buffer.from(JSON.stringify({ key, facts }), "utf8"));
+      this.writeFast(join(this.dir, "facts", key.slice(0, 2)), `${key}.json`, data);
+      this.used += data.length;
       return "ok";
     } catch (error) {
       if (!isDiskFull(error)) return "refused";
@@ -500,6 +510,7 @@ class Store implements GraphStore {
   // is written inside the lock, so every valid generation the collector
   // sees has been through it.
   async publish(input: PublishInput): Promise<PublishResult> {
+    this.used = null;
     const problem = inputProblem(input);
     if (problem !== null) return { ok: false, error: "invalid", reason: problem };
     // After the build `current` names, even when this clock is behind.
@@ -623,6 +634,7 @@ class Store implements GraphStore {
 
   // Throws when the lock stays busy for 10 seconds.
   collect(): Promise<CollectReport> {
+    this.used = null;
     return this.locked(() => collectLocked(this.collector(), null));
   }
 

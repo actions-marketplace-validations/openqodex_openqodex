@@ -142,7 +142,7 @@ export type UnknownSite = {
 };
 
 // An eligible file the graph did not read, and why.
-export type NotRead = { file: string; reason: "size" | "budget" | "parse-cap" | "memory" | "parse-error" | "unreadable" };
+export type NotRead = { file: string; reason: "size" | "budget" | "parse-cap" | "memory" | "parse-error" | "slow-parse" | "unreadable" };
 
 export type GraphStatus = {
   status: "ok" | "partial";
