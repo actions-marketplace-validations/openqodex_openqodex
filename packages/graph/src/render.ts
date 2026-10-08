@@ -8,6 +8,7 @@
 // outside it.
 import type { ImpactEdge, ImpactSite, ImpactSummary, ImpactSymbol } from "@openqodex/core";
 import { INLINE_SITES } from "./impact.js";
+import { TIER_RANK, weakest } from "./model/records.js";
 
 const MAX_TOUCHED = 25;
 const MAX_IMPORTERS = 12;
@@ -44,6 +45,15 @@ const instruction = (packet: string | null) =>
   ]
     .filter((l) => l !== "")
     .join(" ");
+
+// A caller two hops out is as sure as the weaker of its own call and the
+// step it reaches the change through (that step's surest site); a weaker
+// step brings its note.
+function throughStep(site: ImpactSite, step: ImpactSite | null): ImpactSite {
+  if (step === null || TIER_RANK[step.tier] >= TIER_RANK[site.tier]) return site;
+  const notes = [site.note, step.note].filter((n): n is string => typeof n === "string" && n !== "");
+  return { ...site, tier: weakest(site.tier, step.tier), note: notes.length > 0 ? [...new Set(notes)].join(" ") : null };
+}
 
 function siteTier(site: ImpactSite): string {
   if (site.tier === "certain") return "certain";
@@ -156,7 +166,9 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
       const last = p.edges[p.edges.length - 1] as ImpactEdge;
       const via = p.edges.length === 2 ? `, which calls \`${name(p.seed)}\` (2 hops` : " (1 hop";
       const verb = last.kind === "inherits" ? "extends" : "calls";
-      for (const site of last.sites) {
+      const inner = p.edges.length === 2 ? [...(p.edges[0] as ImpactEdge).sites].sort((a, b) => TIER_RANK[b.tier] - TIER_RANK[a.tier])[0] ?? null : null;
+      for (const raw of last.sites) {
+        const site = throughStep(raw, inner);
         rows.push({ tier: site.tier === "certain" ? 0 : site.tier === "likely" ? 1 : 2, text: `- ${site.file}:${site.line} in \`${name(last.from)}\` ${verb} \`${name(last.to)}\`${via}, ${siteTier(site)})` });
       }
     }

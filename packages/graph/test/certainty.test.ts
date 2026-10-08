@@ -13,11 +13,16 @@
 // 5. A method called on a value typed `any`, `unknown` or `object` counts
 //    as external, so no floor says a repository method of that name may be
 //    reached.
+// 6. A caller two hops out is printed in the brief as certain because its
+//    own call is, while the step it reaches the change through is only
+//    likely.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
-import { buildGraph, floorReasons } from "../src/index.js";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { getChange } from "@openqodex/core";
+import { buildGraph, detectImpact, floorReasons, renderImpactBlock } from "../src/index.js";
 import type { Graph } from "../src/index.js";
-import { makeRepo, symbol } from "./helpers.js";
+import { commitAll, makeRepo, symbol } from "./helpers.js";
 
 const repos: string[] = [];
 afterAll(() => {
@@ -111,5 +116,22 @@ describe("certainty", () => {
     expect(gaps).toEqual(["drop untyped-receiver", "load untyped-receiver", "save untyped-receiver", "save untyped-receiver"]);
     const save = symbol(g, "repo.ts", "save", "Repo");
     expect(floorReasons(g, { id: save, name: "save", file: "repo.ts" }, new Set()).join(" ")).toMatch(/save/);
+  });
+
+  it("prints a caller two hops out no surer than the weaker of its two steps (6)", async () => {
+    const root = makeRepo({
+      ...workspace,
+      "packages/a/src/index.ts": "export function core() {\n  return 1;\n}\n",
+      "packages/b/src/mid.ts": 'import { core } from "a";\nexport function mid() {\n  return core();\n}\n',
+      "packages/b/src/top.ts": 'import { mid } from "./mid";\nexport function top() {\n  return mid();\n}\n',
+    });
+    repos.push(root);
+    commitAll(root);
+    writeFileSync(join(root, "packages/a/src/index.ts"), "export function core() {\n  return 2;\n}\n");
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const g = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const block = renderImpactBlock(detectImpact(g, change));
+    const line = block.split("\n").find((l) => l.startsWith("- packages/b/src/top.ts:3"));
+    expect(line).toMatch(/\(2 hops, likely: /);
   });
 });
