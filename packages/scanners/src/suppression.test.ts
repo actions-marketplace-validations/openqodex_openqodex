@@ -59,6 +59,22 @@
 //      it, so the body runs on and an apostrophe in it swallows a later
 //      directive: `<<"E\"OF"` ends at `E\"OF`, `<<E"O"F` at `E"O"F`, and
 //      an end line may carry trailing blanks.
+// Added with the infrastructure scanners (trivy 0.75.0, checkov 3.3.22 and
+// tflint 0.64.0 were run on the same lines):
+//  20. tflint: `tflint-ignore:` in an HCL string, a heredoc body or a
+//      template's string is reported; or a `#`, `//` or `/* */` comment that
+//      holds it is missed, also after a string that holds a quote, a `#`, a
+//      `//` or a `${ }` with nested strings and braces, and inside a `${ }`.
+//  21. An HCL heredoc is read other than the way HCL reads it: its closing
+//      word indented (both `<<` and `<<-`), a `<<WORD` not followed by the
+//      line end, `$${` taken for a template.
+//  22. trivy and checkov read their markers on the raw line, a string
+//      included; one is missed there, or in the forms they take (`tfsec:`,
+//      `trivy:exp:...:ignore:`, `bridgecrew:skip=`).
+//  23. checkov's Kubernetes annotation key and CloudFormation Metadata key
+//      are missed as YAML code, or counted in a YAML comment or a quoted
+//      value; a marker of one family is read in another's units.
+//  24. The HCL reader takes more than linear time on hostile input.
 
 import { describe, expect, it } from "vitest";
 import type { BuiltinScanner } from "@openqodex/core";
@@ -517,6 +533,10 @@ describe("linear time on hostile input (11)", () => {
     ["golangci", "blanks before #nosec", `/*\n${" ".repeat(N)}x\n*/\n`],
     ["rubocop", "openers left open", `${'=begin\n"#{%q(<<~A\n'.repeat(N / 10)}`],
     ["rubocop", "blanks in a directive", `#${" ".repeat(N)}rubocop${" ".repeat(N)}:x\n`],
+    ["tflint", "openers left open (24)", `${'"${/*<<E\n'.repeat(N / 10)}`],
+    ["tflint", "deep templates (24)", `x = ${'"${'.repeat(N)}\n`],
+    ["trivy", "a long word and many short ones (24)", `${"#".repeat(N)}trivy:${"a".repeat(N)}\n${" trivy:".repeat(N / 7)}\n`],
+    ["checkov", "many near markers (24)", `${"checkov:skip".repeat(N / 12)}\n${"checkov.io/ski".repeat(N / 14)}\n`],
   ];
   for (const [scanner, what, text] of cases) {
     it(`${scanner}: ${what}`, () => {
@@ -568,12 +588,153 @@ describe("linear time on 1 MB of generated input, per reader family (16)", () =>
     ["golangci", "many unclosed openers of each kind", fill((k) => [`a := \`${k}\n`, `/* ${k}\n`, `b := "${k}\n`][k % 3] as string)],
     ["golangci", "one very long line", `x := ${fill('"a" + ')}1 //nolint\n`],
     ["golangci", "deep nesting and package lines in comments", fill("/*\npackage x\n*/\n")],
+    ["tflint", "many unclosed openers of each kind (24)", fill((k) => [`a = "${k}\n`, `/* ${k}\n`, `b = "\${${k}\n`, `c = <<E${k}\n`, `d = "%{${k}\n`][k % 5] as string)],
+    ["tflint", "many distinct heredoc words (24)", fill((k) => `x = <<E${k}\n`)],
+    ["tflint", "one very long line (24)", `x = ${fill('"a" + ')}1 # tflint-ignore: all\n`],
+    ["tflint", "deep nesting (24)", `x = ${fill('"${')}\n`],
   ];
   for (const [scanner, what, text] of cases) {
     it(`${scanner}: ${what}`, () => {
       expect(fast(scanner, text)).toBeLessThan(1000);
     });
   }
+});
+
+describe("tflint, tflint-ignore in HCL comments (20, 21)", () => {
+  it("finds it in #, // and /* */ comments and in a template's comment, never in a string or a heredoc body", () => {
+    const text = src(
+      "# tflint-ignore: terraform_unused_declarations",
+      'variable "a" { # tflint-ignore: all',
+      '  description = "tflint-ignore: all"',
+      "}",
+      "/* tflint-ignore: terraform_unused_declarations */",
+      "// tflint-ignore: all",
+      "locals {",
+      "  doc = <<EOT",
+      "# tflint-ignore: all",
+      "  EOT",
+      '  x = "a \\" # tflint-ignore: all"',
+      '  y = "${lookup(m, "k # x", "}")}" # tflint-ignore: all',
+      '  z = "${ # tflint-ignore: all',
+      '  }"',
+      "}",
+      "# tflint-ignore-file: terraform_unused_declarations",
+      "# tflint-ignore:all",
+    );
+    const found = findMarkers(text, ["tflint"]);
+    expect(found.map((m) => [m.line, m.name])).toEqual([
+      [1, "tflint-ignore:"],
+      [2, "tflint-ignore:"],
+      [5, "tflint-ignore:"],
+      [6, "tflint-ignore:"],
+      [12, "tflint-ignore:"],
+      [13, "tflint-ignore:"],
+      [16, "tflint-ignore-file:"],
+    ]);
+  });
+
+  it("reads heredocs as HCL does: an indented closing word for both forms, a <<WORD with text after it opens none, $${ is text", () => {
+    const text = src(
+      "locals {",
+      "  a = <<-EOT",
+      "    # tflint-ignore: all",
+      "    ${var.x} # tflint-ignore: all",
+      "    EOT",
+      "  b = 1 # tflint-ignore: all",
+      "  c = <<EOT ",
+      "# tflint-ignore: all",
+      '  d = "$${ # tflint-ignore: all }"',
+      '  e = "%%{ # tflint-ignore: all }"',
+      "}",
+    );
+    expect(lines("tflint", text)).toEqual([6, 8]);
+  });
+
+  it("finds the file form as the start of a .tf.json string, as tflint reads the root \"//\" key", () => {
+    const text = src('{', '  "//": "tflint-ignore-file: terraform_unused_declarations",', '  "variable": {"a": {}}', "}");
+    expect(findMarkers(text, ["tflint"]).map((m) => [m.line, m.name])).toEqual([[2, 'tflint-ignore-file: in a JSON "//" value']]);
+  });
+});
+
+describe("trivy and checkov read their markers on the raw line (22)", () => {
+  it("trivy: trivy:ignore and tfsec:ignore as a word of the line after #, / or *, a string included", () => {
+    const text = src(
+      "#trivy:ignore:AWS-0107",
+      'resource "x" "y" { # tfsec:ignore:aws-ec2-no-public-ingress-sgr',
+      '  description = "see trivy:ignore:* here"',
+      "  //trivy:exp:2030-01-01:ignore:AWS-0107",
+      '  name = "trivy:ignore:x"',
+      '  note = "trivy: ignore:x"',
+      "  x = 1 /* trivy:ignore:AWS-0107 */",
+      "}",
+    );
+    expect(findMarkers(text, ["trivy"]).map((m) => [m.line, m.name])).toEqual([
+      [1, "trivy:ignore"],
+      [2, "tfsec:ignore"],
+      [3, "trivy:ignore"],
+      [4, "trivy:ignore"],
+      [7, "trivy:ignore"],
+    ]);
+  });
+
+  it("checkov: checkov:skip=, bridgecrew:skip= and cortex:skip= anywhere on the line, a string included", () => {
+    const text = src(
+      'resource "aws_security_group" "c" {',
+      "  # checkov:skip=CKV_AWS_24:reason",
+      '  description = "x checkov:skip=CKV_AWS_24:in a string"',
+      "  # bridgecrew:skip=CKV_AWS_23",
+      "  # cortex:skip=CKV_AWS_23",
+      "  # checkov:skip CKV_AWS_24",
+      "}",
+    );
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([
+      [2, "checkov:skip="],
+      [3, "checkov:skip="],
+      [4, "bridgecrew:skip="],
+      [5, "cortex:skip="],
+    ]);
+  });
+});
+
+describe("checkov's YAML keys, a family of their own in one entry (23)", () => {
+  it("a Kubernetes skip annotation key counts as YAML code, never in a comment or a quoted value; the skip comment counts on the line", () => {
+    const text = src(
+      "apiVersion: v1",
+      "kind: Pod",
+      "metadata:",
+      "  annotations:",
+      "    checkov.io/skip1: CKV_K8S_16=reason",
+      '    "bridgecrew.io/skip2": CKV_K8S_20',
+      '    note: "checkov.io/skip3: CKV_K8S_16"',
+      "  # checkov.io/skip4: CKV_K8S_16",
+      "  # checkov:skip=CKV_K8S_16",
+    );
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([
+      [5, "checkov.io/skip annotation"],
+      [6, "bridgecrew.io/skip annotation"],
+      [9, "checkov:skip="],
+    ]);
+  });
+
+  it("a CloudFormation Metadata checkov or bridgecrew key counts as YAML code, in block or flow form, never in a value", () => {
+    const text = src(
+      "Resources:",
+      "  SgA:",
+      "    Type: AWS::EC2::SecurityGroup",
+      "    Metadata:",
+      "      checkov:",
+      "        skip:",
+      "          - id: CKV_AWS_24",
+      "      bridgecrew: {skip: [{id: CKV_AWS_23}]}",
+      "    Properties:",
+      '      GroupDescription: "checkov: not a key"',
+      "      Tags: checkov",
+    );
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([
+      [5, "Metadata checkov key"],
+      [8, "Metadata bridgecrew key"],
+    ]);
+  });
 });
 
 describe("lines and names", () => {

@@ -16,7 +16,7 @@
 // - Nesting deeper than MAX_DEPTH ($( ) in $( ), f-string fields, Ruby #{ })
 //   is read as plain code instead of recursing.
 
-export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go" | "yaml";
+export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go" | "yaml" | "hcl";
 
 // `start` is the offset of the comment's opener in the file; `text` runs from
 // the opener to the end of the comment (the line end for a line comment,
@@ -44,6 +44,9 @@ export function comments(text: string, family: Family): Comment[] {
       break;
     case "yaml":
       yamlComments(r);
+      break;
+    case "hcl":
+      hclCode(r, 0, false, 0);
       break;
   }
   return r.out;
@@ -964,4 +967,130 @@ export function yamlCode(text: string): Comment[] {
     if (end < 0) return out;
     start = end + 1;
   }
+}
+
+// HCL (Terraform), as hclsyntax 2.24 lexes it (scan_tokens.rl): `#` and `//`
+// line comments and `/* */` block comments, which the first `*/` ends. A
+// quoted string ends at its closing quote, with backslash escapes, and never
+// runs past its line (a string the line end leaves open makes the file
+// invalid, and tflint then reads no comment at all). `${` and `%{` inside a
+// string open a template sequence that holds code, with its own strings and
+// comments, up to the matching `}`; `$${` and `%%{` are text. A heredoc
+// opens with `<<` or `<<-`, a word and the line end, and holds every line up
+// to one that reads the word once its blanks are trimmed (for both forms);
+// its `${` and `%{` sequences are code too. In a template sequence, `{` and
+// `}` nest.
+//
+// `masked`, when given, collects the spans that are not code: comments, the
+// inside of a quoted string (between its quotes) and a heredoc's body (its
+// lines before the closing word), template sequences included.
+function hclCode(r: Reader, i: number, inTemplate: boolean, depth: number, masked?: [number, number][]): number {
+  const s = r.s;
+  let braces = 0;
+  while (i < s.length) {
+    const c = s[i] as string;
+    if (inTemplate && c === "}" && braces === 0) return i + 1;
+    if (c === "#" || (c === "/" && s[i + 1] === "/")) {
+      const end = r.lineComment(i);
+      masked?.push([i, end]);
+      i = end;
+    } else if (c === "/" && s[i + 1] === "*") {
+      const from = i;
+      const end = r.open("*/", i, () => {
+        const close = s.indexOf("*/", from + 2);
+        return close < 0 ? -1 : close + 2;
+      });
+      if (end < 0) {
+        i += 2;
+      } else {
+        r.out.push({ start: i, text: s.slice(i, end) });
+        masked?.push([i, end]);
+        i = end;
+      }
+    } else if (c === '"') {
+      i = hclString(r, i, depth, masked);
+    } else if (c === "<" && s[i + 1] === "<") {
+      i = hclHeredoc(r, i, depth, masked);
+    } else {
+      if (c === "{") braces++;
+      else if (c === "}") braces--;
+      i++;
+    }
+  }
+  return s.length;
+}
+
+// A `${` or `%{` at `j` that opens a template sequence: not `$${` or `%%{`,
+// whose first sign makes it text.
+const hclTemplateAt = (s: string, j: number): boolean => (s[j] === "$" || s[j] === "%") && s[j + 1] === "{" && s[j - 1] !== s[j];
+
+// The offset past a quoted string whose opening quote is at `i`; the line end
+// when the line leaves it open.
+function hclString(r: Reader, i: number, depth: number, masked?: [number, number][]): number {
+  const s = r.s;
+  let j = i + 1;
+  while (j < s.length && s[j] !== "\n") {
+    const c = s[j];
+    if (c === "\\") {
+      j += 2;
+    } else if (c === '"') {
+      masked?.push([i + 1, j]);
+      return j + 1;
+    } else if (hclTemplateAt(s, j) && depth < MAX_DEPTH) {
+      // A sequence left open reads the rest of the file as code.
+      j = hclCode(r, j + 2, true, depth + 1, masked);
+    } else {
+      j++;
+    }
+  }
+  const end = Math.min(j, s.length);
+  masked?.push([i + 1, end]);
+  return end;
+}
+
+const HCL_HEREDOC = /^<<-?([A-Za-z_][A-Za-z0-9_-]*)\r?\n/;
+
+// The offset past a heredoc whose `<<` is at `i`, its closing line included;
+// past the `<<` alone when it opens none or has no closing line.
+function hclHeredoc(r: Reader, i: number, depth: number, masked?: [number, number][]): number {
+  const s = r.s;
+  const m = HCL_HEREDOC.exec(s.slice(i, i + MAX_WORD + 8));
+  if (!m) return i + 2;
+  const body = i + m[0].length;
+  const end = r.closer({ word: m[1] as string, indent: "blanks", trailing: true, expands: false }, body);
+  if (end < 0) return i + 2;
+  // The start of the closing line: the body ends before it.
+  const last = Math.max(body, s.lastIndexOf("\n", end - 2) + 1);
+  masked?.push([body, last]);
+  let j = body;
+  while (j < last) {
+    if (hclTemplateAt(s, j) && depth < MAX_DEPTH) {
+      j = hclCode(r, j + 2, true, depth + 1, masked);
+    } else {
+      j++;
+    }
+  }
+  // A sequence that ran past the closing line read that text already.
+  return Math.min(Math.max(end, j), s.length);
+}
+
+// The text of an HCL file with everything that is not code turned into
+// blanks, line ends kept: comments, the inside of quoted strings and heredoc
+// bodies. Offsets and lines stay those of the file, so a reader of its
+// structure (blocks, attributes, braces) never takes a brace or an `=` in a
+// string, a heredoc or a comment for code.
+export function hclMasked(text: string): string {
+  const masked: [number, number][] = [];
+  hclCode(new Reader(text), 0, false, 0, masked);
+  masked.sort((a, b) => a[0] - b[0]);
+  const parts: string[] = [];
+  let at = 0;
+  for (const [from, to] of masked) {
+    if (to <= at) continue;
+    const begin = Math.max(from, at);
+    parts.push(text.slice(at, begin), text.slice(begin, to).replace(/[^\n]/g, " "));
+    at = to;
+  }
+  parts.push(text.slice(at));
+  return parts.join("");
 }
