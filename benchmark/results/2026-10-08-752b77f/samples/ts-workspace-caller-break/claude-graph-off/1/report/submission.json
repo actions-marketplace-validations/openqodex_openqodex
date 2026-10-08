@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "Changes safeGit so it no longer throws when git fails. It now returns a GitResult object with code, stdout and stderr, and index.ts exports the GitResult type.",
+  "findings": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "safeGit return change breaks both CLI callers",
+      "problem": "safeGit now returns a GitResult object instead of the stdout string. The callers in branch.ts and status.ts still call trim and split on that result.",
+      "consequence": "In branch.ts, currentBranch throws a TypeError, its catch swallows it, and it returns null even inside a repository. In status.ts, changedFiles throws a TypeError on every call.",
+      "fix": "Update both callers in the same change to check result.code and read result.stdout. currentBranch should return null when code is not zero.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 15,
+      "line_end": 16,
+      "title": "New safeGit failure path has no test",
+      "problem": "safeGit has a new error branch that turns a git failure into a returned code. No test in the repository exercises safeGit on success or on failure.",
+      "consequence": "A wrong code mapping or a broken caller could ship without anything failing first.",
+      "fix": "Add tests that call safeGit on a successful command and on a failing command. Assert code, stdout and stderr in each test.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

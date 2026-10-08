@@ -1,0 +1,29 @@
+[
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "package.json",
+    "inside": true,
+    "range": [
+      1,
+      10
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/main.ts",
+    "inside": true,
+    "range": [
+      1,
+      9
+    ],
+    "ok": true
+  }
+]

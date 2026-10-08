@@ -1,0 +1,9 @@
+Passed with warnings: 4 findings (2 critical, 1 major, 1 minor)
+Change 44b3a626f5e8 against HEAD, 3 files, +24 -3
+Summary: Adds a search filter to the users index and new update and destroy endpoints. Adds an after_save callback that sends a welcome email.
+1. Critical security: SQL injection in user search (app/controllers/users_controller.rb:6)
+2. Critical security: Any user can delete any account (app/controllers/users_controller.rb:21)
+3. Major bug: Welcome email sent on every save (app/models/user.rb:4)
+4. Minor maintainability: New behaviour has no covering test (app/controllers/users_controller.rb:14-23)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

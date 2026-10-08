@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "857e2b75ee60",
+  "summary": "Renames formatPrice to formatMoney in src/money.ts so it formats amounts with Intl.NumberFormat in a chosen currency. Updates invoiceLines to take a currency argument that defaults to USD.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "src/money.ts",
+      "line_number": 3,
+      "line_end": 4,
+      "title": "Removed export still imported by cart.ts",
+      "problem": "This change renames the export formatPrice to formatMoney in src/money.ts. src/cart.ts still imports formatPrice and calls it in cartTotal.",
+      "consequence": "The TypeScript compiler fails to build the project. At runtime, cartTotal throws because formatPrice is undefined, so customers cannot see the cart total.",
+      "fix": "Update src/cart.ts to import formatMoney and call formatMoney(addTax(subtotal, taxRate), \"USD\"). Alternatively, keep formatPrice as a wrapper that calls formatMoney with USD.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/money.ts",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Changed money formatting has no covering test",
+      "problem": "formatMoney now adds thousands separators and moves the minus sign before the currency symbol. No test in the repository checks formatMoney or invoiceLines.",
+      "consequence": "Nothing catches a regression in the strings that customers see on invoices.",
+      "fix": "Add tests for formatMoney and invoiceLines that cover large amounts, negative amounts and a non-USD currency.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

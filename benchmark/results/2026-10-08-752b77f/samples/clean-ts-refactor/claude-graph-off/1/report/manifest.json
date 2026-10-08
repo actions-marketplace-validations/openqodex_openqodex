@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "change_id": "32c939b7a434f882ad67da0efffac34d5af241d2b1d6ee443bc77f00d875b4ec",
+  "config_hash": "bb5a14e29e83019aee75407355284dc4e41382c99ceb8724b852c108e08210d3",
+  "created_at": "2026-10-08T19:24:57.087Z",
+  "lenses": [
+    {
+      "name": "async-await-in-loop-n-plus-one",
+      "confidenceFloor": 0.7
+    }
+  ],
+  "instructions_hash": null,
+  "runtime_version": "0.9.0"
+}

@@ -1,0 +1,6 @@
+Passed: no findings
+Change 1957ed62c932 against HEAD, 3 files, +26 -2
+Summary: Adds to_display to format cents as dollar text, plus a balance_line helper for the monthly statement. Tests cover both.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

@@ -1,0 +1,679 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "medium",
+    "build": {
+      "durationMs": 68,
+      "cacheHits": 0,
+      "parses": 7,
+      "eligibleFiles": 4,
+      "parsedFiles": 4,
+      "omittedFiles": 0,
+      "unresolvedSites": 5,
+      "externalSites": 9,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "ledger/money.py#to_display@10:5",
+        "file": "ledger/money.py",
+        "name": "to_display",
+        "kind": "function",
+        "startLine": 10,
+        "endLine": 14,
+        "snapshot": "current"
+      },
+      {
+        "id": "ledger/report.py#balance_line@9:5",
+        "file": "ledger/report.py",
+        "name": "balance_line",
+        "kind": "function",
+        "startLine": 9,
+        "endLine": 11,
+        "snapshot": "current"
+      },
+      {
+        "id": "tests/test_money.py#test_to_display_formats_dollars_with_separators@20:5",
+        "file": "tests/test_money.py",
+        "name": "test_to_display_formats_dollars_with_separators",
+        "kind": "function",
+        "startLine": 20,
+        "endLine": 24,
+        "snapshot": "current"
+      },
+      {
+        "id": "tests/test_money.py#test_balance_line_shows_the_sum@27:5",
+        "file": "tests/test_money.py",
+        "name": "test_balance_line_shows_the_sum",
+        "kind": "function",
+        "startLine": 27,
+        "endLine": 28,
+        "snapshot": "current"
+      },
+      {
+        "id": "ledger/report.py#balance@4:5",
+        "file": "ledger/report.py",
+        "name": "balance",
+        "kind": "function",
+        "startLine": 4,
+        "endLine": 6,
+        "snapshot": "current"
+      },
+      {
+        "id": "ledger/report.py",
+        "file": "ledger/report.py",
+        "name": "report.py",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 11,
+        "snapshot": "current"
+      },
+      {
+        "id": "tests/test_money.py",
+        "file": "tests/test_money.py",
+        "name": "test_money.py",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 28,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "ledger/money.py#to_display@10:5",
+      "ledger/report.py#balance_line@9:5",
+      "tests/test_money.py#test_to_display_formats_dollars_with_separators@20:5",
+      "tests/test_money.py#test_balance_line_shows_the_sum@27:5"
+    ],
+    "removed": [],
+    "callers": [
+      {
+        "seed": "ledger/money.py#to_display@10:5",
+        "edges": [
+          {
+            "from": "ledger/report.py#balance_line@9:5",
+            "to": "ledger/money.py#to_display@10:5",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "ledger/report.py",
+                "line": 11,
+                "column": 24,
+                "tier": "certain",
+                "evidence": "py-root",
+                "via": {
+                  "file": "ledger/report.py",
+                  "line": 1,
+                  "spec": "ledger.money"
+                },
+                "note": null,
+                "rule": "py-walk-root"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "ledger/money.py#to_display@10:5",
+        "edges": [
+          {
+            "from": "tests/test_money.py#test_to_display_formats_dollars_with_separators@20:5",
+            "to": "ledger/money.py#to_display@10:5",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "tests/test_money.py",
+                "line": 21,
+                "column": 12,
+                "tier": "certain",
+                "evidence": "py-root",
+                "via": {
+                  "file": "tests/test_money.py",
+                  "line": 3,
+                  "spec": "ledger.money"
+                },
+                "note": null,
+                "rule": "py-walk-root"
+              },
+              {
+                "file": "tests/test_money.py",
+                "line": 22,
+                "column": 12,
+                "tier": "certain",
+                "evidence": "py-root",
+                "via": {
+                  "file": "tests/test_money.py",
+                  "line": 3,
+                  "spec": "ledger.money"
+                },
+                "note": null,
+                "rule": "py-walk-root"
+              },
+              {
+                "file": "tests/test_money.py",
+                "line": 23,
+                "column": 12,
+                "tier": "certain",
+                "evidence": "py-root",
+                "via": {
+                  "file": "tests/test_money.py",
+                  "line": 3,
+                  "spec": "ledger.money"
+                },
+                "note": null,
+                "rule": "py-walk-root"
+              },
+              {
+                "file": "tests/test_money.py",
+                "line": 24,
+                "column": 12,
+                "tier": "certain",
+                "evidence": "py-root",
+                "via": {
+                  "file": "tests/test_money.py",
+                  "line": 3,
+                  "spec": "ledger.money"
+                },
+                "note": null,
+                "rule": "py-walk-root"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "ledger/report.py#balance_line@9:5",
+        "edges": [
+          {
+            "from": "tests/test_money.py#test_balance_line_shows_the_sum@27:5",
+            "to": "ledger/report.py#balance_line@9:5",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "tests/test_money.py",
+                "line": 28,
+                "column": 12,
+                "tier": "certain",
+                "evidence": "py-root",
+                "via": {
+                  "file": "tests/test_money.py",
+                  "line": 4,
+                  "spec": "ledger.report"
+                },
+                "note": null,
+                "rule": "py-walk-root"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "callees": [
+      {
+        "seed": "ledger/report.py#balance_line@9:5",
+        "edges": [
+          {
+            "from": "ledger/report.py#balance_line@9:5",
+            "to": "ledger/report.py#balance@4:5",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "ledger/report.py",
+                "line": 11,
+                "column": 35,
+                "tier": "certain",
+                "evidence": "same-scope",
+                "via": null,
+                "note": null,
+                "rule": "same-scope"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "importers": [
+      {
+        "from": "ledger/report.py",
+        "to": "ledger/money.py",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "ledger/report.py",
+            "line": 1,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "py-root",
+            "via": {
+              "file": "ledger/report.py",
+              "line": 1,
+              "spec": "ledger.money"
+            },
+            "note": null,
+            "rule": "py-walk-root"
+          }
+        ]
+      },
+      {
+        "from": "tests/test_money.py",
+        "to": "ledger/money.py",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "tests/test_money.py",
+            "line": 3,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "py-root",
+            "via": {
+              "file": "tests/test_money.py",
+              "line": 3,
+              "spec": "ledger.money"
+            },
+            "note": null,
+            "rule": "py-walk-root"
+          }
+        ]
+      },
+      {
+        "from": "tests/test_money.py",
+        "to": "ledger/report.py",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "tests/test_money.py",
+            "line": 4,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "py-root",
+            "via": {
+              "file": "tests/test_money.py",
+              "line": 4,
+              "spec": "ledger.report"
+            },
+            "note": null,
+            "rule": "py-walk-root"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "ledger/money.py#to_display@10:5",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "ledger/report.py#balance_line@9:5",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "tests/test_money.py#test_to_display_formats_dollars_with_separators@20:5",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "tests/test_money.py#test_balance_line_shows_the_sum@27:5",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 4,
+        "miss": 1
+      },
+      "near": [
+        {
+          "file": "ledger/money.py",
+          "line": 4,
+          "name": "partition",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type amount.lstrip is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "ledger/money.py",
+          "line": 5,
+          "name": "isdigit",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "ledger/money.py",
+          "line": 5,
+          "name": "isdigit",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "ledger/money.py",
+          "line": 7,
+          "name": "ljust",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "tests/test_money.py",
+          "line": 16,
+          "name": "raises",
+          "cause": "miss",
+          "scope": "file",
+          "note": "the module pytest is not in the repository and no Python manifest declares pytest",
+          "candidates": null
+        }
+      ],
+      "nearTotal": 5,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "1957ed62c932ea3fecc2484bfa1a9c45b3130b6fe959acece7133874862f7ec3",
+  "base": {
+    "ref": "HEAD",
+    "sha": "39d3360f858cffd901b8bb950656a9e4390234c3"
+  },
+  "generated_at": "2026-10-08T19:48:30.416Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds to_display, which formats whole cents as a signed dollar string with thousands separators. Adds balance_line, which puts the formatted balance on a statement line, and adds tests for both.",
+  "findings": [],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 21,
+        "lineEnd": 21,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c1",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 21
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 22,
+        "lineEnd": 22,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c2",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 22
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 23,
+        "lineEnd": 23,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c3",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 23
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 24,
+        "lineEnd": 24,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c4",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 24
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 28,
+        "lineEnd": 28,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c5",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This assert is in a pytest test function, where plain asserts are the normal way to check results. The test code does not run under optimised byte code in production.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 28
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3513,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 22,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 13,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 9,
+      "keptCount": 5,
+      "durationMs": 69,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 26,
+    "deletions": 2
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 21069,
+      "started_at": "2026-10-08T19:48:21.709Z",
+      "ended_at": "2026-10-08T19:48:30.417Z",
+      "duration_ms": 8707,
+      "rounds": 1,
+      "usage": {
+        "turns": 2,
+        "input_tokens": 21778,
+        "output_tokens": 731,
+        "cost_usd": 0.067772
+      }
+    },
+    "snapshot": {
+      "change_id": "1957ed62c932ea3fecc2484bfa1a9c45b3130b6fe959acece7133874862f7ec3",
+      "tree": "88c5dc07bd9b396f3798d126cb93a102cc5fe99b",
+      "before": "33c8913803b965b719803b3918d0bc8b950e388c777cd1f862751f737484bf70",
+      "after": "33c8913803b965b719803b3918d0bc8b950e388c777cd1f862751f737484bf70"
+    },
+    "candidates": {
+      "total": 5,
+      "disposed": 5
+    },
+    "coverage": {
+      "hunks": 5,
+      "covered": 5,
+      "unread": [],
+      "files_read": [
+        "ledger/money.py"
+      ],
+      "files_not_read": [
+        "ledger/report.py",
+        "tests/test_money.py"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

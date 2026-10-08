@@ -1,0 +1,382 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "0d314adcfe1650d1966df594a33e54aec743da84165e136a7a775cc6d0905ab7",
+  "base": {
+    "ref": "HEAD",
+    "sha": "a353c114101a56d1a094688575e10cd4ce9e893f"
+  },
+  "generated_at": "2026-10-08T19:58:35.038Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a thumbnail helper that shells out to ImageMagick convert, a resize docs URL setting, and a GET /calc endpoint that evaluates an arithmetic expression from the query string.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Remote code execution through eval of query parameter",
+      "description": "The /calc handler passes req.query.expr straight to eval. Any caller controls the JavaScript that the server runs. Any client can run arbitrary code inside the Node process. That client can read secrets, touch the filesystem, or spawn processes. Replace eval with a restricted arithmetic parser such as expr-eval or mathjs evaluate. Remove both suppression comments on these lines.",
+      "suggested_change": "  const value = new Parser().evaluate(String(req.query.expr));",
+      "source": "lens:eval-on-user-input",
+      "candidate": null,
+      "notes": [],
+      "problem": "The /calc handler passes req.query.expr straight to eval. Any caller controls the JavaScript that the server runs.",
+      "consequence": "Any client can run arbitrary code inside the Node process. That client can read secrets, touch the filesystem, or spawn processes.",
+      "fix": "Replace eval with a restricted arithmetic parser such as expr-eval or mathjs evaluate. Remove both suppression comments on these lines."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Shell command injection through upload name",
+      "description": "make_thumbnail interpolates upload_name into a shell string and runs it with shell=True. The docstring says upload_name comes from the upload form. An uploader can choose a name with shell metacharacters, such as a semicolon, and run arbitrary commands on the host. The same name can also contain path traversal to write outside THUMB_DIR. Pass an argument list without shell=True. Reduce upload_name to a basename and reject names that start with a dash.",
+      "suggested_change": "    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "make_thumbnail interpolates upload_name into a shell string and runs it with shell=True. The docstring says upload_name comes from the upload form.",
+      "consequence": "An uploader can choose a name with shell metacharacters, such as a semicolon, and run arbitrary commands on the host. The same name can also contain path traversal to write outside THUMB_DIR.",
+      "fix": "Pass an argument list without shell=True. Reduce upload_name to a basename and reject names that start with a dash."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Suppression comment hides the shell injection",
+      "description": "The nosec B602 comment silences the warning for the shell=True call. That call really is injectable. Later scans stay quiet about a command injection that the code still contains. Remove the nosec comment once the call uses an argument list without a shell.",
+      "suggested_change": null,
+      "source": "bandit:openqodex.suppression-added",
+      "candidate": "c3",
+      "notes": [],
+      "problem": "The nosec B602 comment silences the warning for the shell=True call. That call really is injectable.",
+      "consequence": "Later scans stay quiet about a command injection that the code still contains.",
+      "fix": "Remove the nosec comment once the call uses an argument list without a shell."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "web/server.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Lint suppression hides eval of request input",
+      "description": "The eslint-disable-next-line no-eval comment silences the warning on the eval call. That eval runs request input. The linter never reports the remote code execution in the /calc handler. Delete the disable comment when you replace eval with a safe expression parser.",
+      "suggested_change": null,
+      "source": "oxlint:openqodex.suppression-added",
+      "candidate": "c4",
+      "notes": [],
+      "problem": "The eslint-disable-next-line no-eval comment silences the warning on the eval call. That eval runs request input.",
+      "consequence": "The linter never reports the remote code execution in the /calc handler.",
+      "fix": "Delete the disable comment when you replace eval with a safe expression parser."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Pattern scan suppression hides eval of request input",
+      "description": "The nosemgrep comment silences pattern scanning on the line that calls eval with req.query.expr. Future scans miss the remote code execution in the /calc handler. Remove the nosemgrep comment together with the eval call.",
+      "suggested_change": null,
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5",
+      "notes": [],
+      "problem": "The nosemgrep comment silences pattern scanning on the line that calls eval with req.query.expr.",
+      "consequence": "Future scans miss the remote code execution in the /calc handler.",
+      "fix": "Remove the nosemgrep comment together with the eval call."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "web/server.js",
+      "line_number": 10,
+      "line_end": 14,
+      "title": "New behaviour has no covering test",
+      "description": "The change adds the /calc endpoint and make_thumbnail. No test in the repository exercises either one. Nothing would catch regressions in the endpoint or the helper, including hostile input. Add tests for valid expressions, hostile expressions, and upload names that contain metacharacters.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds the /calc endpoint and make_thumbnail. No test in the repository exercises either one.",
+      "consequence": "Nothing would catch regressions in the endpoint or the helper, including hostile input.",
+      "fix": "Add tests for valid expressions, hostile expressions, and upload names that contain metacharacters."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "ruff",
+        "ruleId": "openqodex.suppression-added",
+        "filePath": "tools/settings.py",
+        "lineStart": 4,
+        "lineEnd": 4,
+        "severity": "medium",
+        "message": "This change adds # noqa, which stops ruff reporting what it covers; check that it hides no real problem",
+        "reference": null,
+        "id": "c2",
+        "token": "ruff:openqodex.suppression-added",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The noqa E501 comment only allows one long documentation URL constant. It hides no logic problem.",
+      "cited": {
+        "file_path": "tools/settings.py",
+        "line_number": 4
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B404",
+        "filePath": "tools/thumbs.py",
+        "lineStart": 1,
+        "lineEnd": 1,
+        "severity": "low",
+        "message": "B404: Consider possible security implications associated with the subprocess module.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess",
+        "id": "c6",
+        "token": "bandit:B404",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Importing subprocess is not a problem on its own. The real risk is the shell=True call raised separately.",
+      "cited": {
+        "file_path": "tools/thumbs.py",
+        "line_number": 1
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 1,
+      "keptCount": 2,
+      "durationMs": 2998,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 23,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 1,
+      "durationMs": 30,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 1,
+      "keptCount": 2,
+      "durationMs": 81,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 1,
+      "durationMs": 23,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 18,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 32322,
+      "started_at": "2026-10-08T19:58:02.644Z",
+      "ended_at": "2026-10-08T19:58:35.039Z",
+      "duration_ms": 32395,
+      "rounds": 2,
+      "usage": {
+        "turns": 3,
+        "input_tokens": 40646,
+        "output_tokens": 4038,
+        "cost_usd": 0.168004
+      }
+    },
+    "snapshot": {
+      "change_id": "0d314adcfe1650d1966df594a33e54aec743da84165e136a7a775cc6d0905ab7",
+      "tree": "db3b65d14f1b1502a603899c170a0553f79f03ac",
+      "before": "9f23e63912c542500652850ddc5c8f9133f03fb0194a26ba6a4d7d99902ca798",
+      "after": "9f23e63912c542500652850ddc5c8f9133f03fb0194a26ba6a4d7d99902ca798"
+    },
+    "candidates": {
+      "total": 6,
+      "disposed": 6
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [],
+      "files_not_read": [
+        "tools/settings.py",
+        "tools/thumbs.py",
+        "web/server.js"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

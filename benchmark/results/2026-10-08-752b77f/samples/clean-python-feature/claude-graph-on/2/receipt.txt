@@ -1,0 +1,6 @@
+Passed: no findings
+Change 1957ed62c932 against HEAD, 3 files, +26 -2
+Summary: Adds to_display, which formats cents as signed dollars with thousands separators. It also adds balance_line, which builds a statement line from the summed entries, and tests for both.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

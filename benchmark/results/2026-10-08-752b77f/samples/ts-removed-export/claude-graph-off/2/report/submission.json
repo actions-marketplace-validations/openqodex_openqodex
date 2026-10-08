@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "857e2b75ee60",
+  "summary": "Renames formatPrice to formatMoney, which now formats with Intl.NumberFormat in a caller-chosen currency. invoiceLines gains a currency parameter that defaults to USD.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "src/money.ts",
+      "line_number": 3,
+      "line_end": 3,
+      "title": "Removed export still imported by cart.ts",
+      "problem": "This change renames the export formatPrice to formatMoney. src/cart.ts still imports formatPrice and calls it on line 8.",
+      "consequence": "The TypeScript build fails on the missing export. If the build does not run, the cart total call throws at runtime.",
+      "fix": "Update src/cart.ts to import formatMoney and call formatMoney(addTax(subtotal, taxRate), \"USD\"). Alternatively, keep formatPrice as a wrapper around formatMoney.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/invoice.ts",
+      "line_number": 5,
+      "line_end": 6,
+      "title": "Changed formatting behaviour has no covering test",
+      "problem": "invoiceLines now takes a currency argument, and formatMoney now formats through Intl.NumberFormat. The repository has no test file that exercises either function.",
+      "consequence": "Nothing would catch regressions in currency output or in callers of the renamed function.",
+      "fix": "Add tests for formatMoney and invoiceLines with the default USD currency and with a non-USD currency.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

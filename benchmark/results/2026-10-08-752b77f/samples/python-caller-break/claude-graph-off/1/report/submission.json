@@ -1,0 +1,50 @@
+{
+  "version": 2,
+  "change_id": "9f4d6ef41c2c",
+  "summary": "Changes tax_for so that it returns None for an unknown region instead of 0. Two shop callers still do arithmetic on its result, and nobody updated them.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Callers crash on the new None return",
+      "problem": "Now tax_for returns None for an unknown region. In pkgs/shop/src/shop/checkout.py line 6, order_total adds that result to amount_cents.",
+      "consequence": "A checkout for a region missing from RATES now raises TypeError instead of charging zero tax. That checkout fails for every customer in that region.",
+      "fix": "Keep returning 0 for unknown regions. Otherwise, update order_total and tax_line to handle None explicitly.",
+      "suggested_change": "        return 0",
+      "source": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Receipt tax line breaks for unknown regions",
+      "problem": "In pkgs/shop/src/shop/receipt.py line 6, tax_line divides the tax_for result by 100. When tax_for returns None, that division raises TypeError.",
+      "consequence": "Receipt rendering fails for any order whose region is missing from RATES.",
+      "fix": "Make tax_line handle None, for example by printing zero tax or an explicit unknown-region message.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 7,
+      "line_end": 8,
+      "title": "No test covers the unknown-region branch",
+      "problem": "The change adds a None return path to tax_for. No test in the repository exercises tax_for or its callers.",
+      "consequence": "Without a test, nothing caught the caller breakage. Future changes to this branch will also go unchecked.",
+      "fix": "Add tests for tax_for, order_total and tax_line with a known region and an unknown region.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

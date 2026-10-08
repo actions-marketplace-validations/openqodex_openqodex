@@ -1,0 +1,29 @@
+[
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "app/search/page.tsx",
+    "inside": true,
+    "range": [
+      1,
+      30
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "lib/api.ts",
+    "inside": true,
+    "range": [
+      1,
+      9
+    ],
+    "ok": true
+  }
+]

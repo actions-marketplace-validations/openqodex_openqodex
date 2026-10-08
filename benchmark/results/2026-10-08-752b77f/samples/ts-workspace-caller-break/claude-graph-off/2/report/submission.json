@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "safeGit now catches git failures and returns a GitResult object with code, stdout and stderr instead of returning the stdout string and throwing. The change also exports the GitResult type from the core package.",
+  "findings": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.93,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "Callers still treat the safeGit result as a string",
+      "problem": "safeGit now returns a GitResult object, but neither caller was updated. currentBranch calls name.trim() in packages/cli/src/branch.ts:7, and changedFiles calls out.split() in packages/cli/src/status.ts:6.",
+      "consequence": "changedFiles throws a TypeError on every call. currentBranch catches its own TypeError and always returns null, even inside a repository.",
+      "fix": "Update both callers to read result.stdout and check result.code. currentBranch should return null when code is nonzero.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 13,
+      "line_end": 16,
+      "title": "No test covers the new safeGit failure path",
+      "problem": "safeGit now catches git failures and maps them to a code, but no test file exists in the repository. Nothing checks the success shape or the failure shape.",
+      "consequence": "Broken callers and wrong exit-code mapping can ship without any test failing.",
+      "fix": "Add tests for safeGit covering a successful command and a failing command. Also add tests for currentBranch and changedFiles.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

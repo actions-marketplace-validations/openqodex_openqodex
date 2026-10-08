@@ -1,0 +1,19 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/cart.ts",
+    "inside": true,
+    "range": [
+      1,
+      10
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

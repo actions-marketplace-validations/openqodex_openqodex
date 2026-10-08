@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves files from the upload directory by name. It also changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The download handler joins the name query parameter onto UPLOAD_DIR without any containment check. A name like ../../etc/passwd or an absolute path such as /etc/passwd escapes UPLOAD_DIR.",
+      "consequence": "Any client can read any file the server process can read. This exposes secrets, config files and source code.",
+      "fix": "Resolve the joined path and reject it unless it stays under UPLOAD_DIR. Alternatively use send_from_directory, which enforces that boundary.",
+      "suggested_change": "    base = os.path.realpath(UPLOAD_DIR)\n    path = os.path.realpath(os.path.join(base, name))\n    if not path.startswith(base + os.sep) or not os.path.isfile(path):\n        abort(404)\n    return send_file(path)",
+      "source": "lens:path-traversal-in-fs-access"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Debug server exposed on all interfaces",
+      "problem": "The change turns on debug mode and binds the server to 0.0.0.0 instead of 127.0.0.1. Debug mode enables the interactive Werkzeug debugger.",
+      "consequence": "Anyone on the network can reach the debugger and may run arbitrary code on the host. Error pages also leak source and environment details.",
+      "fix": "Keep the 127.0.0.1 binding and read the debug flag from the environment, defaulting to off.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000, debug=os.environ.get(\"FLASK_DEBUG\") == \"1\")",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 14,
+      "line_end": 20,
+      "title": "New download endpoint has no covering test",
+      "problem": "The change adds the download handler with a 404 path and a file-serving path. The repository contains no test that exercises either path.",
+      "consequence": "Regressions in path handling, including traversal guards, would go unnoticed.",
+      "fix": "Add tests for a valid file, a missing file and a traversal attempt.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The finding raised for c1 already covers the 0.0.0.0 binding on this line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c3",
+      "reason": "This candidate repeats the debug mode problem that the finding for c1 already raises.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c4",
+      "reason": "The finding raised for c1 already covers the all-interfaces binding on this line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "change_id": "32c939b7a434",
+  "summary": "Moves the unset-or-empty env lookup into a shared setting helper and exports the default port and host as constants. Adds node:test coverage for port and host parsing.",
+  "findings": [],
+  "dropped": []
+}

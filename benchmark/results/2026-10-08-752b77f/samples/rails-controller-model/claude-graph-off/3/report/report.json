@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "44b3a626f5e86351ae998107b0344e0c76743e53c296415442d3b9eec7fdb65b",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d6cb66faef0b0dfca4374dab319b05d30a393139"
+  },
+  "generated_at": "2026-10-08T19:57:37.777Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds email search to the user index, plus new update and destroy actions with routes. The User model now sends a welcome email after every save.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Search term interpolated into SQL",
+      "description": "The index action interpolates params[:q] directly into the WHERE clause string. Any caller controls the SQL text that runs. Any authenticated user can run arbitrary SQL. They can read columns like api_token and take over admin accounts. Bind the term as a placeholder and escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The index action interpolates params[:q] directly into the WHERE clause string. Any caller controls the SQL text that runs.",
+      "consequence": "Any authenticated user can run arbitrary SQL. They can read columns like api_token and take over admin accounts.",
+      "fix": "Bind the term as a placeholder and escape LIKE wildcards with sanitize_sql_like."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Destroy action skips the admin check",
+      "description": "The before_action now exempts destroy from require_admin. The destroy action then deletes any user by id without scoping. Any authenticated user can delete every account, including admins. Remove destroy from the except list so that require_admin guards it.",
+      "suggested_change": "  before_action :require_admin, except: [:index, :show]",
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c3",
+      "notes": [],
+      "problem": "The before_action now exempts destroy from require_admin. The destroy action then deletes any user by id without scoping.",
+      "consequence": "Any authenticated user can delete every account, including admins.",
+      "fix": "Remove destroy from the except list so that require_admin guards it."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "description": "The after_save callback runs on updates as well as creates. Each save also enqueues the email before the transaction commits. Users get a fresh welcome email every time an admin updates their record. A rolled-back save can still send an email. Use after_create_commit so that the email goes out once, after the new record commits.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The after_save callback runs on updates as well as creates. Each save also enqueues the email before the transaction commits.",
+      "consequence": "Users get a fresh welcome email every time an admin updates their record. A rolled-back save can still send an email.",
+      "fix": "Use after_create_commit so that the email goes out once, after the new record commits."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 14,
+      "line_end": 23,
+      "title": "New endpoints have no covering test",
+      "description": "The repo has no test that covers search, update, destroy or the welcome email callback. Nothing catches regressions in access control or email behaviour. Add request tests for each new action, including non-admin access and the search filter.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The repo has no test that covers search, update, destroy or the welcome email callback.",
+      "consequence": "Nothing catches regressions in access control or email behaviour.",
+      "fix": "Add request tests for each new action, including non-admin access and the search filter."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+        "filePath": "app/controllers/users_controller.rb",
+        "lineStart": 15,
+        "lineEnd": 15,
+        "severity": "medium",
+        "message": "Found an unscoped `find(...)` with user-controllable input. If the ActiveRecord model being searched against is sensitive, this may lead to Insecure Direct Object Reference (IDOR) behavior and allow users to read arbitrary records. Scope the find to the current user, e.g. `current_user.accounts.find(params[:id])`.",
+        "reference": "https://brakemanscanner.org/docs/warning_types/unscoped_find/",
+        "id": "c2",
+        "token": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The update action stays behind require_admin, so only admins can load and modify arbitrary users.",
+      "cited": {
+        "file_path": "app/controllers/users_controller.rb",
+        "line_number": 2
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 4,
+      "keptCount": 3,
+      "durationMs": 3331,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 20,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 1,
+      "reason": "needs Ruby 3.0 or newer"
+    },
+    {
+      "scanner": "rubocop",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": "needs Ruby 2.7 or newer"
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 24,
+    "deletions": 3
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 31312,
+      "started_at": "2026-10-08T19:57:16.778Z",
+      "ended_at": "2026-10-08T19:57:37.778Z",
+      "duration_ms": 21000,
+      "rounds": 1,
+      "usage": {
+        "turns": 4,
+        "input_tokens": 45375,
+        "output_tokens": 1739,
+        "cost_usd": 0.0979082
+      }
+    },
+    "snapshot": {
+      "change_id": "44b3a626f5e86351ae998107b0344e0c76743e53c296415442d3b9eec7fdb65b",
+      "tree": "600e55e37e3d8fdcf7fc78943c482b91822c101e",
+      "before": "7a62dcc9aa661981340751602cd09e0d2b15e4849e7326f7a7bc97e8690758ba",
+      "after": "7a62dcc9aa661981340751602cd09e0d2b15e4849e7326f7a7bc97e8690758ba"
+    },
+    "candidates": {
+      "total": 3,
+      "disposed": 3
+    },
+    "coverage": {
+      "hunks": 5,
+      "covered": 5,
+      "unread": [],
+      "files_read": [
+        "app/mailers/user_mailer.rb"
+      ],
+      "files_not_read": [
+        "app/controllers/users_controller.rb",
+        "app/models/user.rb",
+        "config/routes.rb"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

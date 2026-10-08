@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves files from the upload directory. It also changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The download handler joins the name query parameter onto UPLOAD_DIR without any check. A name like ../../etc/passwd or an absolute path such as /etc/passwd escapes the upload directory.",
+      "consequence": "Any client can read any file the server process can read. That includes secrets, config files and source code.",
+      "fix": "Resolve the joined path with os.path.realpath and reject it unless it lies under the resolved UPLOAD_DIR. Alternatively, serve the file with flask.send_from_directory.",
+      "suggested_change": "    base = os.path.realpath(UPLOAD_DIR)\n    path = os.path.realpath(os.path.join(base, name))\n    if not path.startswith(base + os.sep) or not os.path.isfile(path):\n        abort(404)\n    return send_file(path)",
+      "source": "lens:path-traversal-in-fs-access",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Interactive debugger exposed on all interfaces",
+      "problem": "The change turns on debug mode and binds the server to 0.0.0.0 instead of 127.0.0.1. The debug mode enables the Werkzeug interactive debugger.",
+      "consequence": "Anyone on the network who can trigger an error can reach the debugger. That person can then run arbitrary code on the host.",
+      "fix": "Restore host 127.0.0.1 and remove debug=True. Read both settings from environment configuration if they need to change.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000)",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 14,
+      "line_end": 20,
+      "title": "Download endpoint has no covering test",
+      "problem": "The change adds a new download endpoint with a 404 branch. The repository contains no test that exercises this endpoint.",
+      "consequence": "A regression in path handling or in the missing-file branch would go unnoticed.",
+      "fix": "Add tests for a valid file, a missing file and a traversal attempt such as ../ in the name.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The finding raised for the debugger on all interfaces already covers the 0.0.0.0 binding on this line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c3",
+      "reason": "This hit repeats the debug=True problem already raised as a finding on this line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c4",
+      "reason": "The finding raised for the debugger on all interfaces already covers the binding to all interfaces.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

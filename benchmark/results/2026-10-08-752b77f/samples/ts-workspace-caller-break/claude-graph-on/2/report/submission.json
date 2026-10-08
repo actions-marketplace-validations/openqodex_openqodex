@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "safeGit now returns a GitResult object with code, stdout and stderr instead of a stdout string. It also returns failures as a nonzero code instead of throwing. The GitResult type is now exported from @acme/core.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 10,
+      "title": "safeGit return type changed while callers still expect a string",
+      "problem": "safeGit now resolves to a GitResult object instead of a string. The callers currentBranch in packages/cli/src/branch.ts:7 and changedFiles in packages/cli/src/status.ts:6 still call trim and split on that value.",
+      "consequence": "The CLI fails to compile against the rebuilt core package. Without a type check, changedFiles throws a TypeError and currentBranch returns null for every repository.",
+      "fix": "Update currentBranch and changedFiles to read the stdout field of the result. Make that update in the same change as the new return type.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 14,
+      "line_end": 17,
+      "title": "Failed git commands no longer throw, so callers lose error detection",
+      "problem": "The new catch block turns every git failure into a returned result. currentBranch in packages/cli/src/branch.ts relies on a thrown error to return null outside a repository.",
+      "consequence": "Even after the callers read stdout, main.ts never prints the not-a-git-repository error. It reports an empty branch name instead, and changedFiles treats a failed git status as zero changed files.",
+      "fix": "Make currentBranch return null when the result code is nonzero. Make changedFiles throw or report an error when the result code is nonzero.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "Changed safeGit behaviour has no covering test",
+      "problem": "This change gives safeGit a new return shape and a new failure path. The repository has no test files that exercise safeGit.",
+      "consequence": "Nothing catches regressions in the code mapping or in callers that rely on the old shape.",
+      "fix": "Add tests for safeGit covering a successful command and a failing command. Add tests for the CLI callers that read the result.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

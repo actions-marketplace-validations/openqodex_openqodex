@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 minor)
+Change 9f4d6ef41c2c against HEAD, 1 file, +6 -3
+Summary: The change makes tax_for return None for an unknown region. Before, tax_for returned 0 tax for an unknown region.
+1. Critical bug: None return breaks existing tax_for callers (pkgs/billing/src/billing/tax.py:7-8)
+2. Minor maintainability: New unknown-region branch has no covering test (pkgs/billing/src/billing/tax.py:7-8)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

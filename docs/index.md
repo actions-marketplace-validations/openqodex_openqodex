@@ -31,3 +31,4 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - `telemetry`: there is none.
 - `privacy`: the privacy policy: what OpenQodex collects (nothing) and every network call it makes.
 - `faq`: short answers.
+- `benchmark`: how review quality is measured, from a clone of the repository, and the rule that a claim about it cites a saved run.

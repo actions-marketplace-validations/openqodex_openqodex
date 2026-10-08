@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 minor)
+Change eab11e18f842 against HEAD, 1 file, +5 -1
+Summary: onSave is now async and writes a snapshot of the in-memory note store to data/notes.json after each save.
+1. Critical bug: Async onSave breaks the synchronous dispatch caller (src/handlers.js:6)
+2. Minor maintainability: New snapshot write has no covering test (src/handlers.js:8)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

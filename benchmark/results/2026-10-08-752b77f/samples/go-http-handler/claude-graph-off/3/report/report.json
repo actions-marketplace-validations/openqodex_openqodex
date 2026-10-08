@@ -1,0 +1,325 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "abd88064b93d1ec44544f21ce6575838aa02bdce1e481cc2c7418c03f58c7e93",
+  "base": {
+    "ref": "HEAD",
+    "sha": "8141019cd18097af94039b3a51238aa1d63bea83"
+  },
+  "generated_at": "2026-10-08T19:54:19.191Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds three endpoints to the directory API: a user search by name, a per-key request counter, and an upstream status check.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "internal/api/handler.go",
+      "line_number": 34,
+      "line_end": 35,
+      "title": "Search query built from request input",
+      "description": "Search formats the name query parameter straight into the SQL text. The quotes around the value do not stop a caller from closing the string. Any caller of GET /users can run arbitrary SQL against the users database. That caller can read or change every row. Pass name to QueryContext as a bound parameter instead of formatting it into the query.",
+      "suggested_change": "rows, err := h.DB.QueryContext(r.Context(), \"SELECT id, name FROM users WHERE name = ?\", name)",
+      "source": "semgrep:go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "Search formats the name query parameter straight into the SQL text. The quotes around the value do not stop a caller from closing the string.",
+      "consequence": "Any caller of GET /users can run arbitrary SQL against the users database. That caller can read or change every row.",
+      "fix": "Pass name to QueryContext as a bound parameter instead of formatting it into the query."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "internal/api/handler.go",
+      "line_number": 63,
+      "line_end": 63,
+      "title": "Mutex left locked on empty key",
+      "description": "Count takes h.mu and then returns early on an empty key without releasing it. After one request without a key, every later Count request blocks forever. Each blocked request also holds a goroutine and a connection. Check the key before taking the lock, or release the lock with defer right after taking it.",
+      "suggested_change": null,
+      "source": "semgrep:trailofbits.go.missing-unlock-before-return.missing-unlock-before-return",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "Count takes h.mu and then returns early on an empty key without releasing it.",
+      "consequence": "After one request without a key, every later Count request blocks forever. Each blocked request also holds a goroutine and a connection.",
+      "fix": "Check the key before taking the lock, or release the lock with defer right after taking it."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "internal/api/handler.go",
+      "line_number": 83,
+      "line_end": 83,
+      "title": "Response body closed before error check",
+      "description": "fetchStatus defers resp.Body.Close before it checks err. When http.Get fails, resp is nil and the deferred call dereferences nil. Each request to GET /upstream panics while the upstream is unreachable. The client gets a dropped connection instead of the intended 502. Move the deferred close below the error check.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "fetchStatus defers resp.Body.Close before it checks err. When http.Get fails, resp is nil and the deferred call dereferences nil.",
+      "consequence": "Each request to GET /upstream panics while the upstream is unreachable. The client gets a dropped connection instead of the intended 502.",
+      "fix": "Move the deferred close below the error check."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "internal/api/handler.go",
+      "line_number": 32,
+      "line_end": 32,
+      "title": "New handlers have no covering test",
+      "description": "The change adds the Search, Count and Upstream handlers. The repository contains no test files that exercise them. Tests would have caught the lock leak and the nil dereference. Future regressions in these handlers will also go unnoticed. Add handler tests that cover an empty key, an unreachable upstream and a quoted search name.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds the Search, Count and Upstream handlers. The repository contains no test files that exercise them.",
+      "consequence": "Tests would have caught the lock leak and the nil dereference. Future regressions in these handlers will also go unnoticed.",
+      "fix": "Add handler tests that cover an empty key, an unreachable upstream and a quoted search name."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "go.lang.security.audit.database.string-formatted-query.string-formatted-query",
+        "filePath": "internal/api/handler.go",
+        "lineStart": 34,
+        "lineEnd": 34,
+        "severity": "medium",
+        "message": "String-formatted SQL query detected. This could lead to SQL injection if the string is not sanitized properly. Audit this call to ensure the SQL is not manipulable by external data.",
+        "reference": "https://owasp.org/Top10/A03_2021-Injection",
+        "id": "c3",
+        "token": "semgrep:go.lang.security.audit.database.string-formatted-query.string-formatted-query",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This hit flags the same formatted query that the c1 finding already raises. Raising it again would report one problem twice.",
+      "cited": {
+        "file_path": "internal/api/handler.go",
+        "line_number": 34
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 4,
+      "keptCount": 3,
+      "durationMs": 3076,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 18,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": "needs Go"
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 2,
+    "additions": 68,
+    "deletions": 1
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 27168,
+      "started_at": "2026-10-08T19:53:59.024Z",
+      "ended_at": "2026-10-08T19:54:19.192Z",
+      "duration_ms": 20168,
+      "rounds": 1,
+      "usage": {
+        "turns": 2,
+        "input_tokens": 23874,
+        "output_tokens": 2019,
+        "cost_usd": 0.103046
+      }
+    },
+    "snapshot": {
+      "change_id": "abd88064b93d1ec44544f21ce6575838aa02bdce1e481cc2c7418c03f58c7e93",
+      "tree": "fbfae34b77269d994a4583261f06f5dff9d88163",
+      "before": "ea7430966ad7882c7ad07ba84a01470fea946e0489bff10b5343ee317ab02391",
+      "after": "ea7430966ad7882c7ad07ba84a01470fea946e0489bff10b5343ee317ab02391"
+    },
+    "candidates": {
+      "total": 3,
+      "disposed": 3
+    },
+    "coverage": {
+      "hunks": 6,
+      "covered": 6,
+      "unread": [],
+      "files_read": [],
+      "files_not_read": [
+        "internal/api/handler.go",
+        "main.go"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

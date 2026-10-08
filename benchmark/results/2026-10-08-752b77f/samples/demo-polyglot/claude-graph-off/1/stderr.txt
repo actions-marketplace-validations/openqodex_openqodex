@@ -1,0 +1,7 @@
+Reviewing the change against HEAD: 8 files, +38 -14
+Scanners: 8 ran, 5 had nothing to check, 24 candidates to check
+Redacted secrets in 1 file of the snapshot
+Reviewer: claude 2.1.294 started (process 91921); this takes one to three minutes
+Reviewer still working: 15 s
+Reviewer still working: 30 s
+Reviewer still working: 45 s

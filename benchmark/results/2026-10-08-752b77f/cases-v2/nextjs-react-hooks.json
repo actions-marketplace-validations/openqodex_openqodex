@@ -1,0 +1,151 @@
+{
+  "id": "nextjs-react-hooks",
+  "guards": "a Next.js client page with a hook called after an early return, an effect with no dependency list, HTML built from the query string and a list without keys is reviewed as React code",
+  "amended": "Copied from ../cases/nextjs-react-hooks.json on 2026-10-08 to score this run with the scorer that needs words on every plant: each plant and side issue that had no mentions got them; no other field changed.",
+  "language": "typescript",
+  "framework": "nextjs",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "hook-after-early-return",
+      "file": "app/search/page.tsx",
+      "lines": [
+        10,
+        13
+      ],
+      "anchor": {
+        "line": 13,
+        "text": "useState<Product[]>"
+      },
+      "mentions": [
+        "hook",
+        "useState",
+        "early return",
+        "conditional",
+        "order"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning",
+        "oxlint"
+      ],
+      "truth": "useState and useEffect are called after an early return, so the number of hooks changes when the query appears or disappears, which React rejects with an error. The fix is to call every hook before the early return."
+    },
+    {
+      "id": "effect-without-deps",
+      "file": "app/search/page.tsx",
+      "lines": [
+        15,
+        17
+      ],
+      "anchor": {
+        "line": 15,
+        "text": "useEffect(() => {"
+      },
+      "mentions": [
+        "depend",
+        "every render",
+        "loop",
+        "deps",
+        "re-render",
+        "rerender"
+      ],
+      "kind": [
+        "bug",
+        "performance"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "The effect has no dependency list, so it runs after every render, and setResults with a new array renders again: the page fetches in a loop. The fix is [query] as the dependency list, and ignoring a stale answer."
+    },
+    {
+      "id": "query-as-html",
+      "file": "app/search/page.tsx",
+      "lines": [
+        21,
+        21
+      ],
+      "anchor": {
+        "line": 21,
+        "text": "dangerouslySetInnerHTML"
+      },
+      "mentions": [
+        "html",
+        "xss",
+        "cross-site script",
+        "dangerouslysetinnerhtml",
+        "script"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "The search term from the URL is put into the page as HTML, so a link with a script in q runs that script for whoever opens it (cross-site scripting). The fix is to render the text as a child, {`Results for ${query}`}, which React escapes."
+    },
+    {
+      "id": "list-without-key",
+      "file": "app/search/page.tsx",
+      "lines": [
+        23,
+        25
+      ],
+      "anchor": {
+        "line": 24,
+        "text": "<li>{product.name}</li>"
+      },
+      "mentions": [
+        "key"
+      ],
+      "kind": [
+        "bug",
+        "maintainability",
+        "performance",
+        "style"
+      ],
+      "severity": "minor",
+      "found_by": [
+        "reasoning",
+        "oxlint"
+      ],
+      "truth": "The list items have no key, so React cannot match them between renders and warns. The fix is key={product.id}."
+    }
+  ],
+  "extras": [
+    {
+      "file": "app/search/page.tsx",
+      "lines": [
+        8,
+        8
+      ],
+      "mentions": [
+        "suspense",
+        "usesearchparams",
+        "static"
+      ],
+      "why": "useSearchParams in a client page without a Suspense boundary fails the static build in Next.js 15; real, not planted"
+    },
+    {
+      "file": "app/search/page.tsx",
+      "lines": [
+        15,
+        17
+      ],
+      "mentions": [
+        "catch",
+        "unhandled",
+        "out of order",
+        "abort"
+      ],
+      "why": "a failed search is never caught (an unhandled rejection) and a stale answer can overwrite a newer one; real, not planted"
+    }
+  ]
+}

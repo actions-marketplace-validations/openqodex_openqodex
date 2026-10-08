@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "9f4d6ef41c2c",
+  "summary": "Changes tax_for so it returns None for an unknown region. Before this change it returned zero tax.",
+  "findings": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "None return breaks both tax_for callers",
+      "problem": "For an unknown region, tax_for now returns None instead of 0. Both callers do arithmetic on the result without checking for None.",
+      "consequence": "For any region missing from RATES, order_total in checkout.py raises TypeError on int plus None. The same input makes tax_line in receipt.py raise TypeError on None divided by 100, so checkout and receipts crash.",
+      "fix": "Keep returning 0 for unknown regions. Otherwise, update order_total and tax_line to handle None in the same change.",
+      "suggested_change": "        return 0",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 6,
+      "line_end": 8,
+      "title": "Unknown region path has no covering test",
+      "problem": "The change adds a new branch in tax_for for unknown regions. No test in the repository exercises tax_for or its callers.",
+      "consequence": "No test caught the crash in order_total and tax_line. Future regressions on this path will also go unnoticed.",
+      "fix": "Add tests that call tax_for, order_total and tax_line with an unknown region.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

@@ -1,0 +1,9 @@
+# Each review's report.html, report.md and report.sarif are renderings of its
+# report.json, and impact.json is inside report.json. The scorer reads
+# report.json and brief.md; the renderings stay on the machine that ran.
+**/report/report.html
+**/report/report.md
+**/report/report.sarif
+**/report/impact.json
+# The wording judge's raw model answers; judge.json keeps every verdict.
+**/judge-raw/

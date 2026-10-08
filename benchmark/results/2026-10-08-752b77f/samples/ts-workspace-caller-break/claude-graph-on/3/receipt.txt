@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 708d34803616 against HEAD, 2 files, +13 -5
+Summary: safeGit now catches git failures and returns a GitResult object with code, stdout and stderr instead of a string. index.ts also re-exports the GitResult type.
+1. Critical bug: Return type change breaks both CLI callers (packages/core/src/safe-git.ts:10-17)
+2. Major bug: Swallowed failure removes the not-a-repository signal (packages/core/src/safe-git.ts:14-16)
+3. Minor maintainability: New failure path has no covering test (packages/core/src/safe-git.ts:10-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

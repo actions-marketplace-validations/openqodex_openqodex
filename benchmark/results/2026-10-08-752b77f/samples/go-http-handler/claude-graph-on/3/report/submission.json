@@ -1,0 +1,73 @@
+{
+  "version": 2,
+  "change_id": "abd88064b93d",
+  "summary": "Adds user search, per-key request counting and an upstream status endpoint to the directory API, and registers them in main.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "internal/api/handler.go",
+      "line_number": 34,
+      "line_end": 35,
+      "title": "Search query built from request input",
+      "problem": "Search formats the name query parameter directly into the SQL text with Sprintf. A quote in name escapes the string literal.",
+      "consequence": "Any client calling GET /users can read or change arbitrary database rows.",
+      "fix": "Use a placeholder in the query and pass name to QueryContext as a bound argument.",
+      "suggested_change": "rows, err := h.DB.QueryContext(r.Context(), \"SELECT id, name FROM users WHERE name = ?\", name)",
+      "source": "semgrep:go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "internal/api/handler.go",
+      "line_number": 63,
+      "line_end": 63,
+      "title": "Mutex left locked on missing key",
+      "problem": "Count locks h.mu and then returns early when key is empty without unlocking. The mutex stays held forever.",
+      "consequence": "One request to GET /count without a key blocks every later Count request permanently.",
+      "fix": "Check key before taking the lock, or defer h.mu.Unlock() right after locking.",
+      "suggested_change": null,
+      "source": "semgrep:trailofbits.go.missing-unlock-before-return.missing-unlock-before-return",
+      "candidate": "c2"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "internal/api/handler.go",
+      "line_number": 83,
+      "line_end": 83,
+      "title": "Response body closed before error check",
+      "problem": "fetchStatus defers resp.Body.Close() before checking err. When http.Get fails, resp is nil and the deferred call dereferences it.",
+      "consequence": "An unreachable upstream makes GET /upstream panic instead of returning 502.",
+      "fix": "Move the defer after the err check.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "internal/api/handler.go",
+      "line_number": 32,
+      "line_end": 88,
+      "title": "New handlers have no tests",
+      "problem": "The change adds Search, Count and Upstream handlers. No test file in the repository exercises them.",
+      "consequence": "Regressions such as the lock leak and nil dereference go unnoticed until production.",
+      "fix": "Add httptest based tests covering each handler, including the error paths.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "This hit flags the same Sprintf query that the c1 finding already raises.",
+      "file_path": "internal/api/handler.go",
+      "line_number": 34
+    }
+  ]
+}

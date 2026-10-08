@@ -1,0 +1,92 @@
+{
+  "id": "go-http-handler",
+  "guards": "a Go HTTP change with SQL built from a query parameter, a mutex left locked on an early return and a response body closed before the error check is reviewed as Go code",
+  "language": "go",
+  "framework": "net-http",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "sprintf-sql",
+      "file": "internal/api/handler.go",
+      "lines": [
+        34,
+        35
+      ],
+      "anchor": {
+        "line": 34,
+        "text": "fmt.Sprintf(\"SELECT id, name FROM users WHERE name = '%s'\", name)"
+      },
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "semgrep",
+        "golangci",
+        "reasoning"
+      ],
+      "truth": "The name from the query string is formatted into the SQL text, so a caller can run any SQL. The fix is a placeholder, QueryContext(ctx, \"... WHERE name = ?\", name)."
+    },
+    {
+      "id": "mutex-held-on-return",
+      "file": "internal/api/handler.go",
+      "lines": [
+        60,
+        63
+      ],
+      "anchor": {
+        "line": 63,
+        "text": "return"
+      },
+      "mentions": [
+        "unlock",
+        "lock",
+        "mutex",
+        "deadlock"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "Count takes the lock and returns early for a missing key without unlocking, so the next request to Count waits forever. The fix is defer h.mu.Unlock() right after Lock, or checking the key before taking the lock."
+    },
+    {
+      "id": "defer-close-before-err",
+      "file": "internal/api/handler.go",
+      "lines": [
+        82,
+        83
+      ],
+      "anchor": {
+        "line": 83,
+        "text": "defer resp.Body.Close()"
+      },
+      "mentions": [
+        "nil",
+        "panic"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning",
+        "golangci"
+      ],
+      "truth": "resp.Body.Close is deferred before err is checked; when http.Get fails, resp is nil and the deferred call panics. The fix is to check err first and defer the close after."
+    }
+  ],
+  "extras": [
+    {
+      "file": "internal/api/handler.go",
+      "lines": [
+        82,
+        83
+      ],
+      "why": "http.Get uses the default client with no timeout, so a slow upstream holds the request forever; real, not planted"
+    }
+  ]
+}

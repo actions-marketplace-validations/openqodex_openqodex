@@ -1,0 +1,16 @@
+Passed with warnings: 11 findings (2 critical, 3 major, 6 minor)
+Change 10985528b336 against HEAD, 8 files, +38 -14
+Summary: Adds a /search endpoint with a hardcoded Stripe key in config, and changes paging offsets on /items. Also downgrades lodash, loosens the Dockerfile, and edits the deploy script and CI workflow.
+1. Critical security: Search query built from request input (app/search.py:14)
+2. Critical security: Stripe secret key committed to source (app/config.py:2)
+3. Major bug: Paging offset skips the first page (app/server.py:23)
+4. Major security: Container now runs as root (Dockerfile:9-10)
+5. Major security: Lodash downgraded to a vulnerable release (package-lock.json:11)
+6. Minor security: Pull request title expanded into shell script (.github/workflows/ci.yml:15)
+7. Minor bug: Apt install runs without the yes flag (Dockerfile:3)
+8. Minor bug: Base image uses the floating latest tag (Dockerfile:1)
+9. Minor bug: Unquoted path in recursive delete (scripts/deploy.sh:7)
+10. Minor bug: Deploy loop parses ls output (scripts/deploy.sh:11)
+11. Minor maintainability: Changed behaviour has no covering test (app/search.py:9-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

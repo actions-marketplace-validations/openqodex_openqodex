@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "09f3ac8900f8",
+  "summary": "Adds an admin route that deletes one user by id and a purge route that deletes a list of users.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Delete user route lacks admin check",
+      "problem": "The DELETE /users/:id route omits the requireAdmin middleware that its sibling routes use. The handler deletes the user named in the URL without any authorization check.",
+      "consequence": "Any caller who can reach the server can delete any user account. The caller only needs to guess or enumerate user ids.",
+      "fix": "Add requireAdmin to the route, as the GET /users and POST /users/purge routes do.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": "lens:id-enumeration-sequential",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 25,
+      "title": "Purge deletions float outside the request",
+      "problem": "The forEach callback starts async removeUser calls, and nothing awaits them. db.removeUser throws for an unknown id, so each failure becomes an unhandled rejection.",
+      "consequence": "One unknown id in the purge list crashes the Node process on current Node versions. The handler also reports every id as removed before any deletion finishes.",
+      "fix": "Await all deletions with Promise.allSettled, then report how many succeeded.",
+      "suggested_change": "  const results = await Promise.allSettled(ids.map((id) => db.removeUser(id)));\n  res.json({ removed: results.filter((r) => r.status === \"fulfilled\").length });",
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 16,
+      "line_end": 26,
+      "title": "New delete routes have no covering test",
+      "problem": "The change adds two delete routes, and the repository contains no tests for them.",
+      "consequence": "Nothing will catch a regression in the auth check or in purge error handling.",
+      "fix": "Add tests for the single delete and purge routes, covering auth and an unknown id.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

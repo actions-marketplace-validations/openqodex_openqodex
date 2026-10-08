@@ -1,0 +1,446 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "high",
+    "build": {
+      "durationMs": 62,
+      "cacheHits": 0,
+      "parses": 5,
+      "eligibleFiles": 3,
+      "parsedFiles": 3,
+      "omittedFiles": 0,
+      "unresolvedSites": 2,
+      "externalSites": 4,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "src/invoice.ts#invoiceLines@5:17",
+        "file": "src/invoice.ts",
+        "name": "invoiceLines",
+        "kind": "function",
+        "startLine": 5,
+        "endLine": 7,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/money.ts#formatMoney@3:17",
+        "file": "src/money.ts",
+        "name": "formatMoney",
+        "kind": "function",
+        "startLine": 3,
+        "endLine": 5,
+        "snapshot": "current"
+      },
+      {
+        "id": "base:src/money.ts#formatPrice@3:17",
+        "file": "src/money.ts",
+        "name": "formatPrice",
+        "kind": "function",
+        "startLine": 3,
+        "endLine": 5,
+        "snapshot": "base"
+      },
+      {
+        "id": "src/cart.ts#cartTotal@6:17",
+        "file": "src/cart.ts",
+        "name": "cartTotal",
+        "kind": "function",
+        "startLine": 6,
+        "endLine": 9,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/invoice.ts",
+        "file": "src/invoice.ts",
+        "name": "invoice.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 7,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/cart.ts",
+        "file": "src/cart.ts",
+        "name": "cart.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 9,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "src/invoice.ts#invoiceLines@5:17",
+      "src/money.ts#formatMoney@3:17"
+    ],
+    "removed": [
+      "base:src/money.ts#formatPrice@3:17"
+    ],
+    "callers": [
+      {
+        "seed": "src/money.ts#formatMoney@3:17",
+        "edges": [
+          {
+            "from": "src/invoice.ts#invoiceLines@5:17",
+            "to": "src/money.ts#formatMoney@3:17",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "src/invoice.ts",
+                "line": 6,
+                "column": 47,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "src/invoice.ts",
+                  "line": 1,
+                  "spec": "./money"
+                },
+                "note": null,
+                "rule": "js-relative"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "base:src/money.ts#formatPrice@3:17",
+        "edges": [
+          {
+            "from": "src/cart.ts#cartTotal@6:17",
+            "to": "base:src/money.ts#formatPrice@3:17",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "src/cart.ts",
+                "line": 8,
+                "column": 10,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "src/cart.ts",
+                  "line": 1,
+                  "spec": "./money"
+                },
+                "note": null,
+                "rule": "js-relative"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "callees": [],
+    "importers": [
+      {
+        "from": "src/invoice.ts",
+        "to": "src/money.ts",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "src/invoice.ts",
+            "line": 1,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "src/invoice.ts",
+              "line": 1,
+              "spec": "./money"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      },
+      {
+        "from": "src/cart.ts",
+        "to": "src/money.ts",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "src/cart.ts",
+            "line": 1,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "src/cart.ts",
+              "line": 1,
+              "spec": "./money"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [
+        {
+          "seed": "src/invoice.ts#invoiceLines@5:17",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "src/money.ts#formatMoney@3:17",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "base:src/money.ts#formatPrice@3:17",
+          "floor": true,
+          "reasons": [
+            "1 call named `formatPrice` in the repository could not be bound"
+          ]
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 1,
+        "miss": 1
+      },
+      "near": [
+        {
+          "file": "src/money.ts",
+          "line": 4,
+          "name": "format",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type Intl.NumberFormat is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/cart.ts",
+          "line": 8,
+          "name": "formatPrice",
+          "cause": "miss",
+          "scope": "file",
+          "note": "no definition of formatPrice where the evidence points (src/money.ts)",
+          "candidates": null
+        }
+      ],
+      "nearTotal": 2,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "857e2b75ee60551f6319310f6fdcdde54824f572398b981d0efbf5e103c3758d",
+  "base": {
+    "ref": "HEAD",
+    "sha": "efb4f26d878c3ab58ccaf6dfb1c6f532f8cee630"
+  },
+  "generated_at": "2026-10-08T19:59:31.628Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Renames formatPrice to formatMoney with a currency argument and uses Intl.NumberFormat. invoiceLines now takes an optional currency that defaults to USD.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "src/money.ts",
+      "line_number": 3,
+      "line_end": 3,
+      "title": "Removed formatPrice still imported by cart",
+      "description": "This change removes the formatPrice export from money.ts. The file src/cart.ts still imports formatPrice on line 1 and calls it on line 8. The TypeScript build fails on cart.ts, so the cart total cannot compile or render. Every customer checkout path that shows cartTotal breaks. Update cartTotal in cart.ts to call formatMoney with a currency. Another option is to keep formatPrice as a wrapper that calls formatMoney with USD.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "This change removes the formatPrice export from money.ts. The file src/cart.ts still imports formatPrice on line 1 and calls it on line 8.",
+      "consequence": "The TypeScript build fails on cart.ts, so the cart total cannot compile or render. Every customer checkout path that shows cartTotal breaks.",
+      "fix": "Update cartTotal in cart.ts to call formatMoney with a currency. Another option is to keep formatPrice as a wrapper that calls formatMoney with USD."
+    }
+  ],
+  "below_threshold": 1,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3489,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 21,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 8,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 2,
+    "additions": 5,
+    "deletions": 5
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 33853,
+      "started_at": "2026-10-08T19:59:18.629Z",
+      "ended_at": "2026-10-08T19:59:31.628Z",
+      "duration_ms": 12999,
+      "rounds": 1,
+      "usage": {
+        "turns": 3,
+        "input_tokens": 20295,
+        "output_tokens": 1000,
+        "cost_usd": 0.0664204
+      }
+    },
+    "snapshot": {
+      "change_id": "857e2b75ee60551f6319310f6fdcdde54824f572398b981d0efbf5e103c3758d",
+      "tree": "06d9e5a29096fe14fbd450d6282d1592fda4a9fc",
+      "before": "477ecb4a5207e78b408cd06ef4d24680dcd30833c40009373382c4dabb7eeb88",
+      "after": "477ecb4a5207e78b408cd06ef4d24680dcd30833c40009373382c4dabb7eeb88"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "src/cart.ts"
+      ],
+      "files_not_read": [
+        "src/invoice.ts",
+        "src/money.ts"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

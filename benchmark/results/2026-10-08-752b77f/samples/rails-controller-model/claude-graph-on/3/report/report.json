@@ -1,0 +1,730 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "medium",
+    "build": {
+      "durationMs": 79,
+      "cacheHits": 0,
+      "parses": 12,
+      "eligibleFiles": 9,
+      "parsedFiles": 9,
+      "omittedFiles": 0,
+      "unresolvedSites": 41,
+      "externalSites": 2,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "app/controllers/users_controller.rb#UsersController@1:7",
+        "file": "app/controllers/users_controller.rb",
+        "name": "UsersController",
+        "kind": "class",
+        "startLine": 1,
+        "endLine": 24,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/controllers/users_controller.rb#UsersController.index@4:7",
+        "file": "app/controllers/users_controller.rb",
+        "name": "index",
+        "kind": "method",
+        "startLine": 4,
+        "endLine": 8,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/controllers/users_controller.rb#UsersController.update@14:7",
+        "file": "app/controllers/users_controller.rb",
+        "name": "update",
+        "kind": "method",
+        "startLine": 14,
+        "endLine": 18,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/controllers/users_controller.rb#UsersController.destroy@20:7",
+        "file": "app/controllers/users_controller.rb",
+        "name": "destroy",
+        "kind": "method",
+        "startLine": 20,
+        "endLine": 23,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/models/user.rb#User@1:7",
+        "file": "app/models/user.rb",
+        "name": "User",
+        "kind": "class",
+        "startLine": 1,
+        "endLine": 11,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/models/user.rb#User.send_welcome_email@8:7",
+        "file": "app/models/user.rb",
+        "name": "send_welcome_email",
+        "kind": "method",
+        "startLine": 8,
+        "endLine": 10,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/controllers/application_controller.rb#ApplicationController@1:7",
+        "file": "app/controllers/application_controller.rb",
+        "name": "ApplicationController",
+        "kind": "class",
+        "startLine": 1,
+        "endLine": 14,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/models/application_record.rb#ApplicationRecord@1:7",
+        "file": "app/models/application_record.rb",
+        "name": "ApplicationRecord",
+        "kind": "class",
+        "startLine": 1,
+        "endLine": 3,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "app/controllers/users_controller.rb#UsersController@1:7",
+      "app/controllers/users_controller.rb#UsersController.index@4:7",
+      "app/controllers/users_controller.rb#UsersController.update@14:7",
+      "app/controllers/users_controller.rb#UsersController.destroy@20:7",
+      "app/models/user.rb#User@1:7",
+      "app/models/user.rb#User.send_welcome_email@8:7"
+    ],
+    "removed": [],
+    "callers": [],
+    "callees": [
+      {
+        "seed": "app/controllers/users_controller.rb#UsersController@1:7",
+        "edges": [
+          {
+            "from": "app/controllers/users_controller.rb#UsersController@1:7",
+            "to": "app/controllers/application_controller.rb#ApplicationController@1:7",
+            "kind": "inherits",
+            "sites": [
+              {
+                "file": "app/controllers/users_controller.rb",
+                "line": 1,
+                "column": 25,
+                "tier": "likely",
+                "evidence": "autoload",
+                "via": null,
+                "note": "The Ruby constant was found by the autoload convention, not by a require.",
+                "rule": "rb-autoload-const"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "app/models/user.rb#User@1:7",
+        "edges": [
+          {
+            "from": "app/models/user.rb#User@1:7",
+            "to": "app/models/application_record.rb#ApplicationRecord@1:7",
+            "kind": "inherits",
+            "sites": [
+              {
+                "file": "app/models/user.rb",
+                "line": 1,
+                "column": 14,
+                "tier": "likely",
+                "evidence": "autoload",
+                "via": null,
+                "note": "The Ruby constant was found by the autoload convention, not by a require.",
+                "rule": "rb-autoload-const"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "app/controllers/users_controller.rb#UsersController@1:7",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "app/controllers/users_controller.rb#UsersController.index@4:7",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "app/controllers/users_controller.rb#UsersController.update@14:7",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "app/controllers/users_controller.rb#UsersController.destroy@20:7",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "app/models/user.rb#User@1:7",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "app/models/user.rb#User.send_welcome_email@8:7",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 26,
+        "miss": 1
+      },
+      "near": [
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 2,
+          "name": "before_action",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "UsersController is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 5,
+          "name": "limit",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 5,
+          "name": "order",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "User is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 6,
+          "name": "where",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 6,
+          "name": "present?",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 7,
+          "name": "render",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "UsersController is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 7,
+          "name": "as_json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 11,
+          "name": "render",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "UsersController is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 11,
+          "name": "as_json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 11,
+          "name": "find",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "User is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 15,
+          "name": "find",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "User is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 16,
+          "name": "update!",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 16,
+          "name": "permit!",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 16,
+          "name": "require",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 17,
+          "name": "render",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "UsersController is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 17,
+          "name": "as_json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 21,
+          "name": "destroy!",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 21,
+          "name": "find",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "User is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/controllers/users_controller.rb",
+          "line": 22,
+          "name": "head",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "UsersController is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/models/user.rb",
+          "line": 2,
+          "name": "validates",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "User is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/models/user.rb",
+          "line": 4,
+          "name": "after_save",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "User is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/models/user.rb",
+          "line": 9,
+          "name": "deliver_later",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/models/user.rb",
+          "line": 9,
+          "name": "welcome",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "UserMailer is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "config/routes.rb",
+          "line": 1,
+          "name": "draw",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "config/routes.rb",
+          "line": 1,
+          "name": "routes",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "config/routes.rb",
+          "line": 1,
+          "name": "application",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the constant Rails is not defined in the repository",
+          "candidates": null
+        },
+        {
+          "file": "config/routes.rb",
+          "line": 2,
+          "name": "resources",
+          "cause": "miss",
+          "scope": "file",
+          "note": "no definition of resources in the repository",
+          "candidates": null
+        }
+      ],
+      "nearTotal": 27,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "44b3a626f5e86351ae998107b0344e0c76743e53c296415442d3b9eec7fdb65b",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d6cb66faef0b0dfca4374dab319b05d30a393139"
+  },
+  "generated_at": "2026-10-08T19:57:58.875Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a search filter to the users index and new update and destroy endpoints. Adds an after_save callback that sends a welcome email.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "SQL injection in user search",
+      "description": "The index action interpolates params[:q] directly into the SQL text of the where clause. Any authenticated caller can inject SQL and read or alter any table, including api_token values. Pass the search term as a bound parameter and escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The index action interpolates params[:q] directly into the SQL text of the where clause.",
+      "consequence": "Any authenticated caller can inject SQL and read or alter any table, including api_token values.",
+      "fix": "Pass the search term as a bound parameter and escape LIKE wildcards with sanitize_sql_like."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 21,
+      "line_end": 21,
+      "title": "Any user can delete any account",
+      "description": "The change exempts destroy from require_admin on line 2. The destroy action then deletes any user found by params[:id]. Any authenticated non-admin can delete every account, including admin accounts. Remove destroy from the require_admin exception list. Alternatively, restrict destroy to the current user's own record.",
+      "suggested_change": null,
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c3",
+      "notes": [],
+      "problem": "The change exempts destroy from require_admin on line 2. The destroy action then deletes any user found by params[:id].",
+      "consequence": "Any authenticated non-admin can delete every account, including admin accounts.",
+      "fix": "Remove destroy from the require_admin exception list. Alternatively, restrict destroy to the current user's own record."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "description": "The after_save callback runs on updates as well as creates. Every user update therefore sends another welcome email. Users get a duplicate welcome email each time an admin updates their record. Use after_create_commit so the email goes out only once, after the record is committed.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The after_save callback runs on updates as well as creates. Every user update therefore sends another welcome email.",
+      "consequence": "Users get a duplicate welcome email each time an admin updates their record.",
+      "fix": "Use after_create_commit so the email goes out only once, after the record is committed."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 14,
+      "line_end": 23,
+      "title": "New behaviour has no covering test",
+      "description": "The repository has no test or spec directory. Nothing exercises the search filter, update, destroy or the welcome email callback. Regressions in authorization and email behaviour reach production unnoticed. Add request tests for search, update and destroy, including authorization cases. Add a model test for the email callback.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The repository has no test or spec directory. Nothing exercises the search filter, update, destroy or the welcome email callback.",
+      "consequence": "Regressions in authorization and email behaviour reach production unnoticed.",
+      "fix": "Add request tests for search, update and destroy, including authorization cases. Add a model test for the email callback."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+        "filePath": "app/controllers/users_controller.rb",
+        "lineStart": 15,
+        "lineEnd": 15,
+        "severity": "medium",
+        "message": "Found an unscoped `find(...)` with user-controllable input. If the ActiveRecord model being searched against is sensitive, this may lead to Insecure Direct Object Reference (IDOR) behavior and allow users to read arbitrary records. Scope the find to the current user, e.g. `current_user.accounts.find(params[:id])`.",
+        "reference": "https://brakemanscanner.org/docs/warning_types/unscoped_find/",
+        "id": "c2",
+        "token": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The update action stays behind require_admin, so only admins can reach this find. Admins are meant to manage any user.",
+      "cited": {
+        "file_path": "app/controllers/users_controller.rb",
+        "line_number": 2
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 4,
+      "keptCount": 3,
+      "durationMs": 3162,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 32,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 1,
+      "reason": "needs Ruby 3.0 or newer"
+    },
+    {
+      "scanner": "rubocop",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 1,
+      "reason": "needs Ruby 2.7 or newer"
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 24,
+    "deletions": 3
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 31862,
+      "started_at": "2026-10-08T19:57:41.779Z",
+      "ended_at": "2026-10-08T19:57:58.876Z",
+      "duration_ms": 17097,
+      "rounds": 1,
+      "usage": {
+        "turns": 4,
+        "input_tokens": 36953,
+        "output_tokens": 1700,
+        "cost_usd": 0.10193360000000001
+      }
+    },
+    "snapshot": {
+      "change_id": "44b3a626f5e86351ae998107b0344e0c76743e53c296415442d3b9eec7fdb65b",
+      "tree": "600e55e37e3d8fdcf7fc78943c482b91822c101e",
+      "before": "a838b68491e5fcc3c22d1fd583036e33832da5de0b997bf80a519480dbb05db5",
+      "after": "a838b68491e5fcc3c22d1fd583036e33832da5de0b997bf80a519480dbb05db5"
+    },
+    "candidates": {
+      "total": 3,
+      "disposed": 3
+    },
+    "coverage": {
+      "hunks": 5,
+      "covered": 5,
+      "unread": [],
+      "files_read": [
+        "app/controllers/application_controller.rb",
+        "app/mailers/user_mailer.rb"
+      ],
+      "files_not_read": [
+        "app/controllers/users_controller.rb",
+        "app/models/user.rb",
+        "config/routes.rb"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

@@ -1,0 +1,362 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "low",
+    "build": {
+      "durationMs": 45,
+      "cacheHits": 0,
+      "parses": 3,
+      "eligibleFiles": 2,
+      "parsedFiles": 2,
+      "omittedFiles": 0,
+      "unresolvedSites": 0,
+      "externalSites": 10,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "files/app.py#download@14:5",
+        "file": "files/app.py",
+        "name": "download",
+        "kind": "function",
+        "startLine": 14,
+        "endLine": 20,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "files/app.py#download@14:5"
+    ],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "files/app.py#download@14:5",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "1b9dcc9404693d0bfff7a9128ccd51e4ac80edf167baebb71a6f03f2fc7df6e0",
+  "base": {
+    "ref": "HEAD",
+    "sha": "e59b949d21f6d514480c34feb290bde13696687d"
+  },
+  "generated_at": "2026-10-08T19:40:51.166Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a /download endpoint that serves a file named by a query parameter from UPLOAD_DIR. It also changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "description": "The download handler joins the name query parameter onto UPLOAD_DIR without any check. A name like ../../etc/passwd or an absolute path like /etc/passwd escapes UPLOAD_DIR. Any client can read any file the server process can read. This includes secrets, config files and source code. Resolve the joined path and reject it unless it stays under UPLOAD_DIR. Alternatively, serve the file with flask.send_from_directory, which applies safe_join.",
+      "suggested_change": "    path = os.path.realpath(os.path.join(UPLOAD_DIR, name))\n    if not path.startswith(os.path.realpath(UPLOAD_DIR) + os.sep) or not os.path.isfile(path):\n        abort(404)\n    return send_file(path)",
+      "source": "lens:path-traversal-in-fs-access",
+      "candidate": null,
+      "notes": [],
+      "problem": "The download handler joins the name query parameter onto UPLOAD_DIR without any check. A name like ../../etc/passwd or an absolute path like /etc/passwd escapes UPLOAD_DIR.",
+      "consequence": "Any client can read any file the server process can read. This includes secrets, config files and source code.",
+      "fix": "Resolve the joined path and reject it unless it stays under UPLOAD_DIR. Alternatively, serve the file with flask.send_from_directory, which applies safe_join."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Debugger enabled on a network-facing server",
+      "description": "The change turns on debug mode and also binds the server to all interfaces instead of 127.0.0.1. Together these settings expose the interactive Werkzeug debugger to the network. A remote user who triggers an error can reach the debugger console and may run arbitrary code. The traversal bug also helps an attacker gather the inputs needed to compute the debugger PIN. Keep host at 127.0.0.1 and read debug from an environment variable that defaults to off.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000, debug=os.environ.get(\"FLASK_DEBUG\") == \"1\")",
+      "source": "bandit:B201",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The change turns on debug mode and also binds the server to all interfaces instead of 127.0.0.1. Together these settings expose the interactive Werkzeug debugger to the network.",
+      "consequence": "A remote user who triggers an error can reach the debugger console and may run arbitrary code. The traversal bug also helps an attacker gather the inputs needed to compute the debugger PIN.",
+      "fix": "Keep host at 127.0.0.1 and read debug from an environment variable that defaults to off."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 15,
+      "line_end": 20,
+      "title": "New download endpoint has no test",
+      "description": "The change adds a download endpoint but no test file. No test checks the not-found path or rejects traversal input. A later regression in path checking would ship without anyone noticing. Add tests for a valid file, a missing file and traversal names such as ../etc/passwd and /etc/passwd.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds a download endpoint but no test file. No test checks the not-found path or rejects traversal input.",
+      "consequence": "A later regression in path checking would ship without anyone noticing.",
+      "fix": "Add tests for a valid file, a missing file and traversal names such as ../etc/passwd and /etc/passwd."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host",
+        "filePath": "files/app.py",
+        "lineStart": 24,
+        "lineEnd": 24,
+        "severity": "medium",
+        "message": "Running flask app with host 0.0.0.0 could expose the server publicly.",
+        "reference": "https://owasp.org/Top10/A01_2021-Broken_Access_Control",
+        "id": "c2",
+        "token": "semgrep:python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The all-interfaces bind is already covered by the debug finding on this line. It is risky mainly because it exposes the debugger.",
+      "cited": {
+        "file_path": "files/app.py",
+        "line_number": 24
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.flask.security.audit.debug-enabled.debug-enabled",
+        "filePath": "files/app.py",
+        "lineStart": 24,
+        "lineEnd": 24,
+        "severity": "medium",
+        "message": "Detected Flask app with debug=True. Do not deploy to production with this flag enabled as it will leak sensitive information. Instead, consider using Flask configuration variables or setting 'debug' using system environment variables.",
+        "reference": "https://labs.detectify.com/2015/10/02/how-patreon-got-hacked-publicly-exposed-werkzeug-debugger/",
+        "id": "c3",
+        "token": "semgrep:python.flask.security.audit.debug-enabled.debug-enabled",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the debug mode problem that the finding for c1 already raises on the same line.",
+      "cited": {
+        "file_path": "files/app.py",
+        "line_number": 24
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B104",
+        "filePath": "files/app.py",
+        "lineStart": 24,
+        "lineEnd": 24,
+        "severity": "medium",
+        "message": "B104: Possible binding to all interfaces.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b104_hardcoded_bind_all_interfaces.html",
+        "id": "c4",
+        "token": "bandit:B104",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the all-interfaces bind that the finding for c1 already covers on the same line.",
+      "cited": {
+        "file_path": "files/app.py",
+        "line_number": 24
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 3266,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 18,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 11,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 62,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 13,
+    "deletions": 2
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 11305,
+      "started_at": "2026-10-08T19:40:31.624Z",
+      "ended_at": "2026-10-08T19:40:51.167Z",
+      "duration_ms": 19543,
+      "rounds": 1,
+      "usage": {
+        "turns": 2,
+        "input_tokens": 20426,
+        "output_tokens": 1980,
+        "cost_usd": 0.08685780000000001
+      }
+    },
+    "snapshot": {
+      "change_id": "1b9dcc9404693d0bfff7a9128ccd51e4ac80edf167baebb71a6f03f2fc7df6e0",
+      "tree": "9a0cd7a600eec360a7148013e769c3861c840d3f",
+      "before": "fbf3985cf06354a13b2a891c2edfdd64295b24ddef0c9f5e17a429ec1981bb28",
+      "after": "fbf3985cf06354a13b2a891c2edfdd64295b24ddef0c9f5e17a429ec1981bb28"
+    },
+    "candidates": {
+      "total": 4,
+      "disposed": 4
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "files/app.py"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

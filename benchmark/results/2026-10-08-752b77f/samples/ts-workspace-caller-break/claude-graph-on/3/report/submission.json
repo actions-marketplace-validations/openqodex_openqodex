@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "safeGit now catches git failures and returns a GitResult object with code, stdout and stderr instead of a string. index.ts also re-exports the GitResult type.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "Return type change breaks both CLI callers",
+      "problem": "safeGit now resolves to a GitResult object instead of a string. The callers still call string methods on it, namely trim() in packages/cli/src/branch.ts:7 and split() in packages/cli/src/status.ts:7.",
+      "consequence": "In currentBranch, the TypeError from trim is caught, so the function always returns null. The CLI then always prints not a git repository and exits with code 1.",
+      "fix": "Update both callers to read result.stdout. Have currentBranch return null when result.code is not 0.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 14,
+      "line_end": 16,
+      "title": "Swallowed failure removes the not-a-repository signal",
+      "problem": "safeGit no longer throws when git fails. currentBranch at packages/cli/src/branch.ts:8 relies on a throw to return null outside a repository.",
+      "consequence": "If currentBranch is changed only to read stdout, it will return an empty string outside a repository instead of null. The CLI would then report a blank branch instead of an error.",
+      "fix": "Have every caller check result.code and handle a non-zero exit explicitly. currentBranch should return null when the code is not 0.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "New failure path has no covering test",
+      "problem": "No test covers the new GitResult return shape or the catch branch that maps execFile errors to code. The change added no tests.",
+      "consequence": "Mapping regressions for non-numeric error codes, such as ENOENT, would go unnoticed.",
+      "fix": "Add tests that cover a successful git call, a failing git call and a missing git binary.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

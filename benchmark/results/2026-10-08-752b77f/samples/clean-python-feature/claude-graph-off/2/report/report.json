@@ -1,0 +1,334 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "1957ed62c932ea3fecc2484bfa1a9c45b3130b6fe959acece7133874862f7ec3",
+  "base": {
+    "ref": "HEAD",
+    "sha": "39d3360f858cffd901b8bb950656a9e4390234c3"
+  },
+  "generated_at": "2026-10-08T19:36:06.980Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds to_display, which formats cents as a dollar string, and balance_line, which renders the summed balance for the monthly statement. Tests cover both functions.",
+  "findings": [],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 21,
+        "lineEnd": 21,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c1",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Pytest test functions are meant to use plain assert statements. This test code never runs with optimisation enabled.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 21
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 22,
+        "lineEnd": 22,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c2",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Pytest test functions are meant to use plain assert statements. This test code never runs with optimisation enabled.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 22
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 23,
+        "lineEnd": 23,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c3",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Pytest test functions are meant to use plain assert statements. This test code never runs with optimisation enabled.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 23
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 24,
+        "lineEnd": 24,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c4",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Pytest test functions are meant to use plain assert statements. This test code never runs with optimisation enabled.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 24
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B101",
+        "filePath": "tests/test_money.py",
+        "lineStart": 28,
+        "lineEnd": 28,
+        "severity": "low",
+        "message": "B101: Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html",
+        "id": "c5",
+        "token": "bandit:B101",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Pytest test functions are meant to use plain assert statements. This test code never runs with optimisation enabled.",
+      "cited": {
+        "file_path": "tests/test_money.py",
+        "line_number": 28
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3307,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 19,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 10,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 9,
+      "keptCount": 5,
+      "durationMs": 63,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 26,
+    "deletions": 2
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.294",
+      "pid": 6651,
+      "started_at": "2026-10-08T19:35:54.238Z",
+      "ended_at": "2026-10-08T19:36:06.980Z",
+      "duration_ms": 12742,
+      "rounds": 1,
+      "usage": {
+        "turns": 2,
+        "input_tokens": 19464,
+        "output_tokens": 619,
+        "cost_usd": 0.05606800000000001
+      }
+    },
+    "snapshot": {
+      "change_id": "1957ed62c932ea3fecc2484bfa1a9c45b3130b6fe959acece7133874862f7ec3",
+      "tree": "88c5dc07bd9b396f3798d126cb93a102cc5fe99b",
+      "before": "06dffffe2cb19c4ea66be04692cd5318097d882895b6fe244b32ac981fbd3499",
+      "after": "06dffffe2cb19c4ea66be04692cd5318097d882895b6fe244b32ac981fbd3499"
+    },
+    "candidates": {
+      "total": 5,
+      "disposed": 5
+    },
+    "coverage": {
+      "hunks": 5,
+      "covered": 5,
+      "unread": [],
+      "files_read": [
+        "ledger/money.py"
+      ],
+      "files_not_read": [
+        "ledger/report.py",
+        "tests/test_money.py"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

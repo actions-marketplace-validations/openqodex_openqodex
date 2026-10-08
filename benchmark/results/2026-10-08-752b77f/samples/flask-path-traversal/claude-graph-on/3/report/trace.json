@@ -1,0 +1,29 @@
+[
+  {
+    "tool": "Read",
+    "path": "files/app.py",
+    "inside": true,
+    "range": [
+      1,
+      25
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "files/app.py",
+    "inside": true,
+    "range": [
+      1,
+      1
+    ],
+    "ok": true
+  }
+]

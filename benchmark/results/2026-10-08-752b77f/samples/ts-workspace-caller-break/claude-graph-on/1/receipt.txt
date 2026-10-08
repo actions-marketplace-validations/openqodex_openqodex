@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 major)
+Change 708d34803616 against HEAD, 2 files, +13 -5
+Summary: Changes safeGit to return a GitResult object with code, stdout and stderr instead of a stdout string. It also stops throwing on a failed git command and exports the new GitResult type.
+1. Critical bug: safeGit return type change breaks both CLI callers (packages/core/src/safe-git.ts:10)
+2. Major bug: Removed throw on git failure breaks callers' error detection (packages/core/src/safe-git.ts:14-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md
