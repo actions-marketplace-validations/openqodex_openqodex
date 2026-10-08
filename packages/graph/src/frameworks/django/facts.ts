@@ -26,6 +26,7 @@ export type DjangoFact = At &
     | { kind: "urllist"; name: string; literal: boolean }
     | { kind: "urlrouter"; name: string; router: Ref }
     | { kind: "app_name"; value: Lit }
+    | { kind: "assigned"; names: string[] } // the names top-level assignments bind: module-level values
     | { kind: "router"; name: string; ctor: Ref }
     | { kind: "register"; router: string; prefix: Lit; view: Ref | null; basename: Lit }
     | { kind: "render"; fn: Ref; template: Lit }
@@ -51,6 +52,7 @@ const RENDER_FUNCTIONS: Record<string, number> = { render: 1, render_to_response
 const URL_FUNCTIONS = new Set(["path", "re_path", "url"]);
 const SETTING = /^[A-Z][A-Z0-9_]*$/;
 const MAX_SETTINGS = 400;
+const MAX_ASSIGNED = 2000;
 
 export function wantsDjango(source: string): boolean {
   return /django|urlpatterns|INSTALLED_APPS|ROOT_URLCONF|client\.(get|post|put|patch|delete|head|options)\(/.test(source);
@@ -187,12 +189,14 @@ export function djangoFacts(root: Node): DjangoFact[] {
   };
 
   let settings = 0;
+  const assigned = new Set<string>();
   for (const stmt of statements) {
     const asg = assignmentOf(stmt);
     if (asg) {
       const left = asg.childForFieldName("left");
       const right = asg.childForFieldName("right");
       const name = left?.type === "identifier" ? left.text : null;
+      if (name && assigned.size < MAX_ASSIGNED) assigned.add(name);
       if (!name || !right) continue;
       const at = lineOf(asg);
       const augmented = asg.type === "augmented_assignment";
@@ -232,6 +236,8 @@ export function djangoFacts(root: Node): DjangoFact[] {
       }
     }
   }
+
+  if (assigned.size > 0) out.push({ kind: "assigned", line: 1, column: 0, names: [...assigned] });
 
   // One walk of the tree for every node kind the reads below need: each
   // walk of a large file costs as much as the next, whatever it finds.
@@ -469,6 +475,8 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
       return isStr(f.name) && typeof f.literal === "boolean";
     case "urlrouter":
       return isStr(f.name) && isRef(f.router);
+    case "assigned":
+      return Array.isArray(f.names) && f.names.length <= MAX_ASSIGNED && f.names.every(isStr);
     case "app_name":
     case "settings_module":
       return isLit(f.value);

@@ -43,7 +43,7 @@ export const django: FrameworkPlugin<DjangoFact> = {
         version: RULES.include.version,
         description: "include() of a literal module path composes the included table under the entry's prefix, to a depth of 8, with namespaces carried.",
         emits: ["mounts", "registration"],
-        fixtures: { positive: ["blog-app"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic", "computed-prefix"], metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["blog-app", "wagtail-shapes"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic", "computed-prefix"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.drf.id,
@@ -106,7 +106,7 @@ export const django: FrameworkPlugin<DjangoFact> = {
         version: RULES.tests.version,
         description: "Test files and their TestCase classes and test functions are tests; a client request whose literal path matches a route, or a reverse() of a route name, links the test to the route.",
         emits: ["tests", "test"],
-        fixtures: { positive: ["blog-app"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic", "computed-prefix"], metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["blog-app", "wagtail-shapes"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic", "computed-prefix"], metadataEdit: ["dependency-added"] },
       },
     ],
     negativeControls: ["urls-unrelated-path", "no-dependency", "two-apps"],

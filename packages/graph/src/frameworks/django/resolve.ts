@@ -356,6 +356,16 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       return;
     }
     if (lk.kind === "miss") {
+      // A module-level value (a router, an instance) is no definition the
+      // graph knows: only a module the plugin read, with no top-level
+      // binding of the name, proves the view is missing.
+      const read = index.factsOf(lk.target).length > 0;
+      const value = factsOf(lk.target, "assigned").some((a) => a.names.includes(lk.name));
+      if (!read || value) {
+        reg.handler.status = "unresolved";
+        out.gap({ site, scope, affects: ["handles"], cause: "dynamic", name: show(ref), note: `the view ${show(ref)} is a value of ${lk.target}, not a definition the graph follows` });
+        return;
+      }
       reg.handler.status = "missing";
       out.gap({ site, scope, affects: ["handles"], cause: "miss", name: show(ref), note: `the view ${show(ref)} is not defined in ${lk.target}; the route stays registered` });
       return;
@@ -486,7 +496,20 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
             walk(app, file, v.ref[0] as string, -1, parts, nextVia, ns, depth + 1, stack);
             return;
           }
-          out.gap({ site, scope, affects: ["mounts", "handles"], cause: "unsupported-rule", name: show(v.ref), note: `include(${show(v.ref)}) is not a module path or a list of this module` });
+          // include(module) of an imported URL module.
+          const mod = index.lookup(file, v.ref);
+          if (mod.kind === "external") return;
+          if (mod.kind === "module" && mod.file.endsWith(".py")) {
+            if (stack.includes(mod.file)) {
+              out.gap({ site, scope, affects: ["mounts"], cause: "unsupported-rule", name: show(v.ref), note: `${show(v.ref)} includes itself through a cycle` });
+              return;
+            }
+            out.edge({ from: file, to: mod.file, kind: "mounts", plugin: PLUGIN, app, evidence: ev("mount", mod.tier, site, RULES.include, mod.note, mod.via, []) });
+            out.role(mod.file, "route_table", null, app, ev("mount", mod.tier, site, RULES.include, mod.note, mod.via));
+            walk(app, mod.file, "urlpatterns", -1, parts, nextVia, ns, depth + 1, [...stack, mod.file]);
+            return;
+          }
+          out.gap({ site, scope, affects: ["mounts", "handles"], cause: "unsupported-rule", name: show(v.ref), note: `include(${show(v.ref)}) is not a module path, an imported URL module or a list of this module` });
           return;
         }
         if (isDynamic(v.module) || v.module === null) {
@@ -634,6 +657,16 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const dir = posix.dirname(file);
     return posix.basename(dir) === "models" || posix.basename(dir) === "migrations" ? posix.dirname(dir) : dir;
   };
+  // App folders by label: every folder that holds a models module.
+  const appDirs = new Map<string, Set<string>>();
+  for (const p of index.paths()) {
+    const segs = p.split("/");
+    // <app>/models.py, or <app>/models/<module>.py
+    const dir = segs[segs.length - 1] === "models.py" ? segs.slice(0, -1) : segs.length >= 3 && segs[segs.length - 2] === "models" && p.endsWith(".py") ? segs.slice(0, -2) : null;
+    if (!dir || dir.length === 0) continue;
+    const label = dir[dir.length - 1] as string;
+    (appDirs.get(label) ?? appDirs.set(label, new Set()).get(label))?.add(dir.join("/"));
+  }
   // Every model by app folder first: a field may name by string a model defined later.
   const modelsByApp = new Map<string, Map<string, GraphNode>>(); // app folder to lower-case model name to its class
   for (const m of models.values()) {
@@ -665,11 +698,14 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
           continue;
         }
         const [label, modelName] = f.related.includes(".") ? (f.related.split(".") as [string, string]) : [null, f.related];
-        const dirs = [...modelsByApp.keys()].filter((d) => (label === null ? d === appDirOf(m.file) : posix.basename(d) === label));
+        const dirs = label === null ? [appDirOf(m.file)] : [...(appDirs.get(label) ?? [])];
         const target = dirs.map((d) => modelsByApp.get(d)?.get(modelName.toLowerCase())).find((x) => x !== undefined);
         // "auth.User": a label no app folder of the repository has names an installed app outside it.
         if (!target && label !== null && dirs.length === 0) continue;
-        if (target) out.edge({ from: m.node.id, to: target.id, kind: "uses_type", plugin: PLUGIN, app, evidence: ev("association", "likely", fsite, RULES.models, `the model is named by the string "${f.related}", matched by its app folder and name`) });
+        // A class of that name in the app's models whose model base comes from a dependency.
+        const named = target ? null : dirs.flatMap((d) => [`${d}/models.py`, ...index.paths().filter((p) => p.startsWith(`${d}/models/`) && p.endsWith(".py"))]).map((f2) => classIn(index, f2, modelName)).find((c) => c !== null);
+        if (named) out.edge({ from: m.node.id, to: named.id, kind: "uses_type", plugin: PLUGIN, app, evidence: ev("association", "likely", fsite, RULES.models, `the class is named by the string "${f.related}" in its app's models; its model base is outside the repository`) });
+        else if (target) out.edge({ from: m.node.id, to: target.id, kind: "uses_type", plugin: PLUGIN, app, evidence: ev("association", "likely", fsite, RULES.models, `the model is named by the string "${f.related}", matched by its app folder and name`) });
         else out.gap({ site: fsite, scope: { file: m.file }, affects: ["uses_type"], cause: "miss", name: f.related, note: `no model named ${f.related} was found` });
         continue;
       }
