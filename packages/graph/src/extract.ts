@@ -144,8 +144,30 @@ function bodyHash(lang: Lang, node: Node, nameNode: Node): string {
   const text = node.text;
   const inside = nameNode.startIndex >= start && nameNode.endIndex <= node.endIndex;
   const cut = inside ? text.slice(0, nameNode.startIndex - start) + text.slice(nameNode.endIndex - start) : text;
-  const bare = (lang === "python" || lang === "ruby" ? cut.replace(/#[^\n]*/g, "") : cut.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "")).replace(/\s+/g, "");
-  return createHash("sha1").update(bare).digest("hex").slice(0, 16);
+  return createHash("sha1").update(withoutComments(cut, lang === "python" || lang === "ruby")).digest("hex").slice(0, 16);
+}
+
+// The text without its comments and blanks, in one pass: a comment's end
+// is found with indexOf from where it starts, so unclosed comments cost no
+// more than the text. Strings are not told apart: the hash only has to be
+// the same for the same text.
+function withoutComments(text: string, hashComments: boolean): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i] as string;
+    if (hashComments ? c === "#" : c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      i = end === -1 ? text.length : end;
+    } else if (!hashComments && c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 2;
+    } else {
+      if (c !== " " && c !== "\t" && c !== "\n" && c !== "\r") out += c;
+      i += 1;
+    }
+  }
+  return out;
 }
 
 class Ctx {

@@ -132,8 +132,25 @@ export function resolveTarget(g: Graph, t: Target): GraphNode[] {
   return out;
 }
 
+// An edge id: opaque, so no part of a path or a name can be read as a
+// separator, and read back with one JSON.parse, never a pattern.
 export function edgeId(e: Pick<GraphEdge, "from" | "to" | "kind">, site: GraphSite): string {
-  return `${e.kind}:${e.from}->${e.to}@${site.file}:${site.line}:${site.column}`;
+  return `e.${Buffer.from(JSON.stringify([e.kind, e.from, e.to, site.file, site.line, site.column])).toString("base64url")}`;
+}
+
+const MAX_EDGE_ID = 64 * 1024;
+
+function readEdgeId(id: string): { kind: string; from: string; to: string; file: string; line: number; column: number } | null {
+  if (!id.startsWith("e.") || id.length > MAX_EDGE_ID) return null;
+  try {
+    const v = JSON.parse(Buffer.from(id.slice(2), "base64url").toString("utf8")) as unknown;
+    if (!Array.isArray(v) || v.length !== 6) return null;
+    const [kind, from, to, file, line, column] = v as unknown[];
+    if (typeof kind !== "string" || typeof from !== "string" || typeof to !== "string" || typeof file !== "string" || !Number.isInteger(line) || !Number.isInteger(column)) return null;
+    return { kind, from, to, file, line: line as number, column: column as number };
+  } catch {
+    return null;
+  }
 }
 
 function cursorFor(s: Session, req: Request, offset: number): string {
@@ -262,12 +279,12 @@ export function query(s: Session, req: Request, extra: { changes?: { exports: Im
   }
   if (kind === "explain") {
     const id = req.target?.id ?? "";
-    const m = /^(calls|inherits|imports):(.+)->(.+)@(.+):(\d+):(\d+)$/.exec(id);
-    if (!m) return fail(s, kind, "bad-request", "explain takes an edge id as the items of callers and callees print it");
-    const [, k, from, to, file, line, column] = m as unknown as string[];
-    const edges = k === "imports" ? (g.importers.get(to as string) ?? []) : (g.out.get(from as string) ?? []);
+    const parsed = readEdgeId(id);
+    if (!parsed) return fail(s, kind, "bad-request", "explain takes an edge id as the items of callers and callees print it");
+    const { kind: k, from, to, file, line, column } = parsed;
+    const edges = k === "imports" ? (g.importers.get(to) ?? []) : (g.out.get(from) ?? []);
     const e = edges.find((x) => x.kind === k && x.from === from && x.to === to);
-    const site = e?.sites.find((x) => x.file === file && x.line === Number(line) && x.column === Number(column));
+    const site = e?.sites.find((x) => x.file === file && x.line === line && x.column === column);
     if (!e || !site) return fail(s, kind, "not-found", `no edge ${id} in this graph`);
     return { ...base, items: [{ edge: id, from: e.from, to: e.to, kind: e.kind, site, why: site.tier === "certain" ? `${site.evidence} proves it${site.via ? `: the import at ${site.via.file}:${site.via.line}` : ""}` : site.note }] };
   }

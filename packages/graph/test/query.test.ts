@@ -17,7 +17,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, symbolKey } from "../src/index.js";
-import { query } from "../src/query/engine.js";
+import { edgeId, query } from "../src/query/engine.js";
 import type { Item, Session } from "../src/query/engine.js";
 import { PACKET_DIR, writePacket } from "../src/review/packet.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
@@ -75,7 +75,7 @@ describe("the graph query", () => {
     const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
     const graph = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
     const impact = detectImpact(graph, change);
-    await writePacket({ root, repoRoot: root, graph, impact, baseSha: change.baseSha, redact: (t) => t });
+    await writePacket({ root, repoRoot: root, graph, impact, baseSha: change.baseSha, secrets: [] });
     const seed = impact.touched[0] as string;
     const packet = JSON.parse(readFileSync(join(root, PACKET_DIR, "callers", `${symbolKey(seed)}.json`), "utf8")) as { items: { site: { file: string; line: number } }[] };
     const s: Session = { graph, generation: null, treeSha: null, builtAt: null, laterEditsKnown: false };
@@ -103,7 +103,9 @@ describe("the graph query", () => {
     const why = query(s, { apiVersion: 1, kind: "explain", target: { id: edge } });
     expect(why.error).toBeNull();
     expect(why.items[0]).toMatchObject({ edge, site: { tier: "certain", evidence: "import" } });
-    expect(query(s, { apiVersion: 1, kind: "explain", target: { id: edge.replace(":3:", ":9:") } }).error?.code).toBe("not-found");
+    const item = a.items[0] as Item;
+    const elsewhere = edgeId({ kind: item.kind, from: item.from, to: item.to }, { ...item.site, line: 9 });
+    expect(query(s, { apiVersion: 1, kind: "explain", target: { id: elsewhere } }).error?.code).toBe("not-found");
   });
 
   it("returns search hits as leads, never as counted items (6)", async () => {

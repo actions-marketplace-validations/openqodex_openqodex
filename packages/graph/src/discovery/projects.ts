@@ -8,15 +8,16 @@
 // Every read is bounded (1 MB) and goes through the RepoReader, so no link
 // below the repository root is followed. Nothing here fetches or executes.
 import { posix } from "node:path";
-import { matchesGlob } from "@openqodex/core";
 import type { RepoReader } from "../safe-fs.js";
+import { globMatch } from "./glob.js";
+import { LOCKFILE_BYTES, MANIFEST_BYTES, gemfileGems, goModRequires, normalisePy, parseJsonc, pnpmLinks, pnpmPackages, pyprojectDeps, requirementsDeps, setupCfgRequires, yarnLock } from "./manifests.js";
+import type { Linkage } from "./manifests.js";
 
-export const MANIFEST_BYTES = 1024 * 1024;
+export { LOCKFILE_BYTES, MANIFEST_BYTES, normalisePy, parseJsonc, pnpmLinks, pnpmPackages };
+export type { Linkage };
 
 // Folders whose manifests are never the repository's own projects.
 const NOT_PROJECTS = new Set(["node_modules", ".git", "dist", "build", "out", ".next", ".turbo", ".cache", "coverage", "__pycache__", ".venv", "venv", "vendor", ".openqodex"]);
-
-export type Linkage = "workspace" | "published" | "unknown";
 
 export type PackageJson = {
   name: string | null;
@@ -78,31 +79,6 @@ function skipped(path: string): boolean {
   return path.split("/").some((p) => NOT_PROJECTS.has(p));
 }
 
-// JSON with comments and trailing commas, as tsconfig.json is written.
-export function parseJsonc(text: string): unknown {
-  let out = "";
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i] as string;
-    if (inString) {
-      out += c;
-      if (c === "\\") out += text[++i] ?? "";
-      else if (c === '"') inString = false;
-    } else if (c === '"') {
-      inString = true;
-      out += c;
-    } else if (c === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
-      out += "\n";
-    } else if (c === "/" && text[i + 1] === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
-      i++;
-    } else out += c;
-  }
-  return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
-}
-
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const strList = (v: unknown): string[] | null => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null);
@@ -135,38 +111,13 @@ function readPackageJson(text: string): PackageJson | null {
   };
 }
 
-// The `packages:` list of pnpm-workspace.yaml: a block list or a flow list.
-export function pnpmPackages(text: string): string[] {
-  const out: string[] = [];
-  const lines = text.split(/\r?\n/);
-  const unquote = (s: string) => s.trim().replace(/^['"]|['"]$/g, "");
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^packages\s*:\s*(.*)$/.exec(lines[i] as string);
-    if (!m) continue;
-    const rest = (m[1] ?? "").replace(/\s+#.*$/, "").trim();
-    if (rest.startsWith("[")) {
-      for (const part of rest.replace(/^\[|\]$/g, "").split(",")) if (unquote(part) !== "") out.push(unquote(part));
-      return out;
-    }
-    for (let j = i + 1; j < lines.length; j++) {
-      const line = lines[j] as string;
-      if (/^\s*(#.*)?$/.test(line)) continue;
-      const item = /^\s+-\s*(.+?)\s*(#.*)?$/.exec(line);
-      if (!item) break;
-      out.push(unquote(item[1] as string));
-    }
-    return out;
-  }
-  return out;
-}
-
 // Member folders of a workspace: every package.json folder a positive glob
 // admits and no negated glob excludes, globs relative to the declaring file.
 function membersOf(globs: string[], declaredIn: string, projects: NodeProject[]): NodeProject[] {
   const base = dirOf(declaredIn);
   const pos = globs.filter((g) => !g.startsWith("!")).map((g) => join(base, g.replace(/\/$/, "")));
   const neg = globs.filter((g) => g.startsWith("!")).map((g) => join(base, g.slice(1).replace(/\/$/, "")));
-  return projects.filter((p) => p.dir !== base && pos.some((g) => matchesGlob(p.dir, g)) && !neg.some((g) => matchesGlob(p.dir, g)));
+  return projects.filter((p) => p.dir !== base && pos.some((g) => globMatch(p.dir, g)) && !neg.some((g) => globMatch(p.dir, g)));
 }
 
 // tsconfig.json, following relative `extends` (at most five hops). A config
@@ -220,7 +171,13 @@ function readTsconfig(reader: RepoReader, file: string, known: ReadonlySet<strin
     if (out.include === null && Array.isArray(config.include)) out.include = (strList(config.include) ?? []).map((g) => join(here, g));
     if (out.exclude === null && Array.isArray(config.exclude)) out.exclude = (strList(config.exclude) ?? []).map((g) => join(here, g));
     if (at === file && Array.isArray(config.references)) {
-      for (const r of config.references) if (isObj(r) && typeof r.path === "string") out.references.push(join(here, r.path).replace(/\/tsconfig[^/]*\.json$/, ""));
+      for (const r of config.references) {
+        if (!isObj(r) || typeof r.path !== "string") continue;
+        // A reference names a folder or a tsconfig file in it.
+        const ref = join(here, r.path);
+        const last = posix.basename(ref);
+        out.references.push(last.startsWith("tsconfig") && last.endsWith(".json") ? dirOf(ref) : ref);
+      }
     }
     if (typeof config.extends !== "string" || !config.extends.startsWith(".")) break;
     const next = join(here, config.extends);
@@ -234,10 +191,10 @@ function readTsconfig(reader: RepoReader, file: string, known: ReadonlySet<strin
 // the config's folder; a folder in `include` means everything under it.
 export function tsAdmits(config: TsConfig, path: string): boolean {
   const under = (glob: string, p: string): boolean => {
-    if (matchesGlob(p, glob)) return true;
+    if (globMatch(p, glob)) return true;
     // A pattern with no wildcard in its last part names a folder (or a file).
     const last = glob.split("/").pop() ?? "";
-    if (!/[*?]/.test(last)) return glob === "" || p.startsWith(`${glob}/`) || matchesGlob(p, `${glob}/**`);
+    if (!/[*?]/.test(last)) return glob === "" || p.startsWith(`${glob}/`) || globMatch(p, `${glob}/**`);
     return false;
   };
   if (config.files?.includes(path)) return true;
@@ -245,66 +202,6 @@ export function tsAdmits(config: TsConfig, path: string): boolean {
   if (!include.some((g) => under(g, path))) return false;
   const exclude = config.exclude ?? [join(config.dir, "node_modules"), ...(config.outDir ? [config.outDir] : [])];
   return !exclude.some((g) => under(g, path));
-}
-
-function tomlArray(text: string, key: string, section: string): string[] {
-  // `key = [ "a>=1", 'b' ]` inside `[section]`, possibly over several lines.
-  const at = text.indexOf(`[${section}]`);
-  if (at === -1) return [];
-  const body = text.slice(at + section.length + 2).split(/\n\s*\[/)[0] ?? "";
-  const m = new RegExp(`(^|\\n)\\s*${key}\\s*=\\s*\\[([\\s\\S]*?)\\]`).exec(body);
-  if (!m) return [];
-  return [...(m[2] ?? "").matchAll(/["']([^"']+)["']/g)].map((x) => x[1] as string);
-}
-
-function tomlKeys(text: string, section: string): string[] {
-  const at = text.indexOf(`[${section}]`);
-  if (at === -1) return [];
-  const body = text.slice(at + section.length + 2).split(/\n\s*\[/)[0] ?? "";
-  return [...body.matchAll(/^\s*([A-Za-z0-9_.-]+)\s*=/gm)].map((x) => x[1] as string);
-}
-
-// A distribution or import name as pip compares them.
-export function normalisePy(name: string): string {
-  return name.toLowerCase().replace(/[-_.]+/g, "_");
-}
-
-function requirementName(spec: string): string | null {
-  const m = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)/.exec(spec);
-  return m ? normalisePy(m[1] as string) : null;
-}
-
-// pnpm-lock.yaml importers: for each importer folder, each dependency and
-// whether the lockfile resolved it to a workspace link or a published version.
-export function pnpmLinks(text: string): Map<string, Map<string, Linkage>> {
-  const out = new Map<string, Map<string, Linkage>>();
-  const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((l) => /^importers:\s*$/.test(l));
-  if (start === -1) return out;
-  let importer: Map<string, Linkage> | null = null;
-  let dep: string | null = null;
-  const unquote = (s: string) => s.trim().replace(/^['"]|['"]$/g, "");
-  const kind = (value: string): Linkage => (/^(link|workspace|file):/.test(unquote(value)) ? "workspace" : /^\d/.test(unquote(value)) ? "published" : "unknown");
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i] as string;
-    if (/^\S/.test(line)) break; // the next top-level section
-    const imp = /^ {2}(\S.*?):\s*$/.exec(line);
-    if (imp) {
-      const dir = unquote(imp[1] as string);
-      importer = new Map();
-      out.set(dir === "." ? "" : dir, importer);
-      dep = null;
-      continue;
-    }
-    if (!importer) continue;
-    const inline = /^ {6}(\S.*?):\s*(\S.*)$/.exec(line); // lockfile v5: name: version
-    const nested = /^ {6}(\S.*?):\s*$/.exec(line); // v6 and later: name:, then version:
-    const version = /^ {8}version:\s*(\S.*)$/.exec(line);
-    if (nested) dep = unquote(nested[1] as string);
-    else if (inline && !/^ {6}(specifier|version):/.test(line)) importer.set(unquote(inline[1] as string), kind(inline[2] as string));
-    else if (version && dep !== null) importer.set(dep, kind(version[1] as string));
-  }
-  return out;
 }
 
 function npmLock(text: string): Map<string, Linkage> {
@@ -324,40 +221,14 @@ function npmLock(text: string): Map<string, Linkage> {
   return out;
 }
 
-function yarnLock(text: string): { workspace: Set<string>; published: Set<string> } {
-  const workspace = new Set<string>();
-  const published = new Set<string>();
-  let names: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    if (/^\S/.test(line) && line.trim().endsWith(":")) {
-      names = line
-        .replace(/:$/, "")
-        .split(",")
-        .map((k) => k.trim().replace(/^"|"$/g, ""));
-      for (const k of names) {
-        const at = k.lastIndexOf("@");
-        if (at > 0 && k.slice(at + 1).startsWith("workspace:")) workspace.add(k.slice(0, at));
-      }
-      continue;
-    }
-    const r = /^\s+(resolved|resolution)[:\s]+"?([^"\s]+)/.exec(line);
-    if (r && /^(https?:|npm:)|@npm:/.test(r[2] as string)) {
-      for (const k of names) {
-        const at = k.lastIndexOf("@");
-        if (at > 0) published.add(k.slice(0, at));
-      }
-    }
-  }
-  return { workspace, published };
-}
-
 // Builds the model from every path git lists (`all`) and the reader of
 // the tree they are in.
 export function discoverProjects(all: readonly string[], reader: RepoReader): ProjectModel {
   const known = new Set(all);
-  const read = (path: string): string | null => {
+  // A manifest over its cap is not read at all.
+  const read = (path: string, max = MANIFEST_BYTES): string | null => {
     try {
-      return reader.read(path, MANIFEST_BYTES);
+      return reader.read(path, max);
     } catch {
       return null;
     }
@@ -392,36 +263,20 @@ export function discoverProjects(all: readonly string[], reader: RepoReader): Pr
     } else if (base === "pyproject.toml" || base === "setup.cfg" || base === "setup.py") {
       pyRoots.add(dirOf(path));
       const text = read(path) ?? "";
-      if (base === "pyproject.toml") {
-        for (const d of tomlArray(text, "dependencies", "project")) {
-          const n = requirementName(d);
-          if (n) model.pyDeclared.add(n);
-        }
-        for (const k of [...tomlKeys(text, "tool.poetry.dependencies"), ...tomlKeys(text, "tool.poetry.dev-dependencies")]) model.pyDeclared.add(normalisePy(k));
-      } else if (base === "setup.cfg") {
-        const m = /install_requires\s*=\s*\n((?:[ \t]+\S.*\n?)*)/.exec(text);
-        for (const line of (m?.[1] ?? "").split("\n")) {
-          const n = requirementName(line);
-          if (n) model.pyDeclared.add(n);
-        }
-      }
-    } else if (/^requirements.*\.txt$/.test(base)) {
-      for (const line of (read(path) ?? "").split(/\r?\n/)) {
-        if (/^\s*(#|-)/.test(line)) continue;
-        const n = requirementName(line);
-        if (n) model.pyDeclared.add(n);
-      }
+      if (base === "pyproject.toml") for (const n of pyprojectDeps(text)) model.pyDeclared.add(n);
+      else if (base === "setup.cfg") for (const n of setupCfgRequires(text)) model.pyDeclared.add(n);
+    } else if (base.startsWith("requirements") && base.endsWith(".txt")) {
+      for (const n of requirementsDeps(read(path) ?? "")) model.pyDeclared.add(n);
     } else if (base === "go.mod") {
-      const text = read(path) ?? "";
-      for (const m of text.matchAll(/^\s*(?:require\s+)?([A-Za-z0-9.-]+\.[A-Za-z]{2,}\/\S+)\s+v\d/gm)) model.goRequires.push(m[1] as string);
+      model.goRequires.push(...goModRequires(read(path) ?? ""));
     } else if (base === "Gemfile") {
-      for (const m of (read(path) ?? "").matchAll(/^\s*gem\s+["']([^"']+)["']/gm)) model.gems.add(m[1] as string);
+      for (const g of gemfileGems(read(path) ?? "")) model.gems.add(g);
     } else if (base === "pnpm-lock.yaml" && dirOf(path) === "") {
-      model.pnpmLinks = pnpmLinks(read(path) ?? "");
+      model.pnpmLinks = pnpmLinks(read(path, LOCKFILE_BYTES) ?? "");
     } else if (base === "package-lock.json" && dirOf(path) === "") {
-      model.npmLock = npmLock(read(path) ?? "");
+      model.npmLock = npmLock(read(path, LOCKFILE_BYTES) ?? "");
     } else if (base === "yarn.lock" && dirOf(path) === "") {
-      const y = yarnLock(read(path) ?? "");
+      const y = yarnLock(read(path, LOCKFILE_BYTES) ?? "");
       model.yarnWorkspace = y.workspace;
       model.yarnPublished = y.published;
     }
