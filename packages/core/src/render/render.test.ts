@@ -11,6 +11,8 @@
 // 8. An incomplete review renders as an ordinary SARIF run with no results,
 //    which a code scanning view reads as clean.
 // 9. The blast radius line counts a symbol the change moved as removed.
+// 10. The blast radius line says nothing when the graph could not see every
+//     call (a floor), or leaves out the public names the change removed.
 import { describe, expect, it } from "vitest";
 import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
@@ -97,15 +99,26 @@ describe("renderTerminal", () => {
     const out = renderTerminal({ ...review(), impact }, { color: false });
     expect(out).toContain("Blast radius: risk low (1 symbol touched, 1 removed, 1 moved, 0 callers in 0 files)");
   });
+
+  it("10. says when the callers are a floor and how many public names the change removed", () => {
+    const impact = emptyImpactFixture();
+    impact.risk = "high";
+    impact.touched = ["b.ts#t@1:1"];
+    impact.symbols = [{ id: "b.ts#t@1:1", file: "b.ts", name: "t", kind: "function", startLine: 1, endLine: 2, snapshot: "current" }];
+    impact.exports = [{ file: "b.ts", name: "api", change: "removed", line: 3, before: null, after: null, consumers: [], consumersTotal: 0 }];
+    impact.unknown = { ...impact.unknown, floor: true };
+    const out = renderTerminal({ ...review(), impact }, { color: false });
+    expect(out).toContain("Blast radius: risk high (1 symbol touched, 1 public name changed, 0 callers in 0 files, a floor: some calls the graph could not see)");
+  });
 });
 
 function emptyImpactFixture(): ImpactSummary {
   return {
-    version: 1,
+    version: 2,
     status: "ok",
     reasons: [],
     risk: "none",
-    build: { durationMs: 1, cacheHits: 0, eligibleFiles: 3, parsedFiles: 3, omittedFiles: 0, unresolvedSites: 0 },
+    build: { durationMs: 1, cacheHits: 0, parses: 3, eligibleFiles: 3, parsedFiles: 3, omittedFiles: 0, unresolvedSites: 0, externalSites: 0, mode: "fresh", generation: null },
     symbols: [],
     touched: [],
     removed: [],
@@ -113,7 +126,11 @@ function emptyImpactFixture(): ImpactSummary {
     callees: [],
     importers: [],
     hubs: [],
+    exports: [],
+    unknown: { floor: false, seeds: [], causes: {}, near: [], nearTotal: 0, notRead: [], notReadTotal: 0 },
+    cuts: [],
     truncated: { walk: false, inline: false, omittedSites: null },
+    packet: null,
   };
 }
 

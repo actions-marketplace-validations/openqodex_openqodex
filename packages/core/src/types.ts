@@ -214,7 +214,8 @@ export type Config = {
   includeFixtures: boolean;
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
-  graph: { enabled: boolean; budgetMs: number; maxFiles: number; maxFileBytes: number }; // the code graph in the brief; enabled by default
+  // the code graph in the brief; enabled by default. maxFiles caps new parses per build.
+  graph: { enabled: boolean; budgetMs: number; maxFiles: number; maxFileBytes: number; maxCacheMb: number; maxHeapMb: number };
 };
 
 export type LoadedConfig = {
@@ -226,7 +227,9 @@ export type LoadedConfig = {
 // ---------- code graph, as the report and the brief see it ----------
 // Serializable. The graph package builds it; the brief and the report show it.
 // Ids reference `symbols`. Counts describe what was observed, never what was
-// not seen. "ok" means the extraction finished, not that every call resolved.
+// not seen: a count that cannot be known is null, never zero. "ok" means the
+// extraction finished, not that every call resolved; `unknown` says what the
+// graph could not see.
 
 export type ImpactKind = "file" | "function" | "method" | "class" | "module" | "type";
 
@@ -238,21 +241,33 @@ export type ImpactSymbol = {
   startLine: number;
   endLine: number;
   snapshot: "base" | "current"; // "base" for a symbol that the change removed
-  // On a removed symbol the change moved: its definition now. Set only when
+  // On a removed symbol the change moved: its definition now. Set when
   // exactly one file of the change gained a definition of the same kind,
-  // owner and name (or git saw the file renamed), and no call site still
-  // reaches the old place. A move with a rename reads as removed.
-  movedTo?: { id: string; file: string; line: number };
+  // owner and name (or git saw the file renamed), or one definition with
+  // the same body under another name (`renamed`), and no call site still
+  // reaches the old place.
+  movedTo?: { id: string; file: string; line: number; renamed?: boolean };
 };
+
+// "certain": an import, a definition in the same scope or a known receiver
+// type proves the call, and every step it rests on is proved. "likely": a
+// stated convention picked the one target; `note` says which. "possible":
+// one of a set (not produced before phase 2).
+export type ImpactTier = "certain" | "likely" | "possible";
 
 export type ImpactSite = {
   file: string;
   line: number;
   column: number;
-  confidence: "high" | "low";
-  // What proved the edge: a lexical or import binding, a receiver whose type
-  // is known, or a Ruby constant found by autoload convention.
-  evidence: "binding" | "receiver-type" | "autoload";
+  tier: ImpactTier;
+  // What proved it: same-scope, import, ts-paths, workspace-package,
+  // py-root, go-module, receiver-constructor, receiver-annotation,
+  // receiver-result, receiver-field, receiver-self or autoload.
+  evidence: string;
+  // The import line that proved a binding through a module.
+  via: { file: string; line: number; spec: string | null } | null;
+  note: string | null; // why it is not certain, in one sentence
+  rule: string;
 };
 
 export type ImpactEdge = {
@@ -268,18 +283,55 @@ export type ImpactPath = {
   edges: [ImpactEdge] | [ImpactEdge, ImpactEdge];
 };
 
+// One thing the graph could not see near the change.
+export type ImpactUnknown = {
+  file: string | null;
+  line: number | null;
+  name: string | null; // the function or member name called, when there is one
+  cause: string; // no-receiver-type, ambiguous, miss, dynamic, file-not-parsed, budget, memory, ...
+  scope: "file" | "project" | "workspace";
+  note: string | null;
+  candidates: string[] | null;
+};
+
+// A cut the walk or the build made. `omitted` is null when it cannot be
+// counted (a stop at a budget cannot count what lies past it).
+export type ImpactCut = { by: string; at: string | null; omitted: number | null; exact: boolean; unit: string; note: string };
+
+// A public name a changed file exported in the base version and no longer
+// exports (`removed`), or exports bound to another definition now
+// (`retargeted`), with the consumers that reached it in the base version.
+export type ImpactExportChange = {
+  file: string;
+  name: string;
+  change: "removed" | "retargeted";
+  line: number | null; // where the base version exported it
+  before: { id: string; file: string; line: number } | null;
+  after: { id: string; file: string; line: number } | null;
+  // Each consumer the base version bound through this name, and what the
+  // same site binds to now: nothing, another definition, or the same one;
+  // "unknown" when the consumer's own file changed, so the site has no
+  // twin to compare.
+  consumers: { file: string; line: number; column: number; from: string; now: "broken" | "retargeted" | "unchanged" | "unknown" }[];
+  consumersTotal: number;
+};
+
 export type ImpactSummary = {
-  version: 1;
+  version: 2;
   status: "ok" | "partial" | "off" | "skipped" | "failed";
   reasons: string[]; // one plain line each when status is not "ok"
   risk: "none" | "low" | "medium" | "high" | null; // null when the graph did not run
   build: {
     durationMs: number;
     cacheHits: number;
+    parses: number;
     eligibleFiles: number;
-    parsedFiles: number;
-    omittedFiles: number; // over the size cap, past the budget or the file cap
-    unresolvedSites: number; // call sites no rule could bind
+    parsedFiles: number; // files in the graph
+    omittedFiles: number; // over the size cap, past the budget, the parse cap or the memory bound
+    unresolvedSites: number | null; // call sites in the repository no rule could bind; null when not counted
+    externalSites: number | null; // calls into declared dependencies and the standard library
+    mode: "fresh" | "retained" | null;
+    generation: string | null; // the build id in .openqodex/graph/, null when not saved
   };
   symbols: ImpactSymbol[];
   touched: string[]; // symbol ids whose span overlaps a changed line
@@ -288,7 +340,25 @@ export type ImpactSummary = {
   callees: ImpactPath[];
   importers: ImpactEdge[]; // files that import a changed file
   hubs: { symbol: string; callers: number; sites: number; files: number }[];
+  exports: ImpactExportChange[];
+  // What the graph could not see. `floor` is true when any listed caller
+  // count may be short: a call of the same name was not bound, a file of
+  // the project was not read, a call through a value could reach it, or a
+  // walk was cut. Per seed, with its reasons.
+  unknown: {
+    floor: boolean;
+    seeds: { seed: string; floor: boolean; reasons: string[] }[];
+    causes: Record<string, number | null>; // counts of unbound sites near the change, by cause
+    near: ImpactUnknown[]; // in the changed files and their callers' files, at most 40
+    nearTotal: number;
+    notRead: { file: string; reason: string }[]; // eligible files left out, at most 40
+    notReadTotal: number;
+  };
+  cuts: ImpactCut[];
   truncated: { walk: boolean; inline: boolean; omittedSites: number | null };
+  // The folder the reviewer opens for everything the brief leaves out,
+  // relative to the root it reads (the review snapshot); null when none was written.
+  packet: string | null;
 };
 
 // ---------- review ----------
