@@ -1,0 +1,15 @@
+{
+  "guards": "produces no net/http route, application, middleware, request link or test role from a repository package named http whose calls read exactly like the standard library's",
+  "callers": [
+    {
+      "to": "main.go#home",
+      "site": "main_test.go:11",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "go-http",
+    "apps": 0,
+    "none": ["registration", "handles", "mounts", "applies_middleware", "tests", "role"]
+  }
+}
