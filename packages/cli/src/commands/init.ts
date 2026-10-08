@@ -255,7 +255,7 @@ function printSection(actions: Action[], targets: Target[]): void {
 // The install plan, every file under the one it is for: the developer, on
 // this machine (user-scope agent files, the launcher, the git hook, which
 // lives in this clone only), or the team, in the repo to commit.
-function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: string[], targets: Target[], teamActions: Action[]): void {
+function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: string[], targets: Target[], teamActions: Action[], hookChoice: HookChoice | null): void {
   out(`OpenQodex ${s.version} install plan (${s.scope} scope):`);
   if (mine.length > 0) {
     out("For you, on this machine:");
@@ -271,9 +271,12 @@ function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: strin
     out("The review section init writes into the repo's CLAUDE.md and AGENTS.md:");
     for (const line of teamSection(s.version).split("\n")) out(`    ${line}`);
   }
-  if (s.repoRoot !== null) {
-    out(s.flags.project ? "To leave out the git pre-push hook: --hook none." : "To leave out the git pre-push hook: --hook none. To leave out the team review section: --no-repo.");
-  }
+  // The opt-outs of what this plan adds by default.
+  const optOuts = [
+    ...(hookChoice === "pre-push" ? ["To leave out the git pre-push hook: --hook none."] : []),
+    ...(teamActions.length > 0 ? ["To leave out the team review section: --no-repo."] : []),
+  ];
+  if (optOuts.length > 0) out(optOuts.join(" "));
 }
 
 // How the install step ended, beside its exit code. Only "written" and
@@ -347,7 +350,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
     }
     actions.push(...mine, ...team);
     if ([...runtimeActions].some((a) => a.failed)) {
-      printInstallPlan(s, mine, team, notes, targets, teamActions);
+      printInstallPlan(s, mine, team, notes, targets, teamActions, hookChoice);
       process.stderr.write("openqodex init: nothing was written; the launcher hooks call cannot be set up (see above)\n");
       return { code: EXIT_TOOL_FAILED, ended: "stopped" };
     }
@@ -364,7 +367,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
   if (s.flags.uninstall) {
     out("OpenQodex uninstall plan:");
     printPlan(actions, notes);
-  } else printInstallPlan(s, mine, team, notes, targets, teamActions);
+  } else printInstallPlan(s, mine, team, notes, targets, teamActions, hookChoice);
 
   if (actions.some((a) => a.failed)) failed = true;
   const work = actions.filter((a) => a.apply !== undefined);
