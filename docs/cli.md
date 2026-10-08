@@ -162,7 +162,7 @@ The daily check installs only a release that keeps the agent contract and the co
 
 Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update writes no agent file and never writes inside a repository: the user-scope skill asks the launcher for the procedure with `guide skill`, so it always matches the active version. A foreground `update`, `--rollback`, `--off` and `--on` wait up to 60 seconds while another `init`, uninstall or update runs, then exit 2 with one line. `update`, and the background check right after it switches versions, remove runtime copies older than 7 days, except the one `init` installed, the current one and the previous one.
 
-After an update the next command prints one line on stderr: `openqodex updated to X (was Y). Roll back: openqodex update --rollback`. The agent push hook does not print it.
+After an update the next command prints on stderr, once: `openqodex updated to X (was Y). Roll back: openqodex update --rollback`. Below it come the notices of every release after Y up to X, one line each: a release has one only when it changes what leaves your machine, what blocks a push or who reviews. Last, when files OpenQodex wrote for your agents are from an older version, it says how many and that `<launcher> init` refreshes them; init keeps every file you edited. The agent push hook does not print any of it. `update --status` and `doctor` print the notices of the last update and that count (`agent files`).
 
 ## Environment variables
 

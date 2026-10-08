@@ -6,12 +6,15 @@
 //   --off/--on  turn the daily check off or on (~/.openqodex/config.yaml)
 //   --status    print the update state
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { staleOwnedFiles } from "../agents/stale.js";
+import { compareVersions, noticesBetween } from "../notices.js";
 import { contractOf } from "../contract.js";
 import { withBoundary } from "../agents/lock.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { pruneHomeReceipts } from "../receipts.js";
-import { activeVersion, launcherStarted, openqodexHomeDir, pruneRuntimes, readActive, runtimeBin, writeActive } from "../launcher.js";
+import { activeVersion, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, pruneRuntimes, readActive, runtimeBin, writeActive } from "../launcher.js";
 import { pinnedNote } from "../update/trigger.js";
 import { readState, setUserKeys, setUserUpdate, skipVersion, updatesAllowed, userConfigPath } from "../update/state.js";
 
@@ -55,6 +58,17 @@ export function statusLines(home: string): string[] {
   if (state.held !== null) lines.push(`waiting      ${state.held.version} changes ${state.held.change}; openqodex update installs it`);
   const skip = skipVersion(home);
   if (skip !== null) lines.push(`skipped      ${skip} and every older release (skip_version in ${userConfigPath(home)})`);
+  // The release notices of the last update: after the previous version, up to the current one.
+  const active = readActive(home);
+  if (active.current !== null && active.previous !== null && compareVersions(active.previous, active.current) < 0) {
+    for (const n of noticesBetween(active.previous, active.current)) lines.push(`notice       ${n.version}: ${n.text}`);
+  }
+  // The files OpenQodex wrote that init would refresh, for a launcher install.
+  if (existsSync(launcherPath(home))) {
+    const n = staleOwnedFiles(homedir(), home).length;
+    const runner = launcherRunner(launcherPath(home));
+    lines.push(`agent files  ${n === 0 ? "up to date" : `${n} OpenQodex wrote ${n === 1 ? "is" : "are"} from an older version; run ${runner} init to refresh them`}`);
+  }
   if (!launched) {
     const note = pinnedNote(state, __OPENQODEX_VERSION__);
     if (note !== null) lines.push(`note         ${note}`);
