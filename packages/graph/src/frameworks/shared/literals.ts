@@ -41,7 +41,9 @@ export function pyString(node: Node | null | undefined): Lit {
   if (node.type !== "string") return DYNAMIC;
   if (node.namedChildren.some((c) => c.type === "interpolation")) return DYNAMIC;
   const start = node.namedChildren.find((c) => c.type === "string_start")?.text ?? '"';
-  const prefix = start.replace(/['"]+$/, "").toLowerCase();
+  let cut = start.length;
+  while (cut > 0 && (start[cut - 1] === '"' || start[cut - 1] === "'")) cut--;
+  const prefix = start.slice(0, cut).toLowerCase();
   const raw = prefix.includes("r");
   let out = "";
   for (const c of node.namedChildren) {

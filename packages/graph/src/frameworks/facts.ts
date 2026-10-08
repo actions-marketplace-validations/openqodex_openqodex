@@ -4,14 +4,24 @@
 import type { Node } from "web-tree-sitter";
 import type { Lang } from "../types.js";
 import { MAX_FACTS_PER_FILE } from "./plugin.js";
+
 import type { FrameworkFactBase, FrameworkFileFacts, FrameworkPlugin } from "./plugin.js";
 import { PLUGINS } from "./registry.js";
 
+// The largest source a plugin reads. A larger file keeps no plugin facts and
+// is reported as not read by the plugins, whatever the build's own size cap.
+export const MAX_PLUGIN_SOURCE_BYTES = 1024 * 1024;
+
 export function frameworkFacts(root: Node, lang: Lang, source: string, plugins: readonly FrameworkPlugin[] = PLUGINS): FrameworkFileFacts | undefined {
   let out: FrameworkFileFacts | undefined;
+  const tooBig = Buffer.byteLength(source, "utf8") > MAX_PLUGIN_SOURCE_BYTES;
   for (const p of plugins) {
     if (!p.languages.includes(lang)) continue;
     let list: FrameworkFactBase[];
+    if (tooBig) {
+      (out ??= {})[p.id] = [{ kind: "error", line: 1, column: 0, note: `over the ${MAX_PLUGIN_SOURCE_BYTES} bytes a framework plugin reads` } as FrameworkFactBase];
+      continue;
+    }
     try {
       if (!p.wants(source, lang)) continue;
       list = p.facts(root, lang);

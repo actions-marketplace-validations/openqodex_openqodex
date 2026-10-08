@@ -18,10 +18,21 @@ import { isDynamic } from "../shared/literals.js";
 import type { Lit } from "../shared/literals.js";
 import { HTTP_METHODS } from "./facts.js";
 import type { DjangoFact, Ref } from "./facts.js";
+import { MAX_REQUEST, joinTokens, matchTokens, requestPath, routePart } from "./routes.js";
+import type { Budget, Part, Tok } from "./routes.js";
 
 export const PLUGIN = "django";
 export const MAX_INCLUDE_DEPTH = 8;
 export const MAX_FAN_OUT = 32;
+// Registrations one application may hold: includes multiply (a module
+// included 400 times that includes another 400 times), so the walk stops
+// here and says so.
+export const MAX_REGISTRATIONS_PER_APP = 10_000;
+// URL entries the walk may visit for one application, and matcher steps a
+// whole resolve may spend on test requests. Past either, the work stops
+// with a gap of cause "budget".
+export const MAX_WALK_STEPS = 200_000;
+export const MAX_MATCH_STEPS = 2_000_000;
 
 type Index = PluginIndex<DjangoFact>;
 type Of<K extends DjangoFact["kind"]> = Extract<DjangoFact, { kind: K }>;
@@ -52,10 +63,37 @@ const VIEWSET_ACTIONS: [string, string, string][] = [
   ["destroy", "DELETE", "detail"],
 ];
 
-export const TEST_PATH = /(^|\/)(tests?\.py|test_[^/]*\.py|[^/]*_tests?\.py|conftest\.py)$|(^|\/)tests?\/[^/]+\.py$/;
-const TEMPLATE_PATH = /(^|\/)templates\/(.+)$/;
-const MIGRATION_PATH = /(^|\/)migrations\/[^/]+\.py$/;
-const COMMAND_PATH = /(^|\/)management\/commands\/([^/_][^/]*)\.py$/;
+// Path conventions, read with string operations on the path's parts.
+const parts = (file: string) => file.split("/");
+
+export function isTestPath(file: string): boolean {
+  const p = parts(file);
+  const base = p[p.length - 1] as string;
+  const dir = p[p.length - 2];
+  if (!base.endsWith(".py")) return false;
+  return base === "tests.py" || base === "test.py" || base === "conftest.py" || base.startsWith("test_") || base.endsWith("_test.py") || base.endsWith("_tests.py") || dir === "tests" || dir === "test";
+}
+
+function isMigrationPath(file: string): boolean {
+  const p = parts(file);
+  return p.length >= 2 && p[p.length - 2] === "migrations" && (p[p.length - 1] as string).endsWith(".py");
+}
+
+// The command name of a file under management/commands/, or null.
+function commandName(file: string): string | null {
+  const p = parts(file);
+  const base = p[p.length - 1] as string;
+  if (p.length < 3 || p[p.length - 2] !== "commands" || p[p.length - 3] !== "management" || !base.endsWith(".py") || base.startsWith("_")) return null;
+  return base.slice(0, -3);
+}
+
+// The names a template file answers to: the path after each `templates/` folder in it.
+function templateNames(file: string): string[] {
+  const out: string[] = [];
+  const p = parts(file);
+  for (let i = 0; i < p.length - 1; i++) if (p[i] === "templates") out.push(p.slice(i + 1).join("/"));
+  return out;
+}
 
 export const RULES = {
   urls: { id: "django-urlpatterns", version: 1 },
@@ -79,53 +117,34 @@ type Rule = (typeof RULES)[keyof typeof RULES];
 // import of the file (`path` from `from django.urls import path` is
 // "django.urls.path"); null when the head is defined in the file, bound by
 // nothing, or by a relative import.
-export function canonical(index: Index, file: string, ref: Ref): string | null {
+// Per file: the top-level names it defines, and what each imported head stands for.
+type Heads = { defined: Set<string>; imported: Map<string, string> };
+const headCache = new WeakMap<Index, Map<string, Heads | null>>();
+
+function headsOf(index: Index, file: string): Heads | null {
+  let byFile = headCache.get(index);
+  if (!byFile) headCache.set(index, (byFile = new Map()));
+  if (byFile.has(file)) return byFile.get(file) ?? null;
   const facts = index.languageFacts(file);
+  let heads: Heads | null = null;
+  if (facts) {
+    heads = { defined: new Set(facts.defs.filter((d) => d.topLevel).map((d) => d.name)), imported: new Map() };
+    for (const imp of facts.imports) {
+      if (imp.scoped || imp.reexport || imp.spec.startsWith(".")) continue;
+      for (const n of imp.names) heads.imported.set(n.local, `${imp.spec}.${n.imported}`);
+      if (imp.namespace !== null) heads.imported.set(imp.namespace, imp.alias ? imp.spec : imp.namespace);
+    }
+  }
+  byFile.set(file, heads);
+  return heads;
+}
+
+export function canonical(index: Index, file: string, ref: Ref): string | null {
+  const heads = headsOf(index, file);
   const [head, ...rest] = ref;
-  if (!facts || head === undefined) return null;
-  if (facts.defs.some((d) => d.topLevel && d.name === head)) return null;
-  let found: string | null = null;
-  for (const imp of facts.imports) {
-    if (imp.scoped || imp.reexport || imp.spec.startsWith(".")) continue;
-    for (const n of imp.names) if (n.local === head) found = [imp.spec, n.imported, ...rest].join(".");
-    if (imp.namespace === head) found = [imp.alias ? imp.spec : head, ...rest].join(".");
-  }
-  return found;
-}
-
-// ---------- URL patterns ----------
-
-type Part = { text: string; regex: string };
-
-const CONVERTERS: Record<string, string> = { int: "[0-9]+", str: "[^/]+", slug: "[-a-zA-Z0-9_]+", uuid: "[0-9a-fA-F-]{36}", path: ".+" };
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// One route argument: `path()` syntax with converters, or a `re_path()` regex.
-export function routePart(route: string, regex: boolean): Part {
-  if (regex) {
-    const body = route.replace(/^\^/, "").replace(/\$$/, "");
-    return { text: body, regex: body };
-  }
-  let re = "";
-  let last = 0;
-  for (const m of route.matchAll(/<(?:([a-zA-Z_][a-zA-Z0-9_]*):)?([a-zA-Z_][a-zA-Z0-9_]*)>/g)) {
-    re += escapeRe(route.slice(last, m.index)) + `(${CONVERTERS[m[1] ?? "str"] ?? "[^/]+"})`;
-    last = (m.index ?? 0) + m[0].length;
-  }
-  re += escapeRe(route.slice(last));
-  return { text: route, regex: re };
-}
-
-export function matchesPath(parts: Part[], requestPath: string): boolean {
-  const path = requestPath.replace(/^https?:\/\/[^/]+/, "").replace(/[?#].*$/, "").replace(/^\//, "");
-  try {
-    return new RegExp(`^${parts.map((p) => p.regex).join("")}$`).test(path);
-  } catch {
-    return false;
-  }
+  if (!heads || head === undefined || heads.defined.has(head)) return null;
+  const base = heads.imported.get(head);
+  return base === undefined ? null : [base, ...rest].join(".");
 }
 
 // ---------- the plugin's resolve state ----------
@@ -138,6 +157,7 @@ class Out {
   private entityIds = new Set<string>();
   private roleKeys = new Set<string>();
   private edgeKeys = new Set<string>();
+  private gapKeys = new Set<string>();
 
   entity(e: Entity): string {
     if (!this.entityIds.has(e.id)) {
@@ -159,6 +179,10 @@ class Out {
     this.edges.push(e);
   }
   gap(u: Omit<FrameworkUnknown, "plugin" | "count" | "exact"> & { count?: number | null; exact?: boolean }): void {
+    // A module included many times reports each of its gaps once per scope.
+    const k = `${u.site ? `${u.site.file}:${u.site.line}:${u.site.column}` : ""}\0${JSON.stringify(u.scope)}\0${u.cause}\0${u.note}`;
+    if (this.gapKeys.has(k)) return;
+    this.gapKeys.add(k);
     this.unknowns.push({ plugin: PLUGIN, count: null, exact: false, ...u });
   }
 }
@@ -170,18 +194,42 @@ function ev(kind: FrameworkEvidenceKind, tier: Tier, site: Site, rule: Rule, not
 const siteOf = (file: string, f: { line: number; column: number }): Site => ({ file, line: f.line, column: f.column });
 const show = (ref: Ref) => ref.join(".");
 
+// Symbols of a file by what they are, built once per file.
+type FileSymbols = { classes: Map<string, GraphNode>; functions: Map<string, GraphNode[]>; methods: Map<string, GraphNode[]> };
+const symbolCache = new WeakMap<Index, Map<string, FileSymbols>>();
+
+function symbolsOf(index: Index, file: string): FileSymbols {
+  let byFile = symbolCache.get(index);
+  if (!byFile) symbolCache.set(index, (byFile = new Map()));
+  let fs = byFile.get(file);
+  if (fs) return fs;
+  fs = { classes: new Map(), functions: new Map(), methods: new Map() };
+  for (const s of index.symbols(file)) {
+    const local = s.id.slice(s.id.indexOf("#") + 1, s.id.lastIndexOf("@"));
+    if (s.kind === "class" && local === s.name && !fs.classes.has(s.name)) fs.classes.set(s.name, s);
+    else if (s.kind === "function" && local === s.name) (fs.functions.get(s.name) ?? fs.functions.set(s.name, []).get(s.name))?.push(s);
+    else if (s.kind === "method") {
+      const owner = local.slice(0, local.length - s.name.length - 1);
+      if (owner !== "" && !owner.includes(".")) (fs.methods.get(owner) ?? fs.methods.set(owner, []).get(owner))?.push(s);
+    }
+  }
+  byFile.set(file, fs);
+  return fs;
+}
+
 function methodsOf(index: Index, cls: GraphNode): GraphNode[] {
-  const prefix = `${cls.file}#${cls.name}.`;
-  return index.symbols(cls.file).filter((s) => s.kind === "method" && s.id.startsWith(prefix) && !s.id.slice(prefix.length).includes("."));
+  return symbolsOf(index, cls.file).methods.get(cls.name) ?? [];
 }
 
 function classIn(index: Index, file: string, name: string): GraphNode | null {
-  return index.symbols(file).find((s) => s.kind === "class" && s.name === name && s.id.startsWith(`${file}#${name}@`)) ?? null;
+  return symbolsOf(index, file).classes.get(name) ?? null;
 }
 
 function functionIn(index: Index, file: string, name: string, near: number): GraphNode | null {
-  const hits = index.symbols(file).filter((s) => s.kind === "function" && s.name === name && s.id.startsWith(`${file}#${name}@`));
-  return hits.sort((a, b) => Math.abs(a.startLine - near) - Math.abs(b.startLine - near))[0] ?? null;
+  const hits = symbolsOf(index, file).functions.get(name) ?? [];
+  let best: GraphNode | null = null;
+  for (const h of hits) if (!best || Math.abs(h.startLine - near) < Math.abs(best.startLine - near)) best = h;
+  return best;
 }
 
 // The dotted name of a module file relative to its project ("mysite/settings.py" is "mysite.settings").
@@ -234,11 +282,24 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     return list.length === 1 ? (list[0] as Detection).id : null;
   };
   const enabled = (file: string) => index.declares(index.projectOf(file), "python", "django");
-  const factsOf = <K extends DjangoFact["kind"]>(file: string, kind: K): Of<K>[] => index.factsOf(file).filter((f): f is Of<K> => f.kind === kind);
+  // Facts of a file by kind, sorted once per file.
+  const byKind = new Map<string, Map<string, DjangoFact[]>>();
+  const factsOf = <K extends DjangoFact["kind"]>(file: string, kind: K): Of<K>[] => {
+    let kinds = byKind.get(file);
+    if (!kinds) {
+      kinds = new Map();
+      for (const f of index.factsOf(file)) (kinds.get(f.kind) ?? kinds.set(f.kind, []).get(f.kind))?.push(f);
+      byKind.set(file, kinds);
+    }
+    return (kinds.get(kind) ?? []) as Of<K>[];
+  };
 
-  // Registrations with the regex of their composed path, for test requests.
-  const regexes = new Map<string, Part[]>();
+  // Registrations with the tokens of their composed path, for test requests.
+  const patterns = new Map<string, Tok[] | null>();
   const visited = new Set<string>(); // urls modules some application reached
+  const perApp = new Map<string, number>(); // registrations per application
+  const walkSteps = new Map<string, number>(); // URL entries visited per application
+  const capped = (app: string | null) => (perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP || (walkSteps.get(app ?? "-") ?? 0) >= MAX_WALK_STEPS;
 
   // ---------- views ----------
   const bindHandler = (reg: Registration, file: string, entry: Of<"url"> | Of<"register">, ref: Ref, asView: boolean, rule: Rule): void => {
@@ -284,8 +345,14 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     out.gap({ site, scope, affects: ["handles"], cause: "miss", name: show(ref), note: `the view ${show(ref)} is not bound by a definition or an import of this file` });
   };
 
-  const newRegistration = (app: string | null, file: string, f: { line: number; column: number }, parts: Part[] | null, written: string | null, name: string | null, via: Site[], key: string, methods: string[] = ["*"]): Registration => {
+  const newRegistration = (app: string | null, file: string, f: { line: number; column: number }, parts: Part[] | null, written: string | null, name: string | null, via: Site[], key: string, methods: string[] = ["*"]): Registration | null => {
     const site = siteOf(file, f);
+    const count = perApp.get(app ?? "-") ?? 0;
+    if (count >= MAX_REGISTRATIONS_PER_APP) {
+      out.gap({ site: null, scope: app ? { app } : { project: index.projectOf(file) }, affects: ["handles", "mounts"], cause: "fan-out-capped", name: null, note: `the application has more than ${MAX_REGISTRATIONS_PER_APP} route registrations; the rest are not listed`, count: null, exact: false });
+      return null;
+    }
+    perApp.set(app ?? "-", count + 1);
     const reg: Registration = {
       kind: "registration",
       id: entityId(PLUGIN, app, "registration", `${file}:${f.line}:${f.column}${key}${via.map((v) => `<${v.file}:${v.line}`).join("")}`),
@@ -301,7 +368,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       handler: { written: "", status: "unresolved", targets: [] },
     };
     out.entity(reg);
-    if (parts) regexes.set(reg.id, parts);
+    patterns.set(reg.id, parts ? joinTokens(parts) : null);
     return reg;
   };
 
@@ -323,6 +390,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         const parts = prefix ? [...prefix, routePart(suffix, false)] : null;
         const methods = [...new Set(VIEWSET_ACTIONS.filter(([, , s]) => s === shape).map(([, m]) => m))];
         const r = newRegistration(app, file, reg, parts, suffix, [...namespaces, `${base}-${shape}`].join(":"), via, `:${shape}`, methods);
+        if (!r) return true;
         if (reg.view) bindHandler(r, file, reg, reg.view, false, RULES.drf);
         else {
           r.handler.status = "dynamic";
@@ -336,6 +404,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   // ---------- the URL walk ----------
   const walk = (app: string | null, file: string, list: string, parent: number, prefix: Part[] | null, via: Site[], namespaces: string[], depth: number, stack: string[]) => {
     const scope = app ? { app } : { file };
+    if (capped(app)) return;
     const all = index.factsOf(file);
     if (parent === -1 && list === "urlpatterns") {
       visited.add(file);
@@ -346,6 +415,13 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     all.forEach((f, i) => {
       if (f.kind !== "url" || f.list !== list || f.parent !== parent) return;
       const site = siteOf(file, f);
+      const steps = (walkSteps.get(app ?? "-") ?? 0) + 1;
+      walkSteps.set(app ?? "-", steps);
+      if (steps > MAX_WALK_STEPS) {
+        out.gap({ site: null, scope, affects: ["handles", "mounts"], cause: "budget", name: null, note: `the URL walk visited ${MAX_WALK_STEPS} entries for this application and stopped`, count: null, exact: false });
+        return;
+      }
+      if ((perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP) return;
       const fn = canonical(index, file, f.fn);
       if (!fn || !URL_FUNCTIONS.has(fn)) {
         if (app !== null) out.gap({ site, scope, affects: ["handles", "mounts"], cause: "unsupported-rule", name: show(f.fn), note: `${show(f.fn)} is not Django's path, re_path or url, so the graph does not read this entry` });
@@ -408,6 +484,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       }
       const name = typeof f.name === "string" ? [...namespaces, f.name].join(":") : null;
       const reg = newRegistration(app, file, f, parts, written, name, via, "");
+      if (!reg) return;
       if (v.t === "ref" || v.t === "as_view") bindHandler(reg, file, f, v.ref, v.t === "as_view", RULES.urls);
       else {
         reg.handler.status = "dynamic";
@@ -445,14 +522,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
 
   // ---------- templates ----------
   const templates = new Map<string, string[]>(); // a template name to the files that hold it
-  for (const p of index.paths()) {
-    let rest = p;
-    for (let m = TEMPLATE_PATH.exec(rest); m; m = TEMPLATE_PATH.exec(rest)) {
-      const name = m[2] as string;
-      (templates.get(name) ?? templates.set(name, []).get(name))?.push(p);
-      rest = name;
-    }
-  }
+  for (const p of index.paths()) for (const name of templateNames(p)) (templates.get(name) ?? templates.set(name, []).get(name))?.push(p);
   const renders = (file: string, from: string, at: { line: number; column: number }, template: Lit, rule: Rule) => {
     const site = siteOf(file, at);
     const app = appOf(file);
@@ -579,7 +649,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
 
   // ---------- migrations ----------
   for (const file of index.factFiles()) {
-    if (!MIGRATION_PATH.test(file) || !enabled(file)) continue;
+    if (!isMigrationPath(file) || !enabled(file)) continue;
     const facts = index.languageFacts(file);
     const ops = factsOf(file, "mig_op");
     const cls = facts?.defs.find((d) => d.kind === "class" && d.bases.some((b) => canonical(index, file, [...(b.qualifier ? b.qualifier.split(".") : []), b.name]) === "django.db.migrations.Migration"));
@@ -607,8 +677,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
 
   // ---------- management commands ----------
   for (const file of index.paths()) {
-    const m = COMMAND_PATH.exec(file);
-    if (!m || !enabled(file)) continue;
+    const command = commandName(file);
+    if (!command || !enabled(file)) continue;
     const cls = classIn(index, file, "Command");
     if (!cls) continue;
     const facts = index.languageFacts(file);
@@ -617,7 +687,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const app = appOf(file);
     const site: Site = { file, line: cls.startLine, column: 0 };
     const e = ev("role-path", bound ? "certain" : "likely", site, RULES.commands, bound ? null : "a class named Command under management/commands, whose base is not Django's BaseCommand by import");
-    const id = out.entity({ kind: "command", id: entityId(PLUGIN, app, "command", m[2] as string), plugin: PLUGIN, app, name: m[2] as string, site, file, detail: "management" });
+    const id = out.entity({ kind: "command", id: entityId(PLUGIN, app, "command", command), plugin: PLUGIN, app, name: command, site, file, detail: "management" });
     out.role(cls.id, "command", "management", app, e);
     const handle = methodsOf(index, cls).find((x) => x.name === "handle");
     if (handle) out.edge({ from: id, to: handle.id, kind: "runs", plugin: PLUGIN, app, evidence: e });
@@ -728,8 +798,19 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
 
   // ---------- tests ----------
   const registrations = out.entities.filter((e): e is Registration => e.kind === "registration");
+  // Mounted registrations by project, and by route name, for test links.
+  const appProject = new Map(apps.map((a) => [a.id, a.project]));
+  const byProject = new Map<string, Registration[]>();
+  const byName = new Map<string, Registration[]>();
+  for (const r of registrations) {
+    if (r.app === null) continue;
+    const p = appProject.get(r.app) ?? "";
+    (byProject.get(p) ?? byProject.set(p, []).get(p))?.push(r);
+    if (r.name !== null) (byName.get(`${p}\0${r.name}`) ?? byName.set(`${p}\0${r.name}`, []).get(`${p}\0${r.name}`))?.push(r);
+  }
+  const budget: Budget = { steps: MAX_MATCH_STEPS };
   for (const file of index.factFiles()) {
-    if (!TEST_PATH.test(file) || !enabled(file)) continue;
+    if (!isTestPath(file) || !enabled(file)) continue;
     const app = appOf(file);
     const site: Site = { file, line: 1, column: 0 };
     out.role(file, "test", "file", app, ev("role-path", "certain", site, RULES.tests, null));
@@ -741,7 +822,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       else if ((d.kind === "function" || d.kind === "method") && d.name.startsWith("test")) out.role(node.id, "test", d.kind, app, ev("role-path", "certain", { file, line: d.line, column: d.column }, RULES.tests, null));
     }
     const project = index.projectOf(file);
-    const reachable = registrations.filter((r) => r.app !== null && (apps.find((a) => a.id === r.app)?.project ?? null) === project);
+    const reachable = byProject.get(project) ?? [];
     for (const c of factsOf(file, "client")) {
       const csite = siteOf(file, c);
       const from = index.enclosing(file, c.line)?.id ?? file;
@@ -751,7 +832,29 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       }
       if (c.path === null) continue; // a path from reverse() is linked by its name below
       const method = c.method.toUpperCase();
-      const hits = reachable.filter((r) => (r.methods.includes("*") || r.methods.includes(method)) && matchesPath(regexes.get(r.id) ?? [], c.path as string));
+      const path = requestPath(c.path);
+      if (path === null) {
+        out.gap({ site: csite, scope: { file }, affects: ["tests"], cause: "budget", name: null, note: `the request path is longer than ${MAX_REQUEST} characters and is not matched against routes` });
+        continue;
+      }
+      if (budget.steps <= 0) {
+        out.gap({ site: null, scope: { file }, affects: ["tests"], cause: "budget", name: null, note: "the matcher's step budget ran out; later test requests are not linked to routes" });
+        break;
+      }
+      const hits: Registration[] = [];
+      let unmatchable = 0;
+      for (const r of reachable) {
+        if (!r.methods.includes("*") && !r.methods.includes(method)) continue;
+        const toks = patterns.get(r.id);
+        if (!toks) {
+          unmatchable++;
+          continue;
+        }
+        const m = matchTokens(toks, path, budget);
+        if (m === "budget") break;
+        if (m) hits.push(r);
+      }
+      if (hits.length === 0 && unmatchable > 0) out.gap({ site: csite, scope: { file }, affects: ["tests"], cause: "unsupported-rule", name: null, note: `${unmatchable} routes of this project use a regex the graph does not match requests against` });
       for (const r of hits.slice(0, MAX_FAN_OUT)) {
         const tier: Tier = hits.length === 1 ? "likely" : "possible";
         out.edge({ from, to: r.id, kind: "tests", plugin: PLUGIN, app: r.app, category: "route-request", evidence: ev("test-route-request", tier, csite, RULES.tests, hits.length === 1 ? `the test requests ${c.path}, which matches this route's pattern` : `the test requests ${c.path}, which ${hits.length} route patterns match`, null, [r.id]) });
@@ -766,7 +869,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       }
       if (rv.name === null) continue;
       const from = index.enclosing(file, rv.line)?.id ?? file;
-      const hits = reachable.filter((r) => r.name === rv.name);
+      const hits = byName.get(`${project}\0${rv.name}`) ?? [];
       for (const r of hits.slice(0, MAX_FAN_OUT)) out.edge({ from, to: r.id, kind: "tests", plugin: PLUGIN, app: r.app, category: "route-name", evidence: ev("test-route-name", hits.length === 1 ? "likely" : "possible", rsite, RULES.tests, `the test names the route ${rv.name}`, null, [r.id]) });
     }
   }

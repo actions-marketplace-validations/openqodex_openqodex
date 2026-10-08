@@ -18,6 +18,42 @@ import { deriveTestCalls } from "./shared/tests.js";
 
 export const FRAMEWORK_DATA_VERSION = 1;
 
+// The most entities and edges one plugin keeps per application (null: the
+// registrations no application reaches). Past either cap the rest are left
+// out and one unknown with cause "fan-out-capped" says how many.
+export const MAX_ENTITIES_PER_APP = 20_000;
+export const MAX_EDGES_PER_APP = 100_000;
+
+// Applies the caps to one plugin's output, in the order the plugin emitted it.
+function capPerApp(plugin: string, entities: Entity[], edges: FrameworkEdge[], unknowns: FrameworkUnknown[]): { entities: Entity[]; edges: FrameworkEdge[] } {
+  const count = new Map<string, number>();
+  const droppedIds = new Set<string>();
+  const droppedPerApp = new Map<string, number>();
+  const keptEntities = entities.filter((e) => {
+    const k = e.app ?? "-";
+    const n = (count.get(k) ?? 0) + 1;
+    count.set(k, n);
+    if (n <= MAX_ENTITIES_PER_APP) return true;
+    droppedIds.add(e.id);
+    droppedPerApp.set(k, (droppedPerApp.get(k) ?? 0) + 1);
+    return false;
+  });
+  const edgeCount = new Map<string, number>();
+  const droppedEdges = new Map<string, number>();
+  const keptEdges = edges.filter((e) => {
+    if (droppedIds.has(e.from) || droppedIds.has(e.to)) return false;
+    const k = e.app ?? "-";
+    const n = (edgeCount.get(k) ?? 0) + 1;
+    edgeCount.set(k, n);
+    if (n <= MAX_EDGES_PER_APP) return true;
+    droppedEdges.set(k, (droppedEdges.get(k) ?? 0) + 1);
+    return false;
+  });
+  for (const [k, n] of droppedPerApp) unknowns.push({ plugin, site: null, scope: k === "-" ? { project: "" } : { app: k }, affects: ["handles", "renders", "tests"], cause: "fan-out-capped", name: null, note: `${n} entities past the ${MAX_ENTITIES_PER_APP} kept for one application were left out`, count: n, exact: true });
+  for (const [k, n] of droppedEdges) unknowns.push({ plugin, site: null, scope: k === "-" ? { project: "" } : { app: k }, affects: ["handles", "renders", "tests"], cause: "fan-out-capped", name: null, note: `${n} edges past the ${MAX_EDGES_PER_APP} kept for one application were left out`, count: n, exact: true });
+  return { entities: keptEntities, edges: keptEdges };
+}
+
 export type PluginRun = {
   id: string;
   version: number;
@@ -82,7 +118,8 @@ function makeIndex(input: StageInput, out: Map<string, GraphEdge[]>, plugin: Fra
     let invalid = 0;
     for (const fact of list) {
       if (fact.kind === "error") {
-        dropped.push({ plugin: plugin.id, site: { file: f.path, line: 1, column: 0 }, scope: { file: f.path }, affects: [], cause: "file-not-parsed", name: null, note: `the ${plugin.id} plugin could not read this file`, count: null, exact: false });
+        const why = (fact as FrameworkFactBase & { note?: unknown }).note;
+        dropped.push({ plugin: plugin.id, site: { file: f.path, line: 1, column: 0 }, scope: { file: f.path }, affects: [], cause: "file-not-parsed", name: null, note: `the ${plugin.id} plugin could not read this file${typeof why === "string" ? `: ${why.slice(0, 200)}` : ""}`, count: null, exact: false });
         continue;
       }
       if (fact.kind === "overflow") {
@@ -163,14 +200,15 @@ export function runFrameworks(input: StageInput): FrameworkData {
           return false;
         });
       const roles = keep(result.roles);
-      const edges = keep(result.edges);
-      edges.push(...deriveTestCalls(plugin.id, roles, index));
-      if (apps.length === 0 && roles.length === 0 && result.entities.length === 0 && edges.length === 0) run.status = "not-detected";
+      const unknowns = [...dropped, ...result.unknowns];
+      const capped = capPerApp(plugin.id, result.entities, [...keep(result.edges), ...deriveTestCalls(plugin.id, roles, index)], unknowns);
+      const edges = capped.edges;
+      if (apps.length === 0 && roles.length === 0 && capped.entities.length === 0 && edges.length === 0) run.status = "not-detected";
       data.apps.push(...apps.map((a) => ({ ...a, plugin: plugin.id })));
       data.roles.push(...roles.map((r) => ({ ...r, plugin: plugin.id })));
-      data.entities.push(...result.entities);
+      data.entities.push(...capped.entities);
       data.edges.push(...edges);
-      data.unknowns.push(...dropped, ...result.unknowns);
+      data.unknowns.push(...unknowns);
       if (run.invalid > 0) run.reason = `${run.invalid} evidence records failed the check and were left out`;
     } catch (error) {
       // A plugin that fails contributes nothing to this build.
