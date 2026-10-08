@@ -17,11 +17,12 @@
 // own gets no receipt.
 //
 // The repo id is the sha256 of the repository's real root path. Folders are
-// 0700 and real (never a link), files 0600, written to a fresh temporary
-// file and renamed into place. A file that is a link, too large, or not a
-// receipt reads as no record.
-import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+// made 0700, files 0600, each written through the home guard
+// (guarded-fs.ts): a temporary file renamed into place, in a folder that
+// lies, by identity, under OpenQodex's home. A file that is a link, too
+// large, or not a receipt reads as no record.
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { GateReceipt } from "@openqodex/core";
 import { homeGuard, type Guard } from "./agents/guarded-fs.js";
@@ -61,25 +62,13 @@ export function homeReceiptPath(home: string, repoRoot: string, changeId: string
   return join(receiptsDir(home), repoId(repoRoot), `${changeId}.json`);
 }
 
-// A real folder made 0700, or an error: never written through a link.
-function realFolder(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  const st = lstatSync(path);
-  if (!st.isDirectory() || st.isSymbolicLink()) throw new Error(`${path} is not a real folder`);
-}
-
-// Each named file written 0600 into <home>/<kind>/<repo id>/.
+// Each named file written 0600 into <home>/<kind>/<repo id>/. A folder on
+// the way that is a link, or leads outside OpenQodex's home, is refused.
 function writeRecord(home: string, kind: string, repoRoot: string, names: string[], value: unknown): void {
-  realFolder(home);
-  realFolder(join(home, kind));
+  const guard = homeGuard(home);
   const dir = join(home, kind, repoId(repoRoot));
-  realFolder(dir);
   const text = `${JSON.stringify(value, null, 2)}\n`;
-  for (const name of names) {
-    const tmp = join(dir, `.${name}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-    writeFileSync(tmp, text, { flag: "wx", mode: 0o600 });
-    renameSync(tmp, join(dir, name));
-  }
+  for (const name of names) guard.write(join(dir, name), text, { mode: 0o600, setMode: true, folderMode: 0o700 });
 }
 
 // The parsed file, or null when it is not a regular file within the cap.

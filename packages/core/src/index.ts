@@ -14,4 +14,5 @@ export * from "./push-gate.js";
 export * from "./render/index.js";
 export * from "./report-files.js";
 export * from "./repo-state.js";
+export { Guard, homeGuard, type Roots } from "./guarded-fs.js";
 export * from "./safe-git.js";

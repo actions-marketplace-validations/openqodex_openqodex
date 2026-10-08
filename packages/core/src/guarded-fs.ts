@@ -1,0 +1,426 @@
+// The one way OpenQodex changes a file it does not own outright: every
+// write, rename and delete is decided by filesystem identity and done
+// through checked handles. init and the commands around it, the update
+// worker, the home receipts and the repository's .openqodex files write no
+// other way (packages/cli/test/guarded-writes.test.ts checks).
+//
+// Deciding. A path is walked the way the system walks it: one name at a
+// time from the root, each name looked up without following it, a link
+// followed where it stands, `.` and `..` taken after the links before them.
+// Every folder reached is known by its device and inode, never by how it
+// was spelled, so case, Unicode normalisation and different spellings of
+// one folder stop mattering. Then:
+// - a link whose own folder lies, by identity, in the repository's work
+//   tree, and not in a git folder that itself lies inside the work tree, is
+//   refused: the repository decides where it points (agents/git.ts
+//   inWorkTree draws the same line). A link anywhere else is the
+//   developer's own (a dotfiles repo links ~/.claude/settings.json) and is
+//   followed;
+// - the folder the path lands in must lie, by identity, under one of the
+//   folders init may write (each opened once, when the guard is made).
+//
+// Doing. A write opens the verified folder (O_DIRECTORY | O_NOFOLLOW) and
+// keeps the handle, creates its temp file with O_CREAT | O_EXCL | O_NOFOLLOW,
+// writes, fsyncs and renames it into place. Node has no renameat(2), so the
+// rename goes by path; the closing check is that, after it, the final path
+// holds the very file written (same device and inode as the open handle) in
+// the very folder verified. On any mismatch it removes what it can and
+// fails. A delete never follows a link, and checks the identity of the
+// folder before each name it removes inside it.
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
+import type { BigIntStats } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { dirname, isAbsolute, join, sep } from "node:path";
+
+// Both macOS and Linux define these; a platform without them gets 0, and
+// the identity checks after each step still hold.
+const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const DIRECTORY = constants.O_DIRECTORY ?? 0;
+const MAX_LINKS = 40;
+
+export type Id = { dev: bigint; ino: bigint };
+
+function same(a: Id | null | undefined, b: Id | null | undefined): boolean {
+  return a != null && b != null && a.dev === b.dev && a.ino === b.ino;
+}
+
+function lstatOf(path: string): BigIntStats | null {
+  try {
+    return lstatSync(path, { bigint: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw error;
+  }
+}
+
+function idOf(st: BigIntStats | null): Id | null {
+  return st === null ? null : { dev: st.dev, ino: st.ino };
+}
+
+type Step = { name: string; id: Id };
+
+// Where a path leads. `chain`: the folders that exist from the root down,
+// each by name and identity; `dir`: the last of them as a path. `pending`:
+// the names below it that do not exist yet, the last one the final name.
+// `final`: the final name; `stat`: its lstat when it exists.
+type Walk = { chain: Step[]; dir: string; pending: string[]; final: string; stat: BigIntStats | null };
+
+function rootStep(): Step {
+  return { name: sep, id: idOf(lstatSync(sep, { bigint: true }))! };
+}
+
+// Walks `path` as the system does. `followLast`: a link as the last name is
+// followed too (where a write lands) or kept as itself (what a delete
+// takes). `onLink` sees the folders above each link before it is followed.
+// With `folders`, every name is taken as a folder and the walk returns where
+// the path stands, existing or not (`final` empty).
+function walk(path: string, followLast: boolean, onLink: (chain: Step[], at: string) => void, folders = false): Walk {
+  if (!isAbsolute(path)) throw new Error(`${path} is not an absolute path`);
+  let parts = path.split(sep);
+  let chain = [rootStep()];
+  let at: string = sep;
+  const pending: string[] = [];
+  let links = 0;
+  while (parts.length > 0) {
+    const name = parts.shift()!;
+    if (name === "" || name === ".") continue;
+    const last = parts.every((p) => p === "" || p === ".");
+    if (name === "..") {
+      if (pending.length > 0) throw new Error(`${path} climbs with .. out of a folder that does not exist`);
+      if (chain.length > 1) chain = chain.slice(0, -1);
+      at = dirname(at);
+      continue;
+    }
+    if (pending.length > 0) {
+      pending.push(name);
+      continue;
+    }
+    const next = join(at, name);
+    const st = lstatOf(next);
+    if (st === null) {
+      pending.push(name);
+      continue;
+    }
+    if (st.isSymbolicLink() && !(last && !followLast && !folders)) {
+      onLink(chain, next);
+      if (++links > MAX_LINKS) throw new Error(`more than ${MAX_LINKS} symbolic links on the way to ${path}`);
+      const target = readlinkSync(next);
+      parts = [...target.split(sep), ...parts];
+      if (isAbsolute(target)) {
+        chain = [rootStep()];
+        at = sep;
+      }
+      continue;
+    }
+    if (st.isDirectory() && (folders || !last)) {
+      chain = [...chain, { name, id: idOf(st)! }];
+      at = next;
+      continue;
+    }
+    if (!last || folders) throw new Error(`${next} is not a folder`);
+    return { chain, dir: at, pending: [], final: name, stat: st };
+  }
+  if (folders) return { chain, dir: at, pending, final: "", stat: null };
+  if (pending.length > 0) return { chain, dir: at, pending, final: pending[pending.length - 1]!, stat: null };
+  throw new Error(`${path} names no file`);
+}
+
+// A folder init may write: where its path stands by identity, `anchor` the
+// deepest folder of it that exists, `tail` the names below that do not yet.
+type Root = { anchor: Id; tail: string[]; ids: Id[] };
+
+export type Roots = {
+  // The repository's work tree; null outside a repository.
+  repoRoot: string | null;
+  // Its git folders. Only one that lies inside the work tree exempts the
+  // links under it; a common git folder that holds the work tree does not.
+  gitFolders: string[];
+  // Every other folder init may write: the home folder, the agents' own
+  // folders, OpenQodex's home.
+  roots: string[];
+};
+
+export class Guard {
+  private roots: Root[] = [];
+  private tree: Id | null = null;
+  private exempt: Id[] = [];
+
+  constructor(r: Roots) {
+    const none = (): void => undefined;
+    if (r.repoRoot !== null) {
+      const w = walk(r.repoRoot, true, none, true);
+      if (w.pending.length === 0) this.tree = w.chain[w.chain.length - 1]!.id;
+      this.add(r.repoRoot);
+    }
+    for (const g of r.gitFolders) {
+      const w = walk(g, true, none, true);
+      if (w.pending.length > 0) continue;
+      const ids = w.chain.map((s) => s.id);
+      const at = ids.findIndex((id) => same(id, this.tree));
+      // Inside the work tree, and not the work tree itself.
+      if (at !== -1 && at < ids.length - 1) this.exempt.push(ids[ids.length - 1]!);
+      this.add(g);
+    }
+    for (const root of r.roots) this.add(root);
+  }
+
+  // Adds a folder init may write, such as the hooks folder git names.
+  add(root: string): void {
+    try {
+      const w = walk(root, true, () => undefined, true);
+      this.roots.push({ anchor: w.chain[w.chain.length - 1]!.id, tail: w.pending, ids: w.chain.map((s) => s.id) });
+    } catch {
+      // A root that cannot be walked holds nothing init writes.
+    }
+  }
+
+  private refuseRepoLink = (chain: Step[], at: string): void => {
+    if (this.tree === null) return;
+    const ids = chain.map((s) => s.id);
+    const w = ids.findIndex((id) => same(id, this.tree));
+    if (w === -1) return;
+    if (ids.some((id, i) => i > w && this.exempt.some((g) => same(g, id)))) return;
+    throw new Error(`${at} is a symbolic link inside the repository; openqodex does not write through links the repository holds`);
+  };
+
+  // True when a folder chain, with names still to create below it, lies
+  // under a root by identity.
+  private under(chain: Step[], below: string[]): boolean {
+    return this.roots.some((r) => {
+      const at = chain.findIndex((s) => same(s.id, r.anchor));
+      if (at === -1) return false;
+      const after = [...chain.slice(at + 1).map((s) => s.name), ...below];
+      return r.tail.every((name, i) => after[i] === name);
+    });
+  }
+
+  // Where a write (or, with followLast false, a delete) of `path` lands, or
+  // the reason it may not.
+  check(path: string, followLast = true): Walk {
+    const w = walk(path, followLast, this.refuseRepoLink);
+    if (!this.under(w.chain, w.pending.slice(0, -1))) {
+      throw new Error(`${path} lands in ${w.dir}, outside every folder openqodex writes to`);
+    }
+    return w;
+  }
+
+  // Makes the folders a write needs, one at a time, each checked to be a
+  // real folder in the folder before it. Returns the last one as a path
+  // and an open handle on it.
+  private folderOf(w: Walk, mode = 0o755): { dir: string; fd: number; id: Id } {
+    let dir = w.dir;
+    let id = w.chain[w.chain.length - 1]!.id;
+    for (const name of w.pending.slice(0, -1)) {
+      const next = join(dir, name);
+      try {
+        mkdirSync(next, mode);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      const st = lstatOf(next);
+      if (st === null || !st.isDirectory() || st.isSymbolicLink()) throw new Error(`${next} is not a folder openqodex made`);
+      if (!same(idOf(lstatOf(dir)), id)) throw new Error(`${dir} changed while openqodex was writing in it`);
+      dir = next;
+      id = idOf(st)!;
+    }
+    const fd = openSync(dir, constants.O_RDONLY | DIRECTORY | NOFOLLOW);
+    if (!same(idOf(fstatSync(fd, { bigint: true })), id)) {
+      closeSync(fd);
+      throw new Error(`${dir} changed while openqodex was writing in it`);
+    }
+    return { dir, fd, id };
+  }
+
+  // Writes `data` where `path` lands. An existing file keeps its mode
+  // unless `setMode`; a new one gets `mode` (default 0644). With
+  // `exclusive`, the file is created only when nothing is there: false says
+  // something was. Folders it makes on the way get `folderMode` (default 0755).
+  write(path: string, data: string | Buffer, opts: { mode?: number; setMode?: boolean; exclusive?: boolean; folderMode?: number } = {}): boolean {
+    const w = this.check(path);
+    if (w.stat !== null && !w.stat.isFile()) throw new Error(`${join(w.dir, w.final)} is not a regular file`);
+    if (opts.exclusive && w.stat !== null) return false;
+    const folder = this.folderOf(w, opts.folderMode);
+    const final = join(folder.dir, w.final);
+    const keep = w.stat !== null && !opts.setMode ? Number(w.stat.mode & 0o7777n) : null;
+    const mode = opts.mode ?? 0o644;
+    const tmp = opts.exclusive ? final : join(folder.dir, `.${w.final}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
+    let fd: number;
+    try {
+      fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, mode);
+    } catch (error) {
+      closeSync(folder.fd);
+      if (opts.exclusive && (error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+    const written = idOf(fstatSync(fd, { bigint: true }))!;
+    const ours = (p: string): boolean => same(idOf(lstatOf(p)), written);
+    try {
+      if (!ours(tmp) || !same(idOf(lstatOf(folder.dir)), folder.id)) throw new Error(`${folder.dir} changed while openqodex was writing in it`);
+      const bytes = typeof data === "string" ? Buffer.from(data, "utf8") : data;
+      for (let off = 0; off < bytes.length; ) off += writeSync(fd, bytes, off, bytes.length - off);
+      if (keep !== null) fchmodSync(fd, keep);
+      else if (opts.setMode) fchmodSync(fd, mode);
+      fsyncSync(fd);
+      if (!opts.exclusive) renameSync(tmp, final);
+      // The closing check, since Node has no renameat(2) and the rename went
+      // by path: the final path must hold the file just written, in the
+      // folder verified when the handle was opened.
+      if (!ours(final) || !same(idOf(lstatOf(folder.dir)), idOf(fstatSync(folder.fd, { bigint: true })))) {
+        if (ours(final)) unlinkSync(final);
+        throw new Error(`${final} is not where openqodex wrote it; the write was undone where it could be`);
+      }
+      return true;
+    } catch (error) {
+      // The temp file, or the file an exclusive write made: ours to remove.
+      if (ours(tmp)) unlinkSync(tmp);
+      throw error;
+    } finally {
+      closeSync(fd);
+      closeSync(folder.fd);
+    }
+  }
+
+  // A copy of `data` beside `path`, as `<path>.openqodex.bak` or `.bak.2`,
+  // `.bak.3`, ...; created exclusively and private (0600).
+  backup(path: string, data: string): string {
+    const w = this.check(path, false);
+    const base = join(w.dir, w.final);
+    for (let n = 1; ; n++) {
+      const candidate = `${base}.openqodex.bak${n === 1 ? "" : `.${n}`}`;
+      if (this.write(candidate, data, { mode: 0o600, exclusive: true })) return candidate;
+    }
+  }
+
+  // Removes the file or link `path` names, never what a link points at;
+  // nothing when it is missing. A folder is refused: removeTree takes one.
+  remove(path: string): void {
+    const w = this.check(path, false);
+    if (w.stat === null) return;
+    if (w.stat.isDirectory()) throw new Error(`${join(w.dir, w.final)} is a folder`);
+    this.unlinkIn(w.dir, w.chain[w.chain.length - 1]!.id, w.final, idOf(w.stat)!);
+  }
+
+  // Unlinks `name` in the folder `dir` known as `id`, when both are still
+  // the ones checked; after it, the folder must still be that folder.
+  private unlinkIn(dir: string, id: Id, name: string, entry: Id): void {
+    const fd = openSync(dir, constants.O_RDONLY | DIRECTORY | NOFOLLOW);
+    try {
+      if (!same(idOf(fstatSync(fd, { bigint: true })), id)) throw new Error(`${dir} changed while openqodex was removing in it`);
+      const p = join(dir, name);
+      if (!same(idOf(lstatOf(p)), entry)) throw new Error(`${p} changed while openqodex was removing it`);
+      unlinkSync(p);
+      if (!same(idOf(lstatOf(dir)), id)) throw new Error(`${dir} changed while openqodex was removing in it`);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  // Removes a folder and everything in it, never following a link: a link
+  // inside is removed as itself, and the folder's identity is checked again
+  // before each name removed in it. A link or file at `path` is removed as
+  // itself. Nothing when it is missing.
+  removeTree(path: string): void {
+    const w = this.check(path, false);
+    if (w.stat === null) return;
+    if (!w.stat.isDirectory()) return this.remove(path);
+    this.clearFolder(join(w.dir, w.final), idOf(w.stat)!);
+    this.rmdirIn(w.dir, w.chain[w.chain.length - 1]!.id, w.final, idOf(w.stat)!);
+  }
+
+  private clearFolder(dir: string, id: Id): void {
+    const fd = openSync(dir, constants.O_RDONLY | DIRECTORY | NOFOLLOW);
+    try {
+      if (!same(idOf(fstatSync(fd, { bigint: true })), id)) throw new Error(`${dir} changed while openqodex was removing in it`);
+      for (const name of readdirSync(dir)) {
+        if (!same(idOf(lstatOf(dir)), id)) throw new Error(`${dir} changed while openqodex was removing in it`);
+        const st = lstatOf(join(dir, name));
+        if (st === null) continue;
+        if (st.isDirectory()) {
+          this.clearFolder(join(dir, name), idOf(st)!);
+          this.rmdirIn(dir, id, name, idOf(st)!);
+        } else this.unlinkIn(dir, id, name, idOf(st)!);
+      }
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  private rmdirIn(dir: string, id: Id, name: string, entry: Id): void {
+    if (!same(idOf(lstatOf(dir)), id)) throw new Error(`${dir} changed while openqodex was removing in it`);
+    const p = join(dir, name);
+    if (!same(idOf(lstatOf(p)), entry)) throw new Error(`${p} changed while openqodex was removing it`);
+    rmdirSync(p);
+  }
+
+  // Removes the folder `path` when it is empty; true when it did.
+  removeEmptyFolder(path: string): boolean {
+    const w = this.check(path, false);
+    if (w.stat === null || !w.stat.isDirectory()) return false;
+    if (readdirSync(join(w.dir, w.final)).length > 0) return false;
+    this.rmdirIn(w.dir, w.chain[w.chain.length - 1]!.id, w.final, idOf(w.stat)!);
+    return true;
+  }
+
+  // Makes the folder `path`, which must not exist yet, and its parents.
+  makeFolder(path: string): void {
+    const w = this.check(join(path, ".openqodex-folder"));
+    if (w.pending.length < 2) throw new Error(`${path} is there already`);
+    closeSync(this.folderOf(w).fd);
+  }
+
+  // Renames `from` to `to`, a name that must be free; afterwards `to` must
+  // hold what `from` held.
+  rename(from: string, to: string): void {
+    const a = this.check(from, false);
+    if (a.stat === null) throw new Error(`${from} is not there`);
+    const b = this.check(to, false);
+    if (b.stat !== null) throw new Error(`${to} is there already`);
+    const moved = idOf(a.stat)!;
+    const src = join(a.dir, a.final);
+    if (!same(idOf(lstatOf(src)), moved)) throw new Error(`${src} changed while openqodex was moving it`);
+    const folder = this.folderOf(b);
+    try {
+      const dst = join(folder.dir, b.final);
+      renameSync(src, dst);
+      // The closing check, as for a write.
+      if (!same(idOf(lstatOf(dst)), moved) || !same(idOf(lstatOf(folder.dir)), folder.id)) throw new Error(`${dst} is not where openqodex moved ${src}`);
+    } finally {
+      closeSync(folder.fd);
+    }
+  }
+
+  // Copies the folder `src` (this package: plain files and folders) to a
+  // new folder `dst`, file by file through `write`. `skipTop` names entries
+  // left out at the top. A link or anything else in `src` is refused.
+  copyTree(src: string, dst: string, skipTop: string[] = []): void {
+    this.makeFolder(dst);
+    const copy = (from: string, to: string, top: boolean): void => {
+      for (const entry of readdirSync(from, { withFileTypes: true })) {
+        if (top && skipTop.includes(entry.name)) continue;
+        const a = join(from, entry.name);
+        const b = join(to, entry.name);
+        if (entry.isDirectory()) {
+          this.makeFolder(b);
+          copy(a, b, false);
+        } else if (entry.isFile()) {
+          this.write(b, readFileSync(a), { exclusive: true, mode: Number(lstatSync(a).mode & 0o777), setMode: true });
+        } else throw new Error(`${a} is not a plain file or folder`);
+      }
+    };
+    copy(src, dst, true);
+  }
+}
+
+// A guard for OpenQodex's own home alone, for the writers that run outside
+// init (the update worker, `hook install`, the home receipts); one per home
+// in this process.
+const homeGuards = new Map<string, Guard>();
+export function homeGuard(home: string): Guard {
+  let g = homeGuards.get(home);
+  if (g === undefined) {
+    g = new Guard({ repoRoot: null, gitFolders: [], roots: [home] });
+    homeGuards.set(home, g);
+  }
+  return g;
+}

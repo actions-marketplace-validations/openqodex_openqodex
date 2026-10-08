@@ -6,7 +6,7 @@
 // switch is still wanted and publishes it: the runtime folder by a rename,
 // then the active record by a rename. A crash between the two leaves the old
 // version active and the new folder ready for the next run.
-import { existsSync, mkdirSync, renameSync, rmdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { extractArchive, openqodexHome } from "@openqodex/scanners";
 import { BoundaryError, withBoundary } from "../agents/lock.js";
@@ -57,7 +57,7 @@ function seam(env: NodeJS.ProcessEnv): { as: string | null; minAge: number | nul
 async function pauseAt(home: string, stage: string, env: NodeJS.ProcessEnv): Promise<void> {
   if (env.OPENQODEX_E2E !== "1" || env.OPENQODEX_UPDATE_PAUSE !== stage) return;
   const flag = join(home, "update-paused");
-  writeFileSync(flag, `${stage}\n`);
+  homeGuard(home).write(flag, `${stage}\n`);
   while (existsSync(flag)) await new Promise((r) => setTimeout(r, 50));
 }
 
@@ -76,16 +76,20 @@ function newer(a: string, b: string): boolean {
 // Unpacks a verified tarball into <home>/runtime/<version>.tmp-<pid>/ and
 // checks that it starts and prints its version. Returns that temp folder;
 // the package is in its unpacked/package. activateUnpacked publishes it and
-// removes the temp folder.
+// removes the temp folder. Every folder and file of its own goes through
+// the home guard (guarded-fs.ts): a runtime/ that leads outside OpenQodex's
+// home is refused before anything is written. tar unpacks inside the
+// folder the guard made.
 export async function unpackRelease(home: string, version: string, tarball: Buffer): Promise<string> {
+  const guard = homeGuard(home);
   const tmp = `${runtimeDir(version, home)}.tmp-${process.pid}`;
-  rmSync(tmp, { recursive: true, force: true });
-  mkdirSync(tmp, { recursive: true });
+  guard.removeTree(tmp);
+  guard.makeFolder(tmp);
   try {
     const archive = join(tmp, "package.tgz");
-    writeFileSync(archive, tarball);
+    guard.write(archive, tarball, { mode: 0o600 });
     const unpacked = join(tmp, "unpacked");
-    mkdirSync(unpacked);
+    guard.makeFolder(unpacked);
     // Refuses a member that is a link or escapes the folder. Nothing in the
     // package runs at install: the CLI is one bundled file with its assets.
     await extractArchive(archive, "tar.gz", unpacked);
@@ -94,7 +98,7 @@ export async function unpackRelease(home: string, version: string, tarball: Buff
     await checkRuns(bin, version);
     return tmp;
   } catch (error) {
-    rmSync(tmp, { recursive: true, force: true });
+    guard.removeTree(tmp);
     throw error;
   }
 }
@@ -109,6 +113,7 @@ export type ActivateResult = { outcome: "activated" | "refused" | "skip" | "gone
 // started from the active version `from`. Always removes `tmp`.
 export async function activateUnpacked(opts: { home: string; version: string; from: string; tmp: string; env: NodeJS.ProcessEnv; wait: number }): Promise<ActivateResult> {
   const { home, version, from, tmp, env } = opts;
+  const guard = homeGuard(home);
   let result: ActivateResult;
   try {
     await pauseAt(home, "before-boundary", env);
@@ -124,7 +129,7 @@ export async function activateUnpacked(opts: { home: string; version: string; fr
       if (existsSync(target)) {
         if (!identicalTree(join(tmp, "unpacked", "package"), target)) return { outcome: "skip", reason: `${target} holds a different copy of ${version}; it was left as it is` };
       } else {
-        renameSync(join(tmp, "unpacked", "package"), target);
+        guard.rename(join(tmp, "unpacked", "package"), target);
         // The tarball's own times are from 1985; the age rule counts from now.
         const now = new Date();
         utimesSync(target, now, now);
@@ -142,14 +147,12 @@ export async function activateUnpacked(opts: { home: string; version: string; fr
   } catch (error) {
     result = { outcome: error instanceof BoundaryError && error.held ? "busy" : "failed", reason: message(error) };
   }
-  rmSync(tmp, { recursive: true, force: true });
-  if (result.outcome === "gone") {
+  try {
+    guard.removeTree(tmp);
     // Uninstall removed the runtime folder's contents; leave no empty folder behind.
-    try {
-      rmdirSync(dirname(tmp));
-    } catch {
-      // not empty: not ours to remove
-    }
+    if (result.outcome === "gone") guard.removeEmptyFolder(dirname(tmp));
+  } catch {
+    // refused or not empty: not ours to remove
   }
   return result;
 }

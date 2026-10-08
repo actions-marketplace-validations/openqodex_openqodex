@@ -2,25 +2,9 @@
 // `.openqodex/` and the root `.openqodex.yaml`. Whoever wrote the commit or
 // the work tree controls those paths, so no component below the repo root
 // may be a symbolic link, and no read blocks or runs without a bound.
-import { randomBytes } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readSync,
-  realpathSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-  type Stats,
-} from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, type Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { Guard } from "./guarded-fs.js";
 import { OpenQodexError } from "./types.js";
 
 // The cap for run files (receipts, manifests, reports). Callers with their
@@ -167,18 +151,25 @@ export function readFileBounded(path: string, maxBytes: number, hint = "", label
   }
 }
 
-// The real folder at `path` with every folder on the way made real: a link
-// throws, a missing folder is created.
-function realDir(repoRoot: string, parts: string[]): string {
+// Each folder on the way that exists must be a real folder: a link throws
+// the one-line reason before anything is written.
+function refuseLinks(repoRoot: string, parts: string[]): void {
   let at = repoRoot;
-  for (const part of parts) {
+  for (const [i, part] of parts.entries()) {
     at = join(at, part);
     const st = lstatSync(at, { throwIfNoEntry: false });
-    if (st?.isSymbolicLink()) throw linkError(repoRoot, at);
-    if (st === undefined) mkdirSync(at);
-    else if (!st.isDirectory()) throw new OpenQodexError(`${relative(repoRoot, at)} is not a folder`);
+    if (st === undefined) return;
+    if (st.isSymbolicLink()) throw linkError(repoRoot, at);
+    if (i < parts.length - 1 && !st.isDirectory()) throw new OpenQodexError(`${relative(repoRoot, at)} is not a folder`);
   }
-  return at;
+}
+
+// The guard for one write: the repository is the only folder it may write
+// in, and a link anywhere in its work tree is refused (guarded-fs.ts). It
+// decides by filesystem identity and writes through checked handles, so a
+// link put in place after the check above is refused too.
+function guardFor(repoRoot: string): Guard {
+  return new Guard({ repoRoot: resolve(repoRoot), gitFolders: [], roots: [] });
 }
 
 // Writes `content` to `path` in the repo state, making the folders on the way.
@@ -188,26 +179,8 @@ function realDir(repoRoot: string, parts: string[]): string {
 // permissions of a new file (0600 for what may quote the code under review).
 export function writeRepoFile(repoRoot: string, path: string, content: string, opts: { exclusive?: boolean; mode?: number } = {}): boolean {
   const parts = steps(repoRoot, path);
-  const dir = realDir(repoRoot, parts.slice(0, -1));
-  const target = join(dir, parts[parts.length - 1]!);
-  if (lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) throw linkError(repoRoot, target);
-  if (opts.exclusive) {
-    try {
-      writeFileSync(target, content, { flag: "wx", mode: opts.mode });
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-      throw error;
-    }
-  }
-  const tmp = join(dir, `.${parts[parts.length - 1]}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-  try {
-    writeFileSync(tmp, content, { flag: "wx", mode: opts.mode });
-    renameSync(tmp, target);
-  } finally {
-    rmSync(tmp, { force: true });
-  }
-  return true;
+  refuseLinks(repoRoot, parts);
+  return guardFor(repoRoot).write(join(resolve(repoRoot), ...parts), content, { exclusive: opts.exclusive, mode: opts.mode });
 }
 
 // Removes a file or an empty folder in the repo state; nothing when it is
@@ -215,8 +188,9 @@ export function writeRepoFile(repoRoot: string, path: string, content: string, o
 export function removeRepoFile(repoRoot: string, path: string): void {
   const st = repoStat(repoRoot, path);
   if (st === null) return;
-  if (st.isDirectory()) rmdirSync(resolve(repoRoot, path));
-  else unlinkSync(resolve(repoRoot, path));
+  const full = join(resolve(repoRoot), ...steps(repoRoot, path));
+  if (!st.isDirectory()) guardFor(repoRoot).remove(full);
+  else if (!guardFor(repoRoot).removeEmptyFolder(full)) throw new OpenQodexError(`${relative(repoRoot, full)} is not empty`);
 }
 
 // The names in a folder of the repo state; empty when it is missing.
