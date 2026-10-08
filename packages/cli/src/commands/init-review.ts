@@ -3,18 +3,28 @@
 // repository, a pull request, a branch, not now); without a terminal, the
 // three commands instead of the question. It runs in this process with
 // scanner downloads off, so it never starts another install step, and it
-// never throws: init's exit code is about the install.
+// never throws: init's exit code is about the install. It ends with one
+// line, "First review: <how it ended>".
 import { isAbsolute, relative, resolve } from "node:path";
 import { getChange, loadConfig } from "@openqodex/core";
 import { parseFlags } from "../flags.js";
 import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
-import type { ReviewOptions } from "../review-run.js";
+import type { ReviewEnd, ReviewOptions } from "../review-run.js";
 import type { ReviewerDriver } from "../reviewers/driver.js";
 
 export type Choice = { kind: "all" } | { kind: "target"; target: string } | null;
 
+// How the first review ended: it ran to a complete report (finished), ran
+// and was not complete (incomplete), was not run (skipped, with the reason),
+// or found no reviewer that could start (unavailable).
+export type FirstReview = "finished" | "incomplete" | "skipped" | "unavailable";
+
 function out(line = ""): void {
   process.stdout.write(`${line}\n`);
+}
+
+export function firstReviewLine(ended: FirstReview, why?: string): void {
+  out(`First review: ${ended}${why !== undefined ? ` (${why})` : ""}.`);
 }
 
 async function askWhat(): Promise<Choice> {
@@ -50,11 +60,20 @@ export async function reviewAfterInit(o: {
   // Tests pass a model provider stand-in.
   drivers?: ReviewerDriver[];
   ask?: () => Promise<Choice>;
-}): Promise<void> {
+}): Promise<FirstReview> {
+  const ended = await firstReview(o);
+  firstReviewLine(ended.ended, ended.why);
+  return ended.ended;
+}
+
+async function firstReview(o: Parameters<typeof reviewAfterInit>[0]): Promise<{ ended: FirstReview; why?: string }> {
   try {
     const { global } = parseFlags(["--cwd", o.repoRoot, "--no-install"], {});
-    const review = (extra: Partial<ReviewOptions>) =>
-      runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000, drivers: o.drivers, ...extra });
+    const review = async (extra: Partial<ReviewOptions>): Promise<{ ended: FirstReview; why?: string }> => {
+      const end: ReviewEnd = { ended: "nothing" };
+      await runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000, drivers: o.drivers, end, ...extra });
+      return end.ended === "nothing" ? { ended: "skipped", why: "nothing to review" } : { ended: end.ended };
+    };
     const { config } = loadConfig(o.repoRoot);
     const overlay = [...(o.initFiles ?? new Map<string, string | null>())]
       .map(([path, content]) => ({ path: relative(resolve(o.repoRoot), resolve(path)), content }))
@@ -63,8 +82,7 @@ export async function reviewAfterInit(o: {
     if (change.files.length > 0) {
       out();
       out("Reviewing your change now. This takes one to three minutes.");
-      await review({ overlay });
-      return;
+      return await review({ overlay });
     }
     if (!o.interactive) {
       out();
@@ -72,12 +90,13 @@ export async function reviewAfterInit(o: {
       out(`  ${o.runner} review --all          the whole repository`);
       out(`  ${o.runner} review '#<number>'    a pull request`);
       out(`  ${o.runner} review <branch>       a branch`);
-      return;
+      return { ended: "skipped", why: "no change to review" };
     }
     const choice = await (o.ask ?? askWhat)();
-    if (choice === null) return;
-    await review(choice.kind === "all" ? { all: true } : { target: choice.target });
+    if (choice === null) return { ended: "skipped", why: "not now" };
+    return await review(choice.kind === "all" ? { all: true } : { target: choice.target });
   } catch (error) {
     process.stderr.write(`openqodex: the review after init did not run: ${error instanceof Error ? error.message : String(error)}\n`);
+    return { ended: "incomplete", why: "the review stopped with an error, shown above" };
   }
 }

@@ -22,6 +22,9 @@
 //     file and the files init writes enter the review after init.
 // 10. Answering no to "Write these files?" still runs the review, which
 //     writes the repo folder and the report: a cancelled install goes on.
+// 11. init says it is set up when no reviewer can start, then the first
+//     review fails; or it ends without saying how the first review ended
+//     (finished, incomplete, skipped, unavailable) and which reviewer was found.
 import { appendFileSync, chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -31,7 +34,7 @@ import { gitDirs, gitPath, inWorkTree, repoRootOf } from "../src/agents/git.js";
 import { reviewAfterInit } from "../src/commands/init-review.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
-import { cli, inTerminal, sandbox, snapshot } from "./init-helpers.js";
+import { agentFreePath, cli, inTerminal, sandbox, snapshot } from "./init-helpers.js";
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -97,6 +100,18 @@ describe("the review init ends with", () => {
     expect(driver.started).toBe(1);
     expect(out).toContain("Passed");
     expect(out).toContain("Reviewer: claude 9.9.9");
+    expect(out).toContain("First review: finished.");
+  });
+
+  it("11. a review whose answer never passes the checks ends as First review: incomplete", async () => {
+    const driver = fake();
+    const start = driver.start.bind(driver);
+    driver.start = (opts) => {
+      const session = start(opts);
+      return { ...session, send: async (text: string) => ({ ...(await session.send(text)), finalText: "not an answer" }) };
+    };
+    await expect(reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [driver] })).resolves.toBe("incomplete");
+    expect(out).toContain("First review: incomplete.");
   });
 
   it("3. with no change and no terminal, prints the three commands and asks nothing", async () => {
@@ -108,6 +123,7 @@ describe("the review init ends with", () => {
     expect(out).toContain("openqodex review --all");
     expect(out).toContain("openqodex review '#<number>'");
     expect(out).toContain("openqodex review <branch>");
+    expect(out).toContain("First review: skipped");
   });
 
   it("with no change and a terminal, asks one question and reviews the whole repo when that is the answer", async () => {
@@ -122,17 +138,16 @@ describe("the review init ends with", () => {
     const driver = fake();
     await reviewAfterInit({ repoRoot: repo(false), runner: "openqodex", interactive: true, drivers: [driver], ask: async () => null });
     expect(driver.started).toBe(0);
+    expect(out).toContain("First review: skipped");
   });
 
   it("2. a review that cannot start is reported and never throws", async () => {
     const none: ReviewerDriver = { name: "claude", traced: true, detect: async () => ({ ok: false, missing: "claude is not installed", fix: "install it" }), start: () => { throw new Error("no"); } };
-    await expect(reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [none] })).resolves.toBeUndefined();
+    await expect(reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [none] })).resolves.toBe("unavailable");
     expect(err).toContain("Full review unavailable");
+    expect(out).toContain("First review: unavailable.");
   });
 });
-
-// PATH with every folder that holds a `claude` program left out.
-const noClaude = (process.env.PATH ?? "").split(delimiter).filter((d) => d !== "" && !existsSync(join(d, "claude"))).join(delimiter);
 
 // The model provider stand-in for a subprocess run: a `claude` on PATH that
 // answers detection as Claude Code does, then answers every message with an
@@ -169,30 +184,45 @@ function standIn(): string {
 }
 
 describe("init as a subprocess", () => {
-  it("2, 4. with a change and no reviewer: exit 0, says the review is unavailable, prints the plan once", () => {
+  it("2, 4, 11. with a change and no reviewer: exit 0, names each missing reviewer and its fix, starts no review, prints the plan once", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
-    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo"], { env: { PATH: noClaude }, review: true });
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo"], { review: true });
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr).toContain("Full review unavailable");
+    expect(r.stdout).toContain("No reviewer can start yet");
+    expect(r.stdout).toContain("claude: Claude Code (claude) is not on PATH; install Claude Code and log in");
+    expect(r.stdout).toContain("codex: Codex (codex) is not on PATH");
+    expect(r.stdout).toContain(`'${join(s.oqHome, "bin/openqodex")}' review --agent`);
+    expect(r.stdout).toContain("First review: unavailable.");
+    expect(r.stdout).not.toContain("Reviewing your change now");
     expect(r.stdout.match(/install plan/g)).toHaveLength(1);
     expect(r.stderr + r.stdout).not.toMatch(/Installing the scanners .* first use|downloading/i);
   });
 
-  it("8. with the git pre-push hook and an exclude line written, the review after init still runs", () => {
+  it("11. with --no-review and no reviewer, still names what is missing, and says the review was skipped", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    const r = cli(s, ["init", "--yes", "--no-review", "--agent", "claude-code", "--hook", "none", "--no-repo"], { review: true });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("No reviewer can start yet");
+    expect(r.stdout).toContain("First review: skipped (--no-review).");
+  });
+
+  it("8, 11. with the git pre-push hook and an exclude line written, the review after init still runs, names the reviewer found and finishes", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
-    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--agent", "cursor", "--hook", "pre-push", "--no-repo"], { env: { PATH: `${standIn()}${delimiter}${noClaude}` }, review: true });
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--agent", "cursor", "--hook", "pre-push", "--no-repo"], { env: { PATH: `${standIn()}${delimiter}${agentFreePath()}` }, review: true });
     expect(r.status, r.stderr).toBe(0);
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(true);
     expect(readFileSync(join(s.repo, ".git/info/exclude"), "utf8")).toContain(".cursor");
     expect(r.stderr).not.toContain("did not run");
+    expect(r.stdout).toContain("Reviewer ready: Claude Code 9.9.9");
     expect(r.stdout).toContain("Reviewer: claude 9.9.9");
+    expect(r.stdout).toContain("First review: finished.");
   });
 
   it("3. --yes with no change prints the three commands and exits without waiting", () => {
     const s = sandbox({ "README.md": "hello\n" });
-    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo"], { env: { PATH: noClaude }, review: true });
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo"], { env: { PATH: `${standIn()}${delimiter}${agentFreePath()}` }, review: true });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("No change to review here");
     expect(r.stdout).toContain("review <branch>");
@@ -201,7 +231,7 @@ describe("init as a subprocess", () => {
   it("5. --no-review skips the review", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
-    const r = cli(s, ["init", "--yes", "--no-review", "--agent", "claude-code", "--hook", "none", "--no-repo"], { env: { PATH: noClaude }, review: true });
+    const r = cli(s, ["init", "--yes", "--no-review", "--agent", "claude-code", "--hook", "none", "--no-repo"], { env: { PATH: `${standIn()}${delimiter}${agentFreePath()}` }, review: true });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stderr).not.toContain("Full review unavailable");
     expect(r.stdout).not.toContain("Reviewing your change now");
@@ -211,7 +241,7 @@ describe("init as a subprocess", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
     for (const extra of [["--dry-run"], ["--uninstall"]]) {
-      const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo", ...extra], { env: { PATH: noClaude }, review: true });
+      const r = cli(s, ["init", "--yes", "--agent", "claude-code", "--hook", "none", "--no-repo", ...extra], { review: true });
       expect(r.stderr).not.toContain("Full review unavailable");
       expect(r.stdout).not.toContain("Reviewing your change now");
       expect(r.stdout).not.toContain("No change to review here");

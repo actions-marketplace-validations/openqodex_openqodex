@@ -117,6 +117,9 @@ export type ReviewOptions = {
   // --reviewer-web: the reviewer's web tools for this run, over the user
   // config's reviewer_web.
   web?: boolean;
+  // Filled with how the review ended, beside the exit code, which cannot
+  // tell an incomplete review from one that never had a reviewer.
+  end?: ReviewEnd;
 };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -126,15 +129,18 @@ type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unava
 // when detect() says its agent is installed, logged in and isolated; one
 // that is not (Cursor, or Codex inside its own sandbox) says why and is
 // passed by.
-async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoot: string): Promise<Chosen> {
+function reviewerOrder(choice: string, drivers: ReviewerDriver[]): ReviewerDriver[] {
   if (choice !== "auto" && !(REVIEWER_NAMES as readonly string[]).includes(choice)) {
     throw new OpenQodexError(`--reviewer must be auto or one of ${REVIEWER_NAMES.join(", ")}, not ${choice}`);
   }
   const host = hostAgent();
-  const order =
-    choice !== "auto"
-      ? drivers.filter((d) => d.name === choice)
-      : [...drivers.filter((d) => d.name === host), ...drivers.filter((d) => d.name !== host)];
+  return choice !== "auto"
+    ? drivers.filter((d) => d.name === choice)
+    : [...drivers.filter((d) => d.name === host), ...drivers.filter((d) => d.name !== host)];
+}
+
+async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoot: string): Promise<Chosen> {
+  const order = reviewerOrder(choice, drivers);
   const unavailable: string[] = [];
   for (const driver of order) {
     const d = await driver.detect(repoRoot);
@@ -143,6 +149,29 @@ async function chooseReviewer(choice: string, drivers: ReviewerDriver[], repoRoo
   }
   return { unavailable: unavailable.length > 0 ? unavailable : [`${choice}: no driver of that name`] };
 }
+
+// The agents' names as a developer knows them.
+export const REVIEWER_LABELS: Record<string, string> = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
+
+export type Readiness = { ready: { name: string; version: string } | null; reasons: string[] };
+
+// The reviewer a review started now would use, by the same choice and order
+// as `review`, with every driver's detect() run at once; or, when none can
+// start, each one's reason and fix. Nothing is started.
+export async function reviewerReadiness(repoRoot: string, drivers: ReviewerDriver[] = DRIVERS): Promise<Readiness> {
+  const choice = readReviewerSettings().reviewer;
+  const order = reviewerOrder(choice, drivers);
+  const found = await Promise.all(order.map((d) => d.detect(repoRoot)));
+  const reasons: string[] = [];
+  for (const [i, d] of found.entries()) {
+    if (d.ok) return { ready: { name: order[i].name, version: d.version }, reasons: [] };
+    reasons.push(`${order[i].name}: ${d.missing}; ${d.fix}`);
+  }
+  return { ready: null, reasons: reasons.length > 0 ? reasons : [`${choice}: no driver of that name`] };
+}
+
+// How a review ended, for the caller that must say so (init's first review).
+export type ReviewEnd = { ended: "finished" | "incomplete" | "unavailable" | "nothing" };
 
 // Every regular file under `dir` but the work tree's .git link file, by
 // path relative to `dir`. Links (there are none: they were written as
@@ -619,6 +648,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     const prep = await prepare(o, repoRoot, config, (c) => (snapshot = c));
     if (prep === null) {
       if (o.all) warn("Nothing to review: the repository has no files");
+      if (o.end) o.end.ended = "nothing";
       return EXIT_OK;
     }
     const { p } = prep;
@@ -644,6 +674,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       for (const line of reasons) warn(`- ${line}`);
       warn(`Unchecked scanner candidates, not a review: ${path}`);
       warn(`To review with the agent you are in instead, run \`${fallbackCommand(o)}\` and follow the brief it prints.`);
+      if (o.end) o.end.ended = "unavailable";
       return EXIT_TOOL_FAILED;
     };
     if ("unavailable" in chosen) return unavailable(chosen.unavailable);
@@ -794,6 +825,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     }
     emitReport(report, o.flags, repoRoot);
     say(`Report: ${inCheckout ? relative(repoRoot, join(dir, "report.md")) : join(dir, "report.md")}`);
+    if (o.end) o.end.ended = completion.status === "complete" ? "finished" : "incomplete";
     return exitFor(report);
   } finally {
     process.off("SIGINT", onSignal);

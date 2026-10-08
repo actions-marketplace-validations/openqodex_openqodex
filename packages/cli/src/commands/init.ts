@@ -22,7 +22,8 @@ import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { hostAgent } from "../reviewers/driver.js";
 import { launcherPath, launcherRunner, launcherUsers, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
-import { reviewAfterInit } from "./init-review.js";
+import { firstReviewLine, reviewAfterInit } from "./init-review.js";
+import { REVIEWER_LABELS, reviewerReadiness, type Readiness } from "../review-run.js";
 import { pruneHomeReceipts } from "../receipts.js";
 
 type HookChoice = "pre-push" | "none";
@@ -483,6 +484,27 @@ function undoCommand(s: Setup): string {
   return `${s.runner} init --uninstall${s.flags.project ? " --project" : ""}`;
 }
 
+// Runs every reviewer's detect() at once and says which one a review would
+// start, or why none can and what fixes each. True when one can start.
+async function reviewerCheck(s: Setup): Promise<boolean> {
+  out();
+  let found: Readiness;
+  try {
+    found = await reviewerReadiness(s.repoRoot ?? process.cwd());
+  } catch (error) {
+    process.stderr.write(`openqodex: ${message(error)}\n`);
+    return false;
+  }
+  if (found.ready !== null) {
+    out(`Reviewer ready: ${REVIEWER_LABELS[found.ready.name] ?? found.ready.name} ${found.ready.version}, installed and logged in. Each review starts it as a separate process.`);
+    return true;
+  }
+  out("No reviewer can start yet. A review needs Claude Code or Codex, installed and logged in. Fix one of these:");
+  for (const line of found.reasons) out(`  - ${line}`);
+  out(`Until then, the agent you are in can review the change itself: ${s.runner} review --agent`);
+  return false;
+}
+
 // Names the two team files in the repo, and `also` (the files that got the
 // team review section), and what to do with them.
 function closingRepoLines(s: Setup, rootConfig: boolean, indent = "", also: string[] = []): void {
@@ -553,12 +575,16 @@ export async function run(args: string[]): Promise<number> {
     // After the boundary is released, so the review holds no install lock.
     // A declined or stopped install reviews nothing.
     const installed = outcome.ended === "written" || outcome.ended === "unchanged";
-    if (outcome.code === EXIT_OK && installed && !flags.noReview && repoRoot !== null) {
-      await reviewAfterInit({ repoRoot, runner: setup.runner, interactive: interactive() && !flags.yes, initFiles: setup.before });
-    }
-    // The command to run next, by the launcher's full path: an npx install
-    // puts no `openqodex` on PATH, and init never edits a shell profile.
     if (outcome.code === EXIT_OK && installed) {
+      // Whether a reviewer can start, checked whatever comes next, so "set up"
+      // never hides a review that cannot run.
+      const ready = await reviewerCheck(setup);
+      if (flags.noReview) firstReviewLine("skipped", "--no-review");
+      else if (repoRoot === null) firstReviewLine("skipped", "not inside a git repository");
+      else if (!ready) firstReviewLine("unavailable");
+      else await reviewAfterInit({ repoRoot, runner: setup.runner, interactive: interactive() && !flags.yes, initFiles: setup.before });
+      // The command to run next, by the launcher's full path: an npx install
+      // puts no `openqodex` on PATH, and init never edits a shell profile.
       out();
       out(`Next: say "review my change with openqodex" to your agent, or run ${setup.runner} review`);
     }
