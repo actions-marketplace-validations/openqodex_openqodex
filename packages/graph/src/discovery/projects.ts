@@ -338,17 +338,33 @@ export function governingTsconfig(model: ProjectModel, file: string): { config: 
   }
 }
 
+// Where a dependency declared by a path (`file:` or `link:`) leads, from
+// the declaring package's folder and normalised the way npm and pnpm
+// resolve it: a folder of the repository, outside the repository, or a
+// path the graph cannot place in it (absolute, or from the home folder).
+export type LinkPath = { folder: string } | "outside" | "unplaced";
+
+export type Link = { linkage: Linkage; declaredIn: string; spec: string; path?: LinkPath };
+
+function linkPath(dir: string, spec: string): LinkPath {
+  const rest = spec.slice(spec.indexOf(":") + 1);
+  if (rest.startsWith("/") || rest.startsWith("~") || /^[A-Za-z]:/.test(rest)) return "unplaced";
+  const to = join(dir, rest).replace(/\/+$/, "");
+  return to === ".." || to.startsWith("../") ? "outside" : { folder: to };
+}
+
 // How the importer's package is linked to the dependency `name`: declared
 // with the workspace protocol (or a file or link path), resolved by a
 // lockfile to a workspace link or to a published version, or declared with
 // a plain range no lockfile settles. Null when the importer's package does
 // not declare it.
-export function linkageOf(model: ProjectModel, importer: string, name: string): { linkage: Linkage; declaredIn: string; spec: string } | null {
+export function linkageOf(model: ProjectModel, importer: string, name: string): Link | null {
   const project = nodeProjectOf(model, importer);
   const declaring = project?.pkg.deps.has(name) ? project : model.node.find((p) => p.dir === "" && p.pkg.deps.has(name)) ?? null;
   if (!declaring) return null;
   const spec = declaring.pkg.deps.get(name) as string;
-  if (/^(workspace|link|file):/.test(spec)) return { linkage: "workspace", declaredIn: declaring.file, spec };
+  if (/^(link|file):/.test(spec)) return { linkage: "workspace", declaredIn: declaring.file, spec, path: linkPath(declaring.dir, spec) };
+  if (spec.startsWith("workspace:")) return { linkage: "workspace", declaredIn: declaring.file, spec };
   const fromPnpm = model.pnpmLinks.get(declaring.dir)?.get(name);
   if (fromPnpm && fromPnpm !== "unknown") return { linkage: fromPnpm, declaredIn: declaring.file, spec };
   const fromNpm = model.npmLock.get(declaring.dir === "" ? `node_modules/${name}` : `${declaring.dir}/node_modules/${name}`) ?? model.npmLock.get(`node_modules/${name}`);
@@ -356,6 +372,24 @@ export function linkageOf(model: ProjectModel, importer: string, name: string): 
   if (model.yarnWorkspace.has(name)) return { linkage: "workspace", declaredIn: declaring.file, spec };
   if (model.yarnPublished.has(name)) return { linkage: "published", declaredIn: declaring.file, spec };
   return { linkage: "unknown", declaredIn: declaring.file, spec };
+}
+
+// Whether a path dependency may bind to the workspace package of its name
+// (`memberDir`, null when no workspace package has the name). It binds only
+// when its path leads to that package's own folder, compared as folders of
+// the repository: a name match alone never binds it. Null: no path
+// dependency, or the member's folder. "outside": the path leaves the
+// repository, so the code is not the repository's and the call is
+// external. A note: why it does not bind.
+export function pathLinkOff(link: Link, name: string, memberDir: string | null): "outside" | { note: string } | null {
+  const path = link.path;
+  if (path === undefined) return null;
+  if (path === "outside") return "outside";
+  const declared = `${link.declaredIn} declares ${name} as ${link.spec}`;
+  if (path === "unplaced") return { note: `${declared}, a path the graph cannot place in this repository` };
+  if (path.folder === memberDir) return null;
+  const where = path.folder === "" ? "the repository root" : path.folder;
+  return { note: memberDir === null ? `${declared}, which leads to ${where}, a folder of this repository that is no workspace package` : `${declared}, which leads to ${where}, not to the workspace package ${memberDir}` };
 }
 
 // The package name a bare specifier starts with: `@scope/name` or `name`.

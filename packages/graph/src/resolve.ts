@@ -21,7 +21,7 @@
 import { dirname, posix } from "node:path";
 import type { ImpactKind } from "@openqodex/core";
 import type { ProjectModel } from "./discovery/projects.js";
-import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, nodeProjectOf, normalisePy, packageName } from "./discovery/projects.js";
+import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, nodeProjectOf, normalisePy, packageName, pathLinkOff } from "./discovery/projects.js";
 import type { Cause, Cut, EvidenceKind, Shape, Tier, Via } from "./model/records.js";
 import { weakest } from "./model/records.js";
 import type { BoundImport, CallFact, DefFact, Family, FileFacts, GraphEdge, GraphNode, GraphSite, Miss, TypeRef, UnknownSite } from "./types.js";
@@ -396,6 +396,9 @@ export function createWorld(input: ResolveInput): World {
       return { gap: "ambiguous", note: `the package of this file does not declare ${name}, so the workspace package ${member.dir} is not assumed`, candidates: [member.dir] };
     }
     if (link.linkage === "published") return { ext: name };
+    const off = pathLinkOff(link, name, member.dir);
+    if (off === "outside") return { ext: name };
+    if (off !== null) return { gap: "unsupported-rule", note: off.note, candidates: [member.dir] };
     const linkNote = link.linkage === "unknown" ? `${link.declaredIn} declares ${name} as ${link.spec} and no lockfile says it links the workspace package.` : null;
     const capped = (ev: Ev): Ev => (linkNote ? { ...ev, tier: weakest(ev.tier, "likely"), note: [ev.note, linkNote].filter(Boolean).join(" ") } : ev);
     const sub = spec.length > name.length ? `.${spec.slice(name.length)}` : ".";
@@ -483,8 +486,13 @@ export function createWorld(input: ResolveInput): World {
     const name = packageName(spec);
     const ws = workspaceSpec(from, line, spec, name);
     if (ws !== null) return ws;
-    // Not in the repository: external only when a package.json declares it.
-    if (linkageOf(model, from, name) !== null) return { ext: name };
+    // Not in the repository: external only when a package.json declares it,
+    // and not by a path into a folder of the repository.
+    const declared = linkageOf(model, from, name);
+    if (declared !== null) {
+      const off = pathLinkOff(declared, name, null);
+      return off === null || off === "outside" ? { ext: name } : { gap: "unsupported-rule", note: off.note, candidates: null };
+    }
     return { gap: "miss", note: `the module ${name} is not in the repository and no package.json declares it`, candidates: null };
   };
 
