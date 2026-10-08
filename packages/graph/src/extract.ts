@@ -11,8 +11,9 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
 // 9: body hashes on definitions, computed-member calls as dynamic call
-// sites, and the line of each local export.
-export const EXTRACTOR_VERSION = 9;
+// sites, and the line of each local export. 10: predefined TypeScript
+// types (`string`, `number[]`) on receivers.
+export const EXTRACTOR_VERSION = 10;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -86,7 +87,9 @@ function receiverIn(at: Scope | null, name: string, path: string[], topNames: Re
   if (bound) return topNames ? { kind: "name", name, path, nesting: null, bound } : named;
   if (topNames && at.depth === 0 && topNames.has(name)) return named;
   const t = at.locals?.get(name) ?? null;
-  return t && !t.elem ? { kind: "type", type: t, path } : { kind: "other" };
+  // A collection (an array, a list) is kept as such: a method called on it
+  // is the language's own, never a gap.
+  return t ? { kind: "type", type: t, path } : { kind: "other" };
 }
 
 // An identifier receiver is tagged with what was read where, until Ctx.addCall takes it.
@@ -480,7 +483,8 @@ function jsTypeRef(annotation: Node | null): TypeRef | null {
   }
   if (!t) return null;
   const { line, column } = pos(t);
-  if (t.type === "type_identifier" || t.type === "identifier") return typeRef({ name: t.text, qualifier: null, line, column });
+  // A predefined type (`string`, `number`) is kept, so a call on it is known to be the language's own.
+  if (t.type === "type_identifier" || t.type === "identifier" || t.type === "predefined_type") return typeRef({ name: t.text, qualifier: null, line, column });
   if (t.type === "nested_type_identifier" || t.type === "member_expression") {
     const name = t.childForFieldName("name") ?? t.childForFieldName("property");
     const module = t.childForFieldName("module") ?? t.childForFieldName("object");

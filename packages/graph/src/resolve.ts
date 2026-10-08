@@ -54,6 +54,17 @@ const BUILTINS: Record<Family, ReadonlySet<string>> = {
   ),
 };
 
+// Built-in types whose methods are the language's: a call on a value of
+// one is external, never a gap of the repository.
+const BUILTIN_TYPES: Record<Family, ReadonlySet<string>> = {
+  js: new Set(
+    "string number boolean bigint symbol object any unknown never void undefined null String Number Boolean BigInt Symbol Object Array ReadonlyArray Map ReadonlyMap Set ReadonlySet WeakMap WeakSet Promise PromiseLike Date RegExp Error TypeError RangeError Function Record Partial Required Readonly Pick Omit Iterable IterableIterator AsyncIterable AsyncIterableIterator Iterator Generator AsyncGenerator ArrayBuffer SharedArrayBuffer DataView Uint8Array Int8Array Uint16Array Int16Array Uint32Array Int32Array Float32Array Float64Array BigInt64Array BigUint64Array Buffer URL URLSearchParams AbortController AbortSignal TextEncoder TextDecoder".split(" "),
+  ),
+  python: new Set("str int float bool bytes bytearray list dict set frozenset tuple object complex List Dict Set FrozenSet Tuple Sequence Mapping MutableMapping MutableSequence Iterable Iterator".split(" ")),
+  go: new Set("string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr float32 float64 complex64 complex128 byte rune bool error any".split(" ")),
+  ruby: new Set("String Integer Float Array Hash Symbol Range Proc".split(" ")),
+};
+
 export type FileInput = { path: string; facts: FileFacts };
 
 // The evidence a value carries: how it was bound, how surely, through which line.
@@ -966,6 +977,10 @@ export function createWorld(input: ResolveInput): World {
       case "type": {
         const t = typeKey(file, family, r.type);
         if (t === "ext") return { ext: true };
+        // A collection itself (an array, a list, a slice) or a value of a
+        // built-in type the file does not redefine: the method is the
+        // language's own.
+        if (t === null && r.path.length === 0 && (r.type.elem || (!r.type.qualifier && BUILTIN_TYPES[family].has(r.type.name) && resolveLocal(file, r.type.name) === null))) return { ext: true };
         if (t === null) return { unknown: "no-receiver-type", shape: "typed", note: `the type ${r.type.qualifier ? `${r.type.qualifier}.` : ""}${r.type.name} is not found in the graph` };
         const key = followPath(t, r.path);
         if (key === "ext") return { ext: true };
