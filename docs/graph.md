@@ -1,0 +1,115 @@
+# The code graph
+
+The code graph is a map of your repository: every function, method, class and type as a point, and every call, import and inheritance between them as a line, with the proof attached. `openqodex review` builds it on your machine and puts what your change reaches into the reviewer's brief. No model is called to build it and nothing is sent anywhere.
+
+## What it answers
+
+For a review, the brief's block "What this change reaches" lists:
+
+- the symbols the change touches, removes or moves (a move under another name is found by the same body);
+- the public names the change removed or bound to another definition, compared in the base and the changed version, with every place that used them and what each binds now;
+- who calls the touched code, one and two hops out, certain callers first;
+- what the touched code calls, and the files that import a changed file;
+- what the graph could not see near the change, and whether each caller list is complete or a floor.
+
+Everything the brief leaves out is in the review's packet (below).
+
+## Certain and likely
+
+Every call site on a line carries the evidence that proved it and one of these levels:
+
+- certain: an import that names the symbol, a definition in the same scope or Go package, or a receiver whose type a constructor, an annotation, a declared result or `this`/`self` gives, and every step it rests on is proved the same way. A name match alone is never certain.
+- likely: a stated convention picked the one target. The line says which convention, for example a workspace package reached through its built `dist` entry with no tsconfig `paths`, project reference or source condition mapping it to source, or a Ruby constant found by the autoload convention.
+
+A third level, possible (one of a set, such as every implementer of an interface), comes with calls through interfaces in a later release.
+
+## Workspaces and source roots
+
+- A bare import that names a package of the workspace (`pnpm-workspace.yaml`, or `workspaces` in `package.json`) binds when the importing package declares it: with `workspace:`, `file:` or `link:`, or a version range a lockfile resolves to the workspace. A lockfile that resolves it to a published version keeps the call external. A package that does not declare it is not assumed.
+- The package's entry comes from `exports` (in key order, `types` never), then `module` and `main`. A source entry is certain; a built entry mapped back to `src` (through the package tsconfig's `outDir` and `rootDir`, or `dist` to `src`) is likely, and certain when the importer's tsconfig references the package as a project.
+- The nearest `tsconfig.json` or `jsconfig.json` above a file governs it, with `extends` followed. Its `paths` and `baseUrl` prove an import when its `files`, `include` and `exclude` list the file; otherwise the binding is likely.
+- Python absolute imports search the importing file's own folders, every `src` folder that holds a package, every folder with a `pyproject.toml`, `setup.cfg` or `setup.py`, and namespace packages without `__init__.py`. A module found under two roots is not bound.
+- Manifests and tsconfig files are read as text, each up to 1 MB. Nothing in the repository is run.
+
+## What it cannot see
+
+A call no rule can bind is kept as an unknown with its cause, never dropped:
+
+- external: the name comes from a declared dependency or the standard library. Only these are external; an import of a module that is not in the repository and that no manifest declares is a miss.
+- no-receiver-type: a method called on a value whose type no rule knows, or on an interface or a type alias (calls through interfaces come later).
+- dynamic: a call through a parameter, a local value or a computed member such as `handlers[key]()`. Such a call could reach any function of its project.
+- miss: the evidence names a place where no such symbol exists now.
+- ambiguous: several definitions could be meant and nothing picks one.
+- budget: the time budget ran out before the file's calls were resolved.
+
+A caller list is a floor, and the brief says so with the reasons, when a call of the same name could not be bound, a call through a value in the symbol's project could reach it, a file of its project was not read, a file that imports it was not resolved, or a walk was cut at it. Zero callers on a floor never means unused.
+
+Every cut is recorded with what it left out: a symbol with more than 40 callers keeps its 20 nearest in the brief, the second hop keeps 20 callers of each caller, the walk stops at 200 symbols (what lies past that frontier is not counted), and the brief shows 60 call sites.
+
+Languages: TypeScript, TSX, JavaScript, Python, Go and Ruby. Files under `node_modules`, `dist`, `build`, `out`, `vendor` and the like, declaration files and minified files are left out.
+
+## The graph's folder
+
+The graph lives in the repository, in `.openqodex/graph/`, which the folder's own `.gitignore` keeps out of git. It holds:
+
+- `facts/`: what one parse of one file found, one file per content, so a file that did not change is never parsed again, in any build or any checkout of the repository.
+- `generations/<build id>/`: one folder per build, never changed after it is written: what the build read (paths and content ids), the project model, what it could not read, and for a build kept as an index the resolved graph.
+- `current` and `complete/<tree>`: the newest usable build and the newest complete build of each capture.
+- `leases/`: one file per process that holds a build open. A build a review or a command holds is never removed while it runs.
+- `meta.json`: the rates this machine measured, for the five-second rule.
+
+A build's folder is written whole and checked against its own checksums before `current` moves to it, so a reader never sees half a build. The collector keeps the newest build, the two newest complete builds and every build a live process holds, removes facts no kept build names (only when every kept build is complete, and only facts older than an hour), and keeps the folder under `graph.max_cache_mb` (512 MB by default), oldest first. When the builds in use alone are larger than the bound, the build is still kept and the run says so.
+
+Each kept build's capture is a git tree in the repository's own objects, held by a local ref `refs/openqodex/graph/<tree>` while a build of it is kept, so `git show <tree>:<path>` shows the exact bytes the graph read after the files change. The ref is never pushed by a plain `git push`; `git push --mirror` would push it.
+
+With `--report-dir` (the GitHub Action) nothing is written under `.openqodex/`: the graph is built in memory and nothing is kept.
+
+## The five-second rule
+
+Each build predicts its own time from what it will do: files with no cached facts at the parse rate this machine measured, cached facts at the measured read rate, and the rest per file. The first build uses 400 parses a second, 2,500 cached facts a second and 0.25 s per 1,000 files for the rest; later builds use the rates earlier builds measured (a rate is measured over 20 files or more).
+
+- Under five seconds: the graph is built fresh from the cached facts, parsing only what is new.
+- Over five seconds: a graph command loads the kept index of the same capture when there is one. A review, which compares two versions, and a capture with no kept index build under the time budget, changed files first, and keep an index for the next time.
+
+The mode changes only after two builds in a row land on the other side of the line.
+
+A large repository may be partial on its first reviews: the `graph.max_files` cap counts new parses only, so cached facts never count toward it and each review adds more. The brief and the report say so, and `openqodex graph build` completes it in one run (no parse cap, a ten-minute budget, the memory bound kept).
+
+## The review's packet
+
+`openqodex review` writes the graph's files into the review's snapshot, under `.openqodex-review/graph/`, before the snapshot is hashed, so the reviewer opens them inside the one folder it may read:
+
+- `index.md`: one line per file below.
+- `impact.json`: the summary the brief was made from.
+- `changes.json`: every public name the change removed or bound elsewhere, with every consumer; removed and moved symbols.
+- `callers/<key>.json`: every caller of each touched or removed symbol, in pages of 500, past any cut the brief makes.
+- `second-hop/<key>.json`, `callees/<key>.json`, `importers/<key>.json`: the same for the second hop, what the touched code calls, and who imports a changed file.
+- `unknowns.json`: what the graph could not see near the change, with causes.
+- `status.json`, `capabilities.json`: how the graph was built and what it can see.
+- `base/<key>.txt`: the base version of each removed or moved symbol, labelled as not the code under review.
+
+Every file passes through the review's secret redaction. A repository that holds a path named `.openqodex-review` stops the review instead of being overwritten.
+
+## The graph commands
+
+These commands are hidden from the menu and may change before 1.0. Each runs on a capture of your work tree, building or reusing the graph in `.openqodex/graph/`, or on a kept build with `--generation <id>`, which never builds. `build --full` builds fresh from facts even over the five-second line.
+
+```
+openqodex graph build [--full]
+openqodex graph status
+openqodex graph capabilities
+openqodex graph search <text>
+openqodex graph symbol <name | file:line>
+openqodex graph callers <name | file:line> [--file <path>] [--tier certain,likely] [--depth 1..3]
+openqodex graph callees <name | file:line>
+openqodex graph importers <file>
+openqodex graph changes [--base <ref>]
+openqodex graph unknowns [--file <path> | --name <name>]
+openqodex graph explain <edge id>
+```
+
+`--json` prints the answer as it is: the items with their evidence and level, the true counts by level, search hits as leads that are never counted, whether the answer is a floor and why, how it was cut (with `--cursor` for the next page), and which build answered. A name that matches several definitions returns them all as candidates. Exit code 0 means an answer, partial or a floor included; 2 means the request could not be answered.
+
+## Settings
+
+The `graph` keys of `.openqodex/config.yaml` are in `config`: `graph.enabled`, `graph.budget_ms`, `graph.max_files` (new parses per build), `graph.max_file_bytes`, `graph.max_cache_mb` and `graph.max_heap_mb`. `--no-graph` turns the graph off for one review.

@@ -107,6 +107,8 @@ graph:
   budget_ms: 2500
   max_files: 900
   max_file_bytes: 65536
+  max_cache_mb: 64
+  max_heap_mb: 1500
 `;
 
 describe("loadConfig", () => {
@@ -125,7 +127,7 @@ describe("loadConfig", () => {
       blockOnSeverity: "major",
       severityThreshold: "nitpick",
       defaultBase: "develop",
-      graph: { enabled: false, budgetMs: 2500, maxFiles: 900, maxFileBytes: 65536 },
+      graph: { enabled: false, budgetMs: 2500, maxFiles: 900, maxFileBytes: 65536, maxCacheMb: 64, maxHeapMb: 1500 },
       exclude: ["vendor/**", "*.min.js"],
       disabledRules: ["gitleaks:generic-api-key", "lens:react-*"],
       includeFixtures: true,

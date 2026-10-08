@@ -1,0 +1,15 @@
+---
+"openqodex": minor
+---
+
+- The code graph finds callers across the packages of a workspace (pnpm, npm or yarn workspaces), through the nearest tsconfig.json of each file, and across Python `src` roots. Before, a change to a function of one package listed no caller in another.
+- Every caller in the brief says how sure the graph is: certain (an import, a definition in the same scope or a known receiver type proves it) or likely, with a note naming the convention it rests on, such as a workspace package reached through its built `dist` entry with no tsconfig `paths`, project reference or source condition mapping it to source.
+- The brief's block is now "What this change reaches". It lists the public names the change stopped exporting or bound to another definition, with every place that used them and what each binds now; a function moved to another file under another name with the same body as moved and renamed; and what the graph could not see near the change, with the cause. A caller list that may be short is marked as a floor, with the reasons.
+- Every cut the graph makes says what it left out: a hub's callers past the 20 nearest, the second hop past 20 callers of each caller, files past the parse cap, the time budget or the memory bound.
+- The graph keeps its work between reviews in the repository's `.openqodex/graph/`, ignored by the folder's own `.gitignore`: a file that did not change is never parsed again. Builds are kept whole and never changed after they are written; a review holds the build it read until it ends; the folder is held under `graph.max_cache_mb` (512 MB by default). With `--report-dir` nothing is kept.
+- Each kept build's files stay readable with `git show <tree>:<path>` through a local ref, `refs/openqodex/graph/<tree>`, deleted with the build. A plain `git push` does not send it.
+- The review writes the graph's files into its snapshot under `.openqodex-review/graph/` (every caller, the second hop, what the change calls, importers, the changed public names, what the graph could not see, the base version of removed code), so its reviewer can open everything the brief leaves out without leaving the snapshot. Before, the brief pointed at `impact.json` beside it, outside the folder the reviewer may read, and following it ended the review (#58).
+- When the build the next review needs is predicted, from this machine's own measurements, to take under five seconds, the graph is built fresh from what is cached. Over five seconds, a graph command uses the kept index of the same files when there is one, and a review builds under its time budget and keeps an index.
+- `graph.max_files` now counts new parses, never files whose facts are cached. New keys: `graph.max_cache_mb` and `graph.max_heap_mb`.
+- The graph also runs when a change edits only a manifest (`package.json`, `tsconfig.json`, `pyproject.toml`, `go.mod`, ...), and lists the imports whose target it changed.
+- Hidden commands, which may change before 1.0: `openqodex graph build | status | search | symbol | callers | callees | importers | changes | unknowns | explain | capabilities`, with `--json`. `docs/graph.md` describes the graph.
