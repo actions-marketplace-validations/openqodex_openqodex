@@ -19,9 +19,10 @@ import { join } from "node:path";
 import { buildGraph, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { graphOf } from "../src/session.js";
-import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { commitAll, makeHome, makeRepo, writeFiles } from "./helpers.js";
 
-const repos: string[] = [];
+const home = makeHome();
+const repos: string[] = [home];
 afterAll(() => {
   for (const r of repos) rmSync(r, { recursive: true, force: true });
 });
@@ -43,7 +44,7 @@ function shape(g: Graph) {
 }
 
 async function store(root: string) {
-  const s = await openStore(root);
+  const s = await openStore(root, { home });
   if (!s.ok) throw new Error(s.reason);
   return s.store;
 }

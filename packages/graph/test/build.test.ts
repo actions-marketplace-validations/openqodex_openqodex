@@ -23,9 +23,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, openStore, renderImpactBlock } from "../src/index.js";
-import { at, callSites, commitAll, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { at, callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
 
-const repos: string[] = [];
+const home = makeHome();
+const repos: string[] = [home];
 afterAll(() => {
   for (const r of repos) rmSync(r, { recursive: true, force: true });
 });
@@ -35,7 +36,7 @@ function repo(files: Record<string, string>): string {
   return root;
 }
 async function storeOf(root: string) {
-  const opened = await openStore(root);
+  const opened = await openStore(root, { home });
   if (!opened.ok) throw new Error(opened.reason);
   return opened.store;
 }
@@ -186,7 +187,7 @@ describe("cache", () => {
   it("builds without saving anything when the graph folder cannot be used (8)", async () => {
     const root = repo(files);
     writeFileSync(join(root, ".openqodex"), "a file where the folder would be\n");
-    const opened = await openStore(root);
+    const opened = await openStore(root, { home });
     expect(opened.ok).toBe(false);
     const g = await buildGraph({ repoRoot: root, store: null });
     expect(g.status.filesParsed).toBe(3);
@@ -203,7 +204,7 @@ describe("cache", () => {
     unlinkSync(entry);
     execFileSync("mkfifo", [entry]);
     const built = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "../dist/index.js")).href;
-    const script = `const { buildGraph, openStore } = await import(${JSON.stringify(built)}); const s = await openStore(${JSON.stringify(root)}); const g = await buildGraph({ repoRoot: ${JSON.stringify(root)}, store: s.ok ? s.store : null }); process.stdout.write(String(g.status.parses));`;
+    const script = `const { buildGraph, openStore } = await import(${JSON.stringify(built)}); const s = await openStore(${JSON.stringify(root)}, { home: ${JSON.stringify(home)} }); const g = await buildGraph({ repoRoot: ${JSON.stringify(root)}, store: s.ok ? s.store : null }); process.stdout.write(String(g.status.parses));`;
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8", timeout: 20_000 });
     expect(child.status, child.stderr).toBe(0);
     expect(child.stdout).toBe("1");

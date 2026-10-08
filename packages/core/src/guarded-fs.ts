@@ -524,6 +524,17 @@ export type EntryResult = { ok: true; stat: BigIntStats } | { ok: false; why: Re
 // root).
 export type Accept = (st: BigIntStats, depth: number) => boolean;
 
+// True when only this process's user can change the file or folder: that
+// user owns it, and neither its group nor other users may write it. Other
+// users may read it. A platform without user ids (Windows) has no owner or
+// mode bits that say this, and is not judged. The user id is asked once:
+// a build judges every folder of 14,000 reads.
+const MY_UID = process.getuid?.();
+export function writableByMeAlone(st: { uid: number | bigint; mode: number | bigint }): boolean {
+  if (MY_UID === undefined) return true;
+  return Number(st.uid) === MY_UID && (Number(st.mode) & 0o022) === 0;
+}
+
 function lstatQuiet(path: string): BigIntStats | null | "error" {
   try {
     return lstatSync(path, { bigint: true, throwIfNoEntry: false }) ?? null;

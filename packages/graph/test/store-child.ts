@@ -7,11 +7,14 @@ import { openStore } from "../src/store/store.js";
 import type { GraphStore } from "../src/store/types.js";
 import { publishInput } from "./fixtures/store/input.js";
 
-type Command =
+// `home`: OpenQodex's home the test gives every store, where the record of
+// published builds lives.
+type Command = { home: string } & (
   | { cmd: "publish"; repo: string; tag: string; count: number; at: number; complete: boolean; files: number; bytes: number }
   | { cmd: "lease-loop"; repo: string; rounds: number; holdMs: number }
   | { cmd: "publish-loop"; repo: string; rounds: number }
-  | { cmd: "meta"; repo: string; rounds: number };
+  | { cmd: "meta"; repo: string; rounds: number }
+);
 
 const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
@@ -67,7 +70,7 @@ async function run(store: GraphStore, c: Command): Promise<unknown> {
 
 async function main(): Promise<unknown> {
   const c = JSON.parse(process.argv[2] ?? "{}") as Command;
-  const opened = await openStore(c.repo);
+  const opened = await openStore(c.repo, { home: c.home });
   if (!opened.ok) return { refused: opened.reason };
   return run(opened.store, c);
 }

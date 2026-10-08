@@ -23,15 +23,27 @@
 // is created exclusively without following a link and checked to be the
 // file written, and nothing is synced to disk. Both are checked on every
 // read, so a file lost in a crash is a cache miss, never a wrong answer.
+//
+// Trust. The graph folder, every folder in it and every file read from it
+// must be the developer's alone: owned by this user and closed to writes
+// by group and others (core's writableByMeAlone). A graph folder or layout
+// folder that is not is refused at open (the build then runs in memory);
+// a folder or file deeper down that is not is never read (a facts file is
+// then a cache miss, counted in refusedFacts). A facts key is public (it
+// is derived from the blob id) and a manifest carries its own checksums,
+// so neither proves a file is the store's own: a build is opened, listed
+// or leased only when its manifest is the one this user's store recorded
+// for it in OpenQodex's home (trust.ts).
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, renameSync, unlinkSync, writeSync, type BigIntStats } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { ensureStateDir, FolderReader, Guard, safeGit } from "@openqodex/core";
+import { ensureStateDir, FolderReader, Guard, safeGit, writableByMeAlone } from "@openqodex/core";
 import { isFileFacts } from "../safe-fs.js";
 import type { FileFacts } from "../types.js";
 import { collectLocked, REF_PREFIX, treeBytes, type CollectorContext } from "./gc.js";
 import { leaseFileName, type LeaseRecord } from "./leases.js";
 import { FolderLock, ownStart, type HeldLock } from "./lock.js";
+import { notMineAlone, TrustRecord } from "./trust.js";
 import {
   BUILD_ID_PATTERN,
   DEFAULT_MAX_CACHE_MB,
@@ -213,6 +225,7 @@ function stampOf(st: BigIntStats | null): string | null {
 class Store implements GraphStore {
   readonly dir: string;
   diskFull = false;
+  refusedFacts = 0;
   private readonly lock: FolderLock;
   private readonly ids = new BuildIds();
   // For writes: the folders the guard verified, by their path under the
@@ -224,6 +237,7 @@ class Store implements GraphStore {
     readonly repoRoot: string,
     private readonly guard: Guard,
     private readonly reader: FolderReader,
+    private readonly trust: TrustRecord,
     private readonly now: () => number,
     readonly boundBytes: number,
   ) {
@@ -272,11 +286,12 @@ class Store implements GraphStore {
     return BUILD_ID_PATTERN.test(id) ? id : null;
   }
 
-  // The manifest of generation `id` when every file it lists matches it.
+  // The manifest of generation `id` when it is the one this user's store
+  // recorded for it (trust.ts) and every file it lists matches it.
   private load(id: BuildId): GenerationManifest | null {
     if (!BUILD_ID_PATTERN.test(id)) return null;
     const raw = this.readRel(`generations/${id}/manifest.json`, MANIFEST_MAX_BYTES);
-    if (raw === null) return null;
+    if (raw === null || !this.trust.trusted(id, sha256(raw))) return null;
     let manifest: unknown;
     try {
       manifest = JSON.parse(raw.toString("utf8"));
@@ -415,12 +430,17 @@ class Store implements GraphStore {
     return `facts/${key.slice(0, 2)}/${key}.json`;
   }
 
+  // A facts file another user owns or other users can write is a cache
+  // miss, counted in refusedFacts.
   readFacts(key: string): FileFacts | null {
     if (!FACTS_KEY_PATTERN.test(key)) return null;
-    const raw = this.readRel(this.factsPath(key), FACTS_MAX_BYTES);
-    if (raw === null) return null;
+    const read = this.reader.read(this.names(this.factsPath(key)), FACTS_MAX_BYTES);
+    if (!read.ok) {
+      if (read.why === "untrusted") this.refusedFacts++;
+      return null;
+    }
     try {
-      const entry = JSON.parse(raw.toString("utf8")) as { key?: unknown; facts?: unknown };
+      const entry = JSON.parse(read.data.toString("utf8")) as { key?: unknown; facts?: unknown };
       if (entry.key === key && isFileFacts(entry.facts)) return entry.facts;
     } catch {
       // corrupt: the build parses the file again and rewrites it
@@ -560,7 +580,10 @@ class Store implements GraphStore {
         createdAt: new Date(buildIdTime(id)).toISOString(),
         files: Object.fromEntries(files),
       };
-      this.guard.write(join(folder, "manifest.json"), `${JSON.stringify(manifest)}\n`);
+      const text = `${JSON.stringify(manifest)}\n`;
+      this.guard.write(join(folder, "manifest.json"), text);
+      // Recorded before it is read back: only a recorded build loads.
+      this.trust.record(id, sha256(Buffer.from(text, "utf8")), (other) => this.buildThere(other));
       if (this.load(id) === null) {
         this.discard(folder);
         return { ok: false, error: "invalid", reason: `generation ${id} did not read back as it was written` };
@@ -568,6 +591,7 @@ class Store implements GraphStore {
       // The new generation is counted before `current` moves: the build
       // reserves its room.
       const collected = await collectLocked(this.collector(), id);
+      if (collected.removedGenerations.length > 0) this.pruneTrust();
       const tree = manifest.capture.treeSha;
       // A tree the object store does not hold gets no ref; its sources then
       // read as unavailable.
@@ -593,6 +617,22 @@ class Store implements GraphStore {
 
   private forgetFolders(rel: string): void {
     for (const key of this.writeIds.keys()) if (key === rel || key.startsWith(`${rel}/`)) this.writeIds.delete(key);
+  }
+
+  // Whether the folder of build `id` is still there.
+  private buildThere(id: BuildId): boolean {
+    return this.entryRel(`generations/${id}`)?.isDirectory() === true;
+  }
+
+  // Drops from the record the builds the collector removed. A record that
+  // cannot be written keeps them: an id names one build only, so a stale
+  // entry vouches for nothing else.
+  private pruneTrust(): void {
+    try {
+      this.trust.prune((id) => this.buildThere(id));
+    } catch {
+      // left for the next publication or collection
+    }
   }
 
   private async locked<T>(fn: () => T | Promise<T>): Promise<T> {
@@ -642,7 +682,11 @@ class Store implements GraphStore {
   // Throws when the lock stays busy for 10 seconds.
   collect(): Promise<CollectReport> {
     this.used = null;
-    return this.locked(() => collectLocked(this.collector(), null));
+    return this.locked(async () => {
+      const report = await collectLocked(this.collector(), null);
+      if (report.removedGenerations.length > 0) this.pruneTrust();
+      return report;
+    });
   }
 
   // ---------- meta ----------
@@ -676,11 +720,28 @@ class Store implements GraphStore {
 
 // ---------- opening ----------
 
+// The first of the graph folder and its layout folders that is there and is
+// not the developer's alone, as the reason the store is refused; null when
+// none is.
+function untrustedLayout(root: string): string | null {
+  for (const rel of [STATE.join("/"), ...FOLDERS.map((f) => `${STATE.join("/")}/${f}`)]) {
+    const st = lstatBig(join(root, ...rel.split("/")));
+    const problem = st === null ? null : notMineAlone(st);
+    if (problem !== null) return `${rel} ${problem}, so what it holds may not be yours and is not used: remove ${STATE.join("/")} and openqodex makes a new one`;
+  }
+  return null;
+}
+
 // Opens the graph folder of the repository at `repoRoot`, making it when
 // missing. Refused, with one plain line, when a link stands anywhere from
-// the repo root down to the layout's folders, or when git tracks any file
-// under .openqodex/graph (a commit could ship forged facts or builds).
-export async function openStore(repoRoot: string, opts: { maxCacheMb?: number; now?: () => number } = {}): Promise<StoreOpenResult> {
+// the repo root down to the layout's folders, when git tracks any file
+// under .openqodex/graph (a commit could ship forged facts or builds), when
+// the graph folder or a layout folder belongs to another user or other
+// users can write it (it is left as it is: closing it would make what was
+// planted look trusted), or when the record of builds cannot be kept in
+// OpenQodex's home `opts.home` (trust.ts). A graph folder only others can
+// read is closed to 0700.
+export async function openStore(repoRoot: string, opts: { home: string; maxCacheMb?: number; now?: () => number }): Promise<StoreOpenResult> {
   const root = resolve(repoRoot);
   const refuse = (reason: string): StoreOpenResult => ({ ok: false, reason });
   try {
@@ -704,6 +765,16 @@ export async function openStore(repoRoot: string, opts: { maxCacheMb?: number; n
   if (tracked.stdout.length > 0) {
     return refuse(".openqodex/graph holds files git tracks; the graph never uses files a commit can supply: remove them with git rm -r --cached .openqodex/graph");
   }
+  // Before anything is made in it, and again after, for a folder another
+  // process made meanwhile.
+  const before = untrustedLayout(root);
+  if (before !== null) return refuse(before);
+  let trust: TrustRecord;
+  try {
+    trust = TrustRecord.open(opts.home, root);
+  } catch (error) {
+    return refuse(message(error));
+  }
   const guard = new Guard({ repoRoot: root, gitFolders: [], roots: [] });
   const dir = join(root, ...STATE);
   try {
@@ -716,6 +787,8 @@ export async function openStore(repoRoot: string, opts: { maxCacheMb?: number; n
         if (!lstatBig(abs)?.isDirectory()) throw error;
       }
     }
+    const after = untrustedLayout(root);
+    if (after !== null) return refuse(after);
     // An older version made the folder 0755: what it holds quotes the code.
     guard.narrowFolder(dir, 0o700);
   } catch (error) {
@@ -723,11 +796,13 @@ export async function openStore(repoRoot: string, opts: { maxCacheMb?: number; n
   }
   let reader: FolderReader;
   try {
-    reader = new FolderReader(root);
+    // .openqodex (depth 0) is the repository's; from the graph folder down,
+    // every folder and file read must be the developer's alone.
+    reader = new FolderReader(root, (st, depth) => depth < 1 || writableByMeAlone(st));
   } catch (error) {
     return refuse(message(error));
   }
   await ownStart();
   const mb = opts.maxCacheMb !== undefined && Number.isFinite(opts.maxCacheMb) && opts.maxCacheMb > 0 ? opts.maxCacheMb : DEFAULT_MAX_CACHE_MB;
-  return { ok: true, store: new Store(root, guard, reader, opts.now ?? Date.now, Math.floor(mb * 1024 * 1024)) };
+  return { ok: true, store: new Store(root, guard, reader, trust, opts.now ?? Date.now, Math.floor(mb * 1024 * 1024)) };
 }

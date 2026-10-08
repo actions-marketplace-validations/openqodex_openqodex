@@ -11,6 +11,7 @@
 import { findRepoRoot, getChange, loadConfig, OpenQodexError } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
 import { buildGraph, detectImpact, graphOf, openStore, OPERATIONS, query } from "@openqodex/graph";
+import { openqodexHome } from "@openqodex/scanners";
 import type { Answer, Graph, GraphStore, Item, Lease, Operation, Request, Session } from "@openqodex/graph";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { parseFlags } from "../flags.js";
@@ -80,9 +81,10 @@ export async function run(args: string[]): Promise<number> {
   if (op !== "build" && !(OPERATIONS as readonly string[]).includes(op)) throw new OpenQodexError(`unknown operation: ${op}\n${USAGE}`);
   const repoRoot = await findRepoRoot(global.cwd);
   const config = loadConfig(repoRoot, global.config).config;
-  const opened = await openStore(repoRoot, { maxCacheMb: config.graph.maxCacheMb });
+  const opened = await openStore(repoRoot, { home: openqodexHome(), maxCacheMb: config.graph.maxCacheMb });
   if (!opened.ok) say(`openqodex: the code graph's folder is not used: ${opened.reason}`);
   const store: GraphStore | null = opened.ok ? opened.store : null;
+  const storeRefused = opened.ok ? undefined : opened.reason;
   const progress = (line: string) => {
     if (!global.quiet) say(line);
   };
@@ -115,6 +117,7 @@ export async function run(args: string[]): Promise<number> {
       graph = await buildGraph({
         repoRoot,
         store,
+        storeRefused,
         capture: "working-tree",
         files: change?.changedPaths,
         base,

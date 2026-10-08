@@ -310,8 +310,9 @@ describe.skipIf(process.env.OPENQODEX_E2E_OFFLINE === "1")("graph acceptance on 
   for (const repo of REPOS) {
     it(`${repo.name} at ${repo.sha.slice(0, 12)}: every bindable caller found, precision at least 0.9`, async () => {
       const dir = clone(repo);
-      // The graph folder of the clone itself, as a review keeps it.
-      const opened = await openStore(dir);
+      // The graph folder of the clone itself, as a review keeps it; the
+      // record of its builds in a temporary OpenQodex home.
+      const opened = await openStore(dir, { home: mkdtempSync(join(tmpdir(), "oq-e2e-graph-home-")) });
       if (!opened.ok) throw new Error(opened.reason);
       const cold = await buildGraph({ repoRoot: dir, store: opened.store, budgetMs: 120_000, maxFiles: 100_000 });
       const warm = await buildGraph({ repoRoot: dir, store: opened.store, budgetMs: 120_000, maxFiles: 100_000 });

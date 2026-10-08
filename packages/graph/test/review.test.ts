@@ -31,9 +31,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, openStore } from "../src/index.js";
-import { at, callSites, commitAll, git, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { at, callSites, commitAll, git, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
 
-const dirs: string[] = [];
+const home = makeHome();
+const dirs: string[] = [home];
 afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
@@ -45,7 +46,7 @@ function repo(files: Record<string, string>): string {
 const cacheOf = (root: string) => join(root, ".openqodex", "graph");
 // The repo's graph folder when it may be used, else none: a refused folder is never read or written.
 const build = async (root: string, extra: Partial<Parameters<typeof buildGraph>[0]> = {}) => {
-  const opened = await openStore(root);
+  const opened = await openStore(root, { home });
   return buildGraph({ repoRoot: root, store: opened.ok ? opened.store : null, ...extra });
 };
 const factsFiles = (root: string): string[] => {

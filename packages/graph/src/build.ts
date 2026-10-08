@@ -70,6 +70,9 @@ export type BuildArgs = {
   // .openqodex/graph/. Null keeps nothing (the GitHub Action's
   // --report-dir runs write nothing under .openqodex/).
   store?: GraphStore | null;
+  // Why the graph folder was refused when it was opened (openStore's
+  // reason); the build, kept in memory, says so first among its reasons.
+  storeRefused?: string;
   // What tree the generation's capture is written as: the review snapshot,
   // or the work tree for the graph commands. Null writes no tree.
   capture?: "snapshot" | "working-tree" | null;
@@ -170,6 +173,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   };
   const overBudget = () => performance.now() > deadline;
   const reasons: string[] = [];
+  if (!store && args.storeRefused) reasons.push(`the graph folder is not used: ${args.storeRefused}`);
+  const refusedBefore = store?.refusedFacts ?? 0;
   const cuts: Cut[] = [];
   const notRead: NotRead[] = [];
 
@@ -420,6 +425,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       cuts.push({ by: "storage", at: null, omitted: storageRefused, exact: true, unit: "files", note: "facts not saved: the graph folder is at its size bound" });
     }
     if (store?.diskFull) reasons.push("the disk is full: the graph was not saved");
+    const untrusted = (store?.refusedFacts ?? 0) - refusedBefore;
+    if (untrusted > 0) reasons.push(`${plural(untrusted, "facts file")} in the graph folder could be changed by other users and ${untrusted === 1 ? "was" : "were"} parsed again`);
     stage("assemble");
 
     const durationMs = Math.round(performance.now() - started);

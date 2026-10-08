@@ -29,7 +29,7 @@ import {
 import type { Change, ChangeScope, Config, Display, HotSpot, ImpactSummary, Report, RuleCoverage, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
 import { buildGraph, detectImpact, emptyImpact, hotSymbols, isManifest, langOf, openStore } from "@openqodex/graph";
 import type { Graph, GraphStore, Lease } from "@openqodex/graph";
-import { createToolResolver, customAdapters, runScanners } from "@openqodex/scanners";
+import { createToolResolver, customAdapters, openqodexHome, runScanners } from "@openqodex/scanners";
 import { Guard } from "./agents/guarded-fs.js";
 import { instructionsTemplate } from "./agents/repo-folder.js";
 import { EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILED } from "./exit-codes.js";
@@ -209,18 +209,21 @@ export function reviewOutputs(args: { report: Report; display: Display | null; d
 
 // The graph folder of the developer's repository for this run, or null when
 // the run keeps nothing (--report-dir writes nothing under .openqodex/) or
-// the folder cannot be used (a link, a tracked file): the graph is then
-// built in memory and the run goes on.
-async function graphStore(p: PipelineResult, persist: boolean): Promise<GraphStore | null> {
-  if (!persist) return null;
+// the folder cannot be used (a link, a tracked file, a folder other users
+// can write): the graph is then built in memory, the run goes on, and
+// `refused` says why, for the build's reasons.
+async function graphStore(p: PipelineResult, persist: boolean): Promise<{ store: GraphStore | null; refused?: string }> {
+  if (!persist) return { store: null };
+  let refused: string;
   try {
-    const opened = await openStore(p.repoRoot, { maxCacheMb: p.config.graph.maxCacheMb });
-    if (opened.ok) return opened.store;
-    warn(`openqodex: the code graph's folder is not used: ${opened.reason}`);
+    const opened = await openStore(p.repoRoot, { home: openqodexHome(), maxCacheMb: p.config.graph.maxCacheMb });
+    if (opened.ok) return { store: opened.store };
+    refused = opened.reason;
   } catch (error) {
-    warn(`openqodex: the code graph's folder is not used: ${((error as Error).message ?? "").split("\n")[0]}`);
+    refused = ((error as Error).message ?? "").split("\n")[0] ?? "";
   }
-  return null;
+  warn(`openqodex: the code graph's folder is not used: ${refused}`);
+  return { store: null, refused };
 }
 
 // The graph for this run, or the summary saying why there is none. For the
@@ -237,10 +240,11 @@ async function graphFor(p: PipelineResult, flags: GlobalFlags, noGraph: boolean,
     return emptyImpact("skipped", `no ${withBase ? "changed " : ""}file is TypeScript, JavaScript, Python, Go or Ruby code or a manifest`);
   }
   try {
-    const store = await graphStore(p, persist);
+    const { store, refused } = await graphStore(p, persist);
     return await buildGraph({
       repoRoot: p.workDir,
       store,
+      storeRefused: refused,
       capture: store === null ? null : p.workDir === p.repoRoot ? "working-tree" : "snapshot",
       files: withBase ? p.change.changedPaths : undefined,
       only: withBase ? undefined : p.change.changedPaths,
@@ -270,7 +274,7 @@ export async function buildGraphRun(p: PipelineResult, flags: GlobalFlags, noGra
   if (!isGraph(graph)) return { impact: graph, graph: null, lease: null };
   let lease: Lease | null = null;
   if (persist && graph.status.generation) {
-    const store = await graphStore(p, persist);
+    const { store } = await graphStore(p, persist);
     lease = (await store?.lease({ id: graph.status.generation }, "review"))?.lease ?? null;
   }
   return { impact: redactStored(detectImpact(graph, p.change), p.secrets), graph, lease };

@@ -11,9 +11,14 @@
 //     current                    one line: the newest usable build id
 //     complete/<tree sha>        one line: the newest complete build of that capture
 //
+// Beside it, in OpenQodex's home and never in the repository:
+//
+//   <home>/graph/<repo id>.json  the sha256 of every manifest this user's store wrote (trust.ts)
+//
 // A generation is published by writing its files (outside the lock: the
-// id is new), then, inside the lock: writing manifest.json last,
-// validating every file against the manifest's checksums, collecting,
+// id is new), then, inside the lock: writing manifest.json last, recording
+// its sha256 in the home, validating every file against the manifest's
+// checksums, collecting,
 // keeping the capture's git ref, and moving `current` (and
 // `complete/<tree>` when the build is complete). The manifest is written
 // inside the lock so a collection in another process never sees a valid
@@ -132,6 +137,10 @@ export interface GraphStore {
   readonly dir: string; // absolute path of .openqodex/graph
   // True after a write hit a full disk: the build stops writing and says so.
   readonly diskFull: boolean;
+  // Facts files readFacts refused since the store opened because another
+  // user owns them or other users can write them (or the folder they are
+  // in): each was a cache miss, and the build says how many it parsed again.
+  readonly refusedFacts: number;
   // The folder's size bound in bytes (graph.max_cache_mb).
   readonly boundBytes: number;
 

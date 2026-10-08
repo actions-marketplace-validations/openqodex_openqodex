@@ -17,9 +17,10 @@ import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, openStore } from "../src/index.js";
-import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { commitAll, makeHome, makeRepo, writeFiles } from "./helpers.js";
 
-const repos: string[] = [];
+const home = makeHome();
+const repos: string[] = [home];
 afterAll(() => {
   for (const r of repos) rmSync(r, { recursive: true, force: true });
 });
@@ -81,7 +82,7 @@ describe("the caps of a build", () => {
 
   it("writes no facts past the graph folder's bound during a build, and records what it did not save (5)", async () => {
     const root = repo(many(400));
-    const opened = await openStore(root, { maxCacheMb: 0.05 });
+    const opened = await openStore(root, { home, maxCacheMb: 0.05 });
     if (!opened.ok) throw new Error(opened.reason);
     const g = await buildGraph({ repoRoot: root, store: opened.store });
     expect(g.status.filesParsed).toBe(400);

@@ -65,17 +65,28 @@
 //     .openqodex/graph is moved aside and a link to it is left at the old
 //     name: the folder it remembered is the same folder, now reached
 //     through a link.
+// 22. A graph folder other users can write is used, so facts or builds
+//     they planted there are read as the developer's own; or its refusal
+//     stops the build, narrows it to look trusted, or reaches no one. The
+//     same for the record of builds in OpenQodex's home.
+// 23. A facts file another user owns, or one other users can write, is
+//     read; or the build does not say how many it refused.
+// 24. A build whose manifest this user's store did not write is opened,
+//     listed or leased: a copy of a valid build under a new id with its
+//     manifest written again for that id, a build edited under its own id
+//     with its checksums computed again, or a store using another home.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, chownSync, copyFileSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildGraph } from "../src/build.js";
 import { ownStart } from "../src/store/lock.js";
 import { openStore } from "../src/store/store.js";
-import type { GraphStore, PublishResult } from "../src/store/types.js";
+import { buildIdTime, type GraphStore, type PublishResult } from "../src/store/types.js";
 import { factsOf, keyOf, publishInput } from "./fixtures/store/input.js";
 import { commitAll, git, makeRepo } from "./helpers.js";
 
@@ -83,6 +94,11 @@ const HOUR = 3600_000;
 const here = dirname(fileURLToPath(import.meta.url));
 const cleanup: string[] = [];
 let bundle = "";
+// OpenQodex's home for every store here, the child processes' included:
+// the record of the builds each store published lives there, never in the
+// developer's own ~/.openqodex.
+const HOME = mkdtempSync(join(tmpdir(), "oq-store-home-"));
+cleanup.push(HOME);
 
 // store-child.ts bundled with esbuild (the bundler tsup uses) into one .mjs
 // file a child `node` process runs; the code is this repo's own, unchanged.
@@ -113,7 +129,7 @@ type ChildDone = { out: Record<string, unknown> | null; signal: NodeJS.Signals |
 
 function child(command: Record<string, unknown>): { proc: ChildProcess; done: Promise<ChildDone> } {
   const startedAt = Date.now();
-  const proc = spawn(process.execPath, [bundle, JSON.stringify(command)], { stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(process.execPath, [bundle, JSON.stringify({ home: HOME, ...command })], { stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   proc.stdout!.on("data", (b: Buffer) => (stdout += b.toString("utf8")));
@@ -151,8 +167,8 @@ function outside(): string {
   return dir;
 }
 
-async function storeOf(root: string, opts: { maxCacheMb?: number; now?: () => number } = {}): Promise<GraphStore> {
-  const opened = await openStore(root, opts);
+async function storeOf(root: string, opts: { maxCacheMb?: number; now?: () => number; home?: string } = {}): Promise<GraphStore> {
+  const opened = await openStore(root, { ...opts, home: opts.home ?? HOME });
   if (!opened.ok) throw new Error(opened.reason);
   return opened.store;
 }
@@ -488,13 +504,13 @@ describe("links and tracked files", () => {
     const root = repo();
     mkdirSync(join(root, ".openqodex"), { mode: 0o700 });
     symlinkSync(target, join(root, ".openqodex", "graph"));
-    const refused = await openStore(root);
+    const refused = await openStore(root, { home: HOME });
     expect(!refused.ok && refused.reason).toMatch(/\.openqodex\/graph is a symbolic link/);
     const root2 = repo();
     const store = await storeOf(root2);
     rmSync(join(store.dir, "facts"), { recursive: true });
     symlinkSync(target, join(store.dir, "facts"));
-    const refused2 = await openStore(root2);
+    const refused2 = await openStore(root2, { home: HOME });
     expect(!refused2.ok && refused2.reason).toMatch(/graph\/facts is a symbolic link/);
     expect(store.writeFacts(keyOf("through"), factsOf("through"))).toBe("refused");
     expect(readdirSync(target)).toEqual([]);
@@ -581,7 +597,7 @@ describe("links and tracked files", () => {
     writeFileSync(join(root, ".openqodex", "graph", "current"), "forged\n");
     git(root, "add", "-f", ".openqodex/graph/current");
     git(root, "commit", "-q", "-m", "forged");
-    const refused = await openStore(root);
+    const refused = await openStore(root, { home: HOME });
     expect(!refused.ok && refused.reason).toMatch(/holds files git tracks/);
   });
 
@@ -797,5 +813,168 @@ describe("the size bound and kept builds", () => {
     expect(keys.every((k) => store.hasFacts(k))).toBe(true);
     expect(b.ok && b.overBudget).toBeNull();
     expect(ids(store)).toEqual([bId]);
+  });
+});
+
+// Makes `path` a real file another user owns, the honest ways this machine
+// allows: as root, a file written with `text` and given to uid 1 with
+// chown; otherwise a hard link to a root-owned file on the same disk that
+// only its owner can write (macOS allows that link; Linux with
+// fs.protected_hardlinks refuses it). Null when neither is possible.
+function otherOwned(path: string, text: string): "chown" | "link" | null {
+  if (process.getuid?.() === 0) {
+    writeFileSync(path, text, { mode: 0o600 });
+    chownSync(path, 1, 1);
+    return "chown";
+  }
+  const dev = statSync(dirname(path)).dev;
+  for (const dir of ["/Library/Preferences", "/private/etc", "/etc"]) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const src = join(dir, name);
+      const st = lstatSync(src, { throwIfNoEntry: false });
+      if (!st?.isFile() || st.uid === process.getuid?.() || st.dev !== dev || (st.mode & 0o022) !== 0) continue;
+      try {
+        linkSync(src, path);
+        return "link";
+      } catch {
+        // refused: the next one
+      }
+    }
+  }
+  return null;
+}
+
+describe("trust", () => {
+  it("22. a graph folder other users can write is refused at open and left as it was, with the folder and the fix named, and the build runs in memory with that reason", async () => {
+    for (const mode of [0o777, 0o770]) {
+      const root = repo();
+      const graph = join(root, ".openqodex", "graph");
+      mkdirSync(graph, { recursive: true });
+      chmodSync(graph, mode);
+      const refused = await openStore(root, { home: HOME });
+      const reason = refused.ok ? "" : refused.reason;
+      expect(reason).toBe(`.openqodex/graph can be written by other users (mode 0${mode.toString(8)}), so what it holds may not be yours and is not used: remove .openqodex/graph and openqodex makes a new one`);
+      expect(statSync(graph).mode & 0o777).toBe(mode);
+      const g = await buildGraph({ repoRoot: root, store: null, storeRefused: reason });
+      expect(g.status.filesParsed).toBe(1);
+      expect(g.status.generation).toBeNull();
+      expect(g.status.reasons[0]).toBe(`the graph folder is not used: ${reason}`);
+      expect(readdirSync(graph)).toEqual([]);
+    }
+    // A layout folder in it other users can write: the same.
+    const root = repo();
+    await storeOf(root);
+    chmodSync(join(root, ".openqodex", "graph", "generations"), 0o777);
+    const refused = await openStore(root, { home: HOME });
+    expect(!refused.ok && refused.reason).toMatch(/^\.openqodex\/graph\/generations can be written by other users \(mode 0777\)/);
+    // The record of builds in OpenQodex's home: the same.
+    const home = outside();
+    await storeOf(repo(), { home });
+    chmodSync(join(home, "graph"), 0o777);
+    const homeRefused = await openStore(repo(), { home });
+    expect(homeRefused.ok ? "" : homeRefused.reason).toBe(`${join(home, "graph")} can be written by other users (mode 0777), so the record of your graph builds there may not be yours: remove ${join(home, "graph")} and openqodex makes a new one`);
+  });
+
+  it("23. a facts file other users can write, or one another user owns, is a cache miss the store counts, and the build says how many it parsed again", async () => {
+    const store = await storeOf(repo());
+    const key = keyOf("mode");
+    expect(store.writeFacts(key, factsOf("mode"))).toBe("ok");
+    const file = join(store.dir, "facts", key.slice(0, 2), `${key}.json`);
+    for (const [mode, trusted] of [
+      [0o666, false],
+      [0o620, false],
+      [0o602, false],
+      [0o644, true],
+      [0o600, true],
+    ] as const) {
+      chmodSync(file, mode);
+      expect(store.readFacts(key), mode.toString(8)).toEqual(trusted ? factsOf("mode") : null);
+      expect(store.hasFacts(key), mode.toString(8)).toBe(trusted);
+    }
+    expect(store.refusedFacts).toBe(3);
+    // A facts folder other users can write: every file in it is refused, and nothing is written there.
+    chmodSync(dirname(file), 0o777);
+    expect(store.readFacts(key)).toBeNull();
+    expect(store.refusedFacts).toBe(4);
+    expect(store.writeFacts(key, factsOf("mode"))).toBe("refused");
+    chmodSync(dirname(file), 0o700);
+    expect(store.readFacts(key)).toEqual(factsOf("mode"));
+    expect(store.refusedFacts).toBe(4);
+
+    // Owned by another user. A hard link brings that user's content, which
+    // is no facts entry: the count, which a file that only fails to parse
+    // never moves, says the owner refused it.
+    const otherKey = keyOf("other");
+    const at = join(store.dir, "facts", otherKey.slice(0, 2), `${otherKey}.json`);
+    mkdirSync(dirname(at), { recursive: true, mode: 0o700 });
+    const how = otherOwned(at, JSON.stringify({ key: otherKey, facts: factsOf("other") }));
+    if (how === null) {
+      console.warn("skipped the other-owner case: not root, and no root-owned file on this disk could be hard linked (fs.protected_hardlinks)");
+    } else {
+      expect(store.readFacts(otherKey)).toBeNull();
+      expect(store.hasFacts(otherKey)).toBe(false);
+      expect(store.refusedFacts).toBe(5);
+      // The same bytes in a file this user owns: read, and not counted.
+      const mine = `${at}.mine`;
+      copyFileSync(at, mine);
+      unlinkSync(at);
+      renameSync(mine, at);
+      chmodSync(at, 0o600);
+      expect(store.readFacts(otherKey)).toEqual(how === "chown" ? factsOf("other") : null);
+      expect(store.refusedFacts).toBe(5);
+    }
+
+    // A build parses a refused file again and says how many.
+    const root = repo();
+    const built = await storeOf(root);
+    expect((await buildGraph({ repoRoot: root, store: built, mode: "fresh" })).status.parses).toBe(1);
+    expect((await buildGraph({ repoRoot: root, store: built, mode: "fresh" })).status.parses).toBe(0);
+    const facts = walk(join(built.dir, "facts")).filter((p) => p.endsWith(".json"));
+    expect(facts.length).toBe(1);
+    chmodSync(facts[0]!, 0o666);
+    const again = await buildGraph({ repoRoot: root, store: built, mode: "fresh" });
+    expect(again.status.parses).toBe(1);
+    expect(again.status.reasons).toContain("1 facts file in the graph folder could be changed by other users and was parsed again");
+  });
+
+  it("24. a build whose manifest this user's store did not write is never opened, listed or leased, and another home trusts none of this store's builds", async () => {
+    const root = repo();
+    const store = await storeOf(root);
+    const a = ok(await store.publish(publishInput({ tag: "a" })));
+    const gens = join(store.dir, "generations");
+    const manifestOf = (id: string): Record<string, unknown> & { files: Record<string, unknown> } => JSON.parse(readFileSync(join(gens, id, "manifest.json"), "utf8"));
+    // A copy of a under a newer id, its manifest written again for that id.
+    const planted = `${(buildIdTime(a) + 1).toString(36).padStart(9, "0")}0000-zz-0123abcd`;
+    cpSync(join(gens, a), join(gens, planted), { recursive: true });
+    writeFileSync(join(gens, planted, "manifest.json"), `${JSON.stringify({ ...manifestOf(a), id: planted })}\n`, { mode: 0o600 });
+    expect(ids(store)).toEqual([a]);
+    expect(store.open({ id: planted })).toBeNull();
+    expect(await store.lease({ id: planted }, "cli")).toBeNull();
+    writeFileSync(join(store.dir, "current"), `${planted}\n`);
+    expect(store.open("current")).toBeNull();
+    expect(await store.lease("current", "review")).toBeNull();
+    writeFileSync(join(store.dir, "current"), `${a}\n`);
+    expect(store.open("current")?.manifest.id).toBe(a);
+    // a itself edited under its own id, its checksums computed again.
+    const projects = join(gens, a, "projects.json");
+    const forged = readFileSync(projects, "utf8").replace('"a"', '"forged"');
+    writeFileSync(projects, forged);
+    const m = manifestOf(a);
+    m.files["projects.json"] = { bytes: Buffer.byteLength(forged), sha256: createHash("sha256").update(forged).digest("hex") };
+    writeFileSync(join(gens, a, "manifest.json"), `${JSON.stringify(m)}\n`);
+    expect(ids(store)).toEqual([]);
+    expect(store.open({ id: a })).toBeNull();
+    // What this store publishes it trusts; a store with another home trusts none of it.
+    const b = ok(await store.publish(publishInput({ tag: "b" })));
+    expect(ids(store)).toEqual([b]);
+    const elsewhere = await storeOf(root, { home: outside() });
+    expect(ids(elsewhere)).toEqual([]);
+    expect(elsewhere.open("current")).toBeNull();
   });
 });
