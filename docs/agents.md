@@ -16,6 +16,8 @@ An agent installs OpenQodex for itself with the same command, naming itself and 
 
 Inside a repository, the plan also holds the git pre-push hook, so every push from this repo is checked for a review, from an agent or by hand. `--hook none` leaves it out, and `--hook pre-push` puts it back. The choice is recorded for that repository, so a later `init` keeps it. The hook is described under "A git hook for every tool" below.
 
+For each agent, the plan also registers the code graph's MCP server. `--no-mcp` leaves it out. It is described under "The code graph's MCP server" below.
+
 Without a terminal to ask in, `init` writes the plan when it runs inside Claude Code, Codex or Cursor (their shells set `CLAUDECODE`, `CODEX_THREAD_ID` or `CURSOR_AGENT`): the agent ran it on purpose. Anywhere else without a terminal, it prints the plan and the flags that change it, writes nothing and exits 2, until you add `--yes`.
 
 ## The instruction section
@@ -97,6 +99,26 @@ The user-scope skill is a short stub: when to run, and one command, `<launcher> 
 
 In project scope, the hooks, the skill and the rules call `npx -y openqodex@<version>` and the skill holds the full procedure, because the launcher path would not exist on a teammate's machine. These files, and the review section `init` adds to a repository's `CLAUDE.md` and `AGENTS.md`, stay on the version they name: an update never changes them. Run `init` again to move them.
 
+## The code graph's MCP server
+
+`init` registers an MCP server named `openqodex` with each agent it installs into. The server answers the code graph's questions as tools; `graph` describes the code graph. It runs on your machine as a local process that the agent starts (stdio), and sends nothing anywhere. In user scope it runs the launcher by its full path with the argument `mcp`. In project scope it runs `npx -y openqodex@<version> mcp`, which works on a teammate's machine. An agent reads its MCP servers when it starts: restart it after `init`, which says so.
+
+| Agent | User scope | Project scope |
+|---|---|---|
+| Claude Code | `mcpServers` in `~/.claude.json` in your home folder, or in `.claude.json` in `$CLAUDE_CONFIG_DIR` when that is set | `mcpServers` in `.mcp.json` at the root of the repository |
+| Cursor | `mcpServers` in `~/.cursor/mcp.json` | `mcpServers` in `.cursor/mcp.json` |
+| Codex CLI | a `[mcp_servers.openqodex]` table between `# openqodex:start` and `# openqodex:end` at the end of `$CODEX_HOME/config.toml` (`~/.codex/config.toml` by default) | the same block in `.codex/config.toml` |
+| Cline | `mcpServers` in `~/.cline/data/settings/cline_mcp_settings.json`, when `~/.cline/data`, the Cline CLI's folder, is there | none |
+
+- The Claude Code and Cursor entries hold `"type": "stdio"`, `command` and `args`; the Cline entry holds `command` and `args`.
+- Claude Code asks you to approve a project server from `.mcp.json` before it uses it.
+- Codex reads a project's `.codex/config.toml` only in a trusted project.
+- Cline documents a file for its CLI only, and no project file. With the VS Code extension alone, and in project scope, `init` writes no file for Cline and prints the entry to add in Cline's "Configure MCP Servers".
+- `init` adds the `openqodex` entry and keeps every other server and setting in the file. A file that does not parse, or whose `mcpServers` is not an object, is left untouched, and `init` exits 2. A server named `openqodex` that `init` did not write is left alone, and so is one you edited.
+- In Codex's `config.toml`, `init` appends its block only when no other part of the file defines a server named `openqodex`, in any spelling, and the file does not set `mcp_servers` as an inline table. A second definition would make Codex refuse the whole file.
+- Claude Code rewrites `~/.claude.json` while it runs. `init` reads the file again just before it writes and adds its entry to what is there then. It refuses only when the `openqodex` entry itself changed after the plan was printed.
+- `--no-mcp` leaves the server out of the plan and removes the registrations `init` recorded. The choice is recorded for this machine in user scope, and for the repository in project scope, so a later `init`, with `--yes` or without, keeps it out. `--mcp` puts it back. `init --uninstall` forgets the choice.
+
 ## Claude Code
 
 | What | User scope | Project scope |
@@ -105,12 +127,13 @@ In project scope, the hooks, the skill and the rules call `npx -y openqodex@<ver
 | Push gate hook | merged into `~/.claude/settings.json` | merged into `.claude/settings.json` |
 | Instructions | a marked section in `~/.claude/CLAUDE.md` | a marked section in `CLAUDE.md` |
 | Permission rules | merged into `permissions.allow` of `~/.claude/settings.json` | none |
+| Code graph MCP server | merged into `~/.claude.json` | merged into `.mcp.json` |
 
 When `CLAUDE_CONFIG_DIR` is set, Claude Code reads its settings from that folder instead of `~/.claude`, and so do these user-scope paths. `init` also finds Claude Code by that folder.
 
 The hook is one `PreToolUse` entry. It matches the `Bash` tool and runs only for `git push` commands. It calls `openqodex hook check`.
 
-In user scope, `init` adds rules so Claude Code runs these review commands without asking, and the agent can review unattended: `<launcher> review` and `review --all`, each also with ` --offline` at the end, plus `guide`, `guide skill` and `guide <topic>`, and `findings` with any numbers (it only reads the last review's report and prints it). Each review rule matches one exact line, so the same command with any other flag, such as `--output` or `--config`, a branch or a pull request, or chained with `&&`, still asks you. `scan`, `doctor`, `trust`, `update`, `init` and `report` still ask you. The rules of earlier versions for `review --agent` and `review --finalize` are removed by the next `init`. Project scope writes no permission rule: a committed settings file would decide for every teammate. A rule you already had is left alone, and `init --uninstall` removes only the rules `init` added. When a later version grants a different set, the next `init` removes the rules an earlier version added and adds the new ones. When your home path holds a space or another character the shell would read, the launcher is written in single quotes in the skill and in the rules alike. When the launcher's path holds `*`, which Claude Code reads as a wildcard, `init` writes no rule and says so in one line; Claude Code then asks before each review command.
+In user scope, `init` adds rules so Claude Code runs these review commands without asking, and the agent can review unattended: `<launcher> review` and `review --all`, each also with ` --offline` at the end, plus `guide`, `guide skill` and `guide <topic>`, `findings` with any numbers (it only reads the last review's report and prints it), and `graph` with any arguments (it reads the repository and writes only that repository's `.openqodex/graph/` folder and its local refs `refs/openqodex/graph/<tree>`). One more rule, `mcp__openqodex`, lets Claude Code use every tool of the code graph's MCP server without asking; the tools read the graph, and `graph_refresh` builds a new one in the same folder. Each review rule matches one exact line, so the same command with any other flag, such as `--output` or `--config`, a branch or a pull request, or chained with `&&`, still asks you. `scan`, `doctor`, `trust`, `update`, `init` and `report` still ask you. The rules of earlier versions for `review --agent` and `review --finalize` are removed by the next `init`. Project scope writes no permission rule: a committed settings file would decide for every teammate. A rule you already had is left alone, and `init --uninstall` removes only the rules `init` added. When a later version grants a different set, the next `init` removes the rules an earlier version added and adds the new ones. When your home path holds a space or another character the shell would read, the launcher is written in single quotes in the skill and in the rules alike. When the launcher's path holds `*`, which Claude Code reads as a wildcard, `init` writes no rule and says so in one line; Claude Code then asks before each review command.
 
 A skill, rule or permission rule an earlier `init` wrote, such as the full-text skill of 0.2.1, is replaced by the next `init` only while it is still exactly as written. One you edited is left as it is, and `init` says so. A skill file that holds the skill exactly as some version of OpenQodex shipped it, such as the copy `npx skills add` writes, counts as OpenQodex's own too: `init` replaces it with the skill it keeps up to date, in every agent's skill folder.
 
@@ -125,6 +148,7 @@ Neither the skill `init` writes nor `guide skill` carries the sentence that tell
 | Skill | `~/.agents/skills/openqodex/SKILL.md` | `.agents/skills/openqodex/SKILL.md` |
 | Instructions | a marked section in `$CODEX_HOME/AGENTS.md` (`~/.codex/AGENTS.md` by default) | a marked section in `AGENTS.md` |
 | Push gate hook | merged into `$CODEX_HOME/hooks.json` (`~/.codex/hooks.json` by default) | merged into `.codex/hooks.json` |
+| Code graph MCP server | a marked block in `$CODEX_HOME/config.toml` (`~/.codex/config.toml` by default) | a marked block in `.codex/config.toml` |
 
 `init` also finds Codex by `$CODEX_HOME`. The skill stays in `~/.agents/skills`, the folder the Codex docs name for skills, whatever `CODEX_HOME` says.
 
@@ -138,6 +162,7 @@ Codex runs a new hook only after you trust it. Open Codex, run `/hooks`, and tru
 |---|---|---|
 | Skill | `~/.cursor/skills/openqodex/SKILL.md` | `.agents/skills/openqodex/SKILL.md` |
 | Rule | `.cursor/rules/openqodex.mdc` in the repository, excluded from git | `.cursor/rules/openqodex.mdc` |
+| Code graph MCP server | merged into `~/.cursor/mcp.json` | merged into `.cursor/mcp.json` |
 
 Cursor has no rule file in the home folder, so the rule always goes in the repository. In user scope, run `init` inside each repository where you want the rule. The rule applies to every chat, carries the instruction section, and tells Cursor to run `review` before any `git push`. The review itself needs Claude Code or Codex installed: `cursor-agent` cannot be held to reading only, so it is not a reviewer.
 
@@ -149,6 +174,7 @@ OpenQodex writes no Cursor hook. The rule asks Cursor to review, but nothing sto
 |---|---|---|
 | Skill | `~/.cline/skills/openqodex/SKILL.md` | `.cline/skills/openqodex/SKILL.md` |
 | Rule | `~/Documents/Cline/Rules/openqodex.md` | `.clinerules/openqodex.md` |
+| Code graph MCP server | merged into `~/.cline/data/settings/cline_mcp_settings.json` when `~/.cline/data` is there | none |
 
 OpenQodex writes no Cline hook. The rule carries the instruction section and asks Cline to review before any `git push`.
 
@@ -205,7 +231,8 @@ Add `--project` to remove project files. `init` records what it wrote in `~/.ope
 - The instruction section is removed from each file; your own text in that file stays.
 - In the repository you run it in: the git pre-push hook, when it is still the one OpenQodex wrote, and the `.openqodex/config.yaml` and `.openqodex/custom-instructions.md` that `init` created, when they are unchanged and not committed.
 - The hook entry is removed from the settings file. Other settings stay. When `init` saved a backup and nothing else changed, the backup is put back.
+- The `openqodex` MCP server entry, or Codex's marked block, is removed while it is still as `init` wrote it. Other servers and settings stay; `mcpServers` goes only when `init` added it, and the file only when `init` created it and nothing else is left in it.
 - The `.git/info/exclude` lines are removed.
-- The launcher and the runtime copies are removed when no hook still calls them. The git pre-push hook counts as one.
+- The launcher and the runtime copies are removed when no hook or MCP server entry still calls them. The git pre-push hook counts as one.
 
 Scanners stay in `~/.openqodex/tools/`. Delete that folder to remove them too.

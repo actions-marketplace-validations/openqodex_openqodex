@@ -287,7 +287,9 @@ describe("a release's own package.json", () => {
     expect(spawnSync("tar", ["-czf", join(s.root, "release.tgz"), "-C", dir, "package"]).status).toBe(0);
     const code = `const m = await import(${JSON.stringify(child)}); try { await m.unpackRelease(process.env.H, "0.99.0", (await import("node:fs")).readFileSync(process.env.T), ${JSON.stringify(CONTRACT)}); process.stdout.write("unpacked"); } catch (e) { process.stdout.write(String(e.message)); }`;
     const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...laptop(s), H: s.oqHome, T: join(s.root, "release.tgz") }, encoding: "utf8" });
-    expect(r.stdout, r.stderr).toMatch(/declares contract agent 2, config 1, the registry agent 1, config 1/);
+    expect(r.stdout, r.stderr).toContain(
+      `declares contract agent ${CONTRACT.agent + 1}, config ${CONTRACT.config}, the registry agent ${CONTRACT.agent}, config ${CONTRACT.config}`,
+    );
     expect(r.stdout).not.toMatch(/--version/);
     expect(existsSync(join(s.oqHome, "runtime", "0.99.0"))).toBe(false);
   });

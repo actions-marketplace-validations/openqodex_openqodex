@@ -476,7 +476,7 @@ describe("14. Claude Code permission rules", () => {
     expect(r.status, String(r.stderr)).toBe(0);
     const launcher = join(p.oqHome, "bin/openqodex");
     const rules = allow(join(p.home, ".claude/settings.json"));
-    expect(rules).toEqual([...EXACT, ...EXACT.map((c) => `${c} --offline`), "guide", "guide *", "findings *"].map((c) => `Bash(${launcher} ${c})`));
+    expect(rules).toEqual([...[...EXACT, ...EXACT.map((c) => `${c} --offline`), "guide", "guide *", "findings *", "graph *"].map((c) => `Bash(${launcher} ${c})`), "mcp__openqodex"]);
     for (const banned of ["scan", "doctor", "trust", "update", "init", "report", "hook", "review --agent", "review --finalize"]) {
       expect(rules.filter((x) => x.startsWith(`Bash(${launcher} ${banned}`)), banned).toEqual([]);
     }
