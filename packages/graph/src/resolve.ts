@@ -73,7 +73,7 @@ const BUILTIN_TYPES: Record<Family, ReadonlySet<string>> = {
 // may reach any method of that name, so it is an untyped receiver, never
 // external and never bound.
 const UNTYPED: Record<Family, ReadonlySet<string>> = {
-  js: new Set(["any", "unknown", "object"]),
+  js: new Set(["any", "unknown", "object", "{}"]),
   python: new Set(["object", "Any"]),
   go: new Set(["any"]),
   ruby: new Set(),
@@ -1047,10 +1047,11 @@ export function createWorld(input: ResolveInput): World {
         return onClass(base, call.name, call.static ? "s" : "i", superEv);
       }
       case "type": {
-        // `any`, `unknown`, `object` (Python `object`, `typing.Any`; Go `any`), unless the file defines the name.
+        // `any`, `unknown`, `object`, an object type written in place (Python
+        // `object`, `typing.Any`; Go `any`), unless the file defines the name.
         const untyped = r.type.result === undefined && !r.type.elem && UNTYPED[family].has(r.type.name) && (r.type.qualifier === null || (family === "python" && r.type.qualifier === "typing"));
         if (untyped && resolveLocal(file, r.type.name)?.v !== "sym") {
-          return { unknown: "untyped-receiver", shape: "typed", note: `a value typed ${r.type.name} may be anything with a method of this name` };
+          return { unknown: "untyped-receiver", shape: "typed", note: `a value typed ${r.type.name === "{}" ? "by an object type written in place" : r.type.name} may be anything with a method of this name` };
         }
         const t = typeKey(file, family, r.type);
         if (t === "ext") return { ext: true };

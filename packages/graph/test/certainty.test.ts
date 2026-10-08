@@ -104,10 +104,11 @@ describe("certainty", () => {
   it("records a call on an any, unknown or object value as untyped, and floors the methods it may reach (5)", async () => {
     const g = await graphOf({
       "repo.ts": "export class Repo {\n  save() {\n    return 1;\n  }\n  load() {\n    return 2;\n  }\n  drop() {\n    return 3;\n  }\n}\n",
-      "use.ts": "export function use(a: any, b: unknown, c: object) {\n  return a.save() + (b as any) + c.drop();\n}\nexport function more(b: unknown) {\n  return b.load();\n}\n",
+      "use.ts":
+        "export function use(a: any, b: unknown, c: object) {\n  return a.save() + (b as any) + c.drop();\n}\nexport function more(b: unknown) {\n  return b.load();\n}\nexport function shaped(d: { save(): number }) {\n  return d.save();\n}\n",
     });
     const gaps = g.unknowns.filter((u) => u.file === "use.ts").map((u) => `${u.name} ${u.cause}`).sort();
-    expect(gaps).toEqual(["drop untyped-receiver", "load untyped-receiver", "save untyped-receiver"]);
+    expect(gaps).toEqual(["drop untyped-receiver", "load untyped-receiver", "save untyped-receiver", "save untyped-receiver"]);
     const save = symbol(g, "repo.ts", "save", "Repo");
     expect(floorReasons(g, { id: save, name: "save", file: "repo.ts" }, new Set()).join(" ")).toMatch(/save/);
   });

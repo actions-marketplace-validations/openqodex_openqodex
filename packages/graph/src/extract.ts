@@ -13,7 +13,7 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 // 9: body hashes on definitions, computed-member calls as dynamic call
 // sites, and the line of each local export. 10: predefined TypeScript
 // types (`string`, `number[]`) on receivers.
-export const EXTRACTOR_VERSION = 10;
+export const EXTRACTOR_VERSION = 11;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -483,6 +483,9 @@ function jsTypeRef(annotation: Node | null): TypeRef | null {
   }
   if (!t) return null;
   const { line, column } = pos(t);
+  // An object type written in place (`{ save(): number }`) names no
+  // definition: "{}" marks it, so a call on it is an untyped receiver.
+  if (t.type === "object_type") return typeRef({ name: "{}", qualifier: null, line, column });
   // A predefined type (`string`, `number`) is kept, so a call on it is known to be the language's own.
   if (t.type === "type_identifier" || t.type === "identifier" || t.type === "predefined_type") return typeRef({ name: t.text, qualifier: null, line, column });
   if (t.type === "nested_type_identifier" || t.type === "member_expression") {
