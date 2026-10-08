@@ -39,9 +39,7 @@ import {
   STATE_DIR,
   selectLenses,
   writeLatest,
-  writeManifest,
   writeReportFiles,
-  writeScan,
 } from "@openqodex/core";
 import type { Change, ChangeScope, Config, Display, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, Severity, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
@@ -262,16 +260,13 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
     "brief.md": brief,
   });
-  // The run record in the developer's home: finalize issues a push receipt
-  // only for a run this machine scanned, with these files unchanged. It
-  // holds display.json's hash too, the only thing finalize trusts it by, so
-  // a target review, which has no record, saves no display.
-  if (!target) {
-    const display = displayJson(buildDisplay({ change: p.change, secrets: p.secrets }));
-    // It quotes the code under review: readable by the developer only.
-    writeReportFiles(p.repoRoot, dir, { [DISPLAY_FILE]: display }, PRIVATE);
-    recordRun(p.repoRoot, dir, manifest, bound, display);
-  }
+  // The run record in the developer's home, for every run kind: finalize
+  // trusts this run's files (the scan and its fingerprints, display.json)
+  // and issues a push receipt only while they are the texts recorded here.
+  const display = displayJson(buildDisplay({ change: p.change, secrets: p.secrets }));
+  // It quotes the code under review: readable by the developer only.
+  writeReportFiles(p.repoRoot, dir, { [DISPLAY_FILE]: display }, PRIVATE);
+  recordRun(p.repoRoot, dir, manifest, bound, display);
   if (!target) {
     writeLatest(p.repoRoot, {
       dir: relative(p.repoRoot, dir),
@@ -397,7 +392,7 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
   const instructions = ownersInstructions(repoRoot, p.secrets);
   const lenses = wholeRepoLenses(p.change);
   const dir = openReportDir(repoRoot, p.change.shortId);
-  writeManifest(repoRoot, dir, {
+  const manifest: RunManifest = {
     version: MANIFEST_VERSION,
     change_id: p.change.id,
     config_hash: configHash(config),
@@ -405,8 +400,17 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
     instructions_hash: instructions.hash,
     runtime_version: __OPENQODEX_VERSION__,
-  });
-  writeScan(repoRoot, dir, p.scan);
+  };
+  const runFile: RunFile = { version: 1, scope: "all" };
+  // Every file finalize reads, as text, so the run record hashes exactly what was written.
+  const bound = {
+    "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
+    "scan.json": `${JSON.stringify(p.scan, null, 2)}\n`,
+    "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
+    [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
+  };
+  writeReportFiles(repoRoot, dir, bound);
+  recordRun(repoRoot, dir, manifest, bound);
   const { impact, hot, note } = await buildHotSpots(p, flags, noGraph);
   const inventory = buildInventory(p.change, p.scan);
   const brief = buildWholeRepoBrief({
@@ -423,10 +427,7 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
     graphNote: note,
     instructions: instructions.text,
   });
-  const runFile: RunFile = { version: 1, scope: "all" };
   writeReportFiles(repoRoot, dir, {
-    [RUN_FILE]: `${JSON.stringify(runFile, null, 2)}\n`,
-    "candidates.json": `${JSON.stringify(p.scan.candidates, null, 2)}\n`,
     [INVENTORY_FILE]: `${JSON.stringify(redactStored(inventory, p.secrets), null, 2)}\n`,
     [IMPACT_FILE]: `${JSON.stringify(impact, null, 2)}\n`,
     "brief.md": brief,
@@ -629,10 +630,19 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     impact: whole ? null : readImpact(repoRoot, dir),
   };
 
+  // The run as this machine recorded it when the brief was written, checked
+  // before anything is rendered: the change, the config, the instructions
+  // and the exact texts of the run files, scan.json and its fingerprints
+  // included. A run with no record or another text (a scan.json copied from
+  // another run, its fingerprints emptied) is not trusted: the page shows
+  // no code, `findings` gets no record of it, the push hooks no receipt.
+  const record = readHomeRun(openqodexHomeDir(), repoRoot, basename(dir));
+  const verified = runMatches(record, { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts });
+  if (!verified) warn("openqodex: this run's files are not the ones review --agent recorded on this machine, so report.html shows the findings without the code and openqodex findings will not print this review");
   // Every output from one redaction pass. The secrets are gone from memory
   // by now; their saved fingerprints (scan.json, every line of a multi-line
   // secret included) redact the report, the paths and anything else printed.
-  const out = reviewOutputs({ report, display: savedDisplay(repoRoot, dir, change), dir, redact: (text) => redactByFingerprint(text, scan.secretFingerprints), version: __OPENQODEX_VERSION__ });
+  const out = reviewOutputs({ report, display: verified ? savedDisplay(repoRoot, dir, change, record) : null, dir, redact: (text) => redactByFingerprint(text, scan.secretFingerprints), version: __OPENQODEX_VERSION__ });
   const { "report.html": html, ...files } = out.files;
   writeReportFiles(repoRoot, dir, files);
   if (!writeReportHtml((f) => writeReportFiles(repoRoot, dir, f, PRIVATE), html!)) {
@@ -654,30 +664,31 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     // A legacy record in the developer's home, so the push hooks accept this
     // review as before; only for a run this machine scanned (recordRun).
     try {
-      if (runMatches(readHomeRun(openqodexHomeDir(), repoRoot, basename(dir)), { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts })) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(out.report, "legacy", relative(repoRoot, dir), paths.html));
+      if (verified) writeHomeReceipt(openqodexHomeDir(), repoRoot, gateReceipt(out.report, "legacy", relative(repoRoot, dir), paths.html));
       else warn("openqodex: this review is not recorded for the push hooks: its scan was not run by review --agent on this machine, or its files changed since; run openqodex review");
     } catch (error) {
       warn(`openqodex: could not record this review for the push hooks: ${(error as Error).message.split("\n")[0]}`);
     }
   }
-  try {
-    writeHomeLastReview(openqodexHomeDir(), repoRoot, { dir, shown: out.paths.md.slice(0, -"/report.md".length), changeId: change.id, reportSha256: out.reportSha256 });
-  } catch (error) {
-    warn(`openqodex: could not record this review for openqodex findings: ${(error as Error).message.split("\n")[0]}`);
+  if (verified) {
+    try {
+      writeHomeLastReview(openqodexHomeDir(), repoRoot, { dir, shown: out.paths.md.slice(0, -"/report.md".length), changeId: change.id, reportSha256: out.reportSha256 });
+    } catch (error) {
+      warn(`openqodex: could not record this review for openqodex findings: ${(error as Error).message.split("\n")[0]}`);
+    }
   }
   await discard();
   emitReview(out.report, flags, repoRoot, paths);
   return exitFor(report);
 }
 
-// The code report.html shows for a two-step review: display.json as review
-// --agent wrote it, used only when this machine's record of the run holds
-// its hash and the text still has it, and it is in the saved shape for this
-// very change. A missing record, a record without the hash (a target review
-// keeps none), a changed file or another change: the page shows the
-// findings without code, and one line says why. A whole-repository run
-// saved none, and nothing is said.
-function savedDisplay(repoRoot: string, dir: string, change: Change): Display | null {
+// The code report.html shows for a two-step review whose run files the
+// record already vouched for: display.json as review --agent wrote it, used
+// only when `record` holds its hash, the text still has it, and it is in the
+// saved shape for this very change. A record without the hash, a changed
+// file or another change: the page shows the findings without code, and one
+// line says why. A whole-repository run saved none, and nothing is said.
+function savedDisplay(repoRoot: string, dir: string, change: Change, record: RunRecord | null): Display | null {
   let text: string | null;
   try {
     text = readRepoFile(repoRoot, join(dir, DISPLAY_FILE), DISPLAY_MAX_BYTES + 1);
@@ -685,7 +696,6 @@ function savedDisplay(repoRoot: string, dir: string, change: Change): Display | 
     text = "";
   }
   if (text === null) return null;
-  const record = readHomeRun(openqodexHomeDir(), repoRoot, basename(dir));
   let display: Display | null = null;
   if (record?.display_sha256 !== undefined && record.display_sha256 === sha256Of(text)) {
     try {
@@ -705,7 +715,7 @@ const sha256Of = (text: string | null): string | null => (text === null ? null :
 // reads, from the text this process wrote (never read back from the folder,
 // which the repository and the agent can write too). A failure is one
 // warning line: the run then finalizes with no push receipt.
-function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: Record<"manifest.json" | "scan.json" | "candidates.json" | "run.json", string>, display: string): void {
+function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: Record<"manifest.json" | "scan.json" | "candidates.json" | "run.json", string>, display?: string): void {
   try {
     writeHomeRun(openqodexHomeDir(), repoRoot, basename(dir), {
       version: 1,
@@ -716,7 +726,7 @@ function recordRun(repoRoot: string, dir: string, manifest: RunManifest, files: 
       scan_sha256: sha256Of(files["scan.json"])!,
       candidates_sha256: sha256Of(files["candidates.json"])!,
       run_sha256: sha256Of(files["run.json"])!,
-      display_sha256: sha256Of(display)!,
+      ...(display !== undefined ? { display_sha256: sha256Of(display)! } : {}),
       written_at: new Date().toISOString(),
     });
   } catch (error) {

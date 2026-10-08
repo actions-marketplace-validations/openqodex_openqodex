@@ -649,7 +649,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
   // A --report-dir reached through a link stops the run here, before
   // anything is made, scanned or written.
-  const reportWriter = o.reportDir === undefined ? null : reportFolderWriter(o.reportDir, repoRoot);
+  const reportWriter = o.reportDir === undefined ? null : reportFolderWriter(o.reportDir);
   if (o.reportDir === undefined) announceRepoFiles(repoRoot);
   else keepRunStateOutOfRepo();
   const settings = readReviewerSettings();

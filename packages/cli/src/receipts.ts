@@ -19,10 +19,10 @@
 //
 // The repo id is the sha256 of the repository's real root path. Folders are
 // 0700 and real (never a link), files 0600, written to a fresh temporary
-// file and renamed into place. A file that is a link, too large, or not a
-// receipt reads as no record.
+// file and renamed into place. A record folder that leads outside the home,
+// a file that is a link, too large, or not a receipt reads as no record.
 import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GateReceipt } from "@openqodex/core";
 import { homeGuard, type Guard } from "./agents/guarded-fs.js";
@@ -87,11 +87,14 @@ function writeRecord(home: string, kind: string, repoRoot: string, names: string
 }
 
 // The parsed file, or null when it is not a regular file within the cap.
-function readRecord(path: string): unknown {
+// Read through the guard (agents/guarded-fs.ts): the folder it lies in must
+// be, by identity, under OpenQodex's home, so a record folder that is a link
+// into a repository is no record; and the file is read through a handle
+// opened without following a link and checked to be the file walked to.
+function readRecord(home: string, path: string): unknown {
   try {
-    const st = lstatSync(path);
-    if (!st.isFile() || st.size > MAX_BYTES) return null;
-    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const buf = homeGuard(home).read(path, MAX_BYTES);
+    return buf === null ? null : (JSON.parse(buf.toString("utf8")) as unknown);
   } catch {
     return null;
   }
@@ -127,7 +130,7 @@ export function writeHomeLastReview(home: string, repoRoot: string, run: { dir: 
 // The record, or null when there is none. One in another shape (a record of
 // an earlier version, with no report hash) reads as `unverified`.
 export function readHomeLastReview(home: string, repoRoot: string): LastReview | "unverified" | null {
-  const value = readRecord(join(home, LAST_REVIEW_KIND, repoId(repoRoot), LAST_REVIEW)) as Partial<LastReview> | null;
+  const value = readRecord(home, join(home, LAST_REVIEW_KIND, repoId(repoRoot), LAST_REVIEW)) as Partial<LastReview> | null;
   if (value === null) return null;
   const ok = value.version === 2 && typeof value.dir === "string" && typeof value.shown === "string" && typeof value.change_id === "string" && typeof value.report_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.report_sha256);
   return ok ? (value as LastReview) : "unverified";
@@ -145,7 +148,7 @@ export function writeHomeRun(home: string, repoRoot: string, runId: string, run:
 // The run record of `runId`, or null.
 export function readHomeRun(home: string, repoRoot: string, runId: string): RunRecord | null {
   if (!RUN_ID.test(runId)) return null;
-  const value = readRecord(homeRunPath(home, repoRoot, runId)) as Partial<RunRecord> | null;
+  const value = readRecord(home, homeRunPath(home, repoRoot, runId)) as Partial<RunRecord> | null;
   const text = ["change_id", "config_hash", "manifest_sha256", "scan_sha256", "candidates_sha256", "run_sha256"] as const;
   const ok = value !== null && value.version === 1 && text.every((k) => typeof value[k] === "string") && (value.instructions_hash === null || typeof value.instructions_hash === "string");
   return ok ? (value as RunRecord) : null;
@@ -154,7 +157,7 @@ export function readHomeRun(home: string, repoRoot: string, runId: string): RunR
 // The receipt of `changeId` ("latest" for the newest), or null.
 export function readHomeReceipt(home: string, repoRoot: string, changeId: string): GateReceipt | null {
   if (!ID.test(changeId)) return null;
-  const value = readRecord(homeReceiptPath(home, repoRoot, changeId)) as Partial<GateReceipt> | null;
+  const value = readRecord(home, homeReceiptPath(home, repoRoot, changeId)) as Partial<GateReceipt> | null;
   const ok =
     value !== null &&
     value.version === 1 &&

@@ -37,7 +37,17 @@
 // 12. Finalize draws report.html's code from a display.json that no record
 //     of this machine vouches for.
 // 13. A --report-dir that is a link sends the run's files where the link
-//     points; the refusal comes after something was written.
+//     points; the refusal comes after something was written; a report file
+//     in the folder that is a link overwrites what it points at (a file of
+//     the repository); a link owned by root but not one of the system's own
+//     aliases lets the folder lead anywhere.
+// 15. A home record is read through a record folder that is a link into
+//     the repository, so the repository supplies the record.
+// 16. Finalize redacts with the fingerprints of a scan.json the run record
+//     does not vouch for, shows its code or records it for `findings`; or a
+//     run of some kind keeps no record to vouch with.
+// 17. A secret in a symbol id or in a reviewer's own `id` or `token` field
+//     escapes the redaction, which spared every field of those names.
 // 14. A string of a finished review reaches report.html, report.md,
 //     report.json or the receipt without the redaction: a line of a private
 //     key quoted in the summary, a secret in a suggested change, a dropped
@@ -53,8 +63,8 @@ import { parseFlags } from "../src/flags.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { runReview } from "../src/review-run.js";
-import { reviewOutputs } from "../src/pipeline.js";
-import { readHomeReceipt } from "../src/receipts.js";
+import { redactStored, reviewOutputs, systemAlias } from "../src/pipeline.js";
+import { readHomeLastReview, readHomeReceipt, readHomeRun } from "../src/receipts.js";
 import { run as findings } from "../src/commands/findings.js";
 import { cli, sandbox } from "./init-helpers.js";
 
@@ -408,6 +418,30 @@ describe("13. a report folder reached through a link", () => {
       expect(readdirSync(target)).toEqual([]);
     }
   });
+
+  it("13. a report file in the folder that is a link into the repository is refused with exit 2, and the file it points at is unchanged", () => {
+    const s = sandbox({ "README.md": "hello\n", "package.json": "{\"name\":\"mine\"}\n" });
+    writeFileSync(join(s.repo, "notes.txt"), "one line\n");
+    const folder = join(mkdtempSync(join(tmpdir(), "oq-out-")), "out");
+    mkdirSync(folder);
+    symlinkSync(join(s.repo, "package.json"), join(folder, "report.json"));
+    for (const command of [["review", "--report-dir", folder], ["scan", "--no-install", "--report-dir", folder]]) {
+      const r = cli(s, command);
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stderr).toMatch(/symbolic link/);
+      expect(readFileSync(join(s.repo, "package.json"), "utf8")).toBe("{\"name\":\"mine\"}\n");
+    }
+  });
+
+  it("13. only the system's own aliases pass: /var, /tmp and /etc pointing at /private on macOS, and nothing else, whoever owns it", () => {
+    expect(systemAlias("/var", "private/var", "darwin")).toBe(true);
+    expect(systemAlias("/tmp", "private/tmp", "darwin")).toBe(true);
+    expect(systemAlias("/etc", "private/etc", "darwin")).toBe(true);
+    expect(systemAlias("/var", "/home/user/current", "darwin")).toBe(false);
+    expect(systemAlias("/opt/reports", "/home/user/current", "darwin")).toBe(false);
+    expect(systemAlias("/var", "private/var", "linux")).toBe(false);
+    expect(systemAlias("/private/var", "private/var", "darwin")).toBe(false);
+  });
 });
 
 describe("14. one redaction pass for every output of a review", () => {
@@ -433,5 +467,71 @@ describe("14. one redaction pass for every output of a review", () => {
       expect(text).not.toContain(TOKEN);
     }
     expect(receipt).toMatch(/^Report: .*\[redacted\].*report\.html$/m);
+  });
+
+  it("17. redacts a secret in a symbol id or in a reviewer's own token field, and keeps unredacted only the scanner citations at their own paths", () => {
+    const SECRET = ["sk", "live", "Qw3rTy7890uIoPaSdF1234zx"].join("_");
+    const impact = { symbols: [{ id: `app/${SECRET}.py#f@1:1`, file: `app/${SECRET}.py` }], touched: [`app/${SECRET}.py#f@1:1`] };
+    expect(JSON.stringify(redactStored(impact, [SECRET]))).not.toContain(SECRET);
+    const submission = { findings: [{ title: "x", token: SECRET, id: SECRET }], dropped: [{ candidate: SECRET, reason: "r" }] };
+    expect(JSON.stringify(redactStored(submission, [SECRET]))).not.toContain(SECRET);
+    // The citations finalize matches on stay as the scan wrote them.
+    const scan = { candidates: [{ id: "c1", token: `gitleaks:${SECRET}`, message: SECRET }] };
+    const kept = redactStored(scan, [SECRET]);
+    expect(kept.candidates[0]).toEqual({ id: "c1", token: `gitleaks:${SECRET}`, message: "[redacted]" });
+    const report = { dropped: [{ candidate: { id: "c1", token: `gitleaks:${SECRET}` }, reason: SECRET }], not_reviewed: [{ id: "c2", token: `x:${SECRET}` }], findings: [{ id: SECRET }] };
+    const r = redactStored(report, [SECRET]);
+    expect(r.dropped[0]).toEqual({ candidate: { id: "c1", token: `gitleaks:${SECRET}` }, reason: "[redacted]" });
+    expect(r.not_reviewed[0]).toEqual({ id: "c2", token: `x:${SECRET}` });
+    expect(r.findings[0]).toEqual({ id: "[redacted]" });
+  });
+});
+
+describe("home records are read only from OpenQodex's own home", () => {
+  it("15. a record folder that is a link into the repository is not read: findings, the push records and the run records see no record", async () => {
+    const dir = repo();
+    expect(await review(dir, fake([three]))).toBe(0);
+    // Replace each repository folder of the home records with a link to a
+    // folder the repository holds, carrying the same files.
+    for (const kind of ["last-review", "receipts"]) {
+      const root = join(home, kind);
+      const id = readdirSync(root)[0]!;
+      const planted = join(dir, `planted-${kind}`);
+      mkdirSync(planted);
+      for (const f of readdirSync(join(root, id))) writeFileSync(join(planted, f), readFileSync(join(root, id, f)));
+      rmSync(join(root, id), { recursive: true });
+      symlinkSync(planted, join(root, id));
+    }
+    expect(readHomeLastReview(home, dir)).toBeNull();
+    expect(readHomeReceipt(home, dir, "latest")).toBeNull();
+    await expect(findings(["1", "--cwd", dir])).rejects.toThrow(/no review of this repository yet/);
+  });
+});
+
+describe("16. finalize trusts a run's files only as this machine recorded them", () => {
+  it("shows no code, records nothing for findings and says why when scan.json is not the one the run record holds", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    writeFileSync(join(s.repo, "notes.txt"), "first line of the notes\n");
+    expect(cli(s, ["review", "--agent", "--no-install"]).status).toBe(0);
+    const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string; change_id: string };
+    const dir = join(s.repo, latest.dir);
+    // Its fingerprints replaced (this change has no secret, so emptying them
+    // would leave the text as it was), as a scan.json from elsewhere would be.
+    const scan = JSON.parse(readFileSync(join(dir, "scan.json"), "utf8")) as { secretFingerprints: unknown[] };
+    writeFileSync(join(dir, "scan.json"), `${JSON.stringify({ ...scan, secretFingerprints: [{ length: 32, sha256: "0".repeat(64) }] }, null, 2)}\n`);
+    writeFileSync(join(dir, "agent-findings.json"), JSON.stringify({ version: 1, change_id: latest.change_id, summary: "Adds a notes file.", reviewer: "same-agent", findings: [] }));
+    const done = cli(s, ["review", "--finalize", "--no-color"]);
+    expect(done.status, done.stderr).toBe(0);
+    expect(readFileSync(join(dir, "report.html"), "utf8")).not.toContain("first line of the notes");
+    expect(done.stderr).toContain("report.html shows the findings without the code");
+    expect(readHomeLastReview(s.oqHome, s.repo)).toBeNull();
+  });
+
+  it("records the run of every kind: a review of the whole repository gets a run record too", () => {
+    const s = sandbox({ "README.md": "hello\n" });
+    expect(cli(s, ["review", "--agent", "--all", "--no-install"]).status).toBe(0);
+    const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest-all.json"), "utf8")) as { dir: string };
+    const run = readHomeRun(s.oqHome, s.repo, latest.dir.split("/").pop()!);
+    expect(run?.scan_sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });

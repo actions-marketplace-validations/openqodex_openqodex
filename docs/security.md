@@ -126,12 +126,12 @@ A secret is redacted only when a scanner matched it. When gitleaks did not run, 
 - Every secret a scanner matched is redacted before the page is written, on both sides of the diff, a secret over several lines (a private key) included, with every line number kept. A secret no scanner matched is shown, as in the brief.
 - Every string is escaped, and every anchor in the page is generated, never taken from a path. There is no script, no form, no frame and no inline style. The page's content policy allows only its own stylesheet, by its hash, and loads nothing: no font, image or other file. Opening it sends nothing anywhere. Its one outgoing link, in the closing line, sends no referrer.
 - It is written readable by you only, like every file of the run, and only on your disk. OpenQodex never opens a browser and never uploads it. In the GitHub Action it stays in the run folder on the runner; the Action uploads no HTML.
-- `review --agent` saves the same redacted lines as `display.json` beside the brief, readable by you only, so `review --finalize` can draw the page after the secrets are gone from memory. It records the file's sha256 in `~/.openqodex/runs/`, and finalize shows the code only while the file has it: a `display.json` a branch carries, or one changed since, gives a page without code.
+- `review --agent` saves the same redacted lines as `display.json` beside the brief, readable by you only, so `review --finalize` can draw the page after the secrets are gone from memory. It records the sha256 of this file and of the run's other files, `scan.json` with the secrets' fingerprints among them, in `~/.openqodex/runs/`. Finalize checks them before it renders anything: a run file a branch carries, or one changed since, gives a page without code that `findings` and the push hooks do not count.
 - The page and `display.json` are bounded: at most 5,000 files are listed and the rest counted; at most 50,000 lines of code are shown, and a listed file past that keeps its name with a note.
 
 ## Where files are written
 
-In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
+In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it). The records below (`receipts/`, `runs/`, `last-review/`) are read only from a folder that lies, by identity, under `~/.openqodex/`, through a handle opened without following a link: a record folder that is a link into a repository counts as no record.
 
 - `tools/<scanner>/<version>/`: the scanners.
 - `tools/uv-python/`: the Python 3.11 for semgrep and bandit.
@@ -142,7 +142,7 @@ In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it):
 - `config.yaml`: your own settings: `update`, `reviewer` (which agent reviews) and `reviewer_web` (the reviewer's web tools, on by default; `off` removes them).
 - `install.json`: what `init` and `hook install` wrote, so an uninstall removes only that.
 - `receipts/<repo id>/`: one small record per reviewed change, readable by you only, written by `review` at the end of a run (and by `review --finalize` for the older two-step protocol, only for a run whose scan this machine ran). The push hooks decide from these records only. The files under the repository's `.openqodex/` are the readable report, never the proof: a branch can carry those files, so a record found only there counts as no review. The check inside your agent is a reminder about your current work: it does not know what a push sends. For a plain `git push` it asks whether your current work has a passing review; any other push command it cannot tell, and says so (a deny when `block_on_severity` is set). The git pre-push hook that `init` adds is the check that sees the exact commits a push sends, and `git push --no-verify` skips it. `init` and `openqodex update` remove records older than 30 days.
-- `runs/<repo id>/`: one record per `review --agent` run, readable by you only: the change and the hashes of the run files it wrote, so `review --finalize` can tell a run this machine scanned from one a branch carries. Removed with the receipts.
+- `runs/<repo id>/`: one record per `review --agent` run of any kind, readable by you only: the change and the hashes of the run files it wrote, so `review --finalize` can tell a run this machine scanned from one a branch carries. Removed with the receipts.
 - `last-review/<repo id>/`: the run folder, change and `report.json` sha256 of the last review of each repository run on this machine, readable by you only. `openqodex findings` prints that review's report only while it has that hash, never one a branch carries under `.openqodex/reviews/`. Removed with the receipts.
 - `trust.json`: your approvals of custom scanners.
 

@@ -408,6 +408,8 @@ describe("the standard report", () => {
 //     before it finds the file is past the display limit.
 // 18. File names alone take the saved display past its cap: 60,000 empty
 //     added files with long names give a display.json finalize cannot read.
+// 19. Each excerpt walks the file from its start: 5,000 citations near line
+//     two million of a 2.5 million line file cost ten billion steps.
 describe("bounds", () => {
   const ms = (f: () => void): number => {
     const t = performance.now();
@@ -436,6 +438,17 @@ describe("bounds", () => {
     expect(d.files[0]?.hunks).toEqual([]);
     expect(d.files[0]?.note).toMatch(/display limit/);
     expect(Buffer.byteLength(displayJson(d))).toBeLessThan(DISPLAY_MAX_BYTES);
+  });
+
+  it("19. cuts out 5,000 cited spans near line two million of a 2.5 million line file in one pass, in well under a second", () => {
+    const text = "\n".repeat(2_500_000);
+    const cited = Array.from({ length: 5_000 }, (_, i) => ({ file_path: "big.txt", line_number: 2_000_000 + i * 10, line_end: 2_000_000 + i * 10 }));
+    let display: Display | null = null;
+    expect(ms(() => (display = buildExcerptDisplay({ changeId: "x".repeat(64), cited, read: () => text, secrets: [] })))).toBeLessThan(1000);
+    const d = display as unknown as Display;
+    expect(d.rows).toBe(5_000 * 7);
+    expect(d.files[0]?.hunks).toHaveLength(5_000);
+    expect(d.files[0]?.hunks[4_999]?.rows.map((r) => r.new)).toEqual(Array.from({ length: 7 }, (_, k) => 2_049_990 - 3 + k));
   });
 
   it("18. keeps the saved display of 60,000 empty added files within its cap, counting the files it leaves out, in well under a second", () => {

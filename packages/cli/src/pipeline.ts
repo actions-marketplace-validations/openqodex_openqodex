@@ -1,7 +1,7 @@
 // The scan pipeline every command shares: find the repo, load the config,
 // work out the change, run the scanners on it. Progress goes to stderr.
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, lstatSync, openSync, readSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import {
   DIFF_CAP_BYTES,
@@ -139,17 +139,36 @@ export function redactStored<T>(value: T, secrets: string[]): T {
   return secrets.length === 0 ? value : redactWith(value, (text) => redactSecrets(text, secrets));
 }
 
-// Every string in `value` through `redact`, the same walk for every caller.
+// The scanner citations finalize matches on, kept as the scan wrote them:
+// a candidate's `id` and `token`, at exactly these paths of a scan result or
+// a report (a number stands for any index). Every other string is redacted,
+// a field named `id` or `token` anywhere else included (a symbol id of the
+// code graph, a field the reviewer made up).
+const CITATIONS: string[][] = [
+  ["candidates", "#", "id"],
+  ["candidates", "#", "token"],
+  ["not_reviewed", "#", "id"],
+  ["not_reviewed", "#", "token"],
+  ["dropped", "#", "candidate", "id"],
+  ["dropped", "#", "candidate", "token"],
+];
+
+function isCitation(path: string[]): boolean {
+  return CITATIONS.some((c) => c.length === path.length && c.every((part, i) => part === path[i]));
+}
+
+// Every string in `value` through `redact`, but the scanner citations: the
+// same walk for every caller.
 export function redactWith<T>(value: T, redact: (text: string) => string): T {
-  const walk = (v: unknown, key: string | null): unknown => {
-    if (typeof v === "string") return key === "id" || key === "token" ? v : redact(v);
-    if (Array.isArray(v)) return v.map((x) => walk(x, null));
+  const walk = (v: unknown, path: string[]): unknown => {
+    if (typeof v === "string") return isCitation(path) ? v : redact(v);
+    if (Array.isArray(v)) return v.map((x) => walk(x, [...path, "#"]));
     if (v !== null && typeof v === "object") {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, [...path, k])]));
     }
     return v;
   };
-  return walk(value, null) as T;
+  return walk(value, []) as T;
 }
 
 export type ReviewOutputs = {
@@ -342,41 +361,72 @@ function writeOutFile(out: string, repoRoot: string, text: string, mode?: number
 // owner only. The GitHub Action names a new folder of its own, so it never
 // takes a report that a branch committed under .openqodex/ for this run's.
 //
-// The folder must be reached through no symbolic link but the system's own:
-// each part of its path, from the root, is looked at without following it,
-// and a link owned by anyone but root stops the command before anything is
-// made or written (the system's own, such as /tmp and /var on macOS, are
-// root's). A link a repository or anyone else put there would send the
-// run's files where it points. The writer that comes back holds a guard
-// (agents/guarded-fs.ts) bound to the folder as it is now: every file is
-// written through a checked handle into that very folder, so a link swapped
-// in later is refused too.
+// The folder must be reached through no symbolic link but the system's own
+// aliases: each part of its path, from the root, is looked at without
+// following it, and the only links allowed are /var, /tmp and /etc on macOS
+// pointing at their folders under /private, where the walk goes on and
+// allows no further link. Any other link, whoever owns it, stops the
+// command before anything is made or written: a link a repository or
+// anyone else put there would send the run's files where it points. In a
+// folder that is there already, a file that is a link stops it too.
+//
+// The writer that comes back holds a guard (agents/guarded-fs.ts) whose one
+// root is that folder, as it is now: every file is written through a
+// checked handle into that very folder, so a link swapped in later, at the
+// folder or at a file in it, that leads anywhere else is refused.
+const SYSTEM_ALIASES: Record<string, string> = { "/var": "/private/var", "/tmp": "/private/tmp", "/etc": "/private/etc" };
+
+// Whether the link at `path` reading `target` is one of the system's own aliases.
+export function systemAlias(path: string, target: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "darwin" && Object.hasOwn(SYSTEM_ALIASES, path) && resolve(sep, target) === SYSTEM_ALIASES[path];
+}
+
 export function checkReportFolder(folder: string): string {
   const dir = resolve(folder);
+  const refuse = (at: string) => new OpenQodexError(`--report-dir ${folder}: ${at} is a symbolic link; name a folder reached through no link`);
+  const realFolder = (at: string): void => {
+    const st = lstatSync(at, { throwIfNoEntry: false });
+    if (st?.isSymbolicLink()) throw refuse(at);
+    if (st !== undefined && !st.isDirectory()) throw new OpenQodexError(`--report-dir ${folder}: ${at} is not a folder`);
+  };
   let at = parse(dir).root;
   for (const part of dir.slice(at.length).split(sep).filter((p) => p !== "")) {
-    at = join(at, part);
-    const st = lstatSync(at, { throwIfNoEntry: false });
+    const next = join(at, part);
+    const st = lstatSync(next, { throwIfNoEntry: false });
     if (st === undefined) break;
-    if (st.isSymbolicLink() && st.uid !== 0) throw new OpenQodexError(`--report-dir ${folder}: ${at} is a symbolic link; name a folder reached through no link`);
-    if (!st.isSymbolicLink() && !st.isDirectory()) throw new OpenQodexError(`--report-dir ${folder}: ${at} is not a folder`);
+    if (st.isSymbolicLink()) {
+      if (!systemAlias(next, readlinkSync(next))) throw refuse(next);
+      // The alias's own target, each part of it a real folder.
+      at = parse(next).root;
+      for (const p of SYSTEM_ALIASES[next]!.split(sep).filter((x) => x !== "")) {
+        at = join(at, p);
+        realFolder(at);
+      }
+      continue;
+    }
+    realFolder(next);
+    at = next;
+  }
+  if (lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
+    for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isSymbolicLink()) throw refuse(join(dir, e.name));
   }
   return dir;
 }
 
-export function reportFolderWriter(folder: string, repoRoot: string): (files: Record<string, string>) => void {
+export function reportFolderWriter(folder: string): (files: Record<string, string>) => void {
   const dir = checkReportFolder(folder);
-  const guard = new Guard({ repoRoot, gitFolders: [], roots: [dir] });
+  const guard = new Guard({ repoRoot: null, gitFolders: [], roots: [dir] });
   return (files) => {
     for (const [name, text] of Object.entries(files)) {
       if (name !== basename(name) || name.startsWith(".")) throw new Error(`not a plain file name: ${name}`);
+      if (lstatSync(join(dir, name), { throwIfNoEntry: false })?.isSymbolicLink()) throw new OpenQodexError(`--report-dir ${folder}: ${join(dir, name)} is a symbolic link; openqodex does not write through it`);
       guard.write(join(dir, name), text, { mode: 0o600, setMode: true });
     }
   };
 }
 
-export function writeReportCopies(folder: string, repoRoot: string, files: Record<string, string>): void {
-  reportFolderWriter(folder, repoRoot)(files);
+export function writeReportCopies(folder: string, files: Record<string, string>): void {
+  reportFolderWriter(folder)(files);
 }
 
 export function exitFor(report: Report): number {

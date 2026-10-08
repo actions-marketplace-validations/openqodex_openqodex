@@ -255,16 +255,22 @@ function lineCount(text: string): number {
   return text.length > 0 && !text.endsWith("\n") ? n + 1 : n;
 }
 
-// Lines `from` to `to` (1-based, inclusive) of `text`, cut out one by one.
-function linesOf(text: string, from: number, to: number): string[] {
-  const out: string[] = [];
+// The lines of each span (1-based, inclusive; sorted, apart) of `text`, cut
+// out in one forward walk: the cursor never goes back, so all spans
+// together cost one pass over the file, however many there are.
+function linesOf(text: string, spans: [number, number][]): string[][] {
+  const out: string[][] = spans.map(() => []);
   let start = 0;
-  for (let n = 1; n <= to && start <= text.length; n++) {
-    const end = text.indexOf("\n", start);
-    const stop = end === -1 ? text.length : end;
-    if (n >= from) out.push(text.slice(start, stop));
-    if (end === -1) break;
-    start = end + 1;
+  let line = 1;
+  for (const [k, [from, to]] of spans.entries()) {
+    while (line <= to && start <= text.length) {
+      const end = text.indexOf("\n", start);
+      const stop = end === -1 ? text.length : end;
+      if (line >= from) out[k]!.push(text.slice(start, stop));
+      line++;
+      if (end === -1) return out;
+      start = end + 1;
+    }
   }
   return out;
 }
@@ -315,8 +321,9 @@ export function buildExcerptDisplay(args: {
       files.push(meta);
       continue;
     }
-    const hunks = spans.map(([s, e]): DisplayHunk => {
-      const lines = redactSecretsKeepingLines(linesOf(raw, s, e).join("\n"), secrets).split("\n");
+    const cut = linesOf(raw, spans);
+    const hunks = spans.map(([s], k): DisplayHunk => {
+      const lines = redactSecretsKeepingLines(cut[k]!.join("\n"), secrets).split("\n");
       const rows = lines.map((text, k): DisplayRow => {
         const clean = redactSecrets(text, secrets);
         return cutRow({ kind: "context", old: null, new: s + k, text: texts.some((t) => clean.includes(t)) ? REDACTED : clean });

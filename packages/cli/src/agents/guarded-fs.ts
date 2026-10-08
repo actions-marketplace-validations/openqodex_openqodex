@@ -26,7 +26,7 @@
 // the very folder verified. On any mismatch it removes what it can and
 // fails. A delete never follows a link, and checks the identity of the
 // folder before each name it removes inside it.
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, renameSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, sep } from "node:path";
@@ -277,6 +277,37 @@ export class Guard {
     } finally {
       closeSync(fd);
       closeSync(folder.fd);
+    }
+  }
+
+  // Reads the regular file `path` names, at most `maxBytes`; null when it is
+  // missing. Decided as a delete is (the last name not followed): the
+  // folder it lies in must be, by identity, under a root. Then the file is
+  // opened without following a link, and the open handle must be the very
+  // file walked to, in the very folder verified, before a byte is read
+  // through it. A link at the file, a folder swapped meanwhile, anything but
+  // a regular file or one past the bound throws.
+  read(path: string, maxBytes: number): Buffer | null {
+    const w = this.check(path, false);
+    if (w.stat === null) return null;
+    if (!w.stat.isFile()) throw new Error(`${join(w.dir, w.final)} is not a regular file`);
+    const want = idOf(w.stat)!;
+    const folder = w.chain[w.chain.length - 1]!.id;
+    const fd = openSync(join(w.dir, w.final), constants.O_RDONLY | NOFOLLOW | (constants.O_NONBLOCK ?? 0));
+    try {
+      const st = fstatSync(fd, { bigint: true });
+      if (!st.isFile() || !same(idOf(st), want) || !same(idOf(lstatOf(w.dir)), folder)) throw new Error(`${join(w.dir, w.final)} changed while openqodex was reading it`);
+      if (st.size > BigInt(maxBytes)) throw new Error(`${join(w.dir, w.final)} is over ${maxBytes} bytes`);
+      const buf = Buffer.alloc(Number(st.size));
+      let off = 0;
+      while (off < buf.length) {
+        const n = readSync(fd, buf, off, buf.length - off, off);
+        if (n === 0) break;
+        off += n;
+      }
+      return buf.subarray(0, off);
+    } finally {
+      closeSync(fd);
     }
   }
 
