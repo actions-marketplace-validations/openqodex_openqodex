@@ -19,6 +19,10 @@
 // 7. A name re-exported through more modules than the graph follows is
 //    recorded as a call on a value of unknown type (no-receiver-type) or a
 //    miss, not as what it is: a chain cut by the graph's depth limit.
+// 8. An untyped type known only by its spelling: `Any` imported under
+//    another name, or read through a module alias (`t.Any`), or a
+//    TypeScript alias of `any`, counts as external or as an unknown type,
+//    while a class the repository names `Any` is taken for typing's.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -152,5 +156,22 @@ describe("certainty", () => {
       expect(g.unknowns.filter((u) => u.file === "use.ts").map((u) => `${u.name} ${u.cause}`)).toEqual(["f export-chain-too-deep"]);
       expect(tiers(g, symbol(g, "x.ts", "f"))).toEqual([]);
     }
+  });
+
+  it("knows an untyped type by what binds it, not by how it is spelled (8)", async () => {
+    const g = await graphOf({
+      "repo.py": "class Repo:\n    def save(self):\n        return 1\n",
+      "alias.py": "from typing import Any as A\n\n\ndef use(x: A):\n    return x.save()\n",
+      "module.py": "import typing as t\n\n\ndef use(x: t.Any):\n    return x.save()\n",
+      "plain.py": "import typing\n\n\ndef use(x: typing.Any):\n    return x.save()\n",
+      "own.py": "class Any:\n    def save(self):\n        return 2\n\n\ndef use(x: Any):\n    return x.save()\n",
+      "loose.ts": "export type Loose = any;\nexport type Looser = Loose;\n",
+      "use.ts": 'import type { Looser } from "./loose";\nexport function use(x: Looser) {\n  return x.save();\n}\n',
+    });
+    const cause = (file: string) => g.unknowns.filter((u) => u.file === file && u.name === "save").map((u) => u.cause);
+    for (const file of ["alias.py", "module.py", "plain.py", "use.ts"]) expect(cause(file), file).toEqual(["untyped-receiver"]);
+    // The repository's own class named Any binds; it is no untyped type.
+    expect(cause("own.py")).toEqual([]);
+    expect(tiers(g, symbol(g, "own.py", "save", "Any"))).toEqual(["own.py:7 certain"]);
   });
 });

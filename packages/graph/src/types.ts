@@ -41,6 +41,8 @@ export type DefFact = {
   // A hash of the definition without its name, comments and whitespace
   // (top-level definitions and members of top-level classes only).
   bodyHash?: string;
+  // A TypeScript type alias: the type it stands for (`type Loose = any`).
+  alias?: TypeRef;
 };
 
 // A name bound by an import made inside a function or a block, in that

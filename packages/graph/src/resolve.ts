@@ -37,7 +37,7 @@ export const EXPORT_WALK_STEPS = 4096;
 // back on itself, which no cache can shorten.
 export const EXPORT_LOOKUP_STEPS = 10_000;
 export const HUB_FILES = 8; // a name defined in more files never binds without evidence
-export const RESOLVER_VERSION = 5;
+export const RESOLVER_VERSION = 6;
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -73,15 +73,14 @@ const BUILTIN_TYPES: Record<Family, ReadonlySet<string>> = {
   ruby: new Set("String Integer Float Array Hash Symbol Range Proc".split(" ")),
 };
 
-// Types that say nothing about a value's methods: a call on a value of one
-// may reach any method of that name, so it is an untyped receiver, never
-// external and never bound.
-const UNTYPED: Record<Family, ReadonlySet<string>> = {
-  js: new Set(["any", "unknown", "object", "{}"]),
-  python: new Set(["object", "Any"]),
-  go: new Set(["any"]),
-  ruby: new Set(),
-};
+// TypeScript's types that say nothing about a value's methods: keywords no
+// declaration can rebind, and "{}", which the extractor writes for an
+// object type written in place. A call on a value of one may reach any
+// method of that name, so it is an untyped receiver, never external and
+// never bound. Python's and Go's are known by what binds them (untypedType).
+const JS_UNTYPED: ReadonlySet<string> = new Set(["any", "unknown", "object", "{}"]);
+// The modules whose `Any` is Python's untyped type.
+const TYPING: ReadonlySet<string> = new Set(["typing", "typing_extensions"]);
 
 export type FileInput = { path: string; facts: FileFacts };
 
@@ -998,6 +997,41 @@ export function createWorld(input: ResolveInput): World {
     return inner === null || inner === "ext" ? inner : { key: inner.key, ev: chain(v.ev, inner.ev) };
   };
 
+  // Whether a type says nothing about a value's methods, by what binds its
+  // name rather than how it is spelled: TypeScript's keywords and object
+  // types written in place, and an alias of one, however it is imported;
+  // Python's `object` (unless the file defines one) and `Any` from typing,
+  // under any name or through a module alias (`t.Any`); Go's `any`.
+  const untypedType = (file: string, family: Family, t: TypeRef, depth: number): boolean => {
+    if (t.result !== undefined || t.elem || depth > MAX_DEPTH) return false;
+    if (family === "js") {
+      if (t.qualifier === null && JS_UNTYPED.has(t.name)) return true;
+      let v: Value | null;
+      if (t.qualifier) {
+        const parts = t.qualifier.split(".");
+        v = t.bound ? boundValue(file, parts[0] as string, t.bound) : resolveLocal(file, parts[0] as string);
+        for (const part of [...parts.slice(1), t.name]) v = attr(v, part);
+      } else v = t.bound ? boundValue(file, t.name, t.bound) : resolveLocal(file, t.name);
+      if (v?.v !== "sym" || v.ids.length !== 1) return false;
+      const def = defById.get(v.ids[0] as string);
+      return def?.kind === "type" && def.alias !== undefined && untypedType(def.file, def.family, def.alias, depth + 1);
+    }
+    if (family === "python") {
+      const own = (name: string) => topByFile.get(file)?.has(name) === true;
+      if (t.qualifier === null) {
+        if (own(t.name)) return false;
+        if (t.name === "object") return !index.bindings(file).names.has("object");
+        const b = index.bindings(file).names.get(t.name);
+        return b?.kind === "named" && b.imported === "Any" && b.mod !== null && "ext" in b.mod && TYPING.has(b.mod.ext);
+      }
+      if (t.name !== "Any" || t.qualifier.includes(".") || own(t.qualifier)) return false;
+      const b = index.bindings(file).names.get(t.qualifier);
+      return b?.kind === "pyns" && TYPING.has(b.dotted);
+    }
+    if (family === "go") return t.qualifier === null && t.name === "any" && resolveLocal(file, "any") === null;
+    return false;
+  };
+
   const baseKeys = new Map<string, { keys: string[]; evs: Ev[]; outside: boolean }>();
   // The in-repo base classes of a class, each with the evidence of the name
   // that binds it, and whether any base is outside the graph.
@@ -1175,11 +1209,9 @@ export function createWorld(input: ResolveInput): World {
         return onClass(base, call.name, call.static ? "s" : "i", superEv);
       }
       case "type": {
-        // `any`, `unknown`, `object`, an object type written in place (Python
-        // `object`, `typing.Any`; Go `any`), unless the file defines the name.
-        const untyped = r.type.result === undefined && !r.type.elem && UNTYPED[family].has(r.type.name) && (r.type.qualifier === null || (family === "python" && r.type.qualifier === "typing"));
-        if (untyped && resolveLocal(file, r.type.name)?.v !== "sym") {
-          return { unknown: "untyped-receiver", shape: "typed", note: `a value typed ${r.type.name === "{}" ? "by an object type written in place" : r.type.name} may be anything with a method of this name` };
+        if (untypedType(file, family, r.type, 0)) {
+          const spelled = r.type.name === "{}" ? "by an object type written in place" : `${r.type.qualifier ? `${r.type.qualifier}.` : ""}${r.type.name}`;
+          return { unknown: "untyped-receiver", shape: "typed", note: `a value typed ${spelled} may be anything with a method of this name` };
         }
         const t = typeKey(file, family, r.type);
         if (t === "ext") return { ext: true };

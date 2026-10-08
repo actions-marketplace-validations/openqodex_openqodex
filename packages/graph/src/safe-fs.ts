@@ -190,6 +190,7 @@ function isDef(v: unknown, imports: number): boolean {
     Object.keys(v.fields).length <= 4096 &&
     Object.values(v.fields).every(isType) &&
     (v.results === undefined || isList(v.results, (r) => r === null || isType(r), 64)) &&
+    (v.alias === undefined || isType(v.alias)) &&
     optBool(v.static) &&
     (v.bodyHash === undefined || (typeof v.bodyHash === "string" && /^[0-9a-f]{16}$/.test(v.bodyHash)))
   );
