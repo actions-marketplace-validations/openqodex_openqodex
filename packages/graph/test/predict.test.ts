@@ -11,6 +11,9 @@
 //    or never flips after two consecutive ones.
 // 5. A build's predicted and actual times are not kept, so nobody can check
 //    the predictor against what happened.
+// 6. A build that only loaded a kept index changes the measured rates (it
+//    parsed and resolved nothing), or is not recorded at all, so the mode
+//    never flips back to fresh while kept indexes keep being loaded.
 import { describe, expect, it } from "vitest";
 import { DEFAULT_RATES, FIVE_SECONDS_MS, decideMode, predictMs, recordBuild } from "../src/runtime/predict.js";
 import type { PredictMeta } from "../src/runtime/predict.js";
@@ -66,5 +69,17 @@ describe("the five-second predictor", () => {
     for (let i = 0; i < 12; i++) meta = recordBuild(meta, { eligible: 10, parsed: 10, cached: 0, stages: { parse: 10, facts: 0, other: 1 }, predictedMs: 100 + i, actualMs: 50 + i, mode: "fresh" });
     expect(meta?.last).toHaveLength(10);
     expect(meta?.last[9]).toMatchObject({ predictedMs: 111, actualMs: 61, mode: "fresh", eligible: 10 });
+  });
+
+  it("records a build that loaded an index for the mode, never for the rates (6)", () => {
+    let meta: PredictMeta | null = recordBuild(null, { eligible: 3000, parsed: 3000, cached: 0, stages: { parse: 4000, facts: 0, other: 900 }, predictedMs: 8000, actualMs: 4900, mode: "retained" });
+    const rates = { ...meta.rates };
+    for (let i = 0; i < 2; i++) {
+      const d = decideMode(meta, 1000);
+      meta = recordBuild(meta, { eligible: 3000, parsed: 0, cached: 0, stages: { parse: 0, facts: 0, other: 600 }, predictedMs: 1000, actualMs: 600, mode: d.mode, streak: d.streak }, { rates: false });
+    }
+    expect(meta?.rates).toEqual(rates);
+    expect(meta?.mode).toBe("fresh");
+    expect(meta?.last).toHaveLength(3);
   });
 });

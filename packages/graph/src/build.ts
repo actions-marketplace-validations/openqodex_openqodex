@@ -202,8 +202,15 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     if (reused && loaded) {
       stage("load-index");
       const durationMs = Math.round(performance.now() - started);
+      // Recorded for the mode and its streak; nothing was parsed or resolved, so no rate is measured.
+      const next = recordBuild(meta, { eligible, parsed: 0, cached: 0, stages: { parse: 0, facts: 0, other: durationMs }, predictedMs: predicted, actualMs: durationMs, mode: decided.mode, streak: decided.streak }, { rates: false });
+      try {
+        await store.updateMeta((m) => ({ ...m, predict: next }));
+      } catch {
+        // the record is lost; the next build decides again
+      }
       args.onProgress?.(`Code graph: ${plural(loaded.status.filesParsed, "file")} from the retained index in ${(durationMs / 1000).toFixed(1)} s`);
-      return { ...loaded, repoRoot: args.repoRoot, status: { ...loaded.status, durationMs, mode: "retained", generation: reused.id, predictedMs: predicted, stages } };
+      return { ...loaded, repoRoot: args.repoRoot, status: { ...loaded.status, durationMs, parses: 0, cacheHits: 0, mode: "retained", generation: reused.id, predictedMs: predicted, stages } };
     }
   }
 

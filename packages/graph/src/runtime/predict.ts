@@ -45,15 +45,18 @@ export function decideMode(meta: PredictMeta | null, predictedMs: number): { mod
 }
 
 // The meta after a build: its measured rates (each only when the build
-// measured enough files for it), its mode and the record of the build.
+// measured enough files for it), its mode and the record of the build. A
+// build that only loaded a kept index measured no rate: `rates: false`.
 export function recordBuild(
   meta: PredictMeta | null,
   b: { eligible: number; parsed: number; cached: number; stages: { parse: number; facts: number; other: number }; predictedMs: number; actualMs: number; mode: Mode; streak?: number },
+  opts: { rates?: boolean } = {},
 ): PredictMeta {
   const rates: Rates = { ...(meta?.rates ?? DEFAULT_RATES) };
-  if (b.parsed >= MIN_SAMPLE && b.stages.parse > 0) rates.coldPerSec = b.parsed / (b.stages.parse / 1000);
-  if (b.cached >= MIN_SAMPLE && b.stages.facts > 0) rates.warmPerSec = b.cached / (b.stages.facts / 1000);
-  if (b.eligible >= MIN_SAMPLE && b.stages.other >= 0) rates.otherMsPerFile = b.stages.other / b.eligible;
+  const measured = opts.rates !== false;
+  if (measured && b.parsed >= MIN_SAMPLE && b.stages.parse > 0) rates.coldPerSec = b.parsed / (b.stages.parse / 1000);
+  if (measured && b.cached >= MIN_SAMPLE && b.stages.facts > 0) rates.warmPerSec = b.cached / (b.stages.facts / 1000);
+  if (measured && b.eligible >= MIN_SAMPLE && b.stages.other >= 0) rates.otherMsPerFile = b.stages.other / b.eligible;
   const record: BuildRecord = { at: new Date().toISOString(), eligible: b.eligible, parsed: b.parsed, cached: b.cached, predictedMs: b.predictedMs, actualMs: b.actualMs, mode: b.mode };
   return { version: 1, rates, mode: b.mode, streak: b.streak ?? 0, last: [...(meta?.last ?? []), record].slice(-10) };
 }

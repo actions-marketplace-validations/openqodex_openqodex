@@ -29,7 +29,7 @@ A third level, possible (one of a set, such as every implementer of an interface
 - The package's entry comes from `exports` (in key order, `types` never), then `module` and `main`. A source entry is certain; a built entry mapped back to `src` (through the package tsconfig's `outDir` and `rootDir`, or `dist` to `src`) is likely, and certain when the importer's tsconfig references the package as a project.
 - The nearest `tsconfig.json` or `jsconfig.json` above a file governs it, with `extends` followed. Its `paths` and `baseUrl` prove an import when its `files`, `include` and `exclude` list the file; otherwise the binding is likely.
 - Python absolute imports search the importing file's own folders, every `src` folder that holds a package, every folder with a `pyproject.toml`, `setup.cfg` or `setup.py`, and namespace packages without `__init__.py`. A module found under two roots is not bound.
-- Manifests and tsconfig files are read as text, each up to 1 MB. Nothing in the repository is run.
+- Manifests and tsconfig files are read as text, each up to 1 MB, and lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`) up to 16 MB; a larger file is not read. Each is read in one pass, so a crafted file cannot make the graph hang. Nothing in the repository is run.
 
 ## What it cannot see
 
@@ -48,6 +48,8 @@ Every cut is recorded with what it left out: a symbol with more than 40 callers 
 
 Languages: TypeScript, TSX, JavaScript, Python, Go and Ruby. Files under `node_modules`, `dist`, `build`, `out`, `vendor` and the like, declaration files and minified files are left out.
 
+A file is listed as not read, with the reason, when it is over `graph.max_file_bytes`, past the `graph.max_files` parse cap, past the time budget or the memory bound, or when its parse takes over two seconds (the parser is slow on some broken files). Every one of these holds for the changed files too: they are read first, so a cap reached late never loses them.
+
 ## The graph's folder
 
 The graph lives in the repository, in `.openqodex/graph/`, which the folder's own `.gitignore` keeps out of git. It holds:
@@ -58,7 +60,7 @@ The graph lives in the repository, in `.openqodex/graph/`, which the folder's ow
 - `leases/`: one file per process that holds a build open. A build a review or a command holds is never removed while it runs.
 - `meta.json`: the rates this machine measured, for the five-second rule.
 
-A build's folder is written whole and checked against its own checksums before `current` moves to it, so a reader never sees half a build. The collector keeps the newest build, the two newest complete builds and every build a live process holds, removes facts no kept build names (only when every kept build is complete, and only facts older than an hour), and keeps the folder under `graph.max_cache_mb` (512 MB by default), oldest first. When the builds in use alone are larger than the bound, the build is still kept and the run says so.
+A build's folder is written whole and checked against its own checksums before `current` moves to it, so a reader never sees half a build. The collector keeps the newest build, the two newest complete builds and every build a live process holds, removes facts no kept build names (only when every kept build is complete, and only facts older than an hour), and keeps the folder under `graph.max_cache_mb` (512 MB by default), oldest first. When the builds in use alone are larger than the bound, the build is still kept and the run says so. A build never writes facts past the bound: those files are parsed again next time, and the run says how many.
 
 Each kept build's capture is a git tree in the repository's own objects, held by a local ref `refs/openqodex/graph/<tree>` while a build of it is kept, so `git show <tree>:<path>` shows the exact bytes the graph read after the files change. The ref is never pushed by a plain `git push`; `git push --mirror` would push it.
 
