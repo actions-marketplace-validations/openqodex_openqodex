@@ -74,7 +74,8 @@ export class RailsWorld {
   private readonly classesByFile = new Map<string, ClassInfo[]>();
   private readonly viewsCache = new Map<string, Map<string, string[]>>();
   private readonly methodsCache = new Map<string, { id: string; def: DefFact; file: string }[]>();
-  private readonly marksCache = new Map<string, VisibilityFact[]>();
+  private readonly byClassCache = new Map<string, Map<number, RailsFact[]>>();
+  private readonly spanCache = new Map<string, { symbols: Int32Array; classes: Int32Array; ids: string[] }>();
 
   constructor(
     readonly index: PluginIndex,
@@ -85,11 +86,12 @@ export class RailsWorld {
       if (!file.endsWith(".rb")) continue;
       const facts = index.languageFacts(file);
       if (!facts || facts.lang !== "ruby") continue;
-      const mine = this.facts(file).filter((f): f is ClassFact => f.kind === "class");
+      const mine = new Map<string, ClassFact>();
+      for (const f of this.facts(file)) if (f.kind === "class") mine.set(`${f.line}\0${f.name}`, f);
       for (const def of facts.defs) {
         if (def.kind !== "class" && def.kind !== "module") continue;
         const name = def.owner ? `${def.owner}::${def.name}` : def.name;
-        const fact = mine.find((f) => f.line === def.line && f.name === name);
+        const fact = mine.get(`${def.line}\0${name}`);
         const info: ClassInfo = {
           file,
           name,
@@ -145,17 +147,63 @@ export class RailsWorld {
     return pool.find((c) => `/${c.file}`.endsWith(path)) ?? (pool[0] as ClassInfo);
   }
 
-  // The qualified class or module whose body holds the line, from the
-  // innermost enclosing definition.
+  // The facts of a kind in a file, by the line of the class they belong to
+  // (the `cls` of a class-body fact), built once per file and kind.
+  byClass(file: string, kind: string): Map<number, RailsFact[]> {
+    const key = `${file}\0${kind}`;
+    let m = this.byClassCache.get(key);
+    if (m) return m;
+    m = new Map();
+    for (const f of this.facts(file)) {
+      if (f.kind !== kind || !("cls" in f)) continue;
+      (m.get(f.cls) ?? m.set(f.cls, []).get(f.cls))?.push(f);
+    }
+    this.byClassCache.set(key, m);
+    return m;
+  }
+
+  // For each line of a file, the innermost definition (and the innermost
+  // class or module) whose span holds it: one sweep over the spans sorted by
+  // start, with a stack of the open ones. Linear in lines and definitions,
+  // however many facts ask.
+  private spans(file: string): { symbols: Int32Array; classes: Int32Array; ids: string[] } {
+    const kept = this.spanCache.get(file);
+    if (kept) return kept;
+    const sweep = (spans: { start: number; end: number }[]): Int32Array => {
+      const last = spans.reduce((m, s) => Math.max(m, s.end), 0);
+      const out = new Int32Array(last + 2).fill(-1);
+      const order = spans.map((_, i) => i).sort((a, b) => (spans[a] as { start: number }).start - (spans[b] as { start: number }).start || (spans[b] as { end: number }).end - (spans[a] as { end: number }).end);
+      const stack: number[] = [];
+      let next = 0;
+      for (let line = 1; line <= last; line++) {
+        while (next < order.length && (spans[order[next] as number] as { start: number }).start === line) stack.push(order[next++] as number);
+        while (stack.length > 0 && (spans[stack[stack.length - 1] as number] as { end: number }).end < line) stack.pop();
+        // A span that ended under a still-open later one leaves the stack when it is on top.
+        out[line] = stack.length > 0 ? (stack[stack.length - 1] as number) : -1;
+      }
+      return out;
+    };
+    const symbols = this.index.symbols(file).filter((n) => n.kind !== "file");
+    const result = {
+      ids: symbols.map((n) => n.id),
+      symbols: sweep(symbols.map((n) => ({ start: n.startLine, end: n.endLine }))),
+      classes: sweep(this.classesIn(file).map((c) => ({ start: c.def.line, end: c.def.endLine }))),
+    };
+    this.spanCache.set(file, result);
+    return result;
+  }
+
+  // The qualified class or module whose body holds the line.
   nestingAt(file: string, line: number): string | null {
-    let best: ClassInfo | null = null;
-    for (const c of this.classesIn(file)) if (c.def.line <= line && c.def.endLine >= line && (!best || c.def.line >= best.def.line)) best = c;
-    return best?.name ?? null;
+    const i = this.spans(file).classes[line] ?? -1;
+    return i < 0 ? null : (this.classesIn(file)[i]?.name ?? null);
   }
 
   // The innermost definition holding the line, else the file itself.
   symbolAt(file: string, line: number): string {
-    return this.index.enclosing(file, line)?.id ?? file;
+    const s = this.spans(file);
+    const i = s.symbols[line] ?? -1;
+    return i < 0 ? file : (s.ids[i] ?? file);
   }
 
   // The instance methods a class or module defines in its own body, in
@@ -234,9 +282,7 @@ export class RailsWorld {
   // Whether a method is public in its class: no `private` or `protected`
   // above it in the class body (until a `public`), and not named by one.
   isPublic(cls: ClassInfo, def: DefFact, file: string): boolean {
-    let all = this.marksCache.get(file);
-    if (!all) this.marksCache.set(file, (all = this.facts(file).filter((f): f is VisibilityFact => f.kind === "visibility")));
-    const marks = all.filter((f) => f.cls === cls.def.line);
+    const marks = (this.byClass(file, "visibility").get(cls.def.line) ?? []) as VisibilityFact[];
     let visible = true;
     for (const m of marks) {
       if (m.names !== null) {
@@ -327,6 +373,7 @@ export function detectApps(index: PluginIndex): { apps: App[]; detections: Detec
   };
   for (const file of index.factFiles()) {
     const facts = index.factsOf(file) as readonly RailsFact[];
+    let isolated: Map<number, RailsFact & { kind: "isolate" }> | null = null;
     for (const f of facts) {
       if (f.kind === "class" && f.base !== null && isAppBase(f.base)) {
         const root = rootOf(file, "config/application.rb");
@@ -338,7 +385,8 @@ export function detectApps(index: PluginIndex): { apps: App[]; detections: Detec
       } else if (f.kind === "class" && f.base !== null && isEngineBase(f.base)) {
         const root = engineRoot(file);
         if (root === null) continue;
-        const isolate = facts.find((x) => x.kind === "isolate" && x.cls === f.line);
+        isolated ??= isolates(facts);
+        const isolate = isolated.get(f.line);
         engines.push({
           root,
           kind: "engine",
@@ -363,8 +411,11 @@ export function detectApps(index: PluginIndex): { apps: App[]; detections: Detec
     found.site ??= { file: p, line: 1, column: 0 };
     found.evidence.push({ file: p, line: 1, note: "bin/rails is present" });
   }
-  const all: Found[] = [...roots.values()];
-  for (const e of engines) if (!all.some((a) => a.root === e.root)) all.push(e);
+  // One application per root: an application marker wins over an engine,
+  // and the first engine class of a root over later ones.
+  const byRoot = new Map<string, Found>(roots);
+  for (const e of engines) if (!byRoot.has(e.root)) byRoot.set(e.root, e);
+  const all: Found[] = [...byRoot.values()];
   all.sort((a, b) => a.root.localeCompare(b.root) || a.kind.localeCompare(b.kind));
   const apps: App[] = [];
   const detections: Detection[] = [];
@@ -384,6 +435,12 @@ export function detectApps(index: PluginIndex): { apps: App[]; detections: Detec
     });
   }
   return { apps, detections };
+}
+
+function isolates(facts: readonly RailsFact[]): Map<number, RailsFact & { kind: "isolate" }> {
+  const m = new Map<number, RailsFact & { kind: "isolate" }>();
+  for (const f of facts) if (f.kind === "isolate" && !m.has(f.cls)) m.set(f.cls, f);
+  return m;
 }
 
 // The applications back from their detections (resolve receives the

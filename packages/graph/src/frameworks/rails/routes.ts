@@ -166,6 +166,16 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
       if (cap.kind !== "route-cap") continue;
       out.gaps.push({ site: { file, line: cap.line, column: cap.column }, scope: { file }, cause: "fan-out-capped", affects: ["handles"], name: null, note: "route blocks nested deeper than eight levels are not read" });
     }
+    // The route calls of every draw block by their parent, built once per file.
+    const childrenOf = new Map<string, RouteFact[]>();
+    const indexOf = new Map<RouteFact, number>();
+    routes.forEach((r, i) => {
+      indexOf.set(r, i);
+      // A parent index that does not point back is a damaged cache: the fact is left out.
+      if (r.parent >= i) return;
+      const k = `${r.draw}:${r.parent}`;
+      (childrenOf.get(k) ?? childrenOf.set(k, []).get(k))?.push(r);
+    });
     draws.forEach((d, drawIndex) => {
       if (d.kind !== "draw") return;
       const app = drawApp(world, d.receiver, file);
@@ -173,15 +183,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
       const key = app?.id ?? "-";
       if (!used.has(key)) used.set(key, new Set());
       const taken = used.get(key) as Set<string>;
-      const children = new Map<number, RouteFact[]>();
-      routes.forEach((r, i) => {
-        if (r.draw !== drawIndex) return;
-        // A parent index that does not point back is a damaged cache: the fact is left out.
-        if (r.parent >= i) return;
-        (children.get(r.parent) ?? children.set(r.parent, []).get(r.parent))?.push(r);
-      });
-      const indexOf = new Map<RouteFact, number>();
-      routes.forEach((r, i) => indexOf.set(r, i));
+      const children = { get: (parent: number) => childrenOf.get(`${drawIndex}:${parent}`) };
       const site = (f: RailsFact): Site => ({ file, line: f.line, column: f.column });
       const gap = (f: RailsFact, cause: Cause, note: string, name: string | null = null, affects: FrameworkEdgeKind[] = ["handles"]) => out.gaps.push({ site: site(f), scope: { file }, cause, affects, name, note });
 

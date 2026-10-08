@@ -355,8 +355,7 @@ class Resolver {
 
   private callbacks(app: App, cls: ClassInfo): void {
     let order = 0;
-    for (const f of this.factsOfKind(cls.file, "callback") as CallbackFact[]) {
-      if (f.cls !== cls.line) continue;
+    for (const f of (this.w.byClass(cls.file, "callback").get(cls.line) ?? []) as CallbackFact[]) {
       const site = { file: cls.file, line: f.line, column: f.column };
       if (f.call.startsWith("skip_")) continue;
       if (f.dynamic) this.unknown(site, { file: cls.file }, "dynamic", ["applies_middleware"], f.call, `a ${f.call} with a block or a computed target`);
@@ -377,29 +376,46 @@ class Resolver {
 
   // Explicit renders in each method, then the implicit view of every
   // action that names no template.
+  // The render facts of a file by the definition that holds them, built
+  // once per file.
+  private readonly rendersCache = new Map<string, Map<string, RenderFact[]>>();
+  private rendersIn(file: string): Map<string, RenderFact[]> {
+    let m = this.rendersCache.get(file);
+    if (m) return m;
+    m = new Map();
+    for (const f of this.factsOfKind(file, "render") as RenderFact[]) {
+      const id = this.w.symbolAt(file, f.line);
+      (m.get(id) ?? m.set(id, []).get(id))?.push(f);
+    }
+    this.rendersCache.set(file, m);
+    return m;
+  }
+
   private renders(app: App, cls: ClassInfo, prefix: string, actions: { id: string; def: { name: string; line: number }; file: string }[]): void {
     const explicit = new Set<string>();
     const views = this.w.views(app);
-    for (const f of this.factsOfKind(cls.file, "render") as RenderFact[]) {
-      const enclosing = this.w.index.enclosing(cls.file, f.line);
-      if (!enclosing || enclosing.kind !== "method" || !enclosing.id.includes(`#${cls.name}.`)) continue;
-      if (f.mode === "other") continue;
-      const site = { file: cls.file, line: f.line, column: f.column };
-      if (f.value === null) {
-        this.unknown(site, { file: cls.file }, "dynamic", ["renders"], null, "a render of a computed template name");
-        explicit.add(enclosing.id);
-        continue;
+    const byMethod = this.rendersIn(cls.file);
+    for (const m of this.w.ownMethods(cls)) {
+      if (m.file !== cls.file) continue;
+      for (const f of byMethod.get(m.id) ?? []) {
+        if (f.mode === "other") continue;
+        const site = { file: cls.file, line: f.line, column: f.column };
+        if (f.value === null) {
+          this.unknown(site, { file: cls.file }, "dynamic", ["renders"], null, "a render of a computed template name");
+          explicit.add(m.id);
+          continue;
+        }
+        let logical: string;
+        const v = f.value;
+        if (f.mode === "partial") {
+          const cut = v.lastIndexOf("/");
+          logical = cut === -1 ? `${prefix}/_${v}` : `${v.slice(0, cut)}/_${v.slice(cut + 1)}`;
+        } else if (f.mode === "template") logical = v.includes("/") ? v : `${prefix}/${v}`;
+        else if (f.mode === "action") logical = `${prefix}/${v}`;
+        else logical = v.includes("/") ? v : `${prefix}/${v}`;
+        if (f.mode !== "partial") explicit.add(m.id);
+        this.renderTo(app, m.id, logical, views, site, "template-literal", `the view is found by the app/views folder convention for ${JSON.stringify(v.slice(0, 80))}`);
       }
-      let logical: string;
-      const v = f.value;
-      if (f.mode === "partial") {
-        const cut = v.lastIndexOf("/");
-        logical = cut === -1 ? `${prefix}/_${v}` : `${v.slice(0, cut)}/_${v.slice(cut + 1)}`;
-      } else if (f.mode === "template") logical = v.includes("/") ? v : `${prefix}/${v}`;
-      else if (f.mode === "action") logical = `${prefix}/${v}`;
-      else logical = v.includes("/") ? v : `${prefix}/${v}`;
-      if (f.mode !== "partial") explicit.add(enclosing.id);
-      this.renderTo(app, enclosing.id, logical, views, site, "template-literal", `the view is found by the app/views folder convention for ${JSON.stringify(v.slice(0, 80))}`);
     }
     for (const m of actions) {
       if (explicit.has(m.id)) continue;
@@ -459,7 +475,7 @@ class Resolver {
   }
 
   private isAbstract(cls: ClassInfo): boolean {
-    return this.w.facts(cls.file).some((f) => f.kind === "abstract" && f.cls === cls.line);
+    return this.w.byClass(cls.file, "abstract").has(cls.line);
   }
 
   // The table a model maps to: `self.table_name =` (certain), the table of
@@ -468,7 +484,7 @@ class Resolver {
     if (this.tableOf.has(cls.id)) return this.tableOf.get(cls.id) ?? null;
     const site = { file: cls.file, line: cls.line, column: 0 };
     let result: { table: string; tier: Tier; note: string | null; site: Site } | null = null;
-    const named = (this.factsOfKind(cls.file, "table-name") as TableNameFact[]).find((f) => f.cls === cls.line);
+    const named = (this.w.byClass(cls.file, "table-name").get(cls.line) ?? [])[0] as TableNameFact | undefined;
     if (named) {
       const s = { file: cls.file, line: named.line, column: named.column };
       if (named.value === null) this.unknown(s, { file: cls.file }, "dynamic", ["maps_to"], cls.name, `${cls.name} sets a computed table name`);
@@ -488,8 +504,7 @@ class Resolver {
   }
 
   private associations(cls: ClassInfo, app: App): void {
-    for (const f of this.factsOfKind(cls.file, "assoc") as AssocFact[]) {
-      if (f.cls !== cls.line) continue;
+    for (const f of (this.w.byClass(cls.file, "assoc").get(cls.line) ?? []) as AssocFact[]) {
       const site = { file: cls.file, line: f.line, column: f.column };
       if (f.name === null || f.classNameDynamic) {
         this.unknown(site, { file: cls.file }, "dynamic", ["uses_type"], null, `a ${f.macro} with a computed name or class`);
@@ -672,10 +687,15 @@ class Resolver {
     // mounts into engines.
     const route = (app: App, method: string, req: string[], depth = 0): Registration | null => {
       const ix = indexOf(app.id);
-      const first = req[0] ?? "";
-      const pool = [...(ix.byFirst.get(first) ?? []), ...ix.open].sort((a, b) => (ix.order.get(a.id) ?? 0) - (ix.order.get(b.id) ?? 0));
-      for (const r of pool) {
-        if (this.budget.spent) return null;
+      // The candidates with the request's first segment and the ones that
+      // start with a slot, merged in declaration order (both lists are in
+      // it already); every candidate draws on the budget.
+      const a = ix.byFirst.get(req[0] ?? "") ?? [];
+      const b = ix.open;
+      const order = (r: Registration) => ix.order.get(r.id) ?? 0;
+      for (let i = 0, j = 0; i < a.length || j < b.length; ) {
+        if (!this.budget.take()) return null;
+        const r = j >= b.length || (i < a.length && order(a[i] as Registration) < order(b[j] as Registration)) ? (a[i++] as Registration) : (b[j++] as Registration);
         const c = compile(r);
         if (!c) continue;
         const engine = this.mountTarget.get(r.id);
