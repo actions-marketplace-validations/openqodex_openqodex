@@ -1,9 +1,7 @@
-// Reads and writes inside the repo that a hostile repo cannot redirect: no
-// path component may be a symbolic link, files are opened without following
+// Reads inside the repo that a hostile repo cannot redirect: no path
+// component may be a symbolic link, files are opened without following
 // links, and every read is bounded.
-import { randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { FolderReader, type EntryResult } from "@openqodex/core";
 import type { FileFacts } from "./types.js";
 
@@ -50,51 +48,6 @@ export class RepoReader {
   entry(rel: string): EntryResult {
     if (this.folders === null || isAbsolute(rel)) return { ok: false, why: "refused" };
     return this.folders.entry(rel.split("/"));
-  }
-}
-
-// The cache folder, made and checked component by component below the repo
-// root (or, for a folder outside the repo, the folder itself): null when any
-// component is a link or not a folder.
-export function safeCacheDir(repoRoot: string, dir: string): string | null {
-  const rel = relative(repoRoot, dir);
-  const inside = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
-  const steps = inside ? rel.split(sep) : [];
-  let cur = inside ? repoRoot : dir;
-  const check = (path: string): boolean => {
-    try {
-      mkdirSync(path);
-    } catch {
-      // already there, or the parent cannot hold it: lstat decides
-    }
-    try {
-      const st = lstatSync(path);
-      return st.isDirectory() && !st.isSymbolicLink();
-    } catch {
-      return false;
-    }
-  };
-  if (!inside) return check(dir) ? dir : null;
-  for (const step of steps) {
-    cur = join(cur, step);
-    if (!check(cur)) return null;
-  }
-  return cur;
-}
-
-// Written through a fresh temporary file (created exclusively, so never
-// through a link) and renamed over the target entry.
-export function writeExclusive(path: string, content: string): void {
-  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-  try {
-    writeFileSync(tmp, content, { flag: "wx" });
-    renameSync(tmp, path);
-  } catch {
-    try {
-      rmSync(tmp, { force: true });
-    } catch {
-      // nothing was written
-    }
   }
 }
 
