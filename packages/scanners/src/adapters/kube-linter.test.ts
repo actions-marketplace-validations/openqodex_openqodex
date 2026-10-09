@@ -70,7 +70,8 @@ describe("parseKubeLinterJson", () => {
     expect(at("ssh-port")).toEqual([28]);
     expect(at("duplicate-env-var")).toEqual([32]);
     expect(at("docker-sock")).toEqual([50]);
-    expect(at("writable-host-mount")).toEqual([50]);
+    // The container's mount of the volume (no readOnly), not the volume.
+    expect(at("writable-host-mount")).toEqual([45]);
     expect(at("unsafe-sysctls")).toEqual([22]);
     expect(at("liveness-port")).toEqual([40]);
     expect(at("readiness-port")).toEqual([43]);

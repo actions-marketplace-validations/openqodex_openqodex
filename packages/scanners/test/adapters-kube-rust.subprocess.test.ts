@@ -145,6 +145,17 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
     expect(result.scan.candidates.filter((c) => c.source === "kubeconform").map((c) => [c.ruleId, c.lineStart, c.message.includes("'old'")])).toEqual([["additional-properties", 7, true]]);
   }, 300_000);
 
+  // A host path mount is writable through the container's mount, not the
+  // volume: a change that makes it writable is on the mount.
+  it("kube-linter anchors a writable host mount on the container's mount", async () => {
+    const pod = (readOnly: string) =>
+      `apiVersion: v1\nkind: Pod\nmetadata:\n  name: web\nspec:\n  containers:\n    - name: web\n      image: nginx:1.27.3\n      volumeMounts:\n        - name: data\n          mountPath: /data\n${readOnly}  volumes:\n    - name: data\n      hostPath:\n        path: /srv/data\n`;
+    const flipped = await scanChanged("kube-linter", { "k8s/pod.yaml": pod("          readOnly: false\n") }, { "k8s/pod.yaml": [12] });
+    expect(flipped.scan.candidates.filter((c) => c.ruleId === "writable-host-mount").map((c) => c.lineStart)).toEqual([12]);
+    const added = await scanChanged("kube-linter", { "k8s/pod.yaml": pod("") }, { "k8s/pod.yaml": [10, 11] });
+    expect(added.scan.candidates.filter((c) => c.ruleId === "writable-host-mount").map((c) => c.lineStart)).toEqual([10]);
+  }, 300_000);
+
   // kube-linter runs only on the changed files, so a check that needs the
   // object a Service selects, kept in another file, would report every
   // Service changed alone. Those checks are not in OpenQodex's set.

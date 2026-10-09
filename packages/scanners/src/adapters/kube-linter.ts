@@ -70,7 +70,16 @@ const CHECKS: Record<string, { severity: ScannerSeverity; anchor: (message: stri
   "host-ipc": { severity: "high", anchor: pod(["hostIPC"]) },
   "docker-sock": { severity: "high", anchor: named("pod", [["volumes"]], /directory "([^"]+)"/, "path") },
   "sensitive-host-mounts": { severity: "high", anchor: named("pod", [["volumes"]], /directory "([^"]+)"/, "path") },
-  "writable-host-mount": { severity: "high", anchor: named("pod", [["volumes"]], /mounts path (\S+) on the host/, "path") },
+  // Writable through the container's mount: anchored there (kube-yaml.ts,
+  // writableMountLine), else on the volume's host path.
+  "writable-host-mount": {
+    severity: "high",
+    anchor: (message) => {
+      const mount = /mounts path (\S+) on the host/.exec(message)?.[1];
+      const volume = named("pod", [["volumes"]], /mounts path (\S+) on the host/, "path")(message);
+      return mount === undefined ? volume : { ...volume, mount };
+    },
+  },
   "unsafe-sysctls": { severity: "high", anchor: named("pod", [["securityContext", "sysctls"]], /sysctl "([^"]+)"/, "name") },
   "cluster-admin-role-binding": { severity: "high", anchor: object(["roleRef", "name"]) },
   "wildcard-in-rules": {

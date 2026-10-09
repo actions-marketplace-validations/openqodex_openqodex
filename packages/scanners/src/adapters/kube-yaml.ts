@@ -212,16 +212,50 @@ function* values(doc: KubeDoc, place: Place): Generator<{ text: string; line: nu
 // object has; then, when `value` is given, the line in that field that
 // holds the value the finding names (under `key` when given; the last such
 // line with `last`).
+// `mount`: a host path the container mounts; the anchor is then the
+// container's writable mount of a volume on that path, its `readOnly` when it
+// has one, else the mount's entry, before anything else is tried.
 export type Anchor = {
   base: "object" | "pod" | "container";
   paths: readonly (readonly string[])[];
   value?: { text: string; key?: string; last?: true };
+  mount?: string;
 };
+
+// The line of the first writable mount, in the container named
+// `containerName`, of a volume whose hostPath is `hostPath`: its `readOnly`
+// field when it has one (a change to it is what made the mount writable),
+// else the mount's entry. Null when there is none.
+function writableMountLine(doc: KubeDoc, containerName: string, hostPath: string): number | null {
+  const spec = podSpec(doc);
+  const volumes = spec === null ? null : field(doc, spec, "volumes");
+  if (volumes === null) return null;
+  const names = new Set<string>();
+  for (const volume of entries(doc, volumes)) {
+    const host = field(doc, volume, "hostPath");
+    const name = text(field(doc, volume, "name")?.node);
+    if (host !== null && name !== null && text(field(doc, host, "path")?.node) === hostPath) names.add(name);
+  }
+  const owner = container(doc, containerName);
+  const mounts = owner === null ? null : field(doc, owner, "volumeMounts");
+  if (mounts === null) return null;
+  for (const mount of entries(doc, mounts)) {
+    if (!names.has(text(field(doc, mount, "name")?.node) ?? "")) continue;
+    const readOnly = field(doc, mount, "readOnly");
+    if (readOnly !== null && text(readOnly.node) === "true") continue;
+    return readOnly?.line ?? mount.line;
+  }
+  return null;
+}
 
 // The line of an anchor in `doc`, and whether the field it names was found.
 // A field the object lacks anchors on its nearest ancestor that it has; a
 // base it lacks falls back to the one above (container, pod spec, object).
 export function anchorLine(doc: KubeDoc, anchor: Anchor, containerName: string | null): { line: number; found: boolean } {
+  if (anchor.mount !== undefined && containerName !== null) {
+    const line = writableMountLine(doc, containerName, anchor.mount);
+    if (line !== null) return { line, found: true };
+  }
   let from: Place | null = null;
   if (anchor.base === "container" && containerName !== null) from = container(doc, containerName);
   if (from === null && anchor.base !== "object") from = podSpec(doc);
