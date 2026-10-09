@@ -1,0 +1,48 @@
+{
+  "guards": "makes no registration, render link or model from same-named functions and classes that are not Django's",
+  "frameworks": {
+    "plugin": "django",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "mysite/urls.py:7",
+        "pattern": "home/",
+        "handler": "core/views.py#home",
+        "status": "bound"
+      }
+    ],
+    "noRegistrationsIn": [
+      "scripts/fake_urls.py",
+      "tools/routes.py"
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "to": "scripts/fake_urls.py#handler"
+      },
+      {
+        "kind": "handles",
+        "to": "tools/routes.py#ping"
+      },
+      {
+        "kind": "handles",
+        "to": "core/views.py#legacy"
+      },
+      {
+        "kind": "renders",
+        "from": "core/views.py#home"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/urls.py",
+        "line": 8,
+        "cause": "unsupported-rule"
+      }
+    ],
+    "none": [
+      "maps_to",
+      "declares_field"
+    ]
+  }
+}

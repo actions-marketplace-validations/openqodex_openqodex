@@ -17,7 +17,7 @@
 //    from it names no build (`graph ... --generation <id>` included).
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readdirSync, rmSync, unlinkSync } from "node:fs";
+import { readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
@@ -28,10 +28,6 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 const home = makeHome();
-const repos: string[] = [home];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
 
 const files = {
   "src/a.ts": "export function a() {\n  return b();\n}\nexport function b() {\n  return 1;\n}\n",
@@ -58,7 +54,6 @@ async function store(root: string) {
 describe("reopening a kept build", () => {
   it("reads an index back as the same graph the build made (1)", async () => {
     const root = makeRepo(files);
-    repos.push(root);
     const st = await store(root);
     const built = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(built.status.generation).not.toBeNull();
@@ -75,7 +70,6 @@ describe("reopening a kept build", () => {
 
   it("resolves a build kept without an index from its facts to the same graph (2)", async () => {
     const root = makeRepo(files);
-    repos.push(root);
     const st = await store(root);
     const built = await buildGraph({ repoRoot: root, store: st, mode: "fresh" });
     const gen = st.open({ id: built.status.generation as string });
@@ -85,7 +79,6 @@ describe("reopening a kept build", () => {
 
   it("still shows the bytes a build read after the file changed and objects were collected (3)", async () => {
     const root = makeRepo(files);
-    repos.push(root);
     commitAll(root);
     writeFiles(root, { "src/a.ts": "export function a() {\n  return 42;\n}\n" });
     const st = await store(root);
@@ -99,7 +92,6 @@ describe("reopening a kept build", () => {
 
   it("says a build whose facts are gone is partial when it is reopened (4)", async () => {
     const root = makeRepo(files);
-    repos.push(root);
     const st = await store(root);
     const built = await buildGraph({ repoRoot: root, store: st, mode: "fresh" });
     const facts = join(root, ".openqodex", "graph", "facts");
@@ -112,7 +104,6 @@ describe("reopening a kept build", () => {
 
   it("keeps and loads the index of a build whose only left-out files are over the size cap (5)", async () => {
     const root = makeRepo({ ...files, "big.ts": `export const big = "${"x".repeat(4096)}";\n` });
-    repos.push(root);
     const st = await store(root);
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained", maxFileBytes: 1024 });
     expect(first.status.notRead).toEqual([{ file: "big.ts", reason: "size" }]);
@@ -125,7 +116,6 @@ describe("reopening a kept build", () => {
 
   it("says which build it is when reopened from its index (6)", async () => {
     const root = makeRepo(files);
-    repos.push(root);
     const st = await store(root);
     const built = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     const id = built.status.generation as string;

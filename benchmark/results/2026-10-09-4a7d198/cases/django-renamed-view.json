@@ -1,0 +1,37 @@
+{
+  "id": "django-renamed-view",
+  "guards": "a Django view renamed in views.py while the app's urls.py, outside the diff, still registers it by its old name is reported",
+  "language": "python",
+  "framework": "django",
+  "clean": false,
+  "graph": {},
+  "bugs": [
+    {
+      "id": "route-names-missing-view",
+      "file": "orders/views.py",
+      "lines": [
+        13,
+        16
+      ],
+      "anchor": {
+        "line": 14,
+        "text": "def show_order"
+      },
+      "mentions": [
+        "order_detail",
+        "urls",
+        "urlpatterns",
+        "route"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "reasoning",
+        "graph"
+      ],
+      "truth": "order_detail was renamed to show_order, but orders/urls.py still registers views.order_detail for orders/<int:pk>/, so loading the URL configuration raises AttributeError and every page of the site fails. Rename the reference in orders/urls.py, or keep the old name."
+    }
+  ]
+}

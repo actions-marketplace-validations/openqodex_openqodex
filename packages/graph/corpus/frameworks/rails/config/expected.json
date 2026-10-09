@@ -1,0 +1,67 @@
+{
+  "guards": "links Rails config keys to the config files that set them and the code that reads them, by name and never by value",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "defines_config",
+        "from": "config/application.rb",
+        "to": "config_key:config.x.payments.enabled",
+        "tier": "certain"
+      },
+      {
+        "kind": "defines_config",
+        "from": "config/environments/production.rb",
+        "to": "config_key:config.x.payments.enabled",
+        "tier": "certain"
+      },
+      {
+        "kind": "defines_config",
+        "from": "config/application.rb",
+        "to": "config_key:config.time_zone",
+        "tier": "certain"
+      },
+      {
+        "kind": "defines_config",
+        "from": "config/initializers/beta.rb",
+        "to": "config_key:config.x.beta",
+        "tier": "certain"
+      },
+      {
+        "kind": "reads_config",
+        "from": "app/services/payment_gate.rb#PaymentGate.open?",
+        "to": "config_key:config.x.payments.enabled",
+        "tier": "certain"
+      },
+      {
+        "kind": "reads_config",
+        "from": "app/services/payment_gate.rb#PaymentGate.open?",
+        "to": "config_key:ENV[\"PAYMENTS_KEY\"]",
+        "tier": "certain"
+      },
+      {
+        "kind": "reads_config",
+        "from": "app/services/payment_gate.rb#PaymentGate.region",
+        "to": "config_key:config.x.region",
+        "tier": "certain"
+      },
+      {
+        "kind": "reads_config",
+        "from": "config/initializers/beta.rb",
+        "to": "config_key:ENV[\"BETA\"]",
+        "tier": "certain"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "defines_config",
+        "from": "lib/settings.rb"
+      },
+      {
+        "kind": "reads_config",
+        "from": "lib/settings.rb#Settings.read"
+      }
+    ]
+  }
+}

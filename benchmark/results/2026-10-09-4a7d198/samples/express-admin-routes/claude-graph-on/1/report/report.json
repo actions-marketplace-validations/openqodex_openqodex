@@ -1,0 +1,496 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "none",
+    "build": {
+      "durationMs": 48,
+      "cacheHits": 0,
+      "parses": 5,
+      "eligibleFiles": 4,
+      "parsedFiles": 4,
+      "omittedFiles": 0,
+      "unresolvedSites": 10,
+      "externalSites": 14,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "src/server.js",
+        "file": "src/server.js",
+        "name": "server.js",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 1,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "possible": [],
+    "references": [],
+    "callees": [],
+    "importers": [
+      {
+        "from": "src/server.js",
+        "to": "src/admin.js",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "src/server.js",
+            "line": 2,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "src/server.js",
+              "line": 2,
+              "spec": "./admin.js"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [],
+      "causes": {
+        "no-receiver-type": 7
+      },
+      "near": [
+        {
+          "file": "src/admin.js",
+          "line": 8,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 13,
+          "name": "end",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what res.status returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 13,
+          "name": "status",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 19,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what res.status returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 19,
+          "name": "status",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 22,
+          "name": "forEach",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/admin.js",
+          "line": 25,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 7,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/",
+    "frameworks": {
+      "plugins": [
+        {
+          "id": "express",
+          "status": "ok",
+          "reason": null,
+          "apps": 1
+        }
+      ],
+      "routes": [
+        {
+          "plugin": "express",
+          "app": "fw:express:app:src/server.js:4",
+          "registration": "fw:express:registration:fw:express:app:src/server.js:4:src/admin.js:7:1@src/server.js:6:1",
+          "methods": [
+            "GET"
+          ],
+          "pattern": "/admin/users",
+          "partial": null,
+          "name": null,
+          "site": {
+            "file": "src/admin.js",
+            "line": 7
+          },
+          "handler": "an inline function",
+          "status": "unresolved",
+          "mounted": true,
+          "reach": null,
+          "declared": false
+        },
+        {
+          "plugin": "express",
+          "app": "fw:express:app:src/server.js:4",
+          "registration": "fw:express:registration:fw:express:app:src/server.js:4:src/admin.js:11:1@src/server.js:6:1",
+          "methods": [
+            "DELETE"
+          ],
+          "pattern": "/admin/users/:id",
+          "partial": null,
+          "name": null,
+          "site": {
+            "file": "src/admin.js",
+            "line": 11
+          },
+          "handler": "an inline function",
+          "status": "unresolved",
+          "mounted": true,
+          "reach": null,
+          "declared": true
+        },
+        {
+          "plugin": "express",
+          "app": "fw:express:app:src/server.js:4",
+          "registration": "fw:express:registration:fw:express:app:src/server.js:4:src/admin.js:16:1@src/server.js:6:1",
+          "methods": [
+            "POST"
+          ],
+          "pattern": "/admin/users/purge",
+          "partial": null,
+          "name": null,
+          "site": {
+            "file": "src/admin.js",
+            "line": 16
+          },
+          "handler": "an inline function",
+          "status": "unresolved",
+          "mounted": true,
+          "reach": null,
+          "declared": true
+        }
+      ],
+      "routesTotal": 3,
+      "renders": [],
+      "renderedBy": [],
+      "models": [],
+      "migrations": [],
+      "tests": [],
+      "testsTotal": 0,
+      "roles": [],
+      "unknown": [
+        {
+          "file": "src/admin.js",
+          "line": 7,
+          "cause": "unsupported-rule",
+          "note": "the handler is an inline function, which has no symbol of its own; the calls it makes are counted under the code around it"
+        },
+        {
+          "file": "src/admin.js",
+          "line": 11,
+          "cause": "unsupported-rule",
+          "note": "the handler is an inline function, which has no symbol of its own; the calls it makes are counted under the code around it"
+        },
+        {
+          "file": "src/admin.js",
+          "line": 16,
+          "cause": "unsupported-rule",
+          "note": "the handler is an inline function, which has no symbol of its own; the calls it makes are counted under the code around it"
+        }
+      ],
+      "unknownTotal": 3,
+      "changedFiles": [
+        "src/admin.js"
+      ],
+      "routeIds": [
+        "fw:express:registration:fw:express:app:src/server.js:4:src/admin.js:7:1@src/server.js:6:1",
+        "fw:express:registration:fw:express:app:src/server.js:4:src/admin.js:11:1@src/server.js:6:1",
+        "fw:express:registration:fw:express:app:src/server.js:4:src/admin.js:16:1@src/server.js:6:1"
+      ]
+    }
+  },
+  "change_id": "09f3ac8900f84abad10d156c3db2778b2f4e6139ace172b662fb9b34edd4e73f",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d194e02b0ce16fe11e37eb9b77ae01cf46a2554b"
+  },
+  "generated_at": "2026-10-09T14:37:50.280Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds two admin routes. DELETE /admin/users/:id removes one user, and POST /admin/users/purge removes a list of users by id.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.93,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Delete user route lacks admin check",
+      "description": "The DELETE /users/:id route omits the requireAdmin middleware. Both sibling routes in this router apply requireAdmin, and src/server.js adds no router-level guard. Any caller who reaches the server can delete any user by id. This includes callers with no session. Add requireAdmin to the DELETE route, as the sibling routes do.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The DELETE /users/:id route omits the requireAdmin middleware. Both sibling routes in this router apply requireAdmin, and src/server.js adds no router-level guard.",
+      "consequence": "Any caller who reaches the server can delete any user by id. This includes callers with no session.",
+      "fix": "Add requireAdmin to the DELETE route, as the sibling routes do."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 25,
+      "title": "Purge deletions float outside the handler",
+      "description": "The purge handler passes an async callback to forEach, so nothing awaits or catches the db.removeUser promises. db.removeUser throws for an unknown id, and that rejection goes unhandled. One unknown id in a purge request raises an unhandled rejection, and Node then crashes the server. The response also reports every id as removed before any deletion finishes or fails. Await the deletions with Promise.allSettled before responding. Report the count of fulfilled deletions.",
+      "suggested_change": "  const results = await Promise.allSettled(ids.map((id) => db.removeUser(id)));\n  res.json({ removed: results.filter((r) => r.status === \"fulfilled\").length });",
+      "source": "lens:async-floating-promise",
+      "candidate": null,
+      "notes": [],
+      "problem": "The purge handler passes an async callback to forEach, so nothing awaits or catches the db.removeUser promises. db.removeUser throws for an unknown id, and that rejection goes unhandled.",
+      "consequence": "One unknown id in a purge request raises an unhandled rejection, and Node then crashes the server. The response also reports every id as removed before any deletion finishes or fails.",
+      "fix": "Await the deletions with Promise.allSettled before responding. Report the count of fulfilled deletions."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/admin.js",
+      "line_number": 16,
+      "line_end": 26,
+      "title": "New delete routes have no tests",
+      "description": "This change adds the delete and purge routes, and the repository has no test that calls them. Without tests, the missing auth and the crash on an unknown id went unnoticed. Future regressions in these routes will go unnoticed too. Add tests that cover auth, an unknown id and a mixed purge list for both routes.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "This change adds the delete and purge routes, and the repository has no test that calls them.",
+      "consequence": "Without tests, the missing auth and the crash on an unknown id went unnoticed. Future regressions in these routes will go unnoticed too.",
+      "fix": "Add tests that cover auth, an unknown id and a mixed purge list for both routes."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 2918,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 18,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 25,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 17,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 18317,
+      "started_at": "2026-10-09T14:37:28.629Z",
+      "ended_at": "2026-10-09T14:37:50.280Z",
+      "duration_ms": 21650,
+      "rounds": 1,
+      "usage": {
+        "turns": 7,
+        "input_tokens": 60907,
+        "output_tokens": 1740,
+        "cost_usd": 0.10898260000000001
+      }
+    },
+    "snapshot": {
+      "change_id": "09f3ac8900f84abad10d156c3db2778b2f4e6139ace172b662fb9b34edd4e73f",
+      "tree": "2f3e74a87f59d5061a7d827c86e1dd2d346f8226",
+      "before": "0e01a109de730fd182ba5605249c370628a0649dd640ecebcff2c382d833c96a",
+      "after": "0e01a109de730fd182ba5605249c370628a0649dd640ecebcff2c382d833c96a"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 1,
+      "covered": 1,
+      "unread": [],
+      "files_read": [
+        "package.json",
+        "src/admin.js",
+        "src/auth.js",
+        "src/db.js",
+        "src/server.js"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

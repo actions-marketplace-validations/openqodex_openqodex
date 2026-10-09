@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/routes/users.js",
+    "inside": true,
+    "range": [
+      1,
+      9
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/store.js",
+    "inside": true,
+    "range": [
+      1,
+      16
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/handlers/users.js",
+    "inside": true,
+    "range": [
+      1,
+      20
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

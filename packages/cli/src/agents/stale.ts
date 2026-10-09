@@ -5,6 +5,7 @@
 // scope: the team section and project-scope files are pinned on purpose.
 // Nothing is written. An update never writes these files; it only says how
 // many there are and that `init` refreshes them.
+import { existsSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { launcherFormatStale, launcherPath, launcherRunner } from "../launcher.js";
 import { AGENTS } from "./detect.js";
@@ -13,7 +14,7 @@ import { Guard } from "./guarded-fs.js";
 import { claudeHome, codexHome } from "./homes.js";
 import { ownedFile, planInstall, type Ctx } from "./plan.js";
 import { loadRecord, type InstallRecord } from "./record.js";
-import { targetsFor, type Target } from "./targets.js";
+import { clineCliData, targetsFor, type Target } from "./targets.js";
 
 const CURSOR_RULE = join(".cursor", "rules", "openqodex.mdc");
 
@@ -27,6 +28,9 @@ function recorded(record: InstallRecord, t: Target): boolean {
       return record.hooks.some((h) => h.path === t.path);
     case "allow-rules":
       return record.allowRules.some((r) => r.path === t.path);
+    case "mcp-json":
+    case "mcp-toml":
+      return record.mcp.some((m) => m.path === t.path);
   }
 }
 
@@ -43,7 +47,9 @@ export function staleOwned(home: string, oqHome: string): Stale {
   } catch {
     return { paths: [], repos: [] };
   }
-  const runner = launcherRunner(launcherPath(oqHome));
+  const launcher = launcherPath(oqHome);
+  const runner = launcherRunner(launcher);
+  const clineCli = existsSync(clineCliData(home));
   // A user-scope Cursor rule lives in a repository: the record names it.
   const cursorRepos = record.files.filter((f) => f.usesLauncher && f.path.endsWith(`${sep}${CURSOR_RULE}`)).map((f) => dirname(dirname(dirname(f.path))));
   // Each target with the guard init would write it through: the home's own
@@ -53,7 +59,7 @@ export function staleOwned(home: string, oqHome: string): Stale {
   const planned: { target: Target; guard: Guard; repo: string | null }[] = [];
   const homeOnly = new Guard({ repoRoot: null, gitFolders: [], roots });
   for (const agent of AGENTS) {
-    for (const target of targetsFor({ agent, scope: "user", home, repoRoot: null, version: __OPENQODEX_VERSION__, runner }).targets) planned.push({ target, guard: homeOnly, repo: null });
+    for (const target of targetsFor({ agent, scope: "user", home, repoRoot: null, version: __OPENQODEX_VERSION__, runner, launcher, clineCli }).targets) planned.push({ target, guard: homeOnly, repo: null });
   }
   for (const repoRoot of cursorRepos) {
     let guard: Guard;
@@ -62,7 +68,7 @@ export function staleOwned(home: string, oqHome: string): Stale {
     } catch {
       continue;
     }
-    const rule = targetsFor({ agent: "cursor", scope: "user", home, repoRoot, version: __OPENQODEX_VERSION__, runner }).targets.filter((t) => t.kind === "file" && t.path.endsWith(CURSOR_RULE));
+    const rule = targetsFor({ agent: "cursor", scope: "user", home, repoRoot, version: __OPENQODEX_VERSION__, runner, launcher, clineCli }).targets.filter((t) => t.kind === "file" && t.path.endsWith(CURSOR_RULE));
     for (const target of rule) planned.push({ target, guard, repo: repoRoot });
   }
   const copy = structuredClone(record);
@@ -84,7 +90,6 @@ export function staleOwned(home: string, oqHome: string): Stale {
       // a file that cannot be read or a path init refuses: init says why
     }
   }
-  const launcher = launcherPath(oqHome);
   try {
     if (ownedFile(record, launcher, readText(launcher)) && launcherFormatStale(oqHome)) stale.push(launcher);
   } catch {

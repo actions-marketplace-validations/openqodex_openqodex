@@ -1,0 +1,49 @@
+{
+  "guards": "keeps every implementation of a generic interface as a dispatch candidate whatever its argument, since TypeScript compares arguments by shape",
+  "callers": [
+    {
+      "to": "src/types.ts#Repo.find",
+      "site": "src/run.ts:4",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/user-repo.ts#UserRepo.find",
+      "site": "src/run.ts:4",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "src/order-repo.ts#OrderRepo.find",
+      "site": "src/run.ts:4",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "src/generic-repo.ts#GenericRepo.find",
+      "site": "src/run.ts:4",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "src/run.ts:4",
+      "candidates": [
+        "src/user-repo.ts#UserRepo.find",
+        "src/order-repo.ts#OrderRepo.find",
+        "src/generic-repo.ts#GenericRepo.find"
+      ]
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/run.ts",
+      "line": 4,
+      "cause": "unsupported-rule"
+    }
+  ],
+  "floor": {
+    "src/user-repo.ts#UserRepo.find": true
+  }
+}

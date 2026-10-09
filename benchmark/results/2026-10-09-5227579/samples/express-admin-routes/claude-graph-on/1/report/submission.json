@@ -1,0 +1,68 @@
+{
+  "version": 2,
+  "change_id": "09f3ac8900f8",
+  "summary": "Adds two admin routes. One deletes a single user by id, and the other purges a list of user ids.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Delete user route lacks admin check",
+      "problem": "The DELETE /admin/users/:id route does not use the requireAdmin middleware, but its sibling routes do. The server mounts the admin router without any router-wide auth in src/server.js:6.",
+      "consequence": "Any caller who can reach the server can delete any user by id. They can also enumerate ids to wipe the user table.",
+      "fix": "Add requireAdmin to the route, as the GET and purge routes do.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 24,
+      "title": "Floating removeUser promises in purge loop",
+      "problem": "The purge handler passes an async callback to forEach, so nothing awaits or catches the removeUser promises. db.removeUser throws for an unknown id at src/db.js:10.",
+      "consequence": "One unknown id in the purge list causes an unhandled rejection, which crashes the Node process by default. The response also reports removals before any removal finishes.",
+      "fix": "Await all removals with Promise.allSettled and count the fulfilled ones. Then respond with that count.",
+      "suggested_change": "  const results = await Promise.allSettled(ids.map((id) => db.removeUser(id)));\n  res.json({ removed: results.filter((r) => r.status === \"fulfilled\").length });",
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 25,
+      "line_end": 25,
+      "title": "Purge reports requested count as removed count",
+      "problem": "The purge handler returns ids.length as the removed count. It does this even when some removals fail or are still pending.",
+      "consequence": "Admins see a removed count that can be higher than the number of users actually deleted.",
+      "fix": "Count only the successful removals after they settle.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 16,
+      "line_end": 26,
+      "title": "New admin routes have no covering test",
+      "problem": "The change adds the delete and purge routes but no test file. The repository holds no test that exercises either route.",
+      "consequence": "Regressions in authorization or purge error handling will go unnoticed.",
+      "fix": "Add tests for both routes. Cover the admin check, unknown ids and the reported removed count.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

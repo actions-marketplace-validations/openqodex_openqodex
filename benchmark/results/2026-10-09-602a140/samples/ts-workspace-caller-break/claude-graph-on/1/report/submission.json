@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "safeGit now returns a { code, stdout, stderr } object instead of the stdout string, and it no longer throws when git fails. index.ts also exports the new GitResult type.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "safeGit return shape change breaks both CLI callers",
+      "problem": "safeGit now returns a GitResult object and no longer throws. currentBranch in packages/cli/src/branch.ts:7 and changedFiles in packages/cli/src/status.ts:7 still call string methods on that result and rely on a throw.",
+      "consequence": "In currentBranch, trim throws a TypeError and the catch returns null, so main.ts always exits early. In changedFiles, split throws a TypeError, and failed git commands no longer reach callers as errors.",
+      "fix": "Update currentBranch to return null when code is not 0 and otherwise trim stdout. Update changedFiles to check code and split stdout.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 13,
+      "line_end": 16,
+      "title": "No test covers the new safeGit result and error path",
+      "problem": "safeGit gained a new return shape and a catch branch that maps errors to an exit code. No test in this change exercises either path.",
+      "consequence": "A test calling currentBranch or changedFiles would have caught the broken callers before the push.",
+      "fix": "Add tests that call safeGit with a succeeding and a failing git command and check code, stdout and stderr.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

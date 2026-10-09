@@ -7,6 +7,7 @@ import { basename, dirname } from "node:path";
 import type { AgentId } from "./detect.js";
 import { readText, sha256 } from "./files.js";
 import type { Guard } from "./guarded-fs.js";
+import { planJsonInstall, planJsonRemoval, planTomlInstall, planTomlRemoval } from "./mcp.js";
 import { canonical, type InstallRecord } from "./record.js";
 import type { Scope, Target } from "./targets.js";
 import { isShippedSkill, SECTION_END, SECTION_START } from "./targets.js";
@@ -266,17 +267,18 @@ export function planInstall(t: Target, ctx: Ctx): Action {
       const data = before === null ? {} : parseSettings(before);
       if (typeof data === "string") return { ...base, verb: "refuse", failed: true, note: `${t.label}: the file ${data}; left untouched` };
       const have = (data.permissions?.allow ?? []) as unknown[];
+      const wanted = t.rules;
       // Rules an earlier version granted and this one does not: removed while
       // still there as recorded. A rule the record does not name is never touched.
       const recorded = ourRules(ctx, t.path);
-      const stale = recorded.filter((r) => !t.rules.includes(r));
+      const stale = recorded.filter((r) => !wanted.includes(r));
       const staleThere = stale.filter((r) => have.includes(r));
-      const missing = t.rules.filter((r) => !have.includes(r));
-      const forgetStale = (): void => {
-        record.allowRules = record.allowRules.filter((r) => r.path !== t.path || !stale.includes(r.rule));
+      const missing = wanted.filter((r) => !have.includes(r));
+      const forgetStale = (gone: string[]): void => {
+        record.allowRules = record.allowRules.filter((r) => r.path !== t.path || !gone.includes(r.rule));
       };
       if (missing.length === 0 && staleThere.length === 0) {
-        forgetStale();
+        forgetStale(stale);
         return { ...base, verb: "skip", note: t.rules.length > 0 ? `${t.label} already present` : `${t.label}: none in project scope` };
       }
       const parts = [
@@ -294,12 +296,13 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           const text = unchangedSincePlan(t.path, before);
           const now = text === null ? {} : parseSettings(text);
           if (typeof now === "string") throw new Error(`the file ${now}`);
-          removeAllow(now, staleThere.filter((r) => ((now.permissions?.allow ?? []) as unknown[]).includes(r)));
+          const goneNow = recorded.filter((r) => !wanted.includes(r));
+          removeAllow(now, goneNow.filter((r) => ((now.permissions?.allow ?? []) as unknown[]).includes(r)));
           const allow = (now.permissions?.allow ?? []) as unknown[];
-          const add = t.rules.filter((r) => !allow.includes(r));
+          const add = wanted.filter((r) => !allow.includes(r));
           if (add.length > 0) now.permissions = { ...now.permissions, allow: [...allow, ...add] };
           writeSettings(ctx.guard, t.path, json(now), t.inRepo ? 0o644 : 0o600);
-          forgetStale();
+          forgetStale(goneNow);
           for (const rule of add) record.allowRules.push({ path: t.path, rule });
         },
       };
@@ -354,6 +357,10 @@ export function planInstall(t: Target, ctx: Ctx): Action {
       }
       return { ...base, verb: "keep", note: `${t.label} section was edited; left as it is` };
     }
+    case "mcp-json":
+      return planJsonInstall(t, ctx, before);
+    case "mcp-toml":
+      return planTomlInstall(t, ctx, before);
   }
 }
 
@@ -529,6 +536,19 @@ export function planUninstall(t: Target, ctx: Ctx): Action | null {
         },
       };
     }
+    case "mcp-json":
+      return planJsonRemoval(t, ctx, before, false);
+    case "mcp-toml":
+      return planTomlRemoval(t, ctx, before, false);
   }
+}
+
+// --no-mcp: removes the code graph's MCP server where the record says init
+// added it, and nothing a record does not name, in either scope. Null when
+// there is nothing of ours there.
+export function planMcpOff(t: Extract<Target, { kind: "mcp-json" | "mcp-toml" }>, ctx: Ctx): Action | null {
+  checkRepoPath(t, ctx);
+  const before = readText(t.path);
+  return t.kind === "mcp-json" ? planJsonRemoval(t, ctx, before, true) : planTomlRemoval(t, ctx, before, true);
 }
 

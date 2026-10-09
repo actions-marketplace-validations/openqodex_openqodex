@@ -1,0 +1,22 @@
+{
+  "guards": "lists a function passed to a wrapper that calls it inside the closure it returns as a possible callee",
+  "callers": [
+    {
+      "to": "src/handler.ts#handler",
+      "site": "src/start.ts:6",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/handler.ts#handler",
+      "site": "src/start.ts:6",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "src/handler.ts#handler": true
+  }
+}

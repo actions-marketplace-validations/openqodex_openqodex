@@ -1,0 +1,34 @@
+{
+  "guards": "never dispatches a call on a local typed by a constructor call to the overrides of its subclasses",
+  "callers": [
+    {
+      "to": "src/sql-repo.ts#SqlRepo.find",
+      "site": "src/run.ts:5",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
+  "notReached": [
+    {
+      "to": "src/cached-repo.ts#CachedRepo.find",
+      "site": "src/run.ts:5"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/sql-repo.ts#SqlRepo.find",
+      "site": "src/cached-repo.ts:4",
+      "kind": "overrides",
+      "tier": "certain"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "src/run.ts",
+      "line": 5
+    }
+  ],
+  "floor": {
+    "src/cached-repo.ts#CachedRepo.find": false
+  }
+}

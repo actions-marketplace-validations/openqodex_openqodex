@@ -1,0 +1,82 @@
+{
+  "guards": "reads an entry appended to a joined list, an inserted entry and a router joined into another list, and says what it cannot read in an included list, a loop, a remove, a del, a test request, a receiver, a settings read and a class body, never dropping it silently",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "mysite/urls.py:15",
+        "pattern": "inline/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:10",
+        "pattern": "extra/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:12",
+        "pattern": "appended/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:21",
+        "pattern": "first/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:7",
+        "pattern": "items/",
+        "status": "bound"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/urls.py",
+        "line": 15,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 18,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 22,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 23,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/tests.py",
+        "line": 8,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/signals.py",
+        "line": 5,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/views.py",
+        "line": 8,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/models.py",
+        "line": 6,
+        "cause": "unsupported-rule"
+      }
+    ],
+    "notUnknowns": [
+      {
+        "file": "mysite/tests.py",
+        "line": 11,
+        "cause": "dynamic"
+      }
+    ]
+  }
+}

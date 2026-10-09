@@ -1,0 +1,76 @@
+{
+  "guards": "links Rails enqueue and delivery sites to the job's perform method and the mailer method, and mailer methods to their views",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "enqueues",
+        "from": "app/controllers/posts_controller.rb#PostsController.create",
+        "to": "app/jobs/publish_job.rb#PublishJob.perform",
+        "tier": "likely"
+      },
+      {
+        "kind": "enqueues",
+        "from": "app/controllers/posts_controller.rb#PostsController.create",
+        "to": "app/workers/hard_worker.rb#HardWorker.perform",
+        "tier": "likely"
+      },
+      {
+        "kind": "enqueues",
+        "from": "app/controllers/posts_controller.rb#PostsController.create",
+        "to": "app/mailers/user_mailer.rb#UserMailer.welcome",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "app/mailers/user_mailer.rb#UserMailer.welcome",
+        "to": "template:app/views/user_mailer/welcome.html.erb",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "app/mailers/user_mailer.rb#UserMailer.welcome",
+        "to": "template:app/views/user_mailer/welcome.text.erb",
+        "tier": "likely"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "enqueues",
+        "to": "lib/notifier.rb#Notifier.perform_later"
+      },
+      {
+        "kind": "enqueues",
+        "to": "job:Notifier"
+      },
+      {
+        "kind": "enqueues",
+        "to": "job:ApplicationJob"
+      }
+    ],
+    "roles": [
+      {
+        "target": "app/jobs/publish_job.rb#PublishJob",
+        "role": "job",
+        "detail": "active_job"
+      },
+      {
+        "target": "app/workers/hard_worker.rb#HardWorker",
+        "role": "job",
+        "detail": "sidekiq"
+      },
+      {
+        "target": "app/mailers/user_mailer.rb#UserMailer",
+        "role": "mailer"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "app/controllers/posts_controller.rb",
+        "line": 8,
+        "cause": "miss"
+      }
+    ]
+  }
+}

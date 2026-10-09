@@ -1,0 +1,51 @@
+{
+  "guards": "binds FastAPI decorated routes to their handlers under every include and router prefix, keeps two applications apart, runs dependencies in order, and links a test client request to its route",
+  "callers": [
+    {
+      "to": "app/routers/items.py#read_item",
+      "site": "tests/test_items.py:15",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "fastapi",
+    "apps": 2,
+    "registrations": [
+      { "site": "app/routers/items.py:11", "methods": ["GET"], "pattern": "/items/v1/{item_id}", "handler": "app/routers/items.py#read_item", "status": "bound", "mounted": true },
+      { "site": "app/routers/items.py:18", "methods": ["POST"], "pattern": "/items/v1/", "handler": "app/routers/items.py#create_item", "status": "bound", "mounted": true },
+      { "site": "app/routers/items.py:28", "methods": ["GET"], "pattern": "/items/v1/legacy/{item_id}", "handler": "app/routers/items.py#legacy_item", "status": "bound" },
+      { "site": "app/routers/users.py:6", "methods": ["GET"], "pattern": "/users/me", "handler": "app/routers/users.py#me", "status": "bound", "mounted": true },
+      { "site": "app/routers/users.py:11", "methods": ["DELETE"], "pattern": "/users/{user_id}", "handler": "app/routers/users.py#delete_user" },
+      { "site": "app/main.py:11", "methods": ["GET"], "pattern": "/health", "handler": "app/main.py#health", "status": "bound", "mounted": true },
+      { "site": "app/admin.py:6", "methods": ["GET"], "pattern": "/health", "handler": "app/admin.py#admin_health", "status": "bound", "mounted": true }
+    ],
+    "edges": [
+      { "kind": "mounts", "from": "fw:fastapi:app:app/main.py:5", "to": "fw:fastapi:router:app/routers/items.py:6", "tier": "certain" },
+      { "kind": "mounts", "from": "fw:fastapi:app:app/main.py:5", "to": "fw:fastapi:router:app/routers/users.py:3", "tier": "certain" },
+      { "kind": "applies_middleware", "from": "registration:app/routers/items.py:11", "to": "app/deps.py#get_db", "tier": "certain" },
+      { "kind": "applies_middleware", "from": "registration:app/routers/items.py:18", "to": "app/deps.py#require_user", "tier": "certain" },
+      { "kind": "applies_middleware", "from": "registration:app/routers/items.py:18", "to": "app/deps.py#get_db", "tier": "certain" },
+      { "kind": "tests", "from": "tests/test_items.py#test_read_item", "to": "registration:app/routers/items.py:11", "tier": "likely", "category": "route-request" },
+      { "kind": "tests", "from": "tests/test_items.py#test_read_item_direct", "to": "app/routers/items.py#read_item", "tier": "certain", "category": "direct-call" }
+    ],
+    "roles": [
+      { "target": "app/routers/items.py#read_item", "role": "route_handler", "detail": "fastapi" },
+      { "target": "app/routers/users.py#me", "role": "route_handler", "detail": "fastapi" },
+      { "target": "app/admin.py#admin_health", "role": "route_handler", "detail": "fastapi" },
+      { "target": "app/deps.py#get_db", "role": "middleware", "detail": "fastapi-dependency" },
+      { "target": "app/deps.py#require_user", "role": "middleware", "detail": "fastapi-dependency" },
+      { "target": "app/models.py#Item", "role": "model", "detail": "pydantic" },
+      { "target": "app/models.py#ItemIn", "role": "model", "detail": "pydantic" },
+      { "target": "tests/test_items.py#test_read_item", "role": "test", "detail": "pytest" },
+      { "target": "tests/test_items.py", "role": "test", "detail": "pytest" }
+    ],
+    "unknowns": [{ "file": "app/admin.py", "line": 14, "cause": "dynamic" }],
+    "notEdges": [
+      { "kind": "handles", "to": "app/cache.py#cached" },
+      { "kind": "handles", "to": "app/admin.py#admin_probe" },
+      { "kind": "mounts", "from": "fw:fastapi:app:app/admin.py:3" },
+      { "kind": "tests", "to": "registration:app/admin.py:6" },
+      { "kind": "applies_middleware", "from": "registration:app/routers/users.py:6" }
+    ]
+  }
+}

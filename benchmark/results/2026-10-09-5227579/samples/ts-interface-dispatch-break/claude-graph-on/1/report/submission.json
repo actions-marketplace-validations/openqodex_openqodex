@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "0694dbc5baec",
+  "summary": "SqlCache.get now throws an error when a key is missing or older than 15 minutes, where it used to return an empty string.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.93,
+      "file_path": "src/cache/sql-cache.ts",
+      "line_number": 13,
+      "line_end": 15,
+      "title": "Missing key now throws, breaking the Cache contract",
+      "problem": "SqlCache.get now throws for a missing or stale key. The Cache interface says an empty key reads as an empty string, and readSession and isEnabled rely on that.",
+      "consequence": "main.ts serves every request through SqlCache, so an unknown session or an unset flag makes the request listener throw. The uncaught error crashes the Node server process, and any unauthenticated client can trigger it.",
+      "fix": "Return an empty string for a missing or expired row, as the Cache interface requires. Callers already treat an empty string as absent.",
+      "suggested_change": "    if (!row || Date.now() - row.storedAt > MAX_AGE_MS) return \"\";",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/cache/sql-cache.ts",
+      "line_number": 13,
+      "line_end": 13,
+      "title": "Expiry behaviour has no covering test",
+      "problem": "The change adds a 15 minute expiry to SqlCache.get. No test in the repository exercises get for a missing, fresh or expired row.",
+      "consequence": "A regression in the expiry or the missing-key behaviour would reach the server without any test failing.",
+      "fix": "Add tests for SqlCache.get that cover a missing key, a fresh row and a row older than MAX_AGE_MS.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

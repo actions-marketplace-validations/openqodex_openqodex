@@ -1,0 +1,16 @@
+Passed with warnings: 11 findings (1 critical, 3 major, 7 minor)
+Change 10985528b336 against HEAD, 8 files, +38 -14
+Summary: Adds a search endpoint and a hardcoded payment key, and changes pagination. It also loosens the Dockerfile, deploy script and CI workflow and downgrades lodash.
+1. Critical security: Search query built from request input (app/search.py:14)
+2. Major bug: Pagination offset skips the first page (app/server.py:23)
+3. Major security: Payment API key committed to source (app/config.py:2)
+4. Major security: Container now runs as root (Dockerfile:9-10)
+5. Minor security: lodash downgraded to a vulnerable release (package-lock.json:11-18)
+6. Minor security: Pull request title expanded inside a shell step (.github/workflows/ci.yml:15)
+7. Minor maintainability: Base image no longer pinned (Dockerfile:1)
+8. Minor bug: apt-get install lacks non-interactive flag (Dockerfile:3)
+9. Minor bug: Unquoted directory in recursive delete (scripts/deploy.sh:7)
+10. Minor bug: Deploy loop iterates over ls output (scripts/deploy.sh:11)
+11. Minor maintainability: Changed endpoints have no covering test (app/search.py:9-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

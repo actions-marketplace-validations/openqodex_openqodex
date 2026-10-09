@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "eab11e18f842",
+  "summary": "Makes onSave async so that it writes the whole note store to data/notes.json after each save.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Async onSave breaks the synchronous dispatch caller",
+      "problem": "onSave now returns a Promise, and dispatch in src/router.js:7 passes it on without awaiting it. The request handler in src/main.js:9 then passes that Promise to res.end, which accepts only a string or a Buffer.",
+      "consequence": "Each POST /save request makes res.end throw a TypeError inside the request listener, and the Node process crashes. Nobody handles the writeFile Promise either, so a failed write also becomes an unhandled rejection.",
+      "fix": "Make dispatch async and have the request handler await it with a catch that sends an error response. Another option is to keep onSave synchronous and handle the snapshot write separately.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Snapshot write has no covering test",
+      "problem": "onSave now writes the store to data/notes.json and returns a Promise. No test in the repository exercises onSave or that write.",
+      "consequence": "A test that calls save through dispatch would have caught the broken response path. Without tests, regressions in onSave reach users unnoticed.",
+      "fix": "Add a test that calls dispatch with save and checks both the response text and the written snapshot.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

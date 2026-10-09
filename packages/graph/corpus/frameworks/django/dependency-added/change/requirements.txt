@@ -1,0 +1,2 @@
+requests==2.32
+Django==5.0

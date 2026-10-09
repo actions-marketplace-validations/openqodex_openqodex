@@ -1,0 +1,9 @@
+Passed with warnings: 4 findings (1 critical, 1 major, 2 minor)
+Change 1b9dcc940469 against HEAD, 1 file, +13 -2
+Summary: Adds a /download endpoint that serves a file from the uploads folder by name. The change also makes the dev server listen on all interfaces with debug mode on.
+1. Critical security: Path traversal in download endpoint (files/app.py:17-20)
+2. Major security: Interactive debugger enabled on a network-facing server (files/app.py:24)
+3. Minor security: Default bind changed from localhost to all interfaces (files/app.py:24)
+4. Minor maintainability: New download endpoint has no covering test (files/app.py:15-20)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

@@ -1,0 +1,3 @@
+# Rails: a view a base controller renders is looked up in the instance's folders
+
+Guards against calling a view missing when Rails finds it in another controller's folder. Rails looks a view name up under the running controller's folder first, then under each folder of the classes it inherits from. `ApplicationController#respond_to_timeout` renders `timeout`, which exists only as `nodes/timeout` and `ways/timeout`: each is a possible render, one per subclass. `Preferences::PreferencesController#update` renders `show`, found in its subclass's folder `preferences/basic_preferences`. `PostsController#index` renders `shared_list`, found in its base's folder `application/`. Only `render :nothing_here`, found in no folder of the chain, is a miss.

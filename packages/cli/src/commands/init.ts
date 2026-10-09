@@ -3,10 +3,13 @@
 // agent files stay out of the repo's git status; `--project` writes them into
 // the repo for a team to commit. Inside a repo the plan also holds the git
 // pre-push hook, the two team files in `.openqodex/` and the team review
-// section, each on by default (--hook none and --no-repo leave them out). It
-// prints the whole plan, for the developer and for the team, and asks once.
+// section, each on by default (--hook none and --no-repo leave them out). For
+// every agent the plan also registers the code graph's MCP server, on by
+// default too (--no-mcp leaves it out). It prints the whole plan, for the
+// developer and for the team, and asks once.
 // It ends with a review (init-review.ts) unless --no-review is given.
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
@@ -16,11 +19,11 @@ import { readText } from "../agents/files.js";
 import { Guard } from "../agents/guarded-fs.js";
 import { claudeHome, codexHome } from "../agents/homes.js";
 import { excludeLine, gitDirs, gitPath, inWorkTree, planExclude, planUnexclude, repoRootOf } from "../agents/git.js";
-import { planInstall, planUninstall, type Action, type Ctx } from "../agents/plan.js";
+import { planInstall, planMcpOff, planUninstall, type Action, type Ctx } from "../agents/plan.js";
 import { withBoundary } from "../agents/lock.js";
 import { loadRecord, saveRecord, serialize, type InstallRecord } from "../agents/record.js";
 import { commitLines, INSTRUCTIONS_LINE, planRepoFiles, planRepoFilesRemoval, ROOT_CONFIG_NOTE } from "../agents/repo-folder.js";
-import { targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
+import { clineCliData, targetsFor, teamSection, teamTargets, type Scope, type Target } from "../agents/targets.js";
 import { runningContract } from "../contract.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { hostAgent } from "../reviewers/driver.js";
@@ -32,10 +35,11 @@ import { pruneHomeReceipts, staleReceipts } from "../receipts.js";
 
 type HookChoice = "pre-push" | "none";
 
-type Flags = { agents: AgentId[]; project: boolean; yes: boolean; uninstall: boolean; dryRun: boolean; hook: HookChoice | null; noRepo: boolean; noReview: boolean };
+// `mcp`: --mcp (true), --no-mcp (false), or neither (null).
+type Flags = { agents: AgentId[]; project: boolean; yes: boolean; uninstall: boolean; dryRun: boolean; hook: HookChoice | null; noRepo: boolean; noReview: boolean; mcp: boolean | null };
 
 const USAGE =
-  "usage: openqodex init [--agent <claude-code|cursor|codex|cline|all>]... [--project] [--hook <pre-push|none>] [--no-repo] [--no-review] [--yes] [--uninstall] [--dry-run]";
+  "usage: openqodex init [--agent <claude-code|cursor|codex|cline|all>]... [--project] [--hook <pre-push|none>] [--no-repo] [--mcp | --no-mcp] [--no-review] [--yes] [--uninstall] [--dry-run]";
 
 // The one question init asks, after the whole plan.
 const WRITE_QUESTION = "Write these files?";
@@ -43,12 +47,14 @@ const WRITE_QUESTION = "Write these files?";
 const HOST_NAMES: Record<NonNullable<ReturnType<typeof hostAgent>>, string> = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
 
 function parseFlags(args: string[]): Flags | string {
-  const flags: Flags = { agents: [], project: false, yes: false, uninstall: false, dryRun: false, hook: null, noRepo: false, noReview: false };
+  const flags: Flags = { agents: [], project: false, yes: false, uninstall: false, dryRun: false, hook: null, noRepo: false, noReview: false, mcp: null };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--project") flags.project = true;
     else if (arg === "--no-repo") flags.noRepo = true;
     else if (arg === "--no-review") flags.noReview = true;
+    else if (arg === "--mcp") flags.mcp = true;
+    else if (arg === "--no-mcp") flags.mcp = false;
     else if (arg === "--yes" || arg === "-y") flags.yes = true;
     else if (arg === "--uninstall") flags.uninstall = true;
     else if (arg === "--dry-run") flags.dryRun = true;
@@ -117,6 +123,31 @@ function teamChoiceFor(s: Setup, record: InstallRecord): { write: boolean; earli
 function setTeamChoice(record: InstallRecord, repo: string, write: boolean): void {
   record.teamChoices = record.teamChoices.filter((c) => c.repo !== repo);
   record.teamChoices.push({ repo, write });
+}
+
+// Where the --no-mcp choice of this run is recorded: this machine in user
+// scope, the repository in project scope.
+function mcpKey(s: Setup): string | null {
+  return s.flags.project ? s.repoRoot : null;
+}
+
+// Whether the plan registers the code graph's MCP server: --mcp or --no-mcp,
+// then a --no-mcp recorded here before, then yes. --yes never undoes a
+// recorded --no-mcp. `earlier`: the choice came from the record.
+function mcpChoiceFor(s: Setup, record: InstallRecord): { on: boolean; earlier: boolean } {
+  if (s.flags.mcp !== null) return { on: s.flags.mcp, earlier: false };
+  const off = record.mcpOff.some((c) => c.repo === mcpKey(s));
+  return { on: !off, earlier: off };
+}
+
+// Records --no-mcp; --mcp takes it out, which is the default, on.
+function setMcpChoice(record: InstallRecord, key: string | null, on: boolean): void {
+  record.mcpOff = record.mcpOff.filter((c) => c.repo !== key);
+  if (!on) record.mcpOff.push({ repo: key });
+}
+
+function isMcp(t: Target): t is Extract<Target, { kind: "mcp-json" | "mcp-toml" }> {
+  return t.kind === "mcp-json" || t.kind === "mcp-toml";
 }
 
 // The team section in the repo's CLAUDE.md and AGENTS.md, planned apart from
@@ -216,14 +247,20 @@ type Setup = {
   guard: Guard;
 };
 
-function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
-  const runner = s.flags.project ? `npx -y openqodex@${s.version}` : launcherRunner(launcherPath(s.oqHome));
+// `mcpOn`: whether this run registers the code graph's MCP server.
+function collectTargets(s: Setup, mcpOn: boolean): { targets: Target[]; notes: string[] } {
+  const launcher = launcherPath(s.oqHome);
+  const runner = s.flags.project ? `npx -y openqodex@${s.version}` : launcherRunner(launcher);
+  // A removal plans the Cline CLI's MCP file whatever is there now, so one
+  // init recorded is found and its record cleared even when the folder is gone.
+  const clineCli = s.flags.uninstall || !mcpOn || existsSync(clineCliData(s.home));
   const targets: Target[] = [];
   const notes: string[] = [];
   const seen = new Set<string>();
   for (const agent of s.agents) {
-    const r = targetsFor({ agent, scope: s.scope, home: s.home, repoRoot: s.repoRoot, version: s.version, runner });
+    const r = targetsFor({ agent, scope: s.scope, home: s.home, repoRoot: s.repoRoot, version: s.version, runner, launcher, clineCli });
     notes.push(...r.skipped);
+    if (mcpOn && !s.flags.uninstall) notes.push(...r.mcpNotes);
     for (const t of r.targets) {
       // Two agents can share a project skill path (.agents/skills); the hook
       // and the permission rules share settings.json.
@@ -237,8 +274,9 @@ function collectTargets(s: Setup): { targets: Target[]; notes: string[] } {
 }
 
 // Plans one agent's targets. A file that cannot be read, or a path through
-// a link the repository holds, stops that agent with the reason.
-async function planAgents(s: Setup, record: InstallRecord, targets: Target[]): Promise<Action[]> {
+// a link the repository holds, stops that agent with the reason. With
+// `mcpOn` false, the MCP server registrations init recorded are removed.
+async function planAgents(s: Setup, record: InstallRecord, targets: Target[], mcpOn: boolean): Promise<Action[]> {
   const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, guard: s.guard };
   const excludeFile = s.repoRoot !== null && !s.flags.project ? await gitPath(s.repoRoot, "info/exclude") : null;
   const actions: Action[] = [];
@@ -249,6 +287,9 @@ async function planAgents(s: Setup, record: InstallRecord, targets: Target[]): P
       for (const t of mine) {
         if (s.flags.uninstall) {
           const a = planUninstall(t, ctx);
+          if (a) planned.push(a);
+        } else if (!mcpOn && isMcp(t)) {
+          const a = planMcpOff(t, ctx);
           if (a) planned.push(a);
         } else planned.push(planInstall(t, ctx));
         // A repo file written in user scope is hidden from git status.
@@ -290,7 +331,7 @@ function printSection(actions: Action[], targets: Target[]): void {
 // The install plan, every file under the one it is for: the developer, on
 // this machine (user-scope agent files, the launcher, the git hook, which
 // lives in this clone only), or the team, in the repo to commit.
-function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: string[], targets: Target[], teamActions: Action[], hookChoice: HookChoice | null): void {
+function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: string[], targets: Target[], teamActions: Action[], hookChoice: HookChoice | null, mcpOn: boolean): void {
   out(`OpenQodex ${s.version} install plan (${s.scope} scope):`);
   if (mine.length > 0) {
     out("For you, on this machine:");
@@ -310,6 +351,7 @@ function printInstallPlan(s: Setup, mine: Action[], team: Action[], notes: strin
   const optOuts = [
     ...(hookChoice === "pre-push" ? ["To leave out the git pre-push hook: --hook none."] : []),
     ...(teamActions.length > 0 ? ["To leave out the team review section: --no-repo."] : []),
+    ...(mcpOn && targets.some(isMcp) ? ["To leave out the code graph's MCP server for your agents: --no-mcp."] : []),
   ];
   if (optOuts.length > 0) out(optOuts.join(" "));
 }
@@ -322,7 +364,8 @@ type Outcome = { code: number; ended: "written" | "unchanged" | "unconfirmed" | 
 async function runLocked(s: Setup): Promise<Outcome> {
   const record = loadRecord(s.oqHome);
   const recordBefore = serialize(record);
-  const { targets, notes } = collectTargets(s);
+  const mcp = mcpChoiceFor(s, record);
+  const { targets, notes } = collectTargets(s, mcp.on);
   if (!s.flags.uninstall && s.agents.includes("cursor") && s.repoRoot !== null) {
     notes.push("Cursor has no global instruction file: its rule in this repo carries the review instructions");
   }
@@ -334,13 +377,14 @@ async function runLocked(s: Setup): Promise<Outcome> {
   const teamActions: Action[] = [];
   let failed = false;
 
-  const agentActions = await planAgents(s, record, targets);
+  const agentActions = await planAgents(s, record, targets, mcp.on);
   let rootConfig = false;
   let hookChoice: HookChoice | null = null;
   // The git pre-push hook action, when the plan holds one.
   let gitHook: Action | null = null;
   if (s.flags.uninstall) {
     actions.push(...agentActions);
+    record.mcpOff = record.mcpOff.filter((c) => c.repo !== mcpKey(s));
     if (s.repoRoot !== null) {
       actions.push(...(await planRepoFilesRemoval(s.repoRoot, record, s.guard)));
       const hook = await planGitHookRemoval(s.repoRoot, record, s.oqHome, s.guard);
@@ -360,6 +404,8 @@ async function runLocked(s: Setup): Promise<Outcome> {
     mine.push(...runtime);
     // Project-scope agent files are committed: the team's.
     (s.flags.project ? team : mine).push(...agentActions);
+    if (!s.flags.dryRun && s.flags.mcp !== null) setMcpChoice(record, mcpKey(s), s.flags.mcp);
+    if (!mcp.on) notes.push(`the code graph's MCP server: left out${mcp.earlier ? ", as chosen before" : ""} (--no-mcp); --mcp adds it`);
     if (s.repoRoot !== null) {
       const repo = planRepoFiles(s.repoRoot, record, s.guard);
       rootConfig = repo.rootConfig;
@@ -389,7 +435,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
     }
     actions.push(...mine, ...team);
     if ([...runtimeActions].some((a) => a.failed)) {
-      printInstallPlan(s, mine, team, notes, targets, teamActions, hookChoice);
+      printInstallPlan(s, mine, team, notes, targets, teamActions, hookChoice, mcp.on);
       process.stderr.write("openqodex init: nothing was written; the launcher hooks call cannot be set up (see above)\n");
       return { code: EXIT_TOOL_FAILED, ended: "stopped" };
     }
@@ -406,7 +452,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
   if (s.flags.uninstall) {
     out("OpenQodex uninstall plan:");
     printPlan(actions, notes);
-  } else printInstallPlan(s, mine, team, notes, targets, teamActions, hookChoice);
+  } else printInstallPlan(s, mine, team, notes, targets, teamActions, hookChoice, mcp.on);
 
   if (actions.some((a) => a.failed)) failed = true;
   const work = actions.filter((a) => a.apply !== undefined);
@@ -465,7 +511,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
         s.flags.uninstall
           ? "openqodex init: no terminal to confirm in; run again with --yes\n"
           : "openqodex init: no terminal to confirm in, and no agent to act for; nothing was written.\n" +
-              "Run it again with --yes to write the plan above. To change the plan: --hook none (no git pre-push hook), --no-repo (no team review section), --project (the agent files inside the repo, for the team to commit), --agent <name> (only that agent).\n",
+              "Run it again with --yes to write the plan above. To change the plan: --hook none (no git pre-push hook), --no-repo (no team review section), --no-mcp (no code graph MCP server), --project (the agent files inside the repo, for the team to commit), --agent <name> (only that agent).\n",
       );
       return { code: EXIT_TOOL_FAILED, ended: "stopped" };
     }
@@ -550,6 +596,10 @@ async function runLocked(s: Setup): Promise<Outcome> {
   if (s.repoRoot !== null && !s.flags.project) {
     out(`To put the agent files in this repo instead, for the team to commit: ${s.runner} init --project (the scanners and init's record stay in ~/.openqodex)`);
   }
+  // An agent reads its MCP servers when it starts.
+  const mcpPaths = new Set(targets.filter(isMcp).map((t) => t.path));
+  const mcpWritten = mcp.on ? [...new Set(agentActions.filter((a) => a.agent && mcpPaths.has(a.path) && s.written.includes(a.path)).map((a) => AGENT_NAMES[a.agent!]))] : [];
+  if (mcpWritten.length > 0) out(`Restart ${mcpWritten.join(", ")} to load the code graph's MCP server.`);
   if (s.agents.includes("codex")) out("Codex: run /hooks once inside Codex and trust the new OpenQodex hook, or Codex will not run it.");
   return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "written" };
 }

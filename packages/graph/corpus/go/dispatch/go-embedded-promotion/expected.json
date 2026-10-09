@@ -1,0 +1,40 @@
+{
+  "guards": "counts methods promoted through an embedded struct in a Go method set, so the embedded method is the dispatch candidate",
+  "callers": [
+    {
+      "to": "store/repo.go#Repo.Find",
+      "site": "store/repo.go:9",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "store/base.go#Base.Find",
+      "site": "store/repo.go:9",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/repo.go#Repo",
+      "site": "store/impl.go:3",
+      "tier": "likely",
+      "kind": "implements"
+    }
+  ],
+  "notReached": [
+    {
+      "to": "store/repo.go#Repo",
+      "site": "store/base.go:3"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "store/repo.go:9",
+      "candidates": [
+        "store/base.go#Base.Find"
+      ]
+    }
+  ],
+  "floor": {
+    "store/base.go#Base.Find": true
+  }
+}

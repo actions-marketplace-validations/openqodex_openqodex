@@ -1,0 +1,10 @@
+{
+  "guards": "finds the route of an unchanged page under src/app once a manifest change declares next",
+  "frameworks": {
+    "plugin": "nextjs",
+    "apps": 1,
+    "registrations": [
+      { "site": "src/app/guides/[topic]/page.tsx:1", "methods": ["GET"], "pattern": "/guides/[topic]", "handler": "src/app/guides/[topic]/page.tsx#Guide", "status": "bound" }
+    ]
+  }
+}

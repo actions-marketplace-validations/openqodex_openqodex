@@ -1,0 +1,65 @@
+{
+  "guards": "lists the caller that passes a Python function to an in-repo function which calls that parameter, matched by position, by keyword, and past a method's self",
+  "callers": [
+    {
+      "to": "pkg/each.py#each",
+      "site": "pkg/main.py:7",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "pkg/each.py#each_with",
+      "site": "pkg/main.py:8",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "pkg/runner.py#Runner.apply",
+      "site": "pkg/main.py:9",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "pkg/log.py#show",
+      "site": "pkg/main.py:7",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "pkg/log.py#note",
+      "site": "pkg/main.py:8",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "pkg/log.py#show",
+      "site": "pkg/main.py:9",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "pkg/log.py#show",
+      "site": "pkg/main.py:7",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "pkg/log.py#note",
+      "site": "pkg/main.py:8",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "pkg/log.py#show",
+      "site": "pkg/main.py:9",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "pkg/log.py#show": true,
+    "pkg/log.py#note": true
+  }
+}

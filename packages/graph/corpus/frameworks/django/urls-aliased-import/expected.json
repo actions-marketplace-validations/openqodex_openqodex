@@ -1,0 +1,49 @@
+{
+  "guards": "binds Django URL entries, includes, renders and test requests made through aliased imports",
+  "frameworks": {
+    "plugin": "django",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "shop/urls.py:6",
+        "pattern": "shop/items/",
+        "name": "items",
+        "handler": "shop/views.py#item_list",
+        "status": "bound"
+      },
+      {
+        "site": "shop/urls.py:7",
+        "pattern": "shop/items/(?P<pk>\\d+)/",
+        "handler": "shop/views.py#item_detail",
+        "status": "bound"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "mounts",
+        "from": "mysite/urls.py",
+        "to": "shop/urls.py",
+        "tier": "certain"
+      },
+      {
+        "kind": "renders",
+        "from": "shop/views.py#item_list",
+        "to": "template:shop/items.html",
+        "tier": "likely"
+      },
+      {
+        "kind": "tests",
+        "from": "shop/tests.py#ItemTests.test_item",
+        "to": "registration:shop/urls.py:7",
+        "tier": "likely",
+        "category": "route-request"
+      }
+    ],
+    "roles": [
+      {
+        "target": "shop/tests.py#ItemTests",
+        "role": "test"
+      }
+    ]
+  }
+}

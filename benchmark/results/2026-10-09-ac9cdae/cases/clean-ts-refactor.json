@@ -1,0 +1,8 @@
+{
+  "id": "clean-ts-refactor",
+  "guards": "a correct refactor (constants extracted, one helper, the same behaviour, tests added) gets no finding",
+  "language": "typescript",
+  "framework": "none",
+  "clean": true,
+  "bugs": []
+}

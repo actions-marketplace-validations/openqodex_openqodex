@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "change_id": "09f3ac8900f84abad10d156c3db2778b2f4e6139ace172b662fb9b34edd4e73f",
+  "config_hash": "bb5a14e29e83019aee75407355284dc4e41382c99ceb8724b852c108e08210d3",
+  "created_at": "2026-10-09T14:37:28.607Z",
+  "lenses": [
+    {
+      "name": "async-await-in-loop-n-plus-one",
+      "confidenceFloor": 0.7
+    },
+    {
+      "name": "async-floating-promise",
+      "confidenceFloor": 0.7
+    },
+    {
+      "name": "id-enumeration-sequential",
+      "confidenceFloor": 0.7
+    },
+    {
+      "name": "return-shape-contract-break",
+      "confidenceFloor": 0.7
+    }
+  ],
+  "instructions_hash": null,
+  "runtime_version": "0.10.0"
+}

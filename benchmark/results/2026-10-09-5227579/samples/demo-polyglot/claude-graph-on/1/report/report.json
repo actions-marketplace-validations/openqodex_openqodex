@@ -1,0 +1,876 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "low",
+    "build": {
+      "durationMs": 64,
+      "cacheHits": 0,
+      "parses": 5,
+      "eligibleFiles": 4,
+      "parsedFiles": 4,
+      "omittedFiles": 0,
+      "unresolvedSites": 6,
+      "externalSites": 21,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "app/search.py#search_items@8:5",
+        "file": "app/search.py",
+        "name": "search_items",
+        "kind": "function",
+        "startLine": 8,
+        "endLine": 17,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/server.py#list_items@20:5",
+        "file": "app/server.py",
+        "name": "list_items",
+        "kind": "function",
+        "startLine": 20,
+        "endLine": 29,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/server.py#get_db@14:5",
+        "file": "app/server.py",
+        "name": "get_db",
+        "kind": "function",
+        "startLine": 14,
+        "endLine": 17,
+        "snapshot": "current"
+      },
+      {
+        "id": "app/server.py",
+        "file": "app/server.py",
+        "name": "server.py",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 40,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "app/search.py#search_items@8:5",
+      "app/server.py#list_items@20:5"
+    ],
+    "removed": [],
+    "callers": [],
+    "possible": [],
+    "references": [],
+    "callees": [
+      {
+        "seed": "app/server.py#list_items@20:5",
+        "edges": [
+          {
+            "from": "app/server.py#list_items@20:5",
+            "to": "app/server.py#get_db@14:5",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "app/server.py",
+                "line": 24,
+                "column": 10,
+                "tier": "certain",
+                "evidence": "same-scope",
+                "via": null,
+                "note": null,
+                "rule": "same-scope"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "importers": [
+      {
+        "from": "app/server.py",
+        "to": "app/search.py",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "app/server.py",
+            "line": 5,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "py-root",
+            "via": {
+              "file": "app/server.py",
+              "line": 5,
+              "spec": "app.search"
+            },
+            "note": null,
+            "rule": "py-walk-root"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "app/search.py#search_items@8:5",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "app/server.py#list_items@20:5",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 6
+      },
+      "near": [
+        {
+          "file": "app/search.py",
+          "line": 14,
+          "name": "execute",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type conn.cursor is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/search.py",
+          "line": 15,
+          "name": "fetchall",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type conn.cursor is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/server.py",
+          "line": 28,
+          "name": "fetchall",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type conn.execute is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/server.py",
+          "line": 25,
+          "name": "execute",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "app/server.py",
+          "line": 37,
+          "name": "fetchone",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type conn.execute is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/server.py",
+          "line": 35,
+          "name": "execute",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 6,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/",
+    "frameworks": {
+      "plugins": [],
+      "routes": [],
+      "routesTotal": 0,
+      "renders": [],
+      "renderedBy": [],
+      "models": [],
+      "migrations": [],
+      "tests": [],
+      "testsTotal": 0,
+      "roles": [],
+      "unknown": [],
+      "unknownTotal": 0,
+      "changedFiles": [
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "app/config.py",
+        "app/search.py",
+        "app/server.py",
+        "package-lock.json",
+        "package.json",
+        "scripts/deploy.sh"
+      ],
+      "routeIds": []
+    }
+  },
+  "change_id": "10985528b336e9266237818ca4511e1b0d59a063409b96ebf07e3b3fc1099a99",
+  "base": {
+    "ref": "HEAD",
+    "sha": "2ed1b34367ba20d60188fab893e0d34744183006"
+  },
+  "generated_at": "2026-10-09T13:12:29.531Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a search endpoint and a hardcoded payment key, and changes pagination. It also loosens the Dockerfile, deploy script and CI workflow and downgrades lodash.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/search.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Search query built from request input",
+      "description": "search_items puts the q request argument straight into the SQL text with an f-string. Any caller of the search endpoint can inject SQL and read or alter the items database. Pass q to cur.execute as a bound parameter with a placeholder.",
+      "suggested_change": "    cur.execute(\"SELECT id, name, price FROM items WHERE name = ?\", (q,))",
+      "source": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c5",
+      "notes": [],
+      "problem": "search_items puts the q request argument straight into the SQL text with an f-string.",
+      "consequence": "Any caller of the search endpoint can inject SQL and read or alter the items database.",
+      "fix": "Pass q to cur.execute as a bound parameter with a placeholder."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "app/server.py",
+      "line_number": 23,
+      "line_end": 23,
+      "title": "Pagination offset skips the first page",
+      "description": "list_items now computes offset as page times PAGE_SIZE, so page 1 starts at row 20. Clients never see the first 20 items, and every page shows the rows of the next page. Restore the offset formula that subtracts one from page.",
+      "suggested_change": "    offset = (page - 1) * PAGE_SIZE",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "list_items now computes offset as page times PAGE_SIZE, so page 1 starts at row 20.",
+      "consequence": "Clients never see the first 20 items, and every page shows the rows of the next page.",
+      "fix": "Restore the offset formula that subtracts one from page."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": "app/config.py",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Payment API key committed to source",
+      "description": "config.py hardcodes a Stripe key as a string literal in the repository. Anyone with read access to the repository or image can use the key against the payment account. Revoke the key, then load it from an environment variable or secret store.",
+      "suggested_change": "STRIPE_KEY = os.environ[\"STRIPE_KEY\"]",
+      "source": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "config.py hardcodes a Stripe key as a string literal in the repository.",
+      "consequence": "Anyone with read access to the repository or image can use the key against the payment account.",
+      "fix": "Revoke the key, then load it from an environment variable or secret store."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "Dockerfile",
+      "line_number": 9,
+      "line_end": 10,
+      "title": "Container now runs as root",
+      "description": "The change removed the useradd step and the USER 10001 line. The Flask server now runs as root. A compromise of the web app gives the attacker root inside the container. Restore the unprivileged user and the USER directive before CMD.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change removed the useradd step and the USER 10001 line. The Flask server now runs as root.",
+      "consequence": "A compromise of the web app gives the attacker root inside the container.",
+      "fix": "Restore the unprivileged user and the USER directive before CMD."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "package-lock.json",
+      "line_number": 11,
+      "line_end": 18,
+      "title": "lodash downgraded to a vulnerable release",
+      "description": "The change pins lodash from 4.18.1 down to 4.17.15. Version 4.17.15 has known command injection, prototype pollution and ReDoS flaws. Any front-end code that uses lodash inherits these flaws, and future users get them silently. Keep lodash at 4.18.1 in package.json and package-lock.json.",
+      "suggested_change": null,
+      "source": "osv-scanner:GHSA-35jh-r3h4-6jhm",
+      "candidate": "c6",
+      "notes": [],
+      "problem": "The change pins lodash from 4.18.1 down to 4.17.15. Version 4.17.15 has known command injection, prototype pollution and ReDoS flaws.",
+      "consequence": "Any front-end code that uses lodash inherits these flaws, and future users get them silently.",
+      "fix": "Keep lodash at 4.18.1 in package.json and package-lock.json."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.75,
+      "file_path": ".github/workflows/ci.yml",
+      "line_number": 15,
+      "line_end": 15,
+      "title": "Pull request title expanded inside a shell step",
+      "description": "The workflow puts the pull request title directly into the run script text. A PR author can run shell commands through the title, and quotes in a title break the step. Pass the title through an env variable and quote that variable in the script.",
+      "suggested_change": "        env:\n          PR_TITLE: ${{ github.event.pull_request.title }}\n        run: echo \"Testing $PR_TITLE\"",
+      "source": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The workflow puts the pull request title directly into the run script text.",
+      "consequence": "A PR author can run shell commands through the title, and quotes in a title break the step.",
+      "fix": "Pass the title through an env variable and quote that variable in the script."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "Dockerfile",
+      "line_number": 1,
+      "line_end": 1,
+      "title": "Base image no longer pinned",
+      "description": "The Dockerfile switched from python:3.12.7-slim-bookworm to python:latest. Builds can pick up a new Python major version and a much larger image without warning. Pin the base image to an explicit Python release tag.",
+      "suggested_change": "FROM python:3.12.7-slim-bookworm",
+      "source": "hadolint:DL3007",
+      "candidate": "c15",
+      "notes": [],
+      "problem": "The Dockerfile switched from python:3.12.7-slim-bookworm to python:latest.",
+      "consequence": "Builds can pick up a new Python major version and a much larger image without warning.",
+      "fix": "Pin the base image to an explicit Python release tag."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.7,
+      "file_path": "Dockerfile",
+      "line_number": 3,
+      "line_end": 3,
+      "title": "apt-get install lacks non-interactive flag",
+      "description": "The Dockerfile runs apt-get install without -y. The build aborts whenever apt needs confirmation, for example to upgrade dependent packages. Add -y to the apt-get install command.",
+      "suggested_change": "RUN apt-get update && apt-get install -y curl",
+      "source": "hadolint:DL3014",
+      "candidate": "c17",
+      "notes": [],
+      "problem": "The Dockerfile runs apt-get install without -y.",
+      "consequence": "The build aborts whenever apt needs confirmation, for example to upgrade dependent packages.",
+      "fix": "Add -y to the apt-get install command."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 7,
+      "line_end": 7,
+      "title": "Unquoted directory in recursive delete",
+      "description": "The rm -rf line no longer quotes DEPLOY_DIR. A DEPLOY_DIR with spaces or glob characters makes rm -rf delete the wrong paths. Quote the variable in the rm command.",
+      "suggested_change": "rm -rf \"${DEPLOY_DIR:?}/\"",
+      "source": "shellcheck:SC2086",
+      "candidate": "c23",
+      "notes": [],
+      "problem": "The rm -rf line no longer quotes DEPLOY_DIR.",
+      "consequence": "A DEPLOY_DIR with spaces or glob characters makes rm -rf delete the wrong paths.",
+      "fix": "Quote the variable in the rm command."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Deploy loop iterates over ls output",
+      "description": "The loop now splits unquoted ls output instead of using a glob. It also prints bare names instead of full paths. File names with spaces split into several entries, and the deploy log becomes inaccurate. Restore the quoted glob loop over the deploy directory.",
+      "suggested_change": "for file in \"$DEPLOY_DIR\"/*; do",
+      "source": "shellcheck:SC2045",
+      "candidate": "c10",
+      "notes": [],
+      "problem": "The loop now splits unquoted ls output instead of using a glob. It also prints bare names instead of full paths.",
+      "consequence": "File names with spaces split into several entries, and the deploy log becomes inaccurate.",
+      "fix": "Restore the quoted glob loop over the deploy directory."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "app/search.py",
+      "line_number": 9,
+      "line_end": 17,
+      "title": "Changed endpoints have no covering test",
+      "description": "The repository has no tests for the new search endpoint or the changed list_items offset. The injection and pagination regressions in this change shipped without any test catching them. Add tests for search with a quoted query and for page 1 of the items endpoint.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The repository has no tests for the new search endpoint or the changed list_items offset.",
+      "consequence": "The injection and pagination regressions in this change shipped without any test catching them.",
+      "fix": "Add tests for search with a quoted query and for page 1 of the items endpoint."
+    }
+  ],
+  "below_threshold": 3,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "high",
+        "message": "Avoiding SQL string concatenation: untrusted input concatenated with raw SQL query can result in SQL Injection. In order to execute raw query safely, prepared statement should be used. SQLAlchemy provides TextualSQL to easily used prepared statement with named parameters. For complex SQL composition, use SQL Expression Language or Schema Definition Language. In most cases, SQLAlchemy ORM will be a better option.",
+        "reference": "https://docs.sqlalchemy.org/en/14/core/tutorial.html#using-textual-sql",
+        "id": "c3",
+        "token": "semgrep:python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+        "reviewSeverity": "major"
+      },
+      "reason": "The code uses sqlite3 directly, not SQLAlchemy. The injection is raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 1
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.django.security.injection.tainted-sql-string.tainted-sql-string",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "high",
+        "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using the Django object-relational mappers (ORM) instead of raw SQL queries.",
+        "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
+        "id": "c4",
+        "token": "semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string",
+        "reviewSeverity": "major"
+      },
+      "reason": "This is a Flask app, not Django. The same injection is raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "osv-scanner",
+        "ruleId": "GHSA-p6mc-m468-83gw",
+        "filePath": "package-lock.json",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "high",
+        "message": "lodash@4.17.15: GHSA-p6mc-m468-83gw (CVE-2020-8203). Prototype Pollution in lodash",
+        "reference": "https://osv.dev/vulnerability/GHSA-p6mc-m468-83gw",
+        "id": "c7",
+        "token": "osv-scanner:GHSA-p6mc-m468-83gw",
+        "reviewSeverity": "major"
+      },
+      "reason": "The lodash downgrade is raised once under c6, which covers this advisory.",
+      "cited": {
+        "file_path": "package-lock.json",
+        "line_number": 11
+      }
+    },
+    {
+      "candidate": {
+        "source": "actionlint",
+        "ruleId": "expression",
+        "filePath": ".github/workflows/ci.yml",
+        "lineStart": 15,
+        "lineEnd": 15,
+        "severity": "high",
+        "message": "\"github.event.pull_request.title\" is potentially untrusted. avoid using it directly in inline scripts. instead, pass it through an environment variable. see https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions for more details",
+        "reference": "https://github.com/rhysd/actionlint/blob/main/docs/checks.md",
+        "id": "c8",
+        "token": "actionlint:expression",
+        "reviewSeverity": "major"
+      },
+      "reason": "This duplicates the workflow injection already raised under c1.",
+      "cited": {
+        "file_path": ".github/workflows/ci.yml",
+        "line_number": 15
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
+        "filePath": "app/search.py",
+        "lineStart": 10,
+        "lineEnd": 14,
+        "severity": "medium",
+        "message": "User-controlled data from a request is passed to 'execute()'. This could lead to a SQL injection and therefore protected information could be leaked. Instead, use django's QuerySets, which are built with query parameterization and therefore not vulnerable to sql injection. For example, you could use `Entry.objects.filter(date=2006)`.",
+        "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
+        "id": "c11",
+        "token": "semgrep:python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The app is not Django, and the injection on this query is already raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "medium",
+        "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
+        "reference": "https://stackoverflow.com/questions/775296/mysql-parameterized-queries",
+        "id": "c12",
+        "token": "semgrep:python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the injection already raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "osv-scanner",
+        "ruleId": "GHSA-29mw-wpgm-hmr9",
+        "filePath": "package-lock.json",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "medium",
+        "message": "lodash@4.17.15: GHSA-29mw-wpgm-hmr9 (CVE-2020-28500). Regular Expression Denial of Service (ReDoS) in lodash",
+        "reference": "https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9",
+        "id": "c13",
+        "token": "osv-scanner:GHSA-29mw-wpgm-hmr9",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The lodash downgrade is raised once under c6, which covers this advisory.",
+      "cited": {
+        "file_path": "package-lock.json",
+        "line_number": 11
+      }
+    },
+    {
+      "candidate": {
+        "source": "osv-scanner",
+        "ruleId": "GHSA-f23m-r3pf-42rh",
+        "filePath": "package-lock.json",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "medium",
+        "message": "lodash@4.17.15: GHSA-f23m-r3pf-42rh (CVE-2025-13465, CVE-2026-2950, GHSA-xxjr-mmjv-4gpg). lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+        "reference": "https://osv.dev/vulnerability/GHSA-f23m-r3pf-42rh",
+        "id": "c14",
+        "token": "osv-scanner:GHSA-f23m-r3pf-42rh",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The lodash downgrade is raised once under c6, which covers this advisory.",
+      "cited": {
+        "file_path": "package-lock.json",
+        "line_number": 11
+      }
+    },
+    {
+      "candidate": {
+        "source": "hadolint",
+        "ruleId": "DL3008",
+        "filePath": "Dockerfile",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "medium",
+        "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`",
+        "reference": "https://github.com/hadolint/hadolint/wiki/DL3008",
+        "id": "c16",
+        "token": "hadolint:DL3008",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Pinning the curl package version adds little once the base image is pinned under c15.",
+      "cited": {
+        "file_path": "Dockerfile",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "shellcheck",
+        "ruleId": "SC2115",
+        "filePath": "scripts/deploy.sh",
+        "lineStart": 7,
+        "lineEnd": 7,
+        "severity": "medium",
+        "message": "Use \"${var:?}\" to ensure this never expands to / .",
+        "reference": "https://www.shellcheck.net/wiki/SC2115",
+        "id": "c19",
+        "token": "shellcheck:SC2115",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The default expansion on line 5 replaces an empty or unset DEPLOY_DIR with /srv/demo, so it never expands to slash.",
+      "cited": {
+        "file_path": "scripts/deploy.sh",
+        "line_number": 5
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B608",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "medium",
+        "message": "B608: Possible SQL injection vector through string-based query construction.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+        "id": "c20",
+        "token": "bandit:B608",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the injection already raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "hadolint",
+        "ruleId": "DL3015",
+        "filePath": "Dockerfile",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "low",
+        "message": "Avoid additional packages by specifying `--no-install-recommends`",
+        "reference": "https://github.com/hadolint/hadolint/wiki/DL3015",
+        "id": "c21",
+        "token": "hadolint:DL3015",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "The full python image already ships curl, so the install pulls no recommended extras.",
+      "cited": {
+        "file_path": "Dockerfile",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "shellcheck",
+        "ruleId": "SC2086",
+        "filePath": "scripts/deploy.sh",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "low",
+        "message": "Double quote to prevent globbing and word splitting.",
+        "reference": "https://www.shellcheck.net/wiki/SC2086",
+        "id": "c24",
+        "token": "shellcheck:SC2086",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This duplicates the unquoted ls loop already raised under c10.",
+      "cited": {
+        "file_path": "scripts/deploy.sh",
+        "line_number": 11
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 8,
+      "keptCount": 7,
+      "durationMs": 3286,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 1,
+      "keptCount": 0,
+      "durationMs": 31,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "ran",
+      "version": "2.6.0",
+      "rawCount": 4,
+      "keptCount": 4,
+      "durationMs": 574,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "ran",
+      "version": "1.7.7",
+      "rawCount": 1,
+      "keptCount": 1,
+      "durationMs": 20,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "ran",
+      "version": "2.15.1",
+      "rawCount": 7,
+      "keptCount": 7,
+      "durationMs": 86,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "ran",
+      "version": "0.10.0",
+      "rawCount": 4,
+      "keptCount": 4,
+      "durationMs": 57,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 11,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 1,
+      "keptCount": 1,
+      "durationMs": 75,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 8,
+    "additions": 38,
+    "deletions": 14
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 17391,
+      "started_at": "2026-10-09T13:11:29.432Z",
+      "ended_at": "2026-10-09T13:12:29.540Z",
+      "duration_ms": 60108,
+      "rounds": 1,
+      "usage": {
+        "turns": 5,
+        "input_tokens": 65362,
+        "output_tokens": 6848,
+        "cost_usd": 0.2526796
+      }
+    },
+    "snapshot": {
+      "change_id": "10985528b336e9266237818ca4511e1b0d59a063409b96ebf07e3b3fc1099a99",
+      "tree": "f3425e89a51d9c1c3b5017bc529e9fdde21f0e4d",
+      "before": "d4621950c203d5fdae630a9471a74f05ac7b2c3e20cd8797ae8b1db029facdf2",
+      "after": "d4621950c203d5fdae630a9471a74f05ac7b2c3e20cd8797ae8b1db029facdf2"
+    },
+    "candidates": {
+      "total": 24,
+      "disposed": 24
+    },
+    "coverage": {
+      "hunks": 15,
+      "covered": 15,
+      "unread": [],
+      "files_read": [
+        ".github/workflows/ci.yml",
+        "app/server.py"
+      ],
+      "files_not_read": [
+        "Dockerfile",
+        "app/config.py",
+        "app/search.py",
+        "package-lock.json",
+        "package.json",
+        "scripts/deploy.sh"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

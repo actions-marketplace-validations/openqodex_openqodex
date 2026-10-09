@@ -1,0 +1,6 @@
+Passed: no findings
+Change 32c939b7a434 against HEAD, 2 files, +34 -5
+Summary: Extracts a shared setting helper and named default constants for port and host lookup, and adds unit tests for both functions.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

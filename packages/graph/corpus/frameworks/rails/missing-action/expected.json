@@ -1,0 +1,45 @@
+{
+  "guards": "keeps a Rails route whose action the change deletes, with its handler missing and a gap that names it",
+  "removed": [
+    "app/controllers/posts_controller.rb#PostsController.destroy"
+  ],
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/posts/:id",
+        "name": "post",
+        "methods": [
+          "DELETE"
+        ],
+        "handler": null,
+        "status": "missing"
+      },
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/posts",
+        "methods": [
+          "GET"
+        ],
+        "handler": "app/controllers/posts_controller.rb#PostsController.index",
+        "status": "bound"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "config/routes.rb",
+        "line": 2,
+        "cause": "miss"
+      },
+      {
+        "file": "app/controllers/posts_controller.rb",
+        "cause": "miss"
+      }
+    ],
+    "brief": [
+      "| `DELETE /posts/:id` | `post` | `config/routes.rb:2` | `posts#destroy` | no handler now: the handler is missing |"
+    ]
+  }
+}

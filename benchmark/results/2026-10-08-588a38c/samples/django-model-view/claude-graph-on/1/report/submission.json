@@ -1,0 +1,83 @@
+{
+  "version": 2,
+  "change_id": "c856f8e5689f",
+  "summary": "Adds a discount_code field and an apply_discount method on Order. Adds order detail and discount redeem endpoints.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "orders/views.py",
+      "line_number": 18,
+      "line_end": 18,
+      "title": "Order detail does not check the owner",
+      "problem": "order_detail looks up the order by primary key alone and never filters by request.user. The sibling views order_list and redeem both filter by owner.",
+      "consequence": "Any logged-in user can read the total and discount code of every other user's order. An attacker can enumerate all orders by incrementing the id.",
+      "fix": "Add owner=request.user to the get_object_or_404 lookup, as redeem already does.",
+      "suggested_change": "    order = get_object_or_404(Order, pk=order_id, owner=request.user)",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "orders/models.py",
+      "line_number": 20,
+      "line_end": 20,
+      "title": "Decimal multiplied by float",
+      "problem": "apply_discount multiplies total, a Decimal, by the float 0.9. Python raises TypeError when it multiplies a Decimal by a float.",
+      "consequence": "Every redeem request with the WELCOME10 code fails with a server error. No user can ever get the discount.",
+      "fix": "Multiply by Decimal(\"0.9\") and round to two decimal places with quantize.",
+      "suggested_change": "        self.total = (self.total * Decimal(\"0.9\")).quantize(Decimal(\"0.01\"))",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "orders/models.py",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "New field has no migration",
+      "problem": "The change adds the discount_code field to Order but adds no migration. The orders app has only 0001_initial, and it lacks this column.",
+      "consequence": "Every Order query selects a missing column and fails at runtime. This breaks order_list as well as the new endpoints.",
+      "fix": "Run makemigrations for the orders app and commit the generated migration that adds discount_code.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.75,
+      "file_path": "orders/views.py",
+      "line_number": 22,
+      "line_end": 22,
+      "title": "CSRF protection disabled on a session-authenticated POST",
+      "problem": "The redeem view disables CSRF checks but authenticates users with the session cookie. The settings enable CsrfViewMiddleware for every other view.",
+      "consequence": "A third-party site can make a logged-in user's browser redeem the code. The one-time code then lands on an order the user did not choose.",
+      "fix": "Remove the csrf_exempt decorator and have clients send the CSRF token with the POST.",
+      "suggested_change": "",
+      "source": "semgrep:python.django.security.audit.csrf-exempt.no-csrf-exempt",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "orders/models.py",
+      "line_number": 16,
+      "line_end": 22,
+      "title": "New discount and view behaviour has no test",
+      "problem": "No test covers apply_discount, order_detail or redeem. The repository contains no test files.",
+      "consequence": "A test would have caught the crash in apply_discount and the missing owner check in order_detail.",
+      "fix": "Add tests for the discount, for repeat redemption and for access to another user's order.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

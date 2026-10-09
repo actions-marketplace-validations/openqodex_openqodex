@@ -1,7 +1,13 @@
 // What a change reaches: the symbols it touches or removes, their callers
-// two hops out over calls and inheritance, what they call one hop out, the
-// files that import a changed file, and the public names the change removed
-// or bound elsewhere. Every call site is kept with its evidence and tier.
+// two hops out over calls, inheritance and implementation, what they call
+// one hop out, the files that import a changed file, and the public names
+// the change removed or bound elsewhere. Every call site is kept with its
+// evidence and tier. A path with a possible step (a call through an
+// interface or a base type to an implementation, a function value a
+// callee, an alias, a table or a returned value may call) is listed apart
+// from the certain and likely ones, and the hub rule holds per group. The
+// other uses of a touched symbol (as a value, as a type, implemented or
+// overridden) are listed one hop out.
 //
 // Every cut the walk makes is recorded with what it left out (a hub keeps
 // its 20 nearest callers, the second hop keeps 20 per caller, the walk stops
@@ -12,12 +18,16 @@
 // lists from the graph, never from this summary.
 import { dirname } from "node:path";
 import type { Change, ImpactCut, ImpactEdge, ImpactPath, ImpactSummary, ImpactSymbol, ImpactUnknown } from "@openqodex/core";
-import type { Graph, GraphEdge, GraphNode, HotSymbol, Miss, UnknownSite } from "./types.js";
+import { frameworkImpact } from "./frameworks/impact.js";
+import type { DispatchSite, Graph, GraphEdge, GraphNode, HotSymbol, Miss, UnknownSite } from "./types.js";
 
 export const HUB_CALLERS = 40; // a symbol with more direct callers is a hub
 export const HUB_SHOWN = 20; // callers kept for a hub, and per caller on the second hop
 export const WALK_LIMIT = 200; // symbols the whole walk may reach
-export const INLINE_SITES = 60; // call sites the brief shows
+export const INLINE_SITES = 60; // certain and likely call sites the brief shows
+export const INLINE_POSSIBLE = 20; // possible call sites the brief shows
+export const REFERENCES_KEPT = 200; // uses of one kind per symbol the summary keeps
+const FAN_OUT_CUTS = 10; // capped dispatch sites named per symbol
 export const SUMMARY_CONSUMERS = 200; // consumers of a public name the summary keeps
 const NEAR_SHOWN = 40;
 
@@ -72,6 +82,8 @@ export function emptyImpact(status: "off" | "skipped" | "failed", reason: string
     touched: [],
     removed: [],
     callers: [],
+    possible: [],
+    references: [],
     callees: [],
     importers: [],
     hubs: [],
@@ -83,10 +95,12 @@ export function emptyImpact(status: "off" | "skipped" | "failed", reason: string
   };
 }
 
-function riskFor(touched: number, callers: number, removedStillCalled: boolean, brokenConsumers: number): ImpactSummary["risk"] {
+// Possible callers raise a change to medium at most: a widely implemented
+// interface must not make every change to one implementation high.
+function riskFor(touched: number, callers: number, possible: number, removedStillCalled: boolean, brokenConsumers: number): ImpactSummary["risk"] {
   if (touched === 0) return "none";
   if (removedStillCalled || brokenConsumers > 0 || callers > 8 || touched > 12) return "high";
-  if (callers >= 1 || touched > 4) return "medium";
+  if (callers >= 1 || possible >= 1 || touched > 4) return "medium";
   return "low";
 }
 
@@ -155,6 +169,22 @@ export function callersOfRemoved(graph: Graph, node: GraphNode, path: string): G
   return [...byFrom.values()];
 }
 
+// Dispatch sites by the member name they call.
+const dispatchIndex = new WeakMap<Graph, Map<string, DispatchSite[]>>();
+function dispatchNamed(graph: Graph, name: string): DispatchSite[] {
+  let byName = dispatchIndex.get(graph);
+  if (!byName) {
+    byName = new Map();
+    for (const d of graph.dispatch) {
+      const list = byName.get(d.name);
+      if (list) list.push(d);
+      else byName.set(d.name, [d]);
+    }
+    dispatchIndex.set(graph, byName);
+  }
+  return byName.get(name) ?? [];
+}
+
 const budgetSets = new WeakMap<Graph, Set<string>>();
 function budgetFilesOf(graph: Graph): Set<string> {
   let set = budgetSets.get(graph);
@@ -168,8 +198,11 @@ function budgetFilesOf(graph: Graph): Set<string> {
 // Why a seed's caller list may be short. Empty when the graph knows it is whole.
 export function floorReasons(graph: Graph, seed: { id: string; name: string; file: string }, cutAt: ReadonlySet<string>): string[] {
   const reasons: string[] = [];
+  // A possible caller is never proof that the code runs, nor that nothing else reaches it.
+  const possible = (graph.in.get(seed.id) ?? []).filter((e) => e.tier === "possible" && e.from !== seed.id).reduce((k, e) => k + e.sites.length, 0);
+  if (possible > 0) reasons.push(`${possible} ${possible === 1 ? "call" : "calls"} may reach it through an interface, a base type or a function value, and none is proved to`);
   const named = graph.unknownNames.get(seed.name) ?? 0;
-  if (named > 0) reasons.push(`${named} ${named === 1 ? "call" : "calls"} named \`${seed.name}\` in the repository could not be bound`);
+  if (named > 0) reasons.push(`${named} ${named === 1 ? "call" : "calls"} named \`${seed.name}\` in the repository could not be bound to one definition`);
   const project = graph.projectOf(seed.file);
   const values = graph.valueCalls.get(project) ?? 0;
   if (values > 0) reasons.push(`${values} ${values === 1 ? "call goes" : "calls go"} through a value (a callback or a computed member) in ${project === "" ? "the repository root project" : project}, and could reach it`);
@@ -242,8 +275,14 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     }
   }
 
-  // Callers: two hops back over calls and inheritance. Each cut says what it left out.
+  // Callers: two hops back over calls, inheritance and implementation;
+  // certain and likely first, then possible. Each cut says what it left out.
   const callers: ImpactPath[] = [];
+  const possible: ImpactPath[] = [];
+  const addPath = (seed: string, edges: GraphEdge[]) => {
+    const path = { seed, edges: edges.map(toImpactEdge) as ImpactPath["edges"] };
+    (edges.some((e) => e.tier === "possible") ? possible : callers).push(path);
+  };
   const hubs: ImpactSummary["hubs"] = [];
   const reached = new Set<string>([...touched, ...removed]);
   let walkCut = false;
@@ -251,28 +290,44 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
   const incoming = (id: string): GraphEdge[] => removedEdges.get(id) ?? graph.in.get(id) ?? [];
   const seedFile = (id: string) => symbols.get(id)?.file ?? graph.nodes.get(id)?.file ?? "";
 
-  const firstHop: { seed: string; edge: GraphEdge }[] = [];
+  // The hub rule holds per group: a widely implemented interface floods
+  // the possible callers, never the certain ones.
+  const firstLists = new Map<string, { sure: GraphEdge[]; possible: GraphEdge[] }>();
   for (const seed of [...touched, ...removed]) {
-    let edges = incoming(seed).filter((e) => e.from !== seed);
-    if (edges.length > HUB_CALLERS) {
-      const sites = edges.reduce((n, e) => n + e.sites.length, 0);
-      const files = new Set(edges.flatMap((e) => e.sites.map((x) => x.file))).size;
-      hubs.push({ symbol: seed, callers: edges.length, sites, files });
-      cuts.push({ by: "hub", at: seed, omitted: edges.length - HUB_SHOWN, exact: true, unit: "callers", note: `a hub with ${edges.length} callers; the ${HUB_SHOWN} nearest are listed` });
-      cutAt.add(seed);
-      edges = [...edges].sort(byCloseness(seedFile(seed))).slice(0, HUB_SHOWN);
-    } else edges = [...edges].sort(byCloseness(seedFile(seed)));
-    for (const [i, edge] of edges.entries()) {
-      if (reached.size >= WALK_LIMIT && !reached.has(edge.from)) {
-        walkCut = true;
-        walkFrontier += edges.length - i;
+    const all = incoming(seed).filter((e) => e.from !== seed);
+    const lists = { sure: all.filter((e) => e.tier !== "possible"), possible: all.filter((e) => e.tier === "possible") };
+    for (const group of ["sure", "possible"] as const) {
+      const edges = [...lists[group]].sort(byCloseness(seedFile(seed)));
+      if (edges.length > HUB_CALLERS) {
+        if (group === "sure") {
+          const sites = edges.reduce((n, e) => n + e.sites.length, 0);
+          const files = new Set(edges.flatMap((e) => e.sites.map((x) => x.file))).size;
+          hubs.push({ symbol: seed, callers: edges.length, sites, files });
+        }
+        const what = group === "sure" ? `a hub with ${edges.length} callers` : `${edges.length} possible callers (through an interface, a base type or a function value)`;
+        cuts.push({ by: "hub", at: seed, omitted: edges.length - HUB_SHOWN, exact: true, unit: "callers", note: `${what}; the ${HUB_SHOWN} nearest are listed` });
         cutAt.add(seed);
-        break;
+        lists[group] = edges.slice(0, HUB_SHOWN);
+      } else lists[group] = edges;
+    }
+    firstLists.set(seed, lists);
+  }
+  const firstHop: { seed: string; edge: GraphEdge }[] = [];
+  for (const group of ["sure", "possible"] as const) {
+    for (const [seed, lists] of firstLists) {
+      const edges = lists[group];
+      for (const [i, edge] of edges.entries()) {
+        if (reached.size >= WALK_LIMIT && !reached.has(edge.from)) {
+          walkCut = true;
+          walkFrontier += edges.length - i;
+          cutAt.add(seed);
+          break;
+        }
+        reached.add(edge.from);
+        note(edge.from);
+        firstHop.push({ seed, edge });
+        addPath(seed, [edge]);
       }
-      reached.add(edge.from);
-      note(edge.from);
-      firstHop.push({ seed, edge });
-      callers.push({ seed, edges: [toImpactEdge(edge)] });
     }
   }
   for (const { seed, edge } of firstHop) {
@@ -293,7 +348,7 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
       }
       reached.add(e2.from);
       note(e2.from);
-      callers.push({ seed, edges: [toImpactEdge(edge), toImpactEdge(e2)] });
+      addPath(seed, [edge, e2]);
     }
   }
   // Past the walk limit what lies beyond the frontier cannot be counted.
@@ -329,11 +384,52 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     return p.edges.length * 2 + Number(isTestPath(last.sites[0]?.file ?? last.from));
   };
   callers.sort((a, b) => rank(a) - rank(b));
+  possible.sort((a, b) => rank(a) - rank(b));
 
   const callerIds = new Set(callers.map((p) => (p.edges[p.edges.length - 1] as ImpactEdge).from));
+  const possibleIds = new Set(possible.map((p) => (p.edges[p.edges.length - 1] as ImpactEdge).from));
   const removedStillCalled = removed.some((id) => removedEdges.has(id));
-  const totalSites = callers.reduce((n, p) => n + (p.edges[p.edges.length - 1] as ImpactEdge).sites.length, 0);
-  if (totalSites > INLINE_SITES) cuts.push({ by: "inline", at: null, omitted: totalSites - INLINE_SITES, exact: true, unit: "sites", note: `the brief shows ${INLINE_SITES} call sites; the packet holds every one` });
+  const sitesOf = (paths: ImpactPath[]) => paths.reduce((n, p) => n + (p.edges[p.edges.length - 1] as ImpactEdge).sites.length, 0);
+  const totalSites = sitesOf(callers);
+  const possibleSites = sitesOf(possible);
+  if (totalSites > INLINE_SITES) cuts.push({ by: "inline", at: null, omitted: totalSites - INLINE_SITES, exact: true, unit: "sites", note: `the brief shows ${INLINE_SITES} certain and likely call sites; the packet holds every one` });
+  if (possibleSites > INLINE_POSSIBLE) cuts.push({ by: "inline", at: null, omitted: possibleSites - INLINE_POSSIBLE, exact: true, unit: "sites", note: `the brief shows ${INLINE_POSSIBLE} possible call sites; the packet holds every one` });
+
+  // Other uses of each seed, one hop: as a value, as a type, implemented
+  // or overridden. The summary keeps the first ones of each kind.
+  const references: NonNullable<ImpactSummary["references"]> = [];
+  for (const seed of [...touched, ...removed]) {
+    const kinds = new Map<string, GraphEdge[]>();
+    for (const e of graph.refsIn.get(seed) ?? []) {
+      if (e.from === seed) continue;
+      const list = kinds.get(e.kind);
+      if (list) list.push(e);
+      else kinds.set(e.kind, [e]);
+    }
+    for (const [kind, edges] of kinds) {
+      const sorted = [...edges].sort(byCloseness(seedFile(seed)));
+      if (sorted.length > REFERENCES_KEPT) cuts.push({ by: "references", at: seed, omitted: sorted.length - REFERENCES_KEPT, exact: true, unit: "symbols", note: `the summary keeps the first ${REFERENCES_KEPT} symbols with a ${kind} edge into it; the packet holds every one` });
+      for (const e of sorted.slice(0, REFERENCES_KEPT)) {
+        note(e.from);
+        references.push({ seed, edge: toImpactEdge(e) });
+      }
+    }
+  }
+
+  // A call that may run more implementations of a seed's name than the
+  // graph lists: the seed may be among those left out.
+  for (const seed of [...touched, ...removed]) {
+    const sym = symbols.get(seed);
+    if (!sym || sym.kind !== "method") continue;
+    let named = 0;
+    for (const d of dispatchNamed(graph, sym.name)) {
+      if (d.total <= d.candidates.length || d.declared.includes(seed) || d.candidates.includes(seed)) continue;
+      if (++named > FAN_OUT_CUTS) break;
+      const omitted = d.total - d.candidates.length;
+      cuts.push({ by: "fan-out", at: `${d.file}:${d.line}`, omitted, exact: true, unit: "symbols", note: `a call to ${d.name} at ${d.file}:${d.line} may run ${d.total} implementations or overrides; the ${omitted} past the first ${d.candidates.length} are not listed, and \`${sym.name}\` at ${sym.file}:${sym.startLine} may be one of them` });
+      cutAt.add(seed);
+    }
+  }
 
   // What the graph could not see, per seed and near the change.
   const seeds = [...touched, ...removed].map((id) => {
@@ -341,7 +437,7 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     const reasons = sym ? floorReasons(graph, { id, name: sym.name, file: sym.file }, cutAt) : ["the symbol is not in the graph"];
     return { seed: id, floor: reasons.length > 0, reasons };
   });
-  const nearFiles = new Set<string>([...change.files.map((f) => f.path), ...callers.flatMap((p) => p.edges.flatMap((e) => e.sites.map((x) => x.file)))]);
+  const nearFiles = new Set<string>([...change.files.map((f) => f.path), ...[...callers, ...possible].flatMap((p) => p.edges.flatMap((e) => e.sites.map((x) => x.file)))]);
   const near = graph.unknowns.filter((u) => nearFiles.has(u.file));
   const causes: Record<string, number | null> = {};
   for (const u of near) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
@@ -354,12 +450,16 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     return { ...e, consumers: e.consumers.slice(0, SUMMARY_CONSUMERS) };
   });
 
+  // What the framework plugins say about the touched code (frameworks/impact.ts).
+  const frameworks = frameworkImpact(graph, change, touched, removed);
+
   return {
     version: 2,
     status: s.status,
     reasons: s.reasons,
     // A move is no change of its own: the lines added at the new place make its new definition a touched symbol.
-    risk: riskFor(touched.length + removed.length - moved + exports.length, callerIds.size, removedStillCalled, brokenConsumers),
+    // A route the change left without its handler is broken like a removed symbol still called.
+    risk: riskFor(touched.length + removed.length - moved + exports.length, callerIds.size, possibleIds.size, removedStillCalled || (frameworks?.routes.some((r) => r.status === "missing") ?? false), brokenConsumers),
     build: {
       durationMs: s.durationMs,
       cacheHits: s.cacheHits,
@@ -376,6 +476,8 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     touched,
     removed,
     callers,
+    possible,
+    references,
     callees,
     importers,
     hubs,
@@ -391,11 +493,12 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     },
     cuts: [...s.cuts, ...cuts],
     truncated: {
-      walk: walkCut || hubs.length > 0,
-      inline: totalSites > INLINE_SITES,
-      omittedSites: totalSites > INLINE_SITES ? totalSites - INLINE_SITES : null,
+      walk: walkCut || cuts.some((c) => c.by === "hub"),
+      inline: totalSites > INLINE_SITES || possibleSites > INLINE_POSSIBLE,
+      omittedSites: totalSites > INLINE_SITES || possibleSites > INLINE_POSSIBLE ? Math.max(0, totalSites - INLINE_SITES) + Math.max(0, possibleSites - INLINE_POSSIBLE) : null,
     },
     packet: null,
+    ...(frameworks ? { frameworks } : {}),
   };
 }
 

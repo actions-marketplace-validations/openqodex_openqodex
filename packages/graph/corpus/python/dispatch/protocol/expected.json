@@ -1,0 +1,60 @@
+{
+  "guards": "dispatches a call through a typing Protocol to a subclass and to a class that only matches its method names, the second implementing it as likely",
+  "callers": [
+    {
+      "to": "store/repo.py#Repo.find",
+      "site": "store/run.py:5",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "store/sql.py#SqlRepo.find",
+      "site": "store/run.py:5",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/mem.py#MemRepo.find",
+      "site": "store/run.py:5",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/repo.py#Repo",
+      "site": "store/mem.py:1",
+      "tier": "likely",
+      "kind": "implements"
+    },
+    {
+      "to": "store/repo.py#Repo",
+      "site": "store/sql.py:4",
+      "tier": "certain"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "store/run.py:5",
+      "candidates": [
+        "store/sql.py#SqlRepo.find",
+        "store/mem.py#MemRepo.find"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "to": "store/repo.py#Repo.find",
+      "site": "store/mem.py:2",
+      "kind": "overrides",
+      "tier": "likely"
+    },
+    {
+      "to": "store/repo.py#Repo",
+      "site": "store/run.py:4",
+      "kind": "uses_type",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "store/mem.py#MemRepo.find": true
+  }
+}

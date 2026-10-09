@@ -10,21 +10,14 @@
 //    imported file defines a method of that name.
 // 5. A call site's line is wrong or only the first site of a pair is kept.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
 import { at, callSites, makeRepo, symbol } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function graphOf(files: Record<string, string>) {
   const root = makeRepo(files);
-  repos.push(root);
   return buildGraph({ repoRoot: root, store: null });
 }
 

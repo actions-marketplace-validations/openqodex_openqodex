@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "change_id": "32c939b7a434",
+  "summary": "Moves the unset-or-empty env lookup into a shared setting helper and names the port and host defaults as constants. Adds tests for the port and host fallback and validation behaviour.",
+  "findings": [],
+  "dropped": []
+}

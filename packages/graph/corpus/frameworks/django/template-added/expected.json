@@ -1,0 +1,14 @@
+{
+  "guards": "links a Django view to a template file the change adds without editing the view",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "renders",
+        "from": "pages/views.py#Landing",
+        "to": "template:pages/templates/pages/landing.html",
+        "tier": "likely"
+      }
+    ]
+  }
+}

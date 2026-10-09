@@ -1,0 +1,78 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a thumbnail helper that runs ImageMagick convert through a shell and a /calc endpoint that evaluates a query expression. It also adds a documentation URL constant.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Request query string passed to eval",
+      "problem": "The /calc handler passes req.query.expr straight to eval. The added suppression comments hide this from the linters.",
+      "consequence": "Any caller of /calc can run arbitrary JavaScript inside the server process. That gives them full remote code execution.",
+      "fix": "Remove eval and parse the expression with a restricted arithmetic evaluator. Reject any input that is not numbers and operators.",
+      "suggested_change": null,
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Upload name interpolated into a shell command",
+      "problem": "make_thumbnail puts upload_name, which comes from the upload form, into a command string. subprocess.run then runs that string through a shell.",
+      "consequence": "An uploader can choose a name with shell metacharacters and run commands on the host. A name with dot-dot segments can also read or write files outside the upload folders.",
+      "fix": "Pass an argument list without shell=True. Reduce upload_name to its basename and reject names with path separators.",
+      "suggested_change": "    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "tools/thumbs.py",
+      "line_number": 6,
+      "line_end": 9,
+      "title": "New behaviour has no covering test",
+      "problem": "This change adds make_thumbnail and the /calc endpoint without any tests. No test checks how either one handles hostile input.",
+      "consequence": "Later edits can bring back injection bugs and no test will catch them.",
+      "fix": "Add tests that send names and expressions containing metacharacters. Assert that each one is rejected.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The suppression only allows a long documentation URL line. It hides no real problem.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    },
+    {
+      "candidate": "c3",
+      "reason": "This suppression hides the shell injection that the finding on thumbs.py line 9 already reports.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c4",
+      "reason": "This suppression hides the eval that the finding on server.js line 12 already reports.",
+      "file_path": "web/server.js",
+      "line_number": 11
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is not a problem in itself. The real risk is the shell call reported at line 9.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 1
+    }
+  ]
+}

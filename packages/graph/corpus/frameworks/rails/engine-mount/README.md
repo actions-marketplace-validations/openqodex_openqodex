@@ -1,0 +1,3 @@
+# Rails: an engine mounted in a host application
+
+Guards against merging two applications' routes. The host mounts `Blog::Engine` at `/blog`; the engine draws its own routes in `engines/blog/config/routes.rb` with `isolate_namespace Blog`, so `resources :posts` there is handled by `Blog::PostsController`, never by the host's `PostsController`, and the host's `resources :posts` never by the engine's. The mount is a registration of the host with a certain `mounts` edge to the engine's routes, `mount Sidekiq::Web` names an application outside the repository, and a host request spec for `/blog/posts/1` reaches the engine's `show` route through the mount.

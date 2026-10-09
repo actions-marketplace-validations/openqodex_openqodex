@@ -1,6 +1,6 @@
 {
   "name": "openqodex",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Open source AI code review for Claude Code and Codex, before you push: scanners on your changed lines, then a separate reviewer that checks every scanner finding and is given every changed line.",
   "type": "module",
   "license": "Apache-2.0",
@@ -42,7 +42,7 @@
     "node": ">=22"
   },
   "openqodex": {
-    "agentContract": 1,
+    "agentContract": 2,
     "configFormat": 1
   },
   "bin": {
@@ -70,6 +70,7 @@
     "@clack/prompts": "^1.8.1",
     "@openqodex/core": "workspace:*",
     "@openqodex/graph": "workspace:*",
+    "@openqodex/mcp": "workspace:*",
     "@openqodex/scanners": "workspace:*",
     "@sigstore/bundle": "5.0.0",
     "@sigstore/protobuf-specs": "0.5.2",

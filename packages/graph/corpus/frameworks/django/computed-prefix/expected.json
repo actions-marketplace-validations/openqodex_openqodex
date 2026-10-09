@@ -1,0 +1,44 @@
+{
+  "guards": "keeps the known tail of a Django route whose prefix is computed at run time, binds its view, and says once per test file why its requests are not matched",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "hc/accounts/urls.py:6",
+        "pattern": null,
+        "handler": "hc/accounts/views.py#login",
+        "status": "bound"
+      }
+    ],
+    "partials": [
+      {
+        "site": "hc/accounts/urls.py:6",
+        "partial": "{computed}accounts/login/"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "hc/urls.py",
+        "line": 11,
+        "cause": "dynamic"
+      },
+      {
+        "file": "hc/accounts/tests.py",
+        "cause": "unsupported-rule"
+      }
+    ],
+    "maxUnknowns": [
+      {
+        "file": "hc/accounts/tests.py",
+        "cause": "unsupported-rule",
+        "max": 1
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "tests",
+        "from": "hc/accounts/tests.py#LoginTests.test_login"
+      }
+    ]
+  }
+}

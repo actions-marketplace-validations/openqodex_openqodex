@@ -1,0 +1,22 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/main.ts",
+    "inside": true,
+    "range": [
+      1,
+      9
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/server-config.ts",
+    "inside": true,
+    "range": [
+      1,
+      25
+    ],
+    "ok": true
+  }
+]

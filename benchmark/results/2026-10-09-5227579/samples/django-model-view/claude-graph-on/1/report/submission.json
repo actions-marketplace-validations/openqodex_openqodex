@@ -1,0 +1,83 @@
+{
+  "version": 2,
+  "change_id": "c856f8e5689f",
+  "summary": "Adds a discount_code field and an apply_discount method to Order. Adds order detail and discount redeem endpoints.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "orders/views.py",
+      "line_number": 18,
+      "line_end": 18,
+      "title": "Order detail readable by any logged-in user",
+      "problem": "order_detail looks up the order by primary key alone and never checks the owner. The redeem view filters by owner, but order_detail does not.",
+      "consequence": "Any logged-in user can walk order ids and read other customers' totals and discount codes.",
+      "fix": "Add owner=request.user to the get_object_or_404 lookup, as redeem already does.",
+      "suggested_change": "    order = get_object_or_404(Order, pk=order_id, owner=request.user)",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "orders/models.py",
+      "line_number": 19,
+      "line_end": 19,
+      "title": "Decimal multiplied by float raises TypeError",
+      "problem": "total is a Decimal from a DecimalField. apply_discount multiplies it by the float 0.9, and Python raises TypeError for Decimal times float.",
+      "consequence": "Every redeem request with the WELCOME10 code returns a server error. No customer can ever get the discount.",
+      "fix": "Multiply by Decimal(\"0.9\") and round the result to two decimal places.",
+      "suggested_change": "        self.total = (self.total * Decimal(\"0.9\")).quantize(Decimal(\"0.01\"))",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "orders/models.py",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "New model field has no migration",
+      "problem": "The change adds discount_code to Order but adds no migration. The only migration, 0001_initial, creates no discount_code column.",
+      "consequence": "Django selects discount_code in every Order query, so the database raises a missing-column error. The list, detail and redeem endpoints all fail.",
+      "fix": "Run makemigrations and commit the new migration that adds discount_code to Order.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.75,
+      "file_path": "orders/views.py",
+      "line_number": 22,
+      "line_end": 22,
+      "title": "CSRF protection disabled on a session-authenticated POST",
+      "problem": "redeem changes order state and authenticates the user with the session cookie. The csrf_exempt decorator turns off Django's CSRF check for this view.",
+      "consequence": "A third-party site can make a logged-in user's browser redeem a code on that user's orders. The impact is limited because the only effect is a discount.",
+      "fix": "Remove csrf_exempt and have clients send the CSRF token with the request.",
+      "suggested_change": null,
+      "source": "semgrep:python.django.security.audit.csrf-exempt.no-csrf-exempt",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "orders/models.py",
+      "line_number": 16,
+      "line_end": 22,
+      "title": "New discount and endpoint behaviour has no test",
+      "problem": "The repository has no tests. Nothing covers apply_discount, order_detail or redeem.",
+      "consequence": "A test would have caught the Decimal crash and the missing migration before release.",
+      "fix": "Add tests for applying the discount once, rejecting other codes, and denying access to other users' orders.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

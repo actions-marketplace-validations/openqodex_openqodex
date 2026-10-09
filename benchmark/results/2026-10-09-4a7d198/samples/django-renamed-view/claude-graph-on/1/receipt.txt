@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 minor)
+Change c09a6fefdf49 against HEAD, 1 file, +2 -2
+Summary: Renames the order detail view from order_detail to show_order. The view now loads only the number and total_cents fields.
+1. Critical bug: URLconf still references the removed order_detail view (orders/views.py:14)
+2. Minor maintainability: Changed detail view has no covering test (orders/views.py:15)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

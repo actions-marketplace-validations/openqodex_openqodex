@@ -1,0 +1,86 @@
+{
+  "guards": "finds Django models through imported and in-repo bases with fields, relations, tables and the migrations that name them",
+  "frameworks": {
+    "plugin": "django",
+    "roles": [
+      {
+        "target": "library/models.py#Book",
+        "role": "model"
+      },
+      {
+        "target": "library/base.py#Stamped",
+        "role": "model"
+      },
+      {
+        "target": "library/migrations/0002_book_title.py",
+        "role": "migration"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "declares_field",
+        "from": "library/models.py#Book",
+        "to": "model_field:Book.title",
+        "tier": "certain"
+      },
+      {
+        "kind": "uses_type",
+        "from": "library/models.py#Book",
+        "to": "library/models.py#Shelf",
+        "tier": "certain"
+      },
+      {
+        "kind": "uses_type",
+        "from": "library/models.py#Book",
+        "to": "library/models.py#Person",
+        "tier": "likely"
+      },
+      {
+        "kind": "maps_to",
+        "from": "library/models.py#Shelf",
+        "to": "table:shelves",
+        "tier": "certain"
+      },
+      {
+        "kind": "maps_to",
+        "from": "library/models.py#Book",
+        "to": "table:library_book",
+        "tier": "likely"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "library/migrations/0001_initial.py",
+        "to": "library/models.py#Book",
+        "tier": "likely"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "library/migrations/0002_book_title.py",
+        "to": "library/models.py#Book",
+        "tier": "likely"
+      },
+      {
+        "kind": "runs",
+        "from": "migration_operation:RunPython",
+        "to": "library/migrations/0002_book_title.py#fill_titles",
+        "tier": "certain"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "maps_to",
+        "from": "library/other_orm.py#Loan"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "library/migrations/0002_book_title.py",
+        "line": 16,
+        "cause": "dynamic"
+      }
+    ],
+    "brief": [
+      "| `Book` | `library/migrations/0001_initial.py` (`CreateModel book`), `library/migrations/0002_book_title.py` (`AddField book.title`)"
+    ]
+  }
+}

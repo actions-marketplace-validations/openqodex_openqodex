@@ -1,0 +1,15 @@
+{
+  "guards": "produces no React component, hook or test link from a class on a base named Component, use-named functions that call no React hook, and a render function of the repository's own",
+  "callers": [
+    {
+      "to": "src/widget.ts#Widget.render",
+      "site": "src/widget.test.ts:7",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "react",
+    "apps": 0,
+    "none": ["renders", "tests", "role"]
+  }
+}

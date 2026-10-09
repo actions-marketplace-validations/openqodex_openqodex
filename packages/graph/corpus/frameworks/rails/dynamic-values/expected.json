@@ -1,0 +1,103 @@
+{
+  "guards": "turns computed Rails route paths, options, templates, tables, classes, config keys and test requests into gaps, never edges",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": null,
+        "handler": "app/controllers/posts_controller.rb#PostsController.show",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:5",
+        "pattern": null,
+        "handler": "app/controllers/posts_controller.rb#PostsController.index"
+      },
+      {
+        "site": "config/routes.rb:7",
+        "pattern": "/x",
+        "status": "dynamic",
+        "handler": null
+      },
+      {
+        "site": "config/routes.rb:8",
+        "pattern": "/m",
+        "methods": [
+          "*"
+        ]
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "config/routes.rb",
+        "line": 2,
+        "cause": "dynamic"
+      },
+      {
+        "file": "config/routes.rb",
+        "line": 3,
+        "cause": "dynamic"
+      },
+      {
+        "file": "config/routes.rb",
+        "line": 4,
+        "cause": "dynamic"
+      },
+      {
+        "file": "config/routes.rb",
+        "line": 7,
+        "cause": "dynamic"
+      },
+      {
+        "file": "config/routes.rb",
+        "line": 8,
+        "cause": "dynamic"
+      },
+      {
+        "file": "app/controllers/posts_controller.rb",
+        "line": 2,
+        "cause": "dynamic"
+      },
+      {
+        "file": "app/controllers/posts_controller.rb",
+        "line": 8,
+        "cause": "dynamic"
+      },
+      {
+        "file": "app/models/post.rb",
+        "line": 2,
+        "cause": "dynamic"
+      },
+      {
+        "file": "app/models/post.rb",
+        "line": 3,
+        "cause": "dynamic"
+      },
+      {
+        "file": "db/migrate/20240101000000_create_things.rb",
+        "line": 3,
+        "cause": "dynamic"
+      },
+      {
+        "file": "app/services/flags.rb",
+        "line": 3,
+        "cause": "dynamic"
+      },
+      {
+        "file": "spec/requests/dynamic_spec.rb",
+        "line": 3,
+        "cause": "dynamic"
+      }
+    ],
+    "none": [
+      "renders",
+      "uses_type",
+      "maps_to",
+      "changes_schema",
+      "reads_config",
+      "applies_middleware"
+    ]
+  }
+}

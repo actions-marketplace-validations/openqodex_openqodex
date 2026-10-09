@@ -6,11 +6,15 @@
 // kind is in the certain set and every premise it rests on is certain.
 // "likely": a stated convention picked the one target (Ruby autoload, a
 // workspace package reached through its dist entry). "possible": the
-// evidence names a set (phase 2 and later). A name match alone is never
+// evidence names a set: a call through an interface or a base type to
+// each implementation, a function value a callee, an alias, a table or a
+// returned value may call. A name match alone is never
 // certain: no name-convention kind is in CERTAIN_KINDS, and validateSite
 // refuses a certain site whose kind is not.
 
-export const MODEL_VERSION = 2;
+// 3: dispatch, value and type uses (phase 2): the edge kinds implements,
+// dispatches_to, may_invoke, overrides, uses_value and uses_type.
+export const MODEL_VERSION = 3;
 export const API_VERSION = 1;
 
 export type Tier = "certain" | "likely" | "possible";
@@ -34,7 +38,16 @@ export type EvidenceKind =
   | "receiver-result" // a receiver a declared result type typed
   | "receiver-field" // a receiver reached through a typed field
   | "receiver-self" // this, self or cls in a method of the class
-  | "autoload"; // a Ruby constant found by the autoload convention
+  | "autoload" // a Ruby constant found by the autoload convention
+  // Possible only: the evidence names a set, never one definition.
+  | "dispatch-implements" // a call through an interface to one of its implementations
+  | "dispatch-override" // a call through a base type, or this or self, to an override in a subclass
+  | "invocation-summary" // a function passed to a callee whose body calls that parameter
+  | "value-alias" // a local given one function, then called
+  | "value-table" // a function in a literal table that a computed call on it may call
+  | "returned-value" // a function a callee returns by name, called where it is returned
+  // Likely at most: a match of member names, the signatures not compared.
+  | "method-set"; // a Go type or Python class that defines every member of an interface or Protocol
 
 // The kinds that may prove a certain edge. A kind outside this set yields
 // likely at most. The set never grows without a corpus case for the kind
@@ -75,6 +88,7 @@ export type Cause =
   | "ambiguous" // several definitions could be meant and no evidence picks one
   | "miss" // the evidence names a place where no such symbol exists now
   | "dynamic" // a call through a value: a parameter, a computed member
+  | "dynamic-base" // a class names a base with an expression (a call, a conditional), so what it extends is not known
   | "fan-out-capped"
   | "file-not-parsed" // the file was not read: size, budget, cap, memory, a parse error
   | "unsupported-language"
@@ -94,6 +108,7 @@ export const CAUSES: readonly Cause[] = [
   "ambiguous",
   "miss",
   "dynamic",
+  "dynamic-base",
   "fan-out-capped",
   "file-not-parsed",
   "unsupported-language",
@@ -132,7 +147,7 @@ export type Unknown = {
 // A cut a walk or a build made. `omitted` is exact when `exact`, else null
 // (a stop at a budget cannot count what lies past the frontier).
 export type Cut = {
-  by: "hub" | "second-hop" | "walk-limit" | "inline" | "budget" | "parse-cap" | "memory" | "size" | "storage" | "export-walk";
+  by: "hub" | "second-hop" | "walk-limit" | "inline" | "budget" | "parse-cap" | "memory" | "size" | "storage" | "export-walk" | "fan-out";
   at: string | null; // the symbol or file where the cut was made
   omitted: number | null;
   exact: boolean;
@@ -143,8 +158,11 @@ export type Cut = {
 // Checks a bound site before it is published: a certain tier needs a kind
 // in the certain set and, for a binding through a module, the import line
 // that proved it. Returns the reason it is invalid, or null.
+export const POSSIBLE_KINDS: ReadonlySet<EvidenceKind> = new Set<EvidenceKind>(["dispatch-implements", "dispatch-override", "invocation-summary", "value-alias", "value-table", "returned-value"]);
+
 export function validateEvidence(e: Evidence): string | null {
   if (e.tier === "certain" && !CERTAIN_KINDS.has(e.kind)) return `a certain site cannot rest on ${e.kind}`;
+  if (e.tier !== "possible" && POSSIBLE_KINDS.has(e.kind)) return `a ${e.kind} site names a set, so it is possible at most`;
   if (e.tier === "certain" && e.note !== null && /convention|guess/i.test(e.note)) return "a certain site cannot carry a convention note";
   const throughModule = e.kind === "import" || e.kind === "ts-paths" || e.kind === "workspace-package" || e.kind === "py-root" || e.kind === "go-module";
   if (throughModule && e.via === null) return `a ${e.kind} site needs the import line that proved it`;

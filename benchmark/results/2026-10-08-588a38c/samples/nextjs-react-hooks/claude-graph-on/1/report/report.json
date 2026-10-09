@@ -1,0 +1,432 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "low",
+    "build": {
+      "durationMs": 63,
+      "cacheHits": 0,
+      "parses": 4,
+      "eligibleFiles": 3,
+      "parsedFiles": 3,
+      "omittedFiles": 0,
+      "unresolvedSites": 3,
+      "externalSites": 7,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "app/search/page.tsx#SearchPage@7:25",
+        "file": "app/search/page.tsx",
+        "name": "SearchPage",
+        "kind": "function",
+        "startLine": 7,
+        "endLine": 29,
+        "snapshot": "current"
+      },
+      {
+        "id": "lib/api.ts#searchProducts@4:23",
+        "file": "lib/api.ts",
+        "name": "searchProducts",
+        "kind": "function",
+        "startLine": 4,
+        "endLine": 8,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "app/search/page.tsx#SearchPage@7:25"
+    ],
+    "removed": [],
+    "callers": [],
+    "callees": [
+      {
+        "seed": "app/search/page.tsx#SearchPage@7:25",
+        "edges": [
+          {
+            "from": "app/search/page.tsx#SearchPage@7:25",
+            "to": "lib/api.ts#searchProducts@4:23",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "app/search/page.tsx",
+                "line": 16,
+                "column": 5,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "app/search/page.tsx",
+                  "line": 5,
+                  "spec": "../../lib/api"
+                },
+                "note": null,
+                "rule": "js-relative"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "app/search/page.tsx#SearchPage@7:25",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 2
+      },
+      "near": [
+        {
+          "file": "app/search/page.tsx",
+          "line": 16,
+          "name": "then",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what searchProducts returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "app/search/page.tsx",
+          "line": 23,
+          "name": "map",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 2,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "f40fe5221f97e86897c4832f153547a621e2f7eb9b6d866029b00e48284df196",
+  "base": {
+    "ref": "HEAD",
+    "sha": "3d6a052e845bcf30ab75830d5649e2bec5967d38"
+  },
+  "generated_at": "2026-10-08T22:50:16.230Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Turns the search page into a client component that reads q from the URL, fetches matching products and renders them in a list. It also removes the search form.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/search/page.tsx",
+      "line_number": 21,
+      "line_end": 21,
+      "title": "URL query rendered as raw HTML",
+      "description": "The heading passes the q URL parameter into dangerouslySetInnerHTML without sanitizing it. React therefore inserts attacker-controlled markup into the page. An attacker can send a crafted search link that runs script in the victim's session. This is reflected XSS. Render the query as a normal text child so React escapes it.",
+      "suggested_change": "      <h1>Results for {query}</h1>",
+      "source": "lens:react-dangerously-set-inner-html",
+      "candidate": null,
+      "notes": [],
+      "problem": "The heading passes the q URL parameter into dangerouslySetInnerHTML without sanitizing it. React therefore inserts attacker-controlled markup into the page.",
+      "consequence": "An attacker can send a crafted search link that runs script in the victim's session. This is reflected XSS.",
+      "fix": "Render the query as a normal text child so React escapes it."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "app/search/page.tsx",
+      "line_number": 15,
+      "line_end": 17,
+      "title": "Effect refetches on every render",
+      "description": "The useEffect has no dependency array, so it runs after every render. Each fetch calls setResults with a new array, which triggers another render and another fetch. The page sends search requests to the catalog API in an endless loop while it stays open. This wastes client and server resources. Give the effect a dependency array containing query.",
+      "suggested_change": "  useEffect(() => {\n    searchProducts(query).then(setResults);\n  }, [query]);",
+      "source": "oxlint:react-hooks/exhaustive-deps",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The useEffect has no dependency array, so it runs after every render. Each fetch calls setResults with a new array, which triggers another render and another fetch.",
+      "consequence": "The page sends search requests to the catalog API in an endless loop while it stays open. This wastes client and server resources.",
+      "fix": "Give the effect a dependency array containing query."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/search/page.tsx",
+      "line_number": 10,
+      "line_end": 13,
+      "title": "Hooks called after a conditional return",
+      "description": "SearchPage returns early when q is missing, before it calls useState and useEffect. The number of hooks therefore changes when q goes from empty to set. React throws a hook order error when the user navigates between /search and /search?q=x. The page then crashes. Call useState and useEffect before the early return. Skip the fetch inside the effect when query is empty.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "SearchPage returns early when q is missing, before it calls useState and useEffect. The number of hooks therefore changes when q goes from empty to set.",
+      "consequence": "React throws a hook order error when the user navigates between /search and /search?q=x. The page then crashes.",
+      "fix": "Call useState and useEffect before the early return. Skip the fetch inside the effect when query is empty."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "app/search/page.tsx",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Search form removed with no replacement",
+      "description": "The change deletes the only search form in the repository. The page now says to type a search term but offers no input. Users have no way to enter a query. They can only search by editing the URL by hand. Keep the form with the q input on the page, and render the results below it.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change deletes the only search form in the repository. The page now says to type a search term but offers no input.",
+      "consequence": "Users have no way to enter a query. They can only search by editing the URL by hand.",
+      "fix": "Keep the form with the q input on the page, and render the results below it."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.8,
+      "file_path": "app/search/page.tsx",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Search failure is never handled",
+      "description": "searchProducts throws when the response is not ok, but the promise chain has no catch handler. The rejection goes unhandled. Users see stale or empty results with no error message when the API fails. The browser only logs an unhandled rejection. Add a catch handler that stores an error state and renders a message.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null,
+      "notes": [],
+      "problem": "searchProducts throws when the response is not ok, but the promise chain has no catch handler. The rejection goes unhandled.",
+      "consequence": "Users see stale or empty results with no error message when the API fails. The browser only logs an unhandled rejection.",
+      "fix": "Add a catch handler that stores an error state and renders a message."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/search/page.tsx",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "List items have no key",
+      "description": "The results list renders each li without a key. Product has a stable id field that could serve as the key. React cannot match items between renders when the results change. It logs a warning and may reuse the wrong elements. Use product.id as the key.",
+      "suggested_change": "          <li key={product.id}>{product.name}</li>",
+      "source": "oxlint:react/jsx-key",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "The results list renders each li without a key. Product has a stable id field that could serve as the key.",
+      "consequence": "React cannot match items between renders when the results change. It logs a warning and may reuse the wrong elements.",
+      "fix": "Use product.id as the key."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.7,
+      "file_path": "app/search/page.tsx",
+      "line_number": 8,
+      "line_end": 17,
+      "title": "New search behaviour has no test",
+      "description": "SearchPage now fetches products and renders results, but no test file covers this. The change adds no tests either. Regressions in fetching, rendering or the empty query path can ship without anyone noticing. Add a component test for the empty query path, the results path and the API failure path.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "SearchPage now fetches products and renders results, but no test file covers this. The change adds no tests either.",
+      "consequence": "Regressions in fetching, rendering or the empty query path can ship without anyone noticing.",
+      "fix": "Add a component test for the empty query path, the results path and the API failure path."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3622,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 26,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 17,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 23,
+    "deletions": 5
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 11749,
+      "started_at": "2026-10-08T22:49:36.685Z",
+      "ended_at": "2026-10-08T22:50:16.231Z",
+      "duration_ms": 39546,
+      "rounds": 2,
+      "usage": {
+        "turns": 4,
+        "input_tokens": 48304,
+        "output_tokens": 4600,
+        "cost_usd": 0.1725776
+      }
+    },
+    "snapshot": {
+      "change_id": "f40fe5221f97e86897c4832f153547a621e2f7eb9b6d866029b00e48284df196",
+      "tree": "dfdb40899e8a0fab04c9d9c21fec0fa51d164f35",
+      "before": "eb7671e83555a0a3df2806dac836d3700e6fbc377cc589a7b38e53dfbeb73e98",
+      "after": "eb7671e83555a0a3df2806dac836d3700e6fbc377cc589a7b38e53dfbeb73e98"
+    },
+    "candidates": {
+      "total": 2,
+      "disposed": 2
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "lib/api.ts"
+      ],
+      "files_not_read": [
+        "app/search/page.tsx"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

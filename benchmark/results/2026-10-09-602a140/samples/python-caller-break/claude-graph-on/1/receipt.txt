@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 major, 1 minor)
+Change 9f4d6ef41c2c against HEAD, 1 file, +6 -3
+Summary: Changes tax_for so it returns None for an unknown region instead of zero tax.
+1. Major bug: None return breaks checkout and receipt callers (pkgs/billing/src/billing/tax.py:8)
+2. Minor maintainability: No test covers the unknown region branch (pkgs/billing/src/billing/tax.py:7-8)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

@@ -1,0 +1,29 @@
+[
+  {
+    "tool": "Read",
+    "path": "orders/urls.py",
+    "inside": true,
+    "range": [
+      1,
+      10
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "orders/templates/orders/detail.html",
+    "inside": true,
+    "range": [
+      1,
+      3
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Grep",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "guards": "lists a Rails route that a change to config/routes.rb alone declares, bound to its existing action",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/posts/:id",
+        "name": "post",
+        "handler": "app/controllers/posts_controller.rb#PostsController.show",
+        "status": "bound"
+      }
+    ],
+    "brief": [
+      "| `GET /posts/:id` | `post` | `config/routes.rb:2` | `posts#show` | declared by this change |"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "guards": "emits nothing for Django-looking code when no manifest declares Django",
+  "frameworks": {
+    "plugin": "django",
+    "apps": 0,
+    "none": [
+      "registration",
+      "handles",
+      "renders",
+      "role",
+      "tests",
+      "mounts"
+    ]
+  }
+}

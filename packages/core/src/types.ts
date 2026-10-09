@@ -268,7 +268,10 @@ export type ImpactSymbol = {
 // "certain": an import, a definition in the same scope or a known receiver
 // type proves the call, and every step it rests on is proved. "likely": a
 // stated convention picked the one target; `note` says which. "possible":
-// one of a set (not produced before phase 2).
+// the call may reach this definition and nothing proves it does: a call
+// through an interface or a base type to one of its implementations, or a
+// function used as a value that a callee, an alias, a table or a returned
+// value may call.
 export type ImpactTier = "certain" | "likely" | "possible";
 
 export type ImpactSite = {
@@ -278,7 +281,9 @@ export type ImpactSite = {
   tier: ImpactTier;
   // What proved it: same-scope, import, ts-paths, workspace-package,
   // py-root, go-module, receiver-constructor, receiver-annotation,
-  // receiver-result, receiver-field, receiver-self or autoload.
+  // receiver-result, receiver-field, receiver-self or autoload; for a
+  // possible site, dispatch-implements, dispatch-override, method-set,
+  // invocation-summary, value-alias, value-table or returned-value.
   evidence: string;
   // The import line that proved a binding through a module.
   via: { file: string; line: number; spec: string | null } | null;
@@ -286,10 +291,17 @@ export type ImpactSite = {
   rule: string;
 };
 
+// The relations of the code graph. A caller list walks calls, inherits,
+// implements, dispatches_to (a call through an interface or a base type to
+// an implementation) and may_invoke (a function value a callee, an alias, a
+// table or a returned value may call). The other uses of a symbol are
+// overrides, uses_value and uses_type.
+export type ImpactEdgeKind = "calls" | "inherits" | "implements" | "dispatches_to" | "may_invoke" | "overrides" | "uses_value" | "uses_type" | "imports";
+
 export type ImpactEdge = {
   from: string; // symbol id
   to: string; // symbol id
-  kind: "calls" | "inherits" | "imports";
+  kind: ImpactEdgeKind;
   sites: ImpactSite[]; // every site, never only the first
 };
 
@@ -353,7 +365,15 @@ export type ImpactSummary = {
   symbols: ImpactSymbol[];
   touched: string[]; // symbol ids whose span overlaps a changed line
   removed: string[]; // symbol ids present in the base version of a changed file and gone now; a moved one has `movedTo`
-  callers: ImpactPath[];
+  callers: ImpactPath[]; // every step certain or likely
+  // Callers that may reach the touched code and are not proved to, one or
+  // two hops: a path with a possible step (dispatches_to, may_invoke) is
+  // here, never in `callers`. Absent before the graph knew dispatch.
+  possible?: ImpactPath[];
+  // Uses of the touched and removed symbols that are not calls, one hop:
+  // used as a value, named as a type, implemented or overridden. Absent
+  // before the graph knew them.
+  references?: { seed: string; edge: ImpactEdge }[];
   callees: ImpactPath[];
   importers: ImpactEdge[]; // files that import a changed file
   hubs: { symbol: string; callers: number; sites: number; files: number }[];
@@ -376,6 +396,62 @@ export type ImpactSummary = {
   // The folder the reviewer opens for everything the brief leaves out,
   // relative to the root it reads (the review snapshot); null when none was written.
   packet: string | null;
+  // What the framework plugins say about the change: the routes that reach
+  // it, the templates it renders, the migrations of a changed model, the
+  // tests that reference, call or may request it. Absent when the framework
+  // stage did not run.
+  frameworks?: ImpactFrameworks;
+};
+
+// A route registration listed for a change: because it reaches touched code
+// (`reach`), because it is declared on a changed line (`declared`), or
+// because its handler is gone (`status` other than "bound").
+export type ImpactFrameworkRoute = {
+  plugin: string;
+  app: string | null;
+  registration: string;
+  methods: string[];
+  pattern: string | null; // null when computed
+  partial?: string | null; // when pattern is null: the known parts, each computed part shown as "{computed}"
+  name: string | null;
+  site: { file: string; line: number };
+  handler: string; // as written at the registration
+  status: "bound" | "missing" | "dynamic" | "external" | "ambiguous" | "unresolved";
+  mounted: boolean; // false when no application root includes its route table
+  reach: { seed: string; seedName: string; hops: number; tier: ImpactTier; note: string | null } | null;
+  declared: boolean;
+};
+
+// A static association between a test and the touched code. Never coverage.
+export type ImpactFrameworkTest = {
+  test: string;
+  testName: string;
+  target: string;
+  targetName: string;
+  category: string; // direct-call, route-request, route-name, subject, component-render, type-or-value-reference
+  through: string | null; // the route the test requests or names, as "GET blog/<int:pk>/"
+  tier: ImpactTier;
+  note: string | null;
+  site: { file: string; line: number };
+};
+
+export type ImpactFrameworks = {
+  plugins: { id: string; status: string; reason: string | null; apps: number }[];
+  routes: ImpactFrameworkRoute[];
+  routesTotal: number;
+  renders: { from: string; fromName: string; template: string; file: string | null; tier: ImpactTier; note: string | null; site: { file: string; line: number } }[];
+  renderedBy: { template: string; by: string; byName: string; site: { file: string; line: number } }[];
+  models: { model: string; name: string; migrations: { file: string; line: number; operation: string }[] }[];
+  migrations: { file: string; operations: string[]; models: string[] }[];
+  tests: ImpactFrameworkTest[];
+  testsTotal: number;
+  roles: { target: string; name: string; role: string; detail: string | null }[];
+  unknown: { file: string | null; line: number | null; cause: string; note: string }[];
+  unknownTotal: number;
+  // Uncut, for the review packet: the changed files the section read, and
+  // the id of every route it lists before the summary's cut.
+  changedFiles?: string[];
+  routeIds?: string[];
 };
 
 // ---------- review ----------

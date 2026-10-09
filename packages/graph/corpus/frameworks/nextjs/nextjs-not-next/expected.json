@@ -1,0 +1,15 @@
+{
+  "guards": "produces no Next.js route, server action or role from folders named app and pages outside the router roots, or from directive strings that are not at the start of a file or a body",
+  "callers": [
+    {
+      "to": "lib/format.ts#format",
+      "site": "lib/save.ts:8",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "nextjs",
+    "apps": 0,
+    "none": ["registration", "handles", "applies_middleware", "role"]
+  }
+}

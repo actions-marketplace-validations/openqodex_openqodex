@@ -1,6 +1,6 @@
 # Plumbing commands
 
-`openqodex --help` lists four commands: `init`, `review`, `update` and `trust`. The commands below still work the same way. They are hidden from `--help` because hooks, the skill, the Action or OpenQodex itself call them, not people in daily use.
+`openqodex --help` lists five commands: `init`, `review`, `update`, `trust` and `graph`. The commands below still work the same way. They are hidden from `--help` because hooks, the skill, the Action, an agent or OpenQodex itself call them, not people in daily use.
 
 ## scan
 
@@ -130,3 +130,13 @@ When the issue could not be saved, OpenQodex says so and does not offer `--send-
 In a terminal, press 1 or 2. Any other key, Enter, Ctrl-C or the end of input counts as 2. Without a terminal (an agent, a git hook, CI), OpenQodex prints the issue and how to create it later with `openqodex report --send-last`; doing nothing ignores it.
 
 Choice 1 creates the issue with the GitHub CLI when `gh auth status` says you are signed in. Otherwise it opens the new issue page on GitHub with the title and body filled in, and prints the link. OpenQodex never signs you in. Choice 2 sends nothing. Nothing leaves your machine without choice 1. The last issue shown is kept in `.openqodex/last-report.json`, which git ignores.
+
+## mcp
+
+Started by an agent, never by you: `init` registers it with each agent it installs into (`agents`).
+
+```
+openqodex mcp [--repo <folder>]
+```
+
+Serves the code graph's questions to the agent as MCP tools over standard input and output, for the repository of the folder it starts in, or of `--repo`. Standard output carries the protocol only; diagnostics go to standard error. `graph` describes the tools, what the server reads and how it holds one build.

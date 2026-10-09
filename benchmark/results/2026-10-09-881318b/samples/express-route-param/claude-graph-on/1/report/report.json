@@ -1,0 +1,409 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "low",
+    "build": {
+      "durationMs": 54,
+      "cacheHits": 0,
+      "parses": 5,
+      "eligibleFiles": 4,
+      "parsedFiles": 4,
+      "omittedFiles": 0,
+      "unresolvedSites": 6,
+      "externalSites": 16,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "src/handlers/users.js#getUser@7:17",
+        "file": "src/handlers/users.js",
+        "name": "getUser",
+        "kind": "function",
+        "startLine": 7,
+        "endLine": 15,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/store.js#findUser@7:17",
+        "file": "src/store.js",
+        "name": "findUser",
+        "kind": "function",
+        "startLine": 7,
+        "endLine": 9,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/routes/users.js",
+        "file": "src/routes/users.js",
+        "name": "users.js",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 1,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "src/handlers/users.js#getUser@7:17"
+    ],
+    "removed": [],
+    "callers": [],
+    "callees": [
+      {
+        "seed": "src/handlers/users.js#getUser@7:17",
+        "edges": [
+          {
+            "from": "src/handlers/users.js#getUser@7:17",
+            "to": "src/store.js#findUser@7:17",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "src/handlers/users.js",
+                "line": 9,
+                "column": 16,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "src/handlers/users.js",
+                  "line": 1,
+                  "spec": "../store.js"
+                },
+                "note": null,
+                "rule": "js-relative"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "importers": [
+      {
+        "from": "src/routes/users.js",
+        "to": "src/handlers/users.js",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "src/routes/users.js",
+            "line": 2,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "src/routes/users.js",
+              "line": 2,
+              "spec": "../handlers/users.js"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "src/handlers/users.js#getUser@7:17",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 6
+      },
+      "near": [
+        {
+          "file": "src/handlers/users.js",
+          "line": 4,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/handlers/users.js",
+          "line": 11,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what res.status returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/handlers/users.js",
+          "line": 11,
+          "name": "status",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/handlers/users.js",
+          "line": 14,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/handlers/users.js",
+          "line": 18,
+          "name": "json",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what res.status returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/handlers/users.js",
+          "line": 18,
+          "name": "status",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 6,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "256602956034936f253b1dda229741e8e7bcf1154a95a631176676876c763367",
+  "base": {
+    "ref": "HEAD",
+    "sha": "78383332d99479fb5774ec28da65fedf25dcc723"
+  },
+  "generated_at": "2026-10-09T06:20:29.851Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "getUser now reads the user id from a destructured route param, puts the id in its 404 message, and adds a fetchedAt timestamp to the response.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "src/handlers/users.js",
+      "line_number": 8,
+      "line_end": 9,
+      "title": "Handler reads a route param that does not exist",
+      "description": "getUser reads req.params.userId. The route in src/routes/users.js:7 declares the param as :id, so userId is always undefined. findUser(undefined) returns nothing, so every GET /users/:id call gets a 404. The 404 message also reads 'no user with id undefined'. Read the id param that the route defines. Renaming the route param to :userId would also work.",
+      "suggested_change": "  const { id: userId } = req.params;\n  const user = findUser(userId);",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "getUser reads req.params.userId. The route in src/routes/users.js:7 declares the param as :id, so userId is always undefined.",
+      "consequence": "findUser(undefined) returns nothing, so every GET /users/:id call gets a 404. The 404 message also reads 'no user with id undefined'.",
+      "fix": "Read the id param that the route defines. Renaming the route param to :userId would also work."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/handlers/users.js",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "No test covers the changed getUser behaviour",
+      "description": "This change alters how getUser reads its param and what it returns. The repository has no test that exercises getUser. A test calling the route would have caught the broken param lookup. Without one, future regressions in this handler will also go unnoticed. Add a test that requests GET /users/1 and checks for a 200 status with a fetchedAt field. Add a second test that checks the 404 for an unknown id.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "This change alters how getUser reads its param and what it returns. The repository has no test that exercises getUser.",
+      "consequence": "A test calling the route would have caught the broken param lookup. Without one, future regressions in this handler will also go unnoticed.",
+      "fix": "Add a test that requests GET /users/1 and checks for a 200 status with a fetchedAt field. Add a second test that checks the 404 for an unknown id."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3441,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 22,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 10,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 4,
+    "deletions": 3
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 67230,
+      "started_at": "2026-10-09T06:20:18.181Z",
+      "ended_at": "2026-10-09T06:20:29.851Z",
+      "duration_ms": 11669,
+      "rounds": 1,
+      "usage": {
+        "turns": 5,
+        "input_tokens": 34793,
+        "output_tokens": 947,
+        "cost_usd": 0.0812234
+      }
+    },
+    "snapshot": {
+      "change_id": "256602956034936f253b1dda229741e8e7bcf1154a95a631176676876c763367",
+      "tree": "1ebfc0a62ec89e7d3fdb521026e007468d9562f3",
+      "before": "0fd367609cb60758b5bf9f683fde1c87335341b10a1e4c4cd777427f599169ec",
+      "after": "0fd367609cb60758b5bf9f683fde1c87335341b10a1e4c4cd777427f599169ec"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "src/handlers/users.js",
+        "src/routes/users.js",
+        "src/store.js"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}
