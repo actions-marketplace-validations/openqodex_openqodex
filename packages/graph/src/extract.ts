@@ -20,8 +20,10 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 // 14: the review of phase 2: Ruby mixins of one statement in the order Ruby
 // applies them, whether a function returns anything but named functions,
 // parameters given another value, abstract Python methods by decorator
-// only, and every type an annotation names.
-export const EXTRACTOR_VERSION = 14;
+// only, and every type an annotation names. 15: the parameters and returns
+// of a function written as a const arrow or function expression, and the
+// call a local holds found by the call's end.
+export const EXTRACTOR_VERSION = 15;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -33,11 +35,13 @@ type Frame = {
   // a nested function land here; `var` and parameters skip it.
   block?: boolean;
   // Locals given one value once (`const fn = helper`, `const h = pick(k)`):
-  // the value reference, or the call node whose result it holds.
+  // the value reference, or the call node whose result it holds, by its
+  // end (`pick(k)()` and `pick(k)` start at one place, never end at one).
   aliases?: Map<string, { ref?: number; callNode?: number }>;
   tables?: Map<string, number>; // names bound to a literal table, index into tables
   typeParams?: Map<string, TypeRef | null>; // TypeScript type parameters and their constraints
   objectAt?: number; // a module made from an object literal: the literal's start
+  fnAt?: number; // a const bound to a function: the function's start, whose frame is this definition's
   // Parameters of this function frame given another value in its body: a
   // call of one may not run what the caller passed.
   reassigned?: Set<string>;
@@ -452,7 +456,7 @@ class Ctx {
   // The call a call node made, when one was recorded since `before`.
   noteCall(node: Node, before: number): number | undefined {
     if (this.calls.length === before) return undefined;
-    this.callAt.set(node.startIndex, before);
+    this.callAt.set(node.endIndex, before);
     return before;
   }
 
@@ -462,7 +466,7 @@ class Ctx {
     const { line, column } = pos(node);
     const call: CallFact = { name: "", line, column, caller: this.caller(), recv: { kind: "other" }, dynamic: true };
     this.calls.push(call);
-    this.aliasCalls.push({ call, callNode: inner.startIndex });
+    this.aliasCalls.push({ call, callNode: inner.endIndex });
   }
 
   // A name in value position. Go names are decided where they are read (a
@@ -1301,20 +1305,22 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           const v = jsValueNode(ctx, value);
           const awaited = value?.type === "await_expression" ? value.firstNamedChild : value;
           if (v) ctx.noteAssign(name.text, { ref: ctx.addValue(v, "assign") }, true, block);
-          else if (awaited?.type === "call_expression") ctx.noteAssign(name.text, { callNode: awaited.startIndex }, true, block);
+          else if (awaited?.type === "call_expression") ctx.noteAssign(name.text, { callNode: awaited.endIndex }, true, block);
         } else if (!isFn) {
           const v = jsValueNode(ctx, value);
           if (v) ctx.addValue(v, "assign");
         }
+        // The function's own frame takes the definition (fnAt), so its
+        // parameters and what it returns by name are the definition's.
         if (isFn && moduleLevel) {
           const def = ctx.addDef(node, name, "function", { topLevel: true, exported: isExportedDecl(node), results: jsResults(value as Node) });
-          return ctx.push({ def, cls: null, locals: null });
+          return ctx.push({ def, cls: null, locals: null, fnAt: (value as Node).startIndex });
         }
         if (isFn && ctx.caller() >= 0) {
           // const inner = () => ... inside a function: a definition of that scope.
           const def = ctx.addDef(node, name, "function", { owner: ctx.ownerName(), results: jsResults(value as Node) });
           ctx.declareFn(name.text, def, block);
-          return ctx.push({ def, cls: null, locals: null });
+          return ctx.push({ def, cls: null, locals: null, fnAt: (value as Node).startIndex });
         }
         ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value), block);
         return;
@@ -1373,6 +1379,8 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
       case "function_expression":
       case "function":
       case "generator_function": {
+        // The value of `const apply = (cb) => ...`: the frame of apply itself.
+        if (ctx.top.fnAt === node.startIndex) return fnFrame(node, ctx.top.def);
         // `stop: () => 1` in an object literal made a module: its method.
         const pair = node.parent?.type === "pair" ? node.parent : null;
         const key = pair?.childForFieldName("key");
@@ -1770,7 +1778,7 @@ function extractPython(tree: Tree): FileFacts {
         if (left?.type === "identifier" && !inClassBody) {
           // A name given one value once may stand for it when called; a
           // literal table is read for its entries.
-          ctx.noteAssign(left.text, ref !== undefined ? { ref } : right?.type === "call" ? { callNode: right.startIndex } : null, false);
+          ctx.noteAssign(left.text, ref !== undefined ? { ref } : right?.type === "call" ? { callNode: right.endIndex } : null, false);
           if (right?.type === "dictionary") ctx.pendingTables.set(right.startIndex, { name: left.text, line: node.startPosition.row + 1, scope: ctx.top.fnDecl });
         }
         if (left?.type === "identifier") {
@@ -2023,7 +2031,7 @@ function extractGo(tree: Tree): FileFacts {
     const ref = v ? ctx.addValue(v, "assign") : undefined;
     let inner: Node | undefined = value;
     if (inner?.type === "unary_expression") inner = inner.childForFieldName("operand") ?? undefined;
-    ctx.noteAssign(name.text, ref !== undefined ? { ref } : value?.type === "call_expression" ? { callNode: value.startIndex } : null, false);
+    ctx.noteAssign(name.text, ref !== undefined ? { ref } : value?.type === "call_expression" ? { callNode: value.endIndex } : null, false);
     const body = inner?.type === "composite_literal" ? inner.childForFieldName("body") : null;
     if (body) ctx.pendingTables.set(body.startIndex, { name: name.text, line: name.startPosition.row + 1, scope: ctx.top.fnDecl });
   };

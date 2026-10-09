@@ -1,5 +1,5 @@
 // What each language's lookup order and the value rules may claim. Ways
-// they could claim more than the code proves, each on a real repo:
+// they could claim more than the code proves, or less, each on a real repo:
 // 4. A Python class whose first base is outside the graph (`UserDict`)
 //    binds a member to a later base in the repository as certain, though
 //    Python looks in the outside base first.
@@ -22,6 +22,12 @@
 // 12. An annotation naming more than sixteen types records only sixteen
 //     type uses, so changing the seventeenth hides the function that names
 //     it; and an annotation too large to read whole drops names unsaid.
+// 13. A function written as `const apply = (cb) => cb()` records no
+//     parameters and no returns, so a function passed to it, or returned
+//     by it by name, gets no possible caller (most TypeScript is written so).
+// 14. `const h = pick(k)()` reads as holding what `pick(k)` returns, since
+//     both calls start at one place, so `h()` reads as calling a function
+//     pick returns, which never runs there.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
@@ -143,5 +149,22 @@ describe("lookup orders and value rules", () => {
     const used = (g.refsOut.get(f) ?? []).filter((e) => e.kind === "uses_type").map((e) => g.nodes.get(e.to)?.name);
     expect(used.sort()).toEqual(names);
     expect(g.unknowns.filter((u) => u.file === "src/huge.ts").map((u) => u.cause)).toEqual(["unsupported-rule"]);
+  });
+
+  it("reads the parameters and the returns of a function written as a const arrow or function expression (13)", async () => {
+    const g = await graphOf({
+      "src/apply.ts":
+        "function handler(): number {\n  return 1;\n}\nfunction known(): number {\n  return 2;\n}\nexport const apply = (cb: () => number): number => cb();\nexport const each = function (f: () => number): number {\n  return f();\n};\nexport const pick = (k: string) => known;\nexport const run = (k: string): number => apply(handler) + each(handler) + pick(k)();\n",
+    });
+    expect(into(g, idOf(g, "src/apply.ts", "handler"))).toEqual(["src/apply.ts:12 may_invoke possible", "src/apply.ts:12 may_invoke possible"]);
+    expect(into(g, idOf(g, "src/apply.ts", "known"))).toEqual(["src/apply.ts:12 may_invoke possible"]);
+  });
+
+  it("never reads a const given the result of a call of a returned function as holding that function (14)", async () => {
+    const g = await graphOf({
+      "src/chain.ts":
+        "function known(): () => number {\n  return () => 1;\n}\nfunction pick(k: string): () => () => number {\n  return known;\n}\nexport function run(k: string): number {\n  const h = pick(k)();\n  return h();\n}\n",
+    });
+    expect(into(g, idOf(g, "src/chain.ts", "known"))).toEqual(["src/chain.ts:8 may_invoke possible"]);
   });
 });
