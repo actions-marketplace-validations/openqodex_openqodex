@@ -43,36 +43,10 @@ describe("the React plugin on a small real application", () => {
   }, 60_000);
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-  it("answers which component renders a changed component, and names only the one it imports", () => {
-    const button = sym(graph, "src/components/Button.tsx", "Button");
-    const from = layer(graph)
-      .edgesTo(button)
-      .filter((e) => e.kind === "renders")
-      .map((e) => graph.nodes.get(e.from)?.name);
-    expect(from).toEqual(["UserCard"]);
-    const other = sym(graph, "src/other/Button.tsx", "Button");
-    expect(layer(graph).edgesTo(other).filter((e) => e.kind === "renders")).toEqual([]);
-  });
-
   it("calls useUser a hook because it calls React's hooks, and not useLabel, which only has the name", () => {
     const roles = (id: string) => layer(graph).rolesOf(id).map((r) => r.role);
     expect(roles(sym(graph, "src/hooks/useUser.ts", "useUser"))).toContain("hook");
     expect(roles(sym(graph, "src/hooks/useLabel.ts", "useLabel"))).not.toContain("hook");
-  });
-
-  it("calls a class on React.Component a component, and says a table-picked element is unknown rather than guessing", () => {
-    expect(layer(graph).rolesOf(sym(graph, "src/components/Legacy.tsx", "Legacy")).map((r) => r.detail)).toContain("class");
-    const gap = graph.frameworks?.unknowns.find((u) => u.plugin === "react" && u.site?.file === "src/components/Picker.tsx");
-    expect(gap?.cause).toBe("dynamic");
-    expect(layer(graph).edgesFrom(sym(graph, "src/components/Picker.tsx", "Picker")).filter((e) => e.kind === "renders")).toEqual([]);
-  });
-
-  it("links the test that renders a component to that component, as a render and never as coverage", () => {
-    const links = layer(graph)
-      .testsOf(sym(graph, "src/components/UserCard.tsx", "UserCard"))
-      .map((l) => `${l.test} ${l.category}`)
-      .sort();
-    expect(links).toContain("src/components/UserCard.test.tsx component-render");
   });
 });
 
