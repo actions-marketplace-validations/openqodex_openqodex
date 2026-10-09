@@ -35,6 +35,11 @@
 //     pretends to answer when there is no graph.
 // 13. A tool name the brain did not define is run or is logged as inside.
 // 14. Bad arguments are run, or are logged as an attempt outside.
+// 15. A pattern or a glob makes the brain do unbounded work: a 65 KB
+//     pattern, a pattern that backtracks without end elsewhere, a glob of
+//     100 brace lists or of many `**` steps, a listing or a search over a
+//     snapshot of 20,000 files. Each must end under a fixed time, and a call
+//     that stops at a bound must say so in its reply and its log reason.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,8 +47,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getTreeChange } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
 import { buildGraph } from "@openqodex/graph";
-import { TOOL_DEFINITIONS, TOOL_REPLY_BYTES, runTool } from "../src/tools/index.js";
-import { compilePattern, matchesLine } from "../src/tools/pattern.js";
+import { TOOL_DEFINITIONS, TOOL_REPLY_BYTES, WALK_FILES, runTool } from "../src/tools/index.js";
+import { compileGlob, compilePattern, matchesLine } from "../src/tools/pattern.js";
 import type { ToolBox } from "../src/tools/index.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
@@ -309,5 +314,92 @@ describe("calls the brain cannot run", () => {
   it("reads a JSON text holding one object as that object", async () => {
     const r = await runTool(box, "read_file", JSON.stringify({ path: "src/math.ts", lines: 1 }));
     expect(r).toMatchObject({ ok: true, range: [1, 1] });
+  });
+});
+
+describe("15. the bounds on the work one call may ask for", () => {
+  const timed = async (name: string, args: unknown, b: ToolBox = box) => {
+    const started = performance.now();
+    const r = await runTool(b, name, args);
+    return { r, ms: performance.now() - started };
+  };
+
+  it("refuses a 65 KB pattern or glob at once", async () => {
+    const big = "a".repeat(65 * 1024);
+    for (const [name, args] of [
+      ["search_code", { pattern: big }],
+      ["search_code", { pattern: "x", glob: big }],
+      ["list_files", { glob: big }],
+    ] as const) {
+      const { r, ms } = await timed(name, args);
+      expect(ms, name).toBeLessThan(500);
+      expect(r, name).toMatchObject({ ok: false, inside: true });
+      expect(r.reason, name).toMatch(/over 1000 characters/);
+    }
+  });
+
+  it("runs patterns that backtrack without end elsewhere in bounded time", async () => {
+    for (const pattern of ["^(x+x+)+y$", "(x*)*(x*)*(x*)*y", "(x|xx|xxx)+y", "(.*){20}y"]) {
+      const { r, ms } = await timed("search_code", { pattern });
+      expect(ms, pattern).toBeLessThan(5_000);
+      expect(r.ok, pattern).toBe(true);
+    }
+  });
+
+  it("refuses a glob of 100 brace lists at once, as a call it will not run, not an attempt outside", async () => {
+    const glob = "{a,b}".repeat(100);
+    for (const name of ["list_files", "search_code"]) {
+      const { r, ms } = await timed(name, { pattern: "x", glob });
+      expect(ms, name).toBeLessThan(500);
+      expect(r, name).toMatchObject({ ok: false, inside: true });
+      expect(r.reason, name).toMatch(/brace list/);
+    }
+  });
+
+  it("matches a glob of many ** steps in bounded time", async () => {
+    const glob = `${"**a".repeat(150)}**b`;
+    const { r, ms } = await timed("list_files", { glob });
+    expect(ms).toBeLessThan(5_000);
+    expect(r.ok).toBe(true);
+  });
+
+  it("stops a listing and a search of 20,000 files at the walk's bound and records the cut", async () => {
+    const dir = tempDir("oq-tools-many-");
+    for (let f = 0; f < 100; f++) {
+      mkdirSync(join(dir, `d${String(f).padStart(3, "0")}`));
+      for (let k = 0; k < 200; k++) writeFileSync(join(dir, `d${String(f).padStart(3, "0")}`, `f${k}.txt`), "a line of text\n");
+    }
+    const many: ToolBox = { ...box, snapshotDir: dir };
+    const listed = await timed("list_files", {}, many);
+    expect(listed.ms).toBeLessThan(10_000);
+    expect(listed.r.ok).toBe(true);
+    expect(listed.r.text.split("\n")[0]).toBe(`${WALK_FILES} or more files; the file walk stopped after ${WALK_FILES} files`);
+    expect(listed.r.reason).toMatch(new RegExp(`^the file walk stopped after ${WALK_FILES} files; cut at 32 KB: \\d+ of ${WALK_FILES} files listed; narrow the glob$`));
+    expect(Buffer.byteLength(listed.r.text)).toBeLessThanOrEqual(TOOL_REPLY_BYTES);
+    const searched = await timed("search_code", { pattern: "line" }, many);
+    expect(searched.ms).toBeLessThan(15_000);
+    expect(searched.r.ok).toBe(true);
+    expect(searched.r.text.split("\n")[0]).toMatch(/^500 matches in 10000 or more files; the search stopped at 500 matches$/);
+    expect(searched.r.reason).toMatch(/stopped at 500 matches/);
+    const none = await timed("search_code", { pattern: "zz_absent" }, many);
+    expect(none.ms).toBeLessThan(15_000);
+    expect(none.r.text).toBe(`0 matches in ${WALK_FILES} or more files; the file walk stopped after ${WALK_FILES} files`);
+    expect(none.r.reason).toBe(`the file walk stopped after ${WALK_FILES} files; narrow the pattern or the glob`);
+  });
+
+  it("a glob means what core's glob matcher says it means", () => {
+    const paths = ["src/a.ts", "src/x/b.ts", "a.ts", "src/.hidden", "docs/a.md"];
+    for (const [glob, want] of [
+      ["src/*.ts", ["src/a.ts"]],
+      ["src/**", ["src/a.ts", "src/x/b.ts", "src/.hidden"]],
+      ["**.ts", ["src/a.ts", "src/x/b.ts", "a.ts"]],
+      ["?.ts", ["a.ts"]],
+      ["docs/a.md", ["docs/a.md"]],
+    ] as const) {
+      const c = compileGlob(glob);
+      expect("program" in c, glob).toBe(true);
+      const program = (c as { program: Parameters<typeof matchesLine>[0] }).program;
+      expect(paths.filter((p) => matchesLine(program, p)), glob).toEqual(want);
+    }
   });
 });

@@ -18,28 +18,37 @@
 // aimed at a secret (its prefix, the redaction marker) gets the answer a miss
 // gets. Each reply is redacted once more at the end, and the log keeps each
 // call's arguments redacted the same way.
-import { lstatSync, openSync, closeSync, fstatSync, readFileSync, constants } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix } from "node:path";
-import { REDACTED, matchesGlob, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
+import { REDACTED, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
 import { API_VERSION, query } from "@openqodex/graph";
 import type { Candidate, Graph, Item } from "@openqodex/graph";
 import { classify } from "../agents/trace.js";
 import type { ToolDefinition } from "../reviewer.js";
-import { MAX_FILE_BYTES, snapshotFiles } from "../snapshot.js";
-import { compilePattern, matchesLine } from "./pattern.js";
+import { MAX_FILE_BYTES } from "../snapshot.js";
+import { compileGlob, compilePattern, matchesLine } from "./pattern.js";
+import type { Program } from "./pattern.js";
 
 // The most bytes one tool reply carries.
 export const TOOL_REPLY_BYTES = 32 * 1024;
 const BOUND = `${TOOL_REPLY_BYTES / 1024} KB`;
 // How much of a call's arguments the log keeps.
 const MAX_DETAIL_CHARS = 2000;
+// Every bound on the work one call may ask for. Whatever the reviewer sends,
+// a call reads at most WALK_ENTRIES folder entries, considers at most
+// WALK_FILES files, reads at most SEARCH_BYTES of them, and runs the matcher
+// at most SEARCH_STEPS (a pattern) or GLOB_STEPS (a glob) steps; a call that
+// reaches a bound stops there and says so in its reply and in the log.
 const MAX_PATTERN_CHARS = 1000;
+const MAX_GLOB_CHARS = 1000;
 const MAX_MATCHES = 500;
 const MAX_MATCH_CHARS = 300;
-// The most matcher steps one search may take (characters searched times the
-// matcher's size); a search that would pass it stops there and says so.
-const SEARCH_WORK = 200_000_000;
+export const WALK_ENTRIES = 100_000;
+export const WALK_FILES = 10_000;
+const SEARCH_BYTES = 64 * 1024 * 1024;
+const SEARCH_STEPS = 50_000_000;
+const GLOB_STEPS = 20_000_000;
 const MAX_CALLERS = 100;
 
 export const TOOL_NAMES = ["read_file", "search_code", "list_files", "read_diff_for_file", "find_callers"] as const;
@@ -281,13 +290,73 @@ function readFile(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"
   };
 }
 
-// The snapshot's files a glob admits, or the refusal of the glob.
-function filesFor(box: ToolBox, tool: string, glob: string | null): { files: string[] } | { refused: Omit<ToolOutcome, "tool" | "detail"> } {
-  const all = snapshotFiles(box.snapshotDir);
-  if (glob === null) return { files: all };
+// The snapshot's regular files, walked in name order, without following a
+// link and without the `.git` entry, as far as the bounds allow: at most
+// WALK_ENTRIES folder entries read and WALK_FILES files kept. A glob keeps
+// only the files it matches, run on the bounded matcher with GLOB_STEPS
+// steps in all. `cut` names the bound the walk stopped at, if any.
+type Walk = { files: string[]; cut: string | null };
+
+function walkFiles(root: string, glob: Program | null): Walk {
+  const files: string[] = [];
+  const budget = { steps: GLOB_STEPS };
+  let entries = 0;
+  // Folders still to read, the next one last.
+  const folders = [""];
+  while (folders.length > 0) {
+    const rel = folders.pop()!;
+    let dir;
+    try {
+      dir = opendirSync(join(root, rel));
+    } catch {
+      continue;
+    }
+    const here: { name: string; folder: boolean }[] = [];
+    try {
+      for (let e = dir.readSync(); e !== null; e = dir.readSync()) {
+        if (++entries > WALK_ENTRIES) return { files, cut: `stopped after ${WALK_ENTRIES} folder entries` };
+        if (rel === "" && e.name === ".git") continue;
+        if (e.isDirectory()) here.push({ name: e.name, folder: true });
+        else if (e.isFile()) here.push({ name: e.name, folder: false });
+      }
+    } finally {
+      dir.closeSync();
+    }
+    here.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const sub: string[] = [];
+    for (const e of here) {
+      const path = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.folder) {
+        sub.push(path);
+        continue;
+      }
+      if (glob !== null) {
+        const hit = matchesLine(glob, path, budget);
+        if (hit === null) return { files, cut: `stopped when the glob had taken its ${GLOB_STEPS} matcher steps` };
+        if (!hit) continue;
+      }
+      if (files.length >= WALK_FILES) return { files, cut: `stopped after ${WALK_FILES} files` };
+      files.push(path);
+    }
+    // The folders of this one, first name first.
+    for (let k = sub.length - 1; k >= 0; k--) folders.push(sub[k]!);
+  }
+  return { files, cut: null };
+}
+
+// The files a call considers: every one, or those a glob admits, or the
+// refusal of the glob. A glob is placed like a path (outside, absolute and
+// `.git` refused) and then matched by the bounded matcher.
+function filesFor(box: ToolBox, tool: string, glob: string | null): Walk | { refused: Omit<ToolOutcome, "tool" | "detail"> } {
+  if (glob === null) return walkFiles(box.snapshotDir, null);
+  if (glob.length > MAX_GLOB_CHARS) return { refused: badArgs(`glob is over ${MAX_GLOB_CHARS} characters`) };
+  // Refused before it is placed: placing expands brace lists.
+  if (/[{}]/.test(glob)) return { refused: refusal("a glob with a brace list ({a,b}) is not supported; ask with one glob per call", true, ".") };
   const placed = placePath(box, tool, glob, "glob", false);
   if ("refused" in placed) return placed;
-  return { files: all.filter((f) => matchesGlob(f, placed.rel)) };
+  const compiled = compileGlob(placed.rel);
+  if ("refused" in compiled) return { refused: refusal(compiled.refused, true, ".") };
+  return walkFiles(box.snapshotDir, compiled.program);
 }
 
 async function searchCode(box: ToolBox, args: Args): Promise<Omit<ToolOutcome, "tool" | "detail">> {
@@ -295,50 +364,52 @@ async function searchCode(box: ToolBox, args: Args): Promise<Omit<ToolOutcome, "
   const glob = str(args, "glob", false);
   for (const v of [pattern, glob]) if (isBad(v)) return badArgs(v.bad);
   if ((pattern as string).length > MAX_PATTERN_CHARS) return badArgs(`pattern is over ${MAX_PATTERN_CHARS} characters`);
-  const listed = filesFor(box, "search_code", glob as string | null);
-  if ("refused" in listed) return listed.refused;
   const compiled = compilePattern(pattern as string);
   if ("refused" in compiled) return refusal(compiled.refused, true, ".");
+  const walk = filesFor(box, "search_code", glob as string | null);
+  if ("refused" in walk) return walk.refused;
   const { program } = compiled;
   const found: string[] = [];
-  let limited = false;
-  let work = 0;
+  const budget = { steps: SEARCH_STEPS };
+  let bytesLeft = SEARCH_BYTES;
   let searched = 0;
-  outer: for (const [k, rel] of listed.files.entries()) {
+  let stop: string | null = walk.cut === null ? null : `the file walk ${walk.cut}`;
+  outer: for (const [k, rel] of walk.files.entries()) {
     // A long search lets the rest of the process run between files.
     if (k > 0 && k % 100 === 0) await new Promise<void>((done) => setImmediate(done));
     const lines = redactedLines(box, rel);
-    if (lines === null) {
-      searched++;
-      continue;
-    }
-    // The work counts every line, a skipped one too, so where a search
-    // stops never depends on where a secret was.
-    const cost = lines.reduce((n, l) => n + (l.length + 1) * program.length, 0);
-    if (work + cost > SEARCH_WORK) break;
-    work += cost;
-    searched++;
-    for (const [i, line] of lines.entries()) {
-      if (line.includes(REDACTED) || !matchesLine(program, line)) continue;
-      found.push(`${rel}:${i + 1}: ${line.slice(0, MAX_MATCH_CHARS)}`);
-      if (found.length >= MAX_MATCHES) {
-        limited = true;
-        break outer;
+    if (lines !== null) {
+      const size = lines.reduce((n, l) => n + l.length + 1, 0);
+      if (size > bytesLeft) {
+        stop = `the search stopped after ${searched} files, at its ${SEARCH_BYTES / 1024 / 1024} MB read bound`;
+        break;
+      }
+      bytesLeft -= size;
+      for (const [i, line] of lines.entries()) {
+        // Every line takes its steps, a redacted one too, so where a search
+        // stops never depends on where a secret was; a redacted line is
+        // never a result.
+        const hit = matchesLine(program, line, budget);
+        if (hit === null) {
+          stop = `the search stopped in its ${searched + 1}th file, at its ${SEARCH_STEPS} matcher steps`;
+          break outer;
+        }
+        if (!hit || line.includes(REDACTED)) continue;
+        found.push(`${rel}:${i + 1}: ${line.slice(0, MAX_MATCH_CHARS)}`);
+        if (found.length >= MAX_MATCHES) {
+          stop = `the search stopped at ${MAX_MATCHES} matches`;
+          break outer;
+        }
       }
     }
+    searched++;
   }
-  const stopped = !limited && searched < listed.files.length;
-  const header = `${found.length}${limited ? " or more" : ""} ${found.length === 1 ? "match" : "matches"} in ${listed.files.length} ${listed.files.length === 1 ? "file" : "files"}${stopped ? `; the search stopped at its work bound after ${searched} of them` : ""}`;
+  const files = `${walk.files.length}${walk.cut !== null ? " or more" : ""} ${walk.files.length === 1 && walk.cut === null ? "file" : "files"}`;
+  const header = `${found.length} ${found.length === 1 ? "match" : "matches"} in ${files}${stop !== null ? `; ${stop}` : ""}`;
   const { text, shown } = fill(header, found);
-  const reason =
-    shown < found.length
-      ? `cut at ${BOUND}: ${shown} of ${found.length} matches sent; narrow the pattern or the glob`
-      : limited
-        ? `stopped at ${MAX_MATCHES} matches`
-        : stopped
-          ? `stopped at the search's work bound after ${searched} of ${listed.files.length} files; narrow the pattern or the glob`
-          : null;
-  return { text, ok: true, path: ".", inside: true, range: null, reason };
+  const cut = shown < found.length ? `cut at ${BOUND}: ${shown} of ${found.length} matches sent` : null;
+  const reason = [stop, cut].filter((r) => r !== null).join("; ");
+  return { text, ok: true, path: ".", inside: true, range: null, reason: reason === "" ? null : `${reason}; narrow the pattern or the glob` };
 }
 
 function listFiles(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"> {
@@ -347,8 +418,10 @@ function listFiles(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail
   const listed = filesFor(box, "list_files", glob);
   if ("refused" in listed) return listed.refused;
   const rows = listed.files.map((f) => redactSecrets(f, box.secrets));
-  const { text, shown } = fill(`${rows.length} ${rows.length === 1 ? "file" : "files"}${glob !== null ? ` match ${glob}` : ""}`, rows);
-  return { text, ok: true, path: ".", inside: true, range: null, reason: shown < rows.length ? `cut at ${BOUND}: ${shown} of ${rows.length} files listed; narrow the glob` : null };
+  const count = `${rows.length}${listed.cut !== null ? " or more" : ""} ${rows.length === 1 && listed.cut === null ? "file" : "files"}`;
+  const { text, shown } = fill(`${count}${glob !== null ? ` match ${glob}` : ""}${listed.cut !== null ? `; the file walk ${listed.cut}` : ""}`, rows);
+  const reasons = [listed.cut !== null ? `the file walk ${listed.cut}` : null, shown < rows.length ? `cut at ${BOUND}: ${shown} of ${rows.length} files listed` : null].filter((r) => r !== null);
+  return { text, ok: true, path: ".", inside: true, range: null, reason: reasons.length > 0 ? `${reasons.join("; ")}; narrow the glob` : null };
 }
 
 function readDiff(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"> {

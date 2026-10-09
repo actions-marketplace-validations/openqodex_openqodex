@@ -247,8 +247,10 @@ export function compilePattern(src: string): { program: Program } | { refused: s
 }
 
 // Whether the pattern matches anywhere in `line`, by stepping every live
-// state of the automaton one character at a time.
-export function matchesLine(prog: Program, line: string): boolean {
+// state of the automaton one character at a time. `budget.steps` is the work
+// left for the caller's whole search: each state visited takes one, and the
+// answer is null once it runs out.
+export function matchesLine(prog: Program, line: string, budget?: { steps: number }): boolean | null {
   const n = prog.length;
   const mark = new Uint32Array(n);
   let gen = 1;
@@ -266,6 +268,7 @@ export function matchesLine(prog: Program, line: string): boolean {
     const stack = [start];
     while (stack.length > 0) {
       const pc = stack.pop()!;
+      work++;
       if (mark[pc] === gen) continue;
       mark[pc] = gen;
       const inst = prog[pc]!;
@@ -277,9 +280,15 @@ export function matchesLine(prog: Program, line: string): boolean {
       else list.push(pc);
     }
   };
+  let work = 0;
   let current: number[] = [];
   add(current, 0, 0);
   for (let i = 0; ; i++) {
+    if (budget) {
+      budget.steps -= work + current.length;
+      work = 0;
+      if (budget.steps < 0) return null;
+    }
     if (matched) return true;
     if (i === line.length) return false;
     const c = line.charCodeAt(i);
@@ -293,4 +302,23 @@ export function matchesLine(prog: Program, line: string): boolean {
     add(next, 0, i + 1);
     current = next;
   }
+}
+
+// A file glob as a matcher over whole paths: `*` any characters but `/`,
+// `**` any characters, `?` one character but `/`, everything else itself
+// (the meaning core's matchesGlob gives a glob). Brace lists are refused:
+// they multiply what one glob asks for.
+export function compileGlob(glob: string): { program: Program } | { refused: string } {
+  if (/[{}]/.test(glob)) return { refused: "a glob with a brace list ({a,b}) is not supported; ask with one glob per call" };
+  let src = "^";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]!;
+    if (c === "*" && glob[i + 1] === "*") {
+      src += "[\\s\\S]*";
+      i++;
+    } else if (c === "*") src += "[^/]*";
+    else if (c === "?") src += "[^/]";
+    else src += c.replace(/[\\^$.|?*+()[\]{}]/g, "\\$&");
+  }
+  return compilePattern(`${src}$`);
 }
