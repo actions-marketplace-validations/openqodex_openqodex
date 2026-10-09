@@ -135,6 +135,26 @@ function exited(p: ReturnType<typeof spawn>): Promise<{ code: number | null; out
   p.stderr?.on("data", (d: Buffer) => (out += d.toString()));
   return new Promise((r) => p.once("exit", (code) => r({ code, out })));
 }
+// The checkedAt of the home's update state, or null without one.
+function checkedAt(s: Sandbox): string | null {
+  try {
+    return (JSON.parse(readFileSync(join(s.oqHome, "update.json"), "utf8")) as { checkedAt?: string }).checkedAt ?? null;
+  } catch {
+    return null;
+  }
+}
+// True when no background check ran in the home for `ms`: a launcher
+// command with a check due starts one, which writes checkedAt and takes the
+// home's lock to do it, so an activation with no wait beside it reports
+// busy (#57).
+async function noCheckRuns(s: Sandbox, ms: number): Promise<boolean> {
+  const before = checkedAt(s);
+  for (const end = Date.now() + ms; Date.now() < end; ) {
+    if (checkedAt(s) !== before) return false;
+    await sleep(100);
+  }
+  return checkedAt(s) === before;
+}
 // A worker's last step: activateUnpacked in a child, printing its result as JSON.
 function activation(s: Sandbox, v: string, from: string, extra: Record<string, string> = {}) {
   const tmp = unpacked(s, v);
@@ -226,6 +246,24 @@ describe("5. three processes contending for the boundary", () => {
       expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["in", "out", "in", "out", "in", "out"]);
     }
   }, 120_000);
+});
+
+describe("5b. the lock is per home folder", () => {
+  // Its port comes from the home folder, so two test files, each with homes
+  // of their own, never share one; only a process in the same home can
+  // hold it (#57).
+  it("activations in two homes at once both activate; one in a home whose lock another process holds reports busy", async () => {
+    const [a, b, c] = [installed(), installed(), installed()];
+    const both = await Promise.all([activation(a, NEWER, version).done, activation(b, NEWER, version).done]);
+    for (const r of both) expect(r.out).toMatch(/"outcome":"activated"/);
+    const holder = nodeChild(`await m.withBoundary(process.env.H, { wait: 0 }, async () => { process.stdout.write("held\\n"); await new Promise((r) => setTimeout(r, 30000)); });`, { H: c.oqHome });
+    try {
+      await new Promise<void>((resolve) => holder.stdout?.on("data", (d: Buffer) => d.toString().includes("held") && resolve()));
+      expect((await activation(c, NEWER, version).done).out).toMatch(/"outcome":"busy"/);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  }, 180_000);
 });
 
 describe("6. the boundary's listener", () => {
@@ -711,9 +749,13 @@ describe("20 to 27. the third review", () => {
 
   it("a handoff finalizes a findings path given after -- (failure 24)", async () => {
     const s = installed();
+    // A check ran today, so the review below starts no background check that
+    // would hold this home's lock while the activation runs (#57).
+    writeFileSync(join(s.oqHome, "update.json"), JSON.stringify({ checkedAt: new Date().toISOString() }));
     writeFileSync(join(s.repo, "app.py"), "print('hello')\n");
     git(s.repo, "add", "app.py");
     expect(launch(s, ["review", "--agent", "--no-install"]).status).toBe(0);
+    expect(await noCheckRuns(s, 3000), "a background update check ran beside the activation").toBe(true);
     const dir = join(s.repo, (JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8")) as { dir: string }).dir);
     const scan = JSON.parse(readFileSync(join(dir, "scan.json"), "utf8")) as { candidates: { id: string }[] };
     const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { change_id: string };
