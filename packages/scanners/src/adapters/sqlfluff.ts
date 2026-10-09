@@ -1,7 +1,8 @@
 // SQLFluff adapter (SQL lint). Runs
 // `sqlfluff lint --format json --templater raw --library-path none
-// --rules <list> -- <files>` from the repository root on the changed .sql
-// files, and turns each violation of the listed rules into a StaticFinding.
+// --rules <list> -- <files>` on a copy of the changed .sql files and of the
+// settings files SQLFluff reads for them, and turns each violation of the
+// listed rules into a StaticFinding.
 //
 // The rules: only those that name a query that is wrong or dead, never a
 // style rule. A comparison with NULL by `=` (CV05), a set query whose sides
@@ -25,7 +26,13 @@
 //   `setup.cfg`, `tox.ini`, `pep8.ini` and `pyproject.toml`, and
 //   `.sqlfluffignore`. They choose the dialect, the rules left out, and
 //   which rules only warn. The rules that run are this list whatever they
-//   say.
+//   say. SQLFluff searches from the common ancestor of the file and its
+//   HOME down to the file (core/config/loader.py, load_config_up_to_path),
+//   which is above the repository, so a settings file there would count.
+//   So it runs on a staging copy (iac.ts, withStage) of the changed .sql
+//   files and of those settings files in each folder from the repository
+//   root down to each one, regular files reached through no link only, with
+//   HOME beside the copy: the search never leaves it.
 // - The dialect: the one the settings name, else postgres. HOME is a folder
 //   of OpenQodex's own whose `.sqlfluff` names postgres, the lowest layer,
 //   so any dialect a settings file names wins; your user settings folder is
@@ -47,10 +54,12 @@ import type {
   ScannerSeverity as StaticFindingSeverity,
   StaticFinding,
 } from "@openqodex/core";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { describeFailure, execTool, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
+import { withStage } from "./iac.js";
 import type { Adapter } from "./index.js";
-import { withOwnedConfig } from "./owned-config.js";
 import { suchAs } from "./words.js";
 
 const SQLFLUFF_TIMEOUT_MS = 120_000;
@@ -63,6 +72,24 @@ const WRONG_RESULT = new Set(["AL04", "AM07", "AM08", "CV05", "RF01"]);
 
 // The dialect when no settings file names one, as the lowest settings layer.
 const DEFAULT_SETTINGS = "[sqlfluff]\ndialect = postgres\n";
+
+// The files SQLFluff reads its settings and ignore list from, in each folder
+// (core/config/loader.py, load_config_at_path; core/linter/discovery.py).
+const SETTINGS_NAMES = [".sqlfluff", ".sqlfluffignore", "setup.cfg", "tox.ini", "pep8.ini", "pyproject.toml"];
+
+// The changed .sql files and the settings files of every folder from the
+// repository root down to each one's own: what the staging copy holds.
+export function sqlfluffStageFiles(files: readonly string[]): string[] {
+  const out = new Set<string>(files);
+  for (const file of files) {
+    const parts = path.posix.dirname(file) === "." ? [] : path.posix.dirname(file).split("/");
+    for (let depth = 0; depth <= parts.length; depth++) {
+      const folder = parts.slice(0, depth).join("/");
+      for (const name of SETTINGS_NAMES) out.add(folder === "" ? name : `${folder}/${name}`);
+    }
+  }
+  return [...out].sort();
+}
 
 function isSqlPath(p: string): boolean {
   return p.toLowerCase().endsWith(".sql");
@@ -95,12 +122,15 @@ export async function runSqlfluff(args: {
     "--",
     ...chunk,
   ];
-  return withOwnedConfig(".sqlfluff", DEFAULT_SETTINGS, async (_config, home) => {
+  return withStage(args.repoDir, [], sqlfluffStageFiles(files), async (stage) => {
+    await fs.writeFile(path.join(stage.home, ".sqlfluff"), DEFAULT_SETTINGS);
+    const staged = new Set(stage.files);
+    const present = files.filter((f) => staged.has(f));
     // One process per chunk of files, so a whole-repo file list stays under
     // the argument limit; the findings of every chunk are merged.
     try {
-      const findings = await runInChunks("sqlfluff", files, SQLFLUFF_TIMEOUT_MS, async (chunk, left) => {
-        const stdout = await execSqlfluff(tool, cliArgs(chunk), args.repoDir, left, home);
+      const findings = await runInChunks("sqlfluff", present, SQLFLUFF_TIMEOUT_MS, async (chunk, left) => {
+        const stdout = await execSqlfluff(tool, cliArgs(chunk), stage.tree, left, stage.home);
         try {
           return parseSqlfluffJson(stdout);
         } catch (err) {

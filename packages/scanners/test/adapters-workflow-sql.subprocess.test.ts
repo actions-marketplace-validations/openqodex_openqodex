@@ -250,6 +250,21 @@ describe("workflow and SQL scanner subprocesses", () => {
     ]);
   }, 300_000);
 
+  // SQLFluff looks for settings in every folder from the common ancestor of
+  // the file and its HOME down to the file, so a settings file above the
+  // repository could leave a rule out. It runs on a copy of the repository's
+  // SQL and settings files whose HOME sits beside the copy.
+  it("sqlfluff never reads settings above the repository", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-parent-"));
+    writeFileSync(join(parent, ".sqlfluff"), "[sqlfluff]\nexclude_rules = CV05\n");
+    writeFileSync(join(parent, "setup.cfg"), "[sqlfluff]\nexclude_rules = CV05\n");
+    const repo = join(parent, "repo");
+    mkdirSync(repo);
+    const result = await scanAt(repo, "sqlfluff", { "reports/active.sql": NULL_COMPARISON }, ["reports/active.sql"]);
+    expect(result.scan.scanners[0]).toMatchObject({ status: "ran", reason: null });
+    expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "sqlfluff", ruleId: "CV05", filePath: "reports/active.sql" }));
+  }, 300_000);
+
   // A review runs it on every changed .sql file; a slow start would stall it.
   it("sqlfluff checks a small file in under 10 seconds once installed", async () => {
     await resolveFirst("sqlfluff");
