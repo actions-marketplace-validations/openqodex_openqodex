@@ -9,6 +9,8 @@ import { API_VERSION } from "../model/records.js";
 import type { Tier } from "../model/records.js";
 import type { Graph, GraphNode } from "../types.js";
 import type { Truncated } from "./page.js";
+import { NameLookup, qualified } from "./traverse.js";
+import type { Budget } from "./traverse.js";
 
 export const OPERATIONS = [
   "search",
@@ -82,10 +84,11 @@ export type Session = {
 };
 
 // What some questions need beyond the graph: the change compared with its
-// base (`changes`), the diff the review walks (`impact`), and the caller's
-// cancellation.
+// base (`changes`), the diff the review walks (`impact`), the caller's
+// cancellation, and a budget made by the caller (the MCP server's slices)
+// in place of the request's `budget.ms`.
 export type ChangesExtra = { exports: ImpactExportChange[]; removed: ImpactSymbol[]; moved: ImpactSymbol[] };
-export type Extra = { changes?: ChangesExtra; change?: Pick<Change, "files" | "coverage">; signal?: AbortSignal };
+export type Extra = { changes?: ChangesExtra; change?: Pick<Change, "files" | "coverage">; signal?: AbortSignal; budget?: Budget };
 
 export function graphBlock(s: Session): Answer["graph"] {
   const st = s.graph.status;
@@ -118,15 +121,11 @@ export function candidate(g: Graph, n: GraphNode, score: number): Candidate {
   return { id: n.id, name: n.name, kind: n.kind, file: n.file, line: n.startLine, project: g.projectOf(n.file), score };
 }
 
-// "Owner.name" when the symbol has an owner, else the name.
-export function qualified(n: GraphNode): string {
-  const inner = n.id.slice(n.id.indexOf("#") + 1, n.id.lastIndexOf("@"));
-  return inner || n.name;
-}
+export { qualified };
 
-// The symbols a target names: an id, a file and line (the innermost
-// definition around it), or a name (`name` or `Owner.name`), narrowed by file.
-export function resolveTarget(g: Graph, t: Target): GraphNode[] {
+// A target that names its point without a search: an id, a file and line
+// (the innermost definition around it), or a file. Undefined for a name.
+function direct(g: Graph, t: Target): GraphNode[] | undefined {
   if (t.id) {
     const n = g.nodes.get(t.id);
     return n ? [n] : [];
@@ -144,14 +143,18 @@ export function resolveTarget(g: Graph, t: Target): GraphNode[] {
     return n ? [n] : [];
   }
   if (!t.name) return [];
-  const out: GraphNode[] = [];
-  for (const n of g.nodes.values()) {
-    if (n.kind === "file") continue;
-    if (n.name !== t.name && qualified(n) !== t.name) continue;
-    if (t.file && n.file !== t.file) continue;
-    out.push(n);
-  }
-  return out;
+  return undefined;
+}
+
+// The symbols a target names: an id, a file and line, a file, or a name
+// (`name` or `Owner.name`), narrowed by file. No budget: for callers that
+// are not answering a question.
+export function resolveTarget(g: Graph, t: Target): GraphNode[] {
+  const d = direct(g, t);
+  if (d) return d;
+  const l = new NameLookup(g, t.name as string, t.file);
+  l.run({ deadline: Number.POSITIVE_INFINITY, signal: null, stopped: false, checks: 0, limit: null });
+  return l.found;
 }
 
 // A target as a person or an agent writes it: `file:line`, or a name
@@ -164,17 +167,71 @@ export function parseTarget(value: string | undefined, file?: string): Target {
   return { name: value, ...(file ? { file } : {}) };
 }
 
-// One symbol or file for a question about one point, or the answer that
-// says why there is none: not found, or several candidates and no silent pick.
-export function onePoint(s: Session, kind: Operation, t: Target | undefined): GraphNode | Answer {
-  const found = resolveTarget(s.graph, t ?? {});
-  if (found.length === 0) return fail(s, kind, "not-found", "no symbol or file of that name in this graph; try `search`");
-  if (found.length > 1) return { ...fail(s, kind, "ambiguous", `${found.length} definitions match; name one by its id or file and line`), target: found.map((n) => candidate(s.graph, n, 1)) };
-  return found[0] as GraphNode;
+// The one symbol or file a question is about, found within the budget: a
+// name is looked up node by node, and the lookup goes on where it stopped.
+export class Point {
+  private readonly lookup: NameLookup | null;
+  private found: GraphNode[] | null;
+  constructor(
+    private readonly g: Graph,
+    t: Target | undefined,
+  ) {
+    const d = direct(g, t ?? {});
+    this.found = d ?? null;
+    this.lookup = d ? null : new NameLookup(g, (t as Target).name as string, (t as Target).file);
+  }
+  run(budget: Budget): boolean {
+    if (this.found) return true;
+    if (!(this.lookup as NameLookup).run(budget)) return false;
+    this.found = (this.lookup as NameLookup).found;
+    return true;
+  }
+  // After run returned true: the point, or the answer that says why there
+  // is none: not found, or several candidates and no silent pick.
+  outcome(s: Session, kind: Operation): GraphNode | Answer {
+    const found = this.found ?? [];
+    if (found.length === 0) return fail(s, kind, "not-found", "no symbol or file of that name in this graph; try `search`");
+    if (found.length > 1) return { ...fail(s, kind, "ambiguous", `${found.length} definitions match; name one by its id or file and line`), target: found.map((n) => candidate(s.graph, n, 1)) };
+    return found[0] as GraphNode;
+  }
 }
 
 export function counts(items: readonly { site: { tier: Tier } }[]): Answer["counts"] {
   const c = { certain: 0, likely: 0, possible: 0 };
   for (const i of items) c[i.site.tier]++;
   return c;
+}
+
+// What a question's work produced, before it is paged: the answer without
+// its page (`items` or `leads` and `truncated`), the whole ordered list,
+// and how the work ended. `stopped`: the budget stopped it, `all` holds
+// what it had found, and running the same job again goes on from there.
+// `beyond`: the work is whole, and the depth asked left points with more
+// past them.
+export type Listing = {
+  answer: Answer;
+  all: unknown[];
+  into: "items" | "leads";
+  beyond: { frontier: string[] } | null;
+  stopped: { frontier: string[]; frontierTotal: number | null; note: string } | null;
+};
+
+// A question's work, run with a budget; run again, it goes on where the
+// last budget stopped it. It returns an Answer when the question has no
+// list to give (an error, a status).
+export type Job = (budget: Budget) => Listing | Answer;
+
+// True for an answer, as against the work or the point a step gives.
+export function isAnswer<T>(v: T | Answer): v is Answer {
+  return typeof v === "object" && v !== null && "apiVersion" in v;
+}
+
+export function listing(answer: Answer, all: unknown[], more: Partial<Pick<Listing, "into" | "beyond" | "stopped">> = {}): Listing {
+  return { answer, all, into: more.into ?? "items", beyond: more.beyond ?? null, stopped: more.stopped ?? null };
+}
+
+export const STOPPED_NOTE = "the question stopped at its time budget; what lies past where it stopped is not counted, and its cursor goes on from there";
+
+export function stoppedAt(answer: Answer, all: unknown[], frontier: string[], frontierTotal: number | null, into: "items" | "leads" = "items"): Listing {
+  return listing(answer, all, { into, stopped: { frontier, frontierTotal, note: STOPPED_NOTE } });
 }

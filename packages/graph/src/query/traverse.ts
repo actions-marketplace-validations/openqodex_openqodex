@@ -1,17 +1,23 @@
-// Bounded walks over the graph for the query layer: callers and callees to
-// a depth, the shortest path between two points, and the cycles of the
-// import graph. Every walk checks its budget (wall time, and the caller's
-// cancellation) between expansions, so a question on a large graph stops
-// within moments of its budget and says where it stopped: the frontier it
-// had not expanded, never a count of what lies past it.
+// Bounded, resumable work for the query layer: a name looked up, callers
+// and callees walked to a depth, the shortest path between two points, the
+// cycles of a graph, a list sorted. Each piece keeps its state in an object
+// and checks the question's budget (wall time, and the caller's
+// cancellation) at every element it touches: every node a name is looked
+// up in, every edge a walk expands, every point past the depth it checks,
+// every thousand comparisons of a sort. When the budget is spent the piece
+// stops where it is and can be run again with a new budget to go on from
+// there: a question stopped by its budget says where it stopped, never a
+// count of what lies past it, and its cursor resumes it.
 import { edgeId } from "./ids.js";
 import type { Tier } from "../model/records.js";
-import type { Graph, GraphEdge, GraphSite } from "../types.js";
+import type { Graph, GraphEdge, GraphNode, GraphSite } from "../types.js";
 
 export type Budget = {
   deadline: number; // performance.now() time
   signal: AbortSignal | null;
   stopped: boolean;
+  checks: number; // how many times the budget was checked
+  limit: number | null; // a budget counted in checks instead of time (the MCP server's slices, tests)
 };
 
 export const DEFAULT_QUERY_MS = 1000;
@@ -19,12 +25,19 @@ export const MAX_QUERY_MS = 60_000;
 
 export function budgetOf(ms: number | undefined, signal: AbortSignal | null = null): Budget {
   const span = ms !== undefined && Number.isFinite(ms) ? Math.max(1, Math.min(ms, MAX_QUERY_MS)) : DEFAULT_QUERY_MS;
-  return { deadline: performance.now() + span, signal, stopped: false };
+  return { deadline: performance.now() + span, signal, stopped: false, checks: 0, limit: null };
+}
+
+// A budget of `n` checks, with no clock: the same stop points on every run.
+export function checksBudget(n: number, signal: AbortSignal | null = null): Budget {
+  return { deadline: Number.POSITIVE_INFINITY, signal, stopped: false, checks: 0, limit: n };
 }
 
 // True once the budget is spent or the question was cancelled; it stays true.
 export function spent(b: Budget): boolean {
-  if (!b.stopped && (performance.now() > b.deadline || b.signal?.aborted === true)) b.stopped = true;
+  b.checks++;
+  if (b.stopped) return true;
+  if ((b.limit !== null && b.checks > b.limit) || performance.now() > b.deadline || b.signal?.aborted === true) b.stopped = true;
   return b.stopped;
 }
 
@@ -45,8 +58,62 @@ export function toItem(g: Graph, e: { from: string; to: string; kind: string }, 
   return { from: e.from, to: e.to, kind: e.kind, depth, site, edge: edgeId(e, site), fromName: g.nodes.get(e.from)?.name ?? null, toName: g.nodes.get(e.to)?.name ?? null };
 }
 
-export function sortItems(items: Item[]): Item[] {
-  return items.sort((a, b) => a.depth - b.depth || RANK[a.site.tier] - RANK[b.site.tier] || a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line || a.site.column - b.site.column);
+export const byItem = (a: Item, b: Item): number =>
+  a.depth - b.depth || RANK[a.site.tier] - RANK[b.site.tier] || a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line || a.site.column - b.site.column || a.from.localeCompare(b.from);
+
+const STOP = Symbol("budget spent");
+const COMPARISONS_PER_CHECK = 1024;
+
+// Sorts `list` in place, checking the budget every 1,024 comparisons. False
+// when the budget stopped it: the list holds the same elements, in no
+// promised order, and a later call sorts it again.
+export function sortWithin<T>(list: T[], cmp: (a: T, b: T) => number, budget: Budget): boolean {
+  if (spent(budget)) return false;
+  let n = 0;
+  try {
+    list.sort((a, b) => {
+      if (++n % COMPARISONS_PER_CHECK === 0 && spent(budget)) throw STOP;
+      return cmp(a, b);
+    });
+    return true;
+  } catch (error) {
+    if (error === STOP) return false;
+    throw error;
+  }
+}
+
+// One pass over a list or an iterator, an element at a time, with the
+// budget checked at each. Run it until it returns true; `left` is what it
+// has not read, null when the size of an iterator is not given.
+export class Pass<T> {
+  private readonly it: Iterator<T>;
+  private readonly size: number | null;
+  private read = 0;
+  private done = false;
+  constructor(
+    list: readonly T[] | Iterable<T>,
+    private readonly each: (x: T) => void,
+    size?: number,
+  ) {
+    this.it = list[Symbol.iterator]();
+    this.size = Array.isArray(list) ? list.length : (size ?? null);
+  }
+  get left(): number | null {
+    return this.size === null ? null : this.size - this.read;
+  }
+  run(budget: Budget): boolean {
+    while (!this.done) {
+      if (spent(budget)) return false;
+      const r = this.it.next();
+      if (r.done) {
+        this.done = true;
+        break;
+      }
+      this.read++;
+      this.each(r.value);
+    }
+    return true;
+  }
 }
 
 // Import edges by the file that imports: the graph keeps them by target.
@@ -59,6 +126,28 @@ export function importsFrom(g: Graph, file: string): GraphEdge[] {
     importsOut.set(g, byFrom);
   }
   return byFrom.get(file) ?? [];
+}
+
+// Every import edge of the graph, one at a time, and how many there are.
+export function* importEdges(g: Graph): Generator<GraphEdge> {
+  for (const list of g.importers.values()) yield* list;
+}
+const importTotals = new WeakMap<Graph, number>();
+export function importCount(g: Graph): number {
+  let n = importTotals.get(g);
+  if (n === undefined) {
+    n = 0;
+    for (const list of g.importers.values()) n += list.length;
+    importTotals.set(g, n);
+  }
+  return n;
+}
+
+// The indexes of this file, built once per graph before any question.
+export function prepareTraversal(g: Graph): void {
+  importsFrom(g, "");
+  importCount(g);
+  goFilesOf(g, "go:");
 }
 
 // Go imports name a package folder (`go:<dir>`): the files of that folder.
@@ -79,10 +168,10 @@ function goFilesOf(g: Graph, target: string): string[] {
 
 // The edges leaving (or entering) a point, of the asked kinds. A file's
 // imports are edges out of the file; a Go package import reaches every
-// file of the folder.
+// file of the folder. The default (null) is what `in` and `out` hold:
+// calls and inheritance.
 export function neighbours(g: Graph, at: string, dir: "in" | "out", kinds: ReadonlySet<string> | null): { edge: GraphEdge; other: string }[] {
   const out: { edge: GraphEdge; other: string }[] = [];
-  // The default (null) is what `in` and `out` hold: calls and inheritance.
   const want = (k: string) => kinds === null || kinds.has(k);
   for (const e of (dir === "in" ? g.in.get(at) : g.out.get(at)) ?? []) if (want(e.kind)) out.push({ edge: e, other: dir === "in" ? e.from : e.to });
   if (kinds !== null && kinds.has("imports")) {
@@ -102,124 +191,298 @@ export function neighbours(g: Graph, at: string, dir: "in" | "out", kinds: Reado
   return out;
 }
 
-export type WalkResult = {
-  items: Item[];
-  stopped: boolean; // the budget ran out
-  beyond: boolean; // a point at the last depth has more edges past it
-  frontier: string[]; // points not expanded when the walk stopped, or past the last depth
-};
+// ---------- a name looked up ----------
+
+// "Owner.name" when the symbol has an owner, else the name.
+export function qualified(n: GraphNode): string {
+  const inner = n.id.slice(n.id.indexOf("#") + 1, n.id.lastIndexOf("@"));
+  return inner || n.name;
+}
+
+// The definitions a name (or `Owner.name`) names, narrowed by file, found
+// node by node with the budget checked at each.
+export class NameLookup {
+  readonly found: GraphNode[] = [];
+  private readonly it: Iterator<GraphNode>;
+  done = false;
+  constructor(
+    g: Graph,
+    private readonly name: string,
+    private readonly file: string | undefined,
+  ) {
+    this.it = g.nodes.values();
+  }
+  run(budget: Budget): boolean {
+    while (!this.done) {
+      if (spent(budget)) return false;
+      const r = this.it.next();
+      if (r.done) {
+        this.done = true;
+        break;
+      }
+      const n = r.value;
+      if (n.kind === "file") continue;
+      if (n.name !== this.name && qualified(n) !== this.name) continue;
+      if (this.file && n.file !== this.file) continue;
+      this.found.push(n);
+    }
+    return true;
+  }
+}
+
+// ---------- a walk to a depth ----------
 
 // Edges into or out of `start` to `depth` hops; each item keeps its hop.
-// The default kinds (null) are the ones `in` and `out` hold: calls and
-// inheritance, as the review's walk reads them.
-export function walk(g: Graph, start: string, dir: "in" | "out", depth: number, tiers: ReadonlySet<Tier>, budget: Budget, kinds: ReadonlySet<string> | null = null): WalkResult {
-  const items: Item[] = [];
-  const seen = new Set([start]);
-  let frontier = [start];
-  for (let d = 1; d <= depth && frontier.length > 0; d++) {
-    const next: string[] = [];
-    for (const [i, at] of frontier.entries()) {
-      if (spent(budget)) return { items: sortItems(items), stopped: true, beyond: true, frontier: [...frontier.slice(i), ...next] };
-      for (const { edge: e, other } of neighbours(g, at, dir, kinds)) {
-        for (const site of e.sites) if (tiers.has(site.tier)) items.push(toItem(g, e, site, d));
-        if (!seen.has(other)) {
-          seen.add(other);
-          next.push(other);
-        }
-      }
-    }
-    frontier = next;
+// Run it until it returns true.
+export class Walk {
+  readonly items: Item[] = [];
+  readonly seen: Set<string>;
+  private frontier: string[];
+  private next: string[] = [];
+  private d = 1;
+  private i = 0; // the next point of the frontier to expand
+  private edge = 0; // the next edge of that point
+  private edges: { edge: GraphEdge; other: string }[] | null = null;
+  private pastChecked = 0;
+  readonly past: string[] = []; // points at the last depth with edges past it
+  private phase: "walk" | "past" | "sort" | "done" = "walk";
+
+  constructor(
+    private readonly g: Graph,
+    start: string,
+    private readonly dir: "in" | "out",
+    private readonly depth: number,
+    private readonly tiers: ReadonlySet<Tier>,
+    private readonly kinds: ReadonlySet<string> | null = null,
+  ) {
+    this.seen = new Set([start]);
+    this.frontier = [start];
   }
-  // Points one hop past the last depth: the answer stops at the depth asked.
-  const past = frontier.filter((at) => neighbours(g, at, dir, kinds).some(({ other }) => !seen.has(other)));
-  return { items: sortItems(items), stopped: false, beyond: past.length > 0, frontier: past };
-}
 
-// `beyond`: the search used every hop it may take and still had points to
-// expand, so a longer path may exist.
-export type PathResult = { hops: Item[] | null; stopped: boolean; beyond: boolean; expanded: number; visited: Set<string> };
-
-// The shortest directed path from `a` to `b` over the asked kinds, at most
-// `depth` hops; each hop is one edge with its strongest site.
-export function shortestPath(g: Graph, a: string, b: string, kinds: ReadonlySet<string>, depth: number, tiers: ReadonlySet<Tier>, budget: Budget): PathResult {
-  const parent = new Map<string, { from: string; edge: GraphEdge; site: GraphSite }>();
-  const visited = new Set([a]);
-  let frontier = [a];
-  let expanded = 0;
-  const strongest = (e: GraphEdge) => e.sites.filter((s) => tiers.has(s.tier)).sort((x, y) => RANK[x.tier] - RANK[y.tier] || x.file.localeCompare(y.file) || x.line - y.line)[0];
-  for (let d = 1; d <= depth && frontier.length > 0; d++) {
-    const next: string[] = [];
-    for (const at of frontier) {
-      if (spent(budget)) return { hops: null, stopped: true, beyond: true, expanded, visited };
-      expanded++;
-      for (const { edge: e, other } of neighbours(g, at, "out", kinds)) {
-        if (visited.has(other)) continue;
-        const site = strongest(e);
-        if (!site) continue;
-        visited.add(other);
-        parent.set(other, { from: at, edge: e, site });
-        if (other === b) {
-          const hops: Item[] = [];
-          let cur = b;
-          while (cur !== a) {
-            const p = parent.get(cur) as { from: string; edge: GraphEdge; site: GraphSite };
-            hops.unshift({ ...toItem(g, { from: p.from, to: cur, kind: p.edge.kind }, p.site, 0), edge: edgeId(p.edge, p.site) });
-            cur = p.from;
-          }
-          return { hops: hops.map((h, i) => ({ ...h, depth: i + 1 })), stopped: false, beyond: false, expanded, visited };
-        }
-        next.push(other);
-      }
-    }
-    frontier = next;
+  get finished(): boolean {
+    return this.phase === "done";
   }
-  return { hops: null, stopped: false, beyond: frontier.length > 0, expanded, visited };
-}
 
-// Strongly connected components with more than one member (or a member
-// that reaches itself), by Tarjan's method without recursion.
-export function cycles(nodes: readonly string[], next: (n: string) => readonly string[], budget: Budget): { groups: string[][]; stopped: boolean } {
-  const index = new Map<string, number>();
-  const low = new Map<string, number>();
-  const onStack = new Set<string>();
-  const stack: string[] = [];
-  const groups: string[][] = [];
-  let counter = 0;
-  for (const root of nodes) {
-    if (index.has(root)) continue;
-    const work: { n: string; i: number; succ: readonly string[] }[] = [];
-    const open = (n: string) => {
-      index.set(n, counter);
-      low.set(n, counter);
-      counter++;
-      stack.push(n);
-      onStack.add(n);
-      work.push({ n, i: 0, succ: next(n) });
-    };
-    open(root);
-    while (work.length > 0) {
-      if (spent(budget)) return { groups, stopped: true };
-      const top = work[work.length - 1] as { n: string; i: number; succ: readonly string[] };
-      if (top.i < top.succ.length) {
-        const s = top.succ[top.i++] as string;
-        if (!index.has(s)) open(s);
-        else if (onStack.has(s)) low.set(top.n, Math.min(low.get(top.n) as number, index.get(s) as number));
+  // The points not yet expanded, or past the depth once the walk is whole.
+  pending(): string[] {
+    if (this.phase === "walk") return [...this.frontier.slice(this.i), ...this.next];
+    if (this.phase === "past") return this.frontier;
+    return this.past;
+  }
+
+  get beyond(): boolean {
+    return this.past.length > 0;
+  }
+
+  run(budget: Budget): boolean {
+    const g = this.g;
+    while (this.phase === "walk") {
+      if (this.d > this.depth || this.frontier.length === 0) {
+        this.phase = "past";
+        break;
+      }
+      if (this.i >= this.frontier.length) {
+        this.frontier = this.next;
+        this.next = [];
+        this.i = 0;
+        this.d++;
         continue;
       }
-      work.pop();
-      const parent = work[work.length - 1];
-      if (parent) low.set(parent.n, Math.min(low.get(parent.n) as number, low.get(top.n) as number));
-      if (low.get(top.n) === index.get(top.n)) {
+      const at = this.frontier[this.i] as string;
+      if (this.edges === null) {
+        if (spent(budget)) return false;
+        this.edges = neighbours(g, at, this.dir, this.kinds);
+        this.edge = 0;
+      }
+      while (this.edge < this.edges.length) {
+        if (spent(budget)) return false;
+        const { edge: e, other } = this.edges[this.edge] as { edge: GraphEdge; other: string };
+        this.edge++;
+        for (const site of e.sites) if (this.tiers.has(site.tier)) this.items.push(toItem(g, e, site, this.d));
+        if (!this.seen.has(other)) {
+          this.seen.add(other);
+          this.next.push(other);
+        }
+      }
+      this.edges = null;
+      this.i++;
+    }
+    // Points one hop past the last depth: the answer stops at the depth asked.
+    while (this.phase === "past") {
+      if (this.pastChecked >= this.frontier.length) {
+        this.phase = "sort";
+        break;
+      }
+      if (spent(budget)) return false;
+      const at = this.frontier[this.pastChecked++] as string;
+      if (neighbours(g, at, this.dir, this.kinds).some(({ other }) => !this.seen.has(other))) this.past.push(at);
+    }
+    if (this.phase === "sort") {
+      if (!sortWithin(this.items, byItem, budget)) return false;
+      this.phase = "done";
+    }
+    return true;
+  }
+}
+
+// ---------- the shortest path ----------
+
+// The shortest directed path from `a` to `b` over the asked kinds, at most
+// `depth` hops; each hop is one edge with its strongest site. Run it until
+// it returns true; `hops` is null when there is none within the depth, and
+// `beyond` says the search had points left at its last hop.
+export class PathSearch {
+  hops: Item[] | null = null;
+  beyond = false;
+  readonly visited: Set<string>;
+  private readonly parent = new Map<string, { from: string; edge: GraphEdge; site: GraphSite }>();
+  private frontier: string[];
+  private next: string[] = [];
+  private d = 1;
+  private i = 0;
+  private done = false;
+
+  constructor(
+    private readonly g: Graph,
+    private readonly a: string,
+    private readonly b: string,
+    private readonly kinds: ReadonlySet<string>,
+    private readonly depth: number,
+    private readonly tiers: ReadonlySet<Tier>,
+  ) {
+    this.visited = new Set([a]);
+    this.frontier = [a];
+  }
+
+  get finished(): boolean {
+    return this.done;
+  }
+
+  pending(): string[] {
+    return [...this.frontier.slice(this.i), ...this.next];
+  }
+
+  private strongest(e: GraphEdge): GraphSite | undefined {
+    let best: GraphSite | undefined;
+    for (const s of e.sites) {
+      if (!this.tiers.has(s.tier)) continue;
+      if (!best || RANK[s.tier] < RANK[best.tier] || (RANK[s.tier] === RANK[best.tier] && (s.file < best.file || (s.file === best.file && s.line < best.line)))) best = s;
+    }
+    return best;
+  }
+
+  run(budget: Budget): boolean {
+    while (!this.done) {
+      if (this.d > this.depth || this.frontier.length === 0) {
+        this.beyond = this.frontier.length > 0;
+        this.done = true;
+        break;
+      }
+      if (this.i >= this.frontier.length) {
+        this.frontier = this.next;
+        this.next = [];
+        this.i = 0;
+        this.d++;
+        continue;
+      }
+      if (spent(budget)) return false;
+      const at = this.frontier[this.i] as string;
+      // One point's edges at a time: a point is expanded whole or not at all,
+      // so a stop never leaves it half read.
+      for (const { edge: e, other } of neighbours(this.g, at, "out", this.kinds)) {
+        if (this.visited.has(other)) continue;
+        const site = this.strongest(e);
+        if (!site) continue;
+        this.visited.add(other);
+        this.parent.set(other, { from: at, edge: e, site });
+        if (other === this.b) {
+          const hops: Item[] = [];
+          let cur = this.b;
+          while (cur !== this.a) {
+            const p = this.parent.get(cur) as { from: string; edge: GraphEdge; site: GraphSite };
+            hops.unshift({ ...toItem(this.g, { from: p.from, to: cur, kind: p.edge.kind }, p.site, 0), edge: edgeId(p.edge, p.site) });
+            cur = p.from;
+          }
+          this.hops = hops.map((h, n) => ({ ...h, depth: n + 1 }));
+          this.done = true;
+          return true;
+        }
+        this.next.push(other);
+      }
+      this.i++;
+    }
+    return true;
+  }
+}
+
+// ---------- cycles ----------
+
+// Strongly connected components with more than one member (or a member
+// that reaches itself), by Tarjan's method without recursion. Run it until
+// it returns true.
+export class Cycles {
+  readonly groups: string[][] = [];
+  private readonly index = new Map<string, number>();
+  private readonly low = new Map<string, number>();
+  private readonly onStack = new Set<string>();
+  private readonly stack: string[] = [];
+  private readonly work: { n: string; i: number; succ: readonly string[] }[] = [];
+  private counter = 0;
+  private root = 0;
+  done = false;
+
+  constructor(
+    private readonly nodes: readonly string[],
+    private readonly next: (n: string) => readonly string[],
+  ) {}
+
+  get remaining(): number {
+    return this.nodes.length - this.root;
+  }
+
+  private open(n: string): void {
+    this.index.set(n, this.counter);
+    this.low.set(n, this.counter);
+    this.counter++;
+    this.stack.push(n);
+    this.onStack.add(n);
+    this.work.push({ n, i: 0, succ: this.next(n) });
+  }
+
+  run(budget: Budget): boolean {
+    while (!this.done) {
+      if (this.work.length === 0) {
+        while (this.root < this.nodes.length && this.index.has(this.nodes[this.root] as string)) this.root++;
+        if (this.root >= this.nodes.length) {
+          this.done = true;
+          break;
+        }
+        if (spent(budget)) return false;
+        this.open(this.nodes[this.root] as string);
+        continue;
+      }
+      if (spent(budget)) return false;
+      const top = this.work[this.work.length - 1] as { n: string; i: number; succ: readonly string[] };
+      if (top.i < top.succ.length) {
+        const s = top.succ[top.i++] as string;
+        if (!this.index.has(s)) this.open(s);
+        else if (this.onStack.has(s)) this.low.set(top.n, Math.min(this.low.get(top.n) as number, this.index.get(s) as number));
+        continue;
+      }
+      this.work.pop();
+      const parent = this.work[this.work.length - 1];
+      if (parent) this.low.set(parent.n, Math.min(this.low.get(parent.n) as number, this.low.get(top.n) as number));
+      if (this.low.get(top.n) === this.index.get(top.n)) {
         const group: string[] = [];
         let m: string;
         do {
-          m = stack.pop() as string;
-          onStack.delete(m);
+          m = this.stack.pop() as string;
+          this.onStack.delete(m);
           group.push(m);
         } while (m !== top.n);
-        if (group.length > 1 || next(top.n).includes(top.n)) groups.push(group.sort());
+        if (group.length > 1 || this.next(top.n).includes(top.n)) this.groups.push(group.sort());
       }
     }
+    return true;
   }
-  return { groups, stopped: false };
 }

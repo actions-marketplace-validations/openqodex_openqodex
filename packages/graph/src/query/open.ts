@@ -19,6 +19,7 @@ import { BUILD_ID_PATTERN } from "../store/types.js";
 import type { GraphStore, Lease, Purpose } from "../store/types.js";
 import type { Graph } from "../types.js";
 import type { ChangesExtra, Session } from "./answer.js";
+import { prepareIndexes } from "./engine.js";
 
 export type GraphSettings = { budgetMs: number; maxFiles: number; maxFileBytes: number; maxHeapMb: number };
 
@@ -63,6 +64,7 @@ export async function laterEdits(repoRoot: string, ref: Reference, maxFileBytes:
 function sessionOf(store: GraphStore | null, graph: Graph): Session {
   const id = graph.status.generation;
   const m = store && id ? store.open({ id })?.manifest : undefined;
+  prepareIndexes(graph);
   return { graph, generation: id, treeSha: m?.capture.treeSha ?? null, builtAt: m?.createdAt ?? null, laterEditsKnown: false };
 }
 
@@ -144,6 +146,7 @@ export async function pinGeneration(store: GraphStore, id: string, purpose: Purp
   } catch {
     reference = null;
   }
+  prepareIndexes(graph);
   const m = held.generation.manifest;
   const session: Session = { graph, generation: m.id, treeSha: m.capture.treeSha, builtAt: m.createdAt, laterEditsKnown: false };
   return { session, lease: held.lease, reference, release: () => held.lease.release() };

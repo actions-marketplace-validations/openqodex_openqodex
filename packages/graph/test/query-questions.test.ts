@@ -10,8 +10,8 @@
 //     relations, routes with no framework layer) returns an empty success
 //     instead of a capability boundary.
 //  4. A walk stopped by its budget or a cancellation claims a count of what
-//     lies past its frontier, or offers a cursor that would page through a
-//     list it never finished.
+//     lies past its frontier, or offers a cursor that pages through a list
+//     it never finished instead of going on with the work.
 //  5. A token budget cuts the counts, or returns no item and never moves.
 //  6. A path hop has no edge, or "no path" is said where an unbound call in
 //     the visited code could hold one, with no floor.
@@ -244,15 +244,23 @@ describe("callers, callees and their gaps", () => {
     expect((two.items as Item[]).filter((i) => i.depth === 2).length).toBeGreaterThanOrEqual(30);
   });
 
-  it("stops a cancelled walk at once, with a null count and no cursor (4)", () => {
+  it("stops a cancelled walk at once, with null counts and a cursor that goes on with the work (4)", () => {
     const b = get("typescript/cuts/thirty-second-hop");
     const abort = new AbortController();
     abort.abort();
-    const a = ask(b, { kind: "callers", target: { name: "baseRate" }, depth: 3 }, { signal: abort.signal });
+    const req = { kind: "callers" as const, target: { name: "baseRate" }, depth: 3, limit: 500 };
+    const a = ask(b, req, { signal: abort.signal });
     expect(a.error).toBeNull();
-    expect(a.truncated).toMatchObject({ by: "budget", omitted: null, omittedExact: false, cursor: null });
-    expect(a.truncated.frontier?.length).toBeGreaterThan(0);
+    expect(a.items).toEqual([]);
+    expect(a.counts).toEqual({ certain: null, likely: null, possible: null });
+    expect(a.truncated).toMatchObject({ by: "budget", omitted: null, omittedExact: false });
     expect(a.unknown.floor).toBe(true);
+    // The cursor runs the stopped work on, to the answer a whole run gives.
+    const rest = ask(b, { ...req, cursor: a.truncated.cursor as string });
+    const whole = ask(b, req);
+    expect(rest.truncated.by).toBe(whole.truncated.by);
+    expect(rest.items).toEqual(whole.items);
+    expect(rest.counts).toEqual(whole.counts);
   });
 
   it("pages a hub's 45 callers by cursor and cuts by tokens without touching the counts (5)", () => {

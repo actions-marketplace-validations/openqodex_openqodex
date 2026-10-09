@@ -8,23 +8,29 @@
 // picks one silently. A count that cannot be known is null, never zero.
 // Search leads are never counted as callers. A question this build cannot
 // answer is a capability boundary (`unsupported`), never an empty success.
-// Each question has a time budget (default 1 s) checked between expansions,
-// and the caller's cancellation stops it the same way.
+//
+// Each question has one budget (default 1 s, `budget.ms`), made before
+// anything else and checked at every element its work touches, the name
+// lookup and the sort included; the caller's cancellation stops it the same
+// way. Work the budget stopped is a floor that names where it stopped, and
+// its cursor goes on from there (page.ts).
 import { floorReasons, toImpactUnknown } from "../impact.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION } from "../model/records.js";
 import type { Tier } from "../model/records.js";
-import type { GraphNode, GraphSite } from "../types.js";
-import { BAD_CURSOR, candidate, counts, empty, fail, onePoint, OPERATIONS, qualified } from "./answer.js";
-import type { Answer, Candidate, Extra, Operation, Request, Session } from "./answer.js";
+import type { Graph, GraphNode, GraphSite, UnknownSite } from "../types.js";
+import { BAD_CURSOR, candidate, counts, empty, fail, isAnswer, listing, OPERATIONS, Point, qualified, stoppedAt } from "./answer.js";
+import type { Answer, Candidate, Extra, Job, Listing, Request, Session } from "./answer.js";
 import { frameworkLayer, routes, tests } from "./frameworks.js";
 import { edgeId, readEdgeId } from "./ids.js";
-import { page } from "./page.js";
-import { derivedOverrides, implementers, importCycles, impact, outline, packages, path, references, relationsOf } from "./relations.js";
-import { budgetOf, walk } from "./traverse.js";
+import { cursorFor, keepJob, keepList, keptJob, keptList, limitOf, pageOf, readCursor } from "./page.js";
+import { Overrides, implementers, importCycles, impact, outline, packages, path, references, relationsOf } from "./relations.js";
+import { budgetOf, prepareTraversal, sortWithin, spent, Walk } from "./traverse.js";
+import type { Budget } from "./traverse.js";
 
 export { OPERATIONS, parseTarget, resolveTarget } from "./answer.js";
 export type { Answer, Candidate, ChangesExtra, ErrorCode, Extra, Operation, Request, Session, Target } from "./answer.js";
-export type { Item } from "./traverse.js";
+export type { Budget, Item } from "./traverse.js";
+export { budgetOf, checksBudget } from "./traverse.js";
 export { edgeId } from "./ids.js";
 
 const LANGUAGES = ["typescript", "tsx", "javascript", "python", "go", "ruby"];
@@ -49,154 +55,222 @@ function capabilities(s: Session): Record<string, unknown> {
   };
 }
 
-function nameCauses(s: Session, name: string): Record<string, number | null> {
-  const out: Record<string, number | null> = {};
-  for (const u of s.graph.unknowns) if (u.name === name) out[u.cause] = (out[u.cause] ?? 0) + 1;
-  return out;
+// The unknown records of the graph by the point they sit inside and by the
+// name they call, built once per graph.
+type UnknownIndex = { byCaller: Map<string, UnknownSite[]>; byName: Map<string, UnknownSite[]> };
+const unknownIndex = new WeakMap<Graph, UnknownIndex>();
+function unknownsBy(g: Graph): UnknownIndex {
+  let ix = unknownIndex.get(g);
+  if (!ix) {
+    ix = { byCaller: new Map(), byName: new Map() };
+    for (const u of g.unknowns) {
+      (ix.byCaller.get(u.caller) ?? ix.byCaller.set(u.caller, []).get(u.caller))?.push(u);
+      (ix.byName.get(u.name) ?? ix.byName.set(u.name, []).get(u.name))?.push(u);
+    }
+    unknownIndex.set(g, ix);
+  }
+  return ix;
+}
+export const unknownsInside = (g: Graph, id: string): UnknownSite[] => unknownsBy(g).byCaller.get(id) ?? [];
+const unknownsNamed = (g: Graph, name: string): UnknownSite[] => unknownsBy(g).byName.get(name) ?? [];
+
+// The indexes questions read, built once per graph when a session opens it
+// (open.ts), so no question's budget pays for them.
+export function prepareIndexes(g: Graph): void {
+  unknownsBy(g);
+  relationsOf(g);
+  prepareTraversal(g);
 }
 
-function search(s: Session, req: Request, base: Answer): Answer {
+function searchJob(s: Session, req: Request): Job | Answer {
   const g = s.graph;
   const text = (req.text ?? req.target?.name ?? "").trim();
   if (text === "") return fail(s, "search", "bad-request", "search needs a text");
   const lower = text.toLowerCase();
   const scored: Candidate[] = [];
-  for (const n of g.nodes.values()) {
-    if (n.kind === "file") {
-      if (n.file.toLowerCase().includes(lower)) scored.push(candidate(g, n, 0.5));
-      continue;
+  const it = g.nodes.values();
+  let scanned = 0;
+  let scanning = true;
+  return (budget) => {
+    const base = empty(s, "search");
+    while (scanning) {
+      if (spent(budget)) return stoppedAt(base, [], [], g.nodes.size - scanned, "leads");
+      const r = it.next();
+      if (r.done) {
+        scanning = false;
+        break;
+      }
+      scanned++;
+      const n = r.value;
+      if (n.kind === "file") {
+        if (n.file.toLowerCase().includes(lower)) scored.push(candidate(g, n, 0.5));
+        continue;
+      }
+      const q = qualified(n);
+      const score = n.name === text || q === text ? 1 : n.name.toLowerCase() === lower ? 0.9 : n.name.toLowerCase().startsWith(lower) ? 0.7 : n.name.toLowerCase().includes(lower) ? 0.5 : 0;
+      if (score > 0) scored.push(candidate(g, n, score));
     }
-    const q = qualified(n);
-    const score = n.name === text || q === text ? 1 : n.name.toLowerCase() === lower ? 0.9 : n.name.toLowerCase().startsWith(lower) ? 0.7 : n.name.toLowerCase().includes(lower) ? 0.5 : 0;
-    if (score > 0) scored.push(candidate(g, n, score));
-  }
-  scored.sort((a, b) => b.score - a.score || a.file.localeCompare(b.file) || a.line - b.line);
-  const p = page(s.generation, req, scored);
-  if (p === "bad") return fail(s, "search", "generation-unavailable", BAD_CURSOR);
-  // Search results are leads: never counted as callers or anything else.
-  return { ...base, leads: p.items, truncated: p.truncated };
+    if (!sortWithin(scored, (a, b) => b.score - a.score || a.file.localeCompare(b.file) || a.line - b.line || a.id.localeCompare(b.id), budget)) return stoppedAt(base, [], [], null, "leads");
+    // Search results are leads: never counted as callers or anything else.
+    return listing(base, scored, { into: "leads" });
+  };
 }
 
-function unknowns(s: Session, req: Request, base: Answer): Answer {
+function unknownsJob(s: Session, req: Request): Job {
   const g = s.graph;
   const t = req.target ?? {};
   const project = t.file && !t.name ? g.projectOf(t.file) : null;
-  const all = g.unknowns.filter((u) => (t.name ? u.name === t.name : true) && (t.file ? u.file === t.file || (u.scope === "project" && project !== null && g.projectOf(u.file) === project) : true));
   const notRead = t.file ? g.status.notRead.filter((n) => n.file === t.file).map((n) => ({ file: n.file, line: null, name: null, cause: "file-not-parsed", scope: "file", note: n.reason, candidates: null })) : [];
-  const p = page(s.generation, req, [...notRead, ...all.map(toImpactUnknown)]);
-  if (p === "bad") return fail(s, "unknowns", "generation-unavailable", BAD_CURSOR);
-  const causes: Record<string, number | null> = {};
-  for (const u of all) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
-  if (notRead.length > 0) causes["file-not-parsed"] = notRead.length;
-  return { ...base, items: p.items, truncated: p.truncated, unknown: { ...base.unknown, causes } };
+  const hits: UnknownSite[] = [];
+  let i = 0;
+  return (budget) => {
+    const base = empty(s, "unknowns");
+    while (i < g.unknowns.length) {
+      if (spent(budget)) return stoppedAt(base, [...notRead, ...hits.map(toImpactUnknown)], [], g.unknowns.length - i);
+      const u = g.unknowns[i++] as UnknownSite;
+      if ((t.name ? u.name === t.name : true) && (t.file ? u.file === t.file || (u.scope === "project" && project !== null && g.projectOf(u.file) === project) : true)) hits.push(u);
+    }
+    const causes: Record<string, number | null> = {};
+    for (const u of hits) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
+    if (notRead.length > 0) causes["file-not-parsed"] = notRead.length;
+    return listing({ ...base, unknown: { ...base.unknown, causes } }, [...notRead, ...hits.map(toImpactUnknown)]);
+  };
 }
 
-function explain(s: Session, req: Request, base: Answer, extra: Extra): Answer {
+function explainJob(s: Session, req: Request): Job | Answer {
   const g = s.graph;
   const id = req.target?.id ?? "";
   const parsed = readEdgeId(id);
   if (!parsed) return fail(s, "explain", "bad-request", "explain takes an edge id as the items of an answer print it");
   const { kind, from, to, file, line, column } = parsed;
+  const base = empty(s, "explain");
   const why = (site: GraphSite) => (site.tier === "certain" ? `${site.evidence} proves it${site.via ? `: ${site.via.spec !== null ? "the import" : "the line"} at ${site.via.file}:${site.via.line}` : ""}` : site.note);
   const edges = kind === "imports" ? (g.importers.get(to) ?? []) : (g.out.get(from) ?? []);
   const e = edges.find((x) => x.kind === kind && x.from === from && x.to === to);
   const site = e?.sites.find((x) => x.file === file && x.line === line && x.column === column);
   if (e && site) return { ...base, items: [{ edge: id, from: e.from, to: e.to, kind: e.kind, site, why: why(site) }] };
-  // An override the query derived from the inheritance: derived again.
-  if (kind === "overrides") {
-    const m = g.nodes.get(to);
-    const hit = m ? derivedOverrides(g, m, 8, budgetOf(undefined, extra.signal ?? null)).items.find((i) => i.edge === id) : undefined;
-    if (hit) return { ...base, items: [{ edge: id, from: hit.from, to: hit.to, kind: hit.kind, site: hit.site, premises: hit.premises, why: hit.site.note }] };
-  }
   // A framework edge: its evidence record as the plugin wrote it.
   const layer = frameworkLayer(g);
   const fw = layer?.edges.find((x) => x.kind === kind && x.from === from && x.to === to && x.evidence.site.file === file && x.evidence.site.line === line && x.evidence.site.column === column);
   if (fw) return { ...base, items: [{ edge: id, from: fw.from, to: fw.to, kind: fw.kind, plugin: fw.plugin, app: fw.app, evidence: fw.evidence, why: fw.evidence.note ?? `${fw.evidence.kind} proves it` }] };
-  return fail(s, "explain", "not-found", `no edge ${id} in this graph`);
-}
-
-function callersOrCallees(s: Session, req: Request, base: Answer, n: GraphNode, tiers: ReadonlySet<Tier>, extra: Extra): Answer {
-  const g = s.graph;
-  const kind = req.kind as "callers" | "callees";
-  const depth = Math.min(Math.max(1, req.depth ?? 1), 3);
-  const budget = budgetOf(req.budget?.ms, extra.signal ?? null);
-  const w = walk(g, n.id, kind === "callers" ? "in" : "out", depth, tiers, budget);
-  const p = page(s.generation, req, w.items);
-  if (p === "bad") return fail(s, kind, "generation-unavailable", BAD_CURSOR);
-  let reasons: string[];
-  let causes: Record<string, number | null>;
-  let examples: Answer["unknown"]["examples"];
-  if (kind === "callers") {
-    reasons = floorReasons(g, { id: n.id, name: n.name, file: n.file }, new Set());
-    causes = nameCauses(s, n.name);
-    examples = g.unknowns.filter((u) => u.name === n.name).slice(0, 5).map(toImpactUnknown);
-  } else {
-    // What it calls is a floor when a call inside it could not be bound.
-    const inside = g.unknowns.filter((u) => u.caller === n.id && u.cause !== "external");
-    reasons = inside.length > 0 ? [`${inside.length} ${inside.length === 1 ? "call" : "calls"} inside it could not be bound`] : [];
-    causes = {};
-    for (const u of inside) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
-    examples = inside.slice(0, 5).map(toImpactUnknown);
-  }
-  if (w.stopped) reasons.push("the walk stopped at its time budget");
-  const partial = g.status.status === "partial";
-  const front = { frontier: w.frontier.slice(0, 50), frontierTotal: w.frontier.length };
-  const truncated: Answer["truncated"] = w.stopped
-    ? { by: "budget", omitted: null, omittedExact: false, cursor: null, ...front }
-    : p.truncated.by !== null
-      ? p.truncated
-      : w.beyond
-        ? { by: "depth", omitted: null, omittedExact: false, cursor: null, ...front }
-        : p.truncated;
-  return {
-    ...base,
-    target: candidate(g, n, 1),
-    items: p.items,
-    counts: counts(w.items),
-    unknown: { floor: reasons.length > 0 || partial, reasons: [...reasons, ...(partial ? g.status.reasons : [])], causes, examples },
-    truncated,
+  // An override the query derived from the inheritance: derived again.
+  const m = kind === "overrides" ? g.nodes.get(to) : undefined;
+  if (!m) return fail(s, "explain", "not-found", `no edge ${id} in this graph`);
+  const derive = new Overrides(g, m, 8, new Set<Tier>(["certain", "likely", "possible"]));
+  return (budget) => {
+    if (!derive.run(budget)) return stoppedAt(base, [], derive.pending(), derive.pending().length);
+    const hit = derive.items.find((i) => i.edge === id);
+    if (!hit) return fail(s, "explain", "not-found", `no edge ${id} in this graph`);
+    return listing(base, [{ edge: id, from: hit.from, to: hit.to, kind: hit.kind, site: hit.site, premises: hit.premises, why: hit.site.note }]);
   };
 }
 
-export function query(s: Session, req: Request, extra: Extra = {}): Answer {
+// Callers and callees to a depth, with the floor of each.
+function walkJob(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job {
   const g = s.graph;
-  const kind = req.kind;
-  if (!(OPERATIONS as readonly string[]).includes(kind)) return fail(s, kind, "bad-request", `unknown operation ${String(kind)}`);
-  if (req.apiVersion !== API_VERSION) return fail(s, kind, "bad-request", `this graph answers apiVersion ${API_VERSION}, not ${req.apiVersion}`);
-  if (req.generation && s.generation && req.generation !== s.generation) return fail(s, kind, "generation-unavailable", `this session holds build ${s.generation}, not ${req.generation}`);
-  const tiers = new Set<Tier>(req.tiers ?? ["certain", "likely", "possible"]);
-  const base = empty(s, kind);
-  const budget = () => budgetOf(req.budget?.ms, extra.signal ?? null);
-
-  switch (kind as Operation) {
-    case "status":
-      return { ...base, items: [{ ...g.status, eligible: g.status.eligibleFiles, inGraph: g.status.filesParsed }] };
-    case "capabilities":
-      return { ...base, items: [capabilities(s)] };
-    case "search":
-      return search(s, req, base);
-    case "unknowns":
-      return unknowns(s, req, base);
-    case "changes": {
-      const c = extra.changes;
-      if (!c) return fail(s, kind, "bad-request", "no base was compared for this graph; ask `changes` with a change against its base");
-      const all = [...c.exports.map((e) => ({ type: "export", ...e })), ...c.removed.map((r) => ({ type: "removed", ...r })), ...c.moved.map((m) => ({ type: "moved", ...m }))];
-      const p = page(s.generation, req, all);
-      if (p === "bad") return fail(s, kind, "generation-unavailable", BAD_CURSOR);
-      return { ...base, items: p.items, truncated: p.truncated };
+  const kind = req.kind as "callers" | "callees";
+  const depth = Math.min(Math.max(1, req.depth ?? 1), 3);
+  const point = new Point(g, req.target);
+  let n: GraphNode | null = null;
+  let w: Walk | null = null;
+  return (budget) => {
+    const base = empty(s, kind);
+    if (!n) {
+      if (!point.run(budget)) return stoppedAt(base, [], [], null);
+      const o = point.outcome(s, kind);
+      if (isAnswer(o)) return o;
+      n = o;
+      w = new Walk(g, n.id, kind === "callers" ? "in" : "out", depth, tiers);
     }
+    const walk = w as Walk;
+    const target = candidate(g, n, 1);
+    if (!walk.run(budget)) return stoppedAt({ ...base, target }, walk.items, walk.pending(), walk.pending().length);
+    let reasons: string[];
+    let causes: Record<string, number | null> = {};
+    let examples: Answer["unknown"]["examples"];
+    if (kind === "callers") {
+      reasons = floorReasons(g, { id: n.id, name: n.name, file: n.file }, new Set());
+      const named = unknownsNamed(g, n.name);
+      for (const u of named) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
+      examples = named.slice(0, 5).map(toImpactUnknown);
+    } else {
+      // What it calls is a floor when a call inside it could not be bound.
+      const inside = unknownsInside(g, n.id).filter((u) => u.cause !== "external");
+      reasons = inside.length > 0 ? [`${inside.length} ${inside.length === 1 ? "call" : "calls"} inside it could not be bound`] : [];
+      causes = {};
+      for (const u of inside) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
+      examples = inside.slice(0, 5).map(toImpactUnknown);
+    }
+    const partial = g.status.status === "partial";
+    const answer: Answer = { ...base, target, counts: counts(walk.items), unknown: { floor: reasons.length > 0 || partial, reasons: [...reasons, ...(partial ? g.status.reasons : [])], causes, examples } };
+    return listing(answer, walk.items, { beyond: walk.beyond ? { frontier: walk.past } : null });
+  };
+}
+
+function changesJob(s: Session, extra: Extra): Job | Answer {
+  const c = extra.changes;
+  if (!c) return fail(s, "changes", "bad-request", "no base was compared for this graph; ask `changes` with a change against its base");
+  const all = [...c.exports.map((e) => ({ type: "export", ...e })), ...c.removed.map((r) => ({ type: "removed", ...r })), ...c.moved.map((m) => ({ type: "moved", ...m }))];
+  return () => listing(empty(s, "changes"), all);
+}
+
+function importersJob(s: Session, req: Request): Job {
+  const g = s.graph;
+  const point = new Point(g, req.target);
+  return (budget) => {
+    const base = empty(s, "importers");
+    if (!point.run(budget)) return stoppedAt(base, [], [], null);
+    const n = point.outcome(s, "importers");
+    if (isAnswer(n)) return n;
+    const file = n.file;
+    const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
+    const edges = [...(g.importers.get(file) ?? []), ...(file.endsWith(".go") ? (g.importers.get(`go:${dir}`) ?? []) : [])];
+    const items = edges.map((e) => ({ from: e.from, to: e.to, kind: e.kind, depth: 1, site: e.sites[0] as GraphSite, edge: edgeId(e, e.sites[0] as GraphSite), fromName: null, toName: null }));
+    return listing({ ...base, target: candidate(g, n, 1), counts: counts(items) }, items);
+  };
+}
+
+function symbolJob(s: Session, req: Request): Job {
+  const g = s.graph;
+  const point = new Point(g, req.target);
+  return (budget) => {
+    const base = empty(s, "symbol");
+    if (!point.run(budget)) return stoppedAt(base, [], [], null);
+    const n = point.outcome(s, "symbol");
+    if (isAnswer(n)) return n;
+    const callers = (g.in.get(n.id) ?? []).reduce((k, e) => k + e.sites.length, 0);
+    const callees = (g.out.get(n.id) ?? []).reduce((k, e) => k + e.sites.length, 0);
+    return { ...base, target: candidate(g, n, 1), items: [{ ...n, project: g.projectOf(n.file), callerSites: callers, calleeSites: callees }] };
+  };
+}
+
+// The work of a question, ready to run with a budget, or the answer it
+// gives without any.
+function jobFor(s: Session, req: Request, extra: Extra, tiers: ReadonlySet<Tier>): Job | Answer {
+  const g = s.graph;
+  switch (req.kind) {
+    case "status":
+      return { ...empty(s, "status"), items: [{ ...g.status, eligible: g.status.eligibleFiles, inGraph: g.status.filesParsed }] };
+    case "capabilities":
+      return { ...empty(s, "capabilities"), items: [capabilities(s)] };
+    case "search":
+      return searchJob(s, req);
+    case "unknowns":
+      return unknownsJob(s, req);
+    case "changes":
+      return changesJob(s, extra);
     case "explain":
-      return explain(s, req, base, extra);
+      return explainJob(s, req);
     case "implementers":
-      return implementers(s, req, budget(), tiers);
+      return implementers(s, req, tiers);
     case "references":
-      return references(s, req, budget(), tiers);
+      return references(s, req, tiers);
     case "routes":
       return routes(s, req);
     case "tests":
-      return tests(s, req, budget(), tiers);
+      return tests(s, req, tiers);
     case "path":
-      return path(s, req, budget(), tiers);
+      return path(s, req, tiers);
     case "impact":
       return impact(s, req, extra);
     case "outline":
@@ -204,28 +278,73 @@ export function query(s: Session, req: Request, extra: Extra = {}): Answer {
     case "packages":
       return packages(s, req);
     case "cycles":
-      return importCycles(s, req, budget());
-    default:
-      break;
+      return importCycles(s, req);
+    case "symbol":
+      return symbolJob(s, req);
+    case "importers":
+      return importersJob(s, req);
+    case "callers":
+    case "callees":
+      return walkJob(s, req, tiers);
   }
+}
 
-  // The operations on one symbol or file.
-  const n = onePoint(s, kind, req.target);
-  if ("apiVersion" in n) return n;
-  const target = candidate(g, n, 1);
-  if (kind === "symbol") {
-    const callers = (g.in.get(n.id) ?? []).reduce((k, e) => k + e.sites.length, 0);
-    const callees = (g.out.get(n.id) ?? []).reduce((k, e) => k + e.sites.length, 0);
-    return { ...base, target, items: [{ ...n, project: g.projectOf(n.file), callerSites: callers, calleeSites: callees }] };
+// What a question's work gave, as its answer. Stopped: its work is kept,
+// the answer is a floor with what it found and where it stopped, and the
+// cursor goes on from there. Whole: the list is kept for the next page.
+function settle(s: Session, req: Request, job: Job, out: Listing | Answer, offset: number): Answer {
+  if (isAnswer(out)) return out;
+  if (out.stopped) {
+    const id = keepJob(s.graph, job);
+    const a = out.answer;
+    return {
+      ...a,
+      [out.into]: out.all.slice(offset, offset + limitOf(req)),
+      counts: { certain: null, likely: null, possible: null },
+      unknown: { ...a.unknown, floor: true, reasons: [out.stopped.note, ...a.unknown.reasons] },
+      truncated: {
+        by: "budget",
+        omitted: null,
+        omittedExact: false,
+        cursor: cursorFor(s.generation, req, offset, id),
+        frontier: out.stopped.frontier.slice(0, 50),
+        ...(out.stopped.frontierTotal !== null ? { frontierTotal: out.stopped.frontierTotal } : {}),
+      },
+    };
   }
-  if (kind === "importers") {
-    const file = n.file;
-    const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
-    const edges = [...(g.importers.get(file) ?? []), ...(file.endsWith(".go") ? (g.importers.get(`go:${dir}`) ?? []) : [])];
-    const items = edges.map((e) => ({ from: e.from, to: e.to, kind: e.kind, depth: 1, site: e.sites[0] as GraphSite, edge: edgeId(e, e.sites[0] as GraphSite), fromName: null, toName: null }));
-    const p = page(s.generation, req, items);
-    if (p === "bad") return fail(s, kind, "generation-unavailable", BAD_CURSOR);
-    return { ...base, target, items: p.items, counts: counts(items), truncated: p.truncated };
+  keepList(s.graph, s.generation, req, out);
+  return pageOf(s.generation, req, out, offset);
+}
+
+// A question made ready to work: its job, its one budget and the position
+// its cursor names, or the answer it gives with no work (an error, a page
+// of a kept list, a status).
+function start(s: Session, req: Request, extra: Extra): { job: Job; budget: Budget; offset: number } | Answer {
+  const kind = req.kind;
+  if (!(OPERATIONS as readonly string[]).includes(kind)) return fail(s, kind, "bad-request", `unknown operation ${String(kind)}`);
+  // The one budget of this question, before any of its work.
+  const budget = extra.budget ?? budgetOf(req.budget?.ms, extra.signal ?? null);
+  if (req.apiVersion !== API_VERSION) return fail(s, kind, "bad-request", `this graph answers apiVersion ${API_VERSION}, not ${req.apiVersion}`);
+  if (req.generation && s.generation && req.generation !== s.generation) return fail(s, kind, "generation-unavailable", `this session holds build ${s.generation}, not ${req.generation}`);
+  const tiers = new Set<Tier>(req.tiers ?? ["certain", "likely", "possible"]);
+  // A cursor first: a kept list gives its next page with no work, and kept
+  // work goes on where its budget stopped it.
+  const c = readCursor(s.generation, req);
+  if (c === "bad") return fail(s, kind, "generation-unavailable", BAD_CURSOR);
+  if (c.state) {
+    const job = keptJob(s.graph, c.state);
+    if (job) return { job, budget, offset: c.offset };
+  } else if (req.cursor) {
+    const kept: Listing | null = keptList(s.graph, s.generation, req);
+    if (kept) return pageOf(s.generation, req, kept, c.offset);
   }
-  return callersOrCallees(s, req, base, n, tiers, extra);
+  const job = jobFor(s, req, extra, tiers);
+  if (isAnswer(job)) return job;
+  return { job, budget, offset: c.offset };
+}
+
+export function query(s: Session, req: Request, extra: Extra = {}): Answer {
+  const st = start(s, req, extra);
+  if (isAnswer(st)) return st;
+  return settle(s, req, st.job, st.job(st.budget), st.offset);
 }

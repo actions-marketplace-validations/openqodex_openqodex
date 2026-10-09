@@ -10,15 +10,18 @@
 // tests. Those are leads, never counted and never called tests or coverage,
 // and the answer is a floor: a test that requests a route or renders a
 // component reaches the symbol without a call.
+//
+// Each is a job (answer.ts): the layer's edges, registrations and gaps are
+// read one at a time with the question's budget checked at each, and a
+// stopped job goes on where it stopped.
 import { isTestPath } from "../impact.js";
 import type { Tier } from "../model/records.js";
-import type { Graph, GraphSite } from "../types.js";
-import { BAD_CURSOR, candidate, counts, empty, fail, onePoint } from "./answer.js";
-import type { Answer, Candidate, Request, Session } from "./answer.js";
+import type { Graph, GraphNode, GraphSite } from "../types.js";
+import { candidate, counts, empty, fail, isAnswer, listing, Point, stoppedAt } from "./answer.js";
+import type { Answer, Candidate, Job, Request, Session } from "./answer.js";
 import { edgeId } from "./ids.js";
-import { page } from "./page.js";
-import { RANK, walk } from "./traverse.js";
-import type { Budget } from "./traverse.js";
+import { Pass, RANK, sortWithin, Walk } from "./traverse.js";
+import type { Item } from "./traverse.js";
 
 type FwSite = { file: string; line: number; column: number };
 type FwEvidence = { kind: string; tier: Tier; site: FwSite; via: { file: string; line: number; spec: string | null } | null; premises: string[]; note: string | null; rule: { id: string; version: number } };
@@ -55,97 +58,157 @@ function fwSite(e: FwEvidence): GraphSite {
   return { file: e.site.file, line: e.site.line, column: e.site.column, tier: e.tier, evidence: e.kind, via: e.via, note: e.note, rule: e.rule.id };
 }
 
-function gapsOf(layer: FwLayer, affects: string): { reasons: string[]; causes: Record<string, number | null> } {
-  const hit = layer.unknowns.filter((u) => u.affects.includes(affects));
-  const causes: Record<string, number | null> = {};
-  for (const u of hit) {
-    const prev = causes[u.cause];
-    causes[u.cause] = prev === null || u.count === null ? null : (prev ?? 0) + u.count;
+// The layer's gaps for one relation, gathered gap by gap.
+class Gaps {
+  private readonly hit: FwUnknown[] = [];
+  readonly pass: Pass<FwUnknown>;
+  constructor(layer: FwLayer, affects: string) {
+    this.pass = new Pass(layer.unknowns, (u) => {
+      if (u.affects.includes(affects)) this.hit.push(u);
+    });
   }
-  const reasons = hit.slice(0, 10).map((u) => `${u.plugin}: ${u.note}${u.site ? ` (${u.site.file}:${u.site.line})` : ""}`);
-  if (hit.length > 10) reasons.push(`and ${hit.length - 10} more gaps of the framework layer`);
-  return { reasons, causes };
+  // After the pass is whole: the answer's unknown block with the gaps.
+  unknown(base: Answer): Answer["unknown"] {
+    const causes: Record<string, number | null> = {};
+    for (const u of this.hit) {
+      const prev = causes[u.cause];
+      causes[u.cause] = prev === null || u.count === null ? null : (prev ?? 0) + u.count;
+    }
+    const reasons = this.hit.slice(0, 10).map((u) => `${u.plugin}: ${u.note}${u.site ? ` (${u.site.file}:${u.site.line})` : ""}`);
+    if (this.hit.length > 10) reasons.push(`and ${this.hit.length - 10} more gaps of the framework layer`);
+    return { ...base.unknown, floor: base.unknown.floor || reasons.length > 0, reasons: [...reasons, ...base.unknown.reasons], causes };
+  }
 }
 
-export function routes(s: Session, req: Request): Answer {
+type Route = {
+  id: string;
+  plugin: string;
+  app: string | null;
+  methods: string[];
+  pattern: string | null;
+  name: string | null;
+  mounted: boolean;
+  site: FwSite;
+  handler: FwRegistration["handler"];
+  handles: { to: string; site: GraphSite; premises: string[]; edge: string }[];
+};
+
+// A target that names one point (an id, a name, a file and line), as
+// against a whole listing narrowed by text.
+const namesPoint = (t: Request["target"]) => Boolean(t && (t.id || t.name || (t.file && t.line !== undefined)));
+
+export function routes(s: Session, req: Request): Job | Answer {
   const g = s.graph;
   const layer = frameworkLayer(g);
   if (!layer) return fail(s, "routes", "unsupported", "this build has no framework layer, so it knows no routes; `callers` and `importers` still answer for the handler code");
-  const base = empty(s, "routes");
-  const t = req.target ?? {};
-  let regs = layer.registrations;
-  let target: Answer["target"] = null;
-  if (t.id || t.name || (t.file && t.line !== undefined)) {
-    const n = onePoint(s, "routes", t);
-    if ("apiVersion" in n) return n;
-    target = candidate(g, n, 1);
-    const handled = new Set(layer.edges.filter((e) => e.kind === "handles" && e.to === n.id).map((e) => e.from));
-    regs = regs.filter((r) => handled.has(r.id) || r.handler.targets.includes(n.id));
-  } else if (req.text) {
-    const text = req.text;
-    regs = regs.filter((r) => (r.pattern ?? r.written ?? "").includes(text) || r.name === text);
-  }
-  const items = regs
-    .map((r) => {
-      const handles = layer.edges.filter((e) => e.kind === "handles" && e.from === r.id);
-      return {
-        id: r.id,
-        plugin: r.plugin,
-        app: r.app,
-        methods: r.methods,
-        pattern: r.pattern,
-        name: r.name,
-        mounted: r.mounted,
-        site: r.site,
-        handler: r.handler,
-        handles: handles.map((e) => ({ to: e.to, site: fwSite(e.evidence), premises: e.evidence.premises, edge: edgeId(e, e.evidence.site) })),
-      };
-    })
-    .sort((a, b) => a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line);
-  const p = page(s.generation, req, items);
-  if (p === "bad") return fail(s, "routes", "generation-unavailable", BAD_CURSOR);
-  const gaps = gapsOf(layer, "handles");
-  const unknown = { ...base.unknown, floor: base.unknown.floor || gaps.reasons.length > 0, reasons: [...gaps.reasons, ...base.unknown.reasons], causes: gaps.causes };
-  return { ...base, target, items: p.items, unknown, truncated: p.truncated };
+  const point = namesPoint(req.target) ? new Point(g, req.target) : null;
+  const text = point ? undefined : req.text;
+  let n: GraphNode | null = null;
+  // The handles edges by the registration they leave, and the registrations
+  // whose handler is the point.
+  const handlesOf = new Map<string, FwEdge[]>();
+  const handlesPoint = new Set<string>();
+  let edges: Pass<FwEdge> | null = null;
+  const items: Route[] = [];
+  let regs: Pass<FwRegistration> | null = null;
+  let sorted = false;
+  const gaps = new Gaps(layer, "handles");
+  return (budget) => {
+    const base = empty(s, "routes");
+    if (point && !n) {
+      if (!point.run(budget)) return stoppedAt(base, [], [], null);
+      const o = point.outcome(s, "routes");
+      if (isAnswer(o)) return o;
+      n = o;
+    }
+    const at = n;
+    const target = at ? candidate(g, at, 1) : null;
+    edges ??= new Pass(layer.edges, (e) => {
+      if (e.kind !== "handles") return;
+      (handlesOf.get(e.from) ?? handlesOf.set(e.from, []).get(e.from))?.push(e);
+      if (at && e.to === at.id) handlesPoint.add(e.from);
+    });
+    if (!edges.run(budget)) return stoppedAt({ ...base, target }, [], [], edges.left);
+    regs ??= new Pass(layer.registrations, (r) => {
+      if (at && !handlesPoint.has(r.id) && !r.handler.targets.includes(at.id)) return;
+      if (text && !(r.pattern ?? r.written ?? "").includes(text) && r.name !== text) return;
+      const handles = (handlesOf.get(r.id) ?? []).map((e) => ({ to: e.to, site: fwSite(e.evidence), premises: e.evidence.premises, edge: edgeId(e, e.evidence.site) }));
+      items.push({ id: r.id, plugin: r.plugin, app: r.app, methods: r.methods, pattern: r.pattern, name: r.name, mounted: r.mounted, site: r.site, handler: r.handler, handles });
+    });
+    if (!regs.run(budget)) return stoppedAt({ ...base, target }, items, [], regs.left);
+    if (!sorted) {
+      if (!sortWithin(items, (a, b) => a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line, budget)) return stoppedAt({ ...base, target }, items, [], null);
+      sorted = true;
+    }
+    if (!gaps.pass.run(budget)) return stoppedAt({ ...base, target }, items, [], gaps.pass.left);
+    return listing({ ...base, target, unknown: gaps.unknown(base) }, items);
+  };
 }
 
-export function tests(s: Session, req: Request, budget: Budget, tiers: ReadonlySet<Tier>): Answer {
+type TestLink = { from: string; to: string; kind: "tests"; category: string | null; depth: number; site: GraphSite; premises: string[]; edge: string; fromName: string | null; toName: string | null };
+
+// The leads-only floor of `tests` when no test runner was read.
+const LEAD_REASONS = [
+  "no test runner was read in this build, so files are taken for tests by their names only: these are leads, not test links",
+  "a test that requests a route, renders a component or reaches the code through a value calls nothing here",
+];
+
+export function tests(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job {
   const g = s.graph;
-  const base = empty(s, "tests");
-  const n = onePoint(s, "tests", req.target);
-  if ("apiVersion" in n) return n;
-  const target = candidate(g, n, 1);
   const layer = frameworkLayer(g);
-  if (layer) {
-    // A test edge into the symbol, or into a route it handles.
-    const handled = new Set(layer.edges.filter((e) => e.kind === "handles" && e.to === n.id).map((e) => e.from));
-    const links = layer.edges
-      .filter((e) => e.kind === "tests" && (e.to === n.id || handled.has(e.to)) && tiers.has(e.evidence.tier))
-      .map((e) => ({ from: e.from, to: e.to, kind: "tests", category: e.category ?? null, depth: 1, site: fwSite(e.evidence), premises: e.evidence.premises, edge: edgeId(e, e.evidence.site), fromName: g.nodes.get(e.from)?.name ?? null, toName: g.nodes.get(e.to)?.name ?? null }))
-      .sort((a, b) => RANK[a.site.tier] - RANK[b.site.tier] || a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line);
-    const p = page(s.generation, req, links);
-    if (p === "bad") return fail(s, "tests", "generation-unavailable", BAD_CURSOR);
-    const gaps = gapsOf(layer, "tests");
-    const unknown = { ...base.unknown, floor: base.unknown.floor || gaps.reasons.length > 0, reasons: [...gaps.reasons, ...base.unknown.reasons], causes: gaps.causes };
-    return { ...base, target, items: p.items, counts: counts(links), unknown, truncated: p.truncated };
-  }
-  // No framework layer: calls from files named like tests, as leads.
-  const w = walk(g, n.id, "in", 2, tiers, budget);
+  const point = new Point(g, req.target);
+  let n: GraphNode | null = null;
+  // With a layer: the routes the point handles, then the test edges into
+  // the point or into one of them, sorted.
+  const handled = new Set<string>();
+  let handles: Pass<FwEdge> | null = null;
+  const links: TestLink[] = [];
+  let tested: Pass<FwEdge> | null = null;
+  let sorted = false;
+  const gaps = layer ? new Gaps(layer, "tests") : null;
+  // Without one: callers two hops out, from files named like tests.
+  let walk: Walk | null = null;
   const seen = new Set<string>();
   const leads: Candidate[] = [];
-  for (const i of w.items) {
-    if (!isTestPath(i.site.file) || seen.has(i.from)) continue;
-    seen.add(i.from);
-    const from = g.nodes.get(i.from);
-    leads.push(from ? { ...candidate(g, from, i.depth === 1 ? 1 : 0.5) } : { id: i.from, name: i.from, kind: "file", file: i.site.file, line: i.site.line, project: g.projectOf(i.site.file), score: i.depth === 1 ? 1 : 0.5 });
-  }
-  const p = page(s.generation, req, leads);
-  if (p === "bad") return fail(s, "tests", "generation-unavailable", BAD_CURSOR);
-  const reasons = [
-    "no test runner was read in this build, so files are taken for tests by their names only: these are leads, not test links",
-    "a test that requests a route, renders a component or reaches the code through a value calls nothing here",
-    ...(w.stopped ? ["the walk stopped at its time budget"] : []),
-    ...base.unknown.reasons,
-  ];
-  return { ...base, target, leads: p.items, unknown: { ...base.unknown, floor: true, reasons, causes: { "unsupported-rule": null } }, truncated: w.stopped ? { by: "budget", omitted: null, omittedExact: false, cursor: null } : p.truncated };
+  let picked: Pass<Item> | null = null;
+  return (budget) => {
+    const base = empty(s, "tests");
+    if (!n) {
+      if (!point.run(budget)) return stoppedAt(base, [], [], null);
+      const o = point.outcome(s, "tests");
+      if (isAnswer(o)) return o;
+      n = o;
+    }
+    const at = n;
+    const target = candidate(g, at, 1);
+    if (layer && gaps) {
+      handles ??= new Pass(layer.edges, (e) => {
+        if (e.kind === "handles" && e.to === at.id) handled.add(e.from);
+      });
+      if (!handles.run(budget)) return stoppedAt({ ...base, target }, [], [], handles.left);
+      tested ??= new Pass(layer.edges, (e) => {
+        if (e.kind !== "tests" || (e.to !== at.id && !handled.has(e.to)) || !tiers.has(e.evidence.tier)) return;
+        links.push({ from: e.from, to: e.to, kind: "tests", category: e.category ?? null, depth: 1, site: fwSite(e.evidence), premises: e.evidence.premises, edge: edgeId(e, e.evidence.site), fromName: g.nodes.get(e.from)?.name ?? null, toName: g.nodes.get(e.to)?.name ?? null });
+      });
+      if (!tested.run(budget)) return stoppedAt({ ...base, target }, links, [], tested.left);
+      if (!sorted) {
+        if (!sortWithin(links, (a, b) => RANK[a.site.tier] - RANK[b.site.tier] || a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line, budget)) return stoppedAt({ ...base, target }, links, [], null);
+        sorted = true;
+      }
+      if (!gaps.pass.run(budget)) return stoppedAt({ ...base, target }, links, [], gaps.pass.left);
+      return listing({ ...base, target, counts: counts(links), unknown: gaps.unknown(base) }, links);
+    }
+    const floor = { ...base.unknown, floor: true, reasons: [...LEAD_REASONS, ...base.unknown.reasons], causes: { "unsupported-rule": null } };
+    walk ??= new Walk(g, at.id, "in", 2, tiers);
+    if (!walk.run(budget)) return stoppedAt({ ...base, target, unknown: floor }, [], walk.pending(), walk.pending().length, "leads");
+    picked ??= new Pass(walk.items, (i) => {
+      if (!isTestPath(i.site.file) || seen.has(i.from)) return;
+      seen.add(i.from);
+      const from = g.nodes.get(i.from);
+      const score = i.depth === 1 ? 1 : 0.5;
+      leads.push(from ? candidate(g, from, score) : { id: i.from, name: i.from, kind: "file", file: i.site.file, line: i.site.line, project: g.projectOf(i.site.file), score });
+    });
+    if (!picked.run(budget)) return stoppedAt({ ...base, target, unknown: floor }, leads, [], picked.left, "leads");
+    return listing({ ...base, target, unknown: floor }, leads, { into: "leads" });
+  };
 }

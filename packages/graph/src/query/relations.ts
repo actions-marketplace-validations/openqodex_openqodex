@@ -6,16 +6,17 @@
 // Each reads the graph through its public shape only (nodes, edges, the
 // importers index, the unknown records, the project of a file); none
 // binds anything the resolver did not bind. A relation this build does not
-// produce is a capability boundary, never an empty success.
+// produce is a capability boundary, never an empty success. Each is a job
+// (answer.ts) that checks the question's budget at every element it
+// touches and goes on where the budget stopped it.
 import { detectImpact, toImpactUnknown } from "../impact.js";
 import type { Tier } from "../model/records.js";
 import { weakest } from "../model/records.js";
 import type { Graph, GraphEdge, GraphNode, GraphSite } from "../types.js";
-import { BAD_CURSOR, candidate, counts, empty, fail, onePoint, qualified } from "./answer.js";
-import type { Answer, Extra, Request, Session } from "./answer.js";
+import { candidate, counts, empty, fail, isAnswer, listing, Point, qualified, stoppedAt } from "./answer.js";
+import type { Answer, Extra, Job, Request, Session } from "./answer.js";
 import { edgeId } from "./ids.js";
-import { page } from "./page.js";
-import { RANK, cycles, importsFrom, shortestPath, sortItems, spent, toItem, walk } from "./traverse.js";
+import { byItem, Cycles, importCount, importEdges, importsFrom, Pass, PathSearch, RANK, sortWithin, spent, toItem, Walk } from "./traverse.js";
 import type { Budget, Item } from "./traverse.js";
 
 // The relations the resolver of this build produces. A later phase that
@@ -43,17 +44,6 @@ function notReadIn(g: Graph, project: string): number {
   return g.status.notRead.filter((n) => g.projectOf(n.file) === project).length;
 }
 
-// The truncated block of a walk: stopped by the budget (no count past the
-// frontier, no cursor: a page of an unfinished list would not hold still),
-// cut by the page, or stopped at the depth asked.
-function walkTruncation(stopped: boolean, beyond: boolean, frontier: string[], paged: Answer["truncated"]): Answer["truncated"] {
-  const front = { frontier: frontier.slice(0, 50), frontierTotal: frontier.length };
-  if (stopped) return { by: "budget", omitted: null, omittedExact: false, cursor: null, ...front };
-  if (paged.by !== null) return paged;
-  if (beyond) return { by: "depth", omitted: null, omittedExact: false, cursor: null, ...front };
-  return paged;
-}
-
 function withFloor(base: Answer, reasons: string[], causes: Record<string, number | null> = {}): Answer["unknown"] {
   const all = [...reasons, ...base.unknown.reasons];
   return { floor: all.length > 0 || base.unknown.floor, reasons: all, causes: { ...base.unknown.causes, ...causes }, examples: base.unknown.examples };
@@ -61,7 +51,7 @@ function withFloor(base: Answer, reasons: string[], causes: Record<string, numbe
 
 // ---------- implementers ----------
 
-type Override = Item & { premises: string[] };
+export type Override = Item & { premises: string[] };
 
 // The class a method belongs to: the definition in the same file whose
 // qualified name is the method's owner path.
@@ -77,132 +67,169 @@ function ownerClass(g: Graph, m: GraphNode): GraphNode | null {
 // method of the same name on a class that inherits the owner, directly or
 // through others. The inheritance is proved; the override rests on the
 // name and on a lookup order the graph does not resolve, so it is likely
-// at most and names the inheritance it rests on.
-export function derivedOverrides(g: Graph, m: GraphNode, depth: number, budget: Budget): { items: Override[]; stopped: boolean } {
-  const owner = ownerClass(g, m);
-  if (!owner) return { items: [], stopped: false };
-  const subs = walk(g, owner.id, "in", depth, ALL_TIERS, budget, new Set(["inherits"]));
-  // The inheritance chain of each subclass back to the owner, strongest site per hop.
-  const up = new Map<string, Item>();
-  for (const i of subs.items) {
-    const have = up.get(i.from);
-    if (!have || i.depth < have.depth || (i.depth === have.depth && RANK[i.site.tier] < RANK[have.site.tier])) up.set(i.from, i);
+// at most and names the inheritance it rests on. Run it until it returns true.
+export class Overrides {
+  items: Override[] = [];
+  private readonly owner: GraphNode | null;
+  private readonly walk: Walk | null;
+  private done = false;
+  constructor(
+    private readonly g: Graph,
+    private readonly m: GraphNode,
+    depth: number,
+    private readonly tiers: ReadonlySet<Tier>,
+  ) {
+    this.owner = ownerClass(g, m);
+    this.walk = this.owner ? new Walk(g, this.owner.id, "in", depth, ALL_TIERS, new Set(["inherits"])) : null;
   }
-  const out: Override[] = [];
-  const name = m.name;
-  for (const [sub, link] of up) {
-    const cls = g.nodes.get(sub);
-    if (!cls) continue;
-    const prefix = `${qualified(cls)}.${name}`;
-    const own = (g.defsByFile.get(cls.file) ?? []).filter((d) => d.kind === "method" && qualified(d) === prefix);
-    if (own.length === 0) continue;
-    const premises: string[] = [];
-    let tier: Tier = "likely";
-    let at: Item | undefined = link;
-    while (at) {
-      premises.push(at.edge);
-      tier = weakest(tier, at.site.tier);
-      at = at.to === owner.id ? undefined : up.get(at.to);
-    }
-    for (const d of own) {
-      const site: GraphSite = {
-        file: d.file,
-        line: d.startLine,
-        column: 0,
-        tier,
-        evidence: "override-by-name",
-        via: { file: link.site.file, line: link.site.line, spec: null },
-        note: `a method of the same name on a class that inherits ${qualified(owner)} (${link.site.file}:${link.site.line}); method lookup order is not resolved`,
-        rule: "query-override-by-name",
-      };
-      const e = { from: d.id, to: m.id, kind: "overrides" };
-      out.push({ ...toItem(g, e, site, link.depth), edge: edgeId(e, site), premises });
-    }
+
+  pending(): string[] {
+    return this.walk?.pending() ?? [];
   }
-  return { items: sortItems(out) as Override[], stopped: subs.stopped };
+
+  get stoppedWalk(): boolean {
+    return false;
+  }
+
+  run(budget: Budget): boolean {
+    if (this.done) return true;
+    if (!this.walk || !this.owner) {
+      this.done = true;
+      return true;
+    }
+    if (!this.walk.run(budget)) return false;
+    const g = this.g;
+    const owner = this.owner;
+    // The inheritance chain of each subclass back to the owner, strongest site per hop.
+    const up = new Map<string, Item>();
+    for (const i of this.walk.items) {
+      const have = up.get(i.from);
+      if (!have || i.depth < have.depth || (i.depth === have.depth && RANK[i.site.tier] < RANK[have.site.tier])) up.set(i.from, i);
+    }
+    const out: Override[] = [];
+    for (const [sub, link] of up) {
+      const cls = g.nodes.get(sub);
+      if (!cls) continue;
+      const prefix = `${qualified(cls)}.${this.m.name}`;
+      const own = (g.defsByFile.get(cls.file) ?? []).filter((d) => d.kind === "method" && qualified(d) === prefix);
+      if (own.length === 0) continue;
+      const premises: string[] = [];
+      let tier: Tier = "likely";
+      let at: Item | undefined = link;
+      for (let guard = 0; at && guard < 64; guard++) {
+        premises.push(at.edge);
+        tier = weakest(tier, at.site.tier);
+        at = at.to === owner.id ? undefined : up.get(at.to);
+      }
+      if (!this.tiers.has(tier)) continue;
+      for (const d of own) {
+        const site: GraphSite = {
+          file: d.file,
+          line: d.startLine,
+          column: 0,
+          tier,
+          evidence: "override-by-name",
+          via: { file: link.site.file, line: link.site.line, spec: null },
+          note: `a method of the same name on a class that inherits ${qualified(owner)} (${link.site.file}:${link.site.line}); method lookup order is not resolved`,
+          rule: "query-override-by-name",
+        };
+        const e = { from: d.id, to: this.m.id, kind: "overrides" };
+        out.push({ ...toItem(g, e, site, link.depth), edge: edgeId(e, site), premises });
+      }
+    }
+    this.items = out.sort(byItem) as Override[];
+    this.done = true;
+    return true;
+  }
 }
 
-export function implementers(s: Session, req: Request, budget: Budget, tiers: ReadonlySet<Tier>): Answer {
+export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job {
   const g = s.graph;
-  const base = empty(s, "implementers");
-  const n = onePoint(s, "implementers", req.target);
-  if ("apiVersion" in n) return n;
-  if (n.kind !== "class" && n.kind !== "type" && n.kind !== "method" && n.kind !== "module") {
-    return fail(s, "implementers", "bad-request", `implementers takes a class, an interface, a type or a method; ${n.name} is a ${n.kind}`);
-  }
+  const point = new Point(g, req.target);
   const rel = relationsOf(g);
   const depth = Math.min(Math.max(1, req.depth ?? 3), 8);
-  const reasons: string[] = [];
-  const causes: Record<string, number | null> = {};
-  let items: Item[];
-  let stopped = false;
-  let beyond = false;
-  let frontier: string[] = [];
-  if (n.kind === "method") {
-    if (rel.has("overrides")) {
-      const w = walk(g, n.id, "in", depth, tiers, budget, new Set(["overrides"]));
-      ({ items, stopped, beyond, frontier } = w);
-    } else {
-      const d = derivedOverrides(g, n, depth, budget);
-      items = d.items.filter((i) => tiers.has(i.site.tier));
-      stopped = d.stopped;
+  let n: GraphNode | null = null;
+  let walk: Walk | null = null;
+  let derive: Overrides | null = null;
+  return (budget) => {
+    const base = empty(s, "implementers");
+    if (!n) {
+      if (!point.run(budget)) return stoppedAt(base, [], [], null);
+      const o = point.outcome(s, "implementers");
+      if (isAnswer(o)) return o;
+      if (o.kind !== "class" && o.kind !== "type" && o.kind !== "method" && o.kind !== "module") {
+        return fail(s, "implementers", "bad-request", `implementers takes a class, an interface, a type or a method; ${o.name} is a ${o.kind}`);
+      }
+      n = o;
+      if (n.kind === "method" && !rel.has("overrides")) derive = new Overrides(g, n, depth, tiers);
+      else walk = new Walk(g, n.id, "in", depth, tiers, n.kind === "method" ? new Set(["overrides"]) : new Set(["inherits", ...(rel.has("implements") ? ["implements"] : [])]));
     }
-    if (!rel.has("dispatches_to")) {
+    const target = candidate(g, n, 1);
+    const reasons: string[] = [];
+    const causes: Record<string, number | null> = {};
+    let items: Item[];
+    let beyond: string[] = [];
+    if (derive) {
+      if (!derive.run(budget)) return stoppedAt({ ...base, target }, [], derive.pending(), derive.pending().length);
+      items = derive.items;
+    } else {
+      const w = walk as Walk;
+      if (!w.run(budget)) return stoppedAt({ ...base, target }, w.items, w.pending(), w.pending().length);
+      items = w.items;
+      beyond = w.past;
+    }
+    if (n.kind === "method" && !rel.has("dispatches_to")) {
       reasons.push("calls through an interface or a base type are not resolved in this build, so a method that implements an interface method is not listed here");
       causes["unsupported-rule"] = null;
     }
-  } else {
-    const kinds = new Set(["inherits", ...(rel.has("implements") ? ["implements"] : [])]);
-    const w = walk(g, n.id, "in", depth, tiers, budget, kinds);
-    ({ items, stopped, beyond, frontier } = w);
     if (n.kind === "type" && !rel.has("implements")) {
       reasons.push("this build does not read `implements` clauses or Go method sets, so the classes that implement it are not listed");
       causes["unsupported-rule"] = null;
     }
-  }
-  const project = g.projectOf(n.file);
-  const skipped = notReadIn(g, project);
-  if (skipped > 0) reasons.push(`${skipped} ${skipped === 1 ? "file" : "files"} of its project ${skipped === 1 ? "was" : "were"} not read`);
-  if (stopped) reasons.push("the walk stopped at its time budget");
-  const p = page(s.generation, req, items);
-  if (p === "bad") return fail(s, "implementers", "generation-unavailable", BAD_CURSOR);
-  return { ...base, target: candidate(g, n, 1), items: p.items, counts: counts(items), unknown: withFloor(base, reasons, causes), truncated: walkTruncation(stopped, beyond, frontier, p.truncated) };
+    const skipped = notReadIn(g, g.projectOf(n.file));
+    if (skipped > 0) reasons.push(`${skipped} ${skipped === 1 ? "file" : "files"} of its project ${skipped === 1 ? "was" : "were"} not read`);
+    return listing({ ...base, target, counts: counts(items), unknown: withFloor(base, reasons, causes) }, items, { beyond: beyond.length > 0 ? { frontier: beyond } : null });
+  };
 }
 
 // ---------- references ----------
 
-export function references(s: Session, req: Request, budget: Budget, tiers: ReadonlySet<Tier>): Answer {
+export function references(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job | Answer {
   const g = s.graph;
   const rel = relationsOf(g);
   const kinds = REFERENCE_KINDS.filter((k) => rel.has(k));
   if (kinds.length === 0) {
     return fail(s, "references", "unsupported", "this build does not resolve uses of a symbol as a value or a type; `callers` lists the calls, and `unknowns` the calls through values it could not bind");
   }
-  const base = empty(s, "references");
-  const n = onePoint(s, "references", req.target);
-  if ("apiVersion" in n) return n;
-  const w = walk(g, n.id, "in", 1, tiers, budget, new Set(kinds));
-  const reasons: string[] = [];
-  const skipped = notReadIn(g, g.projectOf(n.file));
-  if (skipped > 0) reasons.push(`${skipped} ${skipped === 1 ? "file" : "files"} of its project ${skipped === 1 ? "was" : "were"} not read`);
-  if (w.stopped) reasons.push("the walk stopped at its time budget");
-  const p = page(s.generation, req, w.items);
-  if (p === "bad") return fail(s, "references", "generation-unavailable", BAD_CURSOR);
-  return { ...base, target: candidate(g, n, 1), items: p.items, counts: counts(w.items), unknown: withFloor(base, reasons), truncated: walkTruncation(w.stopped, false, w.frontier, p.truncated) };
+  const point = new Point(g, req.target);
+  let n: GraphNode | null = null;
+  let walk: Walk | null = null;
+  return (budget) => {
+    const base = empty(s, "references");
+    if (!n) {
+      if (!point.run(budget)) return stoppedAt(base, [], [], null);
+      const o = point.outcome(s, "references");
+      if (isAnswer(o)) return o;
+      n = o;
+      walk = new Walk(g, n.id, "in", 1, tiers, new Set(kinds));
+    }
+    const w = walk as Walk;
+    const target = candidate(g, n, 1);
+    if (!w.run(budget)) return stoppedAt({ ...base, target }, w.items, w.pending(), w.pending().length);
+    const reasons: string[] = [];
+    const skipped = notReadIn(g, g.projectOf(n.file));
+    if (skipped > 0) reasons.push(`${skipped} ${skipped === 1 ? "file" : "files"} of its project ${skipped === 1 ? "was" : "were"} not read`);
+    return listing({ ...base, target, counts: counts(w.items), unknown: withFloor(base, reasons) }, w.items);
+  };
 }
 
 // ---------- path ----------
 
 export const PATH_DEPTH = 8;
 
-export function path(s: Session, req: Request, budget: Budget, tiers: ReadonlySet<Tier>): Answer {
+export function path(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job | Answer {
   const g = s.graph;
-  const base = empty(s, "path");
   if (!req.to) return fail(s, "path", "bad-request", "path needs a second point: `to`");
-  const a = onePoint(s, "path", req.target);
-  if ("apiVersion" in a) return a;
-  const b = onePoint(s, "path", req.to);
-  if ("apiVersion" in b) return b;
   const kinds = req.edges && req.edges.length > 0 ? req.edges : ["calls", "inherits"];
   const unknownKind = kinds.find((k) => !KNOWN_KINDS.has(k));
   if (unknownKind) return fail(s, "path", "bad-request", `no relation named ${unknownKind}`);
@@ -212,46 +239,56 @@ export function path(s: Session, req: Request, budget: Budget, tiers: ReadonlySe
   const set = new Set(kinds);
   // Imports join files: a symbol stands for its file when only imports are walked.
   const onlyImports = kinds.every((k) => k === "imports");
-  const from = onlyImports ? a.file : a.id;
-  const to = onlyImports ? b.file : b.id;
   const depth = Math.min(Math.max(1, req.depth ?? PATH_DEPTH), PATH_DEPTH);
-  const target = [candidate(g, a, 1), candidate(g, b, 1)];
-  if (from === to) return { ...base, target, counts: { certain: 0, likely: 0, possible: 0 } };
-  const fwd = shortestPath(g, from, to, set, depth, tiers, budget);
-  let hops = fwd.hops;
-  let direction: "forward" | "reverse" = "forward";
-  let rev: typeof fwd | null = null;
-  if (!hops && !fwd.stopped) {
-    rev = shortestPath(g, to, from, set, depth, tiers, budget);
-    if (rev.hops) {
-      hops = rev.hops;
-      direction = "reverse";
+  const pa = new Point(g, req.target);
+  const pb = new Point(g, req.to);
+  let ends: [GraphNode, GraphNode] | null = null;
+  let fwd: PathSearch | null = null;
+  let rev: PathSearch | null = null;
+  return (budget) => {
+    const base = empty(s, "path");
+    if (!ends) {
+      if (!pa.run(budget) || !pb.run(budget)) return stoppedAt(base, [], [], null);
+      const a = pa.outcome(s, "path");
+      if (isAnswer(a)) return a;
+      const b = pb.outcome(s, "path");
+      if (isAnswer(b)) return b;
+      ends = [a, b];
     }
-  }
-  const stopped = fwd.stopped || rev?.stopped === true;
-  if (hops) {
-    const items = hops.map((h) => ({ ...h, direction }));
-    return { ...base, target, items, counts: counts(items) };
-  }
-  // No path among the known edges: a floor when an unbound call in the code
-  // the search visited, a file not read, or the budget could hide one.
-  const visited = new Set([...fwd.visited, ...(rev?.visited ?? [])]);
-  const unbound = g.unknowns.filter((u) => u.cause !== "external" && visited.has(u.caller));
-  const reasons: string[] = [];
-  const causes: Record<string, number | null> = {};
-  for (const u of unbound) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
-  if (unbound.length > 0) reasons.push(`${unbound.length} ${unbound.length === 1 ? "call" : "calls"} in the code the search visited could not be bound, and could lead from one to the other`);
-  if (g.status.notRead.length > 0) reasons.push(`${g.status.notRead.length} ${g.status.notRead.length === 1 ? "file was" : "files were"} not read`);
-  if (stopped) reasons.push("the search stopped at its time budget");
-  const beyond = !stopped && (fwd.beyond || rev?.beyond === true);
-  const unknown = withFloor(base, reasons, causes);
-  unknown.examples = unbound.slice(0, 5).map(toImpactUnknown);
-  return {
-    ...base,
-    target,
-    counts: { certain: 0, likely: 0, possible: 0 },
-    unknown,
-    truncated: stopped ? { by: "budget", omitted: null, omittedExact: false, cursor: null } : beyond ? { by: "depth", omitted: null, omittedExact: false, cursor: null } : base.truncated,
+    const [a, b] = ends;
+    const from = onlyImports ? a.file : a.id;
+    const to = onlyImports ? b.file : b.id;
+    const target = [candidate(g, a, 1), candidate(g, b, 1)];
+    if (from === to) return listing({ ...base, target, counts: { certain: 0, likely: 0, possible: 0 } }, []);
+    fwd ??= new PathSearch(g, from, to, set, depth, tiers);
+    if (!fwd.run(budget)) return stoppedAt({ ...base, target }, [], fwd.pending(), fwd.pending().length);
+    let hops = fwd.hops;
+    let direction: "forward" | "reverse" = "forward";
+    if (!hops) {
+      rev ??= new PathSearch(g, to, from, set, depth, tiers);
+      if (!rev.run(budget)) return stoppedAt({ ...base, target }, [], rev.pending(), rev.pending().length);
+      if (rev.hops) {
+        hops = rev.hops;
+        direction = "reverse";
+      }
+    }
+    if (hops) {
+      const items = hops.map((h) => ({ ...h, direction }));
+      return listing({ ...base, target, counts: counts(items) }, items);
+    }
+    // No path among the known edges: a floor when an unbound call in the code
+    // the search visited, a file not read, or the depth could hide one.
+    const visited = new Set([...fwd.visited, ...(rev?.visited ?? [])]);
+    const unbound = g.unknowns.filter((u) => u.cause !== "external" && visited.has(u.caller));
+    const reasons: string[] = [];
+    const causes: Record<string, number | null> = {};
+    for (const u of unbound) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
+    if (unbound.length > 0) reasons.push(`${unbound.length} ${unbound.length === 1 ? "call" : "calls"} in the code the search visited could not be bound, and could lead from one to the other`);
+    if (g.status.notRead.length > 0) reasons.push(`${g.status.notRead.length} ${g.status.notRead.length === 1 ? "file was" : "files were"} not read`);
+    const unknown = withFloor(base, reasons, causes);
+    unknown.examples = unbound.slice(0, 5).map(toImpactUnknown);
+    const beyond = fwd.beyond || rev?.beyond === true;
+    return listing({ ...base, target, counts: { certain: 0, likely: 0, possible: 0 }, unknown }, [], { beyond: beyond ? { frontier: [...fwd.pending(), ...(rev?.pending() ?? [])] } : null });
   };
 }
 
@@ -260,166 +297,303 @@ export function path(s: Session, req: Request, budget: Budget, tiers: ReadonlySe
 // The review's own walk (impact.ts), seeded by the diff the caller passes
 // or by one symbol as if its first line changed. Items: each caller path
 // with its hops, each callee, each importer of a changed file, each changed
-// public name.
-export function impact(s: Session, req: Request, extra: Extra): Answer {
+// public name. The walk is bounded by its own limits (200 symbols, 20
+// callers a hop), so it runs whole once its point is found.
+export function impact(s: Session, req: Request, extra: Extra): Job | Answer {
   const g = s.graph;
-  const base = empty(s, "impact");
-  let change = extra.change;
-  let target: Answer["target"] = null;
-  if (req.target && (req.target.id || req.target.name || req.target.file)) {
-    const n = onePoint(s, "impact", req.target);
-    if ("apiVersion" in n) return n;
-    target = candidate(g, n, 1);
-    change = { files: [{ path: n.file, status: "modified", oldPath: null, binary: false }], coverage: new Map([[n.file, new Set([n.startLine])]]) };
-  }
-  if (!change) return fail(s, "impact", "bad-request", "impact needs a symbol, or a change compared with its base (`openqodex graph impact` with no symbol)");
-  const sum = detectImpact(g, change);
-  const hop = (e: { from: string; to: string; kind: string; sites: GraphSite[] }, depth: number): Item => toItem(g, e, e.sites[0] as GraphSite, depth);
-  const all: unknown[] = [
-    ...sum.callers.map((p) => ({ type: "caller", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
-    ...sum.callees.map((p) => ({ type: "callee", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
-    ...sum.importers.map((e) => ({ type: "importer", hops: [hop(e, 1)] })),
-    ...sum.exports.map((e) => ({ type: "export", ...e })),
-  ];
-  const p = page(s.generation, req, all);
-  if (p === "bad") return fail(s, "impact", "generation-unavailable", BAD_CURSOR);
-  const lastSites = sum.callers.map((c) => c.edges[c.edges.length - 1]?.sites[0]).filter((x): x is GraphSite => x !== undefined);
-  return {
-    ...base,
-    target: target ?? sum.symbols.filter((x) => sum.touched.includes(x.id) || sum.removed.includes(x.id)).map((x) => ({ id: x.id, name: x.name, kind: x.kind, file: x.file, line: x.startLine, project: g.projectOf(x.file), score: 1 })),
-    items: p.items,
-    counts: counts(lastSites.map((site) => ({ site }))),
-    unknown: {
-      floor: sum.unknown.floor,
-      reasons: [...new Set([...sum.unknown.seeds.flatMap((x) => x.reasons), ...(sum.status === "partial" ? sum.reasons : [])])],
-      causes: sum.unknown.causes,
-      examples: sum.unknown.near.slice(0, 5),
-    },
-    truncated: p.truncated,
+  const bySymbol = req.target !== undefined && (req.target.id !== undefined || req.target.name !== undefined || req.target.file !== undefined);
+  if (!bySymbol && !extra.change) return fail(s, "impact", "bad-request", "impact needs a symbol, or a change compared with its base (`openqodex graph impact` with no symbol)");
+  const point = bySymbol ? new Point(g, req.target) : null;
+  return (budget) => {
+    const base = empty(s, "impact");
+    let change = extra.change;
+    let target: Answer["target"] = null;
+    if (point) {
+      if (!point.run(budget)) return stoppedAt(base, [], [], null);
+      const n = point.outcome(s, "impact");
+      if (isAnswer(n)) return n;
+      target = candidate(g, n, 1);
+      change = { files: [{ path: n.file, status: "modified", oldPath: null, binary: false }], coverage: new Map([[n.file, new Set([n.startLine])]]) };
+    }
+    if (spent(budget)) return stoppedAt(base, [], [], null);
+    const sum = detectImpact(g, change as NonNullable<typeof change>);
+    const hop = (e: { from: string; to: string; kind: string; sites: GraphSite[] }, depth: number): Item => toItem(g, e, e.sites[0] as GraphSite, depth);
+    const all: unknown[] = [
+      ...sum.callers.map((p) => ({ type: "caller", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
+      ...sum.callees.map((p) => ({ type: "callee", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
+      ...sum.importers.map((e) => ({ type: "importer", hops: [hop(e, 1)] })),
+      ...sum.exports.map((e) => ({ type: "export", ...e })),
+    ];
+    const lastSites = sum.callers.map((c) => c.edges[c.edges.length - 1]?.sites[0]).filter((x): x is GraphSite => x !== undefined);
+    return listing(
+      {
+        ...base,
+        target: target ?? sum.symbols.filter((x) => sum.touched.includes(x.id) || sum.removed.includes(x.id)).map((x) => ({ id: x.id, name: x.name, kind: x.kind, file: x.file, line: x.startLine, project: g.projectOf(x.file), score: 1 })),
+        counts: counts(lastSites.map((site) => ({ site }))),
+        unknown: {
+          floor: sum.unknown.floor,
+          reasons: [...new Set([...sum.unknown.seeds.flatMap((x) => x.reasons), ...(sum.status === "partial" ? sum.reasons : [])])],
+          causes: sum.unknown.causes,
+          examples: sum.unknown.near.slice(0, 5),
+        },
+      },
+      all,
+    );
   };
 }
 
 // ---------- outline ----------
 
-export function outline(s: Session, req: Request): Answer {
+export function outline(s: Session, req: Request): Job | Answer {
   const g = s.graph;
-  const base = empty(s, "outline");
   const at = (req.target?.file ?? "").replace(/\/+$/, "");
   if (at === "") return fail(s, "outline", "bad-request", "outline takes a file or a folder of the repository");
-  const files = g.defsByFile.has(at) ? [at] : [...g.defsByFile.keys()].filter((f) => f.startsWith(`${at}/`)).sort();
-  if (files.length === 0) return fail(s, "outline", "not-found", `no file of the graph is ${at} or under it`);
+  const keys = g.defsByFile.keys();
+  const files: string[] = [];
+  let scanning = !g.defsByFile.has(at);
+  if (!scanning) files.push(at);
+  let left = g.defsByFile.size;
+  const all: unknown[] = [];
+  let built = false;
   const sites = (list: GraphEdge[] | undefined) => (list ?? []).reduce((k, e) => k + e.sites.length, 0);
-  const all = files.flatMap((f) =>
-    (g.defsByFile.get(f) ?? [])
-      .slice()
-      .sort((x, y) => x.startLine - y.startLine)
-      .map((d) => ({ id: d.id, name: d.name, qualified: qualified(d), kind: d.kind, file: d.file, line: d.startLine, endLine: d.endLine, exported: d.exported, callerSites: sites(g.in.get(d.id)), calleeSites: sites(g.out.get(d.id)) })),
-  );
-  const p = page(s.generation, req, all);
-  if (p === "bad") return fail(s, "outline", "generation-unavailable", BAD_CURSOR);
-  const notRead = g.status.notRead.filter((n) => n.file === at || n.file.startsWith(`${at}/`));
-  const reasons = notRead.length > 0 ? [`${notRead.length} ${notRead.length === 1 ? "file" : "files"} here ${notRead.length === 1 ? "was" : "were"} not read: ${notRead.slice(0, 5).map((n) => `${n.file} (${n.reason})`).join(", ")}`] : [];
-  return { ...base, items: p.items, unknown: withFloor(base, reasons), truncated: p.truncated };
+  return (budget) => {
+    const base = empty(s, "outline");
+    while (scanning) {
+      if (spent(budget)) return stoppedAt(base, [], [], left);
+      const r = keys.next();
+      if (r.done) {
+        scanning = false;
+        break;
+      }
+      left--;
+      if (r.value.startsWith(`${at}/`)) files.push(r.value);
+    }
+    if (files.length === 0) return fail(s, "outline", "not-found", `no file of the graph is ${at} or under it`);
+    if (!built) {
+      if (!sortWithin(files, (x, y) => (x < y ? -1 : x > y ? 1 : 0), budget)) return stoppedAt(base, [], [], null);
+      for (const f of files) {
+        if (spent(budget)) return stoppedAt(base, [], [], null);
+        const defs = (g.defsByFile.get(f) ?? []).slice().sort((x, y) => x.startLine - y.startLine);
+        for (const d of defs) all.push({ id: d.id, name: d.name, qualified: qualified(d), kind: d.kind, file: d.file, line: d.startLine, endLine: d.endLine, exported: d.exported, callerSites: sites(g.in.get(d.id)), calleeSites: sites(g.out.get(d.id)) });
+      }
+      built = true;
+    }
+    const notRead = g.status.notRead.filter((n) => n.file === at || n.file.startsWith(`${at}/`));
+    const reasons = notRead.length > 0 ? [`${notRead.length} ${notRead.length === 1 ? "file" : "files"} here ${notRead.length === 1 ? "was" : "were"} not read: ${notRead.slice(0, 5).map((n) => `${n.file} (${n.reason})`).join(", ")}`] : [];
+    return listing({ ...base, unknown: withFloor(base, reasons) }, all);
+  };
 }
 
 // ---------- packages and cycles ----------
 
 type Dependency = { from: string; to: string; edges: GraphEdge[] };
 
-// Import edges between files of two different projects, by project pair.
+// Import edges between files of two different projects, by project pair,
+// gathered edge by edge within the budget. A finished gathering is kept
+// for the graph; an unfinished one is kept by its job.
 const projectDeps = new WeakMap<Graph, Map<string, Dependency>>();
-function dependencies(g: Graph): Map<string, Dependency> {
-  let deps = projectDeps.get(g);
-  if (deps) return deps;
-  deps = new Map();
-  for (const list of g.importers.values()) {
-    for (const e of list) {
-      const from = g.projectOf(e.from);
-      const to = e.to.startsWith("go:") ? g.projectOf(`${e.to.slice(3)}/x.go`) : g.projectOf(e.to);
-      if (from === to) continue;
-      const key = `${from}\0${to}`;
-      const d = deps.get(key) ?? { from, to, edges: [] };
-      d.edges.push(e);
-      deps.set(key, d);
+class Dependencies {
+  deps = new Map<string, Dependency>();
+  private readonly pass: Pass<GraphEdge> | null;
+  constructor(private readonly g: Graph) {
+    const kept = projectDeps.get(g);
+    if (kept) {
+      this.deps = kept;
+      this.pass = null;
+      return;
     }
+    this.pass = new Pass(
+      importEdges(g),
+      (e) => {
+        const from = g.projectOf(e.from);
+        const to = e.to.startsWith("go:") ? g.projectOf(`${e.to.slice(3)}/x.go`) : g.projectOf(e.to);
+        if (from === to) return;
+        const key = `${from}\0${to}`;
+        const d = this.deps.get(key) ?? { from, to, edges: [] };
+        d.edges.push(e);
+        this.deps.set(key, d);
+      },
+      importCount(g),
+    );
   }
-  projectDeps.set(g, deps);
-  return deps;
+  get left(): number | null {
+    return this.pass?.left ?? 0;
+  }
+  run(budget: Budget): boolean {
+    if (!this.pass) return true;
+    if (!this.pass.run(budget)) return false;
+    projectDeps.set(this.g, this.deps);
+    return true;
+  }
 }
 
-function projectsOf(g: Graph): string[] {
-  return [...new Set([...g.defsByFile.keys()].map((f) => g.projectOf(f)))].sort();
+// The files of each project the graph read, counted file by file, sorted
+// by project. A finished count is kept for the graph.
+const projectFiles = new WeakMap<Graph, { files: Map<string, number>; projects: string[] }>();
+class Projects {
+  files = new Map<string, number>();
+  projects: string[] = [];
+  private readonly pass: Pass<string> | null;
+  private sorted = false;
+  constructor(private readonly g: Graph) {
+    const kept = projectFiles.get(g);
+    if (kept) {
+      ({ files: this.files, projects: this.projects } = kept);
+      this.pass = null;
+      return;
+    }
+    this.pass = new Pass(
+      g.defsByFile.keys(),
+      (f) => {
+        const p = g.projectOf(f);
+        this.files.set(p, (this.files.get(p) ?? 0) + 1);
+      },
+      g.defsByFile.size,
+    );
+  }
+  get left(): number | null {
+    return this.pass?.left ?? 0;
+  }
+  run(budget: Budget): boolean {
+    if (!this.pass) return true;
+    if (!this.pass.run(budget)) return false;
+    if (!this.sorted) {
+      if (this.projects.length === 0) this.projects = [...this.files.keys()];
+      if (!sortWithin(this.projects, byText, budget)) return false;
+      this.sorted = true;
+      projectFiles.set(this.g, { files: this.files, projects: this.projects });
+    }
+    return true;
+  }
 }
+
+const byText = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
 
 const EDGES_SHOWN = 50;
 
 function importItems(g: Graph, edges: GraphEdge[]): Item[] {
-  return sortItems(edges.flatMap((e) => e.sites.map((site) => toItem(g, e, site, 1))));
+  return edges.flatMap((e) => e.sites.map((site) => toItem(g, e, site, 1))).sort(byItem);
 }
 
-export function packages(s: Session, req: Request): Answer {
+function importReasons(g: Graph): string[] {
+  const reasons: string[] = [];
+  for (const x of g.model.unreadable) if (x.affects.includes("imports")) reasons.push(x.note);
+  if (g.status.notRead.length > 0) reasons.push(`${g.status.notRead.length} ${g.status.notRead.length === 1 ? "file was" : "files were"} not read, and their imports are not here`);
+  return reasons;
+}
+
+// Which projects depend on which, or the projects that depend on one. Each
+// step reads one edge, file, dependency or project with the budget checked;
+// the sites of one project pair are read as one step.
+export function packages(s: Session, req: Request): Job {
   const g = s.graph;
-  const base = empty(s, "packages");
-  const deps = [...dependencies(g).values()];
-  const projects = projectsOf(g);
+  const gather = new Dependencies(g);
+  const count = new Projects(g);
   const t = req.target ?? {};
   const asked = t.project ?? (t.file ? g.projectOf(t.file) : t.name);
-  const reasons: string[] = [];
-  const gaps = g.model.unreadable.filter((x) => x.affects.includes("imports"));
-  for (const x of gaps) reasons.push(x.note);
-  if (g.status.notRead.length > 0) reasons.push(`${g.status.notRead.length} ${g.status.notRead.length === 1 ? "file was" : "files were"} not read, and their imports are not here`);
-  let all: unknown[];
-  if (asked === undefined) {
-    all = projects.map((p) => ({
-      project: p,
-      files: [...g.defsByFile.keys()].filter((f) => g.projectOf(f) === p).length,
-      dependsOn: deps.filter((d) => d.from === p).map((d) => d.to).sort(),
-      dependents: deps.filter((d) => d.to === p).map((d) => d.from).sort(),
-    }));
-  } else {
-    if (!projects.includes(asked)) return fail(s, "packages", "not-found", `no project ${asked === "" ? "at the repository root" : asked} in this graph; the projects are ${projects.map((p) => (p === "" ? "(root)" : p)).join(", ")}`);
-    all = deps
-      .filter((d) => d.to === asked)
-      .sort((a, b) => a.from.localeCompare(b.from))
-      .map((d) => {
-        const items = importItems(g, d.edges);
-        return { project: d.from, importSites: items.length, sites: items.slice(0, EDGES_SHOWN).map((i) => `${i.site.file}:${i.site.line}`), edges: items.slice(0, EDGES_SHOWN) };
+  const dependsOn = new Map<string, string[]>();
+  const dependents = new Map<string, string[]>();
+  const mine: Dependency[] = [];
+  let linking: Pass<Dependency> | null = null;
+  let sorted = false;
+  let building: Pass<string> | Pass<Dependency> | null = null;
+  const all: unknown[] = [];
+  return (budget) => {
+    const base = empty(s, "packages");
+    if (!gather.run(budget)) return stoppedAt(base, [], [], gather.left);
+    if (!count.run(budget)) return stoppedAt(base, [], [], count.left);
+    const unknown = withFloor(base, importReasons(g));
+    if (asked === undefined) {
+      linking ??= new Pass(
+        gather.deps.values(),
+        (d) => {
+          (dependsOn.get(d.from) ?? dependsOn.set(d.from, []).get(d.from))?.push(d.to);
+          (dependents.get(d.to) ?? dependents.set(d.to, []).get(d.to))?.push(d.from);
+        },
+        gather.deps.size,
+      );
+      if (!linking.run(budget)) return stoppedAt(base, [], [], linking.left);
+      building ??= new Pass(count.projects, (p: string) => {
+        all.push({ project: p, files: count.files.get(p) ?? 0, dependsOn: (dependsOn.get(p) ?? []).sort(byText), dependents: (dependents.get(p) ?? []).sort(byText) });
       });
-  }
-  const p = page(s.generation, req, all);
-  if (p === "bad") return fail(s, "packages", "generation-unavailable", BAD_CURSOR);
-  return { ...base, items: p.items, unknown: withFloor(base, reasons), truncated: p.truncated };
+      if (!building.run(budget)) return stoppedAt(base, all, [], building.left);
+      return listing({ ...base, unknown }, all);
+    }
+    if (!count.files.has(asked)) return fail(s, "packages", "not-found", `no project ${asked === "" ? "at the repository root" : asked} in this graph; the projects are ${count.projects.map((p) => (p === "" ? "(root)" : p)).join(", ")}`);
+    linking ??= new Pass(
+      gather.deps.values(),
+      (d) => {
+        if (d.to === asked) mine.push(d);
+      },
+      gather.deps.size,
+    );
+    if (!linking.run(budget)) return stoppedAt(base, [], [], linking.left);
+    if (!sorted) {
+      if (!sortWithin(mine, (a, b) => byText(a.from, b.from), budget)) return stoppedAt(base, [], [], null);
+      sorted = true;
+    }
+    building ??= new Pass(mine, (d: Dependency) => {
+      const items = importItems(g, d.edges);
+      all.push({ project: d.from, importSites: items.length, sites: items.slice(0, EDGES_SHOWN).map((i) => `${i.site.file}:${i.site.line}`), edges: items.slice(0, EDGES_SHOWN) });
+    });
+    if (!building.run(budget)) return stoppedAt(base, all, [], building.left);
+    return listing({ ...base, unknown }, all);
+  };
 }
 
-export function importCycles(s: Session, req: Request, budget: Budget): Answer {
+// Import cycles between files or between projects. The nodes are gathered
+// edge by edge, the search reads one successor at a time, and the edges of
+// each cycle found are read one cycle at a time.
+export function importCycles(s: Session, req: Request): Job | Answer {
   const g = s.graph;
-  const base = empty(s, "cycles");
   const level = req.level ?? "files";
   if (level !== "files" && level !== "projects") return fail(s, "cycles", "bad-request", "cycles takes the level files or projects");
-  let groups: string[][];
-  let stopped: boolean;
-  let between: (members: Set<string>) => Item[];
-  if (level === "files") {
-    const next = (f: string): string[] => [...new Set(importsFrom(g, f).flatMap((e) => (e.to.startsWith("go:") ? [] : [e.to])))];
-    const files = [...new Set([...g.importers.values()].flatMap((l) => l.map((e) => e.from)))].sort();
-    ({ groups, stopped } = cycles(files, next, budget));
-    between = (m) => importItems(g, [...m].flatMap((f) => importsFrom(g, f).filter((e) => m.has(e.to))));
-  } else {
-    const deps = [...dependencies(g).values()];
-    const next = (p: string): string[] => deps.filter((d) => d.from === p).map((d) => d.to);
-    ({ groups, stopped } = cycles(projectsOf(g), next, budget));
-    between = (m) => importItems(g, deps.filter((d) => m.has(d.from) && m.has(d.to)).flatMap((d) => d.edges));
-  }
-  if (spent(budget)) stopped = true;
-  const all = groups
-    .sort((a, b) => b.length - a.length || (a[0] ?? "").localeCompare(b[0] ?? ""))
-    .map((members) => {
-      const edges = between(new Set(members));
-      return { level, members, size: members.length, edgeCount: edges.length, edges: edges.slice(0, EDGES_SHOWN) };
+  const gather = level === "projects" ? new Dependencies(g) : null;
+  const count = level === "projects" ? new Projects(g) : null;
+  // files: the files that import; projects: each project's dependencies.
+  const importing = new Set<string>();
+  const next = new Map<string, string[]>();
+  let nodes: Pass<GraphEdge> | Pass<Dependency> | null = null;
+  let order: string[] | null = null;
+  let search: Cycles | null = null;
+  let groups: string[][] | null = null;
+  const all: unknown[] = [];
+  let reading: Pass<string[]> | null = null;
+  return (budget) => {
+    const base = empty(s, "cycles");
+    if (!search) {
+      if (level === "files") {
+        nodes ??= new Pass(importEdges(g), (e: GraphEdge) => importing.add(e.from), importCount(g));
+        if (!nodes.run(budget)) return stoppedAt(base, [], [], nodes.left);
+        order ??= [...importing];
+        if (!sortWithin(order, byText, budget)) return stoppedAt(base, [], [], null);
+        search = new Cycles(order, (f) => [...new Set(importsFrom(g, f).flatMap((e) => (e.to.startsWith("go:") ? [] : [e.to])))]);
+      } else {
+        const dep = gather as Dependencies;
+        const projects = count as Projects;
+        if (!dep.run(budget)) return stoppedAt(base, [], [], dep.left);
+        if (!projects.run(budget)) return stoppedAt(base, [], [], projects.left);
+        nodes ??= new Pass(dep.deps.values(), (d: Dependency) => (next.get(d.from) ?? next.set(d.from, []).get(d.from))?.push(d.to), dep.deps.size);
+        if (!nodes.run(budget)) return stoppedAt(base, [], [], nodes.left);
+        search = new Cycles(projects.projects, (p) => next.get(p) ?? []);
+      }
+    }
+    if (!search.run(budget)) return stoppedAt(base, [], [], search.remaining);
+    if (!groups) {
+      const found = search.groups.slice();
+      if (!sortWithin(found, (a, b) => b.length - a.length || (a[0] ?? "").localeCompare(b[0] ?? ""), budget)) return stoppedAt(base, [], [], null);
+      groups = found;
+    }
+    reading ??= new Pass(groups, (members) => {
+      const m = new Set(members);
+      const edges =
+        level === "files"
+          ? importItems(g, members.flatMap((f) => importsFrom(g, f).filter((e) => m.has(e.to))))
+          : importItems(g, members.flatMap((p) => (next.get(p) ?? []).filter((q) => m.has(q)).flatMap((q) => (gather as Dependencies).deps.get(`${p}\0${q}`)?.edges ?? [])));
+      all.push({ level, members, size: members.length, edgeCount: edges.length, edges: edges.slice(0, EDGES_SHOWN) });
     });
-  const p = page(s.generation, req, all);
-  if (p === "bad") return fail(s, "cycles", "generation-unavailable", BAD_CURSOR);
-  const reasons = stopped ? ["the search stopped at its time budget; cycles past it are not listed"] : [];
-  if (g.status.notRead.length > 0) reasons.push(`${g.status.notRead.length} ${g.status.notRead.length === 1 ? "file was" : "files were"} not read, and their imports are not here`);
-  return { ...base, items: p.items, unknown: withFloor(base, reasons), truncated: stopped ? { by: "budget", omitted: null, omittedExact: false, cursor: null } : p.truncated };
+    if (!reading.run(budget)) return stoppedAt(base, all, [], reading.left);
+    const reasons = g.status.notRead.length > 0 ? [`${g.status.notRead.length} ${g.status.notRead.length === 1 ? "file was" : "files were"} not read, and their imports are not here`] : [];
+    return listing({ ...base, unknown: withFloor(base, reasons) }, all);
+  };
 }
