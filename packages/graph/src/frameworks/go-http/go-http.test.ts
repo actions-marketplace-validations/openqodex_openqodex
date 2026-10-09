@@ -15,7 +15,7 @@ import type { FrameworkLayer, Graph, Registration } from "../../index.js";
 import { parserFor } from "../../parser.js";
 import type { GoHttpFact } from "./facts.js";
 import { MAX_SOURCE_BYTES, readFacts, wants } from "./facts.js";
-import { matches, MAX_MATCH_WORK, MAX_MIDDLEWARE_CHAIN, MAX_MOUNTS, MAX_REGISTRATIONS, MAX_TEST_REQUESTS } from "./resolve.js";
+import { matches, MAX_APPS, MAX_EDGES, MAX_MATCH_WORK, MAX_MIDDLEWARE_CHAIN, MAX_MOUNTS, MAX_REGISTRATIONS, MAX_ROLES, MAX_TEST_REQUESTS, MAX_UNKNOWNS } from "./resolve.js";
 
 const git = (root: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
 
@@ -530,5 +530,58 @@ describe("the net/http plugin on a package of many symbols", () => {
     expect(goRegs(graph).filter((r) => r.handler.status === "bound").length).toBe(3000);
     expect((graph.frameworks?.roles ?? []).filter((r) => r.plugin === "go-http" && r.role === "test").length).toBe(3600);
     expect(run?.ms ?? Infinity).toBeLessThan(1000);
+  });
+});
+
+// Every list the plugin returns grown past its cap by files a stranger
+// writes: thousands of muxes, of test functions, of computed patterns, and
+// a handler name defined in 60 files, so each route has 60 handles edges.
+describe("the net/http plugin on lists grown past every cap", () => {
+  let graph: Graph;
+
+  beforeAll(async () => {
+    const files: Record<string, string> = { "go.mod": "module example.com/lists\n\ngo 1.22\n" };
+    for (let k = 0; k < 3; k++) {
+      const lines = [GO_HEAD];
+      for (let n = 0; n < 1700; n++) lines.push(`var m${k}x${n} = http.NewServeMux()`);
+      files[`muxes${k}.go`] = lines.join("\n");
+    }
+    files["mux.go"] = `${GO_HEAD}var Mux = http.NewServeMux()\n\nvar v = "1"\n`;
+    for (let k = 0; k < 6; k++) {
+      const lines = [GO_HEAD, "func init() {"];
+      for (let n = 0; n < 1750; n++) lines.push(`\tMux.HandleFunc("/v${k}x${n}/"+v, h)`);
+      lines.push("}");
+      files[`computed${k}.go`] = lines.join("\n");
+    }
+    for (let k = 0; k < 60; k++) files[`h${k}.go`] = `${GO_HEAD}func h(w http.ResponseWriter, r *http.Request) {}\n`;
+    files["routes.go"] = [GO_HEAD, "func init() {", ...Array.from({ length: 1100 }, (_, n) => `\tMux.HandleFunc("/r${n}", h)`), "}"].join("\n");
+    for (let k = 0; k < 6; k++) {
+      const lines = ['package main\n\nimport "testing"\n'];
+      for (let n = 0; n < 1750; n++) lines.push(`func TestL${k}x${n}(*testing.T) {}`);
+      files[`lists${k}_test.go`] = lines.join("\n");
+    }
+    const root = writeRepo("oq-go-lists-", files);
+    try {
+      graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it("a crafted repository cannot hang or exhaust the build: every list the plugin returns stops at its cap, with one unknown each", () => {
+    const data = graph.frameworks;
+    const run = data?.plugins.find((p) => p.id === "go-http");
+    expect(run?.status).toBe("ok");
+    const apps = (data?.apps ?? []).filter((a) => a.plugin === "go-http");
+    const roles = (data?.roles ?? []).filter((r) => r.plugin === "go-http");
+    const edges = (data?.edges ?? []).filter((e) => e.plugin === "go-http");
+    const unknowns = goUnknowns(graph);
+    expect(apps.length).toBe(MAX_APPS);
+    expect(roles.length).toBe(MAX_ROLES);
+    expect(edges.length).toBeLessThanOrEqual(MAX_EDGES);
+    expect(goRegs(graph).length).toBeLessThanOrEqual(MAX_REGISTRATIONS);
+    const caps = unknowns.filter((u) => "project" in u.scope);
+    expect(unknowns.length - caps.length).toBe(MAX_UNKNOWNS);
+    for (const what of ["applications", "roles", "edges", "unknowns"]) expect(caps.filter((u) => u.note.includes(`stopped listing ${what} after`)).length).toBe(1);
   });
 });

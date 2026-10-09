@@ -48,6 +48,11 @@ export const MAX_TEST_LINKS = 10_000; // tests edges made from requests
 export const MAX_MATCH_WORK = 4_000_000; // pattern segments compared
 export const MAX_COMPOSE_STEPS = 1_000_000; // registration calls visited while composing muxes
 export const MAX_LOOKUPS = 100_000; // names looked up through the index
+// Every list the plugin returns, so none can overflow the stage that appends it.
+export const MAX_APPS = 5000; // muxes and default muxes
+export const MAX_ROLES = 10_000;
+export const MAX_EDGES = 60_000; // all kinds together
+export const MAX_UNKNOWNS = 10_000; // besides the one unknown each cap adds when it stops
 // The caps per item: a registration's wrapper chain, a branch of mounts, a pattern.
 export const MAX_MIDDLEWARE_CHAIN = 64;
 export const MAX_MOUNT_DEPTH = 8;
@@ -134,18 +139,36 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
 
   // ---------- caps ----------
   const used = { registrations: 0, mounts: 0, middleware: 0, requests: 0, testLinks: 0, match: 0, steps: 0, lookups: 0 };
-  const stopped = new Set<string>();
-  const stop = (key: keyof typeof used | "depth", cause: Cause, site: Site | null, affects: FrameworkEdgeKind[], note: string) => {
-    if (stopped.has(key)) return;
-    stopped.add(key);
-    unknowns.push({ plugin: PLUGIN, site, scope: { project: "" }, affects, cause, name: null, note, count: null, exact: false });
+  // The one unknown each cap adds when it stops, by cap; it is never counted
+  // against MAX_UNKNOWNS, so a cap is always said.
+  const stopped = new Map<string, FrameworkUnknown>();
+  const stop = (key: keyof typeof used | "depth" | "apps" | "roles" | "edges" | "unknowns", cause: Cause, site: Site | null, affects: FrameworkEdgeKind[], note: string): FrameworkUnknown => {
+    const kept = stopped.get(key);
+    if (kept) return kept;
+    const u: FrameworkUnknown = { plugin: PLUGIN, site, scope: { project: "" }, affects, cause, name: null, note, count: null, exact: false };
+    stopped.set(key, u);
+    unknowns.push(u);
+    return u;
+  };
+  // Every other unknown, at most MAX_UNKNOWNS; past that only counted, with
+  // no check for repeats, so the count is a bound and not exact.
+  let listedUnknowns = 0;
+  const addUnknown = (u: FrameworkUnknown) => {
+    if (listedUnknowns >= MAX_UNKNOWNS) {
+      const cap = stop("unknowns", "fan-out-capped", u.site, [], `the plugin stopped listing unknowns after ${MAX_UNKNOWNS} in this build; the count is of the gaps left out`);
+      cap.count = (cap.count ?? 0) + 1;
+      return;
+    }
+    listedUnknowns++;
+    unknowns.push(u);
   };
   const seenGaps = new Set<string>();
   const gap = (u: FrameworkUnknown) => {
+    if (listedUnknowns >= MAX_UNKNOWNS) return addUnknown(u);
     const k = `${u.cause}\0${u.site ? siteKey(u.site) : ""}\0${u.name ?? ""}\0${"file" in u.scope ? u.scope.file : ""}`;
     if (seenGaps.has(k)) return;
     seenGaps.add(k);
-    unknowns.push(u);
+    addUnknown(u);
   };
   const lookup = (file: string, path: readonly string[]): Lookup => {
     if (used.lookups >= MAX_LOOKUPS) {
@@ -276,10 +299,21 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   };
 
   const muxes = new Map<string, Mux>();
-  const muxAt = (file: string, f: Fact<"value">): Mux => {
+  // Muxes past MAX_APPS are no application; the cap's unknown counts them.
+  const leftApps = new Set<string>();
+  const roomFor = (id: string, site: Site): boolean => {
+    if (muxes.size < MAX_APPS) return true;
+    leftApps.add(id);
+    const cap = stop("apps", "fan-out-capped", site, ["handles", "mounts"], `the plugin stopped listing applications after ${MAX_APPS} muxes in this build; the routes of the muxes past that are not listed`);
+    cap.count = leftApps.size;
+    cap.exact = true;
+    return false;
+  };
+  const muxAt = (file: string, f: Fact<"value">): Mux | null => {
     const id = appId(PLUGIN, file, f.line);
     let m = muxes.get(id);
     if (!m) {
+      if (!roomFor(id, { file, line: f.line, column: f.column })) return null;
       m = { kind: "mux", id, file, name: f.name, line: f.line, column: f.column, project: index.projectOf(file), dflt: false, served: [], first: null };
       muxes.set(id, m);
     }
@@ -289,7 +323,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   const defaultMux = (project: string, create: Site | null): Mux | null => {
     const id = appId(PLUGIN, modPath(project), 1);
     let m = muxes.get(id);
-    if (!m && create) {
+    if (!m && create && roomFor(id, create)) {
       m = { kind: "mux", id, file: modPath(project), name: "http.DefaultServeMux", line: 1, column: 1, project, dflt: true, served: [], first: create };
       muxes.set(id, m);
     }
@@ -617,10 +651,21 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     const k = `${target}\0${role}`;
     if (roleSeen.has(k)) return;
     roleSeen.add(k);
+    if (roles.length >= MAX_ROLES) {
+      const cap = stop("roles", "fan-out-capped", evidence.site, [], `the plugin stopped listing roles after ${MAX_ROLES} in this build; the count is of the roles left out`);
+      cap.count = (cap.count ?? 0) + 1;
+      cap.exact = true;
+      return;
+    }
     roles.push({ target, role, detail, app, evidence });
   };
+  // Past MAX_EDGES no edge is kept, and none is counted: the work stops.
   const edgeSeen = new Set<string>();
   const addEdge = (e: FrameworkEdge): boolean => {
+    if (edges.length >= MAX_EDGES) {
+      stop("edges", "fan-out-capped", e.evidence.site, ["handles", "mounts", "applies_middleware", "tests"], `the plugin stopped listing edges after ${MAX_EDGES} in this build`);
+      return false;
+    }
     const k = `${e.kind}\0${e.app ?? ""}\0${e.from}\0${e.to}\0${siteKey(e.evidence.site)}\0${e.order ?? ""}`;
     if (edgeSeen.has(k)) return false;
     edgeSeen.add(k);
@@ -913,9 +958,9 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   for (const file of files) {
     for (const f of index.factsOf(file)) {
       if (f.kind === "too-large") {
-        unknowns.push({ plugin: PLUGIN, site: { file, line: 1, column: 1 }, scope: { file }, affects: ["handles", "mounts", "applies_middleware"], cause: "file-not-parsed", name: null, note: `the file is ${f.bytes} bytes, over the ${MAX_SOURCE_BYTES} byte cap of the net/http plugin, so its routes were not read`, count: null, exact: false });
+        addUnknown({ plugin: PLUGIN, site: { file, line: 1, column: 1 }, scope: { file }, affects: ["handles", "mounts", "applies_middleware"], cause: "file-not-parsed", name: null, note: `the file is ${f.bytes} bytes, over the ${MAX_SOURCE_BYTES} byte cap of the net/http plugin, so its routes were not read`, count: null, exact: false });
       } else if (f.kind === "parse-error") {
-        unknowns.push({ plugin: PLUGIN, site: { file, line: 1, column: 1 }, scope: { file }, affects: ["handles", "mounts", "applies_middleware"], cause: "file-not-parsed", name: null, note: "the file has a syntax error; calls inside the broken regions were not read", count: null, exact: false });
+        addUnknown({ plugin: PLUGIN, site: { file, line: 1, column: 1 }, scope: { file }, affects: ["handles", "mounts", "applies_middleware"], cause: "file-not-parsed", name: null, note: "the file has a syntax error; calls inside the broken regions were not read", count: null, exact: false });
       }
     }
   }
