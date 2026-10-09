@@ -21,7 +21,7 @@ import { join, relative, resolve } from "node:path";
 import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, redactSecrets, renderUnavailableHtml, writeLatest, writeReportFiles } from "@openqodex/core";
 import type { ChangeScope, Config, Latest, Severity } from "@openqodex/core";
 import { DEPTH_ENV, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
-import type { ReviewDeps, ReviewerDriver } from "@openqodex/review";
+import type { ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
 import { createToolResolver } from "@openqodex/scanners";
 import { announceRepoFiles } from "./agents/repo-folder.js";
 import { checkoutOwner, laptopSnapshots } from "./checkout.js";
@@ -213,38 +213,17 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   // Ctrl-C or a kill: the core's stop ends the reviewer's process group and
   // removes the snapshot, synchronously, since the process exits right after.
   let onSignal: ((signal: NodeJS.Signals) => void) | null = null;
-  try {
-    const result = await runReviewCore(
-      { repoRoot, config, scope: o.scope, all: o.all, target: o.target, overlay: o.overlay, only, skip, noGraph: o.noGraph, reviewer: choice, web, timeoutMs: o.timeoutMs, runtimeVersion: __OPENQODEX_VERSION__ },
-      {
-        ...parts,
-        onEvent: (e) => {
-          if (e.type === "progress") say(e.line);
-          else if (e.type === "warning") warn(e.line);
-          else if (e.type === "scan") noteScan(repoRoot, e.scan);
-          else if (e.type === "prepared") {
-            secrets = e.secrets;
-            if (o.end) o.end.installing = e.scan.scanners.filter((s) => s.status === "installing").map((s) => s.scanner);
-            folder = runFolder(o, repoRoot, e.change.shortId, reportWriter);
-          } else if (e.type === "brief") {
-            write({
-              "manifest.json": `${JSON.stringify(e.manifest, null, 2)}\n`,
-              "scan.json": `${JSON.stringify(e.scan, null, 2)}\n`,
-              "brief.md": e.brief,
-              "impact.json": `${JSON.stringify(e.impact, null, 2)}\n`,
-            });
-          } else if (e.type === "started") noteReviewer({ started: true, driver: e.driver, version: e.version });
-        },
-        onStop: (stop) => {
-          onSignal = (signal) => {
-            stop();
-            process.exit(signal === "SIGINT" ? 130 : 143);
-          };
-          process.once("SIGINT", onSignal);
-          process.once("SIGTERM", onSignal);
-        },
-      },
-    );
+  const offSignals = (): void => {
+    const handler = onSignal as ((signal: NodeJS.Signals) => void) | null;
+    if (handler !== null) {
+      process.off("SIGINT", handler);
+      process.off("SIGTERM", handler);
+    }
+  };
+  // Everything the run writes and prints from its result, before the core
+  // removes the snapshot: a cleanup that fails then fails the command after
+  // the review is on disk, recorded and printed.
+  const finish = (result: ReviewCoreResult): number => {
     if (result.ended === "nothing") {
       if (o.end) o.end.ended = "nothing";
       return EXIT_OK;
@@ -335,11 +314,49 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     emitReview(out.report, o.flags, repoRoot, out.paths);
     if (o.end) o.end.ended = completion.status === "complete" ? "finished" : "incomplete";
     return exitFor(report);
+  };
+  let code: number = EXIT_OK;
+  try {
+    await runReviewCore(
+      { repoRoot, config, scope: o.scope, all: o.all, target: o.target, overlay: o.overlay, only, skip, noGraph: o.noGraph, reviewer: choice, web, timeoutMs: o.timeoutMs, runtimeVersion: __OPENQODEX_VERSION__ },
+      {
+        ...parts,
+        onEvent: (e) => {
+          if (e.type === "progress") say(e.line);
+          else if (e.type === "warning") warn(e.line);
+          else if (e.type === "scan") noteScan(repoRoot, e.scan);
+          else if (e.type === "prepared") {
+            secrets = e.secrets;
+            if (o.end) o.end.installing = e.scan.scanners.filter((s) => s.status === "installing").map((s) => s.scanner);
+            folder = runFolder(o, repoRoot, e.change.shortId, reportWriter);
+          } else if (e.type === "brief") {
+            write({
+              "manifest.json": `${JSON.stringify(e.manifest, null, 2)}\n`,
+              "scan.json": `${JSON.stringify(e.scan, null, 2)}\n`,
+              "brief.md": e.brief,
+              "impact.json": `${JSON.stringify(e.impact, null, 2)}\n`,
+            });
+          } else if (e.type === "started") noteReviewer({ started: true, driver: e.driver, version: e.version });
+        },
+        onStop: (stop) => {
+          onSignal = (signal) => {
+            stop();
+            process.exit(signal === "SIGINT" ? 130 : 143);
+          };
+          process.once("SIGINT", onSignal);
+          process.once("SIGTERM", onSignal);
+        },
+        onResult: (result) => {
+          try {
+            code = finish(result);
+          } finally {
+            offSignals();
+          }
+        },
+      },
+    );
+    return code;
   } finally {
-    const handler = onSignal as ((signal: NodeJS.Signals) => void) | null;
-    if (handler !== null) {
-      process.off("SIGINT", handler);
-      process.off("SIGTERM", handler);
-    }
+    offSignals();
   }
 }
