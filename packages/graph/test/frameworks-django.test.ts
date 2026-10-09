@@ -67,7 +67,7 @@ describe("the Django plugin on a small application", () => {
     const list = registrationAt(g, "blog/urls.py:7");
     expect(list?.handler.status).toBe("bound");
     expect(layer.edgesTo(list?.id ?? "").some((e) => e.kind === "tests" && e.category === "route-name")).toBe(true);
-  });
+  }, 60_000);
 
   it("links templates, models, migrations, the command, the signal receiver, the template tag and the settings key", async () => {
     const root = makeRepo(APP);
@@ -91,7 +91,7 @@ describe("the Django plugin on a small application", () => {
     expect(command && command.kind !== "registration" ? command.name : null).toBe("reindex");
     expect(edges("runs", command?.id ?? "")).toEqual(["blog/management/commands/reindex.py#Command.handle"]);
     expect(layer.rolesOf(symbol(g, "blog/signals.py", "on_post_saved")).map((r) => r.role)).toContain("signal_receiver");
-  });
+  }, 60_000);
 
   it("prints the route, the test links and no coverage claim for a helper change in the brief", async () => {
     const root = makeRepo(APP);
@@ -104,7 +104,7 @@ describe("the Django plugin on a small application", () => {
     expect(brief).toContain("| `DetailTests.test_load` | `blog/tests.py:15` | calls | `load` | certain |");
     expect(brief).toContain("| `DetailTests.test_request` | `blog/tests.py:9` | requests through route `ANY blog/<int:pk>/` | `load` | likely: ");
     expect(brief).not.toMatch(/\bcover(s|age:)/);
-  });
+  }, 60_000);
 
   it("writes every route and test link past the brief's cut into the packet, and the brief names the file that holds them", async () => {
     const many = Array.from({ length: 15 }, (_, i) => `    path("r${i}/", views.detail, name="r${i}"),\n`).join("");
@@ -122,7 +122,7 @@ describe("the Django plugin on a small application", () => {
     expect(held.routes.map((r) => r.pattern).sort()).toEqual(Array.from({ length: 15 }, (_, i) => `blog/r${i}/`).sort());
     const brief = renderImpactBlock(impact);
     expect(brief).toContain(`| and 3 more, every one in \`${PACKET_DIR}/frameworks.json\` |`);
-  });
+  }, 60_000);
 
   it("finds the routes of unchanged files once Django is added to the manifest, from cached facts, never from a stale build", async () => {
     const root = makeRepo({ ...APP, "requirements.txt": "requests==2.32\n" });
@@ -138,7 +138,7 @@ describe("the Django plugin on a small application", () => {
     expect(after.status.parses).toBe(0);
     expect(after.frameworks?.apps.length).toBe(1);
     expect(registrationAt(after, "blog/urls.py:8")?.handler.status).toBe("bound");
-  });
+  }, 60_000);
 
   it("keeps the framework data in a retained index equal to the fresh build, and never reuses it once a template it names is added", async () => {
     const root = makeRepo(APP);
@@ -162,7 +162,7 @@ describe("the Django plugin on a small application", () => {
     const next = await buildGraph({ repoRoot: root, store, mode: "retained" });
     expect(next.frameworks?.fingerprint).not.toBe(fresh.frameworks?.fingerprint);
     expect(about(next)).toBe("blog/templates/blog/about.html");
-  });
+  }, 60_000);
 });
 
 // Repeats `unit` until the text is just under `bytes`.

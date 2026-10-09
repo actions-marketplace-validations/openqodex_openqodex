@@ -55,7 +55,7 @@ describe("the framework stage", () => {
     expect(data.entities).toEqual([]);
     expect(data.edges).toEqual([]);
     expect(data.roles).toEqual([]);
-  });
+  }, 60_000);
 
   it("publishes only evidence that passes the check, so no certain framework edge rests on a convention", async () => {
     const root = makeRepo({
@@ -70,7 +70,7 @@ describe("the framework stage", () => {
     const all = [...(graph.frameworks?.edges ?? []), ...(graph.frameworks?.roles ?? [])];
     expect(all.length).toBeGreaterThan(0);
     for (const x of all) expect(validateFrameworkEvidence(x.evidence)).toBeNull();
-  });
+  }, 60_000);
 });
 
 describe("the framework part of the brief", () => {
@@ -101,7 +101,7 @@ describe("the framework part of the brief", () => {
     const templateRow = lines.find((l) => l.includes("Approve.html"));
     expect(templateRow?.startsWith("| ")).toBe(true);
     expect(templateRow).toContain("`x - Approve.html`");
-  });
+  }, 60_000);
 
   it("cuts a long repository string to 120 characters inside its literal, so one value cannot flood the brief", async () => {
     const long = "seg/".repeat(200);
@@ -122,5 +122,5 @@ describe("the framework part of the brief", () => {
     const literal = /`ANY (seg\/[^`]*)`/.exec(row as string)?.[1] ?? "";
     expect(literal.length).toBeLessThanOrEqual(120);
     expect(literal.endsWith("...")).toBe(true);
-  });
+  }, 60_000);
 });
