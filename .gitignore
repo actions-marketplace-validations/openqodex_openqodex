@@ -27,3 +27,6 @@ packages/cli/LICENSE
 packages/cli/NOTICE
 *.tgz
 tests/e2e/runs/
+
+# Scratch folder for test runs (TMPDIR), removed after each run
+.tmp/
