@@ -415,6 +415,15 @@ def test_long():
 
 def test_odd():
     client.get("/files/a.txt")
+
+
+@app.get("/relative")
+def relative_route():
+    return 3
+
+
+def test_relative():
+    client.get("relative")
 `;
   // A route path and a request path named by a module constant that a
   // parameter or a local of the function around the use shadows.
@@ -578,6 +587,12 @@ FastAPI = object
     const gaps = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "fastapi" && u.site?.file === "app/test_matcher.py" && u.affects.includes("tests"));
     expect(gaps.filter((u) => u.site?.line === 19).map((u) => u.cause)).toEqual(["fan-out-capped"]);
     expect(gaps.filter((u) => u.site?.line === 23).map((u) => u.cause)).toEqual(["unsupported-rule"]);
+  });
+
+  it("links a request whose path has no leading slash to the route the test client sends it to, under its base URL", () => {
+    const relative = fastapiRegs(graph).find((r) => r.written === "/relative") as Registration;
+    const from = (graph.frameworks?.edges ?? []).filter((e) => e.plugin === "fastapi" && e.kind === "tests" && e.to === relative.id).map((e) => graph.nodes.get(e.from)?.name);
+    expect(from).toEqual(["test_relative"]);
   });
 
   it("reads no decorator inside a broken region of a file, keeps the routes before it, and says the file has a syntax error", () => {

@@ -996,7 +996,8 @@ function requestPath(raw: string): string {
   if (q >= 0) p = p.slice(0, q);
   const h = p.indexOf("#");
   if (h >= 0) p = p.slice(0, h);
-  return p;
+  // The test client joins a relative path to its base URL, whose path is "/".
+  return p.startsWith("/") ? p : `/${p}`;
 }
 
 // The same path with its trailing slash added or taken away: Starlette
