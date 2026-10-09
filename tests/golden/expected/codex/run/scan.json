@@ -1,102 +1,33 @@
 {
   "candidates": [
     {
-      "source": "semgrep",
-      "ruleId": "yaml.github-actions.security.run-shell-injection.run-shell-injection",
-      "filePath": ".github/workflows/ci.yml",
-      "lineStart": 17,
-      "lineEnd": 17,
-      "severity": "high",
-      "message": "Using variable interpolation `${{...}}` with `github` context data in a `run:` step could allow an attacker to inject their own code into the runner. This would allow them to steal secrets and code. `github` context data can have arbitrary user input and should be treated as untrusted. Instead, use an intermediate environment variable with `env:` to store the data and use the environment variable in the `run:` script. Be sure to use double-quotes the environment variable, like this: \"$ENVVAR\".",
-      "reference": "https://docs.github.com/en/actions/learn-github-actions/security-hardening-for-github-actions#understanding-the-risk-of-script-injections",
-      "id": "c1",
-      "token": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection",
-      "reviewSeverity": "major",
-      "alsoReportedBy": [
-        "actionlint:expression",
-        "zizmor:template-injection"
-      ]
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "source": "gitleaks",
+      "ruleId": "stripe-access-token",
       "filePath": "app/config.py",
       "lineStart": 2,
       "lineEnd": 2,
       "severity": "high",
-      "message": "Stripe API Key detected",
-      "reference": "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures",
+      "message": "Found a Stripe Access Token, posing a risk to payment processing services and sensitive financial data.",
+      "reference": null,
+      "id": "c1",
+      "token": "gitleaks:stripe-access-token",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "actionlint",
+      "ruleId": "expression",
+      "filePath": ".github/workflows/ci.yml",
+      "lineStart": 17,
+      "lineEnd": 17,
+      "severity": "high",
+      "message": "\"github.event.pull_request.title\" is potentially untrusted. avoid using it directly in inline scripts. instead, pass it through an environment variable. see https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions for more details",
+      "reference": "https://github.com/rhysd/actionlint/blob/main/docs/checks.md",
       "id": "c2",
-      "token": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "token": "actionlint:expression",
       "reviewSeverity": "major",
       "alsoReportedBy": [
-        "gitleaks:stripe-access-token"
+        "zizmor:template-injection"
       ]
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
-      "filePath": "app/search.py",
-      "lineStart": 14,
-      "lineEnd": 14,
-      "severity": "high",
-      "message": "Avoiding SQL string concatenation: untrusted input concatenated with raw SQL query can result in SQL Injection. In order to execute raw query safely, prepared statement should be used. SQLAlchemy provides TextualSQL to easily used prepared statement with named parameters. For complex SQL composition, use SQL Expression Language or Schema Definition Language. In most cases, SQLAlchemy ORM will be a better option.",
-      "reference": "https://docs.sqlalchemy.org/en/14/core/tutorial.html#using-textual-sql",
-      "id": "c3",
-      "token": "semgrep:python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
-      "reviewSeverity": "major"
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "python.django.security.injection.tainted-sql-string.tainted-sql-string",
-      "filePath": "app/search.py",
-      "lineStart": 14,
-      "lineEnd": 14,
-      "severity": "high",
-      "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using the Django object-relational mappers (ORM) instead of raw SQL queries.",
-      "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
-      "id": "c4",
-      "token": "semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string",
-      "reviewSeverity": "major"
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "python.flask.security.injection.tainted-sql-string.tainted-sql-string",
-      "filePath": "app/search.py",
-      "lineStart": 14,
-      "lineEnd": 14,
-      "severity": "high",
-      "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using an object-relational mapper (ORM) such as SQLAlchemy which will protect your queries.",
-      "reference": "https://docs.sqlalchemy.org/en/14/core/tutorial.html#using-textual-sql",
-      "id": "c5",
-      "token": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string",
-      "reviewSeverity": "major"
-    },
-    {
-      "source": "osv-scanner",
-      "ruleId": "GHSA-35jh-r3h4-6jhm",
-      "filePath": "package-lock.json",
-      "lineStart": 11,
-      "lineEnd": 11,
-      "severity": "high",
-      "message": "lodash@4.17.15: GHSA-35jh-r3h4-6jhm (CVE-2021-23337, CVE-2026-4800, GHSA-r5fr-rjxr-66jc). Command Injection in lodash",
-      "reference": "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm",
-      "id": "c6",
-      "token": "osv-scanner:GHSA-35jh-r3h4-6jhm",
-      "reviewSeverity": "major"
-    },
-    {
-      "source": "osv-scanner",
-      "ruleId": "GHSA-p6mc-m468-83gw",
-      "filePath": "package-lock.json",
-      "lineStart": 11,
-      "lineEnd": 11,
-      "severity": "high",
-      "message": "lodash@4.17.15: GHSA-p6mc-m468-83gw (CVE-2020-8203). Prototype Pollution in lodash",
-      "reference": "https://osv.dev/vulnerability/GHSA-p6mc-m468-83gw",
-      "id": "c7",
-      "token": "osv-scanner:GHSA-p6mc-m468-83gw",
-      "reviewSeverity": "major"
     },
     {
       "source": "hadolint",
@@ -107,7 +38,7 @@
       "severity": "high",
       "message": "Use COPY instead of ADD for files and folders",
       "reference": "https://github.com/hadolint/hadolint/wiki/DL3020",
-      "id": "c8",
+      "id": "c3",
       "token": "hadolint:DL3020",
       "reviewSeverity": "major"
     },
@@ -120,21 +51,8 @@
       "severity": "high",
       "message": "Security groups should not allow unrestricted ingress to SSH or RDP from any IP address: Security group rule allows unrestricted ingress from any IP address.",
       "reference": "https://avd.aquasec.com/misconfig/aws-0107",
-      "id": "c9",
+      "id": "c4",
       "token": "trivy:AWS-0107",
-      "reviewSeverity": "major"
-    },
-    {
-      "source": "kube-linter",
-      "ruleId": "privilege-escalation-container",
-      "filePath": "deploy/deployment.yaml",
-      "lineStart": 43,
-      "lineEnd": 43,
-      "severity": "high",
-      "message": "container \"api\" has AllowPrivilegeEscalation set to true. Ensure containers do not allow privilege escalation by setting allowPrivilegeEscalation=false, privileged=false and removing CAP_SYS_ADMIN capability. See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/ for more details.",
-      "reference": "https://docs.kubelinter.io/#/generated/checks?id=privilege-escalation-container",
-      "id": "c10",
-      "token": "kube-linter:privilege-escalation-container",
       "reviewSeverity": "major"
     },
     {
@@ -146,8 +64,21 @@
       "severity": "high",
       "message": "container \"api\" is privileged. Do not run your container as privileged unless it is required.",
       "reference": "https://docs.kubelinter.io/#/generated/checks?id=privileged-container",
-      "id": "c11",
+      "id": "c5",
       "token": "kube-linter:privileged-container",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "kube-linter",
+      "ruleId": "privilege-escalation-container",
+      "filePath": "deploy/deployment.yaml",
+      "lineStart": 43,
+      "lineEnd": 43,
+      "severity": "high",
+      "message": "container \"api\" has AllowPrivilegeEscalation set to true. Ensure containers do not allow privilege escalation by setting allowPrivilegeEscalation=false, privileged=false and removing CAP_SYS_ADMIN capability. See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/ for more details.",
+      "reference": "https://docs.kubelinter.io/#/generated/checks?id=privilege-escalation-container",
+      "id": "c6",
+      "token": "kube-linter:privilege-escalation-container",
       "reviewSeverity": "major"
     },
     {
@@ -159,61 +90,9 @@
       "severity": "high",
       "message": "Iterating over ls output is fragile. Use globs.",
       "reference": "https://www.shellcheck.net/wiki/SC2045",
-      "id": "c12",
+      "id": "c7",
       "token": "shellcheck:SC2045",
       "reviewSeverity": "major"
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
-      "filePath": "app/search.py",
-      "lineStart": 10,
-      "lineEnd": 14,
-      "severity": "medium",
-      "message": "User-controlled data from a request is passed to 'execute()'. This could lead to a SQL injection and therefore protected information could be leaked. Instead, use django's QuerySets, which are built with query parameterization and therefore not vulnerable to sql injection. For example, you could use `Entry.objects.filter(date=2006)`.",
-      "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
-      "id": "c13",
-      "token": "semgrep:python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
-      "reviewSeverity": "minor"
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
-      "filePath": "app/search.py",
-      "lineStart": 14,
-      "lineEnd": 14,
-      "severity": "medium",
-      "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
-      "reference": "https://stackoverflow.com/questions/775296/mysql-parameterized-queries",
-      "id": "c14",
-      "token": "semgrep:python.lang.security.audit.formatted-sql-query.formatted-sql-query",
-      "reviewSeverity": "minor"
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "yaml.kubernetes.security.privileged-container.privileged-container",
-      "filePath": "deploy/deployment.yaml",
-      "lineStart": 42,
-      "lineEnd": 42,
-      "severity": "medium",
-      "message": "Container or pod is running in privileged mode. This grants the container the equivalent of root capabilities on the host machine. This can lead to container escapes, privilege escalation, and other security concerns. Remove the 'privileged' key to disable this capability.",
-      "reference": "https://kubernetes.io/docs/concepts/policy/pod-security-policy/#privileged",
-      "id": "c15",
-      "token": "semgrep:yaml.kubernetes.security.privileged-container.privileged-container",
-      "reviewSeverity": "minor"
-    },
-    {
-      "source": "semgrep",
-      "ruleId": "yaml.kubernetes.security.allow-privilege-escalation-true.allow-privilege-escalation-true",
-      "filePath": "deploy/deployment.yaml",
-      "lineStart": 43,
-      "lineEnd": 43,
-      "severity": "medium",
-      "message": "In Kubernetes, each pod runs in its own isolated environment with its own set of security policies. However, certain container images may contain `setuid` or `setgid` binaries that could allow an attacker to perform privilege escalation and gain access to sensitive resources. To mitigate this risk, it's recommended to add a `securityContext` to the container in the pod, with the parameter `allowPrivilegeEscalation` set to `false`. This will prevent the container from running any privileged pr...",
-      "reference": "https://kubernetes.io/docs/concepts/policy/pod-security-policy/#privilege-escalation",
-      "id": "c16",
-      "token": "semgrep:yaml.kubernetes.security.allow-privilege-escalation-true.allow-privilege-escalation-true",
-      "reviewSeverity": "minor"
     },
     {
       "source": "squawk",
@@ -224,34 +103,8 @@
       "severity": "medium",
       "message": "During normal index creation, table updates are blocked, but reads are still allowed. Use `concurrently` to avoid blocking writes.",
       "reference": "https://squawkhq.com/docs/require-concurrent-index-creation",
-      "id": "c17",
+      "id": "c8",
       "token": "squawk:require-concurrent-index-creation",
-      "reviewSeverity": "minor"
-    },
-    {
-      "source": "osv-scanner",
-      "ruleId": "GHSA-29mw-wpgm-hmr9",
-      "filePath": "package-lock.json",
-      "lineStart": 11,
-      "lineEnd": 11,
-      "severity": "medium",
-      "message": "lodash@4.17.15: GHSA-29mw-wpgm-hmr9 (CVE-2020-28500). Regular Expression Denial of Service (ReDoS) in lodash",
-      "reference": "https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9",
-      "id": "c18",
-      "token": "osv-scanner:GHSA-29mw-wpgm-hmr9",
-      "reviewSeverity": "minor"
-    },
-    {
-      "source": "osv-scanner",
-      "ruleId": "GHSA-f23m-r3pf-42rh",
-      "filePath": "package-lock.json",
-      "lineStart": 11,
-      "lineEnd": 11,
-      "severity": "medium",
-      "message": "lodash@4.17.15: GHSA-f23m-r3pf-42rh (CVE-2025-13465, CVE-2026-2950, GHSA-xxjr-mmjv-4gpg). lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
-      "reference": "https://osv.dev/vulnerability/GHSA-f23m-r3pf-42rh",
-      "id": "c19",
-      "token": "osv-scanner:GHSA-f23m-r3pf-42rh",
       "reviewSeverity": "minor"
     },
     {
@@ -263,7 +116,7 @@
       "severity": "medium",
       "message": "Using latest is prone to errors if the image will ever update. Pin the version explicitly to a release tag",
       "reference": "https://github.com/hadolint/hadolint/wiki/DL3007",
-      "id": "c20",
+      "id": "c9",
       "token": "hadolint:DL3007",
       "reviewSeverity": "minor"
     },
@@ -276,7 +129,7 @@
       "severity": "medium",
       "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`",
       "reference": "https://github.com/hadolint/hadolint/wiki/DL3008",
-      "id": "c21",
+      "id": "c10",
       "token": "hadolint:DL3008",
       "reviewSeverity": "minor"
     },
@@ -289,7 +142,7 @@
       "severity": "medium",
       "message": "Use the `-y` switch to avoid manual input `apt-get -y install <package>`",
       "reference": "https://github.com/hadolint/hadolint/wiki/DL3014",
-      "id": "c22",
+      "id": "c11",
       "token": "hadolint:DL3014",
       "reviewSeverity": "minor"
     },
@@ -302,34 +155,8 @@
       "severity": "medium",
       "message": "Avoid use of cache directory with pip. Use `pip install --no-cache-dir <package>`",
       "reference": "https://github.com/hadolint/hadolint/wiki/DL3042",
-      "id": "c23",
+      "id": "c12",
       "token": "hadolint:DL3042",
-      "reviewSeverity": "minor"
-    },
-    {
-      "source": "checkov",
-      "ruleId": "CKV_AWS_24",
-      "filePath": "infra/main.tf",
-      "lineStart": 28,
-      "lineEnd": 28,
-      "severity": "medium",
-      "message": "Ensure no security groups allow ingress from 0.0.0.0:0 to port 22",
-      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/SecurityGroupUnrestrictedIngress22.py",
-      "id": "c24",
-      "token": "checkov:CKV_AWS_24",
-      "reviewSeverity": "minor"
-    },
-    {
-      "source": "checkov",
-      "ruleId": "CKV_K8S_20",
-      "filePath": "deploy/deployment.yaml",
-      "lineStart": 43,
-      "lineEnd": 43,
-      "severity": "medium",
-      "message": "Containers should not run with allowPrivilegeEscalation",
-      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/kubernetes/checks/resource/k8s/AllowPrivilegeEscalation.py",
-      "id": "c25",
-      "token": "checkov:CKV_K8S_20",
       "reviewSeverity": "minor"
     },
     {
@@ -341,8 +168,34 @@
       "severity": "medium",
       "message": "Container should not be privileged",
       "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/kubernetes/checks/resource/k8s/PrivilegedContainers.py",
-      "id": "c26",
+      "id": "c13",
       "token": "checkov:CKV_K8S_16",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_K8S_20",
+      "filePath": "deploy/deployment.yaml",
+      "lineStart": 43,
+      "lineEnd": 43,
+      "severity": "medium",
+      "message": "Containers should not run with allowPrivilegeEscalation",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/kubernetes/checks/resource/k8s/AllowPrivilegeEscalation.py",
+      "id": "c14",
+      "token": "checkov:CKV_K8S_20",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_AWS_24",
+      "filePath": "infra/main.tf",
+      "lineStart": 28,
+      "lineEnd": 28,
+      "severity": "medium",
+      "message": "Ensure no security groups allow ingress from 0.0.0.0:0 to port 22",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/SecurityGroupUnrestrictedIngress22.py",
+      "id": "c15",
+      "token": "checkov:CKV_AWS_24",
       "reviewSeverity": "minor"
     },
     {
@@ -354,7 +207,7 @@
       "severity": "medium",
       "message": "Use \"${var:?}\" to ensure this never expands to / .",
       "reference": "https://www.shellcheck.net/wiki/SC2115",
-      "id": "c27",
+      "id": "c16",
       "token": "shellcheck:SC2115",
       "reviewSeverity": "minor"
     },
@@ -367,7 +220,7 @@
       "severity": "medium",
       "message": "B608: Possible SQL injection vector through string-based query construction.",
       "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
-      "id": "c28",
+      "id": "c17",
       "token": "bandit:B608",
       "reviewSeverity": "minor"
     },
@@ -380,7 +233,7 @@
       "severity": "low",
       "message": "Missing `IF NOT EXISTS`, the migration can't be rerun if it fails part way through. Use an explicit name for a concurrently created index",
       "reference": "https://squawkhq.com/docs/prefer-robust-stmts",
-      "id": "c29",
+      "id": "c18",
       "token": "squawk:prefer-robust-stmts",
       "reviewSeverity": "nitpick"
     },
@@ -393,7 +246,7 @@
       "severity": "low",
       "message": "Missing `set lock_timeout` before potentially slow SHARE lock operations Configure a `lock_timeout` before this statement. Statement requires: SHARE lock; blocking: writes, schema changes.",
       "reference": "https://squawkhq.com/docs/require-lock-timeout",
-      "id": "c30",
+      "id": "c19",
       "token": "squawk:require-lock-timeout",
       "reviewSeverity": "nitpick"
     },
@@ -406,21 +259,8 @@
       "severity": "low",
       "message": "Missing `set statement_timeout` before potentially slow operations Configure a `statement_timeout` before this statement",
       "reference": "https://squawkhq.com/docs/require-statement-timeout",
-      "id": "c31",
+      "id": "c20",
       "token": "squawk:require-statement-timeout",
-      "reviewSeverity": "nitpick"
-    },
-    {
-      "source": "hadolint",
-      "ruleId": "DL3015",
-      "filePath": "Dockerfile",
-      "lineStart": 3,
-      "lineEnd": 3,
-      "severity": "low",
-      "message": "Avoid additional packages by specifying `--no-install-recommends`",
-      "reference": "https://github.com/hadolint/hadolint/wiki/DL3015",
-      "id": "c32",
-      "token": "hadolint:DL3015",
       "reviewSeverity": "nitpick"
     },
     {
@@ -432,8 +272,21 @@
       "severity": "low",
       "message": "Delete the apt lists (/var/lib/apt/lists) after installing something",
       "reference": "https://github.com/hadolint/hadolint/wiki/DL3009",
-      "id": "c33",
+      "id": "c21",
       "token": "hadolint:DL3009",
+      "reviewSeverity": "nitpick"
+    },
+    {
+      "source": "hadolint",
+      "ruleId": "DL3015",
+      "filePath": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "message": "Avoid additional packages by specifying `--no-install-recommends`",
+      "reference": "https://github.com/hadolint/hadolint/wiki/DL3015",
+      "id": "c22",
+      "token": "hadolint:DL3015",
       "reviewSeverity": "nitpick"
     },
     {
@@ -445,7 +298,7 @@
       "severity": "low",
       "message": "Double quote to prevent globbing and word splitting.",
       "reference": "https://www.shellcheck.net/wiki/SC2086",
-      "id": "c34",
+      "id": "c23",
       "token": "shellcheck:SC2086",
       "reviewSeverity": "nitpick"
     },
@@ -458,27 +311,18 @@
       "severity": "low",
       "message": "Double quote to prevent globbing and word splitting.",
       "reference": "https://www.shellcheck.net/wiki/SC2086",
-      "id": "c35",
+      "id": "c24",
       "token": "shellcheck:SC2086",
       "reviewSeverity": "nitpick"
     }
   ],
   "scanners": [
     {
-      "scanner": "semgrep",
-      "status": "ran",
-      "version": "1.94.0",
-      "rawCount": 10,
-      "keptCount": 9,
-      "durationMs": "<DURATION_MS>",
-      "reason": null
-    },
-    {
       "scanner": "gitleaks",
       "status": "ran",
       "version": "8.21.2",
       "rawCount": 1,
-      "keptCount": 0,
+      "keptCount": 1,
       "durationMs": "<DURATION_MS>",
       "reason": null
     },
@@ -510,15 +354,6 @@
       "reason": null
     },
     {
-      "scanner": "osv-scanner",
-      "status": "ran",
-      "version": "2.6.0",
-      "rawCount": 4,
-      "keptCount": 4,
-      "durationMs": "<DURATION_MS>",
-      "reason": null
-    },
-    {
       "scanner": "cargo-deny",
       "status": "no_matching_files",
       "version": null,
@@ -532,7 +367,7 @@
       "status": "ran",
       "version": "1.7.7",
       "rawCount": 1,
-      "keptCount": 0,
+      "keptCount": 1,
       "durationMs": "<DURATION_MS>",
       "reason": null
     },

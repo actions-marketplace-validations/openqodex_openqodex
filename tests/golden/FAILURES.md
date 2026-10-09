@@ -13,5 +13,6 @@ Written before the tests and implementation.
 9. A scanner installation or review writes outside the temporary home and scratch folder, or a failed recording leaves its temporary folders behind.
 10. A graph build's generation name, its build, stage or predicted durations, or a reviewer heartbeat line make identical runs differ, or the rest of the graph line in the brief is lost with the duration.
 11. The snapshot hash keeps the graph files' timing and differs between identical runs, or capture accepts a raw snapshot hash that does not match the snapshot the reviewer was given, or a real change to a snapshot file leaves the recorded hash unchanged.
+12. The frozen answer in stand-ins/submission.json is not the one answer.mjs makes from the recorded candidates, so freezing it again would change what the stand-ins say.
 
 The built CLI with real git and real scanners proves failures 7 to 9 and the raw half of 11. Three full checks and a deliberate brief edit prove repeatability and comparison failure.

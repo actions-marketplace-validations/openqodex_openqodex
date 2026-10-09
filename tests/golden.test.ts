@@ -1,11 +1,12 @@
 // Each test guards the numbered failure in golden/FAILURES.md.
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { normalize, normalizedLastReview, normalizedSnapshotHash, snapshotHash } from "./golden/normalize.mjs";
 import { compareTrees } from "./golden/check.mjs";
 import { fixDemoSecret } from "./golden/fixture-secret.mjs";
+import { answerText } from "./golden/answer.mjs";
 import { removeTempDirs, tempDir } from "./temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -106,4 +107,11 @@ it("11. records one snapshot hash for identical runs, refuses a raw hash that do
   expect(normalizedSnapshotHash(changed, [snapshotHash(changed)], { ...context, generation: "gen-first" })).not.toBe(recorded);
   const report = `{"snapshot": {"before": "${rawFirst}", "after": "${rawFirst}"}}`;
   expect(normalize("report.json", report, { ...context, snapshotHash: { raw: rawFirst, normalized: recorded } })).toBe(`{"snapshot": {"before": "${recorded}", "after": "${recorded}"}}`);
+});
+
+it("12. the frozen answer is the one answer.mjs makes from the recorded candidates", () => {
+  const golden = (path: string) => readFileSync(new URL(`./golden/${path}`, import.meta.url), "utf8");
+  const scan = JSON.parse(golden("expected/claude/run/scan.json"));
+  const manifest = JSON.parse(golden("expected/claude/run/manifest.json"));
+  expect(answerText(scan, manifest.change_id)).toBe(golden("stand-ins/submission.json"));
 });

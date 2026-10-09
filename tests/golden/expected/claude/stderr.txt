@@ -1,5 +1,5 @@
 Reviewing the change against HEAD: 11 files, +45 -16
-Scanners: 17 ran, 5 had nothing to check, 35 candidates to check
+Scanners: 15 ran, 5 had nothing to check, 24 candidates to check
 Redacted secrets in 1 file of the snapshot
 Code graph: 4 files in <SECONDS> s (5 parsed, 0 from cache, fresh)
 Reviewer: claude 2.1.289 started (process <REVIEWER_PID>); this takes one to three minutes

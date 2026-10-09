@@ -8,25 +8,10 @@
           "name": "openqodex",
           "rules": [
             {
-              "id": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection"
+              "id": "gitleaks:stripe-access-token"
             },
             {
-              "id": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key"
-            },
-            {
-              "id": "semgrep:python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query"
-            },
-            {
-              "id": "semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string"
-            },
-            {
-              "id": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string"
-            },
-            {
-              "id": "osv-scanner:GHSA-35jh-r3h4-6jhm"
-            },
-            {
-              "id": "osv-scanner:GHSA-p6mc-m468-83gw"
+              "id": "actionlint:expression"
             },
             {
               "id": "hadolint:DL3020"
@@ -35,34 +20,16 @@
               "id": "trivy:AWS-0107"
             },
             {
-              "id": "kube-linter:privilege-escalation-container"
+              "id": "kube-linter:privileged-container"
             },
             {
-              "id": "kube-linter:privileged-container"
+              "id": "kube-linter:privilege-escalation-container"
             },
             {
               "id": "shellcheck:SC2045"
             },
             {
-              "id": "semgrep:python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute"
-            },
-            {
-              "id": "semgrep:python.lang.security.audit.formatted-sql-query.formatted-sql-query"
-            },
-            {
-              "id": "semgrep:yaml.kubernetes.security.privileged-container.privileged-container"
-            },
-            {
-              "id": "semgrep:yaml.kubernetes.security.allow-privilege-escalation-true.allow-privilege-escalation-true"
-            },
-            {
               "id": "squawk:require-concurrent-index-creation"
-            },
-            {
-              "id": "osv-scanner:GHSA-29mw-wpgm-hmr9"
-            },
-            {
-              "id": "osv-scanner:GHSA-f23m-r3pf-42rh"
             },
             {
               "id": "hadolint:DL3007"
@@ -77,13 +44,13 @@
               "id": "hadolint:DL3042"
             },
             {
-              "id": "checkov:CKV_AWS_24"
+              "id": "checkov:CKV_K8S_16"
             },
             {
               "id": "checkov:CKV_K8S_20"
             },
             {
-              "id": "checkov:CKV_K8S_16"
+              "id": "checkov:CKV_AWS_24"
             },
             {
               "id": "shellcheck:SC2115"
@@ -96,35 +63,10 @@
       },
       "results": [
         {
-          "ruleId": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection",
+          "ruleId": "gitleaks:stripe-access-token",
           "level": "error",
           "message": {
             "text": "Planted problem number 1: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": ".github/workflows/ci.yml"
-                },
-                "region": {
-                  "startLine": 17,
-                  "endLine": 17
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "major",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
-          "level": "error",
-          "message": {
-            "text": "Planted problem number 2: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -146,120 +88,20 @@
           }
         },
         {
-          "ruleId": "semgrep:python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+          "ruleId": "actionlint:expression",
           "level": "error",
           "message": {
-            "text": "Planted problem number 3: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 2: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "app/search.py"
+                  "uri": ".github/workflows/ci.yml"
                 },
                 "region": {
-                  "startLine": 14,
-                  "endLine": 14
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "major",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string",
-          "level": "error",
-          "message": {
-            "text": "Planted problem number 4: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "app/search.py"
-                },
-                "region": {
-                  "startLine": 14,
-                  "endLine": 14
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "major",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string",
-          "level": "error",
-          "message": {
-            "text": "Planted problem number 5: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "app/search.py"
-                },
-                "region": {
-                  "startLine": 14,
-                  "endLine": 14
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "major",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "osv-scanner:GHSA-35jh-r3h4-6jhm",
-          "level": "error",
-          "message": {
-            "text": "Planted problem number 6: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "package-lock.json"
-                },
-                "region": {
-                  "startLine": 11,
-                  "endLine": 11
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "major",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "osv-scanner:GHSA-p6mc-m468-83gw",
-          "level": "error",
-          "message": {
-            "text": "Planted problem number 7: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "package-lock.json"
-                },
-                "region": {
-                  "startLine": 11,
-                  "endLine": 11
+                  "startLine": 17,
+                  "endLine": 17
                 }
               }
             }
@@ -274,7 +116,7 @@
           "ruleId": "hadolint:DL3020",
           "level": "error",
           "message": {
-            "text": "Planted problem number 8: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 3: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -299,7 +141,7 @@
           "ruleId": "trivy:AWS-0107",
           "level": "error",
           "message": {
-            "text": "Planted problem number 9: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 4: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -321,35 +163,10 @@
           }
         },
         {
-          "ruleId": "kube-linter:privilege-escalation-container",
-          "level": "error",
-          "message": {
-            "text": "Planted problem number 10: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "deploy/deployment.yaml"
-                },
-                "region": {
-                  "startLine": 43,
-                  "endLine": 43
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "major",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
           "ruleId": "kube-linter:privileged-container",
           "level": "error",
           "message": {
-            "text": "Planted problem number 11: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 5: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -371,10 +188,35 @@
           }
         },
         {
+          "ruleId": "kube-linter:privilege-escalation-container",
+          "level": "error",
+          "message": {
+            "text": "Planted problem number 6: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "deploy/deployment.yaml"
+                },
+                "region": {
+                  "startLine": 43,
+                  "endLine": 43
+                }
+              }
+            }
+          ],
+          "properties": {
+            "severity": "major",
+            "category": "bug",
+            "confidence": 1
+          }
+        },
+        {
           "ruleId": "shellcheck:SC2045",
           "level": "error",
           "message": {
-            "text": "Planted problem number 12: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 7: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -396,110 +238,10 @@
           }
         },
         {
-          "ruleId": "semgrep:python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 13: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "app/search.py"
-                },
-                "region": {
-                  "startLine": 10,
-                  "endLine": 14
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "semgrep:python.lang.security.audit.formatted-sql-query.formatted-sql-query",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 14: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "app/search.py"
-                },
-                "region": {
-                  "startLine": 14,
-                  "endLine": 14
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "semgrep:yaml.kubernetes.security.privileged-container.privileged-container",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 15: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "deploy/deployment.yaml"
-                },
-                "region": {
-                  "startLine": 42,
-                  "endLine": 42
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "semgrep:yaml.kubernetes.security.allow-privilege-escalation-true.allow-privilege-escalation-true",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 16: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "deploy/deployment.yaml"
-                },
-                "region": {
-                  "startLine": 43,
-                  "endLine": 43
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
           "ruleId": "squawk:require-concurrent-index-creation",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 17: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 8: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -521,60 +263,10 @@
           }
         },
         {
-          "ruleId": "osv-scanner:GHSA-29mw-wpgm-hmr9",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 18: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "package-lock.json"
-                },
-                "region": {
-                  "startLine": 11,
-                  "endLine": 11
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "osv-scanner:GHSA-f23m-r3pf-42rh",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 19: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "package-lock.json"
-                },
-                "region": {
-                  "startLine": 11,
-                  "endLine": 11
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
           "ruleId": "hadolint:DL3007",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 20: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 9: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -599,7 +291,7 @@
           "ruleId": "hadolint:DL3008",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 21: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 10: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -624,7 +316,7 @@
           "ruleId": "hadolint:DL3014",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 22: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 11: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -649,7 +341,7 @@
           "ruleId": "hadolint:DL3042",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 23: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 12: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -671,60 +363,10 @@
           }
         },
         {
-          "ruleId": "checkov:CKV_AWS_24",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 24: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "infra/main.tf"
-                },
-                "region": {
-                  "startLine": 28,
-                  "endLine": 28
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
-          "ruleId": "checkov:CKV_K8S_20",
-          "level": "warning",
-          "message": {
-            "text": "Planted problem number 25: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "deploy/deployment.yaml"
-                },
-                "region": {
-                  "startLine": 43,
-                  "endLine": 43
-                }
-              }
-            }
-          ],
-          "properties": {
-            "severity": "minor",
-            "category": "bug",
-            "confidence": 1
-          }
-        },
-        {
           "ruleId": "checkov:CKV_K8S_16",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 26: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 13: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -746,10 +388,60 @@
           }
         },
         {
+          "ruleId": "checkov:CKV_K8S_20",
+          "level": "warning",
+          "message": {
+            "text": "Planted problem number 14: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "deploy/deployment.yaml"
+                },
+                "region": {
+                  "startLine": 43,
+                  "endLine": 43
+                }
+              }
+            }
+          ],
+          "properties": {
+            "severity": "minor",
+            "category": "bug",
+            "confidence": 1
+          }
+        },
+        {
+          "ruleId": "checkov:CKV_AWS_24",
+          "level": "warning",
+          "message": {
+            "text": "Planted problem number 15: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf"
+                },
+                "region": {
+                  "startLine": 28,
+                  "endLine": 28
+                }
+              }
+            }
+          ],
+          "properties": {
+            "severity": "minor",
+            "category": "bug",
+            "confidence": 1
+          }
+        },
+        {
           "ruleId": "shellcheck:SC2115",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 27: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 16: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -774,7 +466,7 @@
           "ruleId": "bandit:B608",
           "level": "warning",
           "message": {
-            "text": "Planted problem number 28: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
+            "text": "Planted problem number 17: This changed line introduces an unsafe operation. The affected behavior can fail when this path runs. Correct the flagged operation before using this change."
           },
           "locations": [
             {
@@ -830,8 +522,8 @@
             "after": "f3f2238286596ab9309c505ea5a5555f275dbe91fd38b06a023f108ed45046fc"
           },
           "candidates": {
-            "total": 35,
-            "disposed": 35
+            "total": 24,
+            "disposed": 24
           },
           "coverage": {
             "hunks": 18,

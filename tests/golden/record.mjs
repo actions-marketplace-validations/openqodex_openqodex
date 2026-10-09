@@ -1,4 +1,13 @@
 // Records the real built CLI. Only the two model provider programs are stand-ins.
+//
+// The review runs with --skip semgrep,osv-scanner. Those two read live data
+// on every run: semgrep fetches its rule packs from the Semgrep registry and
+// osv-scanner looks the lockfile's packages up at osv.dev. A new rule or a
+// new advisory would change the recording with no change to this code. Every
+// other scanner the demo calls for answers from its pinned binary alone
+// (trivy skips its check update; kubeconform reads schemas at one pinned
+// commit), so the recording holds only their candidates. The end-to-end
+// suite still runs semgrep and osv-scanner live on the demo.
 import { spawn } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,10 +16,12 @@ import { fileURLToPath } from "node:url";
 import { fixDemoSecret } from "./fixture-secret.mjs";
 import { normalize, normalizedLastReview, normalizedSnapshotHash, sha256 } from "./normalize.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
+export const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
-const bin = join(root, "packages/cli/dist/bin.js");
+export const bin = join(root, "packages/cli/dist/bin.js");
 export const drivers = ["claude", "codex"];
+// The scanners that read live data, left out of the recording (see the top).
+export const SKIPPED = "semgrep,osv-scanner";
 const required = ["manifest.json", "scan.json", "brief.md", "impact.json", "report.md", "report.json", "report.sarif", "submission.json", "trace.json", "report.html"];
 
 function command(program, args, cwd, env) {
@@ -28,7 +39,7 @@ function command(program, args, cwd, env) {
   });
 }
 
-async function checked(program, args, cwd, env) {
+export async function checked(program, args, cwd, env) {
   const result = await command(program, args, cwd, env);
   if (result.code !== 0) throw new Error(`${program} ${args.join(" ")} exited ${result.code}: ${result.stderr}`);
   return result;
@@ -84,7 +95,7 @@ export async function capture(prepared, destination) {
     chmodSync(executable, 0o755);
     cpSync(join(here, "stand-ins/submission.json"), join(provider, "submission.json"));
     const started = Date.now();
-    const result = await command("env", ["-u", "CLAUDECODE", process.execPath, bin, "review", "--reviewer", driver, "--format", "json", "--no-color"], demo, { ...env, PATH: [provider, dirname(process.execPath), env.PATH].join(delimiter) });
+    const result = await command("env", ["-u", "CLAUDECODE", process.execPath, bin, "review", "--reviewer", driver, "--skip", SKIPPED, "--format", "json", "--no-color"], demo, { ...env, PATH: [provider, dirname(process.execPath), env.PATH].join(delimiter) });
     const reviewMs = Date.now() - started;
     if (![0, 1].includes(result.code)) throw new Error(`${driver} review exited ${result.code}: ${result.stderr}`);
     const latest = JSON.parse(readFileSync(join(home, "last-review", repoId, "last-review.json"), "utf8"));

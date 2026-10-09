@@ -326,28 +326,28 @@ details[open] > summary::before { content: "\2212"; }
 <span class="wordmark">OpenQodex review</span>
 <span class="masthead-kind">review complete</span>
 </div>
-<h1 class="verdict verdict-passed">Passed with warnings: 28 findings (12 major, 16 minor)</h1>
+<h1 class="verdict verdict-passed">Passed with warnings: 17 findings (7 major, 10 minor)</h1>
 
 <dl class="meta"><div class="meta-item"><dt>Change</dt><dd><code>597352237e51</code> against <code>HEAD</code> <code>3df34a143822</code></dd></div><div class="meta-item"><dt>Size</dt><dd>11 files, <span class="added">+45</span> <span class="removed">-16</span></dd></div><div class="meta-item"><dt>Block threshold</dt><dd>none set, findings warn and never block</dd></div><div class="meta-item"><dt>Reviewer</dt><dd>codex 0.160.0, <SECONDS> s, 1 turn, 1,000 tokens in, 500 out</dd></div><div class="meta-item"><dt>Generated</dt><dd><TIMESTAMP></dd></div><div class="meta-item"><dt>Blast radius</dt><dd><a href="#blast-radius">risk low (2 symbols touched, 0 callers in 0 files)</a></dd></div></dl>
 </header>
 </div>
 <div class="verdict-bar">
 <span class="verdict-word verdict-passed">Passed with warnings</span>
-<span class="counts">28 findings: 12 major, 16 minor</span>
+<span class="counts">17 findings: 7 major, 10 minor</span>
 <span class="counts counts-dropped">0 scanner candidates dropped</span>
-<nav class="jumps" aria-label="Sections"><a href="#summary">Summary</a><a href="#findings">Findings (28)</a><a href="#files">Files (11)</a><a href="#scanners">Scanners</a><a href="#blast-radius">Blast radius</a></nav>
+<nav class="jumps" aria-label="Sections"><a href="#summary">Summary</a><a href="#findings">Findings (17)</a><a href="#files">Files (11)</a><a href="#scanners">Scanners</a><a href="#blast-radius">Blast radius</a></nav>
 </div>
 <main class="page">
 <section class="summary" id="summary"><h2>Summary</h2><div class="prose"><p>Reviewed the fixed planted change.</p></div></section>
-<section class="coverage" aria-label="Coverage"><dl><div class="coverage-item"><dt>Changed ranges given to the reviewer</dt><dd>18 of 18</dd></div><div class="coverage-item"><dt>Files the reviewer opened</dt><dd>not recorded by Codex</dd></div><div class="coverage-item"><dt>Scanner candidates</dt><dd>35 on changed lines: 28 raised, 0 dropped, 0 not reviewed</dd></div><div class="coverage-item"><dt>Scanners not included</dt><dd>none</dd></div></dl></section>
+<section class="coverage" aria-label="Coverage"><dl><div class="coverage-item"><dt>Changed ranges given to the reviewer</dt><dd>18 of 18</dd></div><div class="coverage-item"><dt>Files the reviewer opened</dt><dd>not recorded by Codex</dd></div><div class="coverage-item"><dt>Scanner candidates</dt><dd>24 on changed lines: 17 raised, 0 dropped, 0 not reviewed</dd></div><div class="coverage-item"><dt>Scanners not included</dt><dd>none</dd></div></dl></section>
 <div class="review-body">
 <nav class="files" id="files" aria-label="Changed files">
 <h2>Files <span class="count">(11)</span></h2>
-<ol><li><a href="#file-1">.github/workflows/ci.yml</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">modified, 1 finding</span></li><li><a href="#file-2">Dockerfile</a><span class="file-meta"><span class="added">+5</span> <span class="removed">-6</span></span><span class="file-meta file-meta-2">modified, 5 findings</span></li><li><a href="#file-3">app/config.py</a><span class="file-meta"><span class="added">+3</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">added, 1 finding</span></li><li><a href="#file-4">app/search.py</a><span class="file-meta"><span class="added">+17</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">added, 6 findings</span></li><li><a href="#file-5">app/server.py</a><span class="file-meta"><span class="added">+4</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 0 findings</span></li><li><a href="#file-6">db/migrations/002_index_item_names.sql</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">added, 1 finding</span></li><li><a href="#file-7">deploy/deployment.yaml</a><span class="file-meta"><span class="added">+3</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 6 findings</span></li><li><a href="#file-8">infra/main.tf</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 2 findings</span></li><li><a href="#file-9">package-lock.json</a><span class="file-meta"><span class="added">+4</span> <span class="removed">-4</span></span><span class="file-meta file-meta-2">modified, 4 findings</span></li><li><a href="#file-10">package.json</a><span class="file-meta"><span class="added">+1</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 0 findings</span></li><li><a href="#file-11">scripts/deploy.sh</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-2</span></span><span class="file-meta file-meta-2">modified, 2 findings</span></li></ol>
+<ol><li><a href="#file-1">.github/workflows/ci.yml</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">modified, 1 finding</span></li><li><a href="#file-2">Dockerfile</a><span class="file-meta"><span class="added">+5</span> <span class="removed">-6</span></span><span class="file-meta file-meta-2">modified, 5 findings</span></li><li><a href="#file-3">app/config.py</a><span class="file-meta"><span class="added">+3</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">added, 1 finding</span></li><li><a href="#file-4">app/search.py</a><span class="file-meta"><span class="added">+17</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">added, 1 finding</span></li><li><a href="#file-5">app/server.py</a><span class="file-meta"><span class="added">+4</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 0 findings</span></li><li><a href="#file-6">db/migrations/002_index_item_names.sql</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-0</span></span><span class="file-meta file-meta-2">added, 1 finding</span></li><li><a href="#file-7">deploy/deployment.yaml</a><span class="file-meta"><span class="added">+3</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 4 findings</span></li><li><a href="#file-8">infra/main.tf</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 2 findings</span></li><li><a href="#file-9">package-lock.json</a><span class="file-meta"><span class="added">+4</span> <span class="removed">-4</span></span><span class="file-meta file-meta-2">modified, 0 findings</span></li><li><a href="#file-10">package.json</a><span class="file-meta"><span class="added">+1</span> <span class="removed">-1</span></span><span class="file-meta file-meta-2">modified, 0 findings</span></li><li><a href="#file-11">scripts/deploy.sh</a><span class="file-meta"><span class="added">+2</span> <span class="removed">-2</span></span><span class="file-meta file-meta-2">modified, 2 findings</span></li></ol>
 
 </nav>
 <div class="review-main">
-<section class="findings-index" id="findings"><h2>Findings <span class="count">(28)</span></h2><ol><li id="index-f1" class="sev-major"><span class="index-n">1</span><span class="severity sev-major">major</span><a class="index-title" href="#f1">Planted problem number 1</a><span class="index-where"><span class="category">bug</span> .github/workflows/ci.yml:17</span></li><li id="index-f2" class="sev-major"><span class="index-n">2</span><span class="severity sev-major">major</span><a class="index-title" href="#f2">Planted problem number 2</a><span class="index-where"><span class="category">bug</span> app/config.py:2</span></li><li id="index-f3" class="sev-major"><span class="index-n">3</span><span class="severity sev-major">major</span><a class="index-title" href="#f3">Planted problem number 3</a><span class="index-where"><span class="category">bug</span> app/search.py:14</span></li><li id="index-f4" class="sev-major"><span class="index-n">4</span><span class="severity sev-major">major</span><a class="index-title" href="#f4">Planted problem number 4</a><span class="index-where"><span class="category">bug</span> app/search.py:14</span></li><li id="index-f5" class="sev-major"><span class="index-n">5</span><span class="severity sev-major">major</span><a class="index-title" href="#f5">Planted problem number 5</a><span class="index-where"><span class="category">bug</span> app/search.py:14</span></li><li id="index-f6" class="sev-major"><span class="index-n">6</span><span class="severity sev-major">major</span><a class="index-title" href="#f6">Planted problem number 6</a><span class="index-where"><span class="category">bug</span> package-lock.json:11</span></li><li id="index-f7" class="sev-major"><span class="index-n">7</span><span class="severity sev-major">major</span><a class="index-title" href="#f7">Planted problem number 7</a><span class="index-where"><span class="category">bug</span> package-lock.json:11</span></li><li id="index-f8" class="sev-major"><span class="index-n">8</span><span class="severity sev-major">major</span><a class="index-title" href="#f8">Planted problem number 8</a><span class="index-where"><span class="category">bug</span> Dockerfile:6</span></li><li id="index-f9" class="sev-major"><span class="index-n">9</span><span class="severity sev-major">major</span><a class="index-title" href="#f9">Planted problem number 9</a><span class="index-where"><span class="category">bug</span> infra/main.tf:28</span></li><li id="index-f10" class="sev-major"><span class="index-n">10</span><span class="severity sev-major">major</span><a class="index-title" href="#f10">Planted problem number 10</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:43</span></li><li id="index-f11" class="sev-major"><span class="index-n">11</span><span class="severity sev-major">major</span><a class="index-title" href="#f11">Planted problem number 11</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:42</span></li><li id="index-f12" class="sev-major"><span class="index-n">12</span><span class="severity sev-major">major</span><a class="index-title" href="#f12">Planted problem number 12</a><span class="index-where"><span class="category">bug</span> scripts/deploy.sh:11</span></li><li id="index-f13" class="sev-minor"><span class="index-n">13</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f13">Planted problem number 13</a><span class="index-where"><span class="category">bug</span> app/search.py:10-14</span></li><li id="index-f14" class="sev-minor"><span class="index-n">14</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f14">Planted problem number 14</a><span class="index-where"><span class="category">bug</span> app/search.py:14</span></li><li id="index-f15" class="sev-minor"><span class="index-n">15</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f15">Planted problem number 15</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:42</span></li><li id="index-f16" class="sev-minor"><span class="index-n">16</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f16">Planted problem number 16</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:43</span></li><li id="index-f17" class="sev-minor"><span class="index-n">17</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f17">Planted problem number 17</a><span class="index-where"><span class="category">bug</span> db/migrations/002_index_item_names.sql:2</span></li><li id="index-f18" class="sev-minor"><span class="index-n">18</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f18">Planted problem number 18</a><span class="index-where"><span class="category">bug</span> package-lock.json:11</span></li><li id="index-f19" class="sev-minor"><span class="index-n">19</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f19">Planted problem number 19</a><span class="index-where"><span class="category">bug</span> package-lock.json:11</span></li><li id="index-f20" class="sev-minor"><span class="index-n">20</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f20">Planted problem number 20</a><span class="index-where"><span class="category">bug</span> Dockerfile:1</span></li><li id="index-f21" class="sev-minor"><span class="index-n">21</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f21">Planted problem number 21</a><span class="index-where"><span class="category">bug</span> Dockerfile:3</span></li><li id="index-f22" class="sev-minor"><span class="index-n">22</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f22">Planted problem number 22</a><span class="index-where"><span class="category">bug</span> Dockerfile:3</span></li><li id="index-f23" class="sev-minor"><span class="index-n">23</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f23">Planted problem number 23</a><span class="index-where"><span class="category">bug</span> Dockerfile:7</span></li><li id="index-f24" class="sev-minor"><span class="index-n">24</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f24">Planted problem number 24</a><span class="index-where"><span class="category">bug</span> infra/main.tf:28</span></li><li id="index-f25" class="sev-minor"><span class="index-n">25</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f25">Planted problem number 25</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:43</span></li><li id="index-f26" class="sev-minor"><span class="index-n">26</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f26">Planted problem number 26</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:42</span></li><li id="index-f27" class="sev-minor"><span class="index-n">27</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f27">Planted problem number 27</a><span class="index-where"><span class="category">bug</span> scripts/deploy.sh:7</span></li><li id="index-f28" class="sev-minor"><span class="index-n">28</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f28">Planted problem number 28</a><span class="index-where"><span class="category">bug</span> app/search.py:14</span></li></ol></section>
+<section class="findings-index" id="findings"><h2>Findings <span class="count">(17)</span></h2><ol><li id="index-f1" class="sev-major"><span class="index-n">1</span><span class="severity sev-major">major</span><a class="index-title" href="#f1">Planted problem number 1</a><span class="index-where"><span class="category">bug</span> app/config.py:2</span></li><li id="index-f2" class="sev-major"><span class="index-n">2</span><span class="severity sev-major">major</span><a class="index-title" href="#f2">Planted problem number 2</a><span class="index-where"><span class="category">bug</span> .github/workflows/ci.yml:17</span></li><li id="index-f3" class="sev-major"><span class="index-n">3</span><span class="severity sev-major">major</span><a class="index-title" href="#f3">Planted problem number 3</a><span class="index-where"><span class="category">bug</span> Dockerfile:6</span></li><li id="index-f4" class="sev-major"><span class="index-n">4</span><span class="severity sev-major">major</span><a class="index-title" href="#f4">Planted problem number 4</a><span class="index-where"><span class="category">bug</span> infra/main.tf:28</span></li><li id="index-f5" class="sev-major"><span class="index-n">5</span><span class="severity sev-major">major</span><a class="index-title" href="#f5">Planted problem number 5</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:42</span></li><li id="index-f6" class="sev-major"><span class="index-n">6</span><span class="severity sev-major">major</span><a class="index-title" href="#f6">Planted problem number 6</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:43</span></li><li id="index-f7" class="sev-major"><span class="index-n">7</span><span class="severity sev-major">major</span><a class="index-title" href="#f7">Planted problem number 7</a><span class="index-where"><span class="category">bug</span> scripts/deploy.sh:11</span></li><li id="index-f8" class="sev-minor"><span class="index-n">8</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f8">Planted problem number 8</a><span class="index-where"><span class="category">bug</span> db/migrations/002_index_item_names.sql:2</span></li><li id="index-f9" class="sev-minor"><span class="index-n">9</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f9">Planted problem number 9</a><span class="index-where"><span class="category">bug</span> Dockerfile:1</span></li><li id="index-f10" class="sev-minor"><span class="index-n">10</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f10">Planted problem number 10</a><span class="index-where"><span class="category">bug</span> Dockerfile:3</span></li><li id="index-f11" class="sev-minor"><span class="index-n">11</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f11">Planted problem number 11</a><span class="index-where"><span class="category">bug</span> Dockerfile:3</span></li><li id="index-f12" class="sev-minor"><span class="index-n">12</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f12">Planted problem number 12</a><span class="index-where"><span class="category">bug</span> Dockerfile:7</span></li><li id="index-f13" class="sev-minor"><span class="index-n">13</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f13">Planted problem number 13</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:42</span></li><li id="index-f14" class="sev-minor"><span class="index-n">14</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f14">Planted problem number 14</a><span class="index-where"><span class="category">bug</span> deploy/deployment.yaml:43</span></li><li id="index-f15" class="sev-minor"><span class="index-n">15</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f15">Planted problem number 15</a><span class="index-where"><span class="category">bug</span> infra/main.tf:28</span></li><li id="index-f16" class="sev-minor"><span class="index-n">16</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f16">Planted problem number 16</a><span class="index-where"><span class="category">bug</span> scripts/deploy.sh:7</span></li><li id="index-f17" class="sev-minor"><span class="index-n">17</span><span class="severity sev-minor">minor</span><a class="index-title" href="#f17">Planted problem number 17</a><span class="index-where"><span class="category">bug</span> app/search.py:14</span></li></ol></section>
 <section class="file" id="file-1">
 <header class="file-header">
 <h3 class="file-path">.github/workflows/ci.yml</h3>
@@ -364,12 +364,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-ctx"><td class="num num-old" data-n="15"></td><td class="num num-new" data-n="15"></td><td class="sign"> </td><td class="code">          persist-credentials: false</td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="16"></td><td class="sign">+</td><td class="code">      - name: Show the pull request</td></tr>
 <tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="17"></td><td class="sign">+</td><td class="code">        run: echo &quot;Testing ${{ github.event.pull_request.title }}&quot;</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f1">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f2">
 <header class="finding-head">
-<a class="finding-id" href="#index-f1">1</a>
+<a class="finding-id" href="#index-f2">2</a>
 <span class="severity sev-major">major</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 1</h4>
+<h4 class="finding-title">Planted problem number 2</h4>
 <span class="finding-where">.github/workflows/ci.yml:17</span>
 </header>
 <dl class="finding-body">
@@ -377,10 +377,10 @@ details[open] > summary::before { content: "\2212"; }
 </dl>
 
 <footer class="finding-foot">
-<span class="finding-source">Source: semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection</span>
+<span class="finding-source">Source: actionlint:expression</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c1</span>
-<a class="finding-back" href="#index-f1">Back to the findings list</a>
+<span class="finding-candidate">raises c2</span>
+<a class="finding-back" href="#index-f2">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="16"></td><td class="num num-new" data-n="18"></td><td class="sign"> </td><td class="code">      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0</td></tr>
@@ -402,12 +402,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="hunk-header"><td class="num" colspan="2"></td><td class="code" colspan="2">@@ -1,12 +1,11 @@ <span class="hunk-context"></span></td></tr>
 <tr class="line line-del"><td class="num num-old" data-n="1"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">FROM python:3.12.7-slim-bookworm</td></tr>
 <tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="1"></td><td class="sign">+</td><td class="code">FROM python:latest</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f20">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f9">
 <header class="finding-head">
-<a class="finding-id" href="#index-f20">20</a>
+<a class="finding-id" href="#index-f9">9</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 20</h4>
+<h4 class="finding-title">Planted problem number 9</h4>
 <span class="finding-where">Dockerfile:1</span>
 </header>
 <dl class="finding-body">
@@ -417,20 +417,20 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: hadolint:DL3007</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c20</span>
-<a class="finding-back" href="#index-f20">Back to the findings list</a>
+<span class="finding-candidate">raises c9</span>
+<a class="finding-back" href="#index-f9">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="2"></td><td class="num num-new" data-n="2"></td><td class="sign"> </td><td class="code"></td></tr>
 <tr class="line line-del"><td class="num num-old" data-n="3"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">RUN useradd --create-home --uid 10001 app</td></tr>
 <tr class="line line-del"><td class="num num-old" data-n="4"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">WORKDIR /home/app</td></tr>
 <tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="3"></td><td class="sign">+</td><td class="code">RUN apt-get update &amp;&amp; apt-get install curl</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f21">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f10">
 <header class="finding-head">
-<a class="finding-id" href="#index-f21">21</a>
+<a class="finding-id" href="#index-f10">10</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 21</h4>
+<h4 class="finding-title">Planted problem number 10</h4>
 <span class="finding-where">Dockerfile:3</span>
 </header>
 <dl class="finding-body">
@@ -440,16 +440,16 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: hadolint:DL3008</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c21</span>
-<a class="finding-back" href="#index-f21">Back to the findings list</a>
+<span class="finding-candidate">raises c10</span>
+<a class="finding-back" href="#index-f10">Back to the findings list</a>
 </footer>
 </article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f22">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f11">
 <header class="finding-head">
-<a class="finding-id" href="#index-f22">22</a>
+<a class="finding-id" href="#index-f11">11</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 22</h4>
+<h4 class="finding-title">Planted problem number 11</h4>
 <span class="finding-where">Dockerfile:3</span>
 </header>
 <dl class="finding-body">
@@ -459,8 +459,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: hadolint:DL3014</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c22</span>
-<a class="finding-back" href="#index-f22">Back to the findings list</a>
+<span class="finding-candidate">raises c11</span>
+<a class="finding-back" href="#index-f11">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="5"></td><td class="num num-new" data-n="4"></td><td class="sign"> </td><td class="code"></td></tr>
@@ -468,12 +468,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-del"><td class="num num-old" data-n="7"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">RUN pip install --no-cache-dir -r requirements.txt</td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="5"></td><td class="sign">+</td><td class="code">WORKDIR /app</td></tr>
 <tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="6"></td><td class="sign">+</td><td class="code">ADD requirements.txt .</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f8">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f3">
 <header class="finding-head">
-<a class="finding-id" href="#index-f8">8</a>
+<a class="finding-id" href="#index-f3">3</a>
 <span class="severity sev-major">major</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 8</h4>
+<h4 class="finding-title">Planted problem number 3</h4>
 <span class="finding-where">Dockerfile:6</span>
 </header>
 <dl class="finding-body">
@@ -483,17 +483,17 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: hadolint:DL3020</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c8</span>
-<a class="finding-back" href="#index-f8">Back to the findings list</a>
+<span class="finding-candidate">raises c3</span>
+<a class="finding-back" href="#index-f3">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="7"></td><td class="sign">+</td><td class="code">RUN pip install -r requirements.txt</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f23">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f12">
 <header class="finding-head">
-<a class="finding-id" href="#index-f23">23</a>
+<a class="finding-id" href="#index-f12">12</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 23</h4>
+<h4 class="finding-title">Planted problem number 12</h4>
 <span class="finding-where">Dockerfile:7</span>
 </header>
 <dl class="finding-body">
@@ -503,8 +503,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: hadolint:DL3042</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c23</span>
-<a class="finding-back" href="#index-f23">Back to the findings list</a>
+<span class="finding-candidate">raises c12</span>
+<a class="finding-back" href="#index-f12">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="8"></td><td class="num num-new" data-n="8"></td><td class="sign"> </td><td class="code">COPY app ./app</td></tr>
@@ -528,12 +528,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="hunk-header"><td class="num" colspan="2"></td><td class="code" colspan="2">@@ -0,0 +1,3 @@ <span class="hunk-context"></span></td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="1"></td><td class="sign">+</td><td class="code"># Payment settings for the demo shop.</td></tr>
 <tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="2"></td><td class="sign">+</td><td class="code">STRIPE_KEY = &quot;[redacted]&quot;</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f2">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f1">
 <header class="finding-head">
-<a class="finding-id" href="#index-f2">2</a>
+<a class="finding-id" href="#index-f1">1</a>
 <span class="severity sev-major">major</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 2</h4>
+<h4 class="finding-title">Planted problem number 1</h4>
 <span class="finding-where">app/config.py:2</span>
 </header>
 <dl class="finding-body">
@@ -541,10 +541,10 @@ details[open] > summary::before { content: "\2212"; }
 </dl>
 
 <footer class="finding-foot">
-<span class="finding-source">Source: semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key</span>
+<span class="finding-source">Source: gitleaks:stripe-access-token</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c2</span>
-<a class="finding-back" href="#index-f2">Back to the findings list</a>
+<span class="finding-candidate">raises c1</span>
+<a class="finding-back" href="#index-f1">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="3"></td><td class="sign">+</td><td class="code">CURRENCY = &quot;usd&quot;</td></tr>
@@ -557,7 +557,7 @@ details[open] > summary::before { content: "\2212"; }
 
 <span class="file-status">added</span>
 <span class="file-counts"><span class="added">+17</span> <span class="removed">-0</span></span>
-<span class="file-findings">6 findings</span>
+<span class="file-findings">1 finding</span>
 </header>
 <table class="diff"><colgroup><col class="col-num"><col class="col-num"><col class="col-sign"><col class="col-code"></colgroup>
 <tbody class="hunk">
@@ -571,112 +571,17 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="7"></td><td class="sign">+</td><td class="code"></td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="8"></td><td class="sign">+</td><td class="code">@search.get(&quot;/search&quot;)</td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="9"></td><td class="sign">+</td><td class="code">def search_items():</td></tr>
-<tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="10"></td><td class="sign">+</td><td class="code">    q = request.args.get(&quot;q&quot;, &quot;&quot;)</td></tr>
-<tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="11"></td><td class="sign">+</td><td class="code">    conn = sqlite3.connect(&quot;items.db&quot;)</td></tr>
-<tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="12"></td><td class="sign">+</td><td class="code">    conn.row_factory = sqlite3.Row</td></tr>
-<tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="13"></td><td class="sign">+</td><td class="code">    cur = conn.cursor()</td></tr>
-<tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="14"></td><td class="sign">+</td><td class="code">    cur.execute(f&quot;SELECT id, name, price FROM items WHERE name = &#x27;{q}&#x27;&quot;)</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f3">
+<tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="10"></td><td class="sign">+</td><td class="code">    q = request.args.get(&quot;q&quot;, &quot;&quot;)</td></tr>
+<tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="11"></td><td class="sign">+</td><td class="code">    conn = sqlite3.connect(&quot;items.db&quot;)</td></tr>
+<tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="12"></td><td class="sign">+</td><td class="code">    conn.row_factory = sqlite3.Row</td></tr>
+<tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="13"></td><td class="sign">+</td><td class="code">    cur = conn.cursor()</td></tr>
+<tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="14"></td><td class="sign">+</td><td class="code">    cur.execute(f&quot;SELECT id, name, price FROM items WHERE name = &#x27;{q}&#x27;&quot;)</td></tr>
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f17">
 <header class="finding-head">
-<a class="finding-id" href="#index-f3">3</a>
-<span class="severity sev-major">major</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 3</h4>
-<span class="finding-where">app/search.py:14</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: semgrep:python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c3</span>
-<a class="finding-back" href="#index-f3">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f4">
-<header class="finding-head">
-<a class="finding-id" href="#index-f4">4</a>
-<span class="severity sev-major">major</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 4</h4>
-<span class="finding-where">app/search.py:14</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c4</span>
-<a class="finding-back" href="#index-f4">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f5">
-<header class="finding-head">
-<a class="finding-id" href="#index-f5">5</a>
-<span class="severity sev-major">major</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 5</h4>
-<span class="finding-where">app/search.py:14</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c5</span>
-<a class="finding-back" href="#index-f5">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f13">
-<header class="finding-head">
-<a class="finding-id" href="#index-f13">13</a>
+<a class="finding-id" href="#index-f17">17</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 13</h4>
-<span class="finding-where">app/search.py:10-14</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: semgrep:python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c13</span>
-<a class="finding-back" href="#index-f13">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f14">
-<header class="finding-head">
-<a class="finding-id" href="#index-f14">14</a>
-<span class="severity sev-minor">minor</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 14</h4>
-<span class="finding-where">app/search.py:14</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: semgrep:python.lang.security.audit.formatted-sql-query.formatted-sql-query</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c14</span>
-<a class="finding-back" href="#index-f14">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f28">
-<header class="finding-head">
-<a class="finding-id" href="#index-f28">28</a>
-<span class="severity sev-minor">minor</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 28</h4>
+<h4 class="finding-title">Planted problem number 17</h4>
 <span class="finding-where">app/search.py:14</span>
 </header>
 <dl class="finding-body">
@@ -686,8 +591,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: bandit:B608</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c28</span>
-<a class="finding-back" href="#index-f28">Back to the findings list</a>
+<span class="finding-candidate">raises c17</span>
+<a class="finding-back" href="#index-f17">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="15"></td><td class="sign">+</td><td class="code">    rows = cur.fetchall()</td></tr>
@@ -744,12 +649,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="hunk-header"><td class="num" colspan="2"></td><td class="code" colspan="2">@@ -0,0 +1,2 @@ <span class="hunk-context"></span></td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="1"></td><td class="sign">+</td><td class="code">-- The search endpoint filters items by name.</td></tr>
 <tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="2"></td><td class="sign">+</td><td class="code">CREATE INDEX items_name_idx ON items (name);</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f17">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f8">
 <header class="finding-head">
-<a class="finding-id" href="#index-f17">17</a>
+<a class="finding-id" href="#index-f8">8</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 17</h4>
+<h4 class="finding-title">Planted problem number 8</h4>
 <span class="finding-where">db/migrations/002_index_item_names.sql:2</span>
 </header>
 <dl class="finding-body">
@@ -759,8 +664,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: squawk:require-concurrent-index-creation</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c17</span>
-<a class="finding-back" href="#index-f17">Back to the findings list</a>
+<span class="finding-candidate">raises c8</span>
+<a class="finding-back" href="#index-f8">Back to the findings list</a>
 </footer>
 </article></td></tr>
 </tbody>
@@ -772,7 +677,7 @@ details[open] > summary::before { content: "\2212"; }
 
 <span class="file-status">modified</span>
 <span class="file-counts"><span class="added">+3</span> <span class="removed">-1</span></span>
-<span class="file-findings">6 findings</span>
+<span class="file-findings">4 findings</span>
 </header>
 <table class="diff"><colgroup><col class="col-num"><col class="col-num"><col class="col-sign"><col class="col-code"></colgroup>
 <tbody class="hunk">
@@ -783,12 +688,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-del"><td class="num num-old" data-n="41"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">            allowPrivilegeEscalation: false</td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="41"></td><td class="sign">+</td><td class="code">            # The health check pings the database host with raw sockets.</td></tr>
 <tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="42"></td><td class="sign">+</td><td class="code">            privileged: true</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f11">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f5">
 <header class="finding-head">
-<a class="finding-id" href="#index-f11">11</a>
+<a class="finding-id" href="#index-f5">5</a>
 <span class="severity sev-major">major</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 11</h4>
+<h4 class="finding-title">Planted problem number 5</h4>
 <span class="finding-where">deploy/deployment.yaml:42</span>
 </header>
 <dl class="finding-body">
@@ -798,35 +703,16 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: kube-linter:privileged-container</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c11</span>
-<a class="finding-back" href="#index-f11">Back to the findings list</a>
+<span class="finding-candidate">raises c5</span>
+<a class="finding-back" href="#index-f5">Back to the findings list</a>
 </footer>
 </article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f15">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f13">
 <header class="finding-head">
-<a class="finding-id" href="#index-f15">15</a>
+<a class="finding-id" href="#index-f13">13</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 15</h4>
-<span class="finding-where">deploy/deployment.yaml:42</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: semgrep:yaml.kubernetes.security.privileged-container.privileged-container</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c15</span>
-<a class="finding-back" href="#index-f15">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f26">
-<header class="finding-head">
-<a class="finding-id" href="#index-f26">26</a>
-<span class="severity sev-minor">minor</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 26</h4>
+<h4 class="finding-title">Planted problem number 13</h4>
 <span class="finding-where">deploy/deployment.yaml:42</span>
 </header>
 <dl class="finding-body">
@@ -836,17 +722,17 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: checkov:CKV_K8S_16</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c26</span>
-<a class="finding-back" href="#index-f26">Back to the findings list</a>
+<span class="finding-candidate">raises c13</span>
+<a class="finding-back" href="#index-f13">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="43"></td><td class="sign">+</td><td class="code">            allowPrivilegeEscalation: true</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f10">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f6">
 <header class="finding-head">
-<a class="finding-id" href="#index-f10">10</a>
+<a class="finding-id" href="#index-f6">6</a>
 <span class="severity sev-major">major</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 10</h4>
+<h4 class="finding-title">Planted problem number 6</h4>
 <span class="finding-where">deploy/deployment.yaml:43</span>
 </header>
 <dl class="finding-body">
@@ -856,35 +742,16 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: kube-linter:privilege-escalation-container</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c10</span>
-<a class="finding-back" href="#index-f10">Back to the findings list</a>
+<span class="finding-candidate">raises c6</span>
+<a class="finding-back" href="#index-f6">Back to the findings list</a>
 </footer>
 </article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f16">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f14">
 <header class="finding-head">
-<a class="finding-id" href="#index-f16">16</a>
+<a class="finding-id" href="#index-f14">14</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 16</h4>
-<span class="finding-where">deploy/deployment.yaml:43</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: semgrep:yaml.kubernetes.security.allow-privilege-escalation-true.allow-privilege-escalation-true</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c16</span>
-<a class="finding-back" href="#index-f16">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f25">
-<header class="finding-head">
-<a class="finding-id" href="#index-f25">25</a>
-<span class="severity sev-minor">minor</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 25</h4>
+<h4 class="finding-title">Planted problem number 14</h4>
 <span class="finding-where">deploy/deployment.yaml:43</span>
 </header>
 <dl class="finding-body">
@@ -894,8 +761,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: checkov:CKV_K8S_20</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c25</span>
-<a class="finding-back" href="#index-f25">Back to the findings list</a>
+<span class="finding-candidate">raises c14</span>
+<a class="finding-back" href="#index-f14">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="42"></td><td class="num num-new" data-n="44"></td><td class="sign"> </td><td class="code">            readOnlyRootFilesystem: true</td></tr>
@@ -921,12 +788,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-del"><td class="num num-old" data-n="27"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">    cidr_blocks = [&quot;203.0.113.0/24&quot;]</td></tr>
 <tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="27"></td><td class="sign">+</td><td class="code">    # Open while the office VPN is down.</td></tr>
 <tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="28"></td><td class="sign">+</td><td class="code">    cidr_blocks = [&quot;0.0.0.0/0&quot;]</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f9">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f4">
 <header class="finding-head">
-<a class="finding-id" href="#index-f9">9</a>
+<a class="finding-id" href="#index-f4">4</a>
 <span class="severity sev-major">major</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 9</h4>
+<h4 class="finding-title">Planted problem number 4</h4>
 <span class="finding-where">infra/main.tf:28</span>
 </header>
 <dl class="finding-body">
@@ -936,16 +803,16 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: trivy:AWS-0107</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c9</span>
-<a class="finding-back" href="#index-f9">Back to the findings list</a>
+<span class="finding-candidate">raises c4</span>
+<a class="finding-back" href="#index-f4">Back to the findings list</a>
 </footer>
 </article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f24">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f15">
 <header class="finding-head">
-<a class="finding-id" href="#index-f24">24</a>
+<a class="finding-id" href="#index-f15">15</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 24</h4>
+<h4 class="finding-title">Planted problem number 15</h4>
 <span class="finding-where">infra/main.tf:28</span>
 </header>
 <dl class="finding-body">
@@ -955,8 +822,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: checkov:CKV_AWS_24</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c24</span>
-<a class="finding-back" href="#index-f24">Back to the findings list</a>
+<span class="finding-candidate">raises c15</span>
+<a class="finding-back" href="#index-f15">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="28"></td><td class="num num-new" data-n="29"></td><td class="sign"> </td><td class="code">  }</td></tr>
@@ -971,7 +838,7 @@ details[open] > summary::before { content: "\2212"; }
 
 <span class="file-status">modified</span>
 <span class="file-counts"><span class="added">+4</span> <span class="removed">-4</span></span>
-<span class="file-findings">4 findings</span>
+<span class="file-findings file-findings-none">no findings</span>
 </header>
 <table class="diff"><colgroup><col class="col-num"><col class="col-num"><col class="col-sign"><col class="col-code"></colgroup>
 <tbody class="hunk">
@@ -980,83 +847,7 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-ctx"><td class="num num-old" data-n="9"></td><td class="num num-new" data-n="9"></td><td class="sign"> </td><td class="code">      &quot;version&quot;: &quot;1.0.0&quot;,</td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="10"></td><td class="num num-new" data-n="10"></td><td class="sign"> </td><td class="code">      &quot;dependencies&quot;: {</td></tr>
 <tr class="line line-del"><td class="num num-old" data-n="11"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">        &quot;lodash&quot;: &quot;4.18.1&quot;</td></tr>
-<tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="11"></td><td class="sign">+</td><td class="code">        &quot;lodash&quot;: &quot;4.17.15&quot;</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f6">
-<header class="finding-head">
-<a class="finding-id" href="#index-f6">6</a>
-<span class="severity sev-major">major</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 6</h4>
-<span class="finding-where">package-lock.json:11</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: osv-scanner:GHSA-35jh-r3h4-6jhm</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c6</span>
-<a class="finding-back" href="#index-f6">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f7">
-<header class="finding-head">
-<a class="finding-id" href="#index-f7">7</a>
-<span class="severity sev-major">major</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 7</h4>
-<span class="finding-where">package-lock.json:11</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: osv-scanner:GHSA-p6mc-m468-83gw</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c7</span>
-<a class="finding-back" href="#index-f7">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f18">
-<header class="finding-head">
-<a class="finding-id" href="#index-f18">18</a>
-<span class="severity sev-minor">minor</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 18</h4>
-<span class="finding-where">package-lock.json:11</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: osv-scanner:GHSA-29mw-wpgm-hmr9</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c18</span>
-<a class="finding-back" href="#index-f18">Back to the findings list</a>
-</footer>
-</article></td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f19">
-<header class="finding-head">
-<a class="finding-id" href="#index-f19">19</a>
-<span class="severity sev-minor">minor</span>
-<span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 19</h4>
-<span class="finding-where">package-lock.json:11</span>
-</header>
-<dl class="finding-body">
-<dt>Problem</dt><dd><p>This changed line introduces an unsafe operation.</p></dd><dt>Why it matters</dt><dd><p>The affected behavior can fail when this path runs.</p></dd><dt>Fix</dt><dd><p>Correct the flagged operation before using this change.</p></dd>
-</dl>
-
-<footer class="finding-foot">
-<span class="finding-source">Source: osv-scanner:GHSA-f23m-r3pf-42rh</span>
-<span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c19</span>
-<a class="finding-back" href="#index-f19">Back to the findings list</a>
-</footer>
-</article></td></tr>
+<tr class="line line-add"><td class="num num-old"></td><td class="num num-new" data-n="11"></td><td class="sign">+</td><td class="code">        &quot;lodash&quot;: &quot;4.17.15&quot;</td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="12"></td><td class="num num-new" data-n="12"></td><td class="sign"> </td><td class="code">      }</td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="13"></td><td class="num num-new" data-n="13"></td><td class="sign"> </td><td class="code">    },</td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="14"></td><td class="num num-new" data-n="14"></td><td class="sign"> </td><td class="code">    &quot;node_modules/lodash&quot;: {</td></tr>
@@ -1109,12 +900,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-ctx"><td class="num num-old" data-n="6"></td><td class="num num-new" data-n="6"></td><td class="sign"> </td><td class="code"></td></tr>
 <tr class="line line-del"><td class="num num-old" data-n="7"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">rm -rf &quot;${DEPLOY_DIR:?}/&quot;</td></tr>
 <tr class="line line-add line-flagged sev-minor"><td class="num num-old"></td><td class="num num-new" data-n="7"></td><td class="sign">+</td><td class="code">rm -rf $DEPLOY_DIR/</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f27">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-minor" id="f16">
 <header class="finding-head">
-<a class="finding-id" href="#index-f27">27</a>
+<a class="finding-id" href="#index-f16">16</a>
 <span class="severity sev-minor">minor</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 27</h4>
+<h4 class="finding-title">Planted problem number 16</h4>
 <span class="finding-where">scripts/deploy.sh:7</span>
 </header>
 <dl class="finding-body">
@@ -1124,8 +915,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: shellcheck:SC2115</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c27</span>
-<a class="finding-back" href="#index-f27">Back to the findings list</a>
+<span class="finding-candidate">raises c16</span>
+<a class="finding-back" href="#index-f16">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="8"></td><td class="num num-new" data-n="8"></td><td class="sign"> </td><td class="code">mkdir -p &quot;$DEPLOY_DIR&quot;</td></tr>
@@ -1133,12 +924,12 @@ details[open] > summary::before { content: "\2212"; }
 <tr class="line line-ctx"><td class="num num-old" data-n="10"></td><td class="num num-new" data-n="10"></td><td class="sign"> </td><td class="code"></td></tr>
 <tr class="line line-del"><td class="num num-old" data-n="11"></td><td class="num num-new"></td><td class="sign">-</td><td class="code">for file in &quot;$DEPLOY_DIR&quot;/*; do</td></tr>
 <tr class="line line-add line-flagged sev-major"><td class="num num-old"></td><td class="num num-new" data-n="11"></td><td class="sign">+</td><td class="code">for file in $(ls $DEPLOY_DIR); do</td></tr>
-<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f12">
+<tr class="finding-row"><td colspan="4"><article class="finding-card sev-major" id="f7">
 <header class="finding-head">
-<a class="finding-id" href="#index-f12">12</a>
+<a class="finding-id" href="#index-f7">7</a>
 <span class="severity sev-major">major</span>
 <span class="category">bug</span>
-<h4 class="finding-title">Planted problem number 12</h4>
+<h4 class="finding-title">Planted problem number 7</h4>
 <span class="finding-where">scripts/deploy.sh:11</span>
 </header>
 <dl class="finding-body">
@@ -1148,8 +939,8 @@ details[open] > summary::before { content: "\2212"; }
 <footer class="finding-foot">
 <span class="finding-source">Source: shellcheck:SC2045</span>
 <span class="finding-confidence">confidence 1</span>
-<span class="finding-candidate">raises c12</span>
-<a class="finding-back" href="#index-f12">Back to the findings list</a>
+<span class="finding-candidate">raises c7</span>
+<a class="finding-back" href="#index-f7">Back to the findings list</a>
 </footer>
 </article></td></tr>
 <tr class="line line-ctx"><td class="num num-old" data-n="12"></td><td class="num num-new" data-n="12"></td><td class="sign"> </td><td class="code">  echo &quot;deployed: $file&quot;</td></tr>
@@ -1159,8 +950,8 @@ details[open] > summary::before { content: "\2212"; }
 </section>
 </div>
 </div>
-<section class="accounting" id="accounting"><h2>Review accounting</h2><table class="table table-keyed"><thead><tr><th>What</th><th class="n">Count</th><th>Detail</th></tr></thead><tbody><tr><td>Raised by the reviewer</td><td class="n">28</td><td>0 from its own reading, 28 from scanner candidates</td></tr><tr><td>Dropped by the reviewer</td><td class="n">0</td><td>none</td></tr><tr><td>Not reviewed, counted at scanner severity</td><td class="n">0</td><td>none</td></tr><tr><td>Below the confidence floor</td><td class="n">0</td><td>none</td></tr><tr><td>Below the severity threshold</td><td class="n">7</td><td>left out of the findings, never counted</td></tr><tr><td>Outside the changed lines</td><td class="n">0</td><td>none</td></tr><tr><td>Scanner results not kept</td><td class="n">6</td><td>a result is kept only when it sits on a changed line; semgrep 1, gitleaks 1, actionlint 1, zizmor 1, trivy 2</td></tr><tr><td>Left out, change too large</td><td class="n">0</td><td>none</td></tr></tbody></table></section>
-<section class="scanners" id="scanners"><h2>Scanners</h2><p>17 scanners ran, 5 had nothing to check.</p><table class="table "><thead><tr><th>Scanner</th><th>Status</th><th>Version</th><th class="n">Found</th><th class="n">Kept</th><th class="n">Time</th><th>Reason</th></tr></thead><tbody><tr><td><span class="mono">semgrep</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">1.94.0</span></td><td class="n">10</td><td class="n">9</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">gitleaks</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">8.21.2</span></td><td class="n">1</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">sqllint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">squawk</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">2.66.0</span></td><td class="n">4</td><td class="n">4</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">sqlfluff</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">4.3.0</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">osv-scanner</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">2.6.0</span></td><td class="n">4</td><td class="n">4</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">cargo-deny</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">actionlint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">1.7.7</span></td><td class="n">1</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">zizmor</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">1.30.1</span></td><td class="n">1</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">hadolint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">2.15.1</span></td><td class="n">7</td><td class="n">7</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">trivy</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.75.0</span></td><td class="n">3</td><td class="n">1</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">checkov</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">3.3.22</span></td><td class="n">3</td><td class="n">3</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">tflint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.64.0</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">kube-linter</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.8.3</span></td><td class="n">2</td><td class="n">2</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">kubeconform</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.8.0</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">shellcheck</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.10.0</span></td><td class="n">4</td><td class="n">4</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">ruff</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.8.4</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">brakeman</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">rubocop</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">bandit</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">1.9.4</span></td><td class="n">1</td><td class="n">1</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">oxlint</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">golangci</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr></tbody></table></section>
+<section class="accounting" id="accounting"><h2>Review accounting</h2><table class="table table-keyed"><thead><tr><th>What</th><th class="n">Count</th><th>Detail</th></tr></thead><tbody><tr><td>Raised by the reviewer</td><td class="n">17</td><td>0 from its own reading, 17 from scanner candidates</td></tr><tr><td>Dropped by the reviewer</td><td class="n">0</td><td>none</td></tr><tr><td>Not reviewed, counted at scanner severity</td><td class="n">0</td><td>none</td></tr><tr><td>Below the confidence floor</td><td class="n">0</td><td>none</td></tr><tr><td>Below the severity threshold</td><td class="n">7</td><td>left out of the findings, never counted</td></tr><tr><td>Outside the changed lines</td><td class="n">0</td><td>none</td></tr><tr><td>Scanner results not kept</td><td class="n">3</td><td>a result is kept only when it sits on a changed line; zizmor 1, trivy 2</td></tr><tr><td>Left out, change too large</td><td class="n">0</td><td>none</td></tr></tbody></table></section>
+<section class="scanners" id="scanners"><h2>Scanners</h2><p>15 scanners ran, 5 had nothing to check.</p><table class="table "><thead><tr><th>Scanner</th><th>Status</th><th>Version</th><th class="n">Found</th><th class="n">Kept</th><th class="n">Time</th><th>Reason</th></tr></thead><tbody><tr><td><span class="mono">gitleaks</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">8.21.2</span></td><td class="n">1</td><td class="n">1</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">sqllint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">squawk</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">2.66.0</span></td><td class="n">4</td><td class="n">4</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">sqlfluff</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">4.3.0</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">cargo-deny</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">actionlint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">1.7.7</span></td><td class="n">1</td><td class="n">1</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">zizmor</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">1.30.1</span></td><td class="n">1</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">hadolint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">2.15.1</span></td><td class="n">7</td><td class="n">7</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">trivy</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.75.0</span></td><td class="n">3</td><td class="n">1</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">checkov</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">3.3.22</span></td><td class="n">3</td><td class="n">3</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">tflint</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.64.0</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">kube-linter</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.8.3</span></td><td class="n">2</td><td class="n">2</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">kubeconform</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.8.0</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">shellcheck</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.10.0</span></td><td class="n">4</td><td class="n">4</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">ruff</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">0.8.4</span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">brakeman</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">rubocop</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">bandit</span></td><td><span class="scanner-status scanner-ran">ran</span></td><td><span class="mono">1.9.4</span></td><td class="n">1</td><td class="n">1</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">oxlint</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr><tr><td><span class="mono">golangci</span></td><td><span class="scanner-status scanner-no_matching_files">no matching files</span></td><td><span class="mono"></span></td><td class="n">0</td><td class="n">0</td><td class="n"><SECONDS> s</td><td></td></tr></tbody></table></section>
 <section class="blast-radius" id="blast-radius"><h2>Blast radius</h2><p>Risk low: 2 symbols touched, 0 callers in 0 files.</p><p class="muted">Built on this machine from the call graph of 4 files in <SECONDS> s; 6 call sites could not be bound to a definition and are not counted. The graph cannot see dynamic calls, so a symbol with no listed caller may still be called.</p><h3>Touched symbols by file <span class="count">(2 symbols in 2 files)</span></h3><table class="table "><thead><tr><th>File</th><th class="n">Symbols</th><th>Names</th></tr></thead><tbody><tr><td><span class="mono">app/search.py</span></td><td class="n">1</td><td><span class="mono">search_items</span></td></tr><tr><td><span class="mono">app/server.py</span></td><td class="n">1</td><td><span class="mono">list_items</span></td></tr></tbody></table><p>No caller of the touched code was found in the graph.</p><h3>Changed files that others import <span class="count">(1 file, 1 importing file)</span></h3><table class="table table-narrow"><thead><tr><th>Changed file</th><th class="n">Imported by</th></tr></thead><tbody><tr><td><span class="mono">app/search.py</span></td><td class="n">1</td></tr></tbody></table></section>
 </main>
 <div class="page">
