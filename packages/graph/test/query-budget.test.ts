@@ -1,4 +1,4 @@
-// The time budget of a question and its resumption.
+// The time budget of a question, its resumption, and the floors of a walk.
 // Ways it could fail, written before the code:
 //  1. The budget is not seen while a name is looked up, while a hub's edges
 //     are expanded, while the points past the depth are checked, while a
@@ -9,6 +9,8 @@
 //     a walk the budget stopped starts again from nothing instead of from
 //     where it stopped.
 //  4. A resumed walk gives a different answer from one that ran whole.
+//  5. What a walk two hops out calls is a floor only for gaps at its first
+//     point: an unbound call at the second hop is not said.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
@@ -122,5 +124,23 @@ describe("the budget of a question", () => {
     expect(p2.truncated.by).toBe("limit");
     expect(p2.items).toHaveLength(100);
     expect(p2.items.map((i) => where(i as Item))).not.toEqual(p1.items.map((i) => where(i as Item)));
+  });
+});
+
+describe("the floor of a walk", () => {
+  it("says a floor when a call two hops out could not be bound, and not at one hop (5)", async () => {
+    const root = makeRepo({
+      "src/a.ts": 'import { b } from "./b";\nexport function a(): number {\n  return b();\n}\n',
+      "src/b.ts": "const table: Record<string, () => number> = {};\nexport function b(): number {\n  return table.x ? 1 : table[String(Date.now())]();\n}\n",
+    });
+    dirs.push(root);
+    const graph = await buildGraph({ repoRoot: root, store: null });
+    const t: Session = { graph, generation: null, treeSha: null, builtAt: null, laterEditsKnown: false };
+    const one = query(t, { apiVersion: 1, kind: "callees", target: { name: "a" }, depth: 1 });
+    expect(one.unknown.floor).toBe(false);
+    const two = query(t, { apiVersion: 1, kind: "callees", target: { name: "a" }, depth: 2 });
+    expect(two.unknown.floor).toBe(true);
+    expect(two.unknown.causes.dynamic).toBe(1);
+    expect(two.unknown.reasons.join(" ")).toMatch(/could not be bound/);
   });
 });

@@ -194,9 +194,11 @@ function walkJob(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job {
       for (const u of named) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
       examples = named.slice(0, 5).map(toImpactUnknown);
     } else {
-      // What it calls is a floor when a call inside it could not be bound.
-      const inside = unknownsInside(g, n.id).filter((u) => u.cause !== "external");
-      reasons = inside.length > 0 ? [`${inside.length} ${inside.length === 1 ? "call" : "calls"} inside it could not be bound`] : [];
+      // What it calls is a floor when a call inside any point the walk
+      // expanded could not be bound: at every hop, not only the first.
+      const inside: UnknownSite[] = [];
+      for (const at of walk.expanded) for (const u of unknownsInside(g, at)) if (u.cause !== "external") inside.push(u);
+      reasons = inside.length > 0 ? [`${inside.length} ${inside.length === 1 ? "call" : "calls"} inside the code it reaches within ${depth} ${depth === 1 ? "hop" : "hops"} could not be bound`] : [];
       causes = {};
       for (const u of inside) causes[u.cause] = (causes[u.cause] ?? 0) + 1;
       examples = inside.slice(0, 5).map(toImpactUnknown);

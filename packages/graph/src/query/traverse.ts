@@ -233,9 +233,11 @@ export class NameLookup {
 // ---------- a walk to a depth ----------
 
 // Edges into or out of `start` to `depth` hops; each item keeps its hop.
-// Run it until it returns true.
+// `expanded` names every point whose edges the walk read, for the floor of
+// what they could not bind. Run it until it returns true.
 export class Walk {
   readonly items: Item[] = [];
+  readonly expanded = new Set<string>();
   readonly seen: Set<string>;
   private frontier: string[];
   private next: string[] = [];
@@ -293,6 +295,7 @@ export class Walk {
         if (spent(budget)) return false;
         this.edges = neighbours(g, at, this.dir, this.kinds);
         this.edge = 0;
+        this.expanded.add(at);
       }
       while (this.edge < this.edges.length) {
         if (spent(budget)) return false;
