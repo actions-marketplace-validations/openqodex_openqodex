@@ -1,5 +1,5 @@
 export * from "./types.js";
-export { buildGraph, langOf, factsKey, isManifest, DEFAULT_BUDGET_MS, DEFAULT_MAX_FILES, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_HEAP_MB } from "./build.js";
+export { buildGraph, extractFacts, langOf, factsKey, isManifest, DEFAULT_BUDGET_MS, DEFAULT_MAX_FILES, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_HEAP_MB } from "./build.js";
 export type { BuildArgs } from "./build.js";
 export { detectImpact, emptyImpact, floorReasons, hotSymbols, isTestPath, toImpactUnknown } from "./impact.js";
 export { renderImpactBlock, symbolKey } from "./render.js";
