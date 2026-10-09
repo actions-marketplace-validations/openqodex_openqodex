@@ -5,15 +5,15 @@
 // repository's `.openqodex/graph/`, and holds the build it got with a lease,
 // so no collection removes it while questions are answered from it (PLAN.md
 // 3.2.7). A pin of a kept build (`--generation`) never builds. Each pin
-// keeps the content of every eligible file as it was read (by facts key),
-// so a later question can say that files changed since (`laterEditsKnown`)
-// without building again.
+// keeps the graph input digest of what it read (build.ts, captureDigest):
+// every eligible file's content, and every manifest, lockfile, workspace
+// file and followed config with its content or its absence. A later
+// question computes the digest of the work tree again, with no parse, and
+// says that files changed since (`laterEditsKnown`) when the two differ.
 import { getChange } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
-import { buildGraph, factsKey } from "../build.js";
+import { buildGraph, workTreeDigest } from "../build.js";
 import { detectImpact } from "../impact.js";
-import { langOf, takeInventory } from "../capture/inventory.js";
-import { RepoReader } from "../safe-fs.js";
 import { graphOf } from "../session.js";
 import { BUILD_ID_PATTERN } from "../store/types.js";
 import type { GraphStore, Lease, Purpose } from "../store/types.js";
@@ -26,10 +26,8 @@ export type GraphSettings = { budgetMs: number; maxFiles: number; maxFileBytes: 
 // The ten-minute budget and no parse cap of `graph build`, the memory bound kept.
 export const BUILD_ALL_MS = 600_000;
 
-// What a pin read: path to facts key for each eligible file whose content
-// it knows, and the paths it knows were there without their content (left
-// out of the build: too large, past a cap).
-export type Reference = { keys: Map<string, string>; present: Set<string> };
+// What a pin read: the graph input digest of the work tree it captured.
+export type Reference = { digest: string };
 
 export type Pinned = {
   session: Session;
@@ -41,24 +39,11 @@ export type Pinned = {
   release(): void;
 };
 
-// The facts key of every eligible file of the work tree now.
-async function currentKeys(repoRoot: string, maxFileBytes: number): Promise<Reference> {
-  const inv = await takeInventory(repoRoot, new RepoReader(repoRoot), { maxFileBytes });
-  const keys = new Map<string, string>();
-  for (const e of inv.entries) keys.set(e.path, factsKey(e.lang, e.blob));
-  return { keys, present: new Set([...inv.tooBig, ...inv.unreadable]) };
-}
-
-// True when an eligible file was added, removed or changed since the pin read it.
+// True when a file the graph reads was added, removed or changed since the
+// pin read the work tree: a source file, or a manifest, lockfile or config
+// that decides how its imports bind.
 export async function laterEdits(repoRoot: string, ref: Reference, maxFileBytes: number): Promise<boolean> {
-  const now = await currentKeys(repoRoot, maxFileBytes);
-  for (const [path, key] of now.keys) {
-    const was = ref.keys.get(path);
-    if (was === undefined ? !ref.present.has(path) : was !== key) return true;
-  }
-  for (const path of ref.keys.keys()) if (!now.keys.has(path) && !now.present.has(path)) return true;
-  for (const path of ref.present) if (!now.keys.has(path) && !now.present.has(path) && langOf(path) !== null) return true;
-  return false;
+  return (await workTreeDigest(repoRoot, maxFileBytes)) !== ref.digest;
 }
 
 function sessionOf(store: GraphStore | null, graph: Graph): Session {
@@ -98,7 +83,7 @@ export type PinArgs = {
 export async function pinWorkTree(args: PinArgs): Promise<Pinned> {
   const { repoRoot, store, settings } = args;
   // Read before the build: an edit made while it runs shows as a later edit.
-  const reference = await currentKeys(repoRoot, settings.maxFileBytes);
+  const reference: Reference = { digest: await workTreeDigest(repoRoot, settings.maxFileBytes) };
   let change: Change | undefined;
   if (args.compare) change = await getChange({ repoRoot, scope: args.compare.base !== undefined ? { base: args.compare.base } : {}, exclude: args.compare.exclude, defaultBase: args.compare.defaultBase });
   const graph = await buildGraph({
@@ -138,16 +123,11 @@ export async function pinGeneration(store: GraphStore, id: string, purpose: Purp
     held.lease.release();
     return { error: "unreadable", message: `build ${id} could not be read back` };
   }
-  let reference: Reference | null = null;
-  try {
-    const inv = JSON.parse(held.generation.read("inventory.json") ?? "null") as { files: Record<string, { key: string }> } | null;
-    const cov = JSON.parse(held.generation.read("coverage.json") ?? "null") as { notRead: { file: string }[] } | null;
-    if (inv?.files) reference = { keys: new Map(Object.entries(inv.files).map(([p, v]) => [p, v.key])), present: new Set((cov?.notRead ?? []).map((n) => n.file)) };
-  } catch {
-    reference = null;
-  }
-  prepareIndexes(graph);
   const m = held.generation.manifest;
+  // The digest the build kept of what it captured. A build of part of the
+  // tree (a review's changed files) never matches the whole tree.
+  const reference: Reference = { digest: m.capture.digest };
+  prepareIndexes(graph);
   const session: Session = { graph, generation: m.id, treeSha: m.capture.treeSha, builtAt: m.createdAt, laterEditsKnown: false };
   return { session, lease: held.lease, reference, release: () => held.lease.release() };
 }

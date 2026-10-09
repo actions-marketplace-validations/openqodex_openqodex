@@ -22,7 +22,7 @@ import type { Parser } from "web-tree-sitter";
 import { captureSnapshot, captureWorkingTree } from "./capture/capture.js";
 import { showBlob } from "./capture/git.js";
 import { blobId, inventoryDigest, langOf, takeInventory } from "./capture/inventory.js";
-import type { InventoryEntry } from "./capture/inventory.js";
+import type { Inventory, InventoryEntry } from "./capture/inventory.js";
 import { exportChanges } from "./changes/exports.js";
 import type { ChangedFile } from "./changes/exports.js";
 import { goModule, LOCKFILE_BYTES, MANIFEST_BYTES } from "./discovery/manifests.js";
@@ -90,6 +90,44 @@ export type BuildArgs = {
 // The key of a file's facts: the extractor, the grammar and the content.
 export function factsKey(lang: Lang, blob: string): string {
   return createHash("sha1").update(`${EXTRACTOR_VERSION}\0${lang}\0${grammarVersion(lang)}\0${blob}`).digest("hex");
+}
+
+// The graph input digest of a capture (PLAN.md 3.2.0): the eligible files
+// and their content ids, the graph's versions and index format, every file
+// the project model read or looked for (tsconfig chains, manifests,
+// workspace files, lockfiles, go.mod files) with its content or its
+// absence, what the model made of the work tree, the files left out and
+// why, and the size cap that decides which are left out. The same digest
+// means the same graph. The build keys its kept index by it, and the
+// query layer compares it to say whether files changed since a build.
+export function captureDigest(args: { inv: Inventory; only: string[] | null; maxFileBytes: number; reads: [string, string][]; model: ProjectModel }): string {
+  const { inv } = args;
+  return inventoryDigest(inv.entries, {
+    versions: { model: MODEL_VERSION, extractor: EXTRACTOR_VERSION, resolver: RESOLVER_VERSION, policy: POLICY_VERSION },
+    index: INDEX_FORMAT,
+    only: args.only,
+    maxFileBytes: args.maxFileBytes,
+    projects: args.reads,
+    // And what the model made of the work tree beyond the files it read:
+    // where each file: dependency leads (a folder walked by identity, which
+    // may become a link while no listed file changes) and why a file could
+    // not be read.
+    model: createHash("sha256").update(JSON.stringify(serializeModel(args.model))).digest("hex"),
+    tooBig: [...inv.tooBig].sort(),
+    unreadable: [...inv.unreadable].sort(),
+  });
+}
+
+// The digest of the work tree of `root` as a build of it now would compute
+// it, with no file read but the ones the build's capture and project model
+// read.
+export async function workTreeDigest(root: string, maxFileBytes: number): Promise<string> {
+  const reader = new RepoReader(root);
+  const inv = await takeInventory(root, reader, { maxFileBytes });
+  const traced = traceReads(reader);
+  const model = discoverProjects(inv.all, traced.reader, traced.look);
+  readGoModules(traced.reader, inv.all);
+  return captureDigest({ inv, only: null, maxFileBytes, reads: traced.entries(), model });
 }
 
 function readGoModules(reader: RepoReader, all: string[]): [string, string][] {
@@ -209,25 +247,8 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
   const decided = args.mode ? { mode: args.mode, streak: 0 } : decideMode(meta, predicted);
   const config = { budgetMs, maxFiles, maxFileBytes, maxHeapMb: Math.round(maxHeap / 1024 / 1024) };
   const versions = { model: MODEL_VERSION, extractor: EXTRACTOR_VERSION, resolver: RESOLVER_VERSION, policy: POLICY_VERSION };
-  // What a kept index was resolved from, besides the source files: the
-  // graph's versions and index format, every file the project model read
-  // or looked for (tsconfig chains, manifests, workspace files, lockfiles,
-  // go.mod files), the files left out and why, and the size cap that
-  // decides which are left out. The same digest means the same graph.
-  const digest = inventoryDigest(inv.entries, {
-    versions,
-    index: INDEX_FORMAT,
-    only: args.only ?? null,
-    maxFileBytes,
-    projects: traced.entries(),
-    // And what the model made of the work tree beyond the files it read:
-    // where each file: dependency leads (a folder walked by identity, which
-    // may become a link while no listed file changes) and why a file could
-    // not be read.
-    model: createHash("sha256").update(JSON.stringify(serializeModel(model))).digest("hex"),
-    tooBig: [...inv.tooBig].sort(),
-    unreadable: [...inv.unreadable].sort(),
-  });
+  // What a kept index was resolved from (captureDigest above).
+  const digest = captureDigest({ inv, only: args.only ?? null, maxFileBytes, reads: traced.entries(), model });
   stage("predict");
 
   // Retained: the same capture's index, when a complete one is kept.

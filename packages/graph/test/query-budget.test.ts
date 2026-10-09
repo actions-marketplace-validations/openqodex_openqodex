@@ -11,13 +11,17 @@
 //  4. A resumed walk gives a different answer from one that ran whole.
 //  5. What a walk two hops out calls is a floor only for gaps at its first
 //     point: an unbound call at the second hop is not said.
+//  6. The work tree changed in a file the graph reads besides source (a
+//     package.json exports map, a tsconfig paths alias), and the answer
+//     says no edit is known.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
-import { buildGraph } from "../src/index.js";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { buildGraph, laterEdits, pinWorkTree } from "../src/index.js";
 import { query } from "../src/query/engine.js";
 import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { checksBudget } from "../src/query/traverse.js";
-import { makeRepo } from "./helpers.js";
+import { commitAll, makeRepo } from "./helpers.js";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -142,5 +146,38 @@ describe("the floor of a walk", () => {
     expect(two.unknown.floor).toBe(true);
     expect(two.unknown.causes.dynamic).toBe(1);
     expect(two.unknown.reasons.join(" ")).toMatch(/could not be bound/);
+  });
+});
+
+describe("edits since the held build", () => {
+  const settings = { budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxHeapMb: 1536 };
+  const files = {
+    "package.json": '{ "name": "root", "private": true }\n',
+    "tsconfig.json": '{ "compilerOptions": { "baseUrl": ".", "paths": { "@lib/*": ["src/lib/*"] } } }\n',
+    "src/lib/x.ts": "export function x(): number {\n  return 1;\n}\n",
+    "src/use.ts": 'import { x } from "@lib/x";\nexport function use(): number {\n  return x();\n}\n',
+    "README.md": "# readme\n",
+  };
+
+  it("are known for a changed tsconfig alias and a changed manifest, and not for a file the graph never reads (6)", async () => {
+    const root = makeRepo(files);
+    dirs.push(root);
+    commitAll(root);
+    const pinned = await pinWorkTree({ repoRoot: root, store: null, settings, purpose: "cli" });
+    try {
+      expect(pinned.reference).not.toBeNull();
+      const ref = pinned.reference as NonNullable<typeof pinned.reference>;
+      expect(await laterEdits(root, ref, settings.maxFileBytes)).toBe(false);
+      writeFileSync(join(root, "README.md"), "# readme, edited\n");
+      expect(await laterEdits(root, ref, settings.maxFileBytes)).toBe(false);
+      writeFileSync(join(root, "tsconfig.json"), '{ "compilerOptions": { "baseUrl": ".", "paths": { "@lib/*": ["src/other/*"] } } }\n');
+      expect(await laterEdits(root, ref, settings.maxFileBytes)).toBe(true);
+      writeFileSync(join(root, "tsconfig.json"), files["tsconfig.json"]);
+      expect(await laterEdits(root, ref, settings.maxFileBytes)).toBe(false);
+      writeFileSync(join(root, "package.json"), '{ "name": "root", "private": true, "exports": { ".": "./src/use.ts" } }\n');
+      expect(await laterEdits(root, ref, settings.maxFileBytes)).toBe(true);
+    } finally {
+      pinned.release();
+    }
   });
 });
