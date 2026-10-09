@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ReviewerUsage } from "@openqodex/core";
 import { REVIEWER_TOOLS, REVIEWER_WEB_TOOLS } from "@openqodex/core";
-import { checkoutsDir } from "../checkout.js";
+import { checkoutsDir } from "../checkouts.js";
 import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
 import type { ToolCall } from "./trace.js";

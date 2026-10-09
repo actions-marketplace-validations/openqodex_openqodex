@@ -16,7 +16,7 @@ import type { ScannerChoice } from "@openqodex/scanners";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { parseFlags } from "../flags.js";
 import { progress } from "../pipeline.js";
-import { REVIEWER_NAMES } from "../reviewers/driver.js";
+import { REVIEWER_NAMES } from "@openqodex/review";
 import { DEFAULT_REVIEWER_WEB } from "../reviewers/settings.js";
 import { readUserConfig, unknownKeysWarning } from "../user-config.js";
 import { statusLines } from "./update.js";
