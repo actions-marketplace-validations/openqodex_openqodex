@@ -1,0 +1,83 @@
+{
+  "version": 2,
+  "change_id": "4dd55d237fe9",
+  "summary": "Adds an email search filter to the user index, a self-service profile update endpoint, a user delete endpoint, and a welcome email callback on the User model.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Search filter interpolates request input into SQL",
+      "problem": "The index action puts params[:q] straight into the LIKE clause text. Any quote in q ends the string literal and adds caller-controlled SQL.",
+      "consequence": "Any authenticated user can read or change arbitrary database rows, including other users' API tokens.",
+      "fix": "Bind q as a parameter and escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.93,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 21,
+      "line_end": 21,
+      "title": "Any user can delete any user",
+      "problem": "The change adds destroy to the require_admin exception list on line 2. The destroy action then deletes whatever record params[:id] names, with no ownership or role check.",
+      "consequence": "Any holder of a valid API token can delete every account, including admin accounts.",
+      "fix": "Remove destroy from the require_admin exception list so only admins reach this action.",
+      "suggested_change": null,
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c2"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.88,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Profile update permits every attribute",
+      "problem": "The profile action permits every key in the user params, so any column is accepted. A caller can set admin or api_token on their own record.",
+      "consequence": "Any authenticated user can make themselves an admin and pass require_admin.",
+      "fix": "Permit only the fields a user may edit, such as email.",
+      "suggested_change": "    @current_user.update!(params.require(:user).permit(:email))",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "problem": "The after_save callback runs on updates as well as creates. Every profile update or other save therefore queues another welcome email.",
+      "consequence": "Existing users receive repeated welcome emails whenever their record changes.",
+      "fix": "Use after_create_commit so the mail goes out once, after the insert commits.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 15,
+      "line_end": 22,
+      "title": "New endpoints have no covering tests",
+      "problem": "The change adds search, profile and destroy behaviour plus a model callback. No test file exists in the repository to exercise them.",
+      "consequence": "Regressions in authorization and filtering will go unnoticed.",
+      "fix": "Add request specs for search, profile update, destroy authorization and the welcome email callback.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

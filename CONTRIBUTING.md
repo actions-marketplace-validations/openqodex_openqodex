@@ -32,6 +32,7 @@ The end-to-end tests run the real CLI on the demo repository with the real scann
 ## Tests
 
 - No test fakes a module that lives in this repository or a program on the machine. `vi.mock`, `vi.fn` and their kin are not used. Tests use real temporary folders, real git repositories and real scanner output.
+- A test makes its temporary folders with `tempDir()` from `tests/temp-dirs.mjs`, and its file calls `afterAll(removeTempDirs)`. Each test run keeps its temporary folders in one folder of its own and fails when a test leaves one behind (`tests/temp-guard.ts`).
 - A feature is proved end to end: run the real CLI on a real repository and read the saved report.
 - A piece tested alone starts with its failure cases, listed in a comment at the top of the test file. The tests follow that list. The code comes last.
 - A bug report becomes a test on the demo repository before it is fixed. The test and the fix share one pull request.

@@ -1,7 +1,10 @@
 import { mkdirSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
 import { demo, listing, report, run, toolsHome } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 describe("scan --offline", () => {
   let status: number | null; let found: Report; let before: Record<string, string>; let after: Record<string, string>;
@@ -13,11 +16,12 @@ describe("scan --offline", () => {
     found = report(dir);
   }, 300_000);
 
-  it("disables the two scanners that need the network and says why", () => {
+  it("disables the three scanners the demo needs that need the network, and says why", () => {
     expect(status).toBe(0);
     expect(found.scanners.filter((s) => s.status === "disabled").map((s) => [s.scanner, s.reason])).toEqual([
       ["semgrep", "offline, the rule packs need the network"],
       ["osv-scanner", "offline, dependency lookups are off"],
+      ["kubeconform", "offline, schema downloads are off"],
     ]);
   });
   it("downloads or writes nothing in the tools folder", () => {

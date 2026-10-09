@@ -15,19 +15,21 @@
 // 8. The json-map of semgrep's own JSON disagrees with its SARIF on files,
 //    lines or rule ids.
 // 9. Anything that looks like an expression (filters, wildcards) is evaluated.
-import { cpSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { JsonMap } from "@openqodex/core";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { parseJsonMap } from "../src/formats/json-map.js";
 import { parseSarif } from "../src/formats/sarif.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 function sampleRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-jsonmap-"));
+  const dir = tempDir("oq-jsonmap-");
   cpSync(join(fixtures, "sample"), dir, { recursive: true });
   return dir;
 }

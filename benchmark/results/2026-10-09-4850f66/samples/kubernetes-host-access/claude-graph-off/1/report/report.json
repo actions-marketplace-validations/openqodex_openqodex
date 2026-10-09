@@ -1,0 +1,409 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "82deb6d1898eae66ac9018f9f0643c83b0b56543b8361ff935237cba2a144e45",
+  "base": {
+    "ref": "HEAD",
+    "sha": "9b041c056b1d1c880dcfa98f70eb5a41a9e3258a"
+  },
+  "generated_at": "2026-10-09T06:21:00.932Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "The image-worker Deployment now uses the node's network namespace. It also mounts the node's Docker socket so each conversion can run in its own container.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "deploy/worker.yaml",
+      "line_number": 68,
+      "line_end": 71,
+      "title": "Node Docker socket mounted into worker pod",
+      "description": "The Deployment mounts the host's /var/run/docker.sock into the worker container. Any process holding that socket can drive the node's Docker daemon as root. An attacker who compromises the worker can start a privileged container and take over the node. This bypasses runAsNonRoot, dropped capabilities and seccomp, and exposes every pod and secret on that node. Remove the docker volume and volumeMount. Run conversions as Kubernetes Jobs, or use a sandboxed runner such as rootless BuildKit or a gVisor runtime class.",
+      "suggested_change": null,
+      "source": "kube-linter:docker-sock",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The Deployment mounts the host's /var/run/docker.sock into the worker container. Any process holding that socket can drive the node's Docker daemon as root.",
+      "consequence": "An attacker who compromises the worker can start a privileged container and take over the node. This bypasses runAsNonRoot, dropped capabilities and seccomp, and exposes every pod and secret on that node.",
+      "fix": "Remove the docker volume and volumeMount. Run conversions as Kubernetes Jobs, or use a sandboxed runner such as rootless BuildKit or a gVisor runtime class."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "deploy/worker.yaml",
+      "line_number": 20,
+      "line_end": 20,
+      "title": "Worker pod shares the node network namespace",
+      "description": "The worker pod sets hostNetwork to true just to reach a cache on the node's localhost. The pod then shares the node's network namespace and bypasses pod NetworkPolicies. A compromised worker can reach every service bound to node localhost, including kubelet and daemon ports. It can also observe other pods' traffic on that node. Remove hostNetwork. Reach the image cache through a node-local Service, or at the node IP from the downward API.",
+      "suggested_change": null,
+      "source": "kube-linter:host-network",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "The worker pod sets hostNetwork to true just to reach a cache on the node's localhost. The pod then shares the node's network namespace and bypasses pod NetworkPolicies.",
+      "consequence": "A compromised worker can reach every service bound to node localhost, including kubelet and daemon ports. It can also observe other pods' traffic on that node.",
+      "fix": "Remove hostNetwork. Reach the image cache through a node-local Service, or at the node IP from the downward API."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "kube-linter",
+        "ruleId": "writable-host-mount",
+        "filePath": "deploy/worker.yaml",
+        "lineStart": 70,
+        "lineEnd": 70,
+        "severity": "high",
+        "message": "container worker mounts path /var/run/docker.sock on the host as writable. Set containers to mount host paths as readOnly, if you need to access files on the host.",
+        "reference": "https://docs.kubelinter.io/#/generated/checks?id=writable-host-mount",
+        "id": "c3",
+        "token": "kube-linter:writable-host-mount",
+        "reviewSeverity": "major"
+      },
+      "reason": "This is the same Docker socket mount already raised under c1. Setting readOnly would not stop Docker API calls over the socket.",
+      "cited": {
+        "file_path": "deploy/worker.yaml",
+        "line_number": 70
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "yaml.kubernetes.security.hostnetwork-pod.hostnetwork-pod",
+        "filePath": "deploy/worker.yaml",
+        "lineStart": 20,
+        "lineEnd": 20,
+        "severity": "medium",
+        "message": "Pod may use the node network namespace. This gives the pod access to the loopback device, services listening on localhost, and could be used to snoop on network activity of other pods on the same node. Remove the 'hostNetwork' key to disable this functionality.",
+        "reference": "https://kubernetes.io/docs/concepts/policy/pod-security-policy/#host-namespaces",
+        "id": "c4",
+        "token": "semgrep:yaml.kubernetes.security.hostnetwork-pod.hostnetwork-pod",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the hostNetwork finding raised under c2.",
+      "cited": {
+        "file_path": "deploy/worker.yaml",
+        "line_number": 20
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "yaml.kubernetes.security.exposing-docker-socket-hostpath.exposing-docker-socket-hostpath",
+        "filePath": "deploy/worker.yaml",
+        "lineStart": 69,
+        "lineEnd": 71,
+        "severity": "medium",
+        "message": "Exposing host's Docker socket to containers via a volume. The owner of this socket is root. Giving someone access to it is equivalent to giving unrestricted root access to your host. Remove 'docker.sock' from hostpath to prevent this.",
+        "reference": "https://kubernetes.io/docs/concepts/storage/volumes/#hostpath",
+        "id": "c5",
+        "token": "semgrep:yaml.kubernetes.security.exposing-docker-socket-hostpath.exposing-docker-socket-hostpath",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the Docker socket mount finding raised under c1.",
+      "cited": {
+        "file_path": "deploy/worker.yaml",
+        "line_number": 69
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 4039,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 25,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "ran",
+      "version": "0.75.0",
+      "rawCount": 4,
+      "keptCount": 0,
+      "durationMs": 574,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "ran",
+      "version": "3.3.22",
+      "rawCount": 4,
+      "keptCount": 0,
+      "durationMs": 1816,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "ran",
+      "version": "0.8.3",
+      "rawCount": 3,
+      "keptCount": 3,
+      "durationMs": 92,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "ran",
+      "version": "0.8.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 51,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 9,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 83027,
+      "started_at": "2026-10-09T06:20:37.076Z",
+      "ended_at": "2026-10-09T06:21:00.932Z",
+      "duration_ms": 23856,
+      "rounds": 2,
+      "usage": {
+        "turns": 3,
+        "input_tokens": 31411,
+        "output_tokens": 2592,
+        "cost_usd": 0.112511
+      }
+    },
+    "snapshot": {
+      "change_id": "82deb6d1898eae66ac9018f9f0643c83b0b56543b8361ff935237cba2a144e45",
+      "tree": "79c19989fae67e801ac6163fe4ac123170a4cc49",
+      "before": "94c8ab73d9037ac3bab7efcb621ef5fbfb37e93e946efb60eb666f935ace866c",
+      "after": "94c8ab73d9037ac3bab7efcb621ef5fbfb37e93e946efb60eb666f935ace866c"
+    },
+    "candidates": {
+      "total": 5,
+      "disposed": 5
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "deploy/worker.yaml"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

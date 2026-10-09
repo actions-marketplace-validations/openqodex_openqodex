@@ -2,11 +2,14 @@
 // submission it must reject or a run it must bind to.
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { demo, readBrief, readJson, report, run, submission, writeConfig } from "./support.js";
 import type { Brief } from "./support.js";
 import type { Report } from "@openqodex/core";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 function brief(label: string, dir: string): Brief {
   const r = run(label, dir, ["review", "--agent"]);

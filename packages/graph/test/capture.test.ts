@@ -17,8 +17,7 @@
 //    repository is stored in the repository's objects as the path's link.
 import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { captureSnapshot, captureWorkingTree, treeBlobs } from "../src/capture/capture.js";
@@ -26,6 +25,9 @@ import { isSafeRepoPath, isSha, showBlob } from "../src/capture/git.js";
 import { blobId } from "../src/capture/inventory.js";
 import { buildGraph } from "../src/index.js";
 import { commitAll, git, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -37,7 +39,7 @@ const hasObject = (repo: string, id: string) => spawnSync("git", ["cat-file", "-
 // A snapshot made the way the review makes one: a linked work tree of the
 // repository at HEAD.
 function snapshotOf(repo: string): string {
-  const parent = mkdtempSync(join(tmpdir(), "oq-snap-"));
+  const parent = tempDir("oq-snap-");
   dirs.push(parent);
   const snap = join(parent, "tree");
   git(repo, "worktree", "add", "--no-checkout", "--detach", snap, "HEAD");
@@ -46,7 +48,7 @@ function snapshotOf(repo: string): string {
 }
 
 function outsideSecret(): { path: string; text: string } {
-  const dir = mkdtempSync(join(tmpdir(), "oq-home-"));
+  const dir = tempDir("oq-home-");
   dirs.push(dir);
   mkdirSync(join(dir, ".ssh"));
   const text = `-----BEGIN OPENSSH PRIVATE KEY----- ${Math.random()} -----END-----\n`;
@@ -77,7 +79,7 @@ describe("the capture", () => {
   });
 
   it("never reads a file outside the repository through a path with a line break and `../` (2)", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "oq-outside-"));
+    const parent = tempDir("oq-outside-");
     dirs.push(parent);
     const outside = `outside secret ${Math.random()}\n`;
     writeFileSync(join(parent, "outside.txt"), outside);
@@ -115,7 +117,7 @@ describe("the capture", () => {
   });
 
   it("stores nothing found through a folder the snapshot holds as a link, not even the text of a link outside (5)", async () => {
-    const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+    const outside = tempDir("oq-outside-");
     dirs.push(outside);
     const text = `/outside/only/${Math.random()}`;
     symlinkSync(text, join(outside, "x.ts"));

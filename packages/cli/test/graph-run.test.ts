@@ -13,17 +13,19 @@
 //    those lines are built outside the summary and packet redaction.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DEFAULT_CONFIG, getChange } from "@openqodex/core";
 import { renderImpactBlock, writePacket } from "@openqodex/graph";
 import { buildGraphRun } from "../src/pipeline.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 const savedHome = process.env.OPENQODEX_HOME;
 beforeAll(() => {
-  const home = mkdtempSync(join(tmpdir(), "oq-graph-run-home-"));
+  const home = tempDir("oq-graph-run-home-");
   dirs.push(home);
   process.env.OPENQODEX_HOME = home;
 });
@@ -41,7 +43,7 @@ afterAll(() => {
 });
 
 function repo(files: Record<string, string>): string {
-  const root = mkdtempSync(join(tmpdir(), "oq-graph-run-"));
+  const root = tempDir("oq-graph-run-");
   dirs.push(root);
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -86,7 +88,7 @@ describe("the review's graph run", () => {
     expect(run.graph).not.toBeNull();
     expect(run.impact.touched.length).toBeGreaterThan(0);
     expect(JSON.stringify(run.impact)).not.toContain(secret);
-    const snapshot = mkdtempSync(join(tmpdir(), "oq-graph-run-snapshot-"));
+    const snapshot = tempDir("oq-graph-run-snapshot-");
     dirs.push(snapshot);
     const packet = await writePacket({ root: snapshot, repoRoot: root, graph: run.graph as never, impact: run.impact, baseSha: change.baseSha, secrets: [secret] });
     const files: string[] = [];

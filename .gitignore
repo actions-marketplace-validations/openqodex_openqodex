@@ -27,3 +27,7 @@ packages/cli/LICENSE
 packages/cli/NOTICE
 *.tgz
 tests/e2e/runs/
+
+# Scratch folders for local test runs: temporary files and the scanner home the real-binary checks install into.
+.tmp/
+.tools/

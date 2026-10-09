@@ -50,9 +50,15 @@
 //  19. A quoted TOML key with dots in it (["tool.poetry.dependencies"]) is
 //      read as the nested Poetry table, or a dotted header with quoted parts
 //      or blanks around its dots ([tool."poetry".dependencies]) is not.
+// Added with the infrastructure scanners:
+//  20. A CloudFormation template (YAML or JSON, a top-level
+//      AWSTemplateFormatVersion, or a top-level Resources whose entries have
+//      a Type starting AWS::) is not classed as CloudFormation; or a file
+//      that names those words only nested, in a string or in a comment is.
+//  21. A hostile JSON or YAML file of 1 MB makes the CloudFormation check
+//      take more than linear time.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "@openqodex/core";
@@ -61,6 +67,9 @@ import { MAX_MANIFEST_BYTES, repoFacts } from "../src/detect.js";
 import { choiceLine, repoInventory, selectScanners } from "../src/select.js";
 import { oxlintGroups } from "../src/adapters/oxlint.js";
 import { ruffGroups } from "../src/adapters/ruff.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const roots: string[] = [];
 afterAll(() => {
@@ -68,7 +77,7 @@ afterAll(() => {
 });
 
 function repo(files: Record<string, string | Buffer>, git = true): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openqodex-select-"));
+  const dir = tempDir("openqodex-select-");
   roots.push(dir);
   if (git) execFileSync("git", ["init", "-q"], { cwd: dir });
   for (const [rel, content] of Object.entries(files)) {
@@ -209,6 +218,45 @@ describe("what a file's first bytes say", () => {
     expect(facts.content("compose.yaml")).toBeNull();
     expect(facts.content("nested.yaml")).toBeNull();
   });
+
+  // A Helm template is not YAML until Helm renders it: a Kubernetes scanner
+  // handed one reads `{{ .Values.x }}` as broken YAML and fails or reports
+  // lines that do not exist.
+  it("a Helm template with apiVersion and kind is not Kubernetes", () => {
+    const dir = repo({
+      "chart/Chart.yaml": "apiVersion: v2\nname: web\nversion: 1.0.0\n",
+      "chart/templates/deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {{ .Release.Name }}\n",
+    });
+    expect(repoFacts(dir).content("chart/templates/deploy.yaml")).toBeNull();
+  });
+
+  it("a CloudFormation template in YAML or JSON is CloudFormation; the same words nested, quoted or in a comment are not (20)", () => {
+    const dir = repo({
+      "cfn/stack.yaml": '# network\nAWSTemplateFormatVersion: "2010-09-09"\nResources:\n  Web:\n    Type: AWS::EC2::SecurityGroup\n',
+      "cfn/sam.yml": "Transform: AWS::Serverless-2016-10-31\nResources:\n  Fn:\n    Type: 'AWS::Serverless::Function'\n",
+      "cfn/stack.json": '{\n  "AWSTemplateFormatVersion": "2010-09-09",\n  "Resources": {}\n}\n',
+      "cfn/bucket.template": '{"Resources": {"Logs": {"Properties": {"BucketName": "x"}, "Type": "AWS::S3::Bucket"}}}\n',
+      "cfn/stack.template": 'AWSTemplateFormatVersion: "2010-09-09"\nResources: {}\n',
+      // Not templates: the words nested, in a string, in a comment, or a
+      // Resources table of something else.
+      "other/nested.yaml": "config:\n  AWSTemplateFormatVersion: x\n",
+      "other/comment.yaml": "# AWSTemplateFormatVersion: x\nname: a\n",
+      "other/types.yaml": "Resources:\n  a:\n    Type: Custom\n",
+      "other/top-type.yaml": "Resources: []\nType: AWS::S3::Bucket\n",
+      "other/nested.json": '{"a": {"AWSTemplateFormatVersion": "x", "Resources": {"b": {"Type": "AWS::S3::Bucket"}}}}\n',
+      "other/string.json": '{"note": "AWSTemplateFormatVersion", "list": ["Resources", {"Type": "AWS::S3::Bucket"}]}\n',
+      "package.json": JSON.stringify({ name: "a", dependencies: { react: "18" } }),
+      "k8s/deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n",
+    });
+    const facts = repoFacts(dir);
+    for (const file of ["cfn/stack.yaml", "cfn/sam.yml", "cfn/stack.json", "cfn/bucket.template", "cfn/stack.template"]) {
+      expect(facts.content(file), file).toBe("cloudformation");
+    }
+    for (const file of ["other/nested.yaml", "other/comment.yaml", "other/types.yaml", "other/top-type.yaml", "other/nested.json", "other/string.json", "package.json"]) {
+      expect(facts.content(file), file).toBeNull();
+    }
+    expect(facts.content("k8s/deploy.yaml")).toBe("kubernetes");
+  });
 });
 
 describe("manifests are data, read within limits", () => {
@@ -289,6 +337,23 @@ describe("hostile files read in linear time (14)", () => {
     expect(facts.content("bin/run")).toBeNull();
     expect(facts.content("k8s/a.yaml")).toBeNull();
     expect(facts.content("k8s/b.yaml")).toBeNull();
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("a hostile JSON or YAML file of 1 MB is checked for CloudFormation in well under a second (21)", () => {
+    const dir = repo(
+      {
+        "a.json": `{"Resources":${"[".repeat(N / 2)}`,
+        "b.json": `{"x":"${"\\".repeat(N / 2)}`,
+        "c.json": `${'{"Resources":{"a":{"Type":'.repeat(N / 30)}`,
+        "d.yaml": `Resources:\n${"  Type:".repeat(N / 8)}${blanks(N / 4)}`,
+        "e.template": `${blanks(N / 2)}{`,
+      },
+      false,
+    );
+    const facts = repoFacts(dir);
+    const started = performance.now();
+    for (const file of ["a.json", "b.json", "c.json", "d.yaml", "e.template"]) expect(facts.content(file), file).toBeNull();
     expect(performance.now() - started).toBeLessThan(500);
   });
 });

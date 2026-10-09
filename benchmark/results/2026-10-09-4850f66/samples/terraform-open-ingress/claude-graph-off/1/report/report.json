@@ -1,0 +1,652 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "f40cc0629aaafba86f7761137e88bcb7dbae97e7a52cf73b99cf3effeff741c2",
+  "base": {
+    "ref": "HEAD",
+    "sha": "686ba52681a7efb386234e9c74df36cc7524cacd"
+  },
+  "generated_at": "2026-10-09T06:24:10.203Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a bastion security group with SSH access to the app hosts and a Postgres RDS instance for orders, plus a sensitive db_password variable.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "infra/bastion.tf",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Bastion SSH open to the whole internet",
+      "description": "The bastion security group accepts SSH on port 22 from 0.0.0.0/0. Any host on the internet can reach the jump host. Attackers can brute force or exploit SSH on the bastion, which leads straight to the app hosts. Limit the ingress to the on-call engineers' office or VPN CIDR ranges through a variable. Alternatively use SSM Session Manager and drop the ingress.",
+      "suggested_change": "    cidr_blocks = var.bastion_allowed_cidrs",
+      "source": "trivy:AWS-0107",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The bastion security group accepts SSH on port 22 from 0.0.0.0/0. Any host on the internet can reach the jump host.",
+      "consequence": "Attackers can brute force or exploit SSH on the bastion, which leads straight to the app hosts.",
+      "fix": "Limit the ingress to the on-call engineers' office or VPN CIDR ranges through a variable. Alternatively use SSM Session Manager and drop the ingress."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "infra/bastion.tf",
+      "line_number": 24,
+      "line_end": 32,
+      "title": "Standalone rule on a security group with inline rules",
+      "description": "The app_from_bastion rule attaches to aws_security_group.app, which already defines inline ingress and egress blocks in main.tf. Terraform does not support mixing the two styles on one group. Each apply of the app group removes the SSH rule and the next apply adds it again. Engineers lose bastion access unpredictably and plans never settle. Move the SSH rule into an inline ingress block on aws_security_group.app. Alternatively convert all app group rules to standalone rule resources.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The app_from_bastion rule attaches to aws_security_group.app, which already defines inline ingress and egress blocks in main.tf. Terraform does not support mixing the two styles on one group.",
+      "consequence": "Each apply of the app group removes the SSH rule and the next apply adds it again. Engineers lose bastion access unpredictably and plans never settle.",
+      "fix": "Move the SSH rule into an inline ingress block on aws_security_group.app. Alternatively convert all app group rules to standalone rule resources."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "infra/database.tf",
+      "line_number": 17,
+      "line_end": 17,
+      "title": "Orders database marked publicly accessible",
+      "description": "The orders RDS instance sets publicly_accessible to true. AWS then gives the database endpoint a public IP address. The orders data becomes reachable from the internet once the VPC has an internet gateway. The VPC has none, so AWS also rejects the create. Set publicly_accessible to false so the database stays on the private subnets.",
+      "suggested_change": "  publicly_accessible     = false",
+      "source": "trivy:AWS-0180",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "The orders RDS instance sets publicly_accessible to true. AWS then gives the database endpoint a public IP address.",
+      "consequence": "The orders data becomes reachable from the internet once the VPC has an internet gateway. The VPC has none, so AWS also rejects the create.",
+      "fix": "Set publicly_accessible to false so the database stays on the private subnets."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.8,
+      "file_path": "infra/database.tf",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Database security group does not allow Postgres traffic",
+      "description": "The orders database reuses the app security group, which only allows inbound TCP 443 from the VPC. No rule allows inbound port 5432. The app hosts cannot connect to the orders database. Every query from the shop API will time out. Create a dedicated database security group. Allow TCP 5432 inbound from the app security group only.",
+      "suggested_change": "  vpc_security_group_ids  = [aws_security_group.orders_db.id]",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The orders database reuses the app security group, which only allows inbound TCP 443 from the VPC. No rule allows inbound port 5432.",
+      "consequence": "The app hosts cannot connect to the orders database. Every query from the shop API will time out.",
+      "fix": "Create a dedicated database security group. Allow TCP 5432 inbound from the app security group only."
+    }
+  ],
+  "below_threshold": 1,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "terraform.aws.security.aws-db-instance-no-logging.aws-db-instance-no-logging",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 22,
+        "severity": "medium",
+        "message": "Database instance has no logging. Missing logs can cause missing important event information.",
+        "reference": "https://owasp.org/Top10/A04_2021-Insecure_Design",
+        "id": "c3",
+        "token": "semgrep:terraform.aws.security.aws-db-instance-no-logging.aws-db-instance-no-logging",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Log export is a hardening choice and not a defect in this change. Nothing in the repo requires it.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "terraform.lang.security.rds-public-access.rds-public-access",
+        "filePath": "infra/database.tf",
+        "lineStart": 17,
+        "lineEnd": 17,
+        "severity": "medium",
+        "message": "RDS instance accessible from the Internet detected.",
+        "reference": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance#publicly_accessible",
+        "id": "c4",
+        "token": "semgrep:terraform.lang.security.rds-public-access.rds-public-access",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the public access finding already raised for the same line.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 17
+      }
+    },
+    {
+      "candidate": {
+        "source": "trivy",
+        "ruleId": "AWS-0176",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "medium",
+        "message": "RDS IAM Database Authentication Disabled: Instance does not have IAM Authentication enabled",
+        "reference": "https://avd.aquasec.com/misconfig/aws-0176",
+        "id": "c5",
+        "token": "trivy:AWS-0176",
+        "reviewSeverity": "minor",
+        "alsoReportedBy": [
+          "checkov:CKV_AWS_161"
+        ]
+      },
+      "reason": "The database uses password authentication through a sensitive variable on purpose. IAM authentication is optional hardening.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_AWS_24",
+        "filePath": "infra/bastion.tf",
+        "lineStart": 9,
+        "lineEnd": 12,
+        "severity": "medium",
+        "message": "Ensure no security groups allow ingress from 0.0.0.0:0 to port 22",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/SecurityGroupUnrestrictedIngress22.py",
+        "id": "c6",
+        "token": "checkov:CKV_AWS_24",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This duplicates the open SSH finding already raised for the same ingress block.",
+      "cited": {
+        "file_path": "infra/bastion.tf",
+        "line_number": 12
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_AWS_353",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "medium",
+        "message": "Ensure that RDS instances have performance insights enabled",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/RDSInstancePerformanceInsights.py",
+        "id": "c7",
+        "token": "checkov:CKV_AWS_353",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Performance Insights is an optional monitoring feature. Leaving it off does not make the code wrong.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_AWS_157",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "medium",
+        "message": "Ensure that RDS instances have Multi-AZ enabled",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/RDSMultiAZEnabled.py",
+        "id": "c8",
+        "token": "checkov:CKV_AWS_157",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Multi-AZ is a cost and availability choice for each environment. A single-AZ instance is valid here.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_AWS_129",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "medium",
+        "message": "Ensure that respective logs of Amazon Relational Database Service (Amazon RDS) are enabled",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/DBInstanceLogging.py",
+        "id": "c9",
+        "token": "checkov:CKV_AWS_129",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Log export is a hardening choice and duplicates the logging candidate on the same resource.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_AWS_226",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "medium",
+        "message": "Ensure DB instance gets all minor upgrades automatically",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/DBInstanceMinorUpgrade.py",
+        "id": "c10",
+        "token": "checkov:CKV_AWS_226",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The AWS provider already defaults auto_minor_version_upgrade to true. The instance therefore gets minor upgrades.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_AWS_118",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "medium",
+        "message": "Ensure that enhanced monitoring is enabled for Amazon RDS instances",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/RDSEnhancedMonitorEnabled.py",
+        "id": "c11",
+        "token": "checkov:CKV_AWS_118",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Enhanced monitoring is optional observability. Its absence is not a defect.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV2_AWS_60",
+        "filePath": "infra/database.tf",
+        "lineStart": 8,
+        "lineEnd": 8,
+        "severity": "medium",
+        "message": "Ensure RDS instance with copy tags to snapshots is enabled",
+        "reference": "https://www.checkov.io/5.Policy%20Index/terraform.html",
+        "id": "c12",
+        "token": "checkov:CKV2_AWS_60",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The resources define no tags, so copying tags to snapshots would copy nothing.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV2_AWS_5",
+        "filePath": "infra/bastion.tf",
+        "lineStart": 2,
+        "lineEnd": 2,
+        "severity": "medium",
+        "message": "Ensure that Security Groups are attached to another resource",
+        "reference": "https://www.checkov.io/5.Policy%20Index/terraform.html",
+        "id": "c13",
+        "token": "checkov:CKV2_AWS_5",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The bastion group is meant for a jump host, as its comment says. The app_from_bastion rule already references it.",
+      "cited": {
+        "file_path": "infra/bastion.tf",
+        "line_number": 1
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV2_AWS_30",
+        "filePath": "infra/database.tf",
+        "lineStart": 8,
+        "lineEnd": 8,
+        "severity": "medium",
+        "message": "Ensure Postgres RDS as aws_db_instance has Query Logging enabled",
+        "reference": "https://www.checkov.io/5.Policy%20Index/terraform.html",
+        "id": "c14",
+        "token": "checkov:CKV2_AWS_30",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Query logging needs a custom parameter group and is an optional audit choice. Its absence is not a bug.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 8
+      }
+    },
+    {
+      "candidate": {
+        "source": "trivy",
+        "ruleId": "AWS-0133",
+        "filePath": "infra/database.tf",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "low",
+        "message": "Enable Performance Insights to detect potential problems: Instance does not have performance insights enabled.",
+        "reference": "https://avd.aquasec.com/misconfig/aws-0133",
+        "id": "c15",
+        "token": "trivy:AWS-0133",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This duplicates the Performance Insights candidate, which is optional monitoring.",
+      "cited": {
+        "file_path": "infra/database.tf",
+        "line_number": 6
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 3664,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 43,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "ran",
+      "version": "0.75.0",
+      "rawCount": 5,
+      "keptCount": 4,
+      "durationMs": 441,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "ran",
+      "version": "3.3.22",
+      "rawCount": 13,
+      "keptCount": 9,
+      "durationMs": 1434,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "ran",
+      "version": "0.64.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 226,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 60,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 6767,
+      "started_at": "2026-10-09T06:23:30.919Z",
+      "ended_at": "2026-10-09T06:24:10.204Z",
+      "duration_ms": 39284,
+      "rounds": 1,
+      "usage": {
+        "turns": 3,
+        "input_tokens": 32062,
+        "output_tokens": 4130,
+        "cost_usd": 0.13851839999999999
+      }
+    },
+    "snapshot": {
+      "change_id": "f40cc0629aaafba86f7761137e88bcb7dbae97e7a52cf73b99cf3effeff741c2",
+      "tree": "ebf3e8f9a425463da97ff3e47639a5d505e78e03",
+      "before": "249a1a2e0e7295915c60e2390b9b770fa0bf2fcbc694c01064dcea9b54bc2a76",
+      "after": "249a1a2e0e7295915c60e2390b9b770fa0bf2fcbc694c01064dcea9b54bc2a76"
+    },
+    "candidates": {
+      "total": 15,
+      "disposed": 15
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "infra/main.tf"
+      ],
+      "files_not_read": [
+        "infra/bastion.tf",
+        "infra/database.tf",
+        "infra/variables.tf"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

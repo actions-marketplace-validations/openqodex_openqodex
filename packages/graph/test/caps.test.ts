@@ -18,6 +18,9 @@ import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, openStore } from "../src/index.js";
 import { commitAll, makeHome, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const home = makeHome();
 const repos: string[] = [home];

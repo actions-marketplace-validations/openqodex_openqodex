@@ -4,14 +4,14 @@
 // 2. A driver with a name `-c key=value` cannot carry (a space, an equals
 //    sign) is skipped instead of refused, so it stays on.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { safeGitConfig } from "../src/safe-git.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-safe-git-"));
+  const dir = tempDir("oq-safe-git-");
   execFileSync("git", ["init", "--quiet", dir]);
   return dir;
 }

@@ -56,7 +56,7 @@ Five commands: `init`, `review`, `update`, `trust` and `graph`. The commands hoo
 - Codex starts in a read-only sandbox that confines reads to the copy of the change and the system folders, with no network for its commands and none of your config, plugins, hooks or the repository's instruction files. It still loads your global `~/.codex/AGENTS.md`, and its event stream does not show every command, so the report says its reads were not recorded. [docs/internal-reviewer-drivers.md](docs/internal-reviewer-drivers.md) gives the tests.
 - A review is complete only when every stage ran, every scanner finding was raised or dropped with a reason, and every changed line was in front of the reviewer: in the brief, in a later message from OpenQodex, or, for Claude Code, in a file it read. Anything else prints "Review incomplete" with what is missing, and exits 2.
 - A change that only deletes code, such as a removed check, can still carry a finding: the lines next to a deletion count as changed.
-- Thirteen built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
+- Twenty-two built-in scanners. Every downloaded scanner is pinned to one version. Each runs only when the change holds a file it reads.
 - A suppression comment the change adds, such as `# nosec`, and a changed scanner settings file are shown, since the scanner then stays silent: the reviewer checks each one, and a scan counts it as a minor finding.
 - Any scanner by its GitHub link, after you approve it with `openqodex trust`.
 - A push gate for Claude Code and Codex, and an optional git pre-push hook. Both look for a review of exactly what is pushed; neither scans or reviews by itself. They warn by default and block only when `.openqodex/config.yaml` sets `review.block_on_severity`.
@@ -80,13 +80,13 @@ Five commands: `init`, `review`, `update`, `trust` and `graph`. The commands hoo
 
 Scanners download on first use into `~/.openqodex/tools/`. A review downloads only the scanners its changed files call for. `init` and `doctor --install` download the ones your repository's files call for and print why for each one, such as `brakeman: Rails app in backend/`. The table below gives each download size.
 
-Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
+Installed scanners take more disk than their downloads. The sixteen scanners the demo needs take about 1 GB of disk on an Apple Silicon Mac, measured on 2026-10-08, besides uv's download cache in `~/.openqodex/cache/uv`. semgrep with its Python takes about 250 MB of that, Checkov about 175 MB and trivy about 160 MB.
 
 A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. The review `init` ends with waits up to two minutes, since `init` has just started the downloads. To install what a repository needs up front, run `npx openqodex doctor --install` inside it. `--all-scanners` installs every scanner.
 
-One measured first run: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `openqodex demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners. Your times depend on your line.
+One measured first run, on 2026-10-02, when the demo needed eight scanners: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `openqodex demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners. Your times depend on your line.
 
-OpenQodex does not install language runtimes. brakeman needs Ruby 3.0 or newer and rubocop Ruby 2.7 or newer. golangci-lint needs Go. Without them, the report lists those scanners as not installed, with the reason.
+OpenQodex does not install language runtimes. brakeman needs Ruby 3.0 or newer and rubocop Ruby 2.7 or newer. golangci-lint needs Go. cargo-deny needs Cargo (Rust) and the project's crates in your Cargo cache. Without them, the report lists those scanners as not installed, with the reason.
 
 ## Built-in scanners
 
@@ -105,6 +105,15 @@ OpenQodex does not install language runtimes. brakeman needs Ruby 3.0 or newer a
 | brakeman | 6.2.1 | a Ruby or Rails file in a Rails app: a folder whose `Gemfile` or `Gemfile.lock` names rails and that holds `config/application.rb` or `bin/rails` | Ruby 3.0 or newer; see its licence below | from RubyGems, not measured |
 | rubocop | 1.69.2 | `.rb`, `.rake`, `.gemspec`, `Rakefile` | Ruby 2.7 or newer | from RubyGems, not measured |
 | sqllint | built in | `.sql` | nothing, it runs inside OpenQodex | none |
+| squawk | 2.66.0 | `.sql` | nothing | 16.9 MB, 25.7 MB |
+| SQLFluff | 4.3.0 | `.sql` | the same Python as semgrep | about 4.6 MB, 6.0 MB of packages |
+| zizmor | 1.30.1 | a GitHub workflow, an action's `action.yml`, or `.github/dependabot.yml` | nothing | 8.4 MB, 9.2 MB |
+| trivy | 0.75.0 | Terraform, a Kubernetes manifest or a CloudFormation template (its `config` checks only) | nothing | 49.0 MB, 51.7 MB |
+| Checkov | 3.3.22 | the same files as trivy | the same Python as semgrep | about 170 MB installed on Apple Silicon |
+| TFLint | 0.64.0 | `.tf`, `.tf.json` | nothing | 16.3 MB, 17.1 MB |
+| kube-linter | 0.8.3 | a `.yaml` or `.yml` file that holds a Kubernetes object | nothing | 15.3 MB, 16.5 MB |
+| kubeconform | 0.8.0 | the same files as kube-linter | network access to raw.githubusercontent.com for schemas | 7.3 MB, 7.5 MB |
+| cargo-deny | 0.20.2 | `Cargo.lock` | Cargo (Rust), the project's crates in your Cargo cache, and network access to github.com for the RustSec advisory database | 4.5 MB, 4.9 MB |
 
 [docs/scanners.md](docs/scanners.md) lists every file each scanner reads and what each one sends.
 

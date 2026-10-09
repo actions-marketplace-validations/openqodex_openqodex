@@ -64,6 +64,57 @@ export function noLinkOnTheWay(repoDir: string, rel: string): boolean {
   return true;
 }
 
+// A file of the change a built-in scanner may be handed: a regular file
+// named by a relative path with no `..`, with no link anywhere on the way to
+// it (not the file itself, not a folder above it, even one that stays inside
+// the repo), whose real path is inside the repo. A scanner handed a link
+// opens whatever it points at, anywhere on the machine, and puts it in a
+// finding or an error. A FIFO or a device is not one either. `reason` is
+// null for a path that is not there (a deleted file): nothing to say about
+// it. `realRepo` is the repo's real path, computed once by the caller.
+export function scannerInput(realRepo: string, repoDir: string, rel: string): { ok: true } | { ok: false; reason: string | null } {
+  const normalized = path.normalize(rel);
+  if (path.isAbsolute(normalized) || normalized === ".." || normalized.startsWith(`..${path.sep}`)) return { ok: false, reason: "outside the repo" };
+  const abs = path.join(repoDir, normalized);
+  let stat;
+  try {
+    stat = lstatSync(abs);
+  } catch {
+    return { ok: false, reason: null };
+  }
+  const real = (() => {
+    try {
+      return realpathSync(abs);
+    } catch {
+      return null;
+    }
+  })();
+  const inside = real !== null && real.startsWith(realRepo + path.sep);
+  if (!noLinkOnTheWay(repoDir, normalized)) return { ok: false, reason: inside ? "reached through a link" : "outside the repo" };
+  if (!stat.isFile()) return { ok: false, reason: "not a regular file" };
+  if (!inside) return { ok: false, reason: "outside the repo" };
+  return { ok: true };
+}
+
+// The paths of `paths` a built-in scanner may be handed (scannerInput), and
+// each refused one that is there, with why.
+export function scannerInputs(repoDir: string, paths: readonly string[]): { inputs: string[]; refused: Map<string, string> } {
+  const refused = new Map<string, string>();
+  let realRepo: string;
+  try {
+    realRepo = realpathSync(repoDir);
+  } catch {
+    return { inputs: [], refused };
+  }
+  const inputs: string[] = [];
+  for (const p of paths) {
+    const verdict = scannerInput(realRepo, repoDir, p);
+    if (verdict.ok) inputs.push(p);
+    else if (verdict.reason !== null) refused.set(p, verdict.reason);
+  }
+  return { inputs, refused };
+}
+
 // The same checks, synchronous, for at most the first `maxBytes` of a file,
 // and stricter: no link anywhere on the way, not even one that stays inside
 // the repo. `whole`: the file must fit in `maxBytes`, or nothing is read.

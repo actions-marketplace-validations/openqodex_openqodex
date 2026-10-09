@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "safeGit now returns an object with code, stdout and stderr instead of a stdout string. A failing git command no longer throws, and the GitResult type is exported.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 18,
+      "title": "safeGit return type changed but callers were not updated",
+      "problem": "safeGit now returns a GitResult object and never throws. The callers in packages/cli/src/branch.ts and packages/cli/src/status.ts still treat the result as a string and rely on a throw.",
+      "consequence": "In branch.ts, currentBranch calls trim on an object, so the CLI always reports \"not a git repository\". In status.ts, changedFiles throws a TypeError on split, and tsc rejects the cli package.",
+      "fix": "Update currentBranch to return null when code is nonzero and to trim stdout otherwise. Update changedFiles to check code and split stdout.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 11,
+      "line_end": 17,
+      "title": "New error path in safeGit has no covering test",
+      "problem": "This change adds a catch branch that maps a git failure to a nonzero code. No test in the repository exercises safeGit.",
+      "consequence": "A test would have caught the broken callers. Future changes to the code mapping can also regress unnoticed.",
+      "fix": "Add tests for a successful git command and a failing one. Each test should assert code, stdout and stderr.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

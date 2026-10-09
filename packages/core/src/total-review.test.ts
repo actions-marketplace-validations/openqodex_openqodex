@@ -33,10 +33,10 @@
 //     or could not put in the brief (past the diff budget) counts as read
 //     when the reviewer never read it: the run completes by omission.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { COVERAGE_MAX_LINES, DIFF_CAP_BYTES, getChange } from "./change.js";
 import { changedHunks, completionRecord, readCoverage } from "./completion.js";
 import type { TraceEntry } from "./completion.js";
@@ -200,6 +200,11 @@ describe("coverage from the trace", () => {
   });
 });
 
+const roots: string[] = [];
+afterAll(() => {
+  for (const d of roots) rmSync(d, { recursive: true, force: true });
+});
+
 describe("14. files the change could not map or brief", () => {
   const git = (cwd: string, ...args: string[]) => {
     const r = spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } });
@@ -207,6 +212,7 @@ describe("14. files the change could not map or brief", () => {
   };
   const repo = (files: Record<string, string>) => {
     const dir = mkdtempSync(join(tmpdir(), "oq-cover-"));
+    roots.push(dir);
     git(dir, "init", "-q", "-b", "main");
     for (const [path, text] of Object.entries(files)) writeFileSync(join(dir, path), text);
     git(dir, "add", "-A");

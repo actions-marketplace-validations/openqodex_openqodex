@@ -38,15 +38,20 @@
 //  14. A lock that pins one package twice, or whose hash lines run into the
 //      next requirement, is taken, or the file written is the raw text and
 //      not the checked structure.
+// Added with kubeconform:
+//  15. A release checksum file named CHECKSUMS, as kubeconform publishes it,
+//      is not read, so its sums are never checked against the bytes.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runner = join(here, "pin-bump-runner.mjs");
@@ -64,6 +69,8 @@ type Release = {
   bytes: (name: string) => Buffer;
   digest?: (name: string) => string;
   checksums?: (names: string[]) => string;
+  // The checksum file's name; demo_<version>_checksums.txt when not given.
+  checksumsName?: string;
   assetUrlRepo?: string;
   redirectTo?: string;
   apiRedirect?: boolean;
@@ -76,6 +83,10 @@ const servers: Server[] = [];
 
 function assetNames(version: string): string[] {
   return Object.values(PLATFORMS).map((p) => `demo_${version}_${p}.tar.gz`);
+}
+
+function sumsName(version: string): string {
+  return release.checksumsName ?? `demo_${version}_checksums.txt`;
 }
 
 function handle(req: IncomingMessage, res: ServerResponse): void {
@@ -93,7 +104,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
       browser_download_url: `${origin}/${release.assetUrlRepo ?? "acme/demo"}/releases/download/${release.tag}/${name}`,
     }));
     if (release.checksums) {
-      const file = `demo_${version}_checksums.txt`;
+      const file = sumsName(version);
       assets.push({ name: file, digest: `sha256:${sha(release.checksums(names))}`, browser_download_url: `${origin}/acme/demo/releases/download/${release.tag}/${file}` });
     }
     const published = new Date(Date.now() - release.ageDays * DAY).toISOString();
@@ -107,7 +118,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   const blob = /^\/blob\/([^/]+)$/.exec(url.pathname);
-  if (blob && release.streamBytes !== undefined && !blob[1]!.endsWith("_checksums.txt")) {
+  if (blob && release.streamBytes !== undefined && blob[1] !== sumsName(version)) {
     // A large asset sent slowly; `sent` counts what left before the client
     // hung up.
     res.writeHead(200);
@@ -127,7 +138,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   if (blob) {
     const name = blob[1]!;
     const names = assetNames(version);
-    res.writeHead(200).end(name.endsWith("_checksums.txt") && release.checksums ? release.checksums(names) : release.bytes(name));
+    res.writeHead(200).end(name === sumsName(version) && release.checksums ? release.checksums(names) : release.bytes(name));
     return;
   }
   const day = (n: number) => new Date(Date.now() - n * DAY).toISOString();
@@ -193,7 +204,7 @@ afterAll(() => {
 
 // A repo root holding only the pinned table, with demo 1.0.0 in it.
 function repoRoot(): { root: string; table: string; before: string } {
-  const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-"));
+  const root = tempDir("oq-pin-bump-");
   mkdirSync(join(root, "packages", "scanners"), { recursive: true });
   mkdirSync(join(root, ".changeset"));
   const assets = Object.fromEntries(
@@ -325,6 +336,18 @@ describe("what the code review found in pin-bump", () => {
     expect((await bump(repoRoot().root)).stdout).toMatch(/^sums=digest-only$/m);
   });
 
+  it("reads a checksum file named CHECKSUMS and refuses bytes it disagrees with (15)", async () => {
+    release = { ...good(), checksumsName: "CHECKSUMS", checksums: (names) => names.map((n) => `${"a".repeat(64)}  ${n}`).join("\n") + "\n" };
+    const refused = repoRoot();
+    const r = await bump(refused.root);
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.stderr).toMatch(/the checksum file says/);
+    expect(readFileSync(refused.table, "utf8")).toBe(refused.before);
+
+    release = { ...good(), checksumsName: "CHECKSUMS" };
+    expect((await bump(repoRoot().root)).stdout).toMatch(/^sums=checksum-file-and-digest$/m);
+  });
+
   it("stops reading an asset at the size limit instead of after it (11)", async () => {
     sent = 0;
     release = { ...good(), checksums: undefined, streamBytes: 64 * 1024 * 1024 };
@@ -338,13 +361,13 @@ describe("what the code review found in pin-bump", () => {
 
   it("with --locks takes a PyPI pin's lock files only by the recorded sha256 and PyPI's hashes, and starts no uv (12)", async () => {
     const make = () => {
-      const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-uv-"));
+      const root = tempDir("oq-pin-bump-uv-");
       mkdirSync(join(root, "packages", "scanners", "locks"), { recursive: true });
       mkdirSync(join(root, ".changeset"));
       const table = join(root, "packages", "scanners", "toolchain.json");
       const before = `${JSON.stringify({ schema: 1, tools: { pydemo: { version: "1.0.0", method: "uv", package: "pydemo", python: "3.11", binary: "pydemo" } } }, null, 2)}\n`;
       writeFileSync(table, before);
-      const given = mkdtempSync(join(tmpdir(), "oq-locks-"));
+      const given = tempDir("oq-locks-");
       return { root, table, before, given };
     };
     const lock = (hash: string) => `${uvBlock("dep", "1.2")}${uvBlock("leaf", "3.0")}pydemo==2.0.0 \\\n    --hash=sha256:${hash}\n`;
@@ -383,13 +406,13 @@ describe("what the code review found in pin-bump", () => {
 
 // A repo with one registry pin at 1.0.0, and a folder of lock files for it.
 function registryRoot(tool: string, recipe: Record<string, unknown>) {
-  const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-reg-"));
+  const root = tempDir("oq-pin-bump-reg-");
   mkdirSync(join(root, "packages", "scanners", "locks"), { recursive: true });
   mkdirSync(join(root, ".changeset"));
   const table = join(root, "packages", "scanners", "toolchain.json");
   const before = `${JSON.stringify({ schema: 1, tools: { [tool]: recipe } }, null, 2)}\n`;
   writeFileSync(table, before);
-  const given = mkdtempSync(join(tmpdir(), "oq-locks-"));
+  const given = tempDir("oq-locks-");
   return { root, table, before, given };
 }
 

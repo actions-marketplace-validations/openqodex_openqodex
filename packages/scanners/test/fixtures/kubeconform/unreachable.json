@@ -1,0 +1,36 @@
+{
+  "resources": [
+    {
+      "filename": "k8s/app.yaml",
+      "kind": "Certificate",
+      "name": "api-tls",
+      "version": "cert-manager.io/v1",
+      "status": "statusError",
+      "msg": "failed downloading schema at https://127.0.0.1:9/v1.37.1-standalone-strict/certificate-cert-manager-v1.json: Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/certificate-cert-manager-v1.json\": GET https://127.0.0.1:9/v1.37.1-standalone-strict/certificate-cert-manager-v1.json giving up after 3 attempt(s): Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/certificate-cert-manager-v1.json\": dial tcp 127.0.0.1:9: connect: connection refused"
+    },
+    {
+      "filename": "k8s/app.yaml",
+      "kind": "ConfigMap",
+      "name": "api-settings",
+      "version": "v1",
+      "status": "statusError",
+      "msg": "failed downloading schema at https://127.0.0.1:9/v1.37.1-standalone-strict/configmap-v1.json: Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/configmap-v1.json\": GET https://127.0.0.1:9/v1.37.1-standalone-strict/configmap-v1.json giving up after 3 attempt(s): Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/configmap-v1.json\": dial tcp 127.0.0.1:9: connect: connection refused"
+    },
+    {
+      "filename": "k8s/app.yaml",
+      "kind": "Deployment",
+      "name": "api",
+      "version": "apps/v1",
+      "status": "statusError",
+      "msg": "failed downloading schema at https://127.0.0.1:9/v1.37.1-standalone-strict/deployment-apps-v1.json: Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/deployment-apps-v1.json\": GET https://127.0.0.1:9/v1.37.1-standalone-strict/deployment-apps-v1.json giving up after 3 attempt(s): Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/deployment-apps-v1.json\": dial tcp 127.0.0.1:9: connect: connection refused"
+    },
+    {
+      "filename": "k8s/app.yaml",
+      "kind": "Service",
+      "name": "api",
+      "version": "v1",
+      "status": "statusError",
+      "msg": "failed downloading schema at https://127.0.0.1:9/v1.37.1-standalone-strict/service-v1.json: Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/service-v1.json\": GET https://127.0.0.1:9/v1.37.1-standalone-strict/service-v1.json giving up after 3 attempt(s): Get \"https://127.0.0.1:9/v1.37.1-standalone-strict/service-v1.json\": dial tcp 127.0.0.1:9: connect: connection refused"
+    }
+  ]
+}

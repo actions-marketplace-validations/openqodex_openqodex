@@ -1,0 +1,19 @@
+[
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "infra/main.tf",
+    "inside": true,
+    "range": [
+      1,
+      58
+    ],
+    "ok": true
+  }
+]

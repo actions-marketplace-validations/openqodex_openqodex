@@ -34,11 +34,13 @@
 // 12. --send-last follows a symbolic link, or sends a saved body that was
 //     edited after it was shown, or sends without printing it again.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const cliRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const BIN = join(cliRoot, "dist", "bin.js");
@@ -49,7 +51,7 @@ const HEADLINE = "OpenQodex had a problem. Nothing has been sent.";
 const LATER = "To create the issue, run: openqodex report --send-last\nTo ignore it, do nothing\n";
 
 function temp(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), `oq-feedback-${prefix}-`));
+  return tempDir(`oq-feedback-${prefix}-`);
 }
 
 // A folder for PATH with git and a recorder for the browser openers.
@@ -134,16 +136,16 @@ describe("feedback offer", () => {
 
   it("a scanner that failed prints the offer once without the file name, and a scanner not installed prints none", () => {
     const h = harness();
-    // A .sql entry that is not a regular file: the in-process SQL scanner
-    // refuses to read it and ends failed.
-    const failing = repo((d) => symlinkSync("/dev/null", join(d, "ledger-migration.sql")));
+    // A .sql file over the in-process SQL scanner's 5 MB cap: it refuses to
+    // read it and ends failed. (A link is never handed to a scanner at all.)
+    const failing = repo((d) => writeFileSync(join(d, "ledger-migration.sql"), "-- pad\n".repeat(800_000)));
     const r = cli(["scan", "--no-install", "--only", "sqllint"], failing, h);
     expect(r.code).toBe(0);
     expect(offers(r.stderr)).toBe(1);
     const issue = shown(r.stderr);
     expect(issue.title).toBe(`OpenQodex ${VERSION}: scanner-failed`);
     expect(issue.body).toContain("Component: scanner:sqllint");
-    expect(issue.body).toContain("Diagnostic: sqllint: not a regular file\n");
+    expect(issue.body).toContain("Diagnostic: sqllint: a file was too large to read\n");
     expect(issue.body).toContain("Scanners: sqllint failed");
     expect(issue.body).not.toContain("ledger-migration");
     expect(issue.body).not.toContain(basename(failing));
@@ -161,7 +163,7 @@ describe("feedback offer", () => {
     const config = "scanners:\n  custom:\n    - source: https://github.com/acme/zorbpay-lint\n      run: zorbpay-lint {target}\n";
     const dir = repo((d) => {
       writeFileSync(join(d, ".openqodex.yaml"), config);
-      symlinkSync("/dev/null", join(d, "ledger.sql"));
+      writeFileSync(join(d, "ledger.sql"), "-- pad\n".repeat(800_000));
     });
     const r = cli(["scan", "--no-install", "--only", "sqllint,custom:zorbpay-lint"], dir, h);
     const issue = shown(r.stderr);

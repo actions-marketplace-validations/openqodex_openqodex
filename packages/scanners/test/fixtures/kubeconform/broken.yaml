@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ok
+data:
+  a: b
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: p
+spec:
+  containers:
+    - name: a
+     image: busybox:1.36

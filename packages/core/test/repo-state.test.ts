@@ -17,15 +17,17 @@
 //    at a deeper part, a zero-width character in a folder not made yet) is
 //    not seen as state.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { isRepoState, readRepoFile, removeRepoFile, repoStat, writeRepoFile } from "../src/repo-state.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 function repo(): { root: string; away: string } {
-  const root = mkdtempSync(join(tmpdir(), "oq-state-"));
-  const away = mkdtempSync(join(tmpdir(), "oq-state-away-"));
+  const root = tempDir("oq-state-");
+  const away = tempDir("oq-state-away-");
   writeFileSync(join(away, "f.json"), "outside\n");
   return { root, away };
 }
@@ -89,7 +91,7 @@ describe("repo state access", () => {
   });
 
   it("sees the state under another spelling of the repo root", (ctx) => {
-    const typed = mkdtempSync(join(tmpdir(), "oq-state-alias-"));
+    const typed = tempDir("oq-state-alias-");
     const root = realpathSync(typed);
     if (root === typed) {
       process.stdout.write("skipped: the temp folder has no second spelling here\n");
@@ -101,7 +103,7 @@ describe("repo state access", () => {
   });
 
   it("sees the state under another letter case on a case-insensitive disk", (ctx) => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-case-")));
+    const root = realpathSync(tempDir("oq-state-case-"));
     writeFileSync(join(root, "probe"), "");
     if (!existsSync(join(root, "PROBE"))) {
       process.stdout.write("skipped: this disk tells letter case apart\n");
@@ -114,7 +116,7 @@ describe("repo state access", () => {
   });
 
   it("a link inside the state back to the root never stands in for the root", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-loop-")));
+    const root = realpathSync(tempDir("oq-state-loop-"));
     mkdirSync(join(root, ".openqodex"));
     symlinkSync("..", join(root, ".openqodex/r"));
     expect(isRepoState(root, ".openqodex/r/x.json")).toBe(join(".openqodex", "r", "x.json"));
@@ -122,7 +124,7 @@ describe("repo state access", () => {
   });
 
   it("a path that reaches the state through a link elsewhere in the repo is refused", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-into-")));
+    const root = realpathSync(tempDir("oq-state-into-"));
     mkdirSync(join(root, ".openqodex"));
     mkdirSync(join(root, "docs"));
     symlinkSync("../.openqodex", join(root, "docs/x"));
@@ -131,13 +133,13 @@ describe("repo state access", () => {
   });
 
   it("a case variant of a deeper part is still state and reaches the link checks", (ctx) => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-deep-")));
+    const root = realpathSync(tempDir("oq-state-deep-"));
     writeFileSync(join(root, "probe"), "");
     if (!existsSync(join(root, "PROBE"))) {
       process.stdout.write("skipped: this disk tells letter case apart\n");
       ctx.skip();
     }
-    const away = mkdtempSync(join(tmpdir(), "oq-state-away-"));
+    const away = tempDir("oq-state-away-");
     mkdirSync(join(root, ".openqodex"));
     symlinkSync(away, join(root, ".openqodex/reviews"));
     const spelled = isRepoState(root, ".openqodex/Reviews/x.json");
@@ -147,7 +149,7 @@ describe("repo state access", () => {
   });
 
   it("a folder not made yet whose name holds a zero-width character is still state", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-state-zw-")));
+    const root = realpathSync(tempDir("oq-state-zw-"));
     expect(isRepoState(root, ".open\u200Cqodex/config.yaml")).not.toBeNull();
     expect(isRepoState(root, ".OPENQODEX.yaml.")).not.toBeNull();
     expect(isRepoState(root, "src/.openqodex/config.yaml")).toBeNull();

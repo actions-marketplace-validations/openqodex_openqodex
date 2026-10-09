@@ -55,7 +55,6 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -65,14 +64,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const cliRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const BIN = join(cliRoot, "dist", "bin.js");
 let home = "";
 
 function temp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `oq-cli-${prefix}-`));
+  const dir = tempDir(`oq-cli-${prefix}-`);
   return dir;
 }
 

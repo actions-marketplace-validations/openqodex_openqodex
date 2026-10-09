@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-worker
+  namespace: shop
+  labels:
+    app: image-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: image-worker
+  template:
+    metadata:
+      labels:
+        app: image-worker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: image-worker
+      containers:
+        - name: worker
+          image: ghcr.io/example/image-worker:2.3.1
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+          livenessProbe:
+            exec:
+              command: ["/app/healthcheck"]
+          readinessProbe:
+            exec:
+              command: ["/app/healthcheck"]
+      volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 1Gi

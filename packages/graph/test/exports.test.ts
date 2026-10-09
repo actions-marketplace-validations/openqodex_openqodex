@@ -22,6 +22,9 @@ import { rmSync } from "node:fs";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact } from "../src/index.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

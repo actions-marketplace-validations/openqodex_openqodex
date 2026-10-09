@@ -13,9 +13,12 @@
 //     old key in place after --write.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { cli, sandbox } from "./init-helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const version = (JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")) as { version: string }).version;
 
@@ -37,10 +40,10 @@ describe("the repo config across versions", () => {
   });
 
   it("a scanner name this version does not know in scanners.disable gives one warning and the run goes on (failure 2)", () => {
-    const s = withConfig("version: 1\nscanners:\n  disable: [trivy]\n");
+    const s = withConfig("version: 1\nscanners:\n  disable: [snyk]\n");
     const r = cli(s, ["scan", "--no-install", "--offline", "--format", "json"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr.match(/scanners\.disable: trivy is not a scanner this version knows; it is ignored/g)).toHaveLength(1);
+    expect(r.stderr.match(/scanners\.disable: snyk is not a scanner this version knows; it is ignored/g)).toHaveLength(1);
   });
 
   it("min_version above this version stops the run with exit 2 and the version it needs (failure 3)", () => {

@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "9b6d003659a3",
+  "summary": "Adds a workflow that runs Percy visual tests for Dependabot pull requests on pull_request_target, so the job can use PERCY_TOKEN.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": ".github/workflows/visual-tests.yml",
+      "line_number": 20,
+      "line_end": 32,
+      "title": "Untrusted pull request code runs with a repository secret",
+      "problem": "The job runs on pull_request_target, then checks out the pull request head and runs npm ci and npm run test:visual. Those steps run code from the pull request while PERCY_TOKEN is in the environment.",
+      "consequence": "Code in the pull request's package.json scripts or test files can read PERCY_TOKEN and send it out. It also runs with base repository context.",
+      "fix": "Run the visual tests on pull_request and give Dependabot the token through Dependabot secrets. Otherwise, never execute pull request code in a job that holds secrets.",
+      "suggested_change": null,
+      "source": "zizmor:dangerous-triggers",
+      "candidate": "c1"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": ".github/workflows/visual-tests.yml",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Dependabot gate checks the triggering actor instead of the pull request author",
+      "problem": "The job condition checks github.actor, which names whoever triggered the latest event. It does not name the pull request author.",
+      "consequence": "An attacker's pull request can pass the gate when Dependabot triggers a synchronize event on the attacker's branch. The attacker's code then runs with PERCY_TOKEN.",
+      "fix": "Check github.event.pull_request.user.login instead. Also require that the head repository equals the base repository.",
+      "suggested_change": "    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository",
+      "source": "zizmor:bot-conditions",
+      "candidate": "c2"
+    }
+  ],
+  "dropped": []
+}

@@ -11,12 +11,14 @@
 //    checkout in) the file of that name outside decides whether the path
 //    is listed as too big or unreadable: its size reaches the report.
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtempSync, renameSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph } from "../src/index.js";
 import { RepoReader } from "../src/safe-fs.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -24,7 +26,7 @@ afterAll(() => {
 });
 
 function temp(prefix: string): string {
-  const d = mkdtempSync(join(tmpdir(), prefix));
+  const d = tempDir(prefix);
   dirs.push(d);
   return d;
 }

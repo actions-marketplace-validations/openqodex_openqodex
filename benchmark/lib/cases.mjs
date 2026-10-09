@@ -51,7 +51,7 @@ export const CATEGORIES = ["bug", "security", "performance", "maintainability", 
 export const SEVERITIES = ["info", "nitpick", "minor", "major", "critical"];
 // Who is expected to find a bug: a scanner by name, the reviewer's reading
 // of the diff, or the reviewer helped by the code graph's caller list.
-export const FINDERS = ["gitleaks", "semgrep", "bandit", "ruff", "oxlint", "osv-scanner", "hadolint", "shellcheck", "actionlint", "brakeman", "rubocop", "golangci", "suppression", "reasoning", "graph"];
+export const FINDERS = ["gitleaks", "semgrep", "bandit", "ruff", "oxlint", "osv-scanner", "hadolint", "shellcheck", "actionlint", "brakeman", "rubocop", "golangci", "zizmor", "trivy", "squawk", "kube-linter", "tflint", "kubeconform", "cargo-deny", "checkov", "sqlfluff", "suppression", "reasoning", "graph"];
 
 const FIXED_DATE = "2026-01-01T00:00:00Z";
 const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -231,12 +231,17 @@ export function caseHash(id, root = casesRoot) {
 // are added with intent-to-add on a copy of the index, so the repository's
 // own index is not touched).
 export function changedLines(dir) {
-  const index = join(mkdtempSync(join(tmpdir(), "oq-bench-index-")), "index");
-  const env = { ...gitEnv(), GIT_INDEX_FILE: index };
+  const temp = mkdtempSync(join(tmpdir(), "oq-bench-index-"));
+  const env = { ...gitEnv(), GIT_INDEX_FILE: join(temp, "index") };
   const run = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  run("read-tree", "HEAD");
-  run("add", "-A", "-N");
-  const diff = run("diff", "-U0", "--no-color", "--no-renames", "HEAD");
+  let diff;
+  try {
+    run("read-tree", "HEAD");
+    run("add", "-A", "-N");
+    diff = run("diff", "-U0", "--no-color", "--no-renames", "HEAD");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
   const out = new Map();
   let file = null;
   for (const line of diff.split("\n")) {

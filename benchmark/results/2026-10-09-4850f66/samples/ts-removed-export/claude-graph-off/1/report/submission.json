@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "857e2b75ee60",
+  "summary": "Renames formatPrice to formatMoney in src/money.ts and makes it format through Intl.NumberFormat with a currency argument. invoiceLines now passes a currency that defaults to USD.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "src/money.ts",
+      "line_number": 3,
+      "line_end": 4,
+      "title": "Removed export still imported by cart.ts",
+      "problem": "The change renames formatPrice to formatMoney and leaves no formatPrice export behind. src/cart.ts line 1 still imports formatPrice, and src/cart.ts line 8 still calls it.",
+      "consequence": "The TypeScript compiler rejects cart.ts, so the build fails. A bundler without type checks would ship a cart total that throws at runtime.",
+      "fix": "Update src/cart.ts to call formatMoney with a currency. Another option is to keep formatPrice as a wrapper that calls formatMoney with USD.",
+      "suggested_change": "export function formatMoney(cents: number, currency: string): string {\n  return new Intl.NumberFormat(\"en-US\", { style: \"currency\", currency }).format(cents / 100);\n}\n\nexport function formatPrice(cents: number): string {\n  return formatMoney(cents, \"USD\");\n}",
+      "source": null
+    },
+    {
+      "severity": "info",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/money.ts",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Changed formatting has no covering test",
+      "problem": "formatMoney now adds thousands separators and accepts any currency code. The repository has no test that covers formatMoney or invoiceLines.",
+      "consequence": "Nothing checks the new output format or what happens with an invalid currency code. A regression in invoice text would go unnoticed.",
+      "fix": "Add tests for formatMoney and invoiceLines. Cover large amounts, a non-USD currency and an invalid currency code.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

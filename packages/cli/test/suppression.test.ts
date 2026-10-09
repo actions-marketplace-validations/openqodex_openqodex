@@ -23,9 +23,12 @@
 //    scanners.disable, the repository's own choice, does not.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cli, sandbox } from "./init-helpers.js";
 import type { Sandbox } from "./init-helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // Built at run time so this file holds no secret-shaped literal.
 const KEY = ["sk", "live", "Qw3Er5Ty7Ui9Op2As4Df6Gh8"].join("_");

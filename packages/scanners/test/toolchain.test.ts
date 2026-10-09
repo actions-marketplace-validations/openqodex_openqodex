@@ -1,7 +1,8 @@
 // The toolchain installs pinned scanners into the OpenQodex home folder.
 // These tests download real releases from GitHub and run the real binaries.
-// They import the built package (dist), because the install runs in a separate
-// detached process that cannot load TypeScript; run `pnpm build` first.
+// They import the built package (dist) and install through the built CLI,
+// because the install runs in a separate detached process that cannot load
+// TypeScript; run `pnpm build` first.
 //
 // Ways the toolchain could fail, written before the code:
 // 1. The first install of a real tool does not leave a working binary at
@@ -18,7 +19,8 @@
 // 8. A home folder that cannot be written gives a stack trace or a crash
 //    instead of one plain line naming the fix.
 // 9. A missing developer runtime (Ruby 3.0 or newer for brakeman, whose pinned
-//    gem needs it, Ruby 2.7 or newer for rubocop, Go) is not named.
+//    gem needs it, Ruby 2.7 or newer for rubocop, Go, Cargo for cargo-deny)
+//    is not named.
 // 10. openqodexHome ignores OPENQODEX_HOME.
 // 11. An installed launcher fails when started the way scanners are started:
 //     a small environment (PATH, HOME, TMPDIR, LANG) with the tool env on top.
@@ -27,8 +29,8 @@
 // 13. The developer's environment (npm_config_*, UV_*, TAR_OPTIONS,
 //     GEM_SPEC_CACHE) redirects where an installer reads or writes.
 // 14. Two processes both take a stale lock, or a live holder loses its lock.
-// 15. With no override, the install process started is not a program that
-//     installs anything.
+// 15. The install process started is not a program that installs anything
+//     (install-worker-start.test.ts covers which program it is).
 // 16. A child that ignores SIGTERM hangs a probe or an install for ever.
 // 17. A download that trickles data never ends, or one that never stops
 //     growing fills the disk.
@@ -54,14 +56,20 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { run } from "../src/toolchain/fetch.js";
 import { publishVersion, readGemLock, readLock, takeOverStaleLock } from "../src/toolchain/install.js";
 import { lockedFolder } from "../src/toolchain/table.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist", "index.js");
-const worker = join(here, "install-worker.mjs");
+// The program each install runs as: the toolchain finds the built CLI beside
+// this package, as the published package finds its own bin.
+const bin = join(here, "..", "..", "cli", "dist", "bin.js");
+const caller = join(here, "resolve-caller.mjs");
 const table = JSON.parse(readFileSync(join(here, "..", "toolchain.json"), "utf8"));
 const actionlintVersion: string = table.tools.actionlint.version;
 
@@ -69,9 +77,8 @@ type Toolchain = typeof import("../src/toolchain/index.js");
 let tc: Toolchain;
 
 beforeAll(async () => {
-  if (!existsSync(dist)) throw new Error("run pnpm build before these tests");
+  if (!existsSync(dist) || !existsSync(bin)) throw new Error("run pnpm build before these tests");
   tc = (await import(dist)) as Toolchain;
-  tc.setInstallWorkerEntry(worker);
 });
 
 const savedHome = process.env.OPENQODEX_HOME;
@@ -81,7 +88,7 @@ afterEach(() => {
 });
 
 function freshHome(): string {
-  const home = mkdtempSync(join(tmpdir(), "oq-toolchain-"));
+  const home = tempDir("oq-toolchain-");
   process.env.OPENQODEX_HOME = home;
   return home;
 }
@@ -151,10 +158,9 @@ describe("toolchain", () => {
   it("returns installing past the budget and finishes after the caller exits", async () => {
     const home = freshHome();
     // A separate caller process: resolves with a 1 ms budget, prints the result,
-    // exits. It sets no worker entry, so the default (the running program,
-    // which answers __install like the CLI does) starts the install.
+    // exits. The install runs on in the built CLI.
     const started = Date.now();
-    const out = execFileSync(process.execPath, [worker, "resolve", "actionlint", "1"], {
+    const out = execFileSync(process.execPath, [caller, "resolve", "actionlint", "1"], {
       encoding: "utf8",
       env: { ...process.env, OPENQODEX_HOME: home },
       timeout: 15_000,
@@ -170,7 +176,7 @@ describe("toolchain", () => {
   }, 90_000);
 
   it("gives a plain reason when the home folder cannot be written", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "oq-readonly-"));
+    const parent = tempDir("oq-readonly-");
     chmodSync(parent, 0o555);
     const home = join(parent, "home");
     process.env.OPENQODEX_HOME = home;
@@ -224,7 +230,7 @@ describe("toolchain", () => {
   });
 
   it("refuses a gem lock line in any other shape (26)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-gemlock-"));
+    const dir = tempDir("oq-gemlock-");
     const good = `# note\nbrakeman 6.2.1 sha256:${"a".repeat(64)}\n`;
     writeFileSync(join(dir, "good.txt"), good);
     expect(readGemLock(join(dir, "good.txt"))).toEqual([{ name: "brakeman", version: "6.2.1", sha256: "a".repeat(64) }]);
@@ -298,8 +304,8 @@ describe("toolchain", () => {
   });
 
   it("a relative OPENQODEX_HOME installs where the caller looks", () => {
-    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "oq-relinstall-")));
-    const out = execFileSync(process.execPath, [worker, "resolve", "actionlint", "null"], {
+    const cwd = realpathSync(tempDir("oq-relinstall-"));
+    const out = execFileSync(process.execPath, [caller, "resolve", "actionlint", "null"], {
       encoding: "utf8",
       cwd,
       env: { ...process.env, OPENQODEX_HOME: "rel-home" },
@@ -328,7 +334,7 @@ describe("toolchain", () => {
     const caller = `
       const tc = await import(${JSON.stringify(dist)});
       const resolve = tc.createToolResolver({ allowInstall: true, installBudgetMs: null });
-      process.stdout.write(JSON.stringify([await resolve("brakeman"), await resolve("rubocop"), await resolve("golangci")]));
+      process.stdout.write(JSON.stringify([await resolve("brakeman"), await resolve("rubocop"), await resolve("golangci"), await resolve("cargo-deny")]));
     `;
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", caller], {
       encoding: "utf8",
@@ -338,13 +344,14 @@ describe("toolchain", () => {
       { ok: false, status: "not_installed", reason: "needs Ruby 3.0 or newer" },
       { ok: false, status: "not_installed", reason: "needs Ruby 2.7 or newer" },
       { ok: false, status: "not_installed", reason: "needs Go" },
+      { ok: false, status: "not_installed", reason: "needs Cargo (Rust)" },
     ]);
   });
 });
 
 describe("downloadVerified and extractArchive", () => {
   it("refuses an archive member that escapes the destination", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
+    const dir = tempDir("oq-tar-");
     const archive = join(dir, "evil.tar.gz");
     writeFileSync(archive, gzipSync(tarOf([["ok.txt", "fine\n"], ["../escape.txt", "outside\n"]])));
     const dest = join(dir, "out");
@@ -355,7 +362,7 @@ describe("downloadVerified and extractArchive", () => {
   });
 
   it("refuses symlink and hardlink members", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
+    const dir = tempDir("oq-tar-");
     const payload = join(dir, "payload");
     writeFileSync(payload, "#!/bin/sh\necho payload\n", { mode: 0o755 });
     for (const [type, link] of [["2", payload], ["1", payload]] as const) {
@@ -368,7 +375,7 @@ describe("downloadVerified and extractArchive", () => {
   });
 
   it("a normal archive still unpacks, so the member refusals do not reject every archive", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
+    const dir = tempDir("oq-tar-");
     const archive = join(dir, "good.tar.gz");
     writeFileSync(archive, gzipSync(tarOf([["a/b.txt", "hello\n"]])));
     const dest = join(dir, "out");
@@ -378,7 +385,7 @@ describe("downloadVerified and extractArchive", () => {
   });
 
   it("returns the sha256 of what it downloaded and refuses a wrong one", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-dl-"));
+    const dir = tempDir("oq-dl-");
     const asset = table.tools.actionlint.assets["linux-arm64"];
     const got = await tc.downloadVerified(asset.url, null, join(dir, "a"));
     expect(got.sha256).toBe(asset.sha256);
@@ -399,7 +406,7 @@ describe("downloadVerified and extractArchive", () => {
     });
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const dir = mkdtempSync(join(tmpdir(), "oq-dl-"));
+    const dir = tempDir("oq-dl-");
     try {
       const started = Date.now();
       await expect(tc.downloadVerified(`${base}/slow`, null, join(dir, "a"), { deadlineMs: 1000 })).rejects.toThrow(/download failed/);

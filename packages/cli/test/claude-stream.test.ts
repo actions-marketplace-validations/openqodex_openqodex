@@ -18,13 +18,15 @@
 //  6. The process group is left running after the driver gives up on it.
 //  7. A hook runs inside the reviewer session (a wrapper around the agent
 //     or a managed setting adds one) and the review still counts as isolated.
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { claudeDriver } from "../src/reviewers/claude.js";
 import { classify } from "../src/reviewers/trace.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RECORDED = readFileSync(join(here, "fixtures/claude-stream.jsonl"), "utf8");
@@ -36,7 +38,7 @@ const RECORDED_HOOK = readFileSync(join(here, "fixtures/claude-stream-hook.jsonl
 // `body` (a JavaScript expression of the lines, evaluated in the stand-in),
 // then stays alive with a child of its own until it is killed.
 function standIn(body: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-stand-in-"));
+  const dir = tempDir("oq-stand-in-");
   const bin = join(dir, "claude");
   writeFileSync(
     bin,
@@ -69,7 +71,7 @@ const alive = (pid: number) => {
 };
 
 async function runOnce(bin: string) {
-  const snapshotDir = realpathSync(mkdtempSync(join(tmpdir(), "oq-stream-snap-")));
+  const snapshotDir = realpathSync(tempDir("oq-stream-snap-"));
   const session = claudeDriver.start({ snapshotDir, deadline: Date.now() + 30_000, bin, web: false });
   const turn = await session.send("Review this.");
   await session.close();

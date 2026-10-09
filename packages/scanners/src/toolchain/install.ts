@@ -56,7 +56,19 @@ type Runtime = { reason: string | null; env: Record<string, string> };
 // anywhere: not while probing, not while scanning.
 const GO_OFFLINE = { GOTOOLCHAIN: "local", GOPROXY: "off" };
 
-const runtimeNames: Record<string, string> = { ruby: "Ruby", go: "Go" };
+const runtimeNames: Record<string, string> = { ruby: "Ruby", go: "Go", cargo: "Cargo (Rust)" };
+
+// Where the developer keeps Rust: the toolchains (rustup) and the crate
+// cache (Cargo). Paths, not secrets; a probe and a scan need them when they
+// are not the defaults under the home folder.
+function rustHomes(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of ["CARGO_HOME", "RUSTUP_HOME"]) {
+    const value = process.env[key];
+    if (value) out[key] = value;
+  }
+  return out;
+}
 
 function parseNeeds(needs: string | undefined): { runtime: string; minimum: string | null } | null {
   if (!needs) return null;
@@ -97,6 +109,35 @@ async function probe(runtime: string, file: string): Promise<{ version: string; 
     if (modcache) env.GOMODCACHE = modcache;
     if (cache) env.GOCACHE = cache;
     return { version: goversion.replace(/^go/, ""), env };
+  }
+  if (runtime === "cargo") {
+    // The toolchain `cargo` resolves to from the home folder, named by its
+    // real files. A rustup proxy started inside a project would follow the
+    // project's rust-toolchain.toml and could install the toolchain it
+    // names; the real cargo and rustc read no such file. RUSTUP_AUTO_INSTALL
+    // keeps the probe itself from installing one.
+    const rustup = smallEnv({ ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
+    const version = await run(file, ["--version"], { ...opts, env: rustup });
+    if (version.code !== 0) return null;
+    const rustc = join(dirname(file), "rustc");
+    const rustcFile = existsSync(rustc) ? rustc : which("rustc");
+    if (rustcFile === null) return null;
+    const sysroot = await run(rustcFile, ["--print", "sysroot"], { ...opts, env: rustup });
+    const bin = join(sysroot.stdout.trim(), "bin");
+    if (sysroot.code !== 0 || !existsSync(join(bin, "cargo")) || !existsSync(join(bin, "rustc"))) return null;
+    // CARGO and RUSTC by path; no rustc wrapper, whatever a config names;
+    // Cargo never goes to the network.
+    const env: Record<string, string> = {
+      ...rustHomes(),
+      PATH: pathWith([bin]),
+      CARGO: join(bin, "cargo"),
+      RUSTC: join(bin, "rustc"),
+      RUSTC_WRAPPER: "",
+      RUSTC_WORKSPACE_WRAPPER: "",
+      CARGO_NET_OFFLINE: "true",
+      RUSTUP_AUTO_INSTALL: "0",
+    };
+    return { version: /(\d+\.\d+(?:\.\d+)?)/.exec(version.stdout)?.[1] ?? "", env };
   }
   const args = runtime === "ruby" ? ["-e", "print RUBY_VERSION"] : ["--version"];
   const out = await run(file, args, { ...opts, env: smallEnv() });
@@ -530,9 +571,10 @@ export function lastInstallError(home: string, tool: string): { status: "not_ins
   }
 }
 
-// The body of `openqodex __install <tool>`. Returns the exit code: 0 installed,
-// 1 failed with the reason saved for the run that started it.
-export async function runInstallWorker(tool: string): Promise<number> {
+// One install in this process, for `openqodex __install <tool>` (index.ts
+// checks the entry first). Returns the exit code: 0 installed, 1 failed with
+// the reason saved for the run that started it.
+export async function runInstall(tool: string): Promise<number> {
   const home = openqodexHome();
   rmSync(errorPath(home, tool), { force: true });
   try {

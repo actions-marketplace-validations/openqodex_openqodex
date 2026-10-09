@@ -4,14 +4,16 @@
 // GitHub. Every case guards one failure, named in its title.
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Report, RunManifest } from "@openqodex/core";
 import "./global-setup.js";
 import { bin, git, readJson, run, toolsHome, writeConfig } from "./support.js";
 import type { Result } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // No scanner fits a text file: the cases test the target, not the scanners.
 const FAST = ["--only", "hadolint", "--no-install", "--no-graph"];
@@ -45,7 +47,7 @@ type Repos = { top: string; dev: string; other: string; remote: string };
 // The teammate pushes `feature`, then main moves on with late.txt; the
 // developer's clone has fetched main but holds no branch of its own for it.
 function repos(): Repos {
-  const top = realpathSync(mkdtempSync(join(tmpdir(), "oq-target-")));
+  const top = realpathSync(tempDir("oq-target-"));
   const remote = join(top, "remote.git");
   const dev = join(top, "dev");
   const other = join(top, "other");
@@ -85,7 +87,7 @@ function pushBranch(r: Repos, name: string, files: Record<string, string>, ref =
 
 // A folder that holds git and nothing else, for a PATH without gh.
 function gitOnlyPath(): string {
-  const bin = mkdtempSync(join(tmpdir(), "oq-nogh-"));
+  const bin = tempDir("oq-nogh-");
   symlinkSync(spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim(), join(bin, "git"));
   return bin;
 }
@@ -207,7 +209,7 @@ describe("review <target>: settings and what runs", () => {
 
   it("uses the developer's settings and shows the target's own changes to those paths", () => {
     const probe = join(r.top, "evil-ran");
-    const bin = mkdtempSync(join(tmpdir(), "oq-evil-"));
+    const bin = tempDir("oq-evil-");
     write(bin, "evil-probe", `#!/bin/sh\ntouch '${probe}'\n`);
     chmodSync(join(bin, "evil-probe"), 0o755);
     pushBranch(r, "settings", {
@@ -237,7 +239,7 @@ describe("review <target>: settings and what runs", () => {
 
   it("runs a custom scanner the developer approved, in the temporary checkout", () => {
     const where = join(r.top, "probe-cwd");
-    const bin = mkdtempSync(join(tmpdir(), "oq-probe-"));
+    const bin = tempDir("oq-probe-");
     const sarif = JSON.stringify({ version: "2.1.0", runs: [{ tool: { driver: { name: "probe" } }, results: [] }] });
     write(bin, "oq-probe", `#!/bin/sh\npwd > '${where}'\nprintf '%s' '${sarif}' > "$1"\n`);
     chmodSync(join(bin, "oq-probe"), 0o755);
@@ -347,16 +349,16 @@ describe("review <target>: checkouts live only in the developer's openqodex home
     utimesSync(join(folder, MARKER), old, old);
   };
   const review = (label: string) => run(label, r.dev, ["review", "--agent", "feature", "--base", "origin/main", ...FAST], { env: { OPENQODEX_HOME: home } });
-  beforeAll(() => { r = repos(); home = mkdtempSync(join(tmpdir(), "oq-target-home-")); }, 120_000);
+  beforeAll(() => { r = repos(); home = tempDir("oq-target-home-"); }, 120_000);
 
   it("ignores a folder with a forged marker in the OS temp folder", () => {
-    const planted = mkdtempSync(join(tmpdir(), "openqodex-target-"));
+    const planted = tempDir("openqodex-target-");
     decoy(planted);
     expect(review("target-forged-tmp").status).toBe(0);
     expect(existsSync(join(planted, "keep.txt"))).toBe(true);
   });
   it("never follows a link inside the checkouts folder when it cleans up", () => {
-    const victim = mkdtempSync(join(tmpdir(), "oq-victim-"));
+    const victim = tempDir("oq-victim-");
     decoy(victim);
     mkdirSync(join(home, "checkouts"), { recursive: true });
     symlinkSync(victim, join(home, "checkouts", "linked"));
@@ -366,7 +368,7 @@ describe("review <target>: checkouts live only in the developer's openqodex home
   });
   it("refuses to finalize a run whose checkout is outside the checkouts folder", () => {
     const a = agentReview("target-outside", r.dev, ["feature", "--base", "origin/main"], { OPENQODEX_HOME: home });
-    const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+    const outside = tempDir("oq-outside-");
     decoy(outside);
     mkdirSync(join(outside, "tree"));
     writeFileSync(join(a.dir, "manifest.json"), JSON.stringify({ ...a.manifest, target: { ...a.manifest.target, checkout: join(outside, "tree") } }));
@@ -411,7 +413,7 @@ describe("a change that only deletes code", () => {
 
 // The CLI as a child that runs alongside another, with the same environment as `run`.
 function runAsync(cwd: string, args: string[]): Promise<string> {
-  const home = mkdtempSync(join(tmpdir(), "oq-e2e-user-"));
+  const home = tempDir("oq-e2e-user-");
   const env = { ...process.env, HOME: home, OPENQODEX_HOME: toolsHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", OPENQODEX_AUTO_UPDATE: "0" };
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, [bin, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -650,13 +652,15 @@ describe("a changed scanner settings file", () => {
       expect(settingsTokens(scan(`settings-ruff-${label}`, dir)), label).toEqual(["ruff:settings-file pyproject.toml"]);
     }
   });
-  it("a pyproject.toml too large to read raises the ruff note rather than none", () => {
+  // ruff and SQLFluff both read pyproject.toml, so a file too large to read
+  // may hide either one's findings: both notes are raised.
+  it("a pyproject.toml too large to read raises the ruff and SQLFluff notes rather than none", () => {
     const dir = fresh();
     write(dir, "pyproject.toml", '[project]\nname = "app"\n');
     commitAll(dir, "Project file");
     git(dir, "push", "-q", "origin", "HEAD:main", "-f");
     write(dir, "pyproject.toml", `[project]\nname = "app"\n# ${"x".repeat(1024 * 1024 + 10)}\n`);
-    expect(settingsTokens(scan("settings-ruff-unreadable", dir))).toEqual(["ruff:settings-file pyproject.toml"]);
+    expect(settingsTokens(scan("settings-ruff-unreadable", dir))).toEqual(["ruff:settings-file pyproject.toml", "sqlfluff:settings-file pyproject.toml"]);
   });
   it("a root .gitleaksignore added with a secret is a candidate in the agent's brief", () => {
     const dir = fresh();

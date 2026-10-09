@@ -1,0 +1,12 @@
+[
+  {
+    "tool": "Read",
+    "path": "deploy/worker.yaml",
+    "inside": true,
+    "range": [
+      1,
+      72
+    ],
+    "ok": true
+  }
+]

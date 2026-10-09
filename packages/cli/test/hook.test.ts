@@ -44,8 +44,7 @@
 //     line: lefthook inserts {1} and {2} raw, so a remote URL holding
 //     '$(id)' closes the quotes and runs.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   DEFAULT_CONFIG,
@@ -57,10 +56,13 @@ import {
   writeReportFiles,
   type Report,
 } from "@openqodex/core";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BIN, cli, env, git, sandbox, type Sandbox } from "./init-helpers.js";
 import { gateReceipt } from "@openqodex/core";
 import { readHomeReceipt, writeHomeReceipt } from "../src/receipts.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 function check(s: Sandbox, command: string, opts: { env?: Record<string, string>; cwd?: string } = {}) {
   const input = JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: opts.cwd ?? s.repo });
@@ -197,7 +199,7 @@ function blockingRepo(root: string, name: string): string {
 // change in the work tree committed: `git push` sends exactly that change,
 // the change a review of the committed work records.
 function published(s: Sandbox, repo = s.repo): void {
-  const remote = mkdtempSync(join(tmpdir(), "oq-hook-remote-"));
+  const remote = tempDir("oq-hook-remote-");
   git(repo, "init", "-q", "--bare", remote);
   git(repo, "remote", "add", "origin", remote);
   const branch = git(repo, "symbolic-ref", "--short", "HEAD").trim();
@@ -274,7 +276,7 @@ describe("hook check through the launcher", () => {
     expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
     const launcher = join(s.oqHome, "bin/openqodex");
     const text = readFileSync(launcher, "utf8");
-    const emptyPath = mkdtempSync(join(tmpdir(), "oq empty path "));
+    const emptyPath = tempDir("oq empty path ");
     const input = JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push" }, cwd: s.repo });
 
     writeFileSync(launcher, text.replace(/^node=.*$/m, "node='/nonexistent/node'"));
