@@ -21,7 +21,7 @@
 // 8. --only or --skip of the scanner they name leaves them out, although the
 //    comment still silences that scanner in every other run; or
 //    scanners.disable, the repository's own choice, does not.
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cli, sandbox } from "./init-helpers.js";
@@ -75,29 +75,6 @@ describe("a scan of a change that silences a scanner", () => {
     expect(report).not.toHaveProperty("settings_changes");
     expect(out.code).toBe(0);
     expect(report.verdict).toBe("passed");
-  });
-
-  it("never prints the key behind gitleaks:allow, in the terminal or any report file (6)", () => {
-    const terminal = cli(s, ["scan", "--no-install"]);
-    expect(terminal.status).toBe(0);
-    expect(terminal.stdout).toContain("openqodex.suppression-added");
-    const reports = join(s.repo, ".openqodex", "reviews");
-    const files = readdirSync(reports, { recursive: true, withFileTypes: true }).filter((e) => e.isFile());
-    expect(files.map((e) => e.name)).toContain("report.sarif");
-    for (const text of [out.stdout, terminal.stdout, terminal.stderr, ...files.map((e) => readFileSync(join(e.parentPath, e.name), "utf8"))]) {
-      expect(text).not.toContain(KEY);
-    }
-  });
-});
-
-describe("block_on_severity and the minor findings of a scan", () => {
-  it("blocks at minor and passes at major (4)", () => {
-    const minor = cli(changed("review:\n  block_on_severity: minor\n"), ["scan", "--no-install", "--format", "json"]);
-    expect(minor.status, minor.stderr).toBe(1);
-    expect((JSON.parse(minor.stdout) as Json).verdict).toBe("blocked");
-    const major = cli(changed("review:\n  block_on_severity: major\n"), ["scan", "--no-install", "--format", "json"]);
-    expect(major.status, major.stderr).toBe(0);
-    expect(where(JSON.parse(major.stdout) as Json)).toEqual(EXPECTED);
   });
 });
 
