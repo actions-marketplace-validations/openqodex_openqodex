@@ -323,6 +323,29 @@ def m():
 def d():
     return 3
 `;
+  // Dependencies and an include the plugin cannot bind.
+  const UNBOUND = `from fastapi import Depends, FastAPI
+import secrets
+
+app = FastAPI()
+
+
+def helper():
+    return 1
+
+
+@app.get("/plain", dependencies=[helper])
+def plain():
+    return 1
+
+
+@app.get("/ext", dependencies=[Depends(secrets.token_hex)])
+def ext():
+    return 2
+
+
+app.include_router(secrets.router)
+`;
   const REBOUND = `from fastapi import FastAPI
 
 app = FastAPI()
@@ -338,7 +361,7 @@ FastAPI = object
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-fool-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED });
+    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED, "app/unbound.py": UNBOUND });
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null });
   });
@@ -409,6 +432,14 @@ FastAPI = object
     expect(gaps.some((u) => u.affects.includes("mounts") && u.site?.line === 10)).toBe(true);
     expect(gaps.some((u) => u.affects.includes("handles") && u.site?.line === by("/m").site.line)).toBe(true);
     expect(gaps.some((u) => u.affects.includes("applies_middleware") && u.site?.line === by("/d").site.line)).toBe(true);
+  });
+
+  it("never drops a dependency or an include it cannot bind without an unknown: a list entry not written as Depends, an external dependency, an external router", () => {
+    const gaps = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "fastapi" && u.site?.file === "app/unbound.py");
+    const line = (w: string) => fastapiRegs(graph).find((r) => r.site.file === "app/unbound.py" && r.written === w)?.site.line;
+    expect(gaps.some((u) => u.affects.includes("applies_middleware") && u.site?.line === line("/plain") && u.name === "helper")).toBe(true);
+    expect(gaps.some((u) => u.affects.includes("applies_middleware") && u.site?.line === line("/ext") && u.cause === "external")).toBe(true);
+    expect(gaps.some((u) => u.affects.includes("mounts") && u.site?.line === 21 && u.cause === "external")).toBe(true);
   });
 
   it("reads no decorator inside a broken region of a file, keeps the routes before it, and says the file has a syntax error", () => {

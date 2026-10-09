@@ -564,14 +564,16 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   // One dependency in a chain: the call that declares it, where, and the
   // scope it is evaluated in (a parameter's default and annotation are
   // evaluated in the scope around the def, not in the function).
-  type Dep = { call: Expr; file: string; type: Expr | null; scope: number };
+  // `list`: an entry of a `dependencies=[...]` list, where everything is a
+  // dependency; a parameter's default is one only when it calls Depends.
+  type Dep = { call: Expr; file: string; type: Expr | null; scope: number; list: boolean };
   const depsOfList = (file: string, list: Expr | undefined, scope: number): { deps: Dep[]; omitted: number } => {
     if (!list) return { deps: [], omitted: 0 };
     if (list.t !== "list") {
       siteGap({ file, line: list.line, column: list.column }, "dynamic", ["applies_middleware"], show(list), `the dependencies ${show(list)} are computed at run time`);
       return { deps: [], omitted: 0 };
     }
-    return { deps: list.items.map((call) => ({ call, file, type: null, scope })), omitted: list.omitted };
+    return { deps: list.items.map((call) => ({ call, file, type: null, scope, list: true })), omitted: list.omitted };
   };
   // What one dependency call is bound to, read once per call however many
   // registrations share it: null when the call is not FastAPI's Depends
@@ -592,10 +594,14 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         if (named === undefined && d.call.omitted === 0) siteGap(site, "unsupported-rule", ["applies_middleware"], null, `${show(d.call)} names no dependency and its parameter has no annotation the plugin can read`);
       } else {
         const b = bindRef(d.file, target, "dependency", d.scope);
-        if (b.why && b.status !== "external") siteGap(site, b.why.cause, ["applies_middleware"], b.why.name, b.why.note);
+        if (b.why) siteGap(site, b.why.cause, ["applies_middleware"], b.why.name, b.status === "external" ? `the dependency ${show(target)} comes from outside the repository, so what it runs is not listed` : b.why.note);
         const ev: FrameworkEvidence = { kind: "route-call", tier: b.tier, site, via: b.via, premises: [], rule: rule("fastapi-dependency"), note: b.note ? `${DEP_NOTE}; ${b.note}` : DEP_NOTE };
         out.targets = b.targets.map((id) => ({ id, ev }));
       }
+    } else if (d.list) {
+      // Every entry of a dependencies list is a dependency; one not written
+      // as FastAPI's Depends or Security is one the plugin cannot follow.
+      siteGap({ file: d.file, line: d.call.line, column: d.call.column }, "unsupported-rule", ["applies_middleware"], show(d.call), `the dependency ${show(d.call)} is not written as Depends(...) or Security(...), so what it runs is not listed`);
     }
     depMemo.set(d.call, out);
     return out;
@@ -694,13 +700,18 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         if (emit({ from: id, to: t, kind: "handles", plugin: PLUGIN, app, evidence: ev })) addRole(t, "route_handler", "fastapi", app, ev);
       }
       const decorator = depsOfList(e.file, e.deps, e.scope);
-      applyDeps(reg, [...deps, ...decorator.deps, ...e.params.map((p) => ({ call: p.call, file: e.file, type: p.type, scope: e.scope }))], omitted + decorator.omitted + e.paramsOmitted, app);
+      applyDeps(reg, [...deps, ...decorator.deps, ...e.params.map((p) => ({ call: p.call, file: e.file, type: p.type, scope: e.scope, list: false }))], omitted + decorator.omitted + e.paramsOmitted, app);
     }
 
     for (const e of includesOf.get(val.id) ?? []) {
       const target = e.router?.t === "ref" ? valueIn(e.file, e.router.path, e.scope, e.site.line) : null;
       if (!target || target.kind !== "router") {
-        siteGap(e.site, e.router?.t === "ref" ? "unsupported-rule" : "dynamic", ["mounts", "handles"], e.router ? show(e.router) : null, `the router included here (${e.router ? show(e.router) : "nothing"}) is not an APIRouter value the plugin can follow, so its routes are not listed`);
+        // Why: a router from outside the repository, a gap the resolver
+        // names, a computed value, or a value that is no APIRouter.
+        const found = e.router?.t === "ref" && !binder(e.file, e.scope, e.router.path[0] as string) ? lookup(e.file, e.router.path) : null;
+        const cause: Cause = e.router?.t !== "ref" ? "dynamic" : found?.kind === "external" ? "external" : found?.kind === "gap" ? found.cause : "unsupported-rule";
+        const what = cause === "external" ? "comes from outside the repository" : "is not an APIRouter value the plugin can follow";
+        siteGap(e.site, cause, ["mounts", "handles"], e.router ? show(e.router) : null, `the router included here (${e.router ? show(e.router) : "nothing"}) ${what}, so its routes are not listed`);
         continue;
       }
       if (stack.includes(target.id)) continue; // a loop: stop where it closes
