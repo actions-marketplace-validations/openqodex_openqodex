@@ -277,7 +277,7 @@ function collectTargets(s: Setup, mcpOn: boolean): { targets: Target[]; notes: s
 // a link the repository holds, stops that agent with the reason. With
 // `mcpOn` false, the MCP server registrations init recorded are removed.
 async function planAgents(s: Setup, record: InstallRecord, targets: Target[], mcpOn: boolean): Promise<Action[]> {
-  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, guard: s.guard, mcp: mcpOn };
+  const ctx: Ctx = { record, scope: s.scope, repoRoot: s.repoRoot, guard: s.guard };
   const excludeFile = s.repoRoot !== null && !s.flags.project ? await gitPath(s.repoRoot, "info/exclude") : null;
   const actions: Action[] = [];
   for (const agent of s.agents) {

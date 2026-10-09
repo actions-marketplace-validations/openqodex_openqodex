@@ -30,7 +30,7 @@ const VERSION = "9.9.9";
 // a new contract adds a folder and a line here.
 const COPIES: Record<number, string> = {
   1: "6baaa371d9d814b0ca225ff82705403d607f4d0f02c137834050b8d7c2566ecc",
-  2: "c5df9f511530234c8fbf971f73c56c652b503674c9d90853d1f1efe627a067dc",
+  2: "f34091e753bd8c0a0dce42cd5f7312d7e5609497e9dc941aff72048f4fce87a3",
 };
 
 // Every file, hook and rule a user-scope init writes for every agent, for a
@@ -44,7 +44,7 @@ function rendered(): Record<string, string> {
       else if (t.kind === "hook-json") out[`${agent}-hook.json`] = `${JSON.stringify(t.group, null, 2)}\n`;
       else if (t.kind === "mcp-json") out[`${agent}-mcp.json`] = `${JSON.stringify(t.entry, null, 2)}\n`;
       else if (t.kind === "mcp-toml") out[`${agent}-mcp.toml`] = `${t.block}\n`;
-      else out[`${agent}-allow-rules.json`] = `${JSON.stringify([...t.rules, ...(t.server ? [t.server.rule] : [])], null, 2)}\n`;
+      else out[`${agent}-allow-rules.json`] = `${JSON.stringify(t.rules, null, 2)}\n`;
     }
   }
   return out;

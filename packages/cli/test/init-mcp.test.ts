@@ -31,14 +31,15 @@
 // 10. Cline's CLI file is written when only the VS Code extension is there
 //     (it reads another file), or the ~/.cline folder init makes for the
 //     skill makes a second init register the server.
-// 11. The Claude Code permission rules miss the graph command or the MCP
-//     server's tools, or grant anything else for them.
+// 11. The Claude Code permission rules miss the graph command, or grant
+//     anything for the MCP server's tools.
 // 12. Claude Code rewrites ~/.claude.json while it runs: init refuses for a
 //     change it does not touch, or overwrites a change Claude Code made.
-// 13. The mcp__openqodex rule lets Claude Code run, without asking, the
-//     tools of a server named openqodex that is not OpenQodex's: one init
-//     found and kept, one in a file init could not read, or any after
-//     --no-mcp; or the rule init added stays after --no-mcp.
+// 13. A rule lets Claude Code run the tools of a server named openqodex
+//     without asking. A rule names a server by its name only, so it also
+//     covers a project or local server of that name that is not
+//     OpenQodex's, which init cannot see from the user scope; or the rule
+//     an earlier build recorded stays.
 // 14. Codex's config.toml defines the server in a spelling a pattern does
 //     not see (quoted, escaped, spaced or as an array of tables), and init
 //     appends a second one, which makes Codex refuse the whole file; or text
@@ -408,52 +409,46 @@ describe("9. --project", () => {
 });
 
 describe("11. the Claude Code permission rules for the graph", () => {
-  it("permissions.allow holds the graph command line and the openqodex server's tools, and nothing else for them", () => {
+  it("permissions.allow holds the graph command line and no rule for an MCP server", () => {
     const s = sandbox();
     expect(cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]).status).toBe(0);
     const allow = (JSON.parse(read(join(s.home, ".claude", "settings.json"))) as { permissions: { allow: string[] } }).permissions.allow;
-    expect(allow.filter((r) => / graph\b|^mcp__/.test(r))).toEqual([`Bash(${launcher(s).includes(" ") ? `'${launcher(s)}'` : launcher(s)} graph *)`, "mcp__openqodex"]);
+    expect(allow.filter((r) => / graph\b|^mcp__/.test(r))).toEqual([`Bash(${launcher(s).includes(" ") ? `'${launcher(s)}'` : launcher(s)} graph *)`]);
   });
 });
 
-describe("13. the mcp__openqodex rule only for OpenQodex's own server", () => {
-  const rules = (s: Sandbox): string[] => (JSON.parse(read(join(s.home, ".claude", "settings.json"))) as { permissions: { allow: string[] } }).permissions.allow;
+describe("13. no rule for the tools of a server named openqodex", () => {
+  const settings = (s: Sandbox): string => join(s.home, ".claude", "settings.json");
+  const rules = (s: Sandbox): string[] => (JSON.parse(read(settings(s))) as { permissions: { allow: string[] } }).permissions.allow;
   const graphRule = (s: Sandbox): string => `Bash(${launcher(s).includes(" ") ? `'${launcher(s)}'` : launcher(s)} graph *)`;
 
-  it("13. a foreign openqodex entry in ~/.claude.json gets no mcp__openqodex rule; the graph rule is still written", () => {
-    const s = sandbox();
-    write(join(s.home, ".claude.json"), jsonFile({ openqodex: { command: "someone-else" } }));
+  it("13. the user-scope server is OpenQodex's and a project's .mcp.json names another server openqodex: no mcp__openqodex rule", () => {
+    const s = sandbox({ ".mcp.json": jsonFile({ openqodex: { command: "someone-else" } }) });
     const r = cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]);
     expect(r.status, r.stderr).toBe(0);
-    expect(rules(s)).not.toContain("mcp__openqodex");
+    expect((JSON.parse(read(join(s.home, ".claude.json"))) as { mcpServers: Record<string, unknown> }).mcpServers.openqodex).toEqual(stdio(launcher(s), ["mcp"]));
+    expect(rules(s).filter((x) => x.startsWith("mcp__"))).toEqual([]);
     expect(rules(s)).toContain(graphRule(s));
   });
 
-  it("13. --no-mcp writes no rule, and a later --no-mcp after a normal init removes the rule init added", () => {
-    const off = sandbox();
-    expect(cli(off, ["init", "--yes", "--no-mcp", "--agent", "claude-code", ...QUIET]).status).toBe(0);
-    expect(rules(off)).not.toContain("mcp__openqodex");
-    expect(rules(off)).toContain(graphRule(off));
-
+  it("13. the mcp__openqodex rule an earlier build recorded is removed by the next init", () => {
     const s = sandbox();
     expect(cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]).status).toBe(0);
-    expect(rules(s)).toContain("mcp__openqodex");
-    const r = cli(s, ["init", "--yes", "--no-mcp", "--agent", "claude-code", ...QUIET]);
+    // As an earlier build of this version left it: the rule granted and recorded.
+    const data = JSON.parse(read(settings(s))) as { permissions: { allow: string[] } };
+    data.permissions.allow.push("mcp__openqodex");
+    write(settings(s), `${JSON.stringify(data, null, 2)}\n`);
+    const recordPath = join(s.oqHome, "install.json");
+    const record = JSON.parse(read(recordPath)) as { allowRules: { path: string; rule: string }[] };
+    record.allowRules.push({ path: settings(s), rule: "mcp__openqodex" });
+    write(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]);
     expect(r.status, r.stderr).toBe(0);
     expect(rules(s)).not.toContain("mcp__openqodex");
     expect(rules(s)).toContain(graphRule(s));
-    const record = JSON.parse(read(join(s.oqHome, "install.json"))) as { allowRules: { rule: string }[] };
-    expect(record.allowRules.map((a) => a.rule)).not.toContain("mcp__openqodex");
+    const after = JSON.parse(read(recordPath)) as { allowRules: { rule: string }[] };
+    expect(after.allowRules.map((a) => a.rule)).not.toContain("mcp__openqodex");
   }, 120_000);
-
-  it("13. a ~/.claude.json that does not parse gets no rule", () => {
-    const s = sandbox();
-    write(join(s.home, ".claude.json"), "{ not json,\n");
-    const r = cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]);
-    expect(r.status).toBe(2);
-    expect(rules(s)).not.toContain("mcp__openqodex");
-    expect(rules(s)).toContain(graphRule(s));
-  });
 });
 
 describe("12. Claude Code writes ~/.claude.json while init runs", () => {

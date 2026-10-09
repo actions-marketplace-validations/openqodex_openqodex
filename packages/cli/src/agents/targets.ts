@@ -22,9 +22,7 @@ export type Target =
   // is found exactly as written, recorded or not.
   | { kind: "md-section"; agent: AgentId; label: string; path: string; section: string; inRepo: boolean; replaces?: string[] }
   // Rules merged into permissions.allow of a Claude Code settings file.
-  // `server`: the rule for the tools of the MCP server named openqodex, added
-  // only while that server is OpenQodex's own (mcp.ts, ownsServer).
-  | { kind: "allow-rules"; agent: AgentId; label: string; path: string; rules: string[]; inRepo: boolean; server?: { rule: string; mcp: McpJsonTarget } }
+  | { kind: "allow-rules"; agent: AgentId; label: string; path: string; rules: string[]; inRepo: boolean }
   // The code graph's MCP server under mcpServers.openqodex of a JSON file
   // (src/agents/mcp.ts). `hint`: what the agent asks before it uses it.
   | { kind: "mcp-json"; agent: AgentId; label: string; path: string; entry: Record<string, unknown>; inRepo: boolean; usesLauncher: boolean; hint?: string }
@@ -183,16 +181,15 @@ function userRule(file: string, launcher: string): string {
 // folder and its local refs `refs/openqodex/graph/<tree>`; it takes no
 // output path. Like `findings *` it accepts --cwd, and it accepts --config,
 // which names the config file it reads.
-// `mcp__openqodex` (SERVER_RULE) matches every tool of the MCP server named
-// openqodex (permissions page, "MCP": "`mcp__puppeteer` matches any tool
-// provided by the `puppeteer` server"). It goes with the code graph's server
-// that init registers, whose tools only read the graph (graph_refresh builds
-// a new one in the same folder), and only while the server Claude Code knows
-// by that name is that one: never for a server of the name init found and
-// kept, one in a file it could not read, or any after --no-mcp.
+// No rule for the MCP server's tools. A rule such as `mcp__openqodex`
+// matches every tool of any server of that name (permissions page, "MCP":
+// "`mcp__puppeteer` matches any tool provided by the `puppeteer` server"),
+// and a project's `.mcp.json` or a local-scope entry, which take precedence
+// over the user-scope server init registers, can name another server so.
+// Claude Code asks before the server's tools run. A rule an earlier build
+// recorded is removed by the next init.
 const REVIEW_LINES = ["review", "review --all"];
 const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *", "findings *", "graph *"];
-export const SERVER_RULE = `mcp__${MCP_SERVER}`;
 
 export function allowRules(runner: string): string[] {
   return ALLOWED_LINES.map((l) => `Bash(${runner} ${l})`);
@@ -292,12 +289,11 @@ export function targetsFor(args: {
       // https://code.claude.com/docs/en/mcp: user scope in the top-level
       // mcpServers of .claude.json (homes.ts), project scope in .mcp.json at
       // the repository root; an entry with type "stdio" runs a local command.
-      // Before the rules: the server rule is checked against what this
-      // writes, and a write that fails stops the rules too.
-      const claudeMcp = user
-        ? mcpJson(claudeStateFile(home), { type: "stdio", ...server })
-        : mcpJson(at(".mcp.json"), { type: "stdio", ...server }, "Claude Code asks you to approve a project server before it uses it");
-      targets.push(claudeMcp);
+      targets.push(
+        user
+          ? mcpJson(claudeStateFile(home), { type: "stdio", ...server })
+          : mcpJson(at(".mcp.json"), { type: "stdio", ...server }, "Claude Code asks you to approve a project server before it uses it"),
+      );
       // Rules in user scope only: a committed settings file would grant them
       // on every teammate's machine. Project scope gets the target with no
       // rules, so rules an earlier build recorded there are still removed.
@@ -310,7 +306,6 @@ export function targetsFor(args: {
         path: claude("settings.json"),
         rules: granted ? allowRules(runner) : [],
         inRepo: !user,
-        ...(granted ? { server: { rule: SERVER_RULE, mcp: claudeMcp } } : {}),
       });
       break;
     case "codex":

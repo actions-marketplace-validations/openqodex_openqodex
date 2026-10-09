@@ -6,6 +6,5 @@
   "Bash(/home/dev/.openqodex/bin/openqodex guide)",
   "Bash(/home/dev/.openqodex/bin/openqodex guide *)",
   "Bash(/home/dev/.openqodex/bin/openqodex findings *)",
-  "Bash(/home/dev/.openqodex/bin/openqodex graph *)",
-  "mcp__openqodex"
+  "Bash(/home/dev/.openqodex/bin/openqodex graph *)"
 ]
