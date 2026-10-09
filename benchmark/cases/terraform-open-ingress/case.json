@@ -114,6 +114,21 @@
         "state"
       ],
       "why": "the master password passes through a Terraform variable and lands in the state file; managing it with manage_master_user_password is better, real but not planted"
+    },
+    {
+      "file": "infra/bastion.tf",
+      "lines": [
+        24,
+        32
+      ],
+      "mentions": [
+        "inline",
+        "in-line",
+        "standalone",
+        "conflict",
+        "overwrite"
+      ],
+      "why": "app_from_bastion adds a standalone rule to the app security group, which keeps inline ingress and egress blocks in main.tf; with both styles on one group, an apply can overwrite the other's rules and drop the SSH rule (a known AWS provider limitation, its doc page not re-read here). Real, reported in the 2026-10-09 run, not planted"
     }
   ]
 }
