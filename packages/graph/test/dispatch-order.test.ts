@@ -80,7 +80,7 @@ describe("lookup orders and value rules", () => {
     expect(sites(idOf(g, "m.rb", "A.m"))[0]).toBeLessThan(sites(idOf(g, "m.rb", "B.m"))[0] as number);
   });
 
-  it.skip("keeps an implementation of Repo<B> as a candidate of a call on Repo<A>, since TypeScript compares types by shape (7)", async () => {
+  it("keeps an implementation of Repo<B> as a candidate of a call on Repo<A>, since TypeScript compares types by shape (7)", async () => {
     const g = await graphOf({
       "src/types.ts": "export interface A {\n  id: string;\n}\nexport interface B {\n  id: string;\n}\nexport interface Repo<T> {\n  find(): T;\n}\n",
       "src/b-repo.ts": 'import type { B, Repo } from "./types";\nexport class BRepo implements Repo<B> {\n  find(): B {\n    return { id: "b" };\n  }\n}\n',

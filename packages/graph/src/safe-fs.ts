@@ -67,7 +67,7 @@ function optBound(b: unknown, imports: number): boolean {
 
 const RELS = new Set(["implements", "include", "prepend", "extend"]);
 
-function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
+function isTypeRef(v: unknown, imports: number): boolean {
   return (
     isObj(v) &&
     isStr(v.name) &&
@@ -78,8 +78,7 @@ function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
     optBool(v.elem) &&
     optBool(v.declared) &&
     optBound(v.bound, imports) &&
-    (v.rel === undefined || RELS.has(v.rel as string)) &&
-    (v.args === undefined || (depth < 4 && isList(v.args, (a) => isTypeRef(a, imports, depth + 1), 8)))
+    (v.rel === undefined || RELS.has(v.rel as string))
   );
 }
 

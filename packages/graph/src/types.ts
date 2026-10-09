@@ -24,9 +24,7 @@ export function familyOf(lang: Lang): Family {
 // `bound`: the head name (`name`, or the first part of `qualifier`) is
 // bound by a scoped import where the type was read.
 // On a base: `rel` is how the class takes it (absent: extends, a
-// superclass, a Go embedded field or interface). `args`: TypeScript
-// generic arguments written as plain names (`Repo<User>`), so a
-// dispatch candidate whose own arguments are proved different is left out.
+// superclass, a Go embedded field or interface).
 export type TypeRef = {
   name: string;
   qualifier: string | null;
@@ -37,7 +35,6 @@ export type TypeRef = {
   declared?: boolean;
   bound?: BoundImport;
   rel?: "implements" | "include" | "prepend" | "extend";
-  args?: TypeRef[];
 };
 
 export type DefFact = {

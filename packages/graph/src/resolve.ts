@@ -694,7 +694,7 @@ export function createWorld(input: ResolveInput): World {
     // and for a Go interface or a Python Protocol, the types whose method
     // set covers it. An empty answer is a read too.
     implementers(key: string): string[] {
-      return childrenOf(key, undefined, "");
+      return childrenOf(key);
     },
   };
 
@@ -1451,41 +1451,14 @@ export function createWorld(input: ResolveInput): World {
     return out;
   };
 
-  // Whether `a` has `b` among its ancestors.
-  const isAncestor = (a: string, b: string): boolean => {
-    const seen = new Set<string>();
-    const queue = [a];
-    while (queue.length > 0 && seen.size < 4096) {
-      const k = queue.shift() as string;
-      if (k === b) return true;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      queue.push(...basesOf(k).keys);
-    }
-    return false;
-  };
-  // Whether a class implementing `key` with generic arguments is proved to
-  // be another instance of it than the receiver's (`OrderRepo implements
-  // Repo<Order>` for a receiver typed Repo<User>): each argument bound to a
-  // class of the graph on both sides, and neither an ancestor of the other.
-  // An argument either side cannot bind proves nothing.
-  const mismatched = (sub: { key: string; i: number }, args: TypeRef[], argFile: string): boolean => {
-    const info = classes.get(sub.key);
-    const ref = basesOf(sub.key).refs[sub.i];
-    if (!info || !ref?.args || ref.args.length !== args.length) return false;
-    return ref.args.some((a, j) => {
-      const mine = typeKey(info.file, info.family, a);
-      const theirs = typeKey(argFile, info.family, args[j] as TypeRef);
-      if (mine === null || mine === "ext" || theirs === null || theirs === "ext") return false;
-      return mine.key !== theirs.key && !isAncestor(mine.key, theirs.key) && !isAncestor(theirs.key, mine.key);
-    });
-  };
   // The classes directly below a class key: subclasses, includers,
-  // declared implementers (less any proved generic mismatch), and for a Go
-  // interface or a Python Protocol the types matching its method set.
-  function childrenOf(key: string, args: TypeRef[] | undefined, argFile: string): string[] {
+  // declared implementers, and for a Go interface or a Python Protocol the
+  // types matching its method set. A generic argument never drops one:
+  // TypeScript compares `Repo<A>` and `Repo<B>` by the shapes of A and B,
+  // which the graph does not hold whole, so a difference is never proved.
+  function childrenOf(key: string): string[] {
     const out: string[] = [];
-    for (const s of subsOf(key)) if (!(args && mismatched(s, args, argFile))) out.push(s.key);
+    for (const s of subsOf(key)) out.push(s.key);
     if (isIface(key)) for (const k of methodSetImplementers(key)) out.push(k);
     return out;
   }
@@ -1493,21 +1466,19 @@ export function createWorld(input: ResolveInput): World {
   // The implementations or overrides a call bound to `declared` on `key`
   // may run: for each class below `key`, the method its own lookup finds,
   // never an abstract member nor the declared one, in path and line order.
-  // Per class key, then per member name, side and generic arguments: the
-  // declared member follows from the first three, so it is no part of the key.
+  // Per class key, then per member name and side: the declared member
+  // follows from those, so it is no part of the key.
   const dispatchMemo = new Map<string, Map<string, string[]>>();
-  const dispatchTargets = (key: string, name: string, side: Side, declared: readonly string[], args: TypeRef[] | undefined, argFile: string): string[] => {
-    const family = classes.get(key)?.family ?? "js";
-    const argKey = args ? args.map((a) => typeKey(argFile, family, a)).map((k) => (k === null || k === "ext" ? "?" : k.key)).join(",") : "";
+  const dispatchTargets = (key: string, name: string, side: Side, declared: readonly string[]): string[] => {
     let perKey = dispatchMemo.get(key);
     if (!perKey) dispatchMemo.set(key, (perKey = new Map()));
-    const memoKey = argKey === "" ? (side === "i" ? name : `${name} s`) : `${name} ${side} ${argKey}`;
+    const memoKey = side === "i" ? name : `${name} s`;
     const kept = perKey.get(memoKey);
     if (kept) return kept;
     const skip = new Set(declared);
     const found = new Set<string>();
     const seen = new Set<string>([key]);
-    const queue = childrenOf(key, args, argFile);
+    const queue = childrenOf(key);
     for (let i = 0; i < queue.length && seen.size < 100_000; i++) {
       if (i % 1024 === 1023) checkBudget();
       const k = queue[i] as string;
@@ -1515,7 +1486,7 @@ export function createWorld(input: ResolveInput): World {
       seen.add(k);
       const hit = methodOn(k, name, side, 0);
       if (hit && "ids" in hit) for (const id of hit.ids) if (!skip.has(id) && defById.get(id)?.abstract !== true) found.add(id);
-      for (const c of childrenOf(k, undefined, "")) if (!seen.has(c)) queue.push(c);
+      for (const c of childrenOf(k)) if (!seen.has(c)) queue.push(c);
     }
     const out = [...found].sort((a, b) => {
       const x = defById.get(a);
@@ -1552,8 +1523,8 @@ export function createWorld(input: ResolveInput): World {
 
   // ---------- calls ----------
   // Where a call bound through a type that others extend or implement may
-  // also go: the static type, the side, and its generic arguments.
-  type Dispatch = { key: string; side: Side; args?: TypeRef[] };
+  // also go: the static type and the side.
+  type Dispatch = { key: string; side: Side };
   type Outcome =
     | { ids: string[]; ev: Ev; dispatch?: Dispatch }
     | { miss: { target: string; name: string }; ev: Ev; cause: Cause }
@@ -1689,7 +1660,7 @@ export function createWorld(input: ResolveInput): World {
         // by an annotation, a declared result or a field may be any class
         // below it. In Go only an interface has implementations.
         const dispatches = family === "go" ? isIface(key.key) : kind !== "receiver-constructor";
-        return withDispatch(out, dispatches ? { key: key.key, side: "i", ...(r.path.length === 0 && r.type.args ? { args: r.type.args } : {}) } : null);
+        return withDispatch(out, dispatches ? { key: key.key, side: "i" } : null);
       }
       case "name": {
         if (family === "ruby") {
@@ -1966,7 +1937,7 @@ export function createWorld(input: ResolveInput): World {
         // override that may run instead, possible, capped per site.
         if (out.dispatch) {
           const d = out.dispatch;
-          const targets = dispatchTargets(d.key, call.name, d.side, out.ids, d.args, path);
+          const targets = dispatchTargets(d.key, call.name, d.side, out.ids);
           const contract = isIface(d.key) || out.ids.every((id) => defById.get(id)?.abstract === true);
           const rule = contract ? "dispatch-implements" : "dispatch-override";
           const declared = `${shortKey(d.key)}.${call.name}`;

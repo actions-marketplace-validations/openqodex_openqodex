@@ -582,7 +582,6 @@ class Ctx {
     // assigned the name something else after.
     const bindType = (t: TypeRef | null | undefined): void => {
       const s = t as Stamped | null | undefined;
-      s?.args?.forEach(bindType);
       const at = s?.[READ_IN];
       if (!s || !at) return;
       const readAs = s[READ_AS];
@@ -725,13 +724,7 @@ function jsTypeRef(annotation: Node | null): TypeRef | null {
       const inner = jsTypeRef(arg);
       return inner ? { ...inner, elem: true } : null;
     }
-    // Plain names as arguments (`Repo<User>`) are kept: a candidate
-    // implementing Repo<Order> is then proved not to be this one.
-    const list = t.childForFieldName("type_arguments")?.namedChildren ?? [];
-    const read = list.length <= 4 ? list.map((a) => (a.type === "type_identifier" || a.type === "nested_type_identifier" ? jsTypeRef(a) : null)) : [];
-    const args = read.length > 0 && read.every((a) => a !== null && a.result === undefined) ? (read as TypeRef[]) : undefined;
-    const named = jsTypeRef(t.childForFieldName("name"));
-    return named && args ? { ...named, args } : named;
+    t = t.childForFieldName("name");
   }
   if (!t) return null;
   const { line, column } = pos(t);
