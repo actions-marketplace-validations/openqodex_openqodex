@@ -678,19 +678,21 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       // What the facts could not read in this list: a gap each, and a list
       // of the module joined in is walked as part of it.
       for (const u of unreadOf(file, list)) {
-        if (live.size > 0 && !live.has(u.seq)) continue;
+        // Before the last replacement that always runs, nothing is served.
+        if (u.seq < from) continue;
         if (u.join !== undefined && entriesOf(file, u.join, -1).length > 0 && depth < MAX_INCLUDE_DEPTH && !stack.includes(`${file}#${u.join}`)) {
           walk(app, file, u.join, -1, prefix, via, namespaces, depth + 1, [...stack, `${file}#${u.join}`]);
           continue;
         }
         out.gap({ site: siteOf(file, u), scope, affects: ["handles", "mounts"], cause: u.cause, name: list, note: `${u.what}; its routes may be missing` });
       }
+      // The routers whose urls are joined into this list.
+      for (const r of grouped(file, "urlrouter", (x) => x.name).get(list) ?? []) routerRegistrations(app, file, r.router[0] as string, prefix, via, namespaces);
     }
     if (parent === -1 && list === "urlpatterns") {
       visited.add(file);
       const decl = listSteps(file, "urlpatterns").find((l) => !l.literal);
       if (decl) out.gap({ site: siteOf(file, decl), scope, affects: ["handles", "mounts"], cause: "dynamic", name: "urlpatterns", note: "urlpatterns is built by code the graph does not run; its routes may be missing" });
-      for (const r of factsOf(file, "urlrouter")) routerRegistrations(app, file, r.router[0] as string, prefix, via, namespaces);
     }
     entriesOf(file, list, parent).forEach(({ f, i }) => {
       // An entry of a list a later assignment replaced is not served.
@@ -829,7 +831,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   // deep, a cap, migration operations built by code.
   for (const file of index.factFiles()) {
     if (!enabled(file)) continue;
-    for (const u of factsOf(file, "unread")) if (u.list === null) out.gap({ site: siteOf(file, u), scope: { file }, affects: ["handles", "mounts", "changes_schema", "reads_config"], cause: u.cause, name: null, note: u.what });
+    for (const u of unreadOf(file, null)) out.gap({ site: siteOf(file, u), scope: { file }, affects: u.affects ?? ["handles", "mounts", "changes_schema", "reads_config"], cause: u.cause, name: null, note: u.what });
   }
 
   // ---------- templates ----------

@@ -1,0 +1,28 @@
+{
+  "guards": "makes no route from a Django name that a tuple unpacking, a loop target or a with target rebinds at module level",
+  "frameworks": {
+    "plugin": "django",
+    "notRegistrations": [
+      "mysite/urls.py:13",
+      "mysite/urls.py:14",
+      "mysite/urls.py:15"
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/urls.py",
+        "line": 13,
+        "cause": "unsupported-rule"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 14,
+        "cause": "unsupported-rule"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 15,
+        "cause": "unsupported-rule"
+      }
+    ]
+  }
+}

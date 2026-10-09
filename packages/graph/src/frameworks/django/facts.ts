@@ -5,6 +5,7 @@
 // and resolve.ts decides through the file's imports whether it is
 // Django's own API.
 import type { Node } from "web-tree-sitter";
+import type { FrameworkEdgeKind } from "../plugin.js";
 import { DYNAMIC, dotted, isLit, lineOf, pyArgs, pyString, pyStrings } from "../shared/literals.js";
 import type { Lit } from "../shared/literals.js";
 
@@ -31,9 +32,10 @@ export type DjangoFact = At &
     | { kind: "assigned"; names: string[]; complete: boolean } // the names top-level assignments bind: module-level values
     // Something the facts saw and could not read: a URL list item that is
     // not a call, a list built by a call, a statement nested too deep, a cap.
-    // `list` names the URL list it belongs to (null: the module), and `join`
-    // a list of this module joined into it, which resolve follows.
-    | { kind: "unread"; list: string | null; seq: number; cond: boolean; what: string; cause: "dynamic" | "unsupported-rule" | "fan-out-capped"; join?: string }
+    // `list` names the URL list it belongs to (null: the module), `join`
+    // a list of this module joined into it, which resolve follows, and
+    // `affects` the relations it can hide when it is not in a URL list.
+    | { kind: "unread"; list: string | null; seq: number; cond: boolean; what: string; cause: "dynamic" | "unsupported-rule" | "fan-out-capped"; join?: string; affects?: FrameworkEdgeKind[] }
     | { kind: "router"; name: string; ctor: Ref; slash: "yes" | "no" | "dynamic" } // trailing_slash as written
     | { kind: "register"; router: string; prefix: Lit; view: Ref | null; basename: Lit }
     | { kind: "render"; fn: Ref; template: Lit }
@@ -60,6 +62,12 @@ const URL_FUNCTIONS = new Set(["path", "re_path", "url"]);
 const SETTING = /^[A-Z][A-Z0-9_]*$/;
 const MAX_SETTINGS = 400;
 const MAX_ASSIGNED = 2000;
+// The relations an unread fact may name.
+const UNREAD_AFFECTS: ReadonlySet<string> = new Set(["handles", "mounts", "renders", "tests", "declares_field", "changes_schema", "maps_to", "uses_type", "schedules", "reads_config", "defines_config", "runs"]);
+const REVERSE_NAMES = new Set(["reverse", "reverse_lazy", "resolve_url"]);
+// Statements whose body runs any number of times, or picks one branch.
+const LOOPS: Record<string, string> = { for_statement: "a for loop", while_statement: "a while loop", match_statement: "a match statement" };
+const LIST_REMOVERS = new Set(["remove", "pop", "clear"]);
 
 export function wantsDjango(source: string): boolean {
   return /django|rest_framework|urlpatterns|INSTALLED_APPS|ROOT_URLCONF|client\.(get|post|put|patch|delete|head|options)\(/.test(source);
@@ -107,7 +115,9 @@ const CLAUSES = new Set(["elif_clause", "else_clause", "except_clause", "finally
 // an `except` or a try's `else`); a `try` body, a `finally` and a `with`
 // body run.
 type Statement = { node: Node; cond: boolean };
-function topStatements(root: Node, deep: (node: Node) => void): Statement[] {
+// `bind` gets the target of every `with ... as x` and `except ... as x` the
+// walk passes: the names they bind at module level.
+function topStatements(root: Node, deep: (node: Node) => void, bind: (target: Node) => void): Statement[] {
   const out: Statement[] = [];
   const body = (block: Node, cond: boolean, depth: number) => {
     for (const s of block.namedChildren) {
@@ -120,13 +130,34 @@ function topStatements(root: Node, deep: (node: Node) => void): Statement[] {
     }
   };
   const compound = (s: Node, cond: boolean, depth: number) => {
+    const caught = s.type === "except_clause" ? s.childForFieldName("value") : null;
+    if (caught?.type === "as_pattern") {
+      const alias = caught.childForFieldName("alias");
+      if (alias) bind(alias);
+    }
     for (const c of s.namedChildren) {
+      if (c.type === "with_clause") {
+        for (const item of c.namedChildren) {
+          const v = item.childForFieldName("value");
+          const alias = v?.type === "as_pattern" ? v.childForFieldName("alias") : null;
+          if (alias) bind(alias);
+        }
+        continue;
+      }
       if (c.type === "block") body(c, cond || s.type === "if_statement" || s.type === "elif_clause" || s.type === "else_clause" || s.type === "except_clause", depth);
       else if (CLAUSES.has(c.type)) compound(c, cond || (s.type === "if_statement" && c.type !== "finally_clause"), depth);
     }
   };
   body(root, false, 0);
   return out;
+}
+
+// The names a binding target binds: `a`, `a, (b, c)`, `[a, *b]`; an
+// attribute or a subscript binds none.
+function boundNames(target: Node | null, out: string[]): void {
+  if (!target) return;
+  if (target.type === "identifier") out.push(target.text);
+  else if (target.type === "pattern_list" || target.type === "tuple_pattern" || target.type === "list_pattern" || target.type === "tuple" || target.type === "list" || target.type === "list_splat_pattern" || target.type === "as_pattern_target" || target.type === "parenthesized_expression") for (const c of target.namedChildren) boundNames(c, out);
 }
 
 function assignmentOf(stmt: Node): Node | null {
@@ -145,7 +176,22 @@ const CALL_WORDS = /render|get_template|select_template|TemplateResponse|\.conne
 export function djangoFacts(root: Node): DjangoFact[] {
   const out: DjangoFact[] = [];
   const text = root.text;
-  const statements = topStatements(root, (node) => out.push({ kind: "unread", ...lineOf(node), list: null, seq: 0, cond: true, what: "module-level statements nested deeper than four blocks are not read", cause: "fan-out-capped" }));
+  const assigned = new Set<string>();
+  let assignedComplete = true;
+  const bindName = (name: string) => {
+    if (assigned.size < MAX_ASSIGNED) assigned.add(name);
+    else if (!assigned.has(name)) assignedComplete = false;
+  };
+  const bindTarget = (target: Node | null) => {
+    const names: string[] = [];
+    boundNames(target, names);
+    for (const n of names) bindName(n);
+  };
+  const statements = topStatements(
+    root,
+    (node) => out.push({ kind: "unread", ...lineOf(node), list: null, seq: 0, cond: true, what: "module-level statements nested deeper than four blocks are not read", cause: "fan-out-capped" }),
+    bindTarget,
+  );
   const aliases = aliasesOf(statements);
   // A dotted name with its head read through the file's imports.
   const named = (ref: Ref | null): Ref | null => {
@@ -166,7 +212,10 @@ export function djangoFacts(root: Node): DjangoFact[] {
         const ns = keyword.has("namespace") ? pyString(keyword.get("namespace")) : null;
         if (arg?.type === "list") {
           const parent = entryIndex();
-          for (const item of arg.namedChildren) if (item.type === "call") urlEntry(item, list, parent, seq);
+          for (const item of arg.namedChildren) {
+            if (item.type === "call") urlEntry(item, list, parent, seq);
+            else if (item.type !== "comment") unread(item, list, seq, "an item of the included list that is not a call (a name, a spread or a comprehension)", "dynamic");
+          }
           return { view: { t: "include", fn, module: null, ref: null, inline: true }, ns };
         }
         if (arg?.type === "string" || arg?.type === "concatenated_string" || arg?.type === "binary_operator") return { view: { t: "include", fn, module: pyString(arg), ref: null, inline: false }, ns };
@@ -218,8 +267,15 @@ export function djangoFacts(root: Node): DjangoFact[] {
   let cur: Statement = { node: root, cond: false };
 
   let settings = 0;
-  const assigned = new Set<string>();
-  let assignedComplete = true;
+  // The URL lists of the module so far: urlpatterns, and every list whose
+  // items call path, re_path or url.
+  const urlLists = new Set<string>(["urlpatterns"]);
+  // The URL lists a statement names anywhere in it.
+  const listsIn = (node: Node): string[] => {
+    const hits = new Set<string>();
+    for (const id of node.descendantsOfType("identifier")) if (urlLists.has(id.text)) hits.add(id.text);
+    return [...hits];
+  };
   let seq = 0;
   for (const st of statements) {
     const { node: stmt, cond } = st;
@@ -230,8 +286,9 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const left = asg.childForFieldName("left");
       const right = asg.childForFieldName("right");
       const name = left?.type === "identifier" ? left.text : null;
-      if (name && assigned.size < MAX_ASSIGNED) assigned.add(name);
-      else if (name && !assigned.has(name)) assignedComplete = false;
+      bindTarget(left);
+      // `a = b = value` binds b too.
+      for (let r = right; r?.type === "assignment"; r = r.childForFieldName("right")) bindTarget(r.childForFieldName("left"));
       if (!name || !right) continue;
       const at = lineOf(asg);
       const augmented = asg.type === "augmented_assignment";
@@ -239,10 +296,11 @@ export function djangoFacts(root: Node): DjangoFact[] {
       // urlpatterns = [...]; urlpatterns += [...]; urlpatterns = a + [...]; urlpatterns += router.urls
       const parts = right.type === "binary_operator" ? [right.childForFieldName("left"), right.childForFieldName("right")] : [right];
       let sawList = false;
+      for (const part of parts) if (part?.type === "list") sawList = urlItems(part, name, name === "urlpatterns", seq) || sawList;
+      if (sawList) urlLists.add(name);
       for (const part of parts) {
-        if (part?.type === "list") sawList = urlItems(part, name, name === "urlpatterns", seq) || sawList;
         const ref = dotted(part);
-        if (ref && ref.length >= 2 && last(ref) === "urls" && name === "urlpatterns") out.push({ kind: "urlrouter", ...at, name, router: ref.slice(0, -1) });
+        if (ref && ref.length >= 2 && last(ref) === "urls" && (name === "urlpatterns" || sawList)) out.push({ kind: "urlrouter", ...at, name, router: ref.slice(0, -1) });
       }
       // The parts of a URL list's right side the facts do not read as entries:
       // another list of the module joined in (resolve follows it), or a call.
@@ -280,16 +338,34 @@ export function djangoFacts(root: Node): DjangoFact[] {
       }
       continue;
     }
-    // urlpatterns.append(path(...)) and urlpatterns.extend([...])
+    // A loop or a match at module level runs its body any number of times:
+    // a URL list it names is said, and the names it binds no longer prove
+    // an import.
+    if (Object.hasOwn(LOOPS, stmt.type)) {
+      if (stmt.type === "for_statement") bindTarget(stmt.childForFieldName("left"));
+      for (const list of listsIn(stmt)) unread(stmt, list, seq, `${LOOPS[stmt.type]} that uses ${list}, which the graph does not run`, "dynamic");
+      continue;
+    }
+    if (stmt.type === "delete_statement") {
+      for (const list of listsIn(stmt)) unread(stmt, list, seq, `a del of entries of ${list}, which the graph does not track; a listed route may not be served`, "dynamic");
+      continue;
+    }
+    // list.append(path(...)), list.extend([...]) and list.insert(i, path(...))
+    // on a URL list; a remove, pop or clear is said.
     if (stmt.type === "expression_statement" && stmt.namedChildren[0]?.type === "call") {
       const call = stmt.namedChildren[0];
       const fn = calleeOf(call);
-      if (fn && fn.length === 2 && fn[0] === "urlpatterns" && (fn[1] === "append" || fn[1] === "extend")) {
-        const arg = pyArgs(call).positional[0];
-        if (arg?.type === "call") urlEntry(arg, "urlpatterns", -1, seq);
-        else if (arg?.type === "list") urlItems(arg, "urlpatterns", true, seq);
-        else if (arg) unread(arg, "urlpatterns", seq, `urlpatterns.${fn[1]} of a value the graph does not read`, "dynamic");
-        out.push({ kind: "urllist", ...lineOf(call), name: "urlpatterns", literal: true, seq, op: "extend", cond });
+      const list = fn && fn.length === 2 && urlLists.has(fn[0] as string) ? (fn[0] as string) : null;
+      const method = fn?.[1];
+      if (list !== null && (method === "append" || method === "extend" || method === "insert")) {
+        const args = pyArgs(call).positional;
+        const arg = method === "insert" ? args[1] : args[0];
+        if (arg?.type === "call") urlEntry(arg, list, -1, seq);
+        else if (arg?.type === "list" && method === "extend") urlItems(arg, list, true, seq);
+        else unread(arg ?? call, list, seq, `${list}.${method} of a value the graph does not read`, "dynamic");
+        out.push({ kind: "urllist", ...lineOf(call), name: list, literal: true, seq, op: "extend", cond });
+      } else if (list !== null && method !== undefined && LIST_REMOVERS.has(method)) {
+        unread(call, list, seq, `${list}.${method}() takes out entries the graph does not track; a listed route may not be served`, "dynamic");
       }
     }
   }
@@ -317,6 +393,10 @@ export function djangoFacts(root: Node): DjangoFact[] {
     const bases = (cls.childForFieldName("superclasses")?.namedChildren ?? []).map((b) => dotted(b));
     const migration = bases.some((b) => last(b) === "Migration");
     for (const stmt of body.namedChildren) {
+      if (bases.length > 0 && (COMPOUND.has(stmt.type) || Object.hasOwn(LOOPS, stmt.type))) {
+        out.push({ kind: "unread", ...lineOf(stmt), list: null, seq: 0, cond: true, what: `a block in the class body of ${name} is not read, so a field or template set in it is not known`, cause: "unsupported-rule", affects: ["declares_field", "renders", "maps_to"] });
+        continue;
+      }
       if (stmt.type === "class_definition" && stmt.childForFieldName("name")?.text === "Meta") {
         for (const m of stmt.childForFieldName("body")?.namedChildren ?? []) {
           const a = assignmentOf(m);
@@ -418,14 +498,19 @@ export function djangoFacts(root: Node): DjangoFact[] {
         const { positional, keyword } = pyArgs(call);
         const first = positional[0] ?? keyword.get("signal");
         const signals: Ref[] = [];
+        let unreadSignal = !first;
         if (first && (first.type === "list" || first.type === "tuple")) for (const s of first.namedChildren) {
+          if (s.type === "comment") continue;
           const r = dotted(s);
           if (r) signals.push(r);
+          else unreadSignal = true;
         }
         else {
           const r = dotted(first);
           if (r) signals.push(r);
+          else unreadSignal = true;
         }
+        if (unreadSignal) out.push({ kind: "unread", ...at, list: null, seq: 0, cond: false, what: `the signal of the receiver ${fnName} is not a name the graph reads`, cause: "dynamic", affects: ["schedules"] });
         out.push({ kind: "receiver", ...at, dec: ref, signals, sender: dotted(keyword.get("sender")), fn: fnName });
       }
     }
@@ -485,6 +570,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const base = dotted(positional[0]);
       const key = pyString(positional[1]);
       if (base && last(base) === "settings" && typeof key === "string" && SETTING.test(key)) out.push({ kind: "setting_read", ...at, base, key });
+      else if (base && last(base) === "settings" && typeof key !== "string") out.push({ kind: "unread", ...at, list: null, seq: 0, cond: false, what: "a settings read whose key is computed", cause: "dynamic", affects: ["reads_config"] });
       continue;
     }
     if (fn.length >= 2 && HTTP_METHODS.includes(tail)) {
@@ -494,7 +580,10 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const { positional, keyword } = pyArgs(call);
       const node = positional[0] ?? keyword.get("path");
       if (!node) continue;
-      const path = node.type === "string" || node.type === "concatenated_string" || node.type === "binary_operator" ? pyString(node) : null;
+      // A path from reverse() is linked by the route's name; any other
+      // value that is not a literal is computed.
+      const fromReverse = node.type === "call" && REVERSE_NAMES.has(tailOf(calleeOf(node)) ?? "");
+      const path = fromReverse ? null : pyString(node);
       out.push({ kind: "client", ...at, recv, method: tail, path });
     }
   }
@@ -549,7 +638,7 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
     case "assigned":
       return Array.isArray(f.names) && f.names.length <= MAX_ASSIGNED && f.names.every(isStr) && typeof f.complete === "boolean";
     case "unread":
-      return (f.list === null || isStr(f.list)) && Number.isInteger(f.seq) && typeof f.cond === "boolean" && isStr(f.what) && (f.cause === "dynamic" || f.cause === "unsupported-rule" || f.cause === "fan-out-capped") && (f.join === undefined || isStr(f.join));
+      return (f.list === null || isStr(f.list)) && Number.isInteger(f.seq) && typeof f.cond === "boolean" && isStr(f.what) && (f.cause === "dynamic" || f.cause === "unsupported-rule" || f.cause === "fan-out-capped") && (f.join === undefined || isStr(f.join)) && (f.affects === undefined || (Array.isArray(f.affects) && f.affects.length <= UNREAD_AFFECTS.size && f.affects.every((a) => typeof a === "string" && UNREAD_AFFECTS.has(a))));
     case "app_name":
     case "settings_module":
       return isLit(f.value);

@@ -41,7 +41,7 @@ export const django: FrameworkPlugin<DjangoFact> = {
         version: RULES.urls.version,
         description: "Each path, re_path or url entry of a urlpatterns list reached from ROOT_URLCONF is a registration bound to its view through the resolver; a class view's HTTP methods and a class instance's __call__ are possible handlers.",
         emits: ["registration", "handles", "route_handler", "route_table"],
-        fixtures: { positive: ["blog-app", "real-code-shapes"], aliased: ["urls-aliased-import"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic", "computed-prefix"], metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["blog-app", "real-code-shapes", "unread-statements"], aliased: ["urls-aliased-import", "rebound-by-binding"], unrelatedSameName: ["urls-unrelated-path"], dynamic: ["urls-dynamic", "computed-prefix", "unread-statements"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.include.id,
@@ -97,14 +97,14 @@ export const django: FrameworkPlugin<DjangoFact> = {
         version: RULES.signals.version,
         description: "@receiver(signal) and signal.connect(handler) connect a Django signal or a Signal() of the repository to its receiver.",
         emits: ["schedules", "signal", "signal_receiver"],
-        fixtures: { positive: ["commands-signals-tags"], aliased: ["commands-signals-tags"], unrelatedSameName: ["commands-signals-tags"], dynamic: { none: "a signal is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["commands-signals-tags"], aliased: ["commands-signals-tags"], unrelatedSameName: ["commands-signals-tags"], dynamic: ["unread-statements"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.settings.id,
         version: RULES.settings.version,
         description: "Upper-case assignments of an application's settings module are config keys; settings.X reads through django.conf are links to them, never their values.",
         emits: ["config_key", "defines_config", "reads_config", "config"],
-        fixtures: { positive: ["settings-keys"], aliased: ["settings-keys"], unrelatedSameName: ["settings-keys"], dynamic: { none: "a getattr with a computed key is not read" }, metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["settings-keys"], aliased: ["settings-keys"], unrelatedSameName: ["settings-keys"], dynamic: ["unread-statements"], metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.tests.id,
