@@ -645,7 +645,8 @@ export type RunManifest = {
 };
 
 // Where the base of a target review came from, in the order they are tried.
-export type BaseSource = "--base" | "the pull request" | "review.default_base" | "the remote's default branch";
+// "the host": the merge base a host gave reviewChange, proved in its clone.
+export type BaseSource = "--base" | "the pull request" | "review.default_base" | "the remote's default branch" | "the host";
 
 export type RunTarget = {
   spec: string; // as the developer wrote it: a branch, #<n> or a pull request URL

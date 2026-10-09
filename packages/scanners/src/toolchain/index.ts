@@ -199,7 +199,10 @@ function installDetached(entry: string, tool: string, recipe: Recipe, home: stri
 
 const NO_RECIPE = "no install recipe; this build cannot run it";
 
-type ResolverOptions = { allowInstall: boolean; installBudgetMs: number | null; onProgress?: (line: string) => void };
+// `home`: the folder whose tools/ holds the installed scanners; the
+// openqodex home when left out. A server passes its read-only install root
+// with installs off.
+type ResolverOptions = { allowInstall: boolean; installBudgetMs: number | null; onProgress?: (line: string) => void; home?: string };
 
 async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promise<ToolResolution> {
   // The budget covers everything below, the runtime probes included.
@@ -207,7 +210,7 @@ async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promi
   const table = loadToolchain();
   const recipe = table.tools[scanner];
   if (!recipe) return IN_PROCESS.has(scanner) ? { ok: false, status: "failed", reason: "runs inside openqodex, no tool to resolve" } : { ok: false, status: "not_installed", reason: NO_RECIPE };
-  const home = openqodexHome();
+  const home = opts.home ?? openqodexHome();
   // The probe is shared and may finish in the background; this caller waits
   // for it only as long as its budget allows.
   const probe = missingRuntime(recipe);
