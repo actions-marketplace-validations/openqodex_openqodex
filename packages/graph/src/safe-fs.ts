@@ -135,7 +135,8 @@ function isDef(v: unknown, imports: number, values: number): boolean {
     optBool(v.pointer) &&
     (v.params === undefined || isList(v.params, isStr, 256)) &&
     (v.invokes === undefined || isList(v.invokes, (i) => isIndex(i, params), 256)) &&
-    (v.returns === undefined || isList(v.returns, (i) => isIndex(i, values), 256))
+    (v.returns === undefined || isList(v.returns, (i) => isIndex(i, values), 256)) &&
+    optBool(v.returnsOther)
   );
 }
 

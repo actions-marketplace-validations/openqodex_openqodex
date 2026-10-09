@@ -1872,7 +1872,9 @@ export function createWorld(input: ResolveInput): World {
             if (targets.length > DISPATCH_CAP) {
               unknowns.push({ file: path, line: call.line, column: call.column, name: "", cause: "fan-out-capped", shape, caller: callerId, scope: "file", note: `${by} returns ${targets.length.toLocaleString("en-US")} functions by name; the ${(targets.length - DISPATCH_CAP).toLocaleString("en-US")} past the first ${DISPATCH_CAP} are not listed as possible targets of this call` });
             }
-            continue;
+            // A callee that also returns something else (a parameter, a
+            // call) may hand back any function: the call keeps its gap.
+            if (!callees.some((id) => defById.get(id)?.returnsOther === true)) continue;
           }
         }
         // A computed call on a literal table may call any of its entries;
@@ -2093,7 +2095,7 @@ export function createWorld(input: ResolveInput): World {
 
     // What each function does with its parameters and what it returns by name.
     const summaries = new Map<string, InvocationSummary>();
-    for (const [id, d] of defById) if (d.invokes || d.returns) summaries.set(id, { params: d.params ?? [], invokes: d.invokes ?? [], returns: returnsOf(id) });
+    for (const [id, d] of defById) if (d.invokes || d.returns) summaries.set(id, { params: d.params ?? [], invokes: d.invokes ?? [], returns: returnsOf(id), returnsOther: d.returnsOther === true });
 
     return { nodes, edges: callerEdges, references: refEdges, dispatch, summaries, importers, defsByFile, misses, unknowns, unresolvedSites, externalSites, budgetFiles };
   };

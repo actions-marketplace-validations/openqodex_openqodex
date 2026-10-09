@@ -111,7 +111,7 @@ export function writeIndex(g: Graph): Record<string, string> {
   const unknowns = g.unknowns.map((u) => [e.s(u.file), u.line, u.column, e.s(u.name), e.s(u.cause), e.s(u.shape), e.s(u.caller), u.scope === "project" ? 1 : 0, e.s(u.note), u.candidates ? u.candidates.map(e.s) : -1]);
   const references = g.references.map(e.edge);
   const dispatch = g.dispatch.map((x) => [e.s(x.file), x.line, x.column, e.s(x.caller), e.s(x.name), x.declared.map(e.s), x.candidates.map(e.s), x.total, e.s(x.rule)]);
-  const summaries = [...g.summaries].map(([id, x]) => [e.s(id), x.params.map(e.s), x.invokes, x.returns.map(e.s)]);
+  const summaries = [...g.summaries].map(([id, x]) => [e.s(id), x.params.map(e.s), x.invokes, x.returns.map(e.s), x.returnsOther ? 1 : 0]);
   return {
     "index/format.json": JSON.stringify({ format: INDEX_FORMAT }),
     "index/strings.json": JSON.stringify(e.table),
@@ -182,7 +182,7 @@ export function readIndex(gen: OpenGeneration): (Omit<Graph, "repoRoot"> & { rep
       total: r[7] as number,
       rule: d.s(r[8] as number) as DispatchSite["rule"],
     }));
-    const summaries = new Map<string, InvocationSummary>(summaryRows.map((r) => [d.s(r[0] as number), { params: (r[1] as number[]).map(d.s), invokes: r[2] as number[], returns: (r[3] as number[]).map(d.s) }]));
+    const summaries = new Map<string, InvocationSummary>(summaryRows.map((r) => [d.s(r[0] as number), { params: (r[1] as number[]).map(d.s), invokes: r[2] as number[], returns: (r[3] as number[]).map(d.s), returnsOther: r[4] === 1 }]));
     const extra = { references: referenceRows.map(d.edge), dispatch, summaries };
     return assemble(nodes, edgeRows.map(d.edge), importerRows.map(d.edge), misses, unknowns, status, deserializeModel(projects.model), projects.goModules, extra);
   } catch {

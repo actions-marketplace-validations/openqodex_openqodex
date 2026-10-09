@@ -603,6 +603,8 @@ class Ctx {
     for (const d of this.defs) {
       if (!d.returns) continue;
       const kept = d.returns.map((i) => renumber.get(i)).filter((i): i is number => i !== undefined);
+      // A returned name that is a local or a parameter is a value the graph does not name.
+      if (kept.length < d.returns.length) d.returnsOther = true;
       if (kept.length > 0) d.returns = kept;
       else delete d.returns;
     }
@@ -1120,7 +1122,10 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
     const sides = value?.type === "ternary_expression" ? [value.childForFieldName("consequence"), value.childForFieldName("alternative")] : [value];
     for (const side of sides) {
       const v = jsValueNode(ctx, side);
-      if (!v) continue;
+      if (!v) {
+        if (side && owner >= 0) (ctx.defs[owner] as DefFact).returnsOther = true;
+        continue;
+      }
       const ref = ctx.addValue(v, "return");
       if (owner >= 0) ((ctx.defs[owner] as DefFact).returns ??= []).push(ref);
     }
@@ -1598,7 +1603,10 @@ function extractPython(tree: Tree): FileFacts {
     const sides = value?.type === "conditional_expression" ? [value.namedChildren[0] ?? null, value.namedChildren[2] ?? null] : [value];
     for (const side of sides) {
       const v = pyValueNode(ctx, side);
-      if (!v) continue;
+      if (!v) {
+        if (side && owner >= 0) (ctx.defs[owner] as DefFact).returnsOther = true;
+        continue;
+      }
       const ref = ctx.addValue(v, "return");
       if (owner >= 0) ((ctx.defs[owner] as DefFact).returns ??= []).push(ref);
     }
@@ -2153,7 +2161,10 @@ function extractGo(tree: Tree): FileFacts {
         const list = node.firstNamedChild;
         for (const r of list?.type === "expression_list" ? list.namedChildren : list ? [list] : []) {
           const v = goValueNode(ctx, r);
-          if (!v) continue;
+          if (!v) {
+            if (owner >= 0) (ctx.defs[owner] as DefFact).returnsOther = true;
+            continue;
+          }
           const ref = ctx.addValue(v, "return");
           if (owner >= 0) ((ctx.defs[owner] as DefFact).returns ??= []).push(ref);
         }

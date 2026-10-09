@@ -70,6 +70,10 @@ export type DefFact = {
   params?: string[];
   invokes?: number[];
   returns?: number[];
+  // A return hands back something other than a function named by the
+  // graph (a parameter, a call, an expression): a call of the result may
+  // run that too.
+  returnsOther?: boolean;
 };
 
 // A name in value position: an argument, the right side of an assignment,
@@ -214,10 +218,11 @@ export type DispatchSite = {
 };
 
 // What a function does with its parameters and what it returns, read from
-// its body: the parameters it calls and the functions it returns by name.
-// Kept for functions that do either; a framework rule reads it to decide
-// whether a wrapped handler may run (never that it does).
-export type InvocationSummary = { params: string[]; invokes: number[]; returns: string[] };
+// its body: the parameters it calls, the functions it returns by name, and
+// whether it also returns something else (then what it returns is not
+// known whole). Kept for functions that do any of it; a framework rule
+// reads it to decide whether a wrapped handler may run (never that it does).
+export type InvocationSummary = { params: string[]; invokes: number[]; returns: string[]; returnsOther: boolean };
 
 // A call site whose evidence named a place (a file, a class, a Go package)
 // where no symbol of that name exists now. A removed symbol's surviving

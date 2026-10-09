@@ -105,7 +105,7 @@ describe("lookup orders and value rules", () => {
     expect(into(g, idOf(g, "src/written.ts", "f"))).toEqual(["src/written.ts:8 may_invoke possible"]);
   });
 
-  it.skip("keeps a gap at a call of a returned value when one branch returns something other than a named function (9)", async () => {
+  it("keeps a gap at a call of a returned value when one branch returns something other than a named function (9)", async () => {
     const g = await graphOf({
       "src/pick.ts": "function known(): number {\n  return 1;\n}\nfunction pick(flag: boolean, other: () => number): () => number {\n  if (flag) return known;\n  return other;\n}\nexport function run(h: () => number): number {\n  return pick(false, h)();\n}\n",
     });
