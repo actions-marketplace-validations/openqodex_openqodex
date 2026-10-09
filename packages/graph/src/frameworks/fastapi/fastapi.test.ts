@@ -293,6 +293,36 @@ def stacked():
 def outer_wrapped():
     return 3
 `;
+  // Calls with more arguments than the plugin reads, the keyword that
+  // matters written last.
+  const filler = Array.from({ length: 30 }, (_, i) => `a${i}=${i}`).join(", ");
+  const TRUNCATED = `from fastapi import APIRouter, Depends, FastAPI
+
+app = FastAPI()
+
+
+def helper():
+    return 1
+
+
+router = APIRouter(${filler}, prefix="/hidden")
+app.include_router(router)
+
+
+@router.get("/r")
+def r():
+    return 1
+
+
+@app.api_route("/m", ${filler}, methods=["POST"])
+def m():
+    return 2
+
+
+@app.get("/d", ${filler}, dependencies=[Depends(helper)])
+def d():
+    return 3
+`;
   const REBOUND = `from fastapi import FastAPI
 
 app = FastAPI()
@@ -308,7 +338,7 @@ FastAPI = object
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-fool-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED });
+    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED });
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null });
   });
@@ -368,6 +398,17 @@ FastAPI = object
     const gap = graph.frameworks?.unknowns.find((u) => u.plugin === "fastapi" && u.site?.file === "app/wrapped.py" && u.site.line === wrapped.site.line && u.cause === "unsupported-rule");
     expect(gap?.name).toBe("wrap");
     for (const kept of ["/a", "/b", "/outer-wrap"]) expect(by(kept).handler.status).toBe("bound");
+  });
+
+  it("draws no prefix, methods or dependencies from a call with more arguments than it reads, and says so", () => {
+    const regs = fastapiRegs(graph).filter((r) => r.site.file === "app/truncated.py");
+    const by = (w: string) => regs.find((r) => r.written === w) as Registration;
+    expect(by("/r").pattern).toBeNull();
+    expect(by("/m").methods).toEqual(["*"]);
+    const gaps = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "fastapi" && u.site?.file === "app/truncated.py");
+    expect(gaps.some((u) => u.affects.includes("mounts") && u.site?.line === 10)).toBe(true);
+    expect(gaps.some((u) => u.affects.includes("handles") && u.site?.line === by("/m").site.line)).toBe(true);
+    expect(gaps.some((u) => u.affects.includes("applies_middleware") && u.site?.line === by("/d").site.line)).toBe(true);
   });
 
   it("reads no decorator inside a broken region of a file, keeps the routes before it, and says the file has a syntax error", () => {

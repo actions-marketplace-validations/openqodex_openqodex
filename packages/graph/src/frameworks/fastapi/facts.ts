@@ -46,9 +46,11 @@ export type FastApiFact =
   // parameters past MAX_PARAMS. `below` lists the decorators between this
   // one and the def, top to bottom (at most MAX_ARGS, `belowOmitted` the
   // rest): what this decorator registers is the function they return.
-  | (FrameworkFactBase & { kind: "route"; recv: string[]; method: string; args: Expr[]; kw: Kw[]; fn: string; def: number; scope: number; params: ParamDep[]; omitted: number; below: Decorator[]; belowOmitted: number })
-  // A watched call `recv.prop(args)` that is not a decorator.
-  | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; kw: Kw[]; scope: number })
+  | (FrameworkFactBase & { kind: "route"; recv: string[]; method: string; args: Expr[]; kw: Kw[]; fn: string; def: number; scope: number; params: ParamDep[]; omitted: number; below: Decorator[]; belowOmitted: number; cut: number })
+  // A watched call `recv.prop(args)` that is not a decorator. On both this
+  // and "route", `cut` counts the arguments past MAX_ARGS: a keyword not
+  // found may be among them.
+  | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; kw: Kw[]; scope: number; cut: number })
   // The file is larger than MAX_SOURCE_BYTES and was not read.
   | (FrameworkFactBase & { kind: "too-large"; bytes: number })
   // The file has a syntax error (the first one is at the fact's position);
@@ -104,6 +106,7 @@ function paramDeps(fn: Node): { params: ParamDep[]; omitted: number } {
         const types = args.map((a) => (a.type === "type" ? a.firstNamedChild : a)).filter((a): a is Node => a !== null);
         annotation = types[0] ? readExpr(types[0]) : null;
         for (const meta of types.slice(1, MAX_ARGS)) if (meta.type === "call") params.push({ call: readExpr(meta), type: annotation });
+        if (types.length > MAX_ARGS) omitted += types.length - MAX_ARGS;
       } else annotation = readExpr(inner);
     } else if (inner) annotation = readExpr(inner);
     const value = p.childForFieldName("value");
@@ -255,7 +258,7 @@ export function readFacts(root: Node): FastApiFact[] {
           if (e.t !== "call") return;
           deps ??= paramDeps(def);
           const below = decorators.slice(i + 1, i + 1 + MAX_ARGS).map((x) => ({ line: x.line, text: x.text, route: x.route }));
-          out.push({ kind: "route", line: d.line, column: d.column, recv: d.recv, method: d.method, args: e.args, kw: e.kw, fn: name, def: node.startPosition.row + 1, scope: scope.line, params: deps.params, omitted: deps.omitted, below, belowOmitted: Math.max(0, decorators.length - i - 1 - below.length) });
+          out.push({ kind: "route", line: d.line, column: d.column, recv: d.recv, method: d.method, args: e.args, kw: e.kw, fn: name, def: node.startPosition.row + 1, scope: scope.line, params: deps.params, omitted: deps.omitted, below, belowOmitted: Math.max(0, decorators.length - i - 1 - below.length), cut: e.omitted });
         });
         return;
       }
@@ -272,10 +275,10 @@ export function readFacts(root: Node): FastApiFact[] {
           if (e.t !== "call") return;
           const recv = readExpr(fn.childForFieldName("object"));
           if (recv.t !== "call") return;
-          out.push({ kind: "call", ...pos(node), recv, prop, args: e.args, kw: e.kw, scope: scope.line });
+          out.push({ kind: "call", ...pos(node), recv, prop, args: e.args, kw: e.kw, scope: scope.line, cut: e.omitted });
           return;
         }
-        out.push({ kind: "call", ...pos(node), recv: { t: "ref", path: e.fn.path.slice(0, -1), line: e.fn.line, column: e.fn.column }, prop, args: e.args, kw: e.kw, scope: scope.line });
+        out.push({ kind: "call", ...pos(node), recv: { t: "ref", path: e.fn.path.slice(0, -1), line: e.fn.line, column: e.fn.column }, prop, args: e.args, kw: e.kw, scope: scope.line, cut: e.omitted });
         return;
       }
       case "assignment":
@@ -378,10 +381,11 @@ export function isFastApiFact(v: unknown): v is FastApiFact {
         Number.isInteger(f.omitted) &&
         Array.isArray(f.below) &&
         f.below.every((d) => typeof d === "object" && d !== null && Number.isInteger((d as { line?: unknown }).line) && typeof (d as { text?: unknown }).text === "string" && typeof (d as { route?: unknown }).route === "boolean") &&
-        Number.isInteger(f.belowOmitted)
+        Number.isInteger(f.belowOmitted) &&
+        Number.isInteger(f.cut)
       );
     case "call":
-      return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && isKws(f.kw) && Number.isInteger(f.scope);
+      return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && isKws(f.kw) && Number.isInteger(f.scope) && Number.isInteger(f.cut);
     case "too-large":
       return Number.isInteger(f.bytes);
     case "syntax-error":

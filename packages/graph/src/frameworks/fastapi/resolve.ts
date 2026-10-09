@@ -41,7 +41,7 @@ import type { Detection, FrameworkEdge, FrameworkEvidence, FrameworkUnknown, Han
 import { appId, entityId } from "../plugin.js";
 import type { FastApiFact, ParamDep } from "./facts.js";
 import { MAX_SOURCE_BYTES, ROUTE_METHODS } from "./facts.js";
-import type { Expr } from "./py.js";
+import type { Expr, Kw } from "./py.js";
 import { evaluate, show } from "./py.js";
 
 export const PLUGIN = "fastapi";
@@ -441,7 +441,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     paramsOmitted: number;
     scope: number; // the scope the decorator or call is in
   };
-  type IncludeEvent = { file: string; site: Site; router: Expr | undefined; prefix: Expr | undefined; deps: Expr | undefined; scope: number };
+  type IncludeEvent = { file: string; site: Site; router: Expr | undefined; prefix: Expr | undefined; deps: Expr | undefined; scope: number; kw: Kw[]; cut: number };
   const routesOf = new Map<string, RouteEvent[]>();
   const includesOf = new Map<string, IncludeEvent[]>();
   const vals = new Map<string, Known>();
@@ -464,6 +464,14 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     return out;
   };
   const literalName = (e: Expr | undefined): string | null => (e && e.t === "str" ? e.v : null);
+  // A keyword the plugin did not find on a call with more arguments than it
+  // reads may be among the unread ones: say so at the call, and let the
+  // caller treat the keyword as unknown rather than absent.
+  const hidden = (kw: Kw[], cut: number, key: string, site: Site, affects: FrameworkUnknown["affects"], what: string): boolean => {
+    if (cut === 0 || kw.some((k) => k.key === key)) return false;
+    gap({ plugin: PLUGIN, site, scope: { file: site.file }, affects, cause: "fan-out-capped", name: key, note: `the call has ${cut} more arguments than the plugin reads, so its ${key}= may be among them; ${what}`, count: null, exact: false });
+    return true;
+  };
 
   // A route whose own path is computed is no registration: an unknown
   // naming the handler, at the decorator or call site.
@@ -510,8 +518,10 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       if (!base) continue;
       const site: Site = { file, line: r.line, column: r.column };
       const ws = r.method === "websocket";
-      const methods = ws ? ["GET"] : r.method === "api_route" ? methodsOf(file, kwOf(r, "methods"), ["GET"]) : METHODS.has(r.method) ? [r.method.toUpperCase()] : null;
+      const methodsHidden = r.method === "api_route" && hidden(r.kw, r.cut, "methods", site, ["handles"], "the route is listed as taking any method");
+      const methods = ws ? ["GET"] : r.method === "api_route" ? (methodsHidden ? null : methodsOf(file, kwOf(r, "methods"), ["GET"])) : METHODS.has(r.method) ? [r.method.toUpperCase()] : null;
       const name = literalName(kwOf(r, "name")) ?? (ws ? "websocket" : null);
+      hidden(r.kw, r.cut, "dependencies", site, ["applies_middleware"], "the dependencies it declares are not listed");
       const wrap = r.below.find((d) => !d.route || !baseAt.has(d.line));
       const wrapper = wrap ? wrap.text : r.belowOmitted > 0 ? `${r.belowOmitted} more decorators` : null;
       addRoute(base, { file, site, methods, name, handler: { kind: "def", fn: r.fn, def: r.def, wrapper }, deps: kwOf(r, "dependencies"), params: wrapper ? [] : r.params, paramsOmitted: wrapper ? 0 : r.omitted, scope: r.scope }, r.args[0] ?? kwOf(r, "path"));
@@ -531,13 +541,17 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       }
       if (c.prop === "include_router") {
         vals.set(base.id, base);
-        push(includesOf, base.id, { file, site, router: c.args[0] ?? kwOf(c, "router"), prefix: kwOf(c, "prefix"), deps: kwOf(c, "dependencies"), scope: c.scope });
+        push(includesOf, base.id, { file, site, router: c.args[0] ?? kwOf(c, "router"), prefix: kwOf(c, "prefix"), deps: kwOf(c, "dependencies"), scope: c.scope, kw: c.kw, cut: c.cut });
       } else if (c.prop === "add_api_route" || c.prop === "add_api_websocket_route") {
         const ws = c.prop === "add_api_websocket_route";
         const endpoint = c.args[1] ?? kwOf(c, "endpoint");
-        if (!endpoint) continue;
-        const methods = ws ? ["GET"] : methodsOf(file, kwOf(c, "methods"), ["GET"]);
+        if (!endpoint) {
+          if (!hidden(c.kw, c.cut, "endpoint", site, ["handles"], "the route is not listed")) siteGap(site, "unsupported-rule", ["handles"], null, `${c.prop} names no endpoint the plugin can read, so the route is not listed`);
+          continue;
+        }
+        const methods = ws ? ["GET"] : hidden(c.kw, c.cut, "methods", site, ["handles"], "the route is listed as taking any method") ? null : methodsOf(file, kwOf(c, "methods"), ["GET"]);
         const name = literalName(kwOf(c, "name")) ?? (ws ? "websocket" : null);
+        hidden(c.kw, c.cut, "dependencies", site, ["applies_middleware"], "the dependencies it declares are not listed");
         addRoute(base, { file, site, methods, name, handler: { kind: "ref", expr: endpoint }, deps: kwOf(c, "dependencies"), params: [], paramsOmitted: 0, scope: c.scope }, c.args[0] ?? kwOf(c, "path"));
       }
     }
@@ -570,9 +584,13 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     if (d.call.t === "call" && isApi(d.file, d.call.fn, DEPENDS_NAMES, d.scope)) {
       out = { targets: [] };
       const site: Site = { file: d.file, line: d.call.line, column: d.call.column };
-      const target = d.call.args[0] ?? kwOf(d.call, "dependency") ?? d.type;
-      if (!target) siteGap(site, "unsupported-rule", ["applies_middleware"], null, `${show(d.call)} names no dependency and its parameter has no annotation the plugin can read`);
-      else {
+      const named = d.call.args[0] ?? kwOf(d.call, "dependency");
+      // `Depends()` depends on the parameter's annotation, unless its
+      // dependency= is among arguments the plugin did not read.
+      const target = named ?? (hidden(d.call.kw, d.call.omitted, "dependency", site, ["applies_middleware"], "the dependency is not listed") ? null : d.type);
+      if (!target) {
+        if (named === undefined && d.call.omitted === 0) siteGap(site, "unsupported-rule", ["applies_middleware"], null, `${show(d.call)} names no dependency and its parameter has no annotation the plugin can read`);
+      } else {
         const b = bindRef(d.file, target, "dependency", d.scope);
         if (b.why && b.status !== "external") siteGap(site, b.why.cause, ["applies_middleware"], b.why.name, b.why.note);
         const ev: FrameworkEvidence = { kind: "route-call", tier: b.tier, site, via: b.via, premises: [], rule: rule("fastapi-dependency"), note: b.note ? `${DEP_NOTE}; ${b.note}` : DEP_NOTE };
@@ -620,8 +638,11 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   const compose = (val: Known, app: string | null, prefix: string | null, inherited: Dep[], inheritedOmitted: number, via: Site[], stack: string[], depth: number) => {
     reached.add(val.id);
     // The router's own prefix and dependencies, or the application's dependencies.
-    const own = val.kind === "router" ? prefixOf(val.file, kwOf(val.call, "prefix"), { file: val.file, line: val.line, column: val.column }, "router") : "";
+    const at: Site = { file: val.file, line: val.line, column: val.column };
+    const prefixHidden = val.kind === "router" && hidden(val.call.kw, val.call.omitted, "prefix", at, ["mounts", "handles"], "the routes under it have no known pattern");
+    const own = val.kind === "router" ? (prefixHidden ? null : prefixOf(val.file, kwOf(val.call, "prefix"), at, "router")) : "";
     const base = prefix === null || own === null ? null : prefix + own;
+    hidden(val.call.kw, val.call.omitted, "dependencies", at, ["applies_middleware"], "the dependencies it declares are not listed");
     const ownDeps = depsOfList(val.file, kwOf(val.call, "dependencies"), val.scope);
     const deps = [...inherited, ...ownDeps.deps];
     const omitted = inheritedOmitted + ownDeps.omitted;
@@ -692,7 +713,8 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         caps.mounts.exact = false; // what the skipped routers hold is not counted
         continue;
       }
-      const inc = prefixOf(e.file, e.prefix, e.site, "include");
+      const inc = hidden(e.kw, e.cut, "prefix", e.site, ["mounts", "handles"], "the routes under it have no known pattern") ? null : prefixOf(e.file, e.prefix, e.site, "include");
+      hidden(e.kw, e.cut, "dependencies", e.site, ["applies_middleware"], "the dependencies it declares are not listed");
       emit({ from: val.id, to: target.id, kind: "mounts", plugin: PLUGIN, app, evidence: { kind: "mount", tier: "certain", site: e.site, via: null, premises: [], rule: rule("fastapi-include"), note: null } });
       const incDeps = depsOfList(e.file, e.deps, e.scope);
       compose(target, app, base === null || inc === null ? null : base + inc, [...deps, ...incDeps.deps], omitted + incDeps.omitted, [...via, e.site], [...stack, target.id], depth + 1);

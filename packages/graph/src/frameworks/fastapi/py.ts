@@ -25,14 +25,15 @@ export type Part = { s: string } | { ref: string[] };
 // `parts: null`, never evaluated), or a `+` concatenation whose `parts`
 // hold its literal pieces and names when every piece is one of those, so
 // resolve can evaluate a concatenation of module-level string constants.
-// `ref` is a name or a dotted name.
-// `call` a call with its positional and keyword arguments. `list` a list or
-// tuple, with `omitted` the items past the read cap. `other` anything else.
+// `ref` is a name or a dotted name. `call` a call with its positional and
+// keyword arguments, `omitted` the arguments past MAX_ARGS (a keyword not
+// found may be among them). `list` a list or tuple, with `omitted` the
+// items past the read cap. `other` anything else.
 export type Expr =
   | ({ t: "str"; v: string } & Pos)
   | ({ t: "dyn"; parts: Part[] | null } & Pos)
   | ({ t: "ref"; path: string[] } & Pos)
-  | ({ t: "call"; fn: Expr; args: Expr[]; kw: Kw[] } & Pos)
+  | ({ t: "call"; fn: Expr; args: Expr[]; kw: Kw[]; omitted: number } & Pos)
   | ({ t: "list"; items: Expr[]; omitted: number } & Pos)
   | ({ t: "other" } & Pos);
 
@@ -241,16 +242,15 @@ export function readExpr(node: Node | null, budget: Budget = { left: MAX_EXPR_NO
       const args: Expr[] = [];
       const kw: Kw[] = [];
       const list = node.childForFieldName("arguments");
-      if (list?.type === "argument_list") {
-        for (const a of named(list)) {
-          if (args.length + kw.length >= MAX_ARGS) break;
-          if (a.type === "keyword_argument") {
-            const key = a.childForFieldName("name");
-            if (key) kw.push({ key: key.text, value: readExpr(a.childForFieldName("value"), budget, depth + 1) });
-          } else args.push(readExpr(a, budget, depth + 1));
-        }
+      const all = list?.type === "argument_list" ? named(list) : [];
+      for (const a of all) {
+        if (args.length + kw.length >= MAX_ARGS) break;
+        if (a.type === "keyword_argument") {
+          const key = a.childForFieldName("name");
+          if (key) kw.push({ key: key.text, value: readExpr(a.childForFieldName("value"), budget, depth + 1) });
+        } else args.push(readExpr(a, budget, depth + 1));
       }
-      return { t: "call", fn, args, kw, ...p };
+      return { t: "call", fn, args, kw, omitted: all.length - args.length - kw.length, ...p };
     }
     case "list":
     case "tuple": {
@@ -344,7 +344,7 @@ export function isExpr(v: unknown, depth = 0): v is Expr {
     case "ref":
       return strings(e.path) && e.path.length > 0;
     case "call":
-      return isExpr(e.fn, depth + 1) && Array.isArray(e.args) && e.args.every((a) => isExpr(a, depth + 1)) && isKws(e.kw, depth + 1);
+      return isExpr(e.fn, depth + 1) && Array.isArray(e.args) && e.args.every((a) => isExpr(a, depth + 1)) && isKws(e.kw, depth + 1) && Number.isInteger(e.omitted);
     case "list":
       return Array.isArray(e.items) && e.items.every((a) => isExpr(a, depth + 1)) && Number.isInteger(e.omitted);
     case "other":
