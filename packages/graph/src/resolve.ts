@@ -24,7 +24,7 @@ import type { ProjectModel } from "./discovery/projects.js";
 import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, metadataUnknown, nodeProjectOf, normalisePy, packageName, pathLinkOff } from "./discovery/projects.js";
 import type { Cause, Cut, EvidenceKind, Shape, Tier, Via } from "./model/records.js";
 import { weakest } from "./model/records.js";
-import type { Lookup } from "./frameworks/plugin.js";
+import type { Lookup as PluginLookup } from "./frameworks/plugin.js";
 import type { BoundImport, CallFact, DefFact, DispatchSite, EdgeKind, Family, FileFacts, GraphEdge, GraphNode, GraphSite, InvocationSummary, Miss, TypeRef, UnknownSite, ValueRef } from "./types.js";
 import { CALLER_KINDS, familyOf } from "./types.js";
 
@@ -193,8 +193,8 @@ export type World = {
   // For the framework layer (frameworks/plugin.ts, PluginIndex): what a
   // dotted name means at the top level of a file, and which file a module
   // specifier names from a file. Read-only; the same rules as call binding.
-  lookup(file: string, path: readonly string[]): Lookup;
-  moduleLookup(file: string, spec: string): Lookup;
+  lookup(file: string, path: readonly string[]): PluginLookup;
+  moduleLookup(file: string, spec: string): PluginLookup;
 };
 
 export function symbolId(file: string, d: Pick<DefFact, "owner" | "name" | "line" | "column">): string {
@@ -2274,14 +2274,14 @@ export function createWorld(input: ResolveInput): World {
 
   // ---------- lookups for the framework layer ----------
   const viaOut = (ev: Ev) => (ev.via ? { file: ev.via.file, line: ev.via.line, spec: ev.via.spec } : null);
-  const modLookup = (mod: Mod | { ns: string; ev: Ev }): Lookup => {
+  const modLookup = (mod: Mod | { ns: string; ev: Ev }): PluginLookup => {
     if (mod === null) return { kind: "none" };
     if ("ext" in mod) return { kind: "external" };
     if ("gap" in mod) return { kind: "gap", cause: mod.gap, note: mod.note, candidates: mod.candidates };
     if ("ns" in mod) return { kind: "module", file: mod.ns, tier: mod.ev.tier, via: viaOut(mod.ev), note: mod.ev.note };
     return { kind: "module", file: mod.file, tier: mod.ev.tier, via: viaOut(mod.ev), note: mod.ev.note };
   };
-  const valueLookup = (v: Value | null): Lookup => {
+  const valueLookup = (v: Value | null): PluginLookup => {
     if (v === null) return { kind: "none" };
     switch (v.v) {
       case "sym":
@@ -2301,7 +2301,7 @@ export function createWorld(input: ResolveInput): World {
         return { kind: "miss", target: v.target, name: v.name };
     }
   };
-  const lookup = (file: string, path: readonly string[]): Lookup => {
+  const lookup = (file: string, path: readonly string[]): PluginLookup => {
     const [head, ...rest] = path;
     if (head === undefined) return { kind: "none" };
     let v = resolveLocal(file, head);
@@ -2314,7 +2314,7 @@ export function createWorld(input: ResolveInput): World {
     }
     return valueLookup(v);
   };
-  const moduleLookup = (file: string, spec: string): Lookup => {
+  const moduleLookup = (file: string, spec: string): PluginLookup => {
     const f = facts.get(file);
     if (!f) return { kind: "none" };
     return modLookup(moduleOf(file, familyOf(f.lang), { spec, line: 0 }));
