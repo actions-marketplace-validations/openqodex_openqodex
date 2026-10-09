@@ -1235,31 +1235,40 @@ export function createWorld(input: ResolveInput): World {
   }
 
   // Go: the shallowest embedding depth wins; two at the same depth is an
-  // ambiguous selector Go itself refuses.
+  // ambiguous selector Go itself refuses, and so is one type reached along
+  // two paths at that depth (two embedded types that both embed it). Each
+  // level counts the paths to each type, up to two, and expands each type
+  // once; a type met at a shallower depth is not walked again.
   function goLookup(key: string, name: string, side: Side): Lookup {
-    let level: { key: string; ev: Ev | null }[] = [{ key, ev: null }];
-    const seen = new Set([key]);
+    let level = new Map<string, { paths: number; ev: Ev | null }>([[key, { paths: 1, ev: null }]]);
+    const done = new Set<string>();
     // An embedded type outside the graph at this depth or above may define it too.
     let outside: string | null = null;
-    for (let depth = 0; depth <= MAX_DEPTH && level.length > 0; depth++) {
-      const hits: { key: string; ids: string[]; ev: Ev | null }[] = [];
-      for (const x of level) {
-        const own = ownMethods(x.key, name, side);
-        if (own) hits.push({ key: x.key, ids: own, ev: x.ev });
+    for (let depth = 0; depth <= MAX_DEPTH && level.size > 0; depth++) {
+      const hits: { key: string; ids: string[]; paths: number; ev: Ev | null }[] = [];
+      for (const [k, x] of level) {
+        done.add(k);
+        const own = ownMethods(k, name, side);
+        if (own) hits.push({ key: k, ids: own, paths: x.paths, ev: x.ev });
       }
-      if (hits.length === 1) {
+      const paths = hits.reduce((n, h) => n + h.paths, 0);
+      if (paths === 1) {
         const hit = hits[0] as { ids: string[]; ev: Ev | null };
         return { ids: hit.ids, ev: outside ? pastOutside(outside, name, hit.ev) : hit.ev };
       }
-      if (hits.length > 1) return { gap: "ambiguous", note: `${name} is promoted from ${hits.length} embedded types at the same depth (${hits.map((h) => shortKey(h.key)).join(", ")}), a selector Go refuses` };
-      const next: { key: string; ev: Ev | null }[] = [];
-      for (const x of level) {
-        const b = basesOf(x.key);
+      if (paths > 1) {
+        const why = hits.length > 1 ? `from ${hits.length} embedded types at the same depth (${hits.map((h) => shortKey(h.key)).join(", ")})` : `from ${shortKey((hits[0] as { key: string }).key)} along two embedding paths at the same depth`;
+        return { gap: "ambiguous", note: `${name} is promoted ${why}, a selector Go refuses` };
+      }
+      const next = new Map<string, { paths: number; ev: Ev | null }>();
+      for (const [k, x] of level) {
+        const b = basesOf(k);
         for (const slot of b.order) if ("outside" in slot) outside ??= slot.outside;
-        b.keys.forEach((k, i) => {
-          if (seen.has(k)) return;
-          seen.add(k);
-          next.push({ key: k, ev: x.ev ? chain(x.ev, b.evs[i] as Ev) : (b.evs[i] as Ev) });
+        b.keys.forEach((base, i) => {
+          if (done.has(base)) return;
+          const kept = next.get(base);
+          if (kept) kept.paths = Math.min(2, kept.paths + x.paths);
+          else next.set(base, { paths: x.paths, ev: x.ev ? chain(x.ev, b.evs[i] as Ev) : (b.evs[i] as Ev) });
         });
       }
       level = next;

@@ -60,7 +60,7 @@ describe("lookup orders and value rules", () => {
     expect(site?.note).toContain("UserDict");
   });
 
-  it.skip("finds a Go selector ambiguous when two embedded types both embed the type that defines it (5)", async () => {
+  it("finds a Go selector ambiguous when two embedded types both embed the type that defines it (5)", async () => {
     const g = await graphOf({
       "go.mod": "module example.com/p\n\ngo 1.22\n",
       "p.go": "package p\n\ntype A struct{}\n\nfunc (A) M() {}\n\ntype L struct{ A }\n\ntype R struct{ A }\n\ntype Both struct {\n\tL\n\tR\n}\n\nfunc use() {\n\tb := Both{}\n\tb.M()\n}\n",
