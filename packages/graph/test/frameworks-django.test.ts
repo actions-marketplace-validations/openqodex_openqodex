@@ -287,6 +287,31 @@ describe("the Django plugin on hostile input", () => {
     expect(held.routes.map((r) => r.pattern).sort()).toEqual(Array.from({ length: 50 }, (_, i) => `n${i}/`).sort());
   }, 120_000);
 
+  it("resolves fields built by a field class among 25,000 classes, and string relations to absent models among 4,000 paths, in under a second", async () => {
+    const models = `from django.db import models\n\n${Array.from({ length: 25_000 }, (_, i) => `class C${i}: pass\n`).join("")}\nclass MoneyField(models.DecimalField): pass\n\n\nclass Price(models.Model):\n${Array.from({ length: 1_900 }, (_, i) => `    p${i} = MoneyField()\n`).join("")}`;
+    const related = `from django.db import models\n\n\nclass Link(models.Model):\n${Array.from({ length: 1_900 }, (_, i) => `    l${i} = models.ForeignKey("Missing${i}", on_delete=models.CASCADE)\n`).join("")}`;
+    const files: Record<string, string> = { "requirements.txt": "Django==5.0\n", "mysite/__init__.py": "", "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n', "mysite/urls.py": "urlpatterns = []\n", "shop/models.py": models };
+    for (let i = 0; i < 8; i++) files[`links${i}/models.py`] = related;
+    for (let i = 0; i < 4_000; i++) files[`shop/templates/t${i}.html`] = "";
+    const root = makeRepo(files);
+    commitAll(root);
+    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+    expect(graph.frameworks?.plugins.find((p) => p.id === "django")?.status).toBe("ok");
+    expect(graph.frameworks?.edges.filter((e) => e.kind === "declares_field").length).toBe(17_100);
+    expect(graph.frameworks?.unknowns.filter((u) => u.cause === "miss" && u.note.startsWith("no model named Missing")).length).toBe(15_200);
+    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+  }, 120_000);
+
+  it("draws the whole resolve from one work budget and says once per project when it runs out", async () => {
+    const root = makeRepo(files);
+    commitAll(root);
+    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+    const spent = graph.frameworks?.unknowns.filter((u) => u.plugin === "django" && u.cause === "budget" && u.site === null && "project" in u.scope) ?? [];
+    expect(spent.length).toBe(1);
+    expect(spent[0]?.note).toContain("work budget");
+    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+  }, 120_000);
+
   it("resolves a models module of 25,000 classes and one field, and settings reads nested deep, in under a second", async () => {
     const models = `from django.db import models\n\n\nclass First(models.Model):\n    f = models.IntegerField()\n${Array.from({ length: 25_000 }, (_, i) => `class M${i}(models.Model): pass\n`).join("")}`;
     const deep = `from django.conf import settings\n\n\ndef f():\n    return ${"(".repeat(200)}settings.KEY${")".repeat(200)}\n`;

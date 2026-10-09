@@ -11,7 +11,7 @@
 // name. Nothing is imported or executed: settings are read as literals.
 import { posix } from "node:path";
 import type { Tier } from "../../model/records.js";
-import type { CallFact, GraphNode } from "../../types.js";
+import type { CallFact, DefFact, GraphNode } from "../../types.js";
 import { appId, entityId } from "../plugin.js";
 import type { Detection, Entity, FrameworkEdge, FrameworkEdgeKind, FrameworkEvidence, FrameworkEvidenceKind, FrameworkUnknown, Lookup, PluginIndex, PluginOutput, Registration, Role, RoleAssignment, Site } from "../plugin.js";
 import { isDynamic } from "../shared/literals.js";
@@ -28,11 +28,13 @@ export const MAX_FAN_OUT = 32;
 // included 400 times that includes another 400 times), so the walk stops
 // here and says so.
 export const MAX_REGISTRATIONS_PER_APP = 10_000;
-// URL entries the walk may visit for one application, and matcher steps a
-// whole resolve may spend on test requests. Past either, the work stops
-// with a gap of cause "budget".
+// URL entries the walk may visit for one application. Past it, the walk of
+// that application stops with a gap of cause "budget".
 export const MAX_WALK_STEPS = 200_000;
-export const MAX_MATCH_STEPS = 2_000_000;
+// The work one whole resolve may do: every URL entry the walk visits, every
+// fact and class the later steps read, and every step of the matcher draws
+// on it. Past it, each step stops and one gap per project says so.
+export const MAX_RESOLVE_STEPS = 2_000_000;
 
 type Index = PluginIndex<DjangoFact>;
 type Of<K extends DjangoFact["kind"]> = Extract<DjangoFact, { kind: K }>;
@@ -282,6 +284,21 @@ function symbolAt(index: Index, file: string, name: string, line: number): Graph
   return m.get(`${name}\0${line}`) ?? null;
 }
 
+// The class definition of the language facts a class symbol stands for: by
+// its name and line, from a map built once per file.
+const defCache = new WeakMap<Index, Map<string, Map<string, DefFact>>>();
+function classDef(index: Index, cls: GraphNode): DefFact | null {
+  let byFile = defCache.get(index);
+  if (!byFile) defCache.set(index, (byFile = new Map()));
+  let m = byFile.get(cls.file);
+  if (!m) {
+    m = new Map();
+    for (const d of index.languageFacts(cls.file)?.defs ?? []) if (d.kind === "class" && !m.has(`${d.name}\0${d.line}`)) m.set(`${d.name}\0${d.line}`, d);
+    byFile.set(cls.file, m);
+  }
+  return m.get(`${cls.name}\0${cls.startLine}`) ?? null;
+}
+
 function methodsOf(index: Index, cls: GraphNode): GraphNode[] {
   return symbolsOf(index, cls.file).methods.get(cls.name) ?? [];
 }
@@ -387,6 +404,53 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       entryCache.set(file, m);
     }
     return m.get(`${list}\0${parent}`) ?? [];
+  };
+  // Whether the file has URL entries in a list of this name.
+  const listCache = new Map<string, Set<string>>();
+  const hasList = (file: string, list: string): boolean => {
+    let names = listCache.get(file);
+    if (!names) {
+      names = new Set();
+      for (const f of factsOf(file, "url")) names.add(f.list);
+      listCache.set(file, names);
+    }
+    return names.has(list);
+  };
+
+  // Facts of a kind grouped by one of their fields, once per file. Each kind
+  // is grouped by one field only.
+  const groupCache = new Map<string, Map<string, DjangoFact[]>>();
+  const grouped = <K extends DjangoFact["kind"]>(file: string, kind: K, key: (f: Of<K>) => string): Map<string, Of<K>[]> => {
+    const k = `${kind}\0${file}`;
+    let m = groupCache.get(k);
+    if (!m) {
+      m = new Map();
+      for (const f of factsOf(file, kind)) {
+        const g = key(f);
+        (m.get(g) ?? m.set(g, []).get(g))?.push(f);
+      }
+      groupCache.set(k, m);
+    }
+    return m as Map<string, Of<K>[]>;
+  };
+  const routersOf = (file: string, name: string) => grouped(file, "router", (r) => r.name).get(name) ?? [];
+  const registersOf = (file: string, router: string) => grouped(file, "register", (r) => r.router).get(router) ?? [];
+  // The statements that build a URL list, in order.
+  const listSteps = (file: string, name: string) => grouped(file, "urllist", (l) => l.name).get(name) ?? [];
+  const unreadOf = (file: string, list: string | null) => grouped(file, "unread", (u) => (u.list === null ? "" : `=${u.list}`)).get(list === null ? "" : `=${list}`) ?? [];
+  const signalDefsOf = (file: string, name: string) => grouped(file, "signal_def", (d) => d.name).get(name) ?? [];
+
+  // The one work budget of the resolve. `take` spends a step for work in a
+  // file; once none is left it records the file's project and says no.
+  const work: Budget = { steps: MAX_RESOLVE_STEPS };
+  const spent = new Set<string>();
+  const take = (file: string): boolean => {
+    if (work.steps > 0) {
+      work.steps--;
+      return true;
+    }
+    spent.add(index.projectOf(file));
+    return false;
   };
 
   // Registrations with the tokens of their composed path, for test requests.
@@ -530,7 +594,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const cls = lk.ids.map((id) => index.node(id)).find((n): n is GraphNode => n !== null && n.kind === "class");
     if (!cls) return null;
     const actions = new Set(methodsOf(index, cls).map((m) => m.name).filter((n) => VIEWSET_ACTIONS.some(([a]) => a === n)));
-    const def = index.languageFacts(cls.file)?.defs.find((d) => d.kind === "class" && d.name === cls.name && d.line === cls.startLine);
+    const def = classDef(index, cls);
     for (const b of def?.bases ?? []) {
       const bref = [...(b.qualifier ? b.qualifier.split(".") : []), b.name];
       const known = DRF_ACTIONS[canonical(index, cls.file, bref) ?? ""];
@@ -546,11 +610,11 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   };
 
   const routerRegistrations = (app: string | null, file: string, routerName: string, prefix: Part[] | null, via: Site[], namespaces: string[]) => {
-    const router = factsOf(file, "router").find((r) => r.name === routerName);
+    const router = routersOf(file, routerName)[0];
     if (!router || !DRF_ROUTERS.has(canonical(index, file, router.ctor) ?? "")) return false;
     const slash = router.slash === "no" ? "" : "/";
     if (router.slash === "dynamic") out.gap({ site: siteOf(file, router), scope: app ? { app } : { file }, affects: ["handles", "tests"], cause: "dynamic", name: routerName, note: "the router's trailing_slash option is computed, so whether its paths end with a slash is not known" });
-    for (const reg of factsOf(file, "register").filter((r) => r.router === routerName)) {
+    for (const reg of registersOf(file, routerName)) {
       const site = siteOf(file, reg);
       if (typeof reg.prefix !== "string") {
         out.gap({ site, scope: app ? { app } : { file }, affects: ["handles"], cause: "dynamic", name: null, note: "the router prefix is computed, so its routes are not known" });
@@ -587,13 +651,12 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       else stepGap(app, file);
       return;
     }
-    const all = index.factsOf(file);
     // The statements Django's list is left with: from the last replacement
     // that always runs, every later one; replacements in branches keep
     // every branch's entries, with a gap.
     let live: Set<number> | null = null;
     if (parent === -1) {
-      const steps = factsOf(file, "urllist").filter((l) => l.name === list).sort((a, b) => a.seq - b.seq);
+      const steps = [...listSteps(file, list)].sort((a, b) => a.seq - b.seq);
       let from = -1;
       for (const l of steps) if (l.op === "replace" && !l.cond) from = l.seq;
       live = new Set(steps.filter((l) => l.seq >= from).map((l) => l.seq));
@@ -601,8 +664,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       if (branchy) out.gap({ site: siteOf(file, branchy), scope, affects: ["handles", "mounts"], cause: "dynamic", name: list, note: `${list} is assigned in a branch, so which routes Django serves depends on how the code runs; the routes of every branch are listed` });
       // What the facts could not read in this list: a gap each, and a list
       // of the module joined in is walked as part of it.
-      for (const u of factsOf(file, "unread")) {
-        if (u.list !== list || (live.size > 0 && !live.has(u.seq))) continue;
+      for (const u of unreadOf(file, list)) {
+        if (live.size > 0 && !live.has(u.seq)) continue;
         if (u.join !== undefined && entriesOf(file, u.join, -1).length > 0 && depth < MAX_INCLUDE_DEPTH && !stack.includes(`${file}#${u.join}`)) {
           walk(app, file, u.join, -1, prefix, via, namespaces, depth + 1, [...stack, `${file}#${u.join}`]);
           continue;
@@ -612,13 +675,14 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     }
     if (parent === -1 && list === "urlpatterns") {
       visited.add(file);
-      const decl = factsOf(file, "urllist").find((l) => !l.literal);
+      const decl = listSteps(file, "urlpatterns").find((l) => !l.literal);
       if (decl) out.gap({ site: siteOf(file, decl), scope, affects: ["handles", "mounts"], cause: "dynamic", name: "urlpatterns", note: "urlpatterns is built by code the graph does not run; its routes may be missing" });
       for (const r of factsOf(file, "urlrouter")) routerRegistrations(app, file, r.router[0] as string, prefix, via, namespaces);
     }
     entriesOf(file, list, parent).forEach(({ f, i }) => {
       // An entry of a list a later assignment replaced is not served.
       if (live !== null && live.size > 0 && !live.has(f.seq)) return;
+      if (!take(file)) return;
       const site = siteOf(file, f);
       const steps = (walkSteps.get(app ?? "-") ?? 0) + 1;
       walkSteps.set(app ?? "-", steps);
@@ -670,7 +734,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
             const holder = index.lookup(file, v.ref.slice(0, -2));
             if (holder.kind === "module" && holder.file.endsWith(".py") && routerRegistrations(app, holder.file, v.ref[v.ref.length - 2] as string, parts, nextVia, ns)) return;
           }
-          if (v.ref.length === 1 && all.some((x) => x.kind === "url" && x.list === v.ref?.[0])) {
+          if (v.ref.length === 1 && hasList(file, v.ref[0] as string)) {
             walk(app, file, v.ref[0] as string, -1, parts, nextVia, ns, depth + 1, stack);
             return;
           }
@@ -757,7 +821,14 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
 
   // ---------- templates ----------
   const templates = new Map<string, string[]>(); // a template name to the files that hold it
-  for (const p of index.paths()) for (const name of templateNames(p)) (templates.get(name) ?? templates.set(name, []).get(name))?.push(p);
+  const templatesNear = new Map<string, string[]>(); // a project and a template name to the files of the project that hold it
+  for (const p of index.paths()) {
+    for (const name of templateNames(p)) {
+      (templates.get(name) ?? templates.set(name, []).get(name))?.push(p);
+      const k = `${index.projectOf(p)}\0${name}`;
+      (templatesNear.get(k) ?? templatesNear.set(k, []).get(k))?.push(p);
+    }
+  }
   const renders = (file: string, from: string, at: { line: number; column: number }, template: Lit, rule: Rule) => {
     const site = siteOf(file, at);
     const app = appOf(file);
@@ -766,10 +837,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       out.gap({ site, scope: { file }, affects: ["renders"], cause: "dynamic", name: null, note: "the template name is computed, so the template is not known" });
       return;
     }
-    const all = templates.get(template) ?? [];
-    const project = index.projectOf(file);
-    const near = all.filter((p) => index.projectOf(p) === project);
-    const hits = near.length > 0 ? near : all;
+    const near = templatesNear.get(`${index.projectOf(file)}\0${template}`) ?? [];
+    const hits = near.length > 0 ? near : (templates.get(template) ?? []);
     if (hits.length === 0) {
       const id = out.entity({ kind: "template", id: entityId(PLUGIN, app, "template", template), plugin: PLUGIN, app, name: template, site: null, file: null, detail: "missing" });
       out.edge({ from, to: id, kind: "renders", plugin: PLUGIN, app, evidence: ev("template-literal", "likely", site, rule, `no file under a templates folder is named ${template}`) });
@@ -789,10 +858,12 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   for (const file of index.factFiles()) {
     if (!enabled(file)) continue;
     for (const r of factsOf(file, "render")) {
+      if (!take(file)) break;
       if (!RENDER_FUNCTIONS.has(canonical(index, file, r.fn, { line: r.line }) ?? "")) continue;
       renders(file, index.enclosing(file, r.line)?.id ?? file, r, r.template, RULES.templates);
     }
     for (const t of factsOf(file, "template_attr")) {
+      if (!take(file)) break;
       const cls = classIn(index, file, t.owner);
       if (cls) renders(file, cls.id, t, t.template, RULES.templates);
     }
@@ -807,6 +878,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     if (!facts) continue;
     for (const d of facts.defs) {
       if (d.kind !== "class" || d.bases.length === 0) continue;
+      if (!take(file)) break;
       const node = symbolAt(index, file, d.name, d.line);
       if (!node || node.kind !== "class") continue;
       candidates.push({ node, file, bases: d.bases.map((b) => [...(b.qualifier ? b.qualifier.split(".") : []), b.name]) });
@@ -820,6 +892,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     let grew = false;
     for (const c of candidates) {
       if (models.has(c.node.id)) continue;
+      if (!take(c.file)) break;
       for (const b of c.bases) {
         const lk = index.lookup(c.file, b);
         if (lk.kind !== "symbol") continue;
@@ -852,7 +925,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     for (const id of lk.ids) {
       const cls = index.node(id);
       if (!cls || cls.kind !== "class") continue;
-      const def = index.languageFacts(cls.file)?.defs.find((d) => d.kind === "class" && d.name === cls.name && d.line === cls.startLine);
+      const def = classDef(index, cls);
       for (const b of def?.bases ?? []) {
         const base = canonical(index, cls.file, [...(b.qualifier ? b.qualifier.split(".") : []), b.name]);
         if (base?.startsWith("django.db.models.")) return { name: base, tier: "likely", note: `a field class of the repository whose base is ${base}` };
@@ -861,8 +934,10 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     return null;
   };
 
-  // App folders by label: every folder that holds a models module.
+  // App folders by label: every folder that holds a models module, and the
+  // models modules of each folder.
   const appDirs = new Map<string, Set<string>>();
+  const modelModules = new Map<string, string[]>();
   for (const p of index.paths()) {
     const segs = p.split("/");
     // <app>/models.py, or <app>/models/<module>.py
@@ -870,6 +945,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     if (!dir || dir.length === 0) continue;
     const label = dir[dir.length - 1] as string;
     (appDirs.get(label) ?? appDirs.set(label, new Set()).get(label))?.add(dir.join("/"));
+    (modelModules.get(dir.join("/")) ?? modelModules.set(dir.join("/"), []).get(dir.join("/")))?.push(p);
   }
   // Every model by app folder first: a field may name by string a model defined later.
   const modelsByApp = new Map<string, Map<string, GraphNode>>(); // app folder to lower-case model name to its class
@@ -878,6 +954,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     (modelsByApp.get(dir) ?? modelsByApp.set(dir, new Map()).get(dir))?.set(m.node.name.toLowerCase(), m.node);
   }
   for (const m of models.values()) {
+    if (!take(m.file)) break;
     const site: Site = { file: m.file, line: m.node.startLine, column: 0 };
     const app = appOf(m.file);
     out.role(m.node.id, "model", null, app, ev("role-base", m.tier, site, RULES.models, m.note ?? "the base class is a model by the resolver's convention"));
@@ -891,6 +968,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       out.edge({ from: m.node.id, to: id, kind: "maps_to", plugin: PLUGIN, app, evidence: ev("declaration", "likely", site, RULES.models, "the default table name: the app label taken from the folder name, then the model name in lower case") });
     } else out.gap({ site: siteOf(m.file, table), scope: { file: m.file }, affects: ["maps_to"], cause: "dynamic", name: "db_table", note: "the table name is computed" });
     for (const f of byOwner(m.file, "field").get(m.node.name) ?? []) {
+      if (!take(m.file)) break;
       const fsite = siteOf(m.file, f);
       // A field is proved by its constructor: Django's own field class, or
       // a class of the repository whose base is one (likely).
@@ -911,7 +989,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         // "auth.User": a label no app folder of the repository has names an installed app outside it.
         if (!target && label !== null && dirs.length === 0) continue;
         // A class of that name in the app's models whose model base comes from a dependency.
-        const named = target ? null : dirs.flatMap((d) => [`${d}/models.py`, ...index.paths().filter((p) => p.startsWith(`${d}/models/`) && p.endsWith(".py"))]).map((f2) => classIn(index, f2, modelName)).find((c) => c !== null);
+        const named = target ? null : dirs.flatMap((d) => modelModules.get(d) ?? []).map((f2) => classIn(index, f2, modelName)).find((c) => c !== null);
         if (named) out.edge({ from: m.node.id, to: named.id, kind: "uses_type", plugin: PLUGIN, app, evidence: ev("association", "likely", fsite, RULES.models, `the class is named by the string "${f.related}" in its app's models; its model base is outside the repository`) });
         else if (target) out.edge({ from: m.node.id, to: target.id, kind: "uses_type", plugin: PLUGIN, app, evidence: ev("association", "likely", fsite, RULES.models, `the model is named by the string "${f.related}", matched by its app folder and name`) });
         else out.gap({ site: fsite, scope: { file: m.file }, affects: ["uses_type"], cause: "miss", name: f.related, note: `no model named ${f.related} was found` });
@@ -933,6 +1011,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     out.role(file, "migration", null, app, ev("role-base", "certain", { file, line: cls.line, column: cls.column }, RULES.migrations, null));
     const byName = modelsByApp.get(appDirOf(file)) ?? new Map<string, GraphNode>();
     for (const op of ops.filter((o) => o.owner === cls.name)) {
+      if (!take(file)) break;
       const site = siteOf(file, op);
       const model = typeof op.model === "string" ? op.model : null;
       const label = `${op.op}${model ? ` ${model.toLowerCase()}` : ""}${typeof op.field === "string" ? `.${op.field}` : ""}${typeof op.to === "string" ? ` to ${op.to}` : ""}`;
@@ -954,10 +1033,10 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   for (const file of index.paths()) {
     const command = commandName(file);
     if (!command || !enabled(file)) continue;
+    if (!take(file)) break;
     const cls = classIn(index, file, "Command");
     if (!cls) continue;
-    const facts = index.languageFacts(file);
-    const def = facts?.defs.find((d) => d.kind === "class" && d.name === "Command" && d.line === cls.startLine);
+    const def = classDef(index, cls);
     const bound = def?.bases.some((b) => COMMAND_BASES.has(canonical(index, file, [...(b.qualifier ? b.qualifier.split(".") : []), b.name]) ?? "")) ?? false;
     const app = appOf(file);
     const site: Site = { file, line: cls.startLine, column: 0 };
@@ -974,6 +1053,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const libs = new Set(factsOf(file, "tag_library").filter((l) => canonical(index, file, l.ctor) === "django.template.Library" || canonical(index, file, l.ctor) === "django.template.library.Library").map((l) => l.name));
     if (libs.size === 0) continue;
     for (const t of factsOf(file, "tag")) {
+      if (!take(file)) break;
       if (!libs.has(t.lib)) continue;
       const fn = functionIn(index, file, t.fn, t.line + 1);
       if (!fn) continue;
@@ -993,11 +1073,11 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const lk = index.lookup(file, ref);
     // An in-repo signal is a module-level `Signal()` value: the lookup lands on its module.
     if (lk.kind === "miss" && !lk.target.includes("::")) {
-      const def = factsOf(lk.target, "signal_def").find((s) => s.name === lk.name && djangoSignalDef(lk.target, s));
+      const def = signalDefsOf(lk.target, lk.name).find((s) => djangoSignalDef(lk.target, s));
       if (def) return { id: out.entity({ kind: "signal", id: entityId(PLUGIN, app, "signal", `${lk.target}:${def.name}`), plugin: PLUGIN, app, name: def.name, site: siteOf(lk.target, def), file: lk.target, detail: null }), tier: "certain", note: null };
     }
     if (ref.length === 1) {
-      const def = factsOf(file, "signal_def").find((s) => s.name === ref[0] && djangoSignalDef(file, s));
+      const def = signalDefsOf(file, ref[0] as string).find((s) => djangoSignalDef(file, s));
       if (def) return { id: out.entity({ kind: "signal", id: entityId(PLUGIN, app, "signal", `${file}:${def.name}`), plugin: PLUGIN, app, name: def.name, site: siteOf(file, def), file, detail: null }), tier: "certain", note: null };
     }
     out.gap({ site, scope: { file }, affects: ["schedules"], cause: "unsupported-rule", name: show(ref), note: `the signal ${show(ref)} is neither one Django sends nor built by Django's Signal class` });
@@ -1007,6 +1087,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     if (!enabled(file)) continue;
     const app = appOf(file);
     for (const r of factsOf(file, "receiver")) {
+      if (!take(file)) break;
       const dec = canonical(index, file, r.dec, { line: r.line });
       if (dec !== "django.dispatch.receiver" && dec !== "django.dispatch.dispatcher.receiver") continue;
       const fn = functionIn(index, file, r.fn, r.line + 1);
@@ -1021,13 +1102,14 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       }
     }
     for (const c of factsOf(file, "connect")) {
+      if (!take(file)) break;
       const site = siteOf(file, c);
       if (!c.handler) {
-        if (canonical(index, file, c.signal) !== null || factsOf(file, "signal_def").some((d) => d.name === c.signal[0])) out.gap({ site, scope: { file }, affects: ["schedules"], cause: "dynamic", name: show(c.signal), note: `${show(c.signal)}.connect() of a receiver that is not a name the graph binds` });
+        if (canonical(index, file, c.signal) !== null || signalDefsOf(file, c.signal[0] as string).length > 0) out.gap({ site, scope: { file }, affects: ["schedules"], cause: "dynamic", name: show(c.signal), note: `${show(c.signal)}.connect() of a receiver that is not a name the graph binds` });
         continue;
       }
       const name = canonical(index, file, c.signal, { line: c.line, callee: [...c.signal, "connect"] });
-      const inRepo = !name && (factsOf(file, "signal_def").some((s) => s.name === c.signal[0] && c.signal.length === 1) || index.lookup(file, c.signal).kind === "miss");
+      const inRepo = !name && ((c.signal.length === 1 && signalDefsOf(file, c.signal[0] as string).length > 0) || index.lookup(file, c.signal).kind === "miss");
       if (!(name !== null && DJANGO_SIGNAL_MODULES.some((m) => name.startsWith(m))) && !inRepo) continue;
       const sig = signalEntity(file, c.signal, app, site);
       if (!sig) continue;
@@ -1050,6 +1132,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const file = (app.data as { settings: string }).settings;
     out.role(file, "config", "settings", app.id, ev("config-define", "certain", app.site, RULES.settings, null));
     for (const s of factsOf(file, "setting")) {
+      if (!take(file)) break;
       const site = siteOf(file, s);
       const id = out.entity({ kind: "config_key", id: entityId(PLUGIN, app.id, "config_key", s.name), plugin: PLUGIN, app: app.id, name: s.name, site, file: null, detail: "settings" });
       keyIds.set(`${app.id}\0${s.name}`, id);
@@ -1062,6 +1145,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     if (reads.length === 0) continue;
     const projectApps = appsByProject.get(index.projectOf(file)) ?? [];
     for (const r of reads) {
+      if (!take(file)) break;
       const base = canonical(index, file, r.base);
       if (base !== "django.conf.settings") continue;
       const from = index.enclosing(file, r.line)?.id ?? file;
@@ -1089,7 +1173,6 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     (byProject.get(p) ?? byProject.set(p, []).get(p))?.push(r);
     if (r.name !== null) (byName.get(`${p}\0${r.name}`) ?? byName.set(`${p}\0${r.name}`, []).get(`${p}\0${r.name}`))?.push(r);
   }
-  const budget: Budget = { steps: MAX_MATCH_STEPS };
   for (const file of index.factFiles()) {
     if (!isTestPath(file) || !enabled(file)) continue;
     const app = appOf(file);
@@ -1097,6 +1180,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     out.role(file, "test", "file", app, ev("role-path", "certain", site, RULES.tests, null));
     const facts = index.languageFacts(file);
     for (const d of facts?.defs ?? []) {
+      if (!take(file)) break;
       const node = symbolAt(index, file, d.name, d.line);
       if (!node) continue;
       if (d.kind === "class" && (d.bases.some((b) => TEST_BASES.has(canonical(index, file, [...(b.qualifier ? b.qualifier.split(".") : []), b.name]) ?? "")) || d.name.startsWith("Test"))) out.role(node.id, "test", "class", app, ev("role-path", "certain", { file, line: d.line, column: d.column }, RULES.tests, null));
@@ -1118,21 +1202,21 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         out.gap({ site: csite, scope: { file }, affects: ["tests"], cause: "budget", name: null, note: `the request path is longer than ${MAX_REQUEST} characters and is not matched against routes` });
         continue;
       }
-      if (budget.steps <= 0) {
-        out.gap({ site: null, scope: { file }, affects: ["tests"], cause: "budget", name: null, note: "the matcher's step budget ran out; later test requests are not linked to routes" });
+      if (!take(file)) {
+        out.gap({ site: null, scope: { file }, affects: ["tests"], cause: "budget", name: null, note: "the work budget ran out; later test requests of this file are not linked to routes" });
         break;
       }
       const hits: Registration[] = [];
       let unmatchable = 0;
       for (const r of reachable) {
-        if (--budget.steps < 0) break;
+        if (--work.steps < 0) break;
         if (!r.methods.includes("*") && !r.methods.includes(method)) continue;
         const toks = patterns.get(r.id);
         if (!toks) {
           unmatchable++;
           continue;
         }
-        const m = matchTokens(toks, path, budget);
+        const m = matchTokens(toks, path, work);
         if (m === "budget") break;
         if (m) hits.push(r);
       }
@@ -1144,6 +1228,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       }
     }
     for (const rv of factsOf(file, "reverse")) {
+      if (!take(file)) break;
       if (!REVERSE_FUNCTIONS.has(canonical(index, file, rv.fn, { line: rv.line }) ?? "")) continue;
       const rsite = siteOf(file, rv);
       if (isDynamic(rv.name)) {
@@ -1156,6 +1241,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       for (const r of hits.slice(0, MAX_FAN_OUT)) out.edge({ from, to: r.id, kind: "tests", plugin: PLUGIN, app: r.app, category: "route-name", evidence: ev("test-route-name", hits.length === 1 ? "likely" : "possible", rsite, RULES.tests, `the test names the route ${rv.name}`, null, [r.id]) });
     }
   }
+  // Said once per project whose work the budget cut.
+  for (const project of spent) out.gap({ site: null, scope: { project }, affects: EDGE_KINDS, cause: "budget", name: null, note: `the Django plugin used its work budget of ${MAX_RESOLVE_STEPS} steps; later routes, models, templates, signals, settings reads and test links of this project are not listed` });
   return { roles: out.roles, entities: out.entities, edges: out.edges, unknowns: out.unknowns };
 }
 
