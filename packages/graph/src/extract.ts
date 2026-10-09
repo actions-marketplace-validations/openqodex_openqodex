@@ -22,8 +22,11 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 // parameters given another value, abstract Python methods by decorator
 // only, and every type an annotation names. 15: the parameters and returns
 // of a function written as a const arrow or function expression, and the
-// call a local holds found by the call's end.
-export const EXTRACTOR_VERSION = 15;
+// call a local holds found by the call's end. 16: each base a class writes
+// as an expression the facts cannot name (`extends mixin(Base)`, a Python
+// base made by a call or a subscript, a Ruby superclass or mixin that is
+// not a constant), as the class's dynamic bases.
+export const EXTRACTOR_VERSION = 16;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -1204,6 +1207,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         if (!name) return;
         const bases: TypeRef[] = [];
         const implemented: TypeRef[] = [];
+        const dynamicBases: { line: number; column: number }[] = [];
         const typeParams = jsTypeParams(node);
         enteringTypeParams = typeParams;
         const heritage = node.namedChildren.find((c) => c.type === "class_heritage");
@@ -1219,11 +1223,13 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           const value = h.type === "extends_clause" ? h.childForFieldName("value") : h;
           const ref = value ? jsTypeRef(value) : null;
           if (ref) bases.push(ref);
+          // A base written as an expression (`extends mixin(Base)`): what it extends is not known.
+          else if (value && value.type !== "comment") dynamicBases.push(pos(value));
         }
         enteringTypeParams = null;
         // The superclass first: a member is looked up there before an interface.
         bases.push(...implemented);
-        const def = ctx.addDef(node, name, "class", { topLevel: ctx.atModuleLevel(), exported: isExportedDecl(node) && !isDefaultExport(node), bases });
+        const def = ctx.addDef(node, name, "class", { topLevel: ctx.atModuleLevel(), exported: isExportedDecl(node) && !isDefaultExport(node), bases, ...(dynamicBases.length > 0 ? { dynamicBases } : {}) });
         return ctx.push({ def, cls: name.text, locals: null, ...(typeParams ? { typeParams } : {}) });
       }
       case "method_definition": {
@@ -1689,14 +1695,22 @@ function extractPython(tree: Tree): FileFacts {
         const name = node.childForFieldName("name");
         if (!name) return;
         const bases: TypeRef[] = [];
+        const dynamicBases: { line: number; column: number; head?: TypeRef }[] = [];
         for (const b of node.childForFieldName("superclasses")?.namedChildren ?? []) {
+          // `metaclass=M` and `**options` are keywords of the class statement, never a base.
+          if (b.type === "keyword_argument" || b.type === "dictionary_splat" || b.type === "comment") continue;
           const ref = pyTypeRef(b);
           if (ref) bases.push(ref);
+          else {
+            // A base made by a call, a subscript (`Base[int]`, `Generic[T]`) or a `*bases` list.
+            const head = b.type === "subscript" ? pyTypeRef(b.childForFieldName("value")) : null;
+            dynamicBases.push({ ...pos(b), ...(head ? { head } : {}) });
+          }
         }
         const span = node.parent?.type === "decorated_definition" ? node.parent : node;
         const top = ctx.atModuleLevel();
         const cls = ctx.cls();
-        const def = ctx.addDef(node, name, "class", { topLevel: top, exported: !name.text.startsWith("_"), bases, owner: cls?.cls ?? null }, span);
+        const def = ctx.addDef(node, name, "class", { topLevel: top, exported: !name.text.startsWith("_"), bases, owner: cls?.cls ?? null, ...(dynamicBases.length > 0 ? { dynamicBases } : {}) }, span);
         return ctx.push({ def, cls: name.text, locals: null });
       }
       case "function_definition": {
@@ -2320,7 +2334,9 @@ function extractRuby(tree: Tree): FileFacts {
     const bases: TypeRef[] = [];
     const sup = node.childForFieldName("superclass")?.firstNamedChild;
     if (sup && (sup.type === "constant" || sup.type === "scope_resolution")) bases.push({ name: sup.text, qualifier: outer, ...pos(sup) });
-    const def = ctx.addDef(node, nameNode, kind, { owner, topLevel: true, exported: true, bases });
+    // A superclass made by an expression (`< Struct.new(:a)`): what it extends is not known.
+    const dynamicBases = sup && !(sup.type === "constant" || sup.type === "scope_resolution") ? [pos(sup)] : [];
+    const def = ctx.addDef(node, nameNode, kind, { owner, topLevel: true, exported: true, bases, ...(dynamicBases.length > 0 ? { dynamicBases } : {}) });
     return ctx.push({ def, cls: full, locals: null });
   };
   walk(tree, RB_TYPES, (node) => {
@@ -2383,8 +2399,11 @@ function extractRuby(tree: Tree): FileFacts {
               // Ruby applies the modules of one statement last first, so
               // `include A, B` puts A before B: they are recorded in the
               // order Ruby applies them, as if written one statement each.
+              const def = ctx.defs[cls.def] as DefFact;
               for (const a of [...args].reverse()) {
-                if (a.type === "constant" || a.type === "scope_resolution") (ctx.defs[cls.def] as DefFact).bases.push({ name: a.text, qualifier: cls.cls, ...pos(a), rel: method.text as "include" | "extend" | "prepend" });
+                if (a.type === "constant" || a.type === "scope_resolution") def.bases.push({ name: a.text, qualifier: cls.cls, ...pos(a), rel: method.text as "include" | "extend" | "prepend" });
+                // `extend self` adds the module's own methods; any other expression is a mixin not known.
+                else if (a.type !== "self" && a.type !== "comment") (def.dynamicBases ??= []).push(pos(a));
               }
             }
             return;

@@ -123,6 +123,7 @@ function isDef(v: unknown, imports: number, values: number): boolean {
     typeof v.exported === "boolean" &&
     typeof v.topLevel === "boolean" &&
     isList(v.bases, isType, 1024) &&
+    (v.dynamicBases === undefined || isList(v.dynamicBases, (b) => isObj(b) && isInt(b.line) && isInt(b.column) && (b.head === undefined || isType(b.head)), 1024)) &&
     isObj(v.fields) &&
     Object.keys(v.fields).length <= 4096 &&
     Object.values(v.fields).every(isType) &&

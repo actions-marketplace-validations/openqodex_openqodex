@@ -13,7 +13,7 @@ import { detectImpact, toImpactUnknown } from "../impact.js";
 import type { Tier } from "../model/records.js";
 import { weakest } from "../model/records.js";
 import { familyOf } from "../types.js";
-import type { Family, Graph, GraphEdge, GraphNode, GraphSite } from "../types.js";
+import type { Family, Graph, GraphEdge, GraphNode, GraphSite, UnknownSite } from "../types.js";
 import { candidate, counts, empty, fail, isAnswer, listing, Point, qualified, stoppedAt } from "./answer.js";
 import type { Answer, Extra, Job, Request, Session } from "./answer.js";
 import { edgeId } from "./ids.js";
@@ -192,10 +192,28 @@ export class Overrides {
   }
 }
 
-// Languages where a class may name its base with an expression (a call such
-// as a mixin, a conditional): the facts keep a base only when it is a name,
-// so a class declared that way is tied to no base, and no gap records it.
-const EXPRESSION_BASES = new Set<Family>(["js", "python", "ruby"]);
+// The classes that name a base with an expression (a call such as a mixin,
+// a conditional): the facts keep a base only when it is a name, so such a
+// class is tied to no base, and the resolver records a dynamic-base gap on
+// it. What it extends is not known, so it may be missing under any class
+// of its language. By language family, built once per graph when a
+// session opens it (open.ts), so no question pays for it.
+const dynamicBaseIndex = new WeakMap<Graph, Map<Family, UnknownSite[]>>();
+export function dynamicBases(g: Graph, family: Family): UnknownSite[] {
+  let ix = dynamicBaseIndex.get(g);
+  if (!ix) {
+    ix = new Map();
+    for (const u of g.unknowns) {
+      if (u.cause !== "dynamic-base") continue;
+      const lang = g.nodes.get(u.caller)?.lang ?? null;
+      if (lang === null) continue;
+      const f = familyOf(lang);
+      (ix.get(f) ?? ix.set(f, []).get(f))?.push(u);
+    }
+    dynamicBaseIndex.set(g, ix);
+  }
+  return ix.get(family) ?? [];
+}
 
 export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job {
   const g = s.graph;
@@ -237,9 +255,13 @@ export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>)
       reasons.push("calls through an interface or a base type are not resolved in this build, so a method that implements an interface method is not listed here");
       causes["unsupported-rule"] = null;
     }
-    if (n.kind !== "type" && n.lang !== null && EXPRESSION_BASES.has(familyOf(n.lang))) {
-      reasons.push("this build does not read a base written as an expression (a call such as a mixin, or a conditional), so a class declared that way is not listed");
-      causes["unsupported-rule"] = null;
+    const hidden = n.lang !== null ? dynamicBases(g, familyOf(n.lang)) : [];
+    const first = hidden[0];
+    if (first) {
+      const cls = g.nodes.get(first.caller);
+      const example = `${cls ? qualified(cls) : first.caller} at ${first.file}:${first.line}`;
+      reasons.push(`${hidden.length} ${hidden.length === 1 ? "class names" : "classes name"} a base with an expression the graph does not read (a call such as a mixin, or a conditional), such as ${example}; a class declared that way is not listed, and may extend this one`);
+      causes["dynamic-base"] = hidden.length;
     }
     if (n.kind === "type" && !rel.has("implements")) {
       reasons.push("this build does not read `implements` clauses or Go method sets, so the classes that implement it are not listed");
@@ -255,7 +277,9 @@ export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>)
     }
     const skipped = notReadIn(g, g.projectOf(n.file));
     if (skipped > 0) reasons.push(`${skipped} ${skipped === 1 ? "file" : "files"} of its project ${skipped === 1 ? "was" : "were"} not read`);
-    return listing({ ...base, target, counts: counts(items), unknown: withFloor(base, reasons, causes) }, items, { beyond: beyond.length > 0 ? { frontier: beyond } : null });
+    const unknown = withFloor(base, reasons, causes);
+    if (hidden.length > 0) unknown.examples = hidden.slice(0, 5).map(toImpactUnknown);
+    return listing({ ...base, target, counts: counts(items), unknown }, items, { beyond: beyond.length > 0 ? { frontier: beyond } : null });
   };
 }
 

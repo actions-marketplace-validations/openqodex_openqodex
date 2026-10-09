@@ -47,6 +47,11 @@ export type DefFact = {
   exported: boolean;
   topLevel: boolean; // bindable by name from the rest of the file
   bases: TypeRef[]; // classes: extends, superclasses, include; Go: embedded fields
+  // Classes: each base written as an expression the facts cannot name (a
+  // call such as a mixin, a conditional, a subscript), where it stands.
+  // `head`: a Python subscript's head when it is a name (`Generic` of
+  // `Generic[T]`), so the resolver can tell typing's own apart.
+  dynamicBases?: { line: number; column: number; head?: TypeRef }[];
   fields: Record<string, TypeRef>; // classes and structs: field name to its declared or constructed type
   results?: (TypeRef | null)[]; // functions and methods: the declared result types
   static?: boolean; // methods called on the class itself: JS `static`, Ruby `def self.x`

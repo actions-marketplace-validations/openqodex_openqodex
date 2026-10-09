@@ -88,6 +88,7 @@ export type Cause =
   | "ambiguous" // several definitions could be meant and no evidence picks one
   | "miss" // the evidence names a place where no such symbol exists now
   | "dynamic" // a call through a value: a parameter, a computed member
+  | "dynamic-base" // a class names a base with an expression (a call, a conditional), so what it extends is not known
   | "fan-out-capped"
   | "file-not-parsed" // the file was not read: size, budget, cap, memory, a parse error
   | "unsupported-language"
@@ -107,6 +108,7 @@ export const CAUSES: readonly Cause[] = [
   "ambiguous",
   "miss",
   "dynamic",
+  "dynamic-base",
   "fan-out-capped",
   "file-not-parsed",
   "unsupported-language",

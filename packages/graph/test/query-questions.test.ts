@@ -35,7 +35,9 @@
 //     overrides past it.
 // 15. A class whose base is written as an expression (a call, a mixin) is
 //     not tied to the base, and `implementers` of the base says nothing of
-//     what it could not read: a short list with no floor.
+//     what it could not read: a short list with no floor. Or the floor is
+//     said for every class of the language, though no class in the graph
+//     names its base that way, so a whole list reads as a short one.
 // 16. `impact` gives the summary's list of places that used a changed
 //     public name, which keeps the first 200, as if it were whole: no
 //     floor, no cut, and no page holds the rest.
@@ -399,8 +401,11 @@ describe("questions the corpus holds nothing for", () => {
     // `class Mid extends Base` in the same file proves the inheritance, and the lookup order the override.
     expect(o.map((i) => [i.from.includes("#Mid.run@"), i.kind, i.site.tier, i.site.evidence, i.site.rule])).toEqual([[true, "overrides", "certain", "same-scope", "override"]]);
     expect(q({ kind: "explain", target: { id: o[0]?.edge } }).error).toBeNull();
-    // Calls through interfaces and base types are resolved: no reason says otherwise.
+    // Calls through interfaces and base types are resolved, and no class of
+    // this repository names its base with an expression: the answer is whole (15).
     expect(m.unknown.reasons.join(" ")).not.toMatch(/not resolved/);
+    expect(m.unknown.floor).toBe(false);
+    expect(q({ kind: "implementers", target: { name: "Base" } }).unknown.floor).toBe(false);
     expect(q({ kind: "implementers", target: { name: "other" } }).error?.code).toBe("bad-request");
   });
 
@@ -469,14 +474,19 @@ describe("implementers at the edge of what the graph reads", () => {
     expect(two.truncated.by).toBeNull();
   });
 
-  it("says a floor for a base written as an expression, which this build does not read (15)", () => {
+  it("says a floor for a base written as an expression, and names the class that carries it (15)", () => {
     const a = q({ kind: "implementers", target: { name: "Base" } });
     expect(a.error).toBeNull();
     expect((a.items as Item[]).map((i) => i.fromName)).toEqual(["L1", "L2", "L3"]);
     expect(a.unknown.floor).toBe(true);
-    expect(a.unknown.reasons.join(" ")).toMatch(/base written as an expression/);
-    // The same boundary holds for the overrides derived from the inheritance.
-    expect(q({ kind: "implementers", target: { name: "Base.run" } }).unknown.reasons.join(" ")).toMatch(/base written as an expression/);
+    expect(a.unknown.reasons.join(" ")).toMatch(/base with an expression/);
+    expect(a.unknown.reasons.join(" ")).toMatch(/Child at src\/mixed\.ts:5/);
+    expect(a.unknown.causes["dynamic-base"]).toBe(1);
+    // The same boundary holds for the overrides of a method.
+    expect(q({ kind: "implementers", target: { name: "Base.run" } }).unknown.causes["dynamic-base"]).toBe(1);
+    // The gap is recorded on the class, where the unknowns question finds it.
+    const u = q({ kind: "unknowns", target: { file: "src/mixed.ts" } });
+    expect((u.items as { cause: string; line: number | null }[]).map((x) => [x.cause, x.line])).toEqual([["dynamic-base", 5]]);
   });
 });
 
@@ -561,5 +571,39 @@ describe("the relations the resolver keeps apart from calls", () => {
     const possible = (a.items as { type: string; hops?: Item[] }[]).filter((x) => x.type === "possible-caller");
     expect(possible.map((x) => (x.hops as Item[]).map((h) => [h.fromName, h.kind, h.site.tier]))).toEqual([[["store", "dispatches_to", "possible"]]]);
     expect(a.counts.possible).toBe(1);
+  });
+});
+
+describe("a base written as an expression in Python and Ruby (15)", () => {
+  const build = async (files: Record<string, string>): Promise<Session> => {
+    const repo = makeRepo(files);
+    dirs.push(repo);
+    const graph = await buildGraph({ repoRoot: repo, store: null });
+    return { graph, generation: "bases-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+  };
+  const ask1 = (t: Session, req: Omit<Request, "apiVersion">) => query(t, { apiVersion: 1, ...req } as Request);
+
+  it("says no floor for a Python class generic over a type, and one for a base made by a call", async () => {
+    const typed = await build({
+      "app/base.py": "from typing import Generic, TypeVar\n\nT = TypeVar(\"T\")\n\n\nclass Base:\n    def run(self):\n        return 0\n\n\nclass Box(Generic[T]):\n    pass\n\n\nclass Meta(Base, metaclass=type):\n    pass\n",
+    });
+    const whole = ask1(typed, { kind: "implementers", target: { name: "Base" } });
+    expect((whole.items as Item[]).map((i) => i.fromName)).toEqual(["Meta"]);
+    expect(whole.unknown.floor).toBe(false);
+    const made = await build({
+      "app/base.py": "class Base:\n    def run(self):\n        return 0\n\n\ndef make(b):\n    return b\n\n\nclass Child(make(Base)):\n    pass\n",
+    });
+    const short = ask1(made, { kind: "implementers", target: { name: "Base" } });
+    expect(short.items).toEqual([]);
+    expect(short.unknown.floor).toBe(true);
+    expect(short.unknown.causes["dynamic-base"]).toBe(1);
+  });
+
+  it("records a Ruby superclass made by a call and an include of an expression, and not `extend self`", async () => {
+    const t = await build({
+      "lib/row.rb": "class Row < Struct.new(:a)\n  include Helpers.pick\nend\n\nmodule Tools\n  extend self\nend\n",
+    });
+    const u = ask1(t, { kind: "unknowns", target: { file: "lib/row.rb" } });
+    expect((u.items as { cause: string; line: number | null }[]).filter((x) => x.cause === "dynamic-base").map((x) => x.line)).toEqual([1, 2]);
   });
 });

@@ -42,8 +42,9 @@ export const HUB_FILES = 8; // a name defined in more files never binds without 
 export const DISPATCH_CAP = 32;
 // 8: dispatch through interfaces and base types, language lookup orders
 // (Python C3, Go embedding depth, Ruby mixins), value and type uses,
-// may_invoke, overrides and implements.
-export const RESOLVER_VERSION = 8;
+// may_invoke, overrides and implements. 9: a dynamic-base gap on each class
+// that names a base with an expression.
+export const RESOLVER_VERSION = 9;
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -2010,6 +2011,16 @@ export function createWorld(input: ResolveInput): World {
             if (to === defIds[i]) continue;
             addEdge(defIds[i] as string, to, b.rel === "implements" ? "implements" : "inherits", siteOf(path, b.line, b.column, key.ev));
           }
+        }
+      });
+      // A base written as an expression: the class extends something the
+      // graph cannot name, so it may be missing from what implements or
+      // extends any class of its language. Typing's own `Generic[T]` and
+      // `Protocol[T]` name no class and are no gap.
+      f.defs.forEach((d, i) => {
+        for (const b of d.dynamicBases ?? []) {
+          if (b.head && family === "python" && (isTyping(path, b.head, "Generic") || isTyping(path, b.head, "Protocol"))) continue;
+          unknowns.push({ file: path, line: b.line, column: b.column, name: "", cause: "dynamic-base", shape: "other", caller: defIds[i] as string, scope: "file", note: `${d.name} names a base with an expression the graph does not read, so the class it extends is not known` });
         }
       });
       // Overrides: a method to the member of a base it overrides or implements.
