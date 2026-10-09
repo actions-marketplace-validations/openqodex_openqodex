@@ -22,8 +22,10 @@ type At = { line: number; column: number };
 
 export type DjangoFact = At &
   (
-    | { kind: "url"; list: string; parent: number; fn: Ref; route: Lit; view: View; name: Lit; ns: Lit }
-    | { kind: "urllist"; name: string; literal: boolean }
+    | { kind: "url"; list: string; parent: number; seq: number; fn: Ref; route: Lit; view: View; name: Lit; ns: Lit }
+    // One statement that builds a URL list: it replaces the list or extends
+    // it, in statement order (`seq`), inside a branch that may not run or not.
+    | { kind: "urllist"; name: string; literal: boolean; seq: number; op: "replace" | "extend"; cond: boolean }
     | { kind: "urlrouter"; name: string; router: Ref }
     | { kind: "app_name"; value: Lit }
     | { kind: "assigned"; names: string[] } // the names top-level assignments bind: module-level values
@@ -66,9 +68,9 @@ const calleeOf = (call: Node): Ref | null => dotted(call.childForFieldName("func
 // as show`. Read from the same file, so the facts stay context-free; a name
 // test on a call (is this `render`, `include`, `receiver`?) reads through
 // it, and the fact keeps the name as written for resolve to bind.
-function aliasesOf(statements: Node[]): Map<string, string[]> {
+function aliasesOf(statements: Statement[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const stmt of statements) {
+  for (const { node: stmt } of statements) {
     if (stmt.type === "import_from_statement") {
       const module = stmt.childForFieldName("module_name")?.text ?? "";
       const base = module.startsWith(".") ? [] : module.split(".");
@@ -93,21 +95,31 @@ function aliasesOf(statements: Node[]): Map<string, string[]> {
 
 // Statements at the top level of the module, through `if` and `try` blocks
 // (settings and URL lists are often assembled under `if DEBUG:`).
-function topStatements(root: Node): Node[] {
-  const out: Node[] = [];
-  const visit = (block: Node, depth: number) => {
+const COMPOUND = new Set(["if_statement", "try_statement", "with_statement"]);
+const CLAUSES = new Set(["elif_clause", "else_clause", "except_clause", "finally_clause"]);
+
+// `cond`: inside a branch that may not run (an `if`, `elif` or `else` body,
+// an `except` or a try's `else`); a `try` body, a `finally` and a `with`
+// body run.
+type Statement = { node: Node; cond: boolean };
+function topStatements(root: Node): Statement[] {
+  const out: Statement[] = [];
+  const body = (block: Node, cond: boolean, depth: number) => {
     for (const s of block.namedChildren) {
-      if (s.type === "if_statement" || s.type === "try_statement" || s.type === "else_clause" || s.type === "elif_clause" || s.type === "except_clause" || s.type === "finally_clause" || s.type === "with_statement") {
-        if (depth < 4) {
-          for (const c of s.namedChildren) if (c.type === "block") visit(c, depth + 1);
-          for (const c of s.namedChildren) if (c.type === "else_clause" || c.type === "elif_clause" || c.type === "except_clause" || c.type === "finally_clause") visit(c, depth + 1);
-        }
+      if (COMPOUND.has(s.type)) {
+        if (depth < 4) compound(s, cond, depth + 1);
         continue;
       }
-      out.push(s);
+      out.push({ node: s, cond });
     }
   };
-  visit(root, 0);
+  const compound = (s: Node, cond: boolean, depth: number) => {
+    for (const c of s.namedChildren) {
+      if (c.type === "block") body(c, cond || s.type === "if_statement" || s.type === "elif_clause" || s.type === "else_clause" || s.type === "except_clause", depth);
+      else if (CLAUSES.has(c.type)) compound(c, cond || (s.type === "if_statement" && c.type !== "finally_clause"), depth);
+    }
+  };
+  body(root, false, 0);
   return out;
 }
 
@@ -138,7 +150,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
   const tailOf = (ref: Ref | null): string | null => last(named(ref));
 
   // ---------- URL lists ----------
-  const view = (node: Node | undefined, entryIndex: () => number, list: string): { view: View; ns: Lit } => {
+  const view = (node: Node | undefined, entryIndex: () => number, list: string, seq: number): { view: View; ns: Lit } => {
     if (!node) return { view: { t: "other" }, ns: null };
     if (node.type === "call") {
       const fn = calleeOf(node);
@@ -148,7 +160,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
         const ns = keyword.has("namespace") ? pyString(keyword.get("namespace")) : null;
         if (arg?.type === "list") {
           const parent = entryIndex();
-          for (const item of arg.namedChildren) if (item.type === "call") urlEntry(item, list, parent);
+          for (const item of arg.namedChildren) if (item.type === "call") urlEntry(item, list, parent, seq);
           return { view: { t: "include", fn, module: null, ref: null, inline: true }, ns };
         }
         if (arg?.type === "string" || arg?.type === "concatenated_string" || arg?.type === "binary_operator") return { view: { t: "include", fn, module: pyString(arg), ref: null, inline: false }, ns };
@@ -166,31 +178,33 @@ export function djangoFacts(root: Node): DjangoFact[] {
     const ref = dotted(node);
     return { view: ref ? { t: "ref", ref } : { t: "other" }, ns: null };
   };
-  const urlEntry = (call: Node, list: string, parent: number) => {
+  const urlEntry = (call: Node, list: string, parent: number, seq: number) => {
     const fn = calleeOf(call);
     if (!fn) return;
     const { positional, keyword } = pyArgs(call);
     const routeNode = positional[0] ?? keyword.get("route");
     if (!routeNode) return;
     const at = lineOf(call);
-    const fact = { kind: "url", ...at, list, parent, fn, route: pyString(routeNode), view: { t: "other" }, name: keyword.has("name") ? pyString(keyword.get("name")) : null, ns: null } as DjangoFact & { kind: "url" };
+    const fact = { kind: "url", ...at, list, parent, seq, fn, route: pyString(routeNode), view: { t: "other" }, name: keyword.has("name") ? pyString(keyword.get("name")) : null, ns: null } as DjangoFact & { kind: "url" };
     out.push(fact);
     const index = out.length - 1;
-    const v = view(positional[1] ?? keyword.get("view"), () => index, list);
+    const v = view(positional[1] ?? keyword.get("view"), () => index, list, seq);
     fact.view = v.view;
     fact.ns = v.ns;
   };
-  const urlItems = (list: Node, name: string, force: boolean) => {
+  const urlItems = (list: Node, name: string, force: boolean, seq: number) => {
     const calls = list.namedChildren.filter((c) => c.type === "call");
     // A list counts when it is `urlpatterns`, or when its items call path, re_path or url.
     if (!force && !calls.some((c) => URL_FUNCTIONS.has(tailOf(calleeOf(c)) ?? ""))) return false;
-    for (const c of calls) urlEntry(c, name, -1);
+    for (const c of calls) urlEntry(c, name, -1, seq);
     return true;
   };
 
   let settings = 0;
   const assigned = new Set<string>();
-  for (const stmt of statements) {
+  let seq = 0;
+  for (const { node: stmt, cond } of statements) {
+    seq++;
     const asg = assignmentOf(stmt);
     if (asg) {
       const left = asg.childForFieldName("left");
@@ -205,11 +219,13 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const parts = right.type === "binary_operator" ? [right.childForFieldName("left"), right.childForFieldName("right")] : [right];
       let sawList = false;
       for (const part of parts) {
-        if (part?.type === "list") sawList = urlItems(part, name, name === "urlpatterns") || sawList;
+        if (part?.type === "list") sawList = urlItems(part, name, name === "urlpatterns", seq) || sawList;
         const ref = dotted(part);
         if (ref && ref.length >= 2 && last(ref) === "urls" && name === "urlpatterns") out.push({ kind: "urlrouter", ...at, name, router: ref.slice(0, -1) });
       }
-      if (name === "urlpatterns") out.push({ kind: "urllist", ...at, name, literal: sawList || augmented || parts.some((p) => p?.type === "identifier") });
+      // `urlpatterns = urlpatterns + [...]` extends; any other `=` replaces.
+      const extend = augmented || parts.some((p) => p?.type === "identifier" && p.text === name);
+      if (name === "urlpatterns" || sawList) out.push({ kind: "urllist", ...at, name, literal: sawList || augmented || parts.some((p) => p?.type === "identifier"), seq, op: extend ? "extend" : "replace", cond });
       if (right.type === "call") {
         const fn = calleeOf(right);
         const tail = tailOf(fn);
@@ -231,8 +247,9 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const fn = calleeOf(call);
       if (fn && fn.length === 2 && fn[0] === "urlpatterns" && (fn[1] === "append" || fn[1] === "extend")) {
         const arg = pyArgs(call).positional[0];
-        if (arg?.type === "call") urlEntry(arg, "urlpatterns", -1);
-        else if (arg?.type === "list") urlItems(arg, "urlpatterns", true);
+        if (arg?.type === "call") urlEntry(arg, "urlpatterns", -1, seq);
+        else if (arg?.type === "list") urlItems(arg, "urlpatterns", true, seq);
+        out.push({ kind: "urllist", ...lineOf(call), name: "urlpatterns", literal: true, seq, op: "extend", cond });
       }
     }
   }
@@ -476,9 +493,9 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
   if (!Number.isInteger(f.line) || !Number.isInteger(f.column)) return false;
   switch (f.kind) {
     case "url":
-      return isStr(f.list) && Number.isInteger(f.parent) && isRef(f.fn) && isLit(f.route) && isView(f.view) && isLit(f.name) && isLit(f.ns);
+      return isStr(f.list) && Number.isInteger(f.parent) && Number.isInteger(f.seq) && isRef(f.fn) && isLit(f.route) && isView(f.view) && isLit(f.name) && isLit(f.ns);
     case "urllist":
-      return isStr(f.name) && typeof f.literal === "boolean";
+      return isStr(f.name) && typeof f.literal === "boolean" && Number.isInteger(f.seq) && (f.op === "replace" || f.op === "extend") && typeof f.cond === "boolean";
     case "urlrouter":
       return isStr(f.name) && isRef(f.router);
     case "assigned":

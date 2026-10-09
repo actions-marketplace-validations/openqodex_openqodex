@@ -514,6 +514,18 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const scope = app ? { app } : { file };
     if (capped(app)) return;
     const all = index.factsOf(file);
+    // The statements Django's list is left with: from the last replacement
+    // that always runs, every later one; replacements in branches keep
+    // every branch's entries, with a gap.
+    let live: Set<number> | null = null;
+    if (parent === -1) {
+      const steps = factsOf(file, "urllist").filter((l) => l.name === list).sort((a, b) => a.seq - b.seq);
+      let from = -1;
+      for (const l of steps) if (l.op === "replace" && !l.cond) from = l.seq;
+      live = new Set(steps.filter((l) => l.seq >= from).map((l) => l.seq));
+      const branchy = steps.find((l) => l.seq >= from && l.op === "replace" && l.cond);
+      if (branchy) out.gap({ site: siteOf(file, branchy), scope, affects: ["handles", "mounts"], cause: "dynamic", name: list, note: `${list} is assigned in a branch, so which routes Django serves depends on how the code runs; the routes of every branch are listed` });
+    }
     if (parent === -1 && list === "urlpatterns") {
       visited.add(file);
       const decl = factsOf(file, "urllist").find((l) => !l.literal);
@@ -521,6 +533,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       for (const r of factsOf(file, "urlrouter")) routerRegistrations(app, file, r.router[0] as string, prefix, via, namespaces);
     }
     entriesOf(file, list, parent).forEach(({ f, i }) => {
+      // An entry of a list a later assignment replaced is not served.
+      if (live !== null && live.size > 0 && !live.has(f.seq)) return;
       const site = siteOf(file, f);
       const steps = (walkSteps.get(app ?? "-") ?? 0) + 1;
       walkSteps.set(app ?? "-", steps);
