@@ -48,17 +48,19 @@ import type { SettingsReader } from "./shared-settings.js";
 import { readRepoFile, repoFileOrReason, scannerInputs } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
+import { laptopScratch, scratchAt, type Scratch } from "./scratch.js";
 import { SEMGREP_MAX_TARGET_BYTES } from "./adapters/semgrep.js";
 import { findMarkers, SUPPRESSION_MARKERS } from "./suppression.js";
 
 // A custom scanner prepared by the custom module. `skipped` is set when the
 // entry must not run (untrusted, changed since approval); the runner then
-// records that summary and never calls `run`.
+// records that summary and never calls `run`. `scratch`: where the run may
+// write (scratch.ts); the laptop's places when left out.
 export type CustomAdapter = {
   source: ScannerSource;
   skipped: ScannerRunSummary | null;
   wants(changedPaths: string[]): boolean;
-  run(args: { repoDir: string; changedPaths: string[] }): Promise<AdapterResult & { version: string | null }>;
+  run(args: { repoDir: string; changedPaths: string[]; scratch?: Scratch }): Promise<AdapterResult & { version: string | null }>;
 };
 
 export type RunScannersResult = {
@@ -96,9 +98,16 @@ export async function runScanners(args: {
   only?: ScannerSource[];
   skip?: ScannerSource[];
   onProgress?: (line: string) => void;
+  // Where the run writes (scratch.ts). Left out, the laptop's places: caches
+  // under the OpenQodex home, temporary folders in the system temp folder.
+  // Given, for a server run: every folder the run makes or fills is under
+  // this one, and every scanner process gets its HOME and TMPDIR there. The
+  // caller removes it when the run is done.
+  scratchRoot?: string;
 }): Promise<RunScannersResult> {
   const selected = (source: ScannerSource): boolean =>
     (!args.only || args.only.includes(source)) && !(args.skip ?? []).includes(source);
+  const scratch = args.scratchRoot === undefined ? laptopScratch() : scratchAt(args.scratchRoot);
 
   // Read once for the whole run: every scanner and the suppression check ask
   // the same questions about the same files.
@@ -114,7 +123,7 @@ export async function runScanners(args: {
   );
   const builtins = ADAPTERS.filter((a) => selected(a.source)).map((adapter) =>
     guard(adapter.source, async () => {
-      const outcome = await runBuiltin(adapter, choices.get(adapter.source)!, facts, { ...args, changedPaths: inputs });
+      const outcome = await runBuiltin(adapter, choices.get(adapter.source)!, facts, { ...args, changedPaths: inputs, scratch });
       const held = refused.size === 0 || outcome.summary.status === "disabled" ? [] : adapter.files([...refused.keys()], facts);
       if (held.length === 0) return outcome;
       const named = held.map((p) => `${p}: ${refused.get(p)}`).join("; ");
@@ -123,7 +132,7 @@ export async function runScanners(args: {
   );
   const customs = (args.custom ?? [])
     .filter((c) => selected(c.source))
-    .map((custom) => guard(custom.source, () => runCustom(custom, args)));
+    .map((custom) => guard(custom.source, () => runCustom(custom, { ...args, scratch })));
   const outcomes = await Promise.all([...builtins, ...customs]);
 
   const secrets = outcomes.flatMap((o) => o.secrets);
@@ -387,6 +396,7 @@ async function runBuiltin(
     coverage?: DiffCoverage;
     config: Config;
     resolveTool: ResolveTool;
+    scratch: Scratch;
   },
 ): Promise<Outcome> {
   const started = Date.now();
@@ -399,7 +409,9 @@ async function runBuiltin(
   if (!IN_PROCESS.has(source)) {
     const resolution = await args.resolveTool(source);
     if (!resolution.ok) return skippedOutcome(source, resolution.status, resolution.reason, started);
-    tool = resolution.tool;
+    // The scratch's variables on top of the tool's own (none on the laptop).
+    const extra = args.scratch.env;
+    tool = Object.keys(extra).length === 0 ? resolution.tool : { ...resolution.tool, env: { ...resolution.tool.env, ...extra } };
   }
 
   const ranFrom = Date.now();
@@ -409,20 +421,21 @@ async function runBuiltin(
     tool,
     coverage: args.coverage,
     facts,
+    scratch: args.scratch,
   });
   return ranOutcome(source, result, tool?.version ?? null, ranFrom);
 }
 
 async function runCustom(
   custom: CustomAdapter,
-  args: { repoDir: string; changedPaths: string[] },
+  args: { repoDir: string; changedPaths: string[]; scratch: Scratch },
 ): Promise<Outcome> {
   const started = Date.now();
   if (custom.skipped) return { summary: custom.skipped, findings: [], secrets: [] };
   if (!custom.wants(args.changedPaths)) {
     return skippedOutcome(custom.source, "no_matching_files", null, started);
   }
-  const result = await custom.run({ repoDir: args.repoDir, changedPaths: args.changedPaths });
+  const result = await custom.run({ repoDir: args.repoDir, changedPaths: args.changedPaths, scratch: args.scratch });
   return ranOutcome(custom.source, result, result.version, started);
 }
 
