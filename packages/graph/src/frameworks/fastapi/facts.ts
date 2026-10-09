@@ -12,7 +12,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
 import type { Expr, Kw, Scope } from "./py.js";
-import { isExpr, isKws, MAX_ARGS, namePath, pos, readExpr, walkScoped } from "./py.js";
+import { isExpr, isKws, MAX_ARGS, namePath, pos, readExpr, show, walkScoped } from "./py.js";
 
 // The most bytes of one file the plugin reads; a larger file gets one
 // "too-large" fact and nothing else, and resolve says so with an unknown.
@@ -32,6 +32,10 @@ const WATCHED = new Set<string>(["include_router", "add_api_route", "add_api_web
 // `Depends()` depends on).
 export type ParamDep = { call: Expr; type: Expr | null };
 
+// A decorator of a function: its line, its source as the plugin reads it,
+// and whether it is written like a route decorator (`@x.get(...)`).
+export type Decorator = { line: number; text: string; route: boolean };
+
 export type FastApiFact =
   // A name bound to a value: `app = FastAPI()`, `with TestClient(app) as c:`.
   // `scope` is the line of the innermost function around it (0 at module level).
@@ -39,8 +43,10 @@ export type FastApiFact =
   // A decorator `@recv.method(args)` on a function. `def` is the line the
   // decorated definition starts at (the function's symbol line), `params`
   // the dependencies its parameters declare, in order, and `omitted` the
-  // parameters past MAX_PARAMS.
-  | (FrameworkFactBase & { kind: "route"; recv: string[]; method: string; args: Expr[]; kw: Kw[]; fn: string; def: number; scope: number; params: ParamDep[]; omitted: number })
+  // parameters past MAX_PARAMS. `below` lists the decorators between this
+  // one and the def, top to bottom (at most MAX_ARGS, `belowOmitted` the
+  // rest): what this decorator registers is the function they return.
+  | (FrameworkFactBase & { kind: "route"; recv: string[]; method: string; args: Expr[]; kw: Kw[]; fn: string; def: number; scope: number; params: ParamDep[]; omitted: number; below: Decorator[]; belowOmitted: number })
   // A watched call `recv.prop(args)` that is not a decorator.
   | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; kw: Kw[]; scope: number })
   // The file is larger than MAX_SOURCE_BYTES and was not read.
@@ -217,6 +223,7 @@ export function readFacts(root: Node): FastApiFact[] {
         return false;
       }
     }
+    if (node.type === "decorated_definition") decoratedAt = node.startPosition.row + 1;
     // No fact comes from a node whose subtree holds a syntax error.
     if (node.hasError && FACT_NODES.has(node.type)) {
       if (node.type === "decorated_definition") broken ??= pos(node);
@@ -224,26 +231,32 @@ export function readFacts(root: Node): FastApiFact[] {
     }
     switch (node.type) {
       case "decorated_definition": {
-        decoratedAt = node.startPosition.row + 1;
         const def = node.childForFieldName("definition");
         if (def?.type !== "function_definition") return;
         const name = def.childForFieldName("name")?.text;
         if (!name) return;
-        let deps: { params: ParamDep[]; omitted: number } | null = null;
+        // Every decorator, top to bottom, and whether it is written like a
+        // route decorator. Python applies them bottom up, so what a route
+        // decorator registers is the function after every decorator below it.
+        const decorators: (Decorator & { column: number; recv: string[] | null; method: string; call: Node | null })[] = [];
         for (const d of node.namedChildren) {
           if (d.type !== "decorator") continue;
-          const call = d.firstNamedChild;
-          if (call?.type !== "call") continue;
-          const fn = call.childForFieldName("function");
-          if (fn?.type !== "attribute") continue;
-          const method = fn.childForFieldName("attribute")?.text ?? "";
-          const recv = namePath(fn.childForFieldName("object"));
-          if (!recv || !ROUTE_DECORATORS.has(method)) continue;
-          const e = readExpr(call);
-          if (e.t !== "call") continue;
-          deps ??= paramDeps(def);
-          out.push({ kind: "route", ...pos(d), recv, method, args: e.args, kw: e.kw, fn: name, def: node.startPosition.row + 1, scope: scope.line, params: deps.params, omitted: deps.omitted });
+          const expr = d.firstNamedChild;
+          const fn = expr?.type === "call" ? expr.childForFieldName("function") : null;
+          const method = fn?.type === "attribute" ? (fn.childForFieldName("attribute")?.text ?? "") : "";
+          const recv = fn?.type === "attribute" ? namePath(fn.childForFieldName("object")) : null;
+          const route = recv !== null && ROUTE_DECORATORS.has(method);
+          decorators.push({ ...pos(d), text: show(readExpr(expr)), route, recv, method, call: route ? expr : null });
         }
+        let deps: { params: ParamDep[]; omitted: number } | null = null;
+        decorators.forEach((d, i) => {
+          if (!d.route || !d.recv || !d.call) return;
+          const e = readExpr(d.call);
+          if (e.t !== "call") return;
+          deps ??= paramDeps(def);
+          const below = decorators.slice(i + 1, i + 1 + MAX_ARGS).map((x) => ({ line: x.line, text: x.text, route: x.route }));
+          out.push({ kind: "route", line: d.line, column: d.column, recv: d.recv, method: d.method, args: e.args, kw: e.kw, fn: name, def: node.startPosition.row + 1, scope: scope.line, params: deps.params, omitted: deps.omitted, below, belowOmitted: Math.max(0, decorators.length - i - 1 - below.length) });
+        });
         return;
       }
       case "call": {
@@ -362,7 +375,10 @@ export function isFastApiFact(v: unknown): v is FastApiFact {
         Number.isInteger(f.scope) &&
         Array.isArray(f.params) &&
         f.params.every((p) => typeof p === "object" && p !== null && isExpr((p as { call?: unknown }).call) && ((p as { type?: unknown }).type === null || isExpr((p as { type?: unknown }).type))) &&
-        Number.isInteger(f.omitted)
+        Number.isInteger(f.omitted) &&
+        Array.isArray(f.below) &&
+        f.below.every((d) => typeof d === "object" && d !== null && Number.isInteger((d as { line?: unknown }).line) && typeof (d as { text?: unknown }).text === "string" && typeof (d as { route?: unknown }).route === "boolean") &&
+        Number.isInteger(f.belowOmitted)
       );
     case "call":
       return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && isKws(f.kw) && Number.isInteger(f.scope);

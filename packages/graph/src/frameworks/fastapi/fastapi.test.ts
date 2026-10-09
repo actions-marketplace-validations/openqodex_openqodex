@@ -261,6 +261,38 @@ def shadowed_client(TestClient):
     client = TestClient(real)
     client.get("/kept")
 `;
+  // A route over another decorator registers what that decorator returns;
+  // route decorators stacked on one function each register it.
+  const WRAPPED = `from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+
+def wrap(fn):
+    return fn
+
+
+def helper():
+    return 1
+
+
+@app.get("/wrapped")
+@wrap
+def wrapped(dep=Depends(helper)):
+    return 1
+
+
+@app.get("/a")
+@app.get("/b")
+def stacked():
+    return 2
+
+
+@wrap
+@app.get("/outer-wrap")
+def outer_wrapped():
+    return 3
+`;
   const REBOUND = `from fastapi import FastAPI
 
 app = FastAPI()
@@ -276,7 +308,7 @@ FastAPI = object
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-fool-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND });
+    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED });
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null });
   });
@@ -325,6 +357,17 @@ FastAPI = object
     expect(models).not.toContain("Local");
     const requests = (graph.frameworks?.edges ?? []).filter((e) => e.plugin === "fastapi" && e.kind === "tests" && e.evidence.site.file === "app/shadow.py");
     expect(requests).toEqual([]);
+  });
+
+  it("binds no handler when another decorator wraps the function before the route decorator registers it, and names the wrapper in an unknown", () => {
+    const regs = fastapiRegs(graph).filter((r) => r.site.file === "app/wrapped.py");
+    const by = (w: string) => regs.find((r) => r.written === w) as Registration;
+    const wrapped = by("/wrapped");
+    expect(wrapped.handler.status).toBe("unresolved");
+    expect(layer(graph).edgesFrom(wrapped.id).filter((e) => e.kind === "handles" || e.kind === "applies_middleware")).toEqual([]);
+    const gap = graph.frameworks?.unknowns.find((u) => u.plugin === "fastapi" && u.site?.file === "app/wrapped.py" && u.site.line === wrapped.site.line && u.cause === "unsupported-rule");
+    expect(gap?.name).toBe("wrap");
+    for (const kept of ["/a", "/b", "/outer-wrap"]) expect(by(kept).handler.status).toBe("bound");
   });
 
   it("reads no decorator inside a broken region of a file, keeps the routes before it, and says the file has a syntax error", () => {

@@ -116,7 +116,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   // An unknown, once per site, cause, scope and name; past MAX_UNKNOWNS only
   // counted, unless `always` (the summaries of the caps).
   const gap = (u: FrameworkUnknown, always = false) => {
-    const k = `${u.site ? `${u.site.file}:${u.site.line}:${u.site.column}` : "-"}\0${u.cause}\0${JSON.stringify(u.scope)}\0${u.name ?? ""}`;
+    const k = `${u.site ? `${u.site.file}:${u.site.line}:${u.site.column}` : "-"}\0${u.cause}\0${JSON.stringify(u.scope)}\0${u.name ?? ""}\0${u.affects.join(",")}`;
     if (gapSeen.has(k)) return;
     gapSeen.add(k);
     if (!always && unknowns.length >= MAX_UNKNOWNS) {
@@ -433,7 +433,9 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     methods: string[] | null; // null: computed
     written: string; // the path, literal
     name: string | null;
-    handler: { kind: "def"; fn: string; def: number } | { kind: "ref"; expr: Expr };
+    // The decorated function, and the decorator between the route decorator
+    // and the def that wraps it, when there is one.
+    handler: { kind: "def"; fn: string; def: number; wrapper: string | null } | { kind: "ref"; expr: Expr };
     deps: Expr | undefined; // the `dependencies=` list
     params: ParamDep[];
     paramsOmitted: number;
@@ -495,14 +497,25 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   for (const file of files) {
     const f = factsIn(file);
     if (f.tooLarge) continue;
+    // Every route decorator's receiver first: a route decorator below
+    // another one on an application or router returns the function as it
+    // was, so it wraps nothing.
+    const baseAt = new Map<number, Known>();
     for (const r of f.routes) {
       const base = valueIn(file, r.recv, r.scope, r.line);
-      if (!base || base.kind === "client") continue;
+      if (base && base.kind !== "client") baseAt.set(r.line, base);
+    }
+    for (const r of f.routes) {
+      const base = baseAt.get(r.line);
+      if (!base) continue;
       const site: Site = { file, line: r.line, column: r.column };
       const ws = r.method === "websocket";
       const methods = ws ? ["GET"] : r.method === "api_route" ? methodsOf(file, kwOf(r, "methods"), ["GET"]) : METHODS.has(r.method) ? [r.method.toUpperCase()] : null;
       const name = literalName(kwOf(r, "name")) ?? (ws ? "websocket" : null);
-      addRoute(base, { file, site, methods, name, handler: { kind: "def", fn: r.fn, def: r.def }, deps: kwOf(r, "dependencies"), params: r.params, paramsOmitted: r.omitted, scope: r.scope }, r.args[0] ?? kwOf(r, "path"));
+      const wrap = r.below.find((d) => !d.route || !baseAt.has(d.line));
+      const wrapper = wrap ? wrap.text : r.belowOmitted > 0 ? `${r.belowOmitted} more decorators` : null;
+      addRoute(base, { file, site, methods, name, handler: { kind: "def", fn: r.fn, def: r.def, wrapper }, deps: kwOf(r, "dependencies"), params: wrapper ? [] : r.params, paramsOmitted: wrapper ? 0 : r.omitted, scope: r.scope }, r.args[0] ?? kwOf(r, "path"));
+      if (wrapper && r.params.length > 0) siteGap(site, "unsupported-rule", ["applies_middleware"], wrapper, `the dependencies the parameters of ${r.fn} declare belong to what ${wrapper} returns, which the plugin does not follow`);
     }
     for (const c of f.calls) {
       const site: Site = { file, line: c.line, column: c.column };
@@ -626,7 +639,11 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       const id = entityId(PLUGIN, app, "registration", key);
       let bound: Bound;
       let handlerWritten: string;
-      if (e.handler.kind === "def") {
+      if (e.handler.kind === "def" && e.handler.wrapper !== null) {
+        // `@app.get("/x")` over `@wrap`: the route registers what wrap returns.
+        handlerWritten = `${e.handler.wrapper}(${e.handler.fn})`;
+        bound = none("unresolved", "unsupported-rule", `the route registers what ${e.handler.wrapper} returns for ${e.handler.fn}; whether that calls ${e.handler.fn} is not proved, so the handler is not bound`, e.handler.wrapper);
+      } else if (e.handler.kind === "def") {
         handlerWritten = e.handler.fn;
         const sym = symbolAt(e.file, e.handler.fn, e.handler.def);
         bound = sym ? { status: "bound", targets: [sym.id], tier: "certain", via: null, note: null, why: null } : none("unresolved", "unsupported-rule", `the decorated function ${e.handler.fn} has no definition of its own in the graph`, e.handler.fn);
