@@ -24,3 +24,14 @@ export function claudeHome(home: string, env: NodeJS.ProcessEnv = process.env): 
 export function codexHome(home: string, env: NodeJS.ProcessEnv = process.env): string {
   return fromEnv(env.CODEX_HOME) ?? join(home, ".codex");
 }
+
+// Claude Code's own state file, which holds its user-scope MCP servers under
+// a top-level `mcpServers`: `~/.claude.json` in the home folder itself, not
+// inside ~/.claude (https://code.claude.com/docs/en/mcp, "MCP installation
+// scopes" and "Scope hierarchy and precedence"). With CLAUDE_CONFIG_DIR set,
+// `.claude.json` in that folder: observed on a Mac with CLAUDE_CONFIG_DIR
+// set, 2026-10-08, not documented.
+export function claudeStateFile(home: string, env: NodeJS.ProcessEnv = process.env): string {
+  const dir = fromEnv(env.CLAUDE_CONFIG_DIR);
+  return dir === null ? join(home, ".claude.json") : `${dir}${sep}.claude.json`;
+}

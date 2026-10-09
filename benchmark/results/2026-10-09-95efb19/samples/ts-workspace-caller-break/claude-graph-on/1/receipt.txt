@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 708d34803616 against HEAD, 2 files, +13 -5
+Summary: Changes safeGit to return a { code, stdout, stderr } object instead of a stdout string, and stops it throwing on a failing git command. Exports the new GitResult type from the core package entry.
+1. Critical bug: Return shape change breaks both CLI callers (packages/core/src/safe-git.ts:10-13)
+2. Major bug: Swallowed git failure defeats the null check in currentBranch (packages/core/src/safe-git.ts:14-17)
+3. Minor maintainability: New error path and return shape have no covering test (packages/core/src/safe-git.ts:10-18)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "change_id": "4dd55d237fe9",
+  "summary": "Adds an email search filter to the users index, a self-service profile update and a user destroy action. Also adds an after_save hook that sends a welcome email.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Search term interpolated into SQL",
+      "problem": "The index action puts params[:q] straight into the SQL text of the where clause. Any authenticated user controls that text.",
+      "consequence": "An authenticated caller can inject SQL and read or change any row, including api_token and admin columns.",
+      "fix": "Pass the search term as a bound parameter and escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Destroy action exempted from admin check",
+      "problem": "The change adds destroy to the except list of require_admin. Any authenticated user can now call DELETE /users/:id on any id.",
+      "consequence": "Any user with a token can delete every other account, including admins.",
+      "fix": "Remove destroy from the except list so only admins can delete users.",
+      "suggested_change": "  before_action :require_admin, except: [:index, :show, :profile]",
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c2"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Profile update permits every attribute",
+      "problem": "The profile action permits all user params, so the caller can set any column on their own record. ApplicationController trusts the admin and api_token columns of that record for authorization.",
+      "consequence": "Any user can make themselves an admin or overwrite their api_token. That escalates to full admin access.",
+      "fix": "Permit only the fields a user may edit, such as email.",
+      "suggested_change": "    @current_user.update!(params.require(:user).permit(:email))",
+      "source": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "problem": "The after_save callback fires on every create and every update. Each profile edit and every other save queues a new welcome email.",
+      "consequence": "Users get repeated welcome emails whenever their record changes.",
+      "fix": "Use after_create_commit so the welcome email goes out once, after the record is committed.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 14,
+      "line_end": 23,
+      "title": "New actions have no covering test",
+      "problem": "The repository has no tests for the search filter, profile, destroy or the welcome email callback. These add new branches and side effects.",
+      "consequence": "Regressions in authorization and filtering will go unnoticed.",
+      "fix": "Add request tests for index search, profile and destroy, including the non-admin cases.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

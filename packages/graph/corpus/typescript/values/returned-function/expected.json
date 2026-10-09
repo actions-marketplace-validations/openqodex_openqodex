@@ -1,0 +1,58 @@
+{
+  "guards": "lists each function a callee returns by name as a possible callee where the returned value is called, directly or through a const",
+  "callers": [
+    {
+      "to": "src/pick.ts#pick",
+      "site": "src/run.ts:4",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/pick.ts#pick",
+      "site": "src/run.ts:8",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/pick.ts#onA",
+      "site": "src/run.ts:4",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "src/pick.ts#onB",
+      "site": "src/run.ts:4",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "src/pick.ts#onA",
+      "site": "src/run.ts:9",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "src/pick.ts#onB",
+      "site": "src/run.ts:9",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/pick.ts#onA",
+      "site": "src/pick.ts:10",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "src/pick.ts#onB",
+      "site": "src/pick.ts:11",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "src/pick.ts#onA": true
+  }
+}

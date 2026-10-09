@@ -1,0 +1,8 @@
+{
+  "guards": "produces no FastAPI route from classes of the repository's own named FastAPI and APIRouter, though the project declares fastapi and imports Depends from it",
+  "frameworks": {
+    "plugin": "fastapi",
+    "apps": 0,
+    "none": ["registration", "handles", "mounts", "applies_middleware", "tests", "role"]
+  }
+}

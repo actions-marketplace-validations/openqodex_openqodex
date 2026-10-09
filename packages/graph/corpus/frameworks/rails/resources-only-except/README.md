@@ -1,0 +1,3 @@
+# Rails: resources expand from the declaration and its options
+
+Guards against a wrong expansion of `resources` and `resource`. Rails turns each declaration into its seven (singular: six) routes, filtered by `only:` and `except:`, with nested resources under `/:article_id`, `member` and `collection` routes, `on: :member`, `as:` and `path:` options, and Rails' own route names (`publish_article`, `search_articles`, `article_comments`, `person`). A route that `only:` leaves out must not exist, even when the controller defines the method (`ArticlesController#new`, `ProfilesController#destroy`), and `only: []` declares no route.

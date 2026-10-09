@@ -1,0 +1,3 @@
+# Rails: a callback a base controller declares and its subclasses define
+
+Guards against calling a callback missing when Rails runs it on a subclass. `Api::OldElementsController` declares `before_action :lookup_old_element` and defines no such method; `Api::OldNodesController` and `Api::OldWaysController` inherit from it and each define it, and Rails calls the method on the instance, so those definitions run. Each is linked from the base controller as a possible callback. `before_action :nowhere` is defined by no class in the chain and no subclass: that one is a miss. The route to `api/old_nodes#show` binds to the `show` the subclass inherits.

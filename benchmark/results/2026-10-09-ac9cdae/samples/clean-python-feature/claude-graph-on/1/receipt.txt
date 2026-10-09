@@ -1,0 +1,6 @@
+Passed: no findings
+Change 1957ed62c932 against HEAD, 3 files, +26 -2
+Summary: Adds to_display, which formats whole cents as a signed dollar string with thousands separators. Adds balance_line for the monthly statement, plus tests for both.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

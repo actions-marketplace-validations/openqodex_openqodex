@@ -1,0 +1,105 @@
+{
+  "version": 2,
+  "change_id": "abd88064b93d",
+  "summary": "Adds three GET endpoints to the directory API: a user search backed by SQL, an in-memory per-key request counter, and an upstream status probe. main.go wires them onto the mux.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.98,
+      "file_path": "internal/api/handler.go",
+      "line_number": 34,
+      "line_end": 35,
+      "title": "SQL query built from the name query parameter",
+      "problem": "Search interpolates the name query parameter directly into the SQL text with Sprintf. Nothing escapes or validates the value before QueryContext runs it.",
+      "consequence": "Any caller of GET /users can inject SQL and read or alter every table in the database.",
+      "fix": "Pass the name as a bound parameter to QueryContext instead of formatting it into the string.",
+      "suggested_change": "rows, err := h.DB.QueryContext(r.Context(), \"SELECT id, name FROM users WHERE name = ?\", name)",
+      "source": "semgrep:go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "internal/api/handler.go",
+      "line_number": 61,
+      "line_end": 64,
+      "title": "Mutex stays locked on the missing-key return",
+      "problem": "Count locks h.mu on line 60 and then returns on line 63 without unlocking when key is empty. The only Unlock sits on line 67, after that return.",
+      "consequence": "One request to GET /count without a key leaves the mutex held forever. Every later Count request blocks on Lock and the endpoint hangs.",
+      "fix": "Validate key before taking the lock, or use defer h.mu.Unlock() right after Lock.",
+      "suggested_change": "if key == \"\" {\n\t\thttp.Error(w, \"missing key\", http.StatusBadRequest)\n\t\treturn\n\t}\n\th.mu.Lock()",
+      "source": "semgrep:trailofbits.go.missing-unlock-before-return.missing-unlock-before-return",
+      "candidate": "c2"
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.96,
+      "file_path": "internal/api/handler.go",
+      "line_number": 83,
+      "line_end": 84,
+      "title": "Body closed before the error check in fetchStatus",
+      "problem": "fetchStatus defers resp.Body.Close() on line 83 before checking err on line 84. When http.Get fails, resp is nil and the deferred call dereferences a nil pointer.",
+      "consequence": "Any upstream failure panics the handler goroutine, so GET /upstream drops the connection instead of returning 502. The error branch in Upstream never runs.",
+      "fix": "Check err first and only defer the Close after the error check.",
+      "suggested_change": "resp, err := http.Get(url)\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\tdefer resp.Body.Close()",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.8,
+      "file_path": "internal/api/handler.go",
+      "line_number": 53,
+      "line_end": 54,
+      "title": "Row iteration error ignored in Search",
+      "problem": "Search never calls rows.Err() after the rows.Next() loop ends. A connection or driver error during iteration ends the loop silently.",
+      "consequence": "Clients receive a 200 response with a truncated user list when the database fails mid-query.",
+      "fix": "Check rows.Err() after the loop and answer with a 500 when it is set.",
+      "suggested_change": "if err := rows.Err(); err != nil {\n\t\thttp.Error(w, \"search failed\", http.StatusInternalServerError)\n\t\treturn\n\t}\n\t_ = json.NewEncoder(w).Encode(users)",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.78,
+      "file_path": "internal/api/handler.go",
+      "line_number": 82,
+      "line_end": 82,
+      "title": "Upstream request has no timeout",
+      "problem": "fetchStatus uses http.Get, which runs on the default client with no timeout. The handler also ignores the request context.",
+      "consequence": "A slow or hanging upstream holds every GET /upstream goroutine open indefinitely and can exhaust the server.",
+      "fix": "Build the request with the handler's context and send it through a client with a Timeout set.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.85,
+      "file_path": "internal/api/handler.go",
+      "line_number": 32,
+      "line_end": 88,
+      "title": "New endpoints have no covering tests",
+      "problem": "The change adds Search, Count, Upstream and fetchStatus with several error branches. The repository contains no test files, so none of this behaviour is exercised.",
+      "consequence": "The locking, error and parsing bugs in these handlers would have surfaced in a basic httptest run.",
+      "fix": "Add httptest handler tests for the success path and each error branch. Cover the empty key and failed upstream cases.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "This reports the same SQL string on the same line already raised under c1, and one finding per problem applies.",
+      "file_path": "internal/api/handler.go",
+      "line_number": 34
+    }
+  ]
+}

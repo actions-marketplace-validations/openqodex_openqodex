@@ -1,0 +1,183 @@
+{
+  "candidates": [
+    {
+      "source": "bandit",
+      "ruleId": "B201",
+      "filePath": "files/app.py",
+      "lineStart": 24,
+      "lineEnd": 24,
+      "severity": "high",
+      "message": "B201: A Flask app appears to be run with debug=True, which exposes the Werkzeug debugger and allows the execution of arbitrary code.",
+      "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b201_flask_debug_true.html",
+      "id": "c1",
+      "token": "bandit:B201",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host",
+      "filePath": "files/app.py",
+      "lineStart": 24,
+      "lineEnd": 24,
+      "severity": "medium",
+      "message": "Running flask app with host 0.0.0.0 could expose the server publicly.",
+      "reference": "https://owasp.org/Top10/A01_2021-Broken_Access_Control",
+      "id": "c2",
+      "token": "semgrep:python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "python.flask.security.audit.debug-enabled.debug-enabled",
+      "filePath": "files/app.py",
+      "lineStart": 24,
+      "lineEnd": 24,
+      "severity": "medium",
+      "message": "Detected Flask app with debug=True. Do not deploy to production with this flag enabled as it will leak sensitive information. Instead, consider using Flask configuration variables or setting 'debug' using system environment variables.",
+      "reference": "https://labs.detectify.com/2015/10/02/how-patreon-got-hacked-publicly-exposed-werkzeug-debugger/",
+      "id": "c3",
+      "token": "semgrep:python.flask.security.audit.debug-enabled.debug-enabled",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "bandit",
+      "ruleId": "B104",
+      "filePath": "files/app.py",
+      "lineStart": 24,
+      "lineEnd": 24,
+      "severity": "medium",
+      "message": "B104: Possible binding to all interfaces.",
+      "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b104_hardcoded_bind_all_interfaces.html",
+      "id": "c4",
+      "token": "bandit:B104",
+      "reviewSeverity": "minor"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 7274,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 159,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 59,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 205,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [],
+  "projects": [
+    {
+      "root": "",
+      "frameworks": []
+    }
+  ]
+}

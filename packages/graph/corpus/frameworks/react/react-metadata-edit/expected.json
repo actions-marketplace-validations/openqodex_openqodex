@@ -1,0 +1,19 @@
+{
+  "guards": "finds the components of unchanged files once a manifest change declares react",
+  "callers": [
+    {
+      "to": "src/Badge.tsx#Badge",
+      "site": "src/Card.tsx:7",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "react",
+    "apps": 1,
+    "edges": [{ "kind": "renders", "from": "src/Card.tsx#Card", "to": "src/Badge.tsx#Badge", "tier": "certain" }],
+    "roles": [
+      { "target": "src/Card.tsx#Card", "role": "component", "detail": "function" },
+      { "target": "src/Badge.tsx#Badge", "role": "component", "detail": "function" }
+    ]
+  }
+}

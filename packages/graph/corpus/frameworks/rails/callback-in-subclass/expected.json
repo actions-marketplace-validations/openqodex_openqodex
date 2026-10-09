@@ -1,0 +1,36 @@
+{
+  "guards": "links a callback a Rails base controller declares to the definitions in its subclasses, as possible, and keeps a miss only when no class defines it",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/api/old_nodes/:id",
+        "handler": "app/controllers/api/old_elements_controller.rb#Api::OldElementsController.show",
+        "status": "bound"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "applies_middleware",
+        "from": "app/controllers/api/old_elements_controller.rb#Api.OldElementsController",
+        "to": "app/controllers/api/old_nodes_controller.rb#Api::OldNodesController.lookup_old_element",
+        "tier": "possible"
+      },
+      {
+        "kind": "applies_middleware",
+        "from": "app/controllers/api/old_elements_controller.rb#Api.OldElementsController",
+        "to": "app/controllers/api/old_ways_controller.rb#Api::OldWaysController.lookup_old_element",
+        "tier": "possible"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "app/controllers/api/old_elements_controller.rb",
+        "line": 4,
+        "cause": "miss"
+      }
+    ]
+  }
+}

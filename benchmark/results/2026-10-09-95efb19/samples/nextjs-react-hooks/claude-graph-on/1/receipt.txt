@@ -1,0 +1,11 @@
+Passed with warnings: 6 findings (1 critical, 2 major, 3 minor)
+Change f40fe5221f97 against HEAD, 1 file, +23 -5
+Summary: Turns the search page into a client component that reads q from the URL, fetches matching products on render, and lists them.
+1. Critical bug: Hooks called after an early return (app/search/page.tsx:10-13)
+2. Major bug: Effect without dependency array refetches every render (app/search/page.tsx:15-17)
+3. Major security: URL query rendered as raw HTML (app/search/page.tsx:21)
+4. Minor bug: Search failure is never handled (app/search/page.tsx:16)
+5. Minor bug: List items rendered without a key (app/search/page.tsx:24)
+6. Minor bug: Late response can overwrite newer results (app/search/page.tsx:16)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

@@ -1,0 +1,87 @@
+{
+  "version": 2,
+  "change_id": "abd88064b93d",
+  "summary": "Adds three HTTP endpoints. /users searches users by name, /count counts requests per key in memory, and /upstream reports the status code of the upstream service.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "internal/api/handler.go",
+      "line_number": 34,
+      "line_end": 35,
+      "title": "SQL query built from request input",
+      "problem": "Search uses fmt.Sprintf to put the name query parameter straight into the SQL text. No escaping or binding happens first.",
+      "consequence": "Any client can inject SQL through the name parameter. The attacker can then read or change any row the database user can reach.",
+      "fix": "Pass name to QueryContext as a bound parameter. Remove the formatted string.",
+      "suggested_change": "rows, err := h.DB.QueryContext(r.Context(), \"SELECT id, name FROM users WHERE name = ?\", name)",
+      "source": "semgrep:go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "internal/api/handler.go",
+      "line_number": 63,
+      "line_end": 63,
+      "title": "Mutex left locked on missing key",
+      "problem": "Count locks h.mu before it checks the key. The empty-key branch then returns without unlocking h.mu.",
+      "consequence": "One request without a key leaves h.mu locked for good. Every later /count request then blocks forever.",
+      "fix": "Validate the key before calling h.mu.Lock. Another option is to defer h.mu.Unlock right after the lock.",
+      "suggested_change": null,
+      "source": "semgrep:trailofbits.go.missing-unlock-before-return.missing-unlock-before-return",
+      "candidate": "c2"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.92,
+      "file_path": "internal/api/handler.go",
+      "line_number": 83,
+      "line_end": 83,
+      "title": "Response body closed before error check",
+      "problem": "fetchStatus defers resp.Body.Close before it checks err. When http.Get fails, resp is nil, so the deferred call dereferences nil.",
+      "consequence": "Each unreachable upstream panics fetchStatus. The server then aborts the connection instead of sending the intended 502.",
+      "fix": "Move the defer below the err check.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "internal/api/handler.go",
+      "line_number": 82,
+      "line_end": 82,
+      "title": "Upstream request has no timeout",
+      "problem": "fetchStatus calls http.Get, which uses the default client. The default client has no timeout.",
+      "consequence": "A slow upstream holds each /upstream request and its goroutine open indefinitely.",
+      "fix": "Use an http.Client with a Timeout, or a request bound to the incoming request context.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "internal/api/handler.go",
+      "line_number": 32,
+      "line_end": 32,
+      "title": "New handlers have no covering test",
+      "problem": "The change adds Search, Count and Upstream with new error paths. The repository has no test files that exercise them.",
+      "consequence": "Regressions like the lock leak and the nil response can ship unnoticed.",
+      "fix": "Add httptest-based tests for each new handler, including the error branches.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "This repeats the injection already raised for c1 on the same line.",
+      "file_path": "internal/api/handler.go",
+      "line_number": 34
+    }
+  ]
+}

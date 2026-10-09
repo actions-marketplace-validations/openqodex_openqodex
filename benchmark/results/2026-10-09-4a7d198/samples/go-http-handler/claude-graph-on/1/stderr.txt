@@ -1,0 +1,5 @@
+Reviewing the change against HEAD: 2 files, +68 -1
+Scanners: 2 ran, 10 had nothing to check, 1 not installed, 3 candidates to check
+Code graph: 2 files in 0.1 s (4 parsed, 0 from cache, fresh)
+Reviewer: claude 2.1.295 started (process 18836); this takes one to three minutes
+Reviewer still working: 15 s

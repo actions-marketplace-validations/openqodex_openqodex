@@ -1,0 +1,10 @@
+Passed with warnings: 5 findings (2 critical, 1 major, 2 minor)
+Change abd88064b93d against HEAD, 2 files, +68 -1
+Summary: Adds three HTTP endpoints. /users searches users by name, /count counts requests per key in memory, and /upstream reports the status code of the upstream service.
+1. Critical security: SQL query built from request input (internal/api/handler.go:34-35)
+2. Critical bug: Mutex left locked on missing key (internal/api/handler.go:63)
+3. Major bug: Response body closed before error check (internal/api/handler.go:83)
+4. Minor bug: Upstream request has no timeout (internal/api/handler.go:82)
+5. Minor maintainability: New handlers have no covering test (internal/api/handler.go:32)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

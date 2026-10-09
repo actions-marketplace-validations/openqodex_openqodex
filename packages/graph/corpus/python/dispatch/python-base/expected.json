@@ -1,0 +1,48 @@
+{
+  "guards": "binds a call on a parameter annotated with a Python base class to the base method as certain and to the subclass override as possible",
+  "callers": [
+    {
+      "to": "store/base.py#Base.find",
+      "site": "store/run.py:5",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "store/impl.py#Impl.find",
+      "site": "store/run.py:5",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/base.py#Base",
+      "site": "store/impl.py:4",
+      "tier": "certain",
+      "kind": "inherits"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "store/run.py:5",
+      "candidates": [
+        "store/impl.py#Impl.find"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "to": "store/base.py#Base.find",
+      "site": "store/impl.py:5",
+      "kind": "overrides",
+      "tier": "certain"
+    },
+    {
+      "to": "store/base.py#Base",
+      "site": "store/run.py:4",
+      "kind": "uses_type",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "store/impl.py#Impl.find": true
+  }
+}

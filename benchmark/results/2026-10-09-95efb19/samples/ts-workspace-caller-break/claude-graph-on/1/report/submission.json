@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "Changes safeGit to return a { code, stdout, stderr } object instead of a stdout string, and stops it throwing on a failing git command. Exports the new GitResult type from the core package entry.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 13,
+      "title": "Return shape change breaks both CLI callers",
+      "problem": "safeGit now resolves to an object, but currentBranch at branch.ts:7 and changedFiles at status.ts:7 still treat it as a string. Neither caller is updated in this change.",
+      "consequence": "changedFiles throws a TypeError on out.split for every run, so main.ts crashes. currentBranch catches its TypeError and returns null, so main.ts reports not a git repository inside every repository.",
+      "fix": "Update both callers to read result.stdout, and check result.code where the old throw was relied on. Alternatively keep the string return and add the structured variant as a new function.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 14,
+      "line_end": 17,
+      "title": "Swallowed git failure defeats the null check in currentBranch",
+      "problem": "safeGit no longer throws on a failing command. currentBranch in packages/cli/src/branch.ts:5 relies on that throw to return null outside a repository.",
+      "consequence": "Once the callers read stdout, currentBranch returns an empty string instead of null outside a repository. main.ts then skips its not a git repository exit and runs changedFiles against a non-repository.",
+      "fix": "Have callers check result.code and treat a non-zero code as failure. Alternatively keep a throwing variant for callers that depend on the exception.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 18,
+      "title": "New error path and return shape have no covering test",
+      "problem": "safeGit gains a new return shape and a catch branch that maps a thrown error to a code. The repository contains no test files that exercise safeGit.",
+      "consequence": "A regression in the code mapping or in the stdout fallback goes unnoticed until a CLI user hits it.",
+      "fix": "Add a test that runs safeGit in a temporary directory with a succeeding and a failing command. Assert code, stdout and stderr for both.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

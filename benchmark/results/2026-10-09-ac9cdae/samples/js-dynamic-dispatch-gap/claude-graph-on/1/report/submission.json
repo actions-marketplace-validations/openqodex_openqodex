@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "eab11e18f842",
+  "summary": "onSave becomes async and writes the whole store to data/notes.json after each save. The router and HTTP server still treat its return value as a string.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Async onSave breaks the synchronous dispatch caller",
+      "problem": "onSave now returns a Promise, and dispatch in src/router.js:7 passes that Promise back unchanged. The server in src/main.js:9 then calls res.end with that Promise instead of a string.",
+      "consequence": "Node's res.end throws a TypeError on a Promise argument, so every POST /save crashes the server process. The writeFile promise also floats, so a write failure becomes an unhandled rejection.",
+      "fix": "Make dispatch async and have the server await it before calling res.end. The server should catch errors and answer with a 500 status.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "New snapshot write has no covering test",
+      "problem": "onSave now writes the store to a file and returns a Promise. The repository has no test that covers this behaviour.",
+      "consequence": "Regressions in the save path, such as the broken caller, reach production without being caught.",
+      "fix": "Add a test that dispatches a save and checks both the response text and the snapshot file contents.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

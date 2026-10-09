@@ -1,0 +1,806 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "medium",
+    "build": {
+      "durationMs": 59,
+      "cacheHits": 0,
+      "parses": 4,
+      "eligibleFiles": 2,
+      "parsedFiles": 2,
+      "omittedFiles": 0,
+      "unresolvedSites": 5,
+      "externalSites": 35,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "internal/api/handler.go#Handler@12:6",
+        "file": "internal/api/handler.go",
+        "name": "Handler",
+        "kind": "type",
+        "startLine": 12,
+        "endLine": 17,
+        "snapshot": "current"
+      },
+      {
+        "id": "internal/api/handler.go#NewHandler@19:6",
+        "file": "internal/api/handler.go",
+        "name": "NewHandler",
+        "kind": "function",
+        "startLine": 19,
+        "endLine": 21,
+        "snapshot": "current"
+      },
+      {
+        "id": "internal/api/handler.go#Handler.Search@32:19",
+        "file": "internal/api/handler.go",
+        "name": "Search",
+        "kind": "method",
+        "startLine": 32,
+        "endLine": 55,
+        "snapshot": "current"
+      },
+      {
+        "id": "internal/api/handler.go#user@41:7",
+        "file": "internal/api/handler.go",
+        "name": "user",
+        "kind": "type",
+        "startLine": 41,
+        "endLine": 44,
+        "snapshot": "current"
+      },
+      {
+        "id": "internal/api/handler.go#Handler.Count@58:19",
+        "file": "internal/api/handler.go",
+        "name": "Count",
+        "kind": "method",
+        "startLine": 58,
+        "endLine": 69,
+        "snapshot": "current"
+      },
+      {
+        "id": "internal/api/handler.go#Handler.Upstream@72:19",
+        "file": "internal/api/handler.go",
+        "name": "Upstream",
+        "kind": "method",
+        "startLine": 72,
+        "endLine": 79,
+        "snapshot": "current"
+      },
+      {
+        "id": "internal/api/handler.go#fetchStatus@81:6",
+        "file": "internal/api/handler.go",
+        "name": "fetchStatus",
+        "kind": "function",
+        "startLine": 81,
+        "endLine": 88,
+        "snapshot": "current"
+      },
+      {
+        "id": "main.go#main@12:6",
+        "file": "main.go",
+        "name": "main",
+        "kind": "function",
+        "startLine": 12,
+        "endLine": 24,
+        "snapshot": "current"
+      },
+      {
+        "id": "main.go",
+        "file": "main.go",
+        "name": "main.go",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 24,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "internal/api/handler.go#Handler@12:6",
+      "internal/api/handler.go#NewHandler@19:6",
+      "internal/api/handler.go#Handler.Search@32:19",
+      "internal/api/handler.go#user@41:7",
+      "internal/api/handler.go#Handler.Count@58:19",
+      "internal/api/handler.go#Handler.Upstream@72:19",
+      "internal/api/handler.go#fetchStatus@81:6",
+      "main.go#main@12:6"
+    ],
+    "removed": [],
+    "callers": [
+      {
+        "seed": "internal/api/handler.go#NewHandler@19:6",
+        "edges": [
+          {
+            "from": "main.go#main@12:6",
+            "to": "internal/api/handler.go#NewHandler@19:6",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "main.go",
+                "line": 17,
+                "column": 11,
+                "tier": "certain",
+                "evidence": "go-module",
+                "via": {
+                  "file": "main.go",
+                  "line": 9,
+                  "spec": "example.com/directory/internal/api"
+                },
+                "note": null,
+                "rule": "go-module"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "internal/api/handler.go#fetchStatus@81:6",
+        "edges": [
+          {
+            "from": "internal/api/handler.go#Handler.Upstream@72:19",
+            "to": "internal/api/handler.go#fetchStatus@81:6",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "internal/api/handler.go",
+                "line": 73,
+                "column": 15,
+                "tier": "certain",
+                "evidence": "same-scope",
+                "via": null,
+                "note": null,
+                "rule": "same-scope"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "possible": [],
+    "references": [
+      {
+        "seed": "internal/api/handler.go#Handler@12:6",
+        "edge": {
+          "from": "internal/api/handler.go#NewHandler@19:6",
+          "to": "internal/api/handler.go#Handler@12:6",
+          "kind": "uses_type",
+          "sites": [
+            {
+              "file": "internal/api/handler.go",
+              "line": 19,
+              "column": 47,
+              "tier": "certain",
+              "evidence": "same-scope",
+              "via": null,
+              "note": null,
+              "rule": "type-use"
+            }
+          ]
+        }
+      },
+      {
+        "seed": "internal/api/handler.go#Handler.Search@32:19",
+        "edge": {
+          "from": "main.go#main@12:6",
+          "to": "internal/api/handler.go#Handler.Search@32:19",
+          "kind": "uses_value",
+          "sites": [
+            {
+              "file": "main.go",
+              "line": 20,
+              "column": 33,
+              "tier": "certain",
+              "evidence": "receiver-result",
+              "via": {
+                "file": "main.go",
+                "line": 9,
+                "spec": "example.com/directory/internal/api"
+              },
+              "note": null,
+              "rule": "value-ref"
+            }
+          ]
+        }
+      },
+      {
+        "seed": "internal/api/handler.go#Handler.Count@58:19",
+        "edge": {
+          "from": "main.go#main@12:6",
+          "to": "internal/api/handler.go#Handler.Count@58:19",
+          "kind": "uses_value",
+          "sites": [
+            {
+              "file": "main.go",
+              "line": 21,
+              "column": 33,
+              "tier": "certain",
+              "evidence": "receiver-result",
+              "via": {
+                "file": "main.go",
+                "line": 9,
+                "spec": "example.com/directory/internal/api"
+              },
+              "note": null,
+              "rule": "value-ref"
+            }
+          ]
+        }
+      },
+      {
+        "seed": "internal/api/handler.go#Handler.Upstream@72:19",
+        "edge": {
+          "from": "main.go#main@12:6",
+          "to": "internal/api/handler.go#Handler.Upstream@72:19",
+          "kind": "uses_value",
+          "sites": [
+            {
+              "file": "main.go",
+              "line": 22,
+              "column": 36,
+              "tier": "certain",
+              "evidence": "receiver-result",
+              "via": {
+                "file": "main.go",
+                "line": 9,
+                "spec": "example.com/directory/internal/api"
+              },
+              "note": null,
+              "rule": "value-ref"
+            }
+          ]
+        }
+      }
+    ],
+    "callees": [],
+    "importers": [
+      {
+        "from": "main.go",
+        "to": "go:internal/api",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "main.go",
+            "line": 9,
+            "column": 2,
+            "tier": "certain",
+            "evidence": "go-module",
+            "via": {
+              "file": "main.go",
+              "line": 9,
+              "spec": "example.com/directory/internal/api"
+            },
+            "note": null,
+            "rule": "go-module"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "internal/api/handler.go#Handler@12:6",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "internal/api/handler.go#NewHandler@19:6",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "internal/api/handler.go#Handler.Search@32:19",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "internal/api/handler.go#user@41:7",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "internal/api/handler.go#Handler.Count@58:19",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "internal/api/handler.go#Handler.Upstream@72:19",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "internal/api/handler.go#fetchStatus@81:6",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "main.go#main@12:6",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 5
+      },
+      "near": [
+        {
+          "file": "internal/api/handler.go",
+          "line": 33,
+          "name": "Get",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "internal/api/handler.go",
+          "line": 40,
+          "name": "Close",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "internal/api/handler.go",
+          "line": 46,
+          "name": "Next",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "internal/api/handler.go",
+          "line": 48,
+          "name": "Scan",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "internal/api/handler.go",
+          "line": 59,
+          "name": "Get",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 5,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/",
+    "frameworks": {
+      "plugins": [
+        {
+          "id": "go-http",
+          "status": "ok",
+          "reason": null,
+          "apps": 1
+        }
+      ],
+      "routes": [
+        {
+          "plugin": "go-http",
+          "app": "fw:go-http:app:main.go:18",
+          "registration": "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:19:2",
+          "methods": [
+            "GET"
+          ],
+          "pattern": "/health",
+          "partial": null,
+          "name": null,
+          "site": {
+            "file": "main.go",
+            "line": 19
+          },
+          "handler": "h.Health",
+          "status": "dynamic",
+          "mounted": true,
+          "reach": null,
+          "declared": false
+        },
+        {
+          "plugin": "go-http",
+          "app": "fw:go-http:app:main.go:18",
+          "registration": "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:20:2",
+          "methods": [
+            "GET"
+          ],
+          "pattern": "/users",
+          "partial": null,
+          "name": null,
+          "site": {
+            "file": "main.go",
+            "line": 20
+          },
+          "handler": "h.Search",
+          "status": "dynamic",
+          "mounted": true,
+          "reach": null,
+          "declared": true
+        },
+        {
+          "plugin": "go-http",
+          "app": "fw:go-http:app:main.go:18",
+          "registration": "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:21:2",
+          "methods": [
+            "GET"
+          ],
+          "pattern": "/count",
+          "partial": null,
+          "name": null,
+          "site": {
+            "file": "main.go",
+            "line": 21
+          },
+          "handler": "h.Count",
+          "status": "dynamic",
+          "mounted": true,
+          "reach": null,
+          "declared": true
+        },
+        {
+          "plugin": "go-http",
+          "app": "fw:go-http:app:main.go:18",
+          "registration": "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:22:2",
+          "methods": [
+            "GET"
+          ],
+          "pattern": "/upstream",
+          "partial": null,
+          "name": null,
+          "site": {
+            "file": "main.go",
+            "line": 22
+          },
+          "handler": "h.Upstream",
+          "status": "dynamic",
+          "mounted": true,
+          "reach": null,
+          "declared": true
+        }
+      ],
+      "routesTotal": 4,
+      "renders": [],
+      "renderedBy": [],
+      "models": [],
+      "migrations": [],
+      "tests": [],
+      "testsTotal": 0,
+      "roles": [],
+      "unknown": [
+        {
+          "file": "main.go",
+          "line": 19,
+          "cause": "dynamic",
+          "note": "the handler function h.Health is a method of a value whose type no rule reads"
+        },
+        {
+          "file": "main.go",
+          "line": 20,
+          "cause": "dynamic",
+          "note": "the handler function h.Search is a method of a value whose type no rule reads"
+        },
+        {
+          "file": "main.go",
+          "line": 21,
+          "cause": "dynamic",
+          "note": "the handler function h.Count is a method of a value whose type no rule reads"
+        },
+        {
+          "file": "main.go",
+          "line": 22,
+          "cause": "dynamic",
+          "note": "the handler function h.Upstream is a method of a value whose type no rule reads"
+        }
+      ],
+      "unknownTotal": 4,
+      "changedFiles": [
+        "internal/api/handler.go",
+        "main.go"
+      ],
+      "routeIds": [
+        "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:19:2",
+        "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:20:2",
+        "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:21:2",
+        "fw:go-http:registration:fw:go-http:app:main.go:18:main.go:22:2"
+      ]
+    }
+  },
+  "change_id": "abd88064b93d1ec44544f21ce6575838aa02bdce1e481cc2c7418c03f58c7e93",
+  "base": {
+    "ref": "HEAD",
+    "sha": "8141019cd18097af94039b3a51238aa1d63bea83"
+  },
+  "generated_at": "2026-10-09T14:38:12.086Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds three endpoints: a user search by name, a per-key request counter, and an upstream status probe. It registers all three routes in main.go.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "internal/api/handler.go",
+      "line_number": 34,
+      "line_end": 35,
+      "title": "SQL injection in user search",
+      "description": "Search pastes the name query parameter into the SQL text with Sprintf. The value is not escaped or bound. Any caller of GET /users can read or change any row in the database with a crafted name. Pass name to QueryContext as a bound parameter instead of formatting it into the query.",
+      "suggested_change": "\trows, err := h.DB.QueryContext(r.Context(), \"SELECT id, name FROM users WHERE name = ?\", name)",
+      "source": "semgrep:go.lang.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "Search pastes the name query parameter into the SQL text with Sprintf. The value is not escaped or bound.",
+      "consequence": "Any caller of GET /users can read or change any row in the database with a crafted name.",
+      "fix": "Pass name to QueryContext as a bound parameter instead of formatting it into the query."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "internal/api/handler.go",
+      "line_number": 63,
+      "line_end": 63,
+      "title": "Mutex stays locked on missing key",
+      "description": "Count takes h.mu, then returns early when key is empty without unlocking it. One request without a key leaves the lock held, so every later GET /count request hangs forever. Validate key before taking the lock, or unlock with defer right after Lock.",
+      "suggested_change": null,
+      "source": "semgrep:trailofbits.go.missing-unlock-before-return.missing-unlock-before-return",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "Count takes h.mu, then returns early when key is empty without unlocking it.",
+      "consequence": "One request without a key leaves the lock held, so every later GET /count request hangs forever.",
+      "fix": "Validate key before taking the lock, or unlock with defer right after Lock."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "internal/api/handler.go",
+      "line_number": 83,
+      "line_end": 83,
+      "title": "Nil response dereferenced on fetch error",
+      "description": "fetchStatus defers resp.Body.Close before it checks err. When http.Get fails, resp is nil. Whenever the upstream is unreachable, GET /upstream panics instead of returning 502. Move the deferred Close below the error check.",
+      "suggested_change": "\tif err != nil {\n\t\treturn 0, err\n\t}\n\tdefer resp.Body.Close()",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "fetchStatus defers resp.Body.Close before it checks err. When http.Get fails, resp is nil.",
+      "consequence": "Whenever the upstream is unreachable, GET /upstream panics instead of returning 502.",
+      "fix": "Move the deferred Close below the error check."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "internal/api/handler.go",
+      "line_number": 32,
+      "line_end": 88,
+      "title": "New handlers have no tests",
+      "description": "The change adds Search, Count and Upstream, but the repository contains no Go test files. Nothing catches regressions in these handlers, including the locking and error paths. Add httptest-based tests that cover each handler, including the empty key and unreachable upstream cases.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds Search, Count and Upstream, but the repository contains no Go test files.",
+      "consequence": "Nothing catches regressions in these handlers, including the locking and error paths.",
+      "fix": "Add httptest-based tests that cover each handler, including the empty key and unreachable upstream cases."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "go.lang.security.audit.database.string-formatted-query.string-formatted-query",
+        "filePath": "internal/api/handler.go",
+        "lineStart": 34,
+        "lineEnd": 34,
+        "severity": "medium",
+        "message": "String-formatted SQL query detected. This could lead to SQL injection if the string is not sanitized properly. Audit this call to ensure the SQL is not manipulable by external data.",
+        "reference": "https://owasp.org/Top10/A03_2021-Injection",
+        "id": "c3",
+        "token": "semgrep:go.lang.security.audit.database.string-formatted-query.string-formatted-query",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This is the same SQL injection on the same line that the c1 finding already reports.",
+      "cited": {
+        "file_path": "internal/api/handler.go",
+        "line_number": 34
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 4,
+      "keptCount": 3,
+      "durationMs": 3108,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 17,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": "needs Go"
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 2,
+    "additions": 68,
+    "deletions": 1
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 18836,
+      "started_at": "2026-10-09T14:37:54.183Z",
+      "ended_at": "2026-10-09T14:38:12.087Z",
+      "duration_ms": 17904,
+      "rounds": 1,
+      "usage": {
+        "turns": 2,
+        "input_tokens": 27004,
+        "output_tokens": 1833,
+        "cost_usd": 0.1116754
+      }
+    },
+    "snapshot": {
+      "change_id": "abd88064b93d1ec44544f21ce6575838aa02bdce1e481cc2c7418c03f58c7e93",
+      "tree": "fbfae34b77269d994a4583261f06f5dff9d88163",
+      "before": "8a2089340b9d73ea08bb796e32ec23eb4135ab3a39bea042cae1cae81b11ccda",
+      "after": "8a2089340b9d73ea08bb796e32ec23eb4135ab3a39bea042cae1cae81b11ccda"
+    },
+    "candidates": {
+      "total": 3,
+      "disposed": 3
+    },
+    "coverage": {
+      "hunks": 6,
+      "covered": 6,
+      "unread": [],
+      "files_read": [],
+      "files_not_read": [
+        "internal/api/handler.go",
+        "main.go"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

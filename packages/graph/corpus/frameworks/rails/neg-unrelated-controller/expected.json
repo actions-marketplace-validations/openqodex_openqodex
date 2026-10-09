@@ -1,0 +1,36 @@
+{
+  "guards": "never binds a Rails route, callback or association to a same-named class outside app/controllers and app/models",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/posts",
+        "handler": "app/controllers/posts_controller.rb#PostsController.index",
+        "status": "bound"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "to": "lib/legacy/posts_controller.rb#PostsController.index"
+      },
+      {
+        "kind": "applies_middleware",
+        "from": "lib/legacy/posts_controller.rb#PostsController"
+      },
+      {
+        "kind": "uses_type",
+        "from": "lib/legacy/post.rb#Post"
+      },
+      {
+        "kind": "maps_to",
+        "from": "lib/legacy/post.rb#Post"
+      }
+    ],
+    "notBrief": [
+      "handles `PostsController.index`"
+    ]
+  }
+}

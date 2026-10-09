@@ -26,15 +26,9 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 // Builds the graph of `after` against the commit of `before`, and the impact.
 async function change(before: Record<string, string>, after: Record<string, string | null>) {
   const root = makeRepo(before);
-  repos.push(root);
   commitAll(root);
   for (const [path, content] of Object.entries(after)) {
     if (content === null) rmSync(`${root}/${path}`);

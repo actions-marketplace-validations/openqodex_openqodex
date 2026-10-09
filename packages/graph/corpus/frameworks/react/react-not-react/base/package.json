@@ -1,0 +1,12 @@
+{
+  "name": "widgets",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "memo-lib": "^1.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

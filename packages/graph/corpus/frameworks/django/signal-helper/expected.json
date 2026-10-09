@@ -1,0 +1,20 @@
+{
+  "guards": "connects a receiver only to a signal built by Django's Signal, never by a class of the same name",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "schedules",
+        "from": "signal:real",
+        "to": "mysite/hooks.py#on_real",
+        "tier": "certain"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "schedules",
+        "to": "mysite/hooks.py#on_fake"
+      }
+    ]
+  }
+}

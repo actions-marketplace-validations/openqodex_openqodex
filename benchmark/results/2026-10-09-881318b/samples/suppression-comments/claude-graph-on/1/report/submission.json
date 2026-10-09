@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a Python helper that shells out to ImageMagick convert to make upload thumbnails, a docs URL constant, and an Express /calc endpoint that evaluates a query expression.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Request query passed to eval",
+      "problem": "The /calc handler passes req.query.expr straight to eval. Any caller controls the JavaScript that the server runs.",
+      "consequence": "An unauthenticated caller can run arbitrary code on the server, for example through require child_process. The added suppression comments hide this from linting.",
+      "fix": "Remove eval and parse the expression with a restricted arithmetic evaluator such as expr-eval. Delete the two suppression comments.",
+      "suggested_change": "  const value = new Parser().evaluate(String(req.query.expr));",
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.93,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Shell command built from upload name",
+      "problem": "make_thumbnail puts upload_name from the upload form into a shell string on line 8. Line 9 then runs that string with shell=True.",
+      "consequence": "A user who uploads a name like a.png;rm -rf ~ can run any command as the service user. A name with ../ can also read or write files outside the upload folders.",
+      "fix": "Pass an argument list without shell=True. Reject names that are not a plain basename.",
+      "suggested_change": "    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.7,
+      "file_path": "tools/thumbs.py",
+      "line_number": 6,
+      "line_end": 9,
+      "title": "New behaviour has no covering test",
+      "problem": "No test exercises the new make_thumbnail function or the new /calc endpoint.",
+      "consequence": "Nothing catches regressions in input handling for either path.",
+      "fix": "Add tests for make_thumbnail and /calc, including hostile names and hostile expressions.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The noqa only allows the long line on a constant URL string. It hides no real problem.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    },
+    {
+      "candidate": "c3",
+      "reason": "The nosec comment hides the shell injection that the finding on this line already reports.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c4",
+      "reason": "The disable comment hides the eval injection that the finding on line 12 already reports.",
+      "file_path": "web/server.js",
+      "line_number": 11
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is not a problem by itself. The unsafe call on line 9 is reported separately.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 1
+    }
+  ]
+}

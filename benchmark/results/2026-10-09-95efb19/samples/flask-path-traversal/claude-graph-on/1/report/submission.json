@@ -1,0 +1,81 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves files from the upload directory by name, and switches the dev server to bind all interfaces with debug enabled.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The handler joins the raw name query parameter onto the upload directory and serves the result. os.path.join accepts ../ segments and discards the base when name is absolute.",
+      "consequence": "Any caller can read any file the server process can open, such as /etc/passwd or application secrets.",
+      "fix": "Use safe_join from werkzeug, or resolve the path and verify it stays under UPLOAD_DIR, before calling send_file.",
+      "suggested_change": "    path = safe_join(UPLOAD_DIR, name)\n    if path is None or not os.path.isfile(path):\n        abort(404)\n    return send_file(path)",
+      "source": "lens:path-traversal-in-fs-access",
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Werkzeug debugger enabled on all interfaces",
+      "problem": "The app now runs with debug enabled, which exposes the interactive Werkzeug debugger on every exception. Combined with the all-interfaces bind, the debugger is reachable from the network.",
+      "consequence": "Anyone who can reach port 5000 can trigger an error page and run arbitrary Python on the host.",
+      "fix": "Remove debug=True from app.run and read the debug setting from an environment variable such as FLASK_DEBUG for local use only.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000)",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Dev server bound to all interfaces",
+      "problem": "The host changed from loopback to 0.0.0.0, so the Flask development server accepts connections from any network interface. The previous binding limited it to the local machine.",
+      "consequence": "The unauthenticated download endpoint and the debugger become reachable by every host on the network.",
+      "fix": "Restore host=\"127.0.0.1\" or read the bind address from an environment variable so only deployments that need it opt in.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000)",
+      "source": "bandit:B104",
+      "candidate": "c4"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "files/app.py",
+      "line_number": 15,
+      "line_end": 20,
+      "title": "New download endpoint has no test",
+      "problem": "The change adds a download handler with a 404 branch and a file response. The repository contains no test files, so no test exercises either path.",
+      "consequence": "Regressions in the 404 handling or path validation will ship unnoticed.",
+      "fix": "Add a test module that calls /download with a missing, valid, and traversal name. Assert the response for each case.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "Same problem as c1 on the same line, raised once under c1.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c2",
+      "reason": "Same problem as c4 on the same line, raised once under c4.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

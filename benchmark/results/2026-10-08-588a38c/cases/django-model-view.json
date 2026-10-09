@@ -1,0 +1,132 @@
+{
+  "id": "django-model-view",
+  "guards": "a Django change with a model bug, a missing migration and two view bugs (an order readable by any user, CSRF turned off on a POST) is reviewed as a Django change",
+  "language": "python",
+  "framework": "django",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "decimal-times-float",
+      "file": "orders/models.py",
+      "lines": [
+        20,
+        20
+      ],
+      "anchor": {
+        "line": 20,
+        "text": "self.total * 0.9"
+      },
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "total is a DecimalField, so self.total is a Decimal, and Decimal times the float 0.9 raises TypeError: every redemption of the welcome code fails. The fix is to multiply by Decimal(\"0.9\") and round to two places.",
+      "mentions": [
+        "float",
+        "Decimal",
+        "TypeError",
+        "0.9"
+      ]
+    },
+    {
+      "id": "missing-migration",
+      "file": "orders/models.py",
+      "lines": [
+        11,
+        11
+      ],
+      "anchor": {
+        "line": 11,
+        "text": "discount_code = models.CharField"
+      },
+      "mentions": [
+        "migration",
+        "makemigrations"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "The change adds the discount_code field but no migration, so the column does not exist and every query of Order fails once the code is deployed. The fix is a 0002 migration from makemigrations in the same change."
+    },
+    {
+      "id": "order-detail-any-owner",
+      "file": "orders/views.py",
+      "lines": [
+        18,
+        18
+      ],
+      "anchor": {
+        "line": 18,
+        "text": "get_object_or_404(Order, pk=order_id)"
+      },
+      "mentions": [
+        "owner",
+        "any user",
+        "any logged-in user",
+        "other user",
+        "another user",
+        "idor",
+        "authoriz",
+        "access control"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "order_detail looks the order up by id alone, so any logged-in user can read any other user's order by changing the number in the URL. The fix is to filter by owner=request.user, as redeem and order_list do."
+    },
+    {
+      "id": "csrf-exempt-redeem",
+      "file": "orders/views.py",
+      "lines": [
+        22,
+        22
+      ],
+      "anchor": {
+        "line": 22,
+        "text": "@csrf_exempt"
+      },
+      "mentions": [
+        "csrf",
+        "cross-site request"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "redeem changes an order on POST with CSRF protection turned off, so another site can make a logged-in user's browser redeem the code. The fix is to remove csrf_exempt."
+    }
+  ],
+  "extras": [
+    {
+      "file": "orders/models.py",
+      "lines": [
+        16,
+        22
+      ],
+      "mentions": [
+        "race",
+        "concurren",
+        "twice",
+        "atomic",
+        "select_for_update",
+        "same time"
+      ],
+      "why": "two redemptions at the same time can both pass the discount_code check; a real race the plant did not intend"
+    }
+  ]
+}

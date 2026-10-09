@@ -1,0 +1,532 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "medium",
+    "build": {
+      "durationMs": 85,
+      "cacheHits": 0,
+      "parses": 8,
+      "eligibleFiles": 7,
+      "parsedFiles": 7,
+      "omittedFiles": 0,
+      "unresolvedSites": 10,
+      "externalSites": 16,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+        "file": "src/cache/sql-cache.ts",
+        "name": "get",
+        "kind": "method",
+        "startLine": 11,
+        "endLine": 17,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/flags.ts#isEnabled@8:17",
+        "file": "src/flags.ts",
+        "name": "isEnabled",
+        "kind": "function",
+        "startLine": 8,
+        "endLine": 12,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/session.ts#readSession@3:17",
+        "file": "src/session.ts",
+        "name": "readSession",
+        "kind": "function",
+        "startLine": 3,
+        "endLine": 6,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/routes.ts",
+        "file": "src/routes.ts",
+        "name": "routes.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 24,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/main.ts",
+        "file": "src/main.ts",
+        "name": "main.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 1,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "src/cache/sql-cache.ts#SqlCache.get@11:3"
+    ],
+    "removed": [],
+    "callers": [],
+    "possible": [
+      {
+        "seed": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+        "edges": [
+          {
+            "from": "src/flags.ts#isEnabled@8:17",
+            "to": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+            "kind": "dispatches_to",
+            "sites": [
+              {
+                "file": "src/flags.ts",
+                "line": 9,
+                "column": 24,
+                "tier": "possible",
+                "evidence": "dispatch-implements",
+                "via": null,
+                "note": "A call to Cache.get may run this implementation, one of 2; which one runs is not proved.",
+                "rule": "dispatch-implements"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+        "edges": [
+          {
+            "from": "src/session.ts#readSession@3:17",
+            "to": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+            "kind": "dispatches_to",
+            "sites": [
+              {
+                "file": "src/session.ts",
+                "line": 4,
+                "column": 21,
+                "tier": "possible",
+                "evidence": "dispatch-implements",
+                "via": null,
+                "note": "A call to Cache.get may run this implementation, one of 2; which one runs is not proved.",
+                "rule": "dispatch-implements"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+        "edges": [
+          {
+            "from": "src/flags.ts#isEnabled@8:17",
+            "to": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+            "kind": "dispatches_to",
+            "sites": [
+              {
+                "file": "src/flags.ts",
+                "line": 9,
+                "column": 24,
+                "tier": "possible",
+                "evidence": "dispatch-implements",
+                "via": null,
+                "note": "A call to Cache.get may run this implementation, one of 2; which one runs is not proved.",
+                "rule": "dispatch-implements"
+              }
+            ]
+          },
+          {
+            "from": "src/routes.ts",
+            "to": "src/flags.ts#isEnabled@8:17",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "src/routes.ts",
+                "line": 12,
+                "column": 10,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "src/routes.ts",
+                  "line": 2,
+                  "spec": "./flags.js"
+                },
+                "note": null,
+                "rule": "js-relative"
+              },
+              {
+                "file": "src/routes.ts",
+                "line": 18,
+                "column": 10,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "src/routes.ts",
+                  "line": 2,
+                  "spec": "./flags.js"
+                },
+                "note": null,
+                "rule": "js-relative"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "references": [],
+    "callees": [],
+    "importers": [
+      {
+        "from": "src/main.ts",
+        "to": "src/cache/sql-cache.ts",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "src/main.ts",
+            "line": 2,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "src/main.ts",
+              "line": 2,
+              "spec": "./cache/sql-cache.js"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [
+        {
+          "seed": "src/cache/sql-cache.ts#SqlCache.get@11:3",
+          "floor": true,
+          "reasons": [
+            "2 calls may reach it through an interface, a base type or a function value, and none is proved to",
+            "4 calls named `get` in the repository could not be bound to one definition",
+            "1 call goes through a value (a callback or a computed member) in the repository root project, and could reach it"
+          ]
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 4,
+        "unsupported-rule": 3,
+        "dynamic": 1
+      },
+      "near": [
+        {
+          "file": "src/cache/sql-cache.ts",
+          "line": 12,
+          "name": "get",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "a field whose type no rule knows",
+          "candidates": null
+        },
+        {
+          "file": "src/cache/sql-cache.ts",
+          "line": 20,
+          "name": "set",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "a field whose type no rule knows",
+          "candidates": null
+        },
+        {
+          "file": "src/flags.ts",
+          "line": 9,
+          "name": "get",
+          "cause": "unsupported-rule",
+          "scope": "file",
+          "note": "a value of the interface Cache may be any object of that shape; only classes that declare implements Cache are listed as possible targets",
+          "candidates": null
+        },
+        {
+          "file": "src/routes.ts",
+          "line": 17,
+          "name": "includes",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what readSession returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/routes.ts",
+          "line": 23,
+          "name": "handler",
+          "cause": "dynamic",
+          "scope": "project",
+          "note": "a call through a parameter or a local value",
+          "candidates": null
+        },
+        {
+          "file": "src/session.ts",
+          "line": 4,
+          "name": "get",
+          "cause": "unsupported-rule",
+          "scope": "file",
+          "note": "a value of the interface Cache may be any object of that shape; only classes that declare implements Cache are listed as possible targets",
+          "candidates": null
+        },
+        {
+          "file": "src/session.ts",
+          "line": 5,
+          "name": "split",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what cache.get returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/session.ts",
+          "line": 9,
+          "name": "set",
+          "cause": "unsupported-rule",
+          "scope": "file",
+          "note": "a value of the interface Cache may be any object of that shape; only classes that declare implements Cache are listed as possible targets",
+          "candidates": null
+        }
+      ],
+      "nearTotal": 8,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "0694dbc5baec7110b7f03e1d8275617bc613bb8d8dad48bb4bb4d59980cf5d25",
+  "base": {
+    "ref": "HEAD",
+    "sha": "e4a085c2f6171dbea82bfd00767d8a5a54df9077"
+  },
+  "generated_at": "2026-10-09T02:53:19.309Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "SqlCache.get now throws when a key is missing or older than 15 minutes, instead of returning an empty string.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/cache/sql-cache.ts",
+      "line_number": 13,
+      "line_end": 15,
+      "title": "Missing key now throws and breaks the Cache contract",
+      "description": "SqlCache.get now throws for a missing or stale key. Callers like readSession and isEnabled expect an empty string, as the Cache interface promises. main.ts passes a SqlCache to route, so any unknown session or unset flag throws inside the HTTP request handler. The uncaught error crashes the server process, and any anonymous request to /dashboard can trigger it. Return an empty string for a missing or expired row, as the Cache interface promises. Alternatively, update every caller to catch the error.",
+      "suggested_change": "    if (!row || Date.now() - row.storedAt > MAX_AGE_MS) {\n      return \"\";\n    }",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "SqlCache.get now throws for a missing or stale key. Callers like readSession and isEnabled expect an empty string, as the Cache interface promises.",
+      "consequence": "main.ts passes a SqlCache to route, so any unknown session or unset flag throws inside the HTTP request handler. The uncaught error crashes the server process, and any anonymous request to /dashboard can trigger it.",
+      "fix": "Return an empty string for a missing or expired row, as the Cache interface promises. Alternatively, update every caller to catch the error."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/cache/sql-cache.ts",
+      "line_number": 13,
+      "line_end": 15,
+      "title": "Expiry and miss behaviour have no covering test",
+      "description": "The change adds a 15 minute expiry and a new miss path to SqlCache.get. No test file in the repository exercises either path. A regression in miss or expiry handling reaches production unnoticed. The crash in the finding above shows this risk. Add tests for SqlCache.get with a missing key, a fresh row and an expired row.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds a 15 minute expiry and a new miss path to SqlCache.get. No test file in the repository exercises either path.",
+      "consequence": "A regression in miss or expiry handling reaches production unnoticed. The crash in the finding above shows this risk.",
+      "fix": "Add tests for SqlCache.get with a missing key, a fresh row and an expired row."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 8063,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 134,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 93,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 5,
+    "deletions": 1
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 89376,
+      "started_at": "2026-10-09T02:52:51.954Z",
+      "ended_at": "2026-10-09T02:53:19.310Z",
+      "duration_ms": 27356,
+      "rounds": 2,
+      "usage": {
+        "turns": 8,
+        "input_tokens": 45930,
+        "output_tokens": 2688,
+        "cost_usd": 0.1229974
+      }
+    },
+    "snapshot": {
+      "change_id": "0694dbc5baec7110b7f03e1d8275617bc613bb8d8dad48bb4bb4d59980cf5d25",
+      "tree": "0fb84dc8f0d0235ef002e22f68dfc883d5bf356b",
+      "before": "be75e2677f1699cfec08d391fbecba10a2c2f041e9f065346855d24a88cb529f",
+      "after": "be75e2677f1699cfec08d391fbecba10a2c2f041e9f065346855d24a88cb529f"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 2,
+      "covered": 2,
+      "unread": [],
+      "files_read": [
+        "src/cache/cache.ts",
+        "src/flags.ts",
+        "src/main.ts",
+        "src/routes.ts",
+        "src/session.ts"
+      ],
+      "files_not_read": [
+        "src/cache/sql-cache.ts"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

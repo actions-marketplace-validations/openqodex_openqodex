@@ -1,0 +1,42 @@
+{
+  "id": "python-caller-break",
+  "guards": "a Python function that may now return None is reported with the callers in another src-layout package that add and divide its result",
+  "language": "python",
+  "framework": "none",
+  "clean": false,
+  "graph": {
+    "callers": [
+      "pkgs/shop/src/shop/checkout.py:6",
+      "pkgs/shop/src/shop/receipt.py:6"
+    ]
+  },
+  "bugs": [
+    {
+      "id": "none-return-breaks-callers",
+      "file": "pkgs/billing/src/billing/tax.py",
+      "lines": [
+        4,
+        9
+      ],
+      "anchor": {
+        "line": 8,
+        "text": "return None"
+      },
+      "mentions": [
+        "checkout",
+        "receipt",
+        "order_total",
+        "tax_line"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning",
+        "graph"
+      ],
+      "truth": "tax_for now returns None for an unknown region, where it returned 0 before, and its callers in the shop package add it to an int (order_total) and divide it (tax_line), which raises TypeError for any unknown region. The fix is to keep returning 0, or update both callers to handle None."
+    }
+  ]
+}

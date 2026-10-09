@@ -1,0 +1,42 @@
+{
+  "guards": "dispatches a call through a field typed by an interface, given as a constructor parameter property, to every implementation",
+  "callers": [
+    {
+      "to": "src/repo.ts#Repo.find",
+      "site": "src/service.ts:7",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/sql-repo.ts#SqlRepo.find",
+      "site": "src/service.ts:7",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "src/mem-repo.ts#MemRepo.find",
+      "site": "src/service.ts:7",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "src/service.ts:7",
+      "candidates": [
+        "src/sql-repo.ts#SqlRepo.find",
+        "src/mem-repo.ts#MemRepo.find"
+      ]
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/service.ts",
+      "line": 7,
+      "cause": "unsupported-rule"
+    }
+  ],
+  "floor": {
+    "src/sql-repo.ts#SqlRepo.find": true
+  }
+}

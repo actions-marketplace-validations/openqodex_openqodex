@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves files from the upload directory by name. Changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The download handler joins the request's name parameter to UPLOAD_DIR without any check. A name like ../../etc/passwd or an absolute path like /etc/passwd escapes the upload directory.",
+      "consequence": "Any caller can read any file the server process can read. That includes secrets, config and source code.",
+      "fix": "Resolve the joined path with os.path.realpath and reject it unless it lies under the resolved UPLOAD_DIR. Alternatively use flask.send_from_directory, which enforces this check.",
+      "suggested_change": "    return send_from_directory(UPLOAD_DIR, name)",
+      "source": "lens:path-traversal-in-fs-access",
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Debug server exposed on all interfaces",
+      "problem": "The change turns on debug mode and switches the bind address from 127.0.0.1 to 0.0.0.0. The interactive Werkzeug debugger is now reachable from the network.",
+      "consequence": "A network user who triggers an error can open the debugger console. That user can then run arbitrary code on the host.",
+      "fix": "Keep host 127.0.0.1 and turn off debug by default. Read both values from environment configuration if they need to change.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000, debug=os.environ.get(\"FLASK_DEBUG\") == \"1\")",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 15,
+      "line_end": 20,
+      "title": "New download endpoint has no test",
+      "problem": "The repository has no tests that exercise the new download handler. Nothing covers the not-found path or the containment of names.",
+      "consequence": "A regression in path handling or the 404 branch would reach users without anyone noticing.",
+      "fix": "Add tests for a valid file, a missing file and a traversal attempt that the handler must reject.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The finding raised for c1 already covers the public bind address on this line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c3",
+      "reason": "This duplicates c1, which is raised as a finding for debug mode on this line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c4",
+      "reason": "The finding raised for c1 already covers binding to all interfaces on this line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

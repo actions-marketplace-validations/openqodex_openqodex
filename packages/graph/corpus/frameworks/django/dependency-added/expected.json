@@ -1,0 +1,15 @@
+{
+  "guards": "detects a Django application and its routes when only the manifest gains the dependency",
+  "frameworks": {
+    "plugin": "django",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "blog/urls.py:8",
+        "pattern": "blog/<int:pk>/",
+        "handler": "blog/views.py#post_detail",
+        "status": "bound"
+      }
+    ]
+  }
+}

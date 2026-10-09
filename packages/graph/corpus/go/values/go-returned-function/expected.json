@@ -1,0 +1,58 @@
+{
+  "guards": "lists each function a Go callee returns by name as a possible callee where the returned value is called, directly or through a variable",
+  "callers": [
+    {
+      "to": "app/pick.go#pick",
+      "site": "app/run.go:4",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "app/pick.go#pick",
+      "site": "app/run.go:8",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "app/pick.go#onA",
+      "site": "app/run.go:4",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "app/pick.go#onB",
+      "site": "app/run.go:4",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "app/pick.go#onA",
+      "site": "app/run.go:9",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "app/pick.go#onB",
+      "site": "app/run.go:9",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "app/pick.go#onA",
+      "site": "app/pick.go:13",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "app/pick.go#onB",
+      "site": "app/pick.go:15",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "app/pick.go#onA": true
+  }
+}

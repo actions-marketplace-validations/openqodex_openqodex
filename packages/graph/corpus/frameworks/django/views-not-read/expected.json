@@ -1,0 +1,23 @@
+{
+  "guards": "keeps a route whose views module was not read as unresolved with a file-not-parsed gap, never missing",
+  "build": {
+    "maxFileBytes": 2048
+  },
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "mysite/urls.py:6",
+        "pattern": "page/",
+        "status": "unresolved"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/urls.py",
+        "line": 6,
+        "cause": "file-not-parsed"
+      }
+    ]
+  }
+}

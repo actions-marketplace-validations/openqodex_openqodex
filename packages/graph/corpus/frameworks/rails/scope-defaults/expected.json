@@ -1,0 +1,76 @@
+{
+  "guards": "applies the controller and action of an enclosing Rails scope, defaults or controller block to every route inside it, with the route's own to: or action: winning",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/api_key",
+        "handler": "app/controllers/api/deprecated_controller.rb#Api::DeprecatedController.index",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:4",
+        "pattern": "/api_key/reset",
+        "methods": [
+          "PUT"
+        ],
+        "handler": "app/controllers/api/deprecated_controller.rb#Api::DeprecatedController.index",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:5",
+        "pattern": "/gems",
+        "methods": [
+          "POST"
+        ],
+        "handler": "app/controllers/api/deprecated_controller.rb#Api::DeprecatedController.index",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:7",
+        "pattern": "/gems/:rubygem_id/migrate",
+        "methods": [
+          "PUT"
+        ],
+        "handler": "app/controllers/api/deprecated_controller.rb#Api::DeprecatedController.index",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:9",
+        "pattern": "/own",
+        "status": "missing"
+      },
+      {
+        "site": "config/routes.rb:12",
+        "pattern": "/welcome",
+        "handler": "app/controllers/pages_controller.rb#PagesController.home",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:15",
+        "pattern": "/about",
+        "handler": "app/controllers/pages_controller.rb#PagesController.about",
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:16",
+        "pattern": "/faq",
+        "handler": "app/controllers/help_controller.rb#HelpController.faq",
+        "status": "bound"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "config/routes.rb",
+        "line": 9,
+        "cause": "miss"
+      }
+    ],
+    "brief": [
+      "| `GET /api_key` | `api_key` | `config/routes.rb:3` | `api/deprecated#index` | handles `Api::DeprecatedController.index` (likely",
+      "| `PUT /gems/:rubygem_id/migrate` |"
+    ]
+  }
+}

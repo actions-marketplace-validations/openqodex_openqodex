@@ -5,11 +5,12 @@ import { removeTempDirs } from "../temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-// Four visible commands; `scan` stays as a hidden alias that behaves exactly
-// as it did, because released hooks, pre-commit and the Action call it.
+// Five visible commands (`graph` joined the four in the code graph's phase 3);
+// `scan` stays as a hidden alias that behaves exactly as it did, because
+// released hooks, pre-commit and the Action call it.
 //
 // Ways it could fail, written before the code:
-//  a. `--help` lists a hidden command, or misses one of the four.
+//  a. `--help` lists a hidden command, or misses one of the five.
 //  b. Plain `review` with no reviewer available presents the scanner output
 //     as a review, or exits like `scan` does (the total review changed this:
 //     plain `review` no longer equals `scan`).
@@ -20,12 +21,12 @@ type Json = { verdict: string; findings: { source: string | null; file_path: str
 const key = (r: Json): string[] => r.findings.map((f) => `${f.severity} ${f.source} ${f.file_path}:${f.line_number}`).sort();
 
 describe("the command menu", () => {
-  it("a. --help lists exactly init, review, update and trust", () => {
+  it("a. --help lists exactly init, review, update, trust and graph", () => {
     const r = run("menu-help", root, ["--help"]);
     expect(r.status).toBe(0);
     const section = r.stdout.split(/^Commands:$/m)[1] ?? "";
     const names = [...section.matchAll(/^ {2}(\S+)/gm)].map((m) => m[1]).filter((n) => n !== "help");
-    expect(names).toEqual(["init", "review", "update", "trust"]);
+    expect(names).toEqual(["init", "review", "update", "trust", "graph"]);
   });
 
   describe("scan and plain review on the demo repo", () => {

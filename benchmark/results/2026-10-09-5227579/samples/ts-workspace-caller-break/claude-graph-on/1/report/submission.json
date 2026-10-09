@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "safeGit now returns a GitResult object with code, stdout and stderr instead of a stdout string. A failing git command now returns a result instead of throwing. The change also exports the GitResult type from the core package.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.93,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "safeGit return shape and error contract changed without updating callers",
+      "problem": "safeGit now returns a GitResult object and no longer throws on failure. The callers currentBranch in packages/cli/src/branch.ts and changedFiles in packages/cli/src/status.ts still treat the result as a string.",
+      "consequence": "In currentBranch, name.trim() throws a TypeError that its catch swallows, so it always returns null. The CLI main then always prints not a git repository and exits 1.",
+      "fix": "Update currentBranch to check result.code and trim result.stdout. Update changedFiles to split result.stdout and handle a nonzero code.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 13,
+      "line_end": 16,
+      "title": "New safeGit failure path has no covering test",
+      "problem": "safeGit gained a catch branch that maps a failed git command to a GitResult. The repository has no test files that exercise this branch.",
+      "consequence": "A test could have caught the broken CLI callers before the push. Without one, regressions in the code mapping stay unnoticed.",
+      "fix": "Add tests for safeGit on a succeeding and a failing git command. Add tests for currentBranch and changedFiles too.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

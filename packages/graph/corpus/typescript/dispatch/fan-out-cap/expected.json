@@ -1,0 +1,39 @@
+{
+  "guards": "keeps 32 dispatch candidates of a call through an interface with 34 implementations, and discloses the 2 left out as a gap and a cut",
+  "callers": [
+    {
+      "to": "src/handler.ts#Handler.handle",
+      "site": "src/run.ts:4",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "src/run.ts:4",
+      "count": 32,
+      "omitted": 2
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/run.ts",
+      "line": 4,
+      "cause": "fan-out-capped"
+    },
+    {
+      "file": "src/run.ts",
+      "line": 4,
+      "cause": "unsupported-rule"
+    }
+  ],
+  "floor": {
+    "src/impl/h34.ts#H34.handle": true
+  },
+  "cuts": [
+    {
+      "by": "fan-out",
+      "omitted": 2
+    }
+  ]
+}

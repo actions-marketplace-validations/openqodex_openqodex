@@ -44,7 +44,7 @@ OpenQodex needs Node 22 or newer and git. It runs on macOS and Linux. On Windows
 
 ## What it does today
 
-Four commands: `init`, `review`, `update` and `trust`. The commands hooks and agents call are listed in [docs/plumbing.md](docs/plumbing.md).
+Five commands: `init`, `review`, `update`, `trust` and `graph`. The commands hooks and agents call are listed in [docs/plumbing.md](docs/plumbing.md).
 
 - `openqodex review` runs the whole review in one command: a frozen copy of the change, the scanners, the code graph, a reviewer process OpenQodex starts, script checks of its answer, and one report in `report.html`, `report.md`, `report.json` and `report.sarif`.
 - When it ends, the terminal shows a receipt: the verdict, the reviewer's summary, one line per finding (number, severity, category, title, file and line) and the absolute paths of `report.html` and `report.md`. `--format markdown`, `json` or `sarif` still prints the whole report.
@@ -62,6 +62,7 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 - A push gate for Claude Code and Codex, and an optional git pre-push hook. Both look for a review of exactly what is pushed; neither scans or reviews by itself. They warn by default and block only when `.openqodex/config.yaml` sets `review.block_on_severity`.
 - A GitHub Action that runs the full review on a pull request when the workflow gives it an Anthropic API key, and the scanners only (`openqodex scan`) without one. A pre-commit hook that runs the scanners only; it is not a review.
 - `npx openqodex demo` builds a small repo with planted bugs and scans it.
+- `openqodex graph callers <symbol>` and the other graph questions answer from the code graph, with the evidence for each item and a note when the list may be short. `init` registers the same questions as an MCP server (`openqodex mcp`, a tool server your agent starts) with each agent it installs into. [docs/graph.md](docs/graph.md) lists the questions.
 
 ## What it does not do yet
 
@@ -71,7 +72,6 @@ Four commands: `init`, `review`, `update` and `trust`. The commands hooks and ag
 - A review takes one to three minutes and uses your own Claude Code or Codex plan.
 - No review finds everything. The promise is that every stage runs, every scanner finding is checked, every changed line is put in front of the reviewer, and anything skipped is named.
 - No review on your own API key without Claude Code or Codex.
-- No tool server for agents (MCP).
 - No Homebrew formula, no install script and no Docker image. Install through npm.
 - No Windows support outside WSL.
 - No offline copy of the vulnerability database. The dependency check asks osv.dev.

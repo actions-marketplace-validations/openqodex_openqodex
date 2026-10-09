@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves files from the uploads directory. Changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The download handler joins the request's name argument onto UPLOAD_DIR without any check. A name like ../../etc/passwd or an absolute path like /etc/passwd escapes the uploads directory.",
+      "consequence": "Any caller can read any file the server process can read. This includes secrets, config files and source code.",
+      "fix": "Resolve the joined path and reject it unless it lies under UPLOAD_DIR. Alternatively, serve the file with flask.send_from_directory, which applies safe_join.",
+      "suggested_change": "    return send_from_directory(UPLOAD_DIR, name)",
+      "source": "lens:path-traversal-in-fs-access"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Debugger exposed on all interfaces",
+      "problem": "The main block now runs the app with debug=True and binds it to 0.0.0.0. Before this change, the main block bound only to 127.0.0.1 without debug.",
+      "consequence": "Anyone on the network can reach the interactive Werkzeug debugger. The debugger can run arbitrary code and leaks tracebacks.",
+      "fix": "Keep the bind on 127.0.0.1 and turn debug off. Alternatively, read both settings from environment variables.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000)",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 14,
+      "line_end": 20,
+      "title": "New download endpoint has no test",
+      "problem": "The repository has no test that exercises the new download endpoint. No test covers the missing-file or traversal cases.",
+      "consequence": "A regression in path handling would ship unnoticed.",
+      "fix": "Add tests for a valid file, a missing file and a traversal attempt.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The debug finding already covers this host binding, because the exposed debugger is what makes the binding harmful. One finding per problem.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c3",
+      "reason": "This duplicates the debug finding raised from c1 on the same line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c4",
+      "reason": "This duplicates the host binding already covered by the debug finding on the same line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

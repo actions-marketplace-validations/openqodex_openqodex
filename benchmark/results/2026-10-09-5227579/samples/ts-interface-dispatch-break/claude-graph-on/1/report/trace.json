@@ -1,0 +1,69 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/cache/sql-cache.ts",
+    "inside": true,
+    "range": [
+      1,
+      23
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/cache/cache.ts",
+    "inside": true,
+    "range": [
+      1,
+      6
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/flags.ts",
+    "inside": true,
+    "range": [
+      1,
+      13
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/session.ts",
+    "inside": true,
+    "range": [
+      1,
+      11
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/routes.ts",
+    "inside": true,
+    "range": [
+      1,
+      25
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/main.ts",
+    "inside": true,
+    "range": [
+      1,
+      15
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

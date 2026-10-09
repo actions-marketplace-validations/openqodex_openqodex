@@ -1,0 +1,48 @@
+{
+  "guards": "binds net/http routes to their handlers on each mux, keeps a wrapped route apart from its handler, lists a computed pattern as an unknown, and never lets a local value named http register a route",
+  "callers": [
+    {
+      "to": "handlers/items.go#GetItem",
+      "site": "handlers/items_test.go:12",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "go-http",
+    "apps": 3,
+    "registrations": [
+      { "site": "main.go:13", "methods": ["GET"], "pattern": "/items/{id}", "handler": "handlers/items.go#GetItem", "status": "bound", "mounted": true },
+      { "site": "main.go:14", "methods": ["POST"], "pattern": "/items", "handler": "handlers/items.go#CreateItem", "status": "bound" },
+      { "site": "main.go:15", "methods": ["*"], "pattern": "/admin/", "handler": null, "status": "unresolved" },
+      { "site": "main.go:16", "methods": ["*"], "pattern": "/static/", "handler": "main.go#serveStatic", "status": "bound" },
+      { "site": "main.go:21", "methods": ["*"], "pattern": "/healthz", "handler": "main.go#healthz", "status": "bound" },
+      { "site": "metrics/metrics.go:8", "methods": ["GET"], "pattern": "/items/{id}", "handler": "metrics/metrics.go#itemMetrics", "status": "bound" }
+    ],
+    "edges": [
+      { "kind": "applies_middleware", "from": "registration:main.go:15", "to": "middleware.go#logging", "tier": "certain" },
+      { "kind": "tests", "from": "handlers/items_test.go#TestGetItem", "to": "registration:main.go:13", "tier": "possible", "category": "route-request" },
+      { "kind": "tests", "from": "handlers/items_test.go#TestGetItem", "to": "registration:metrics/metrics.go:8", "tier": "possible", "category": "route-request" },
+      { "kind": "tests", "from": "handlers/items_test.go#TestGetItem", "to": "handlers/items.go#GetItem", "tier": "certain", "category": "direct-call" }
+    ],
+    "roles": [
+      { "target": "handlers/items.go#GetItem", "role": "route_handler", "detail": "net/http" },
+      { "target": "main.go#serveStatic", "role": "route_handler", "detail": "net/http" },
+      { "target": "middleware.go#logging", "role": "middleware", "detail": "net/http" },
+      { "target": "handlers/items_test.go#TestGetItem", "role": "test", "detail": "go test" }
+    ],
+    "unknowns": [
+      { "file": "main.go", "line": 15, "cause": "unsupported-rule" },
+      { "file": "main.go", "line": 19, "cause": "dynamic" }
+    ],
+    "none": ["mounts"],
+    "notEdges": [
+      { "kind": "handles", "from": "registration:main.go:15" },
+      { "kind": "handles", "to": "handlers/admin.go#AdminHandler.ServeHTTP" },
+      { "kind": "handles", "from": "registration:main.go:13", "to": "metrics/metrics.go#itemMetrics" },
+      { "kind": "handles", "from": "registration:metrics/metrics.go:8", "to": "handlers/items.go#GetItem" },
+      { "kind": "handles", "from": "registration:main.go:19" },
+      { "kind": "handles", "from": "registration:fake/fake.go:10" },
+      { "kind": "tests", "to": "registration:main.go:14" }
+    ]
+  }
+}

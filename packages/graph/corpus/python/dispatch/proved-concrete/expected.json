@@ -1,0 +1,26 @@
+{
+  "guards": "never dispatches a call on a Python local assigned a constructor call to the overrides of its subclasses",
+  "callers": [
+    {
+      "to": "pkg/impl.py#Impl.find",
+      "site": "pkg/run.py:6",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
+  "notReached": [
+    {
+      "to": "pkg/cached.py#Cached.find",
+      "site": "pkg/run.py:6"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "pkg/run.py",
+      "line": 6
+    }
+  ],
+  "floor": {
+    "pkg/cached.py#Cached.find": false
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "9f4d6ef41c2c",
+  "summary": "tax_for now returns None for an unknown region instead of zero tax. Its two callers, order_total and tax_line, still do arithmetic on the result.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 7,
+      "line_end": 8,
+      "title": "None return crashes order_total and tax_line",
+      "problem": "tax_for now returns None for an unknown region. order_total adds the result to an int, and tax_line divides it by 100.",
+      "consequence": "Checkout raises TypeError for any order shipped to a region missing from RATES. Receipt printing raises the same error for that order.",
+      "fix": "Keep returning 0 for an unknown region. Otherwise, update order_total and tax_line in the same change to handle None.",
+      "suggested_change": "    rate = RATES.get(region, 0.0)\n    return round(amount_cents * rate)",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 7,
+      "line_end": 8,
+      "title": "No test covers the unknown region branch",
+      "problem": "The change adds a None branch to tax_for for an unknown region. No test in the repository runs tax_for or its callers.",
+      "consequence": "No test fails when a caller breaks on the new return value.",
+      "fix": "Add tests that call tax_for, order_total and tax_line with an unknown region.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a thumbnail helper that runs ImageMagick convert through a shell, and a /calc endpoint that evaluates an expression from the query string.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Request query evaluated as JavaScript",
+      "problem": "The /calc handler passes req.query.expr straight to eval. The added comments silence the linters that would report it.",
+      "consequence": "Any caller of /calc can run arbitrary code inside the server process. That caller can read secrets, files and the database.",
+      "fix": "Parse expr with a restricted arithmetic evaluator such as expr-eval, and reject anything else. Remove eval and both suppression comments.",
+      "suggested_change": null,
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Upload name interpolated into a shell command",
+      "problem": "make_thumbnail puts upload_name, which comes from the upload form, into a command string run with shell=True. A nosec comment hides it.",
+      "consequence": "A user can submit a name containing shell syntax such as a semicolon. The server then runs that user's commands.",
+      "fix": "Pass an argument list without shell=True. Also reject names containing path separators or a leading dash.",
+      "suggested_change": "    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.7,
+      "file_path": "tools/thumbs.py",
+      "line_number": 6,
+      "line_end": 9,
+      "title": "New behaviour has no covering test",
+      "problem": "The change adds make_thumbnail and the /calc endpoint. No test file exercises either of them.",
+      "consequence": "A regression in input handling for either path would go unnoticed.",
+      "fix": "Add tests for make_thumbnail and /calc, including names and expressions that hold hostile characters.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c4",
+      "reason": "This suppression hides the same eval that the finding on line 12 already reports.",
+      "file_path": "web/server.js",
+      "line_number": 12
+    },
+    {
+      "candidate": "c3",
+      "reason": "This suppression hides the same shell call that the finding on line 9 already reports.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is not a problem by itself. The unsafe call on line 9 is already reported.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c2",
+      "reason": "The noqa only allows a long constant URL line. It hides no other problem.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    }
+  ]
+}

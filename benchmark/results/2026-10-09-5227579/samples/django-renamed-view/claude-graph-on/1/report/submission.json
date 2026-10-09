@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "change_id": "c09a6fefdf49",
+  "summary": "Renames the order detail view from order_detail to show_order. The view now loads only the number and total_cents fields of the order.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "orders/views.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Renamed view breaks the URL configuration",
+      "problem": "The change renames order_detail to show_order. The orders/urls.py file still references views.order_detail on line 8.",
+      "consequence": "Django raises AttributeError when it imports the orders URLconf. Every route fails to load, including the order list and order detail pages.",
+      "fix": "Keep the name order_detail for the view. Alternatively, update orders/urls.py line 8 to use views.show_order.",
+      "suggested_change": "def order_detail(request, pk):",
+      "source": null
+    }
+  ],
+  "dropped": []
+}

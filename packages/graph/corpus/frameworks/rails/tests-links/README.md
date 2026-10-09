@@ -1,0 +1,3 @@
+# Rails: tests that reference, call or may request the touched code
+
+Guards against missing or overstated test links. A request spec's literal path (`/posts/1.json?full=1`, with its format and query) matches the `show` route; `post posts_path` and `delete post_path(1)` name the create and destroy routes by their URL helpers; a controller spec of `PostsController` calls `index` by name; a minitest controller test `PostsControllerTest` calls `show` by name; an integration test names the search route with `search_url`; a model spec names `Post` and calls `title_length`. Every link is static and stated as a reference, a call or a possible request, never coverage. A `get "/posts"` in application code (app/services/client.rb) is not a test and is never linked.

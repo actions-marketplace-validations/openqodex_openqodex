@@ -6,6 +6,7 @@ OpenQodex is open source AI code review that runs before you push. One command r
 
 - The `openqodex` skill. It tells Claude to run one command, `openqodex review`, wait for it, show you the receipt it prints (the verdict, one line per finding and the path of `report.html`), ask "Fix all, or tell me which?", and fix only the findings you name. Claude does not review the change itself.
 - A push hook. Before Claude runs `git push`, the hook runs `openqodex hook check` through npx, pinned to the plugin's version. It looks for a review of exactly what is pushed; it does not scan or review by itself. By default it never stops a push: it adds a line saying whether the change was reviewed. When `.openqodex/config.yaml` sets `review.block_on_severity`, it denies the push unless a finished review of the current change passed.
+- The code graph's MCP server. Claude Code starts `openqodex mcp` through npx, pinned to the plugin's version, for the repository of the folder it starts it in. Its tools answer who calls a function, what implements it, how two parts connect and what a change reaches, from a graph built on your machine; it talks to Claude Code over stdio only and opens no port.
 
 ## How to use it
 

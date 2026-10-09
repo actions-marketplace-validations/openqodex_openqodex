@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 minor)
+Change 256602956034 against HEAD, 1 file, +4 -3
+Summary: The getUser handler now reads the user id from a different route param, puts the id in its 404 message, and adds a fetchedAt timestamp to the response.
+1. Critical bug: Handler reads a route param that does not exist (src/handlers/users.js:8)
+2. Minor maintainability: Changed getUser behaviour has no covering test (src/handlers/users.js:14)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "c09a6fefdf49",
+  "summary": "Renames the order detail view from order_detail to show_order. The view now loads only the number and total_cents fields.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "orders/views.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "URLconf still references the removed order_detail view",
+      "problem": "The change renames order_detail to show_order. orders/urls.py line 8 still references views.order_detail.",
+      "consequence": "Importing orders.urls raises AttributeError, so the root URLconf fails to load. Every request to the site then fails, including the order list.",
+      "fix": "Keep the order_detail name, or update orders/urls.py line 8 to use views.show_order.",
+      "suggested_change": "def order_detail(request, pk):",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.7,
+      "file_path": "orders/views.py",
+      "line_number": 15,
+      "line_end": 15,
+      "title": "Changed detail view has no covering test",
+      "problem": "The detail view now uses a deferred-field queryset and has a new name. No test requests the detail route.",
+      "consequence": "No test caught the broken route registration. A later template change could also read a deferred field and add queries unnoticed.",
+      "fix": "Add a test that requests orders:detail as a logged-in user and checks the response.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

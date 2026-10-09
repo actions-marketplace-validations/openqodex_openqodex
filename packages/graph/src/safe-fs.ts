@@ -3,6 +3,7 @@
 // links, and every read is bounded.
 import { isAbsolute, resolve } from "node:path";
 import { FolderReader, type EntryResult } from "@openqodex/core";
+import { isFrameworkFileFacts } from "./frameworks/facts.js";
 import type { FileFacts } from "./types.js";
 
 // Repo-relative reads, each decided by what the filesystem holds at the
@@ -65,6 +66,8 @@ function optBound(b: unknown, imports: number): boolean {
   return b === undefined || (isObj(b) && isInt(b.import) && (b.import as number) >= 0 && (b.import as number) < imports && isStr(b.imported));
 }
 
+const RELS = new Set(["implements", "include", "prepend", "extend"]);
+
 function isTypeRef(v: unknown, imports: number): boolean {
   return (
     isObj(v) &&
@@ -75,9 +78,15 @@ function isTypeRef(v: unknown, imports: number): boolean {
     (v.result === undefined || isInt(v.result)) &&
     optBool(v.elem) &&
     optBool(v.declared) &&
-    optBound(v.bound, imports)
+    optBound(v.bound, imports) &&
+    (v.rel === undefined || RELS.has(v.rel as string))
   );
 }
+
+// An index into a list of `size` items.
+const isIndex = (v: unknown, size: number) => isInt(v) && (v as number) >= 0 && (v as number) < size;
+const optIndex = (v: unknown, size: number) => v === undefined || isIndex(v, size);
+const ROLES = new Set(["arg", "assign", "return", "property", "element"]);
 
 function isReceiver(v: unknown, imports: number): boolean {
   if (!isObj(v)) return false;
@@ -101,8 +110,9 @@ function isReceiver(v: unknown, imports: number): boolean {
 const KINDS = new Set(["function", "method", "class", "module", "type"]);
 const LANGS = new Set(["typescript", "tsx", "javascript", "python", "go", "ruby"]);
 
-function isDef(v: unknown, imports: number): boolean {
+function isDef(v: unknown, imports: number, values: number): boolean {
   const isType = (t: unknown) => isTypeRef(t, imports);
+  const params = isObj(v) && Array.isArray(v.params) ? v.params.length : 0;
   return (
     isObj(v) &&
     isStr(v.name) &&
@@ -114,20 +124,31 @@ function isDef(v: unknown, imports: number): boolean {
     typeof v.exported === "boolean" &&
     typeof v.topLevel === "boolean" &&
     isList(v.bases, isType, 1024) &&
+    (v.dynamicBases === undefined || isList(v.dynamicBases, (b) => isObj(b) && isInt(b.line) && isInt(b.column) && (b.head === undefined || isType(b.head)) && (b.rel === undefined || b.rel === "include" || b.rel === "extend" || b.rel === "prepend"), 1024)) &&
     isObj(v.fields) &&
     Object.keys(v.fields).length <= 4096 &&
     Object.values(v.fields).every(isType) &&
     (v.results === undefined || isList(v.results, (r) => r === null || isType(r), 64)) &&
     (v.alias === undefined || isType(v.alias)) &&
     optBool(v.static) &&
-    (v.bodyHash === undefined || (typeof v.bodyHash === "string" && /^[0-9a-f]{16}$/.test(v.bodyHash)))
+    (v.bodyHash === undefined || (typeof v.bodyHash === "string" && /^[0-9a-f]{16}$/.test(v.bodyHash))) &&
+    optBool(v.abstract) &&
+    optBool(v.iface) &&
+    optBool(v.pointer) &&
+    (v.params === undefined || isList(v.params, isStr, 256)) &&
+    (v.invokes === undefined || isList(v.invokes, (i) => isIndex(i, params), 256)) &&
+    (v.returns === undefined || isList(v.returns, (i) => isIndex(i, values), 256)) &&
+    optBool(v.returnsOther)
   );
 }
 
 export function isFileFacts(v: unknown): v is FileFacts {
   if (!isObj(v) || !LANGS.has(v.lang as string)) return false;
   const imports = Array.isArray(v.imports) ? v.imports.length : 0;
-  if (!isList(v.defs, (d) => isDef(d, imports))) return false;
+  const values = Array.isArray(v.values) ? v.values.length : 0;
+  const calls = Array.isArray(v.calls) ? v.calls.length : 0;
+  const tables = Array.isArray(v.tables) ? v.tables.length : 0;
+  if (!isList(v.defs, (d) => isDef(d, imports, values))) return false;
   const defs = (v.defs as unknown[]).length;
   const isCall = (c: unknown) =>
     isObj(c) &&
@@ -142,7 +163,26 @@ export function isFileFacts(v: unknown): v is FileFacts {
     optBool(c.static) &&
     optBool(c.dynamic) &&
     (c.local === undefined || (isInt(c.local) && (c.local as number) >= 0 && (c.local as number) < defs)) &&
-    optBound(c.bound, imports);
+    optBound(c.bound, imports) &&
+    optIndex(c.alias, values) &&
+    optIndex(c.result, calls) &&
+    optIndex(c.table, tables);
+  const isValue = (r: unknown) =>
+    isObj(r) &&
+    isStr(r.name) &&
+    isInt(r.line) &&
+    isInt(r.column) &&
+    isInt(r.caller) &&
+    (r.caller as number) < defs &&
+    isReceiver(r.recv, imports) &&
+    optIndex(r.local, defs) &&
+    optBound(r.bound, imports) &&
+    ROLES.has(r.role as string) &&
+    optIndex(r.call, calls) &&
+    (r.arg === undefined || (isInt(r.arg) && (r.arg as number) >= 0)) &&
+    (r.key === undefined || isStr(r.key));
+  const isTypeUse = (t: unknown) => isObj(t) && isTypeRef(t.ref, imports) && isInt(t.caller) && (t.caller as number) < defs;
+  const isTable = (t: unknown) => isObj(t) && isStr(t.name) && isInt(t.line) && isList(t.values, (i) => isIndex(i, values), 4096) && optBool(t.open);
   const isImport = (i: unknown) =>
     isObj(i) &&
     isStr(i.spec) &&
@@ -158,9 +198,14 @@ export function isFileFacts(v: unknown): v is FileFacts {
     optBool(i.scoped);
   return (
     isList(v.calls, isCall) &&
+    isList(v.values, isValue) &&
+    isList(v.types, isTypeUse) &&
+    (v.typeCuts === undefined || (isInt(v.typeCuts) && (v.typeCuts as number) > 0)) &&
+    isList(v.tables, isTable, 20_000) &&
     isList(v.imports, isImport, 20_000) &&
     isList(v.exportsLocal, (e) => isObj(e) && isStr(e.local) && isStr(e.exported) && (e.line === undefined || isInt(e.line)), 20_000) &&
     (v.defaultExport === null || isStr(v.defaultExport)) &&
-    (v.goPackage === null || isStr(v.goPackage))
+    (v.goPackage === null || isStr(v.goPackage)) &&
+    (v.frameworks === undefined || isFrameworkFileFacts(v.frameworks))
   );
 }

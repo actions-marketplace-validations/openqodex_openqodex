@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "1957ed62c932",
+  "summary": "Adds a to_display function that formats cents as a dollar string, and a balance_line report helper that uses it. Adds tests for both.",
+  "findings": [],
+  "dropped": [
+    {
+      "candidate": "c1",
+      "reason": "The assert is a pytest test assertion, which is the intended idiom for tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 21
+    },
+    {
+      "candidate": "c2",
+      "reason": "The assert is a pytest test assertion, which is the intended idiom for tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 22
+    },
+    {
+      "candidate": "c3",
+      "reason": "The assert is a pytest test assertion, which is the intended idiom for tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 23
+    },
+    {
+      "candidate": "c4",
+      "reason": "The assert is a pytest test assertion, which is the intended idiom for tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c5",
+      "reason": "The assert is a pytest test assertion, which is the intended idiom for tests.",
+      "file_path": "tests/test_money.py",
+      "line_number": 28
+    }
+  ]
+}

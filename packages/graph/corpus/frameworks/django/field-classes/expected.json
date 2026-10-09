@@ -1,0 +1,44 @@
+{
+  "guards": "declares a model field for every constructor whose class is Django's field or derives from one, however the class is named or imported, and never for a manager",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Product",
+        "to": "model_field:Product.price",
+        "tier": "likely"
+      },
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Product",
+        "to": "model_field:Product.cents",
+        "tier": "likely"
+      },
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Product",
+        "to": "model_field:Product.amount",
+        "tier": "likely"
+      },
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Product",
+        "to": "model_field:Product.notes",
+        "tier": "certain"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Product",
+        "to": "model_field:Product.objects"
+      },
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Product",
+        "to": "model_field:Product.shelf"
+      }
+    ]
+  }
+}

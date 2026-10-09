@@ -1,0 +1,28 @@
+{
+  "guards": "lists the Go caller that passes a function to an in-repo function which calls that parameter as a possible caller of the function passed",
+  "callers": [
+    {
+      "to": "util/each.go#Each",
+      "site": "app/main.go:6",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "app/log.go#Show",
+      "site": "app/main.go:6",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "app/log.go#Show",
+      "site": "app/main.go:6",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "app/log.go#Show": true
+  }
+}

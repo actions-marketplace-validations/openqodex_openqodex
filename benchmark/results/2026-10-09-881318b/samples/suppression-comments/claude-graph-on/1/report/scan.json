@@ -1,0 +1,209 @@
+{
+  "candidates": [
+    {
+      "source": "semgrep",
+      "ruleId": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "filePath": "tools/thumbs.py",
+      "lineStart": 9,
+      "lineEnd": 9,
+      "severity": "high",
+      "message": "Found 'subprocess' function 'run' with 'shell=True'. This is dangerous because this call will spawn the command using a shell process. Doing so propagates current shell settings and variables, which makes it much easier for a malicious actor to execute commands. Use 'shell=False' instead.",
+      "reference": "https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess",
+      "id": "c1",
+      "token": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "ruff",
+      "ruleId": "openqodex.suppression-added",
+      "filePath": "tools/settings.py",
+      "lineStart": 4,
+      "lineEnd": 4,
+      "severity": "medium",
+      "message": "This change adds # noqa, which stops ruff reporting what it covers; check that it hides no real problem",
+      "reference": null,
+      "id": "c2",
+      "token": "ruff:openqodex.suppression-added",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "bandit",
+      "ruleId": "openqodex.suppression-added",
+      "filePath": "tools/thumbs.py",
+      "lineStart": 9,
+      "lineEnd": 9,
+      "severity": "medium",
+      "message": "This change adds # nosec, which stops bandit reporting what it covers; check that it hides no real problem",
+      "reference": null,
+      "id": "c3",
+      "token": "bandit:openqodex.suppression-added",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "oxlint",
+      "ruleId": "openqodex.suppression-added",
+      "filePath": "web/server.js",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "medium",
+      "message": "This change adds eslint-disable-next-line, which stops oxlint reporting what it covers; check that it hides no real problem",
+      "reference": null,
+      "id": "c4",
+      "token": "oxlint:openqodex.suppression-added",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "openqodex.suppression-added",
+      "filePath": "web/server.js",
+      "lineStart": 12,
+      "lineEnd": 12,
+      "severity": "medium",
+      "message": "This change adds nosemgrep, which stops semgrep reporting what it covers; check that it hides no real problem",
+      "reference": null,
+      "id": "c5",
+      "token": "semgrep:openqodex.suppression-added",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "bandit",
+      "ruleId": "B404",
+      "filePath": "tools/thumbs.py",
+      "lineStart": 1,
+      "lineEnd": 1,
+      "severity": "low",
+      "message": "B404: Consider possible security implications associated with the subprocess module.",
+      "reference": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess",
+      "id": "c6",
+      "token": "bandit:B404",
+      "reviewSeverity": "nitpick"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 1,
+      "keptCount": 2,
+      "durationMs": 3573,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 37,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 1,
+      "durationMs": 13,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 1,
+      "keptCount": 2,
+      "durationMs": 68,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 1,
+      "durationMs": 15,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [],
+  "projects": [
+    {
+      "root": "web",
+      "frameworks": []
+    }
+  ]
+}

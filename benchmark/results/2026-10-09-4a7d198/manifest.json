@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "started_at": "2026-10-09T14:37:08.390Z",
+  "build": {
+    "commit": "4a7d198375bf5dd8607a17c12da96cbee0ce956b",
+    "short": "4a7d198",
+    "tree": "4c33e3a2d40bb9137f51c1e043fabe6203b84c15",
+    "commitTree": "4c33e3a2d40bb9137f51c1e043fabe6203b84c15",
+    "dirty": false,
+    "bundleHash": "0777470dcafe7f12f54a5211f88e2f01c1865c851f73b5d82225d62c05f510ce",
+    "builtAt": "2026-10-09T14:36:59.782Z",
+    "builtWithNode": "v22.23.3",
+    "cli": "packages/cli/dist/bin.js",
+    "cliVersion": "0.10.0"
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "27.2.0",
+    "arch": "arm64",
+    "cpu": "Apple M5 Pro",
+    "cpus": 15,
+    "memoryGb": 48,
+    "node": "v22.23.3"
+  },
+  "reviewer": {
+    "name": "claude",
+    "version": "2.1.295",
+    "model": "claude-opus-5-5",
+    "modelFrom": "the model Claude Code names in its answer"
+  },
+  "reviewers": {
+    "claude": {
+      "name": "claude",
+      "version": "2.1.295",
+      "model": "claude-opus-5-5",
+      "modelFrom": "the model Claude Code names in its answer"
+    }
+  },
+  "review": {
+    "web": "on",
+    "timeoutSeconds": 900,
+    "reportDir": true,
+    "flags": "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]"
+  },
+  "cases": [
+    "django-renamed-view",
+    "express-admin-routes",
+    "go-http-handler",
+    "suppression-comments"
+  ],
+  "caseHashes": {
+    "django-renamed-view": "d062006956f08a8e2b7bd676f59538c2cf0dce31c82d0396d65e39ed62de0af0",
+    "express-admin-routes": "e9cc8bd156ea089aa220ae0db6fe7ade9b7e91cd6348b103c93b09c500b27648",
+    "go-http-handler": "d94de84adbb648632d5240823f5b6b23718fe153f35fc811dd1866829e77c94f",
+    "suppression-comments": "f224edf0e5290bcd8068d7fe01bede212f7a5fbe458bbd15925fcaf5afec0541"
+  },
+  "configs": [
+    "claude-graph-on"
+  ],
+  "repeat": 1,
+  "concurrency": 1,
+  "planned": 4,
+  "ended": {
+    "at": "2026-10-09T14:38:35.140Z",
+    "how": "finished",
+    "why": null,
+    "reviewsWithAnAttempt": 4,
+    "planned": 4
+  }
+}

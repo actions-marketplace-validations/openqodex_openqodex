@@ -1,0 +1,11 @@
+Passed with warnings: 6 findings (2 critical, 1 major, 3 minor)
+Change c856f8e5689f against HEAD, 3 files, +29 -0
+Summary: Adds an order detail endpoint and a POST endpoint that applies the WELCOME10 discount to an order. Also adds a discount_code field to Order.
+1. Critical security: Order detail readable by any logged-in user (orders/views.py:18)
+2. Critical bug: Decimal multiplied by float raises TypeError (orders/models.py:20)
+3. Major bug: New discount_code field has no migration (orders/models.py:11)
+4. Minor bug: Once-per-order discount check is not atomic (orders/models.py:18-22)
+5. Minor security: CSRF protection disabled on a session-authenticated POST (orders/views.py:22)
+6. Minor maintainability: New discount and view behaviour has no tests (orders/models.py:16-22)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md
