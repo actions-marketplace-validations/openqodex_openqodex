@@ -11,7 +11,7 @@
 // name. Nothing is imported or executed: settings are read as literals.
 import { posix } from "node:path";
 import type { Tier } from "../../model/records.js";
-import type { GraphNode } from "../../types.js";
+import type { CallFact, GraphNode } from "../../types.js";
 import { appId, entityId } from "../plugin.js";
 import type { Detection, Entity, FrameworkEdge, FrameworkEdgeKind, FrameworkEvidence, FrameworkEvidenceKind, FrameworkUnknown, Lookup, PluginIndex, PluginOutput, Registration, Role, RoleAssignment, Site } from "../plugin.js";
 import { isDynamic } from "../shared/literals.js";
@@ -118,7 +118,7 @@ type Rule = (typeof RULES)[keyof typeof RULES];
 // "django.urls.path"); null when the head is defined in the file, bound by
 // nothing, or by a relative import.
 // Per file: the top-level names it defines, and what each imported head stands for.
-type Heads = { defined: Set<string>; imported: Map<string, string> };
+type Heads = { defined: Set<string>; assigned: Set<string>; imported: Map<string, string> };
 const headCache = new WeakMap<Index, Map<string, Heads | null>>();
 
 function headsOf(index: Index, file: string): Heads | null {
@@ -128,7 +128,9 @@ function headsOf(index: Index, file: string): Heads | null {
   const facts = index.languageFacts(file);
   let heads: Heads | null = null;
   if (facts) {
-    heads = { defined: new Set(facts.defs.filter((d) => d.topLevel).map((d) => d.name)), imported: new Map() };
+    // A name assigned at module level no longer proves its import.
+    const assigned = new Set(index.factsOf(file).flatMap((f) => (f.kind === "assigned" ? f.names : [])));
+    heads = { defined: new Set(facts.defs.filter((d) => d.topLevel).map((d) => d.name)), assigned, imported: new Map() };
     for (const imp of facts.imports) {
       if (imp.scoped || imp.reexport || imp.spec.startsWith(".")) continue;
       for (const n of imp.names) heads.imported.set(n.local, `${imp.spec}.${n.imported}`);
@@ -139,12 +141,39 @@ function headsOf(index: Index, file: string): Heads | null {
   return heads;
 }
 
-export function canonical(index: Index, file: string, ref: Ref): string | null {
+// `at`: the line of a call written with `callee` (the dotted callee, the
+// ref itself when absent). The import binds there only when the name is
+// not reassigned at module level and nothing in the calling function (a
+// parameter, a local, a nested definition, an import in the function)
+// hides it at that call, as the language facts record the call.
+export function canonical(index: Index, file: string, ref: Ref, at?: { line: number; callee?: Ref }): string | null {
   const heads = headsOf(index, file);
   const [head, ...rest] = ref;
-  if (!heads || head === undefined || heads.defined.has(head)) return null;
+  if (!heads || head === undefined || heads.defined.has(head) || heads.assigned.has(head)) return null;
   const base = heads.imported.get(head);
-  return base === undefined ? null : [base, ...rest].join(".");
+  if (base === undefined) return null;
+  if (at && !boundAtUse(index, file, at.line, at.callee ?? ref)) return null;
+  return [base, ...rest].join(".");
+}
+
+const callCache = new WeakMap<Index, Map<string, Map<number, CallFact[]>>>();
+
+// Whether every call on the line written with this callee reads the
+// module's binding of its head: a bare call no scope shadows, binds locally
+// or by a function's own import; a call on a name receiver.
+function boundAtUse(index: Index, file: string, line: number, callee: Ref): boolean {
+  let byFile = callCache.get(index);
+  if (!byFile) callCache.set(index, (byFile = new Map()));
+  let byLine = byFile.get(file);
+  if (!byLine) {
+    byLine = new Map();
+    for (const c of index.languageFacts(file)?.calls ?? []) (byLine.get(c.line) ?? byLine.set(c.line, []).get(c.line))?.push(c);
+    byFile.set(file, byLine);
+  }
+  const name = callee[callee.length - 1] as string;
+  const calls = (byLine.get(line) ?? []).filter((c) => c.name === name);
+  if (calls.length === 0) return true; // no call recorded there (a multi-line call): the module-level check stands
+  return calls.every((c) => (callee.length === 1 ? c.recv.kind === "none" && !c.shadowed && c.local === undefined && c.bound === undefined : c.recv.kind === "name" && c.recv.name === callee[0] && c.recv.bound === undefined));
 }
 
 // ---------- the plugin's resolve state ----------
@@ -500,7 +529,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         return;
       }
       if ((perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP) return;
-      const fn = canonical(index, file, f.fn);
+      const fn = canonical(index, file, f.fn, { line: f.line });
       if (!fn || !URL_FUNCTIONS.has(fn)) {
         if (app !== null) out.gap({ site, scope, affects: ["handles", "mounts"], cause: "unsupported-rule", name: show(f.fn), note: `${show(f.fn)} is not Django's path, re_path or url, so the graph does not read this entry` });
         return;
@@ -517,7 +546,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       const written = typeof f.route === "string" ? f.route : null;
       const v = f.view;
       if (v.t === "include") {
-        const inc = canonical(index, file, v.fn);
+        const inc = canonical(index, file, v.fn, { line: f.line });
         if (!inc || !INCLUDE_FUNCTIONS.has(inc)) {
           out.gap({ site, scope, affects: ["mounts"], cause: "unsupported-rule", name: show(v.fn), note: `${show(v.fn)} is not Django's include` });
           return;
@@ -608,7 +637,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   for (const file of index.factFiles()) {
     if (visited.has(file) || !enabled(file)) continue;
     const entries = factsOf(file, "url").filter((f) => f.list === "urlpatterns" && f.parent === -1);
-    if (!entries.some((f) => URL_FUNCTIONS.has(canonical(index, file, f.fn) ?? ""))) continue;
+    if (!entries.some((f) => URL_FUNCTIONS.has(canonical(index, file, f.fn, { line: f.line }) ?? ""))) continue;
     out.role(file, "route_table", null, null, ev("route-table", "certain", siteOf(file, entries[0] as Of<"url">), RULES.urls, null));
     walk(null, file, "urlpatterns", -1, [], [], [], 0, [file]);
   }
@@ -647,7 +676,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   for (const file of index.factFiles()) {
     if (!enabled(file)) continue;
     for (const r of factsOf(file, "render")) {
-      if (!RENDER_FUNCTIONS.has(canonical(index, file, r.fn) ?? "")) continue;
+      if (!RENDER_FUNCTIONS.has(canonical(index, file, r.fn, { line: r.line }) ?? "")) continue;
       renders(file, index.enclosing(file, r.line)?.id ?? file, r, r.template, RULES.templates);
     }
     for (const t of factsOf(file, "template_attr")) {
@@ -839,7 +868,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     if (!enabled(file)) continue;
     const app = appOf(file);
     for (const r of factsOf(file, "receiver")) {
-      const dec = canonical(index, file, r.dec);
+      const dec = canonical(index, file, r.dec, { line: r.line });
       if (dec !== "django.dispatch.receiver" && dec !== "django.dispatch.dispatcher.receiver") continue;
       const fn = functionIn(index, file, r.fn, r.line + 1);
       if (!fn) continue;
@@ -855,7 +884,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     for (const c of factsOf(file, "connect")) {
       const site = siteOf(file, c);
       if (!c.handler) continue;
-      const name = canonical(index, file, c.signal);
+      const name = canonical(index, file, c.signal, { line: c.line, callee: [...c.signal, "connect"] });
       const inRepo = !name && (factsOf(file, "signal_def").some((s) => s.name === c.signal[0] && c.signal.length === 1) || index.lookup(file, c.signal).kind === "miss");
       if (!name?.startsWith("django.") && !inRepo) continue;
       const sig = signalEntity(file, c.signal, app, site);
@@ -973,7 +1002,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       }
     }
     for (const rv of factsOf(file, "reverse")) {
-      if (!REVERSE_FUNCTIONS.has(canonical(index, file, rv.fn) ?? "")) continue;
+      if (!REVERSE_FUNCTIONS.has(canonical(index, file, rv.fn, { line: rv.line }) ?? "")) continue;
       const rsite = siteOf(file, rv);
       if (isDynamic(rv.name)) {
         out.gap({ site: rsite, scope: { file }, affects: ["tests"], cause: "dynamic", name: null, note: "the route name is computed" });

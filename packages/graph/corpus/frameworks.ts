@@ -31,6 +31,8 @@ export type FrameworkExpected = {
   notEdges?: { kind: FrameworkEdgeKind; from?: string; to?: string }[];
   // Files that must hold no registration of the plugin (a file that looks like a route table and is not one).
   noRegistrationsIn?: string[];
+  // Registration sites ("file:line") that must not be registered (a URL list the module replaced).
+  notRegistrations?: string[];
   brief?: string[]; // substrings the review brief must print
   notBrief?: string[]; // substrings it must not print
 };
@@ -179,6 +181,12 @@ export function scoreFrameworks(expected: FrameworkExpected | undefined, graph: 
     const bad = mine.unknowns.filter((x) => x.cause === n.cause && x.site?.file === n.file && x.site.line === n.line);
     if (bad.length === 0) out.controls.hit++;
     else out.failures.push(`negative control broken: ${n.file}:${n.line} is reported as ${n.cause}: ${bad[0]?.note ?? ""}`);
+  }
+  for (const site of expected.notRegistrations ?? []) {
+    out.controls.of++;
+    const bad = mine.entities.filter((e) => e.kind === "registration" && `${e.site.file}:${e.site.line}` === site);
+    if (bad.length === 0) out.controls.hit++;
+    else out.failures.push(`negative control broken: ${site} is registered (${bad.length} registrations)`);
   }
   for (const file of expected.noRegistrationsIn ?? []) {
     out.controls.of++;
