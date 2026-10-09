@@ -10,6 +10,15 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// Folders a program the tests start keeps for itself under TMPDIR. No test
+// makes them, so no test removes them: they go with the run folder like
+// everything else and are named in one line instead of failing the run.
+// Claude Code, the real reviewer the end-to-end tests start, makes
+// claude-<uid> (its per-user state) and cc-socks or cc-socks-<n> (its
+// sockets) on Linux; both names are in its own bundle. The Codex reviewer
+// left nothing here in the runs that started it.
+const PROGRAM_FOLDERS = [/^claude-\d+$/, /^cc-socks(-\d+)?$/];
+
 export default function setup(): () => void {
   // The caches kept between runs stay in the system temp folder: the
   // scanner tools of the end-to-end home and the graph acceptance clones.
@@ -22,8 +31,11 @@ export default function setup(): () => void {
     else process.env.TMPDIR = before;
     // node-compile-cache is Node's own cache, which npm switches on; it lands
     // here only because TMPDIR does, and goes with the run folder.
-    const left = readdirSync(run).filter((name) => name !== "node-compile-cache").sort();
+    const names = readdirSync(run).filter((name) => name !== "node-compile-cache").sort();
+    const programs = names.filter((name) => PROGRAM_FOLDERS.some((p) => p.test(name)));
+    const left = names.filter((name) => !programs.includes(name));
     rmSync(run, { recursive: true, force: true, maxRetries: 5 });
+    if (programs.length > 0) process.stdout.write(`temp folders the reviewer programs keep for themselves, removed with the run folder: ${programs.join(", ")}\n`);
     if (left.length > 0) {
       const shown = left.slice(0, 40).map((name) => `  ${name}`).join("\n");
       const more = left.length > 40 ? `\n  and ${left.length - 40} more` : "";
