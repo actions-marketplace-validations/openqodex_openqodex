@@ -22,10 +22,13 @@ import type { Budget, Item } from "./traverse.js";
 
 // The relations the resolver of this build produces. A later phase that
 // adds a relation adds it here; a relation found on an edge of the graph
-// counts as produced too.
-export const RESOLVED_RELATIONS = ["calls", "inherits", "imports"] as const;
+// counts as produced too. Phase 2 resolves calls through interfaces and
+// base types (implements, dispatches_to, overrides) and uses of a symbol
+// as a value or a type (may_invoke, uses_value, uses_type) on every build,
+// so a repository with none of them answers an empty list, not a boundary.
+export const RESOLVED_RELATIONS = ["calls", "inherits", "implements", "dispatches_to", "may_invoke", "overrides", "uses_value", "uses_type", "imports"] as const;
 const REFERENCE_KINDS = ["uses_value", "uses_type", "reads", "writes", "may_invoke", "decorates"];
-const KNOWN_KINDS = new Set([...RESOLVED_RELATIONS, "implements", "overrides", "dispatches_to", ...REFERENCE_KINDS]);
+const KNOWN_KINDS = new Set<string>([...RESOLVED_RELATIONS, ...REFERENCE_KINDS]);
 
 const produced = new WeakMap<Graph, Set<string>>();
 export function relationsOf(g: Graph): Set<string> {
@@ -33,6 +36,7 @@ export function relationsOf(g: Graph): Set<string> {
   if (!set) {
     set = new Set<string>(RESOLVED_RELATIONS);
     for (const e of g.edges) set.add(e.kind);
+    for (const e of g.references) set.add(e.kind);
     produced.set(g, set);
   }
   return set;
@@ -241,6 +245,14 @@ export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>)
       reasons.push("this build does not read `implements` clauses or Go method sets, so the classes that implement it are not listed");
       causes["unsupported-rule"] = null;
     }
+    // TypeScript matches an interface or an object type by its shape: a
+    // class or an object that has its members implements it without saying
+    // so, and the graph lists only the ones that declare it.
+    const shape = n.kind === "type" ? n : n.kind === "method" ? ownerClass(g, n) : null;
+    if (shape?.kind === "type" && shape.lang !== null && familyOf(shape.lang) === "js") {
+      reasons.push(`TypeScript matches ${qualified(shape)} by its shape, so a class or an object that has its members without declaring it is not listed`);
+      causes["unsupported-rule"] = null;
+    }
     const skipped = notReadIn(g, g.projectOf(n.file));
     if (skipped > 0) reasons.push(`${skipped} ${skipped === 1 ? "file" : "files"} of its project ${skipped === 1 ? "was" : "were"} not read`);
     return listing({ ...base, target, counts: counts(items), unknown: withFloor(base, reasons, causes) }, items, { beyond: beyond.length > 0 ? { frontier: beyond } : null });
@@ -351,8 +363,10 @@ export function path(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job | 
 
 // The review's own walk (impact.ts), seeded by the diff the caller passes
 // or by one symbol as if its first line changed. Items: each caller path
-// with its hops, each callee, each importer of a changed file, each changed
-// public name. The walk is bounded by its own limits (200 symbols, 20
+// with its hops, each possible caller path (a step through an interface, a
+// base type or a function value) apart, each use that is not a call (as a
+// value, as a type, an implementation or an override), each callee, each
+// importer of a changed file, each changed public name. The walk is bounded by its own limits (200 symbols, 20
 // callers a hop), so it runs whole once its point is found. Each changed
 // public name comes from the graph with every place that used it, never
 // from the summary, which keeps the first 200 for the brief; the cuts the
@@ -379,12 +393,14 @@ export function impact(s: Session, req: Request, extra: Extra): Job | Answer {
     const hop = (e: { from: string; to: string; kind: string; sites: GraphSite[] }, depth: number): Item => toItem(g, e, e.sites[0] as GraphSite, depth);
     const all: unknown[] = [
       ...sum.callers.map((p) => ({ type: "caller", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
+      ...(sum.possible ?? []).map((p) => ({ type: "possible-caller", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
+      ...(sum.references ?? []).map((r) => ({ type: "reference", seed: r.seed, hops: [hop(r.edge, 1)] })),
       ...sum.callees.map((p) => ({ type: "callee", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
       ...sum.importers.map((e) => ({ type: "importer", hops: [hop(e, 1)] })),
       ...g.exportChanges.map((e) => ({ type: "export", ...e })),
     ];
     const cutNotes = [...new Set(sum.cuts.filter((c) => LISTED_CUTS.has(c.by)).map((c) => c.note))];
-    const lastSites = sum.callers.map((c) => c.edges[c.edges.length - 1]?.sites[0]).filter((x): x is GraphSite => x !== undefined);
+    const lastSites = [...sum.callers, ...(sum.possible ?? [])].map((c) => c.edges[c.edges.length - 1]?.sites[0]).filter((x): x is GraphSite => x !== undefined);
     return listing(
       {
         ...base,

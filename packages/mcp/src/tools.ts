@@ -64,7 +64,7 @@ export const TOOLS: ToolSpec[] = [
     description: `What extends this class or implements this interface, or overrides this method (\`Class.method\`), through every level of inheritance. ${DATA}`,
     properties: { ...SYMBOL, depth: int("Levels down, 1 to 8; default 3.", 1, 8), tiers: TIERS },
   },
-  { name: "graph_references", op: "references", description: `Who uses this symbol as a value or a type (passed, stored, annotated), apart from calls. Says \`unsupported\` when this build does not resolve such uses. ${DATA}`, properties: { ...SYMBOL, tiers: TIERS } },
+  { name: "graph_references", op: "references", description: `Who uses this symbol as a value or a type (passed, stored, annotated), apart from calls. ${DATA}`, properties: { ...SYMBOL, tiers: TIERS } },
   {
     name: "graph_routes",
     op: "routes",

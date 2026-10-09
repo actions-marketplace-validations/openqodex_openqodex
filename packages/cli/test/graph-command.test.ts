@@ -87,12 +87,14 @@ describe("openqodex graph", () => {
 
   it("exits 2 with the capability boundary for a question this build cannot answer (3, 4)", () => {
     const root = repo(files);
-    const r = cli(root, "graph", "references", "core");
+    const r = cli(root, "graph", "routes");
     expect(r.status).toBe(2);
     expect(r.stdout).toMatch(/^unsupported: /m);
     const routes = cli(root, "graph", "routes", "--json");
     expect(routes.status).toBe(2);
     expect((JSON.parse(routes.stdout) as Answer).error?.code).toBe("unsupported");
+    // Every build resolves uses as a value or a type, so references answers.
+    expect(cli(root, "graph", "references", "core").status).toBe(0);
   });
 
   it("exits 0 for an answer that is a floor, and 2 for a name the graph does not hold (4)", () => {

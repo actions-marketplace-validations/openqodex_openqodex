@@ -25,18 +25,26 @@
 // 11. `packages` says one project depends on another with no import
 //     between them, or misses one that has.
 // 12. An override is said to be certain when only a method name ties it to
-//     the base method, or a subclass two levels down is missed.
+//     the base method, or a subclass two levels down is missed. (The
+//     resolver binds an override through the class's lookup order and the
+//     inheritance it proved, so its tier is that proof's.)
 // 13. Every question, asked of every corpus repository, breaks the answer
 //     shape: no graph block, no unknown block, a count that is neither a
 //     number nor null, an error with items, or a zero worded as "unused".
-// 14. Overrides derived from the inheritance stop at the depth asked and
-//     say nothing of the subclasses past it.
+// 14. An override search stops at the depth asked and says nothing of the
+//     overrides past it.
 // 15. A class whose base is written as an expression (a call, a mixin) is
 //     not tied to the base, and `implementers` of the base says nothing of
 //     what it could not read: a short list with no floor.
 // 16. `impact` gives the summary's list of places that used a changed
 //     public name, which keeps the first 200, as if it were whole: no
 //     floor, no cut, and no page holds the rest.
+// 17. The questions read only the calls profile of the graph and miss the
+//     relations the resolver keeps apart (overrides, uses as a value or a
+//     type): `references` answers unsupported or a short list,
+//     `implementers` of a method lists no implementation of an interface
+//     member, `explain` cannot read their edges back, and `impact` drops
+//     the possible callers and the uses the review's brief shows.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -156,9 +164,10 @@ describe("every question, against every corpus repository (13)", () => {
           expect(typeof i.site.evidence, label).toBe("string");
         }
       }
-      // A build with no value relations and no framework layer cannot say
-      // who uses a symbol as a value or which route maps to it (3).
-      expect(ask(b, { kind: "references", target }).error?.code, name).toBe("unsupported");
+      // Every build resolves uses as a value or a type, so references
+      // answers; a build with no framework layer cannot say which route
+      // maps to a symbol (3).
+      expect(ask(b, { kind: "references", target }).error?.code, name).not.toBe("unsupported");
       expect(ask(b, { kind: "routes", target }).error?.code, name).toBe("unsupported");
     }
   });
@@ -215,13 +224,17 @@ describe("callers, callees and their gaps", () => {
   it("says a floor with the value-call reason when a computed member call could reach the symbol (2)", () => {
     const b = get("typescript/gaps/computed-member-call");
     const a = ask(b, { kind: "callers", target: { name: "onSave" } });
-    expect(a.items).toEqual([]);
-    expect(a.counts.certain).toBe(0);
+    // The table's entry is a possible caller, never a counted one, and the list stays a floor.
+    expect((a.items as Item[]).map((i) => [i.fromName, i.kind, i.site.tier, i.site.evidence])).toEqual([["dispatch", "may_invoke", "possible", "value-table"]]);
+    expect(a.counts).toEqual({ certain: 0, likely: 0, possible: 1 });
     expect(a.unknown.floor).toBe(true);
-    expect(a.unknown.reasons.join(" ")).toMatch(/through a value/);
-    // What does `dispatch` call: the computed call is a gap of the answer, not a callee.
+    expect(a.unknown.reasons.join(" ")).toMatch(/function value/);
+    // What does `dispatch` call: each entry of the table as possible, and the computed call stays a gap of the answer.
     const out = ask(b, { kind: "callees", target: { name: "dispatch" } });
-    expect(out.items).toEqual([]);
+    expect((out.items as Item[]).map((i) => [i.toName, i.site.tier])).toEqual([
+      ["onSave", "possible"],
+      ["onDelete", "possible"],
+    ]);
     expect(out.unknown.floor).toBe(true);
     expect(out.unknown.causes.dynamic).toBe(1);
   });
@@ -373,7 +386,7 @@ describe("questions the corpus holds nothing for", () => {
   });
   const q = (req: Omit<Request, "apiVersion">) => query(s, { apiVersion: 1, ...req } as Request);
 
-  it("lists subclasses two levels down, and an override by name only as likely with its premise (12)", () => {
+  it("lists subclasses two levels down, and an override at the tier of the inheritance that proves it (12)", () => {
     const a = q({ kind: "implementers", target: { name: "Base" } });
     expect(a.error).toBeNull();
     expect((a.items as Item[]).map((i) => [i.fromName, i.kind, i.depth, i.site.tier])).toEqual([
@@ -382,13 +395,12 @@ describe("questions the corpus holds nothing for", () => {
     ]);
     const m = q({ kind: "implementers", target: { name: "Base.run" } });
     expect(m.error).toBeNull();
-    const o = m.items as (Item & { premises: string[] })[];
-    expect(o.map((i) => [i.from.includes("#Mid.run@"), i.kind, i.site.tier])).toEqual([[true, "overrides", "likely"]]);
-    expect(o[0]?.site.note).toMatch(/same name/);
-    expect(o[0]?.premises).toHaveLength(1);
-    expect(q({ kind: "explain", target: { id: o[0]?.premises[0] } }).error).toBeNull();
-    // Calls through an interface or a base type are not resolved in this build: a floor.
-    expect(m.unknown.floor).toBe(true);
+    const o = m.items as Item[];
+    // `class Mid extends Base` in the same file proves the inheritance, and the lookup order the override.
+    expect(o.map((i) => [i.from.includes("#Mid.run@"), i.kind, i.site.tier, i.site.evidence, i.site.rule])).toEqual([[true, "overrides", "certain", "same-scope", "override"]]);
+    expect(q({ kind: "explain", target: { id: o[0]?.edge } }).error).toBeNull();
+    // Calls through interfaces and base types are resolved: no reason says otherwise.
+    expect(m.unknown.reasons.join(" ")).not.toMatch(/not resolved/);
     expect(q({ kind: "implementers", target: { name: "other" } }).error?.code).toBe("bad-request");
   });
 
@@ -434,6 +446,7 @@ describe("implementers at the edge of what the graph reads", () => {
     "src/l2.ts": 'import { L1 } from "./l1";\nexport class L2 extends L1 {}\n',
     "src/l3.ts": 'import { L2 } from "./l2";\nexport class L3 extends L2 {}\n',
     "src/l4.ts": 'import { L3 } from "./l3";\nexport class L4 extends L3 {\n  run(): number {\n    return 4;\n  }\n}\n',
+    "src/l5.ts": 'import { L4 } from "./l4";\nexport class L5 extends L4 {\n  run(): number {\n    return 5;\n  }\n}\n',
     "src/mixed.ts": 'import { Base } from "./base";\nfunction identity<T>(x: T): T {\n  return x;\n}\nexport class Child extends identity(Base) {}\n',
   };
   beforeAll(async () => {
@@ -444,16 +457,16 @@ describe("implementers at the edge of what the graph reads", () => {
   });
   const q = (req: Omit<Request, "apiVersion">) => query(s, { apiVersion: 1, ...req } as Request);
 
-  it("says the depth stopped a derived override search, and names the subclass past it (14)", () => {
-    const three = q({ kind: "implementers", target: { name: "Base.run" } });
-    expect(three.error).toBeNull();
-    expect(three.items).toEqual([]);
-    expect(three.truncated.by).toBe("depth");
-    expect(three.truncated.frontier?.some((id) => id.includes("#L3@"))).toBe(true);
-    const four = q({ kind: "implementers", target: { name: "Base.run" }, depth: 4 });
-    expect((four.items as Item[]).map((i) => i.fromName)).toEqual(["run"]);
-    expect((four.items as Item[])[0]?.from).toMatch(/#L4\.run@/);
-    expect(four.truncated.by).toBeNull();
+  it("says the depth stopped an override search, and names the override past it (14)", () => {
+    // L4.run overrides Base.run (no class between defines run), and L5.run overrides L4.run.
+    const one = q({ kind: "implementers", target: { name: "Base.run" }, depth: 1 });
+    expect(one.error).toBeNull();
+    expect((one.items as Item[]).map((i) => i.from)).toEqual([expect.stringMatching(/#L4\.run@/)]);
+    expect(one.truncated.by).toBe("depth");
+    expect(one.truncated.frontier?.some((id) => id.includes("#L4.run@"))).toBe(true);
+    const two = q({ kind: "implementers", target: { name: "Base.run" }, depth: 2 });
+    expect((two.items as Item[]).map((i) => i.from)).toEqual([expect.stringMatching(/#L4\.run@/), expect.stringMatching(/#L5\.run@/)]);
+    expect(two.truncated.by).toBeNull();
   });
 
   it("says a floor for a base written as an expression, which this build does not read (15)", () => {
@@ -485,5 +498,68 @@ describe("impact of a public name used in more places than the summary keeps", (
     const e = a.items.find((x) => (x as { type: string }).type === "export") as { name: string; consumers: unknown[] } | undefined;
     expect(e?.name).toBe("total");
     expect(e?.consumers).toHaveLength(201);
+  });
+});
+
+describe("the relations the resolver keeps apart from calls", () => {
+  let s: Session;
+  const files: Record<string, string> = {
+    "src/repo.ts": [
+      "export interface Repo {",
+      "  save(x: number): number;",
+      "}",
+      "export class SqlRepo implements Repo {",
+      "  save(x: number): number {",
+      "    return x;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+    "src/use.ts": [
+      'import type { Repo } from "./repo";',
+      "export function store(r: Repo): number {",
+      "  return r.save(1);",
+      "}",
+      "",
+    ].join("\n"),
+    "src/handlers.ts": "export function onSave(): number {\n  return 1;\n}\n",
+    "src/app.ts": 'import { onSave } from "./handlers";\nexport function register(add: (f: () => number) => void): void {\n  add(onSave);\n}\n',
+  };
+  beforeAll(async () => {
+    const repo = makeRepo(files);
+    dirs.push(repo);
+    const graph = await buildGraph({ repoRoot: repo, store: null });
+    s = { graph, generation: "refs-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+  });
+  const q = (req: Omit<Request, "apiVersion">) => query(s, { apiVersion: 1, ...req } as Request);
+
+  it("answers references from the uses as a value and as a type, each with an edge explain reads back (17)", () => {
+    const v = q({ kind: "references", target: { name: "onSave" } });
+    expect(v.error).toBeNull();
+    expect((v.items as Item[]).map((i) => [i.fromName, i.kind, where(i)])).toEqual([["register", "uses_value", "src/app.ts:3"]]);
+    const t = q({ kind: "references", target: { name: "Repo" } });
+    expect(t.error).toBeNull();
+    expect((t.items as Item[]).map((i) => [i.fromName, i.kind])).toContainEqual(["store", "uses_type"]);
+    for (const i of [...(v.items as Item[]), ...(t.items as Item[])]) expect(q({ kind: "explain", target: { id: i.edge } }).error).toBeNull();
+  });
+
+  it("lists the method that implements an interface member, and says a class of the same shape may be missing (17)", () => {
+    const m = q({ kind: "implementers", target: { name: "Repo.save" } });
+    expect(m.error).toBeNull();
+    const items = m.items as Item[];
+    expect(items.map((i) => [i.from.includes("#SqlRepo.save@"), i.kind])).toEqual([[true, "overrides"]]);
+    expect(q({ kind: "explain", target: { id: items[0]?.edge } }).error).toBeNull();
+    expect(m.unknown.floor).toBe(true);
+    expect(m.unknown.reasons.join(" ")).toMatch(/by its shape/);
+    const i = q({ kind: "implementers", target: { name: "Repo" } });
+    expect((i.items as Item[]).map((x) => [x.fromName, x.kind])).toEqual([["SqlRepo", "implements"]]);
+  });
+
+  it("gives impact the possible callers the review's walk lists apart (17)", () => {
+    const a = q({ kind: "impact", target: { name: "SqlRepo.save" }, limit: 500 });
+    expect(a.error).toBeNull();
+    const possible = (a.items as { type: string; hops?: Item[] }[]).filter((x) => x.type === "possible-caller");
+    expect(possible.map((x) => (x.hops as Item[]).map((h) => [h.fromName, h.kind, h.site.tier]))).toEqual([[["store", "dispatches_to", "possible"]]]);
+    expect(a.counts.possible).toBe(1);
   });
 });

@@ -148,7 +148,7 @@ function explainJob(s: Session, req: Request): Job | Answer {
   const { kind, from, to, file, line, column } = parsed;
   const base = empty(s, "explain");
   const why = (site: GraphSite) => (site.tier === "certain" ? `${site.evidence} proves it${site.via ? `: ${site.via.spec !== null ? "the import" : "the line"} at ${site.via.file}:${site.via.line}` : ""}` : site.note);
-  const edges = kind === "imports" ? (g.importers.get(to) ?? []) : (g.out.get(from) ?? []);
+  const edges = kind === "imports" ? (g.importers.get(to) ?? []) : [...(g.out.get(from) ?? []), ...(g.refsOut.get(from) ?? [])];
   const e = edges.find((x) => x.kind === kind && x.from === from && x.to === to);
   const site = e?.sites.find((x) => x.file === file && x.line === line && x.column === column);
   if (e && site) return { ...base, items: [{ edge: id, from: e.from, to: e.to, kind: e.kind, site, why: why(site) }] };

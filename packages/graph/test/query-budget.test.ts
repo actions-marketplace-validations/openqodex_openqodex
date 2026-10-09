@@ -23,7 +23,7 @@
 //     element instead of where it stopped (outline of a large folder), so
 //     slices never finish and pile up duplicates until the deadline.
 // 10. Work runs between two budget checks in proportion to the input, with
-//     no check inside: deriving overrides for thousands of subclasses of
+//     no check inside: listing the overrides of thousands of subclasses of
 //     one file, or expanding one point with thousands of edges in a path
 //     search, runs past the budget and cannot be cancelled.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -273,23 +273,24 @@ describe("work with a budget check inside each element (10)", () => {
     t = { graph, generation: "wide-build", treeSha: null, builtAt: null, laterEditsKnown: false };
   }, 180_000);
 
-  it("derives the overrides of 6,000 subclasses of one file inside a small time budget, and in full when it has time", () => {
+  it("lists the overrides of 6,000 subclasses of one file inside a small time budget, and in full when it has time", () => {
     const req: Request = { apiVersion: 1, kind: "implementers", target: { id: idOf("Base.run") }, depth: 1, limit: 500, budget: { ms: 100 } };
     const started = performance.now();
     const a = query(t, req);
     const ms = performance.now() - started;
-    // Stopped or whole, the answer comes back near its budget: a derivation
+    // Stopped or whole, the answer comes back near its budget: a listing
     // that scans the file once per subclass takes seconds here.
     expect(ms).toBeLessThan(800);
     if (a.truncated.by === "budget") expect(a.unknown.floor).toBe(true);
     const full = query(t, { ...req, budget: { ms: 60_000 } });
     expect(full.truncated.by).toBe("limit");
-    expect(full.counts.likely).toBe(SUBCLASSES);
-    // The walk reads each subclass's edge and checks it past the depth; the
-    // derivation checks each subclass again, so a cancellation is seen there.
+    // Each override is bound in the same file as its base: certain.
+    expect(full.counts.certain).toBe(SUBCLASSES);
+    // The walk reads each override's edge and checks each past the depth,
+    // so a cancellation is seen at every one.
     const b = checksBudget(Number.MAX_SAFE_INTEGER);
     query(t, req, { budget: b });
-    expect(b.checks).toBeGreaterThan(3 * SUBCLASSES);
+    expect(b.checks).toBeGreaterThan(2 * SUBCLASSES);
   });
 
   it("stops a path search inside a point with 3,000 edges, and goes on from there to the whole answer", () => {

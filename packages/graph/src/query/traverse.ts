@@ -170,10 +170,13 @@ function goFilesOf(g: Graph, target: string): string[] {
 // The edges leaving (or entering) a point, of the asked kinds, one at a
 // time. A file's imports are edges out of the file; a Go package import
 // reaches every file of the folder. The default (null) is what `in` and
-// `out` hold: calls and inheritance.
+// `out` hold: the calls profile (calls, inheritance, implements, dispatch
+// and possible invocations). The uses that are not calls (overrides, uses
+// as a value or a type) are read only when a kind asks for them.
 function* neighbours(g: Graph, at: string, dir: "in" | "out", kinds: ReadonlySet<string> | null): Generator<{ edge: GraphEdge; other: string }> {
   const want = (k: string) => kinds === null || kinds.has(k);
   for (const e of (dir === "in" ? g.in.get(at) : g.out.get(at)) ?? []) if (want(e.kind)) yield { edge: e, other: dir === "in" ? e.from : e.to };
+  if (kinds !== null) for (const e of (dir === "in" ? g.refsIn.get(at) : g.refsOut.get(at)) ?? []) if (kinds.has(e.kind)) yield { edge: e, other: dir === "in" ? e.from : e.to };
   if (kinds !== null && kinds.has("imports")) {
     if (dir === "out") {
       for (const e of importsFrom(g, at)) {
