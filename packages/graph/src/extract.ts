@@ -38,6 +38,9 @@ type Frame = {
   tables?: Map<string, number>; // names bound to a literal table, index into tables
   typeParams?: Map<string, TypeRef | null>; // TypeScript type parameters and their constraints
   objectAt?: number; // a module made from an object literal: the literal's start
+  // Parameters of this function frame given another value in its body: a
+  // call of one may not run what the caller passed.
+  reassigned?: Set<string>;
 };
 
 // A frame once pushed: linked to the one around it, with what every lookup
@@ -327,6 +330,7 @@ class Ctx {
   // is no longer evidence for any call to it.
   // `innermost`: Python, where assigning in a function makes a new local.
   assign(name: string, type: TypeRef | null, innermost = false): void {
+    this.reassign(name);
     let s: Scope | null = this.top;
     for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
       if (innermost && !s.locals) continue;
@@ -483,6 +487,13 @@ class Ctx {
     scope.tables.set(name, index);
   }
 
+  // An assignment to `name`: when it is a parameter of the function frame
+  // that holds it, that parameter no longer holds what the caller passed.
+  reassign(name: string): void {
+    const at = this.lookup(this.top, name);
+    if (at && !at.block && at.def >= 0 && this.defs[at.def]?.params?.includes(name)) (at.reassigned ??= new Set()).add(name);
+  }
+
   // A computed call on `name` (`handlers[key]()`, call index `call`).
   tableCall(call: number, name: string): void {
     this.tableCalls.push({ call, name, scope: this.top });
@@ -541,7 +552,7 @@ class Ctx {
         else if (alias?.callNode !== undefined) aliasCalls.push({ call, callNode: alias.callNode });
         // A parameter of the function whose frame holds it: the function
         // calls what it is given there.
-        const owner = !at.block && at.def >= 0 ? this.defs[at.def] : undefined;
+        const owner = !at.block && at.def >= 0 && !at.reassigned?.has(call.name) ? this.defs[at.def] : undefined;
         const param = owner?.params?.indexOf(call.name) ?? -1;
         if (owner && param >= 0 && !owner.invokes?.includes(param)) (owner.invokes ??= []).push(param);
       }
@@ -2133,7 +2144,10 @@ function extractGo(tree: Tree): FileFacts {
         const left = node.childForFieldName("left")?.namedChildren ?? [];
         const right = node.childForFieldName("right")?.namedChildren ?? [];
         for (const l of left) {
-          if (l.type === "identifier") ctx.noteAssign(l.text, null, false);
+          if (l.type === "identifier") {
+            ctx.noteAssign(l.text, null, false);
+            ctx.reassign(l.text);
+          }
           // `handlers["k"] = g`: what a table bound to the name holds changes.
           const operand = l.type === "index_expression" ? l.childForFieldName("operand") : null;
           if (operand?.type === "identifier") ctx.tableUse(operand.text);

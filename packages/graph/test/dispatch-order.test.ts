@@ -113,7 +113,7 @@ describe("lookup orders and value rules", () => {
     expect(g.unknowns.filter((u) => u.file === "src/pick.ts" && u.line === 9 && u.cause === "dynamic")).toHaveLength(1);
   });
 
-  it.skip("never reads a parameter given another function in the body as calling what the caller passed (10)", async () => {
+  it("never reads a parameter given another function in the body as calling what the caller passed (10)", async () => {
     const g = await graphOf({
       "src/apply.ts": "function handler(): number {\n  return 1;\n}\nfunction apply(cb: () => number): number {\n  cb = () => 0;\n  return cb();\n}\nexport function run(): number {\n  return apply(handler);\n}\n",
     });
