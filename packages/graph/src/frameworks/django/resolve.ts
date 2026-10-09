@@ -54,6 +54,19 @@ const TEST_BASES = new Set(["django.test.TestCase", "django.test.SimpleTestCase"
 const COMMAND_BASES = new Set(["django.core.management.base.BaseCommand", "django.core.management.BaseCommand", "django.core.management.base.AppCommand", "django.core.management.base.LabelCommand"]);
 const REVERSE_FUNCTIONS = new Set(["django.urls.reverse", "django.urls.reverse_lazy", "django.shortcuts.resolve_url", "django.core.urlresolvers.reverse"]);
 const DRF_ROUTERS = new Set(["rest_framework.routers.DefaultRouter", "rest_framework.routers.SimpleRouter"]);
+// The actions Django REST framework's own viewset and mixin classes give.
+const DRF_ACTIONS: Record<string, string[]> = {
+  "rest_framework.viewsets.ModelViewSet": ["list", "create", "retrieve", "update", "partial_update", "destroy"],
+  "rest_framework.viewsets.ReadOnlyModelViewSet": ["list", "retrieve"],
+  "rest_framework.viewsets.ViewSet": [],
+  "rest_framework.viewsets.GenericViewSet": [],
+  "rest_framework.viewsets.ViewSetMixin": [],
+  "rest_framework.mixins.ListModelMixin": ["list"],
+  "rest_framework.mixins.CreateModelMixin": ["create"],
+  "rest_framework.mixins.RetrieveModelMixin": ["retrieve"],
+  "rest_framework.mixins.UpdateModelMixin": ["update", "partial_update"],
+  "rest_framework.mixins.DestroyModelMixin": ["destroy"],
+};
 const VIEWSET_ACTIONS: [string, string, string][] = [
   ["list", "GET", "list"],
   ["create", "POST", "list"],
@@ -481,9 +494,36 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   };
 
   // ---------- DRF routers ----------
+  // The actions a viewset has: those it or an in-repo base defines, and
+  // those Django REST framework's own classes give; null when a base comes
+  // from elsewhere, so the actions are not known.
+  const viewsetActions = (file: string, ref: Ref, depth = 0): Set<string> | null => {
+    if (depth > 8) return null;
+    const lk = index.lookup(file, ref);
+    if (lk.kind !== "symbol") return null;
+    const cls = lk.ids.map((id) => index.node(id)).find((n): n is GraphNode => n !== null && n.kind === "class");
+    if (!cls) return null;
+    const actions = new Set(methodsOf(index, cls).map((m) => m.name).filter((n) => VIEWSET_ACTIONS.some(([a]) => a === n)));
+    const def = index.languageFacts(cls.file)?.defs.find((d) => d.kind === "class" && d.name === cls.name && d.line === cls.startLine);
+    for (const b of def?.bases ?? []) {
+      const bref = [...(b.qualifier ? b.qualifier.split(".") : []), b.name];
+      const known = DRF_ACTIONS[canonical(index, cls.file, bref) ?? ""];
+      if (known) {
+        for (const a of known) actions.add(a);
+        continue;
+      }
+      const inner = viewsetActions(cls.file, bref, depth + 1);
+      if (inner === null) return null;
+      for (const a of inner) actions.add(a);
+    }
+    return actions;
+  };
+
   const routerRegistrations = (app: string | null, file: string, routerName: string, prefix: Part[] | null, via: Site[], namespaces: string[]) => {
     const router = factsOf(file, "router").find((r) => r.name === routerName);
     if (!router || !DRF_ROUTERS.has(canonical(index, file, router.ctor) ?? "")) return false;
+    const slash = router.slash === "no" ? "" : "/";
+    if (router.slash === "dynamic") out.gap({ site: siteOf(file, router), scope: app ? { app } : { file }, affects: ["handles", "tests"], cause: "dynamic", name: routerName, note: "the router's trailing_slash option is computed, so whether its paths end with a slash is not known" });
     for (const reg of factsOf(file, "register").filter((r) => r.router === routerName)) {
       const site = siteOf(file, reg);
       if (typeof reg.prefix !== "string") {
@@ -491,12 +531,16 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         continue;
       }
       const base = typeof reg.basename === "string" ? reg.basename : reg.prefix.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const actions = reg.view ? viewsetActions(file, reg.view) : null;
+      if (actions === null) out.gap({ site, scope: app ? { app } : { file }, affects: ["handles", "tests"], cause: "unsupported-rule", name: reg.view ? show(reg.view) : null, note: "the viewset's actions come from a class outside the repository and Django REST framework's own, so the routes' methods are not known" });
       for (const [shape, suffix] of [
-        ["list", `${reg.prefix}/`],
-        ["detail", `${reg.prefix}/<pk>/`],
+        ["list", `${reg.prefix}${slash}`],
+        ["detail", `${reg.prefix}/<pk>${slash}`],
       ] as const) {
-        const parts = [...(prefix ?? [COMPUTED_PART]), routePart(suffix, false)];
-        const methods = [...new Set(VIEWSET_ACTIONS.filter(([, , s]) => s === shape).map(([, m]) => m))];
+        const own = VIEWSET_ACTIONS.filter(([a, , s]) => s === shape && (actions === null || actions.has(a)));
+        if (own.length === 0) continue; // no action answers this shape
+        const parts = [...(prefix ?? [COMPUTED_PART]), routePart(suffix, false), ...(router.slash === "dynamic" ? [COMPUTED_PART] : [])];
+        const methods = actions === null ? ["*"] : [...new Set(own.map(([, m]) => m))];
         const r = newRegistration(app, file, reg, parts, suffix, [...namespaces, `${base}-${shape}`].join(":"), via, `:${shape}`, methods);
         if (!r) return true;
         if (reg.view) bindHandler(r, file, reg, reg.view, "ref", RULES.drf);
@@ -578,6 +622,11 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         if (v.ref) {
           // include(router.urls) or include(other_list) in the same module.
           if (v.ref.length === 2 && v.ref[1] === "urls" && routerRegistrations(app, file, v.ref[0] as string, parts, nextVia, ns)) return;
+          // include(api.router.urls): a router of an imported module.
+          if (v.ref.length >= 3 && v.ref[v.ref.length - 1] === "urls") {
+            const holder = index.lookup(file, v.ref.slice(0, -2));
+            if (holder.kind === "module" && holder.file.endsWith(".py") && routerRegistrations(app, holder.file, v.ref[v.ref.length - 2] as string, parts, nextVia, ns)) return;
+          }
           if (v.ref.length === 1 && all.some((x) => x.kind === "url" && x.list === v.ref?.[0])) {
             walk(app, file, v.ref[0] as string, -1, parts, nextVia, ns, depth + 1, stack);
             return;

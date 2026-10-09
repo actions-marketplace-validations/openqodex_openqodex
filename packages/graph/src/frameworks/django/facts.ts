@@ -29,7 +29,7 @@ export type DjangoFact = At &
     | { kind: "urlrouter"; name: string; router: Ref }
     | { kind: "app_name"; value: Lit }
     | { kind: "assigned"; names: string[] } // the names top-level assignments bind: module-level values
-    | { kind: "router"; name: string; ctor: Ref }
+    | { kind: "router"; name: string; ctor: Ref; slash: "yes" | "no" | "dynamic" } // trailing_slash as written
     | { kind: "register"; router: string; prefix: Lit; view: Ref | null; basename: Lit }
     | { kind: "render"; fn: Ref; template: Lit }
     | { kind: "template_attr"; owner: string; template: Lit }
@@ -57,7 +57,7 @@ const MAX_SETTINGS = 400;
 const MAX_ASSIGNED = 2000;
 
 export function wantsDjango(source: string): boolean {
-  return /django|urlpatterns|INSTALLED_APPS|ROOT_URLCONF|client\.(get|post|put|patch|delete|head|options)\(/.test(source);
+  return /django|rest_framework|urlpatterns|INSTALLED_APPS|ROOT_URLCONF|client\.(get|post|put|patch|delete|head|options)\(/.test(source);
 }
 
 const last = (r: Ref | null): string | null => (r && r.length > 0 ? (r[r.length - 1] as string) : null);
@@ -229,7 +229,11 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (right.type === "call") {
         const fn = calleeOf(right);
         const tail = tailOf(fn);
-        if (fn && (tail === "DefaultRouter" || tail === "SimpleRouter")) out.push({ kind: "router", ...at, name, ctor: fn });
+        if (fn && (tail === "DefaultRouter" || tail === "SimpleRouter")) {
+          const option = pyArgs(right).keyword.get("trailing_slash");
+          const slash = option === undefined || option.type === "true" ? "yes" : option.type === "false" ? "no" : "dynamic";
+          out.push({ kind: "router", ...at, name, ctor: fn, slash });
+        }
         if (fn && tail === "Library") out.push({ kind: "tag_library", ...at, name, ctor: fn });
         if (fn && tail === "Signal") out.push({ kind: "signal_def", ...at, name, ctor: fn });
       }
@@ -504,6 +508,7 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
     case "settings_module":
       return isLit(f.value);
     case "router":
+      return isStr(f.name) && isRef(f.ctor) && (f.slash === "yes" || f.slash === "no" || f.slash === "dynamic");
     case "tag_library":
     case "signal_def":
       return isStr(f.name) && isRef(f.ctor);
