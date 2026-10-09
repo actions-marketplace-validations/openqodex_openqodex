@@ -27,6 +27,8 @@ const files: Record<string, string> = {
   "src/wide.ts": ['import express from "express";', 'import { h, last } from "./h.js";', "export const app = express();", `app.get("/wide", ${many(30)}, last);`].join("\n"),
   // Middleware whose function is a value the code computes.
   "src/auth.ts": ['import express from "express";', 'import { chooseAuth, h } from "./h.js";', "export const app = express();", "const auth = chooseAuth();", "app.use(auth);", 'app.get("/guarded", h);'].join("\n"),
+  // An application mounted on another with use: a sub-application, whose routes the plugin does not compose under the mount.
+  "src/subapp.ts": ['import express from "express";', H, "const admin = express();", 'admin.get("/stats", h);', "export const app = express();", 'app.use("/admin", admin);'].join("\n"),
   // A route deeper than the matcher reads, a route it cannot read, and the test requests for both.
   "src/long.ts": ['import express from "express";', H, "export const app = express();", `app.get("/${deep(70)}", h);`, 'app.get("/re/:id(\\\\d+)", h);'].join("\n"),
   "src/long.test.ts": ['import request from "supertest";', 'import { it } from "vitest";', 'import { app } from "./long.js";', 'it("reaches the long route", async () => {', `  await request(app).get("/${deep(70)}");`, '  await request(app).get("/re/42");', "});"].join("\n"),
@@ -85,6 +87,13 @@ describe("the Express plugin on what a review found", () => {
     const gap = gaps("src/auth.ts").find((u) => u.affects.includes("applies_middleware"));
     expect(gap?.cause).toBe("dynamic");
     expect(gap?.name).toBe("auth");
+  });
+
+  it("says where an application is mounted as a sub-application, whose routes it does not list under that mount", () => {
+    const gap = gaps("src/subapp.ts").find((u) => u.site?.line === 6);
+    expect(gap?.affects).toEqual(expect.arrayContaining(["mounts", "handles"]));
+    expect(gap?.name).toBe("admin");
+    expect(regs("src/subapp.ts").map((r) => r.pattern)).toEqual(["/stats"]);
   });
 
   it("keeps at most the build's applications and says how many were left out, so the stage can always append them", async () => {

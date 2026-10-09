@@ -641,7 +641,11 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
             compose(app, target, at, mw.filter((m) => under(at, m.prefix)), [...via, e.site], [...stack, target.id], depth + 1);
             continue;
           }
-          if (target && target.kind === "app") continue; // a sub-application: its own routes, its own identity
+          if (target && target.kind === "app") {
+            // A sub-application keeps its own routes and identity; the routes it serves under this mount are not composed.
+            addUnknown({ plugin: PLUGIN, site: e.site, scope: scopeOf(app, e.file), affects: ["mounts", "handles"], cause: "unsupported-rule", name: show(a), note: `${show(a)} is an application mounted here as a sub-application; the plugin lists its routes on it alone, not under this mount path`, count: null, exact: false });
+            continue;
+          }
           if (mw.length >= MAX_MIDDLEWARE_CHAIN) {
             middlewareOmitted++;
             continue;

@@ -50,7 +50,7 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `ts-removed-export` | TypeScript | a renamed export still imported by a file outside the change (major; reasoning, graph); nothing in the diff shows it |
 | `ts-workspace-caller-break` | TypeScript, pnpm workspace | `safeGit` changed from returning a string to returning an object, with callers in another package (major; reasoning, graph) |
 
-Thirty-eight planted bugs in all: 11 critical, 21 major, 6 minor.
+Thirty-eight planted bugs in all: 12 critical, 20 major, 6 minor.
 
 Each case is a folder under `benchmark/cases/<case>/`: `case.json` (the spec), `base/` (the base commit), `change/` (the files the change writes) and an optional `delete.txt`. `demo-polyglot` reads `examples/demo-repo` instead, and its secret is generated when the case is built, the same value every time, never committed. The repositories are built in a temporary folder; none is committed. `node benchmark/build.mjs <case>` builds one so you can read it.
 
