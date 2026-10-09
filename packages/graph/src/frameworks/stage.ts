@@ -11,12 +11,14 @@ import type { ProjectModel } from "../discovery/projects.js";
 import { normalisePy } from "../discovery/projects.js";
 import type { World } from "../resolve.js";
 import type { FileFacts, GraphEdge, GraphNode } from "../types.js";
-import { RESERVED_FACT_KINDS, validateFrameworkEvidence } from "./plugin.js";
+import { FRAMEWORK_EDGE_KINDS, RESERVED_FACT_KINDS, validateFrameworkEvidence } from "./plugin.js";
 import type { Detection, Entity, FrameworkEdge, FrameworkFactBase, FrameworkPlugin, FrameworkUnknown, PluginIndex, RoleAssignment } from "./plugin.js";
 import { PLUGINS, pluginsKey } from "./registry.js";
 import { deriveTestCalls } from "./shared/tests.js";
 
-export const FRAMEWORK_DATA_VERSION = 1;
+// 2: a gap may name the whole build as its scope, and the stage's own gaps
+// name every relation they can hide.
+export const FRAMEWORK_DATA_VERSION = 2;
 
 // The most entities and edges one plugin keeps per application (null: the
 // registrations no application reaches). Past either cap the rest are left
@@ -119,12 +121,12 @@ function makeIndex(input: StageInput, out: Map<string, GraphEdge[]>, plugin: Fra
     for (const fact of list) {
       if (fact.kind === "error") {
         const why = (fact as FrameworkFactBase & { note?: unknown }).note;
-        dropped.push({ plugin: plugin.id, site: { file: f.path, line: 1, column: 0 }, scope: { file: f.path }, affects: [], cause: "file-not-parsed", name: null, note: `the ${plugin.id} plugin could not read this file${typeof why === "string" ? `: ${why.slice(0, 200)}` : ""}`, count: null, exact: false });
+        dropped.push({ plugin: plugin.id, site: { file: f.path, line: 1, column: 0 }, scope: { file: f.path }, affects: [...FRAMEWORK_EDGE_KINDS], cause: "file-not-parsed", name: null, note: `the ${plugin.id} plugin could not read this file${typeof why === "string" ? `: ${why.slice(0, 200)}` : ""}`, count: null, exact: false });
         continue;
       }
       if (fact.kind === "overflow") {
         const omitted = (fact as FrameworkFactBase & { omitted?: unknown }).omitted;
-        dropped.push({ plugin: plugin.id, site: { file: f.path, line: 1, column: 0 }, scope: { file: f.path }, affects: [], cause: "fan-out-capped", name: null, note: `the ${plugin.id} plugin kept the first facts of this file and left the rest out`, count: typeof omitted === "number" ? omitted : null, exact: typeof omitted === "number" });
+        dropped.push({ plugin: plugin.id, site: { file: f.path, line: 1, column: 0 }, scope: { file: f.path }, affects: [...FRAMEWORK_EDGE_KINDS], cause: "fan-out-capped", name: null, note: `the ${plugin.id} plugin kept the first facts of this file and left the rest out`, count: typeof omitted === "number" ? omitted : null, exact: typeof omitted === "number" });
         continue;
       }
       if (RESERVED_FACT_KINDS.has(fact.kind) || !plugin.isFact(fact)) {
@@ -133,7 +135,7 @@ function makeIndex(input: StageInput, out: Map<string, GraphEdge[]>, plugin: Fra
       }
       kept.push(fact);
     }
-    if (invalid > 0) dropped.push({ plugin: plugin.id, site: null, scope: { file: f.path }, affects: [], cause: "file-not-parsed", name: null, note: `${invalid} cached ${plugin.id} facts of this file had the wrong shape and were left out`, count: invalid, exact: true });
+    if (invalid > 0) dropped.push({ plugin: plugin.id, site: null, scope: { file: f.path }, affects: [...FRAMEWORK_EDGE_KINDS], cause: "file-not-parsed", name: null, note: `${invalid} cached ${plugin.id} facts of this file had the wrong shape and were left out`, count: invalid, exact: true });
     if (kept.length > 0) valid.set(f.path, kept);
   }
   const factFiles = [...valid.keys()].sort();

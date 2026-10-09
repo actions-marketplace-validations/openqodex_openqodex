@@ -85,8 +85,9 @@ class Gaps {
   private readonly missing: string[];
   readonly pass: Pass<FwUnknown>;
   constructor(layer: FwLayer, affects: string) {
+    // A gap that names no relation may hide any of them.
     this.pass = new Pass(layer.unknowns, (u) => {
-      if (u.affects.includes(affects)) this.hit.push(u);
+      if (u.affects.length === 0 || u.affects.includes(affects)) this.hit.push(u);
     });
     this.missing = layer.runs.filter((r) => r.status === "failed" || r.status === "stopped").map((r) => `${r.id}: ${r.reason ?? r.status}, so nothing of it is listed`);
   }

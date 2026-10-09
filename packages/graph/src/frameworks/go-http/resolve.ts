@@ -149,7 +149,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   const stop = (key: keyof typeof used | "depth" | "apps" | "roles" | "edges" | "unknowns", cause: Cause, site: Site | null, affects: FrameworkEdgeKind[], note: string): FrameworkUnknown => {
     const kept = stopped.get(key);
     if (kept) return kept;
-    const u: FrameworkUnknown = { plugin: PLUGIN, site, scope: { project: "" }, affects, cause, name: null, note, count: null, exact: false };
+    const u: FrameworkUnknown = { plugin: PLUGIN, site, scope: { build: true }, affects, cause, name: null, note, count: null, exact: false };
     stopped.set(key, u);
     unknowns.push(u);
     return u;

@@ -958,7 +958,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   // ---------- one unknown per cap reached ----------
   const capGap = (c: Cap, affects: FrameworkUnknown["affects"], cause: Cause, what: string) => {
     if (c.left === 0 || !c.first) return;
-    gap({ plugin: PLUGIN, site: c.first, scope: { project: project(c.first.file) }, affects, cause, name: null, note: `the plugin stops at ${c.max} ${what} in one build; ${c.left}${c.exact ? "" : " or more"} were left out from here on`, count: c.left, exact: c.exact }, true);
+    gap({ plugin: PLUGIN, site: c.first, scope: { build: true }, affects, cause, name: null, note: `the plugin stops at ${c.max} ${what} in one build; ${c.left}${c.exact ? "" : " or more"} were left out from here on`, count: c.left, exact: c.exact }, true);
   };
   const all: FrameworkUnknown["affects"] = ["handles", "mounts", "applies_middleware", "tests"];
   if (caps.mounts.left > 0 || caps.apps.left > 0) caps.regs.exact = false;
@@ -972,9 +972,9 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   capGap(caps.roles, [], "fan-out-capped", "roles");
   capGap(caps.lookups, all, "budget", "name lookups");
   if (tooDeep.first) gap({ plugin: PLUGIN, site: tooDeep.first, scope: { project: project(tooDeep.first.file) }, affects: ["mounts", "handles"], cause: "fan-out-capped", name: null, note: `routers included more than ${MAX_INCLUDE_DEPTH} levels deep are not followed (${tooDeep.count} includes); their routes are not listed`, count: tooDeep.count, exact: true }, true);
-  if (matchStopped) gap({ plugin: PLUGIN, site: matchStopped, scope: { project: project(matchStopped.file) }, affects: ["tests"], cause: "budget", name: null, note: `matching test requests to routes stopped after ${MAX_MATCH_WORK} steps; the requests from here on were not matched`, count: null, exact: false }, true);
+  if (matchStopped) gap({ plugin: PLUGIN, site: matchStopped, scope: { build: true }, affects: ["tests"], cause: "budget", name: null, note: `matching test requests to routes stopped after ${MAX_MATCH_WORK} steps; the requests from here on were not matched`, count: null, exact: false }, true);
   const lostAt = gapsLeft.first;
-  if (gapsLeft.count > 0) gap({ plugin: PLUGIN, site: lostAt, scope: { project: lostAt ? project(lostAt.file) : "" }, affects: all, cause: "fan-out-capped", name: null, note: `the plugin keeps ${MAX_UNKNOWNS} unknowns in one build; ${gapsLeft.count} more were counted and left out`, count: gapsLeft.count, exact: true }, true);
+  if (gapsLeft.count > 0) gap({ plugin: PLUGIN, site: lostAt, scope: { build: true }, affects: all, cause: "fan-out-capped", name: null, note: `the plugin keeps ${MAX_UNKNOWNS} unknowns in one build; ${gapsLeft.count} more were counted and left out`, count: gapsLeft.count, exact: true }, true);
 
   return { apps, output: { roles, entities: registrations, edges, unknowns } };
 }

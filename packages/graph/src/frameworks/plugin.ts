@@ -310,6 +310,9 @@ export type FrameworkEdgeKind =
   | "defines_config" // settings file to config_key
   | "runs"; // command entity to the symbol that runs it
 
+// Every framework relation, for a gap that may hide any of them.
+export const FRAMEWORK_EDGE_KINDS: readonly FrameworkEdgeKind[] = ["handles", "mounts", "renders", "tests", "declares_field", "changes_schema", "maps_to", "uses_type", "applies_middleware", "schedules", "enqueues", "reads_config", "defines_config", "runs"];
+
 // The test link categories. Never "coverage": each says what the test
 // does with the target, statically.
 export type TestCategory = "direct-call" | "route-request" | "route-name" | "subject" | "component-render" | "type-or-value-reference";
@@ -328,12 +331,15 @@ export type FrameworkEdge = {
 // ---------- gaps ----------
 
 // What a plugin could not see. `scope` is the smallest scope the gap is
-// proved to affect; `affects` the framework relations it can hide. A count
-// that cannot be known is null, never zero.
+// proved to affect: a file, an application, a project, or the whole build
+// (`{ build: true }`: a budget or a cap a plugin counts across every
+// application, which may hide anything past the point it stopped).
+// `affects` the framework relations it can hide; empty means every one. A
+// count that cannot be known is null, never zero.
 export type FrameworkUnknown = {
   plugin: string;
   site: Site | null;
-  scope: { file: string } | { app: string } | { project: string };
+  scope: { file: string } | { app: string } | { project: string } | { build: true };
   affects: FrameworkEdgeKind[];
   cause: Cause;
   name: string | null; // the handler, template, key or name the plugin could not settle

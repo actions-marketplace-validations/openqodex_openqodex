@@ -125,7 +125,7 @@ export function renderFrameworkLines(fw: ImpactFrameworks | undefined, packet: s
   }
   if (fw.unknown.length > 0) {
     const rows = fw.unknown.map((u) => [u.file ? at(u.file, u.line) : "the repository", u.cause, prose(u.note)]);
-    out.push("", "What the framework plugins could not see in the changed files:", ...table(["Where", "Cause", "What"], rows, fw.unknownTotal));
+    out.push("", "What the framework plugins could not see that can hide an entry of this change:", ...table(["Where", "Cause", "What"], rows, fw.unknownTotal));
   }
   return out;
 }

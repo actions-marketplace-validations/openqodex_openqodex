@@ -388,7 +388,8 @@ function run(index: PluginIndex<NextFact>): Analysis {
   }
 
   // ---------- what the budgets left out ----------
-  const whole = { project: "" } as const;
+  // A budget or a cap counted across the whole build.
+  const whole = { build: true } as const;
   const cut = (affects: FrameworkUnknown["affects"], cause: FrameworkUnknown["cause"], count: number | null, note: string) => unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects, cause, name: null, note, count, exact: count !== null });
   const unread = [...factCache.values()].filter((v) => v === null).length;
   if (unread > 0) cut(["handles"], "budget", unread, `${unread} files were not read: the Next.js plugin reads at most ${MAX_FACTS_READ} facts in one build`);

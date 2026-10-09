@@ -973,19 +973,24 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   };
   // The field class a model attribute's constructor names: Django's own
   // field class (certain), or a repository class that derives from one,
-  // however it is named or imported (likely). Anything else is no field.
-  const fieldClass = (file: string, ctor: Ref, line: number): { name: string; tier: Tier; note: string | null } | null => {
+  // however it is named or imported (likely). Anything else is no field;
+  // `cut` when a base chain was deeper than MAX_FIELD_CHAIN, so whether it
+  // is one is not known.
+  const fieldClass = (file: string, ctor: Ref, line: number): { name: string; tier: Tier; note: string | null } | { cut: true } | null => {
     const name = canonical(index, file, ctor, { line });
     if (name !== null && djangoField(name)) return { name, tier: "certain", note: null };
     const lk = index.lookup(file, ctor);
     if (lk.kind !== "symbol") return null;
+    let cut = false;
     for (const id of lk.ids) {
       const cls = index.node(id);
       if (!cls || cls.kind !== "class") continue;
-      const base = fieldBase(cls, 0, new Set()).name;
+      const found = fieldBase(cls, 0, new Set());
+      cut ||= found.cut;
+      const base = found.name;
       if (base !== null) return { name: base, tier: lk.tier === "possible" ? "possible" : "likely", note: joinNote(lk.note, `a field class of the repository that derives from ${base}`) };
     }
-    return null;
+    return cut ? { cut: true } : null;
   };
 
   // App folders by label: every folder that holds a models module, and the
@@ -1028,6 +1033,10 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       // a class of the repository whose base is one (likely).
       const field = fieldClass(m.file, f.ctor, f.line);
       if (field === null) continue;
+      if ("cut" in field) {
+        out.gap({ site: fsite, scope: { file: m.file }, affects: ["declares_field"], cause: "fan-out-capped", name: `${m.node.name}.${f.name}`, note: `the base classes of ${show(f.ctor)} go deeper than ${MAX_FIELD_CHAIN} levels, so whether ${m.node.name}.${f.name} is a field is not known`, count: null, exact: false });
+        continue;
+      }
       const id = out.entity({ kind: "model_field", id: entityId(PLUGIN, app, "model_field", `${m.node.id}.${f.name}`), plugin: PLUGIN, app, name: `${m.node.name}.${f.name}`, site: fsite, file: null, detail: show(f.ctor) });
       out.edge({ from: m.node.id, to: id, kind: "declares_field", plugin: PLUGIN, app, evidence: ev("declaration", field.tier, fsite, RULES.models, field.note) });
       const tail = field.name.slice(field.name.lastIndexOf(".") + 1);
@@ -1262,8 +1271,12 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       }
       const hits: Registration[] = [];
       let unmatchable = 0;
+      let ranOut = false;
       for (const r of reachable) {
-        if (--work.steps < 0) break;
+        if (--work.steps < 0) {
+          ranOut = true;
+          break;
+        }
         if (!r.methods.includes("*") && !r.methods.includes(method)) continue;
         const toks = patterns.get(r.id);
         if (!toks) {
@@ -1271,9 +1284,18 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
           continue;
         }
         const m = matchTokens(toks, path, work);
-        if (m === "budget") break;
+        if (m === "budget") {
+          ranOut = true;
+          break;
+        }
         if (m) hits.push(r);
       }
+      // The budget ran out inside this request: said here, whatever follows.
+      if (ranOut) {
+        spent.add(index.projectOf(file));
+        out.gap({ site: csite, scope: { file }, affects: ["tests"], cause: "budget", name: null, note: "the work budget ran out while this request was matched against the routes; the routes it reaches are not all linked" });
+      }
+      if (hits.length > MAX_FAN_OUT) out.gap({ site: csite, scope: { file }, affects: ["tests"], cause: "fan-out-capped", name: null, note: `the request matches ${hits.length} routes; the first ${MAX_FAN_OUT} are linked`, count: hits.length - MAX_FAN_OUT, exact: !ranOut });
       // Said once per test file: the routes the requests could reach are not matchable.
       if (hits.length === 0 && unmatchable > 0) out.gap({ site: null, scope: { file }, affects: ["tests"], cause: "unsupported-rule", name: null, note: "some routes of this project have a computed path or a regex the graph does not match requests against, so requests in this file may reach routes it does not link" });
       for (const r of hits.slice(0, MAX_FAN_OUT)) {
@@ -1292,6 +1314,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       if (rv.name === null) continue;
       const from = index.enclosing(file, rv.line)?.id ?? file;
       const hits = byName.get(`${project}\0${rv.name}`) ?? [];
+      if (hits.length > MAX_FAN_OUT) out.gap({ site: rsite, scope: { file }, affects: ["tests"], cause: "fan-out-capped", name: null, note: `${hits.length} routes are named ${rv.name}; the first ${MAX_FAN_OUT} are linked`, count: hits.length - MAX_FAN_OUT, exact: true });
       for (const r of hits.slice(0, MAX_FAN_OUT)) out.edge({ from, to: r.id, kind: "tests", plugin: PLUGIN, app: r.app, category: "route-name", evidence: ev("test-route-name", hits.length === 1 ? "likely" : "possible", rsite, RULES.tests, `the test names the route ${rv.name}`, null, [r.id]) });
     }
   }

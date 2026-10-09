@@ -420,7 +420,8 @@ function run(index: PluginIndex<ReactFact>): Analysis {
   }
 
   // ---------- what the budgets left out ----------
-  const whole = { project: "" } as const;
+  // A budget or a cap counted across the whole build.
+  const whole = { build: true } as const;
   const cut = (affects: FrameworkUnknown["affects"], cause: FrameworkUnknown["cause"], count: number, note: string) => unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects, cause, name: null, note, count, exact: true });
   if (unreadFiles > 0) cut(["renders", "tests"], "budget", unreadFiles, `${unreadFiles} files were not read: the React plugin reads at most ${MAX_FACTS_READ} facts in one build`);
   if (refused.lookups > 0) cut(["renders", "tests"], "budget", refused.lookups, `${refused.lookups} names were not looked up: the React plugin makes at most ${MAX_LOOKUPS} lookups in one build`);

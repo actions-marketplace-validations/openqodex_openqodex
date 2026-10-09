@@ -8,7 +8,8 @@ import type { ReactFact } from "./facts.js";
 import { isReactFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 3;
+// 4: a cap counted across the build is a gap of the whole build.
+export const VERSION = 4;
 const SUPPORTED = "React 16.8 to 19";
 
 const app = "react-app";

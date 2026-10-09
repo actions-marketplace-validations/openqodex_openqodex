@@ -304,7 +304,7 @@ describe("the net/http plugin on a crafted repository", () => {
     const { unknowns, registrations, edges } = mine();
     expect(registrations.length).toBeLessThanOrEqual(MAX_REGISTRATIONS);
     expect(edges.filter((e) => e.kind === "mounts").length).toBeLessThanOrEqual(MAX_MOUNTS);
-    const capped = unknowns.filter((u) => u.cause === "fan-out-capped" && "project" in u.scope);
+    const capped = unknowns.filter((u) => u.cause === "fan-out-capped" && "build" in u.scope);
     expect(capped.filter((u) => u.note.includes(`registrations after ${MAX_REGISTRATIONS} `)).length).toBe(1);
     expect(capped.filter((u) => u.note.includes(`mounted muxes after ${MAX_MOUNTS} `)).length).toBe(1);
   });
@@ -634,7 +634,7 @@ describe("the net/http plugin on lists grown past every cap", () => {
     expect(roles.length).toBe(MAX_ROLES);
     expect(edges.length).toBeLessThanOrEqual(MAX_EDGES);
     expect(goRegs(graph).length).toBeLessThanOrEqual(MAX_REGISTRATIONS);
-    const caps = unknowns.filter((u) => "project" in u.scope);
+    const caps = unknowns.filter((u) => "build" in u.scope);
     expect(unknowns.length - caps.length).toBe(MAX_UNKNOWNS);
     for (const what of ["applications", "roles", "edges", "unknowns"]) expect(caps.filter((u) => u.note.includes(`stopped listing ${what} after`)).length).toBe(1);
   });

@@ -43,10 +43,13 @@ export type FrameworkLayer = {
   entitiesIn(file: string): Entity[];
   // Tests that reference, call or may request the symbol.
   testsOf(symbol: string, depth?: number): TestLink[];
-  // What the plugins could not see in these files, and every gap with no
-  // site of the applications and projects that hold them (a cap, a budget,
-  // a computed root URL module): those can hide anything in the files.
-  unknownsIn(files: ReadonlySet<string>): FrameworkUnknown[];
+  // What the plugins could not see that can hide an entry of a change:
+  // every gap in the changed files, at a site of a listed registration (its
+  // own or a mount it rests on), of an application or a project that holds
+  // a changed file or a listed registration, wherever its site is (a cap, a
+  // budget, a computed root URL module or mount prefix), and every gap of
+  // the whole build.
+  unknownsFor(files: ReadonlySet<string>, registrations: readonly string[]): FrameworkUnknown[];
 };
 
 const layers = new WeakMap<Graph, FrameworkLayer>();
@@ -177,11 +180,20 @@ function makeLayer(graph: Graph, data: FrameworkData): FrameworkLayer {
     registrationsIn: (file) => registrationsByFile.get(file) ?? [],
     entitiesIn: (file) => byFile.get(file) ?? [],
     testsOf,
-    unknownsIn: (files) => {
+    unknownsFor: (files, registrations) => {
+      const listed = registrations.map((id) => entities.get(id)).filter((e): e is Registration => e !== undefined && e.kind === "registration");
+      const sites = new Set<string>();
       const projects = new Set([...files].map((f) => graph.projectOf(f)));
-      const apps = new Set(data.apps.filter((a) => projects.has(a.project)).map((a) => a.id));
+      const apps = new Set<string>();
+      for (const r of listed) {
+        for (const s of [r.site, ...r.mountedVia]) sites.add(`${s.file}:${s.line}`);
+        projects.add(graph.projectOf(r.site.file));
+        if (r.app !== null) apps.add(r.app);
+      }
+      for (const a of data.apps) if (projects.has(a.project)) apps.add(a.id);
       return data.unknowns.filter((u) => {
-        if (u.site !== null) return files.has(u.site.file);
+        if ("build" in u.scope) return true;
+        if (u.site !== null && (files.has(u.site.file) || sites.has(`${u.site.file}:${u.site.line}`))) return true;
         if ("file" in u.scope) return files.has(u.scope.file);
         if ("app" in u.scope) return apps.has(u.scope.app);
         return projects.has(u.scope.project);

@@ -24,6 +24,7 @@ import { showBlob } from "../capture/git.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION, POSSIBLE_KINDS } from "../model/records.js";
 import { callersOfRemoved, isTestPath, toImpactUnknown } from "../impact.js";
 import { frameworkPacket } from "../frameworks/impact.js";
+import type { FrameworkUnknown } from "../frameworks/plugin.js";
 import { PLUGINS } from "../frameworks/registry.js";
 import { code, path as escapedPath, symbolKey } from "../render.js";
 import type { Graph, GraphEdge } from "../types.js";
@@ -201,15 +202,28 @@ export async function writePacket(args: {
   const near = new Set<string>([...changed, ...[...impact.callers, ...(impact.possible ?? [])].flatMap((p) => p.edges.flatMap((e) => e.sites.map((s) => s.file)))]);
   const projects = new Set(seeds.map((id) => graph.nodes.get(id)?.file ?? impact.symbols.find((s) => s.id === id)?.file).filter((f): f is string => !!f).map((f) => graph.projectOf(f)));
   const unknowns = graph.unknowns.filter((u) => near.has(u.file) || (u.scope === "project" && projects.has(graph.projectOf(u.file))));
-  write("unknowns.json", "what the graph could not see near the change, with causes", {
-    total: unknowns.length,
+  // With the framework layer's gaps of the change (frameworks.json holds
+  // them in full), each named by its plugin.
+  const fw = frameworkPacket(graph, impact);
+  const fwUnknowns = ((fw?.unknowns ?? []) as FrameworkUnknown[]).map((u) => ({
+    file: u.site?.file ?? ("file" in u.scope ? u.scope.file : null),
+    line: u.site?.line ?? null,
+    name: u.name,
+    cause: u.cause,
+    scope: "file" in u.scope ? "file" : "project",
+    note: u.note,
+    candidates: null,
+    plugin: u.plugin,
+  }));
+  const allUnknowns = [...unknowns.map(toImpactUnknown), ...fwUnknowns];
+  write("unknowns.json", "what the graph and its framework plugins could not see near the change, with causes", {
+    total: allUnknowns.length,
     totalExact: true,
-    shown: Math.min(unknowns.length, MAX_UNKNOWNS),
-    items: unknowns.slice(0, MAX_UNKNOWNS).map(toImpactUnknown),
+    shown: Math.min(allUnknowns.length, MAX_UNKNOWNS),
+    items: allUnknowns.slice(0, MAX_UNKNOWNS),
     notRead: graph.status.notRead,
     cuts: impact.cuts,
   });
-  const fw = frameworkPacket(graph, impact);
   if (fw) write("frameworks.json", "every route, template, migration and test link of the change that the brief's framework tables cut", fw);
   write("status.json", "how the graph was built: counts, mode, generation, what it left out", { apiVersion: API_VERSION, ...graph.status });
   write("capabilities.json", "what this installation's graph can see", {

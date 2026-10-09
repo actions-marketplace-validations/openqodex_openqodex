@@ -418,7 +418,9 @@ export function impact(s: Session, req: Request, extra: Extra): Job | Answer {
     const all: unknown[] = [
       ...sum.callers.map((p) => ({ type: "caller", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
       ...(sum.possible ?? []).map((p) => ({ type: "possible-caller", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
-      ...(sum.references ?? []).map((r) => ({ type: "reference", seed: r.seed, hops: [hop(r.edge, 1)] })),
+      // Every use of each touched and removed symbol, from the graph: the
+      // summary keeps the first 200 of each kind for the brief.
+      ...[...sum.touched, ...sum.removed].flatMap((seed) => (g.refsIn.get(seed) ?? []).filter((e) => e.from !== seed).map((e) => ({ type: "reference", seed, hops: [hop(e, 1)] }))),
       ...sum.callees.map((p) => ({ type: "callee", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
       ...sum.importers.map((e) => ({ type: "importer", hops: [hop(e, 1)] })),
       ...g.exportChanges.map((e) => ({ type: "export", ...e })),

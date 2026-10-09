@@ -831,7 +831,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   }
 
   // ---------- what the caps and budgets left out ----------
-  const whole = { project: "" } as const;
+  // A budget or a cap counted across the whole build.
+  const whole = { build: true } as const;
   for (const [root, n] of depthCut) addUnknown({ plugin: PLUGIN, site: null, scope: root.startsWith("fw:express:app:") ? { app: root } : whole, affects: ["mounts", "handles"], cause: "fan-out-capped", name: null, note: `routers mounted more than ${MAX_MOUNT_DEPTH} levels deep were not followed (${n} mounts); their routes are not listed`, count: n, exact: true });
   // These always fit: they are the record of what the caps and budgets cut.
   const cut = (affects: FrameworkUnknown["affects"], cause: FrameworkUnknown["cause"], count: number | null, note: string) => unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects, cause, name: null, note, count, exact: count !== null });

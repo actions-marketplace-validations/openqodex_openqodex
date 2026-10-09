@@ -6,13 +6,24 @@
 // framework layer only.
 import type { Change, ImpactFrameworkRoute, ImpactFrameworkTest, ImpactFrameworks } from "@openqodex/core";
 import type { Graph } from "../types.js";
-import { frameworkLayer } from "./layer.js";
-import type { Entity, Registration } from "./plugin.js";
+import { frameworkLayer, REACH_VISITS } from "./layer.js";
+import { FRAMEWORK_EDGE_KINDS } from "./plugin.js";
+import type { Entity, FrameworkUnknown, Registration } from "./plugin.js";
 
 export const MAX_SEEDS = 25;
 export const MAX_ROUTES = 40;
 export const MAX_TESTS = 40;
 export const MAX_ROWS = 40;
+
+// The cuts the framework part of a change makes, as gaps of the whole
+// build: the touched symbols past MAX_SEEDS, whose entries are not looked
+// for, and each route walk that stopped at its visit cap.
+function cutsOf(touched: number, seeds: number, walksCut: readonly string[]): FrameworkUnknown[] {
+  const out: FrameworkUnknown[] = [];
+  if (touched > seeds) out.push({ plugin: "frameworks", site: null, scope: { build: true }, affects: [...FRAMEWORK_EDGE_KINDS], cause: "fan-out-capped", name: null, note: `the change touches ${touched} symbols; the framework entries of the first ${seeds} are listed, and those of the rest are not looked for`, count: touched - seeds, exact: true });
+  for (const name of walksCut) out.push({ plugin: "frameworks", site: null, scope: { build: true }, affects: ["handles", "tests"], cause: "fan-out-capped", name, note: `the walk from ${name} to the routes that reach it stopped after ${REACH_VISITS} callers; a route or a test that reaches it past them is not listed`, count: null, exact: false });
+  return out;
+}
 
 const routeLabel = (r: Registration) => `${r.methods.map((m) => (m === "*" ? "ANY" : m)).join("|")} ${r.pattern ?? r.partial ?? "(computed path)"}`;
 
@@ -33,10 +44,10 @@ export function frameworkPacket(graph: Graph, impact: { touched: readonly string
   const tests: Record<string, unknown>[] = [];
   const renders: Record<string, unknown>[] = [];
   const migrations: Record<string, unknown>[] = [];
-  let cut = false;
+  const walksCut: string[] = [];
   for (const seed of impact.touched) {
     const reach = layer.routesReaching(seed);
-    cut = cut || reach.cut;
+    if (reach.cut) walksCut.push(graph.nodes.get(seed)?.name ?? seed);
     for (const x of reach.routes) {
       const row = routes.get(x.registration.id) ?? { ...asRow(x.registration), declared: false, reaches: [] };
       (row.reaches as unknown[]).push({ seed, path: x.path, hops: x.hops, tier: x.tier, note: x.note });
@@ -46,11 +57,11 @@ export function frameworkPacket(graph: Graph, impact: { touched: readonly string
     for (const e of layer.edgesFrom(seed)) if (e.kind === "renders") renders.push({ from: seed, to: layer.entity(e.to), evidence: e.evidence });
     for (const e of layer.edgesTo(seed)) if (e.kind === "changes_schema") migrations.push({ model: seed, migration: e.from, evidence: e.evidence });
   }
-  const unknowns = layer.unknownsIn(new Set(impact.frameworks.changedFiles ?? []));
+  const unknowns = [...cutsOf(0, 0, walksCut), ...layer.unknownsFor(new Set(impact.frameworks.changedFiles ?? []), [...routes.keys()])];
   return {
     routes: [...routes.values()],
     routesTotal: routes.size,
-    walkCut: cut,
+    walkCut: walksCut.length > 0,
     unknowns,
     tests,
     renders,
@@ -93,8 +104,11 @@ export function frameworkImpact(graph: Graph, change: Pick<Change, "files" | "co
     reach: null,
     declared: false,
   });
+  const walksCut: string[] = [];
   for (const seed of seeds) {
-    for (const reach of layer.routesReaching(seed).routes) {
+    const reaching = layer.routesReaching(seed);
+    if (reaching.cut) walksCut.push(nameOf(seed));
+    for (const reach of reaching.routes) {
       const row = routes.get(reach.registration.id) ?? asRoute(reach.registration);
       if (!row.reach || reach.hops < row.reach.hops) row.reach = { seed, seedName: nameOf(seed), hops: reach.hops, tier: reach.tier, note: reach.note };
       routes.set(reach.registration.id, row);
@@ -191,7 +205,7 @@ export function frameworkImpact(graph: Graph, change: Pick<Change, "files" | "co
       if (!roles.some((x) => x.target === seed && x.role === r.role)) roles.push({ target: seed, name: nameOf(seed), role: r.role, detail: r.detail });
     }
   }
-  const unknowns = layer.unknownsIn(allChanged);
+  const unknowns = [...cutsOf(touched.length, seeds.length, walksCut), ...layer.unknownsFor(allChanged, routeRows.map((r) => r.registration))];
   return {
     plugins: layer.data.plugins.filter((p) => p.apps > 0 || p.status === "failed" || p.status === "stopped").map((p) => ({ id: p.id, status: p.status, reason: p.reason, apps: p.apps })),
     routes: routeRows.slice(0, MAX_ROUTES),
