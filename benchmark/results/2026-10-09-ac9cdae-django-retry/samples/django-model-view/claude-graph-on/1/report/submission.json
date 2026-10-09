@@ -1,0 +1,93 @@
+{
+  "version": 2,
+  "change_id": "c856f8e5689f",
+  "summary": "Adds a discount_code field and an apply_discount method to Order. Adds order detail and discount redeem endpoints.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "orders/views.py",
+      "line_number": 18,
+      "line_end": 18,
+      "title": "Order detail lacks an ownership check",
+      "problem": "order_detail looks up the order by primary key alone. It never filters the lookup by request.user.",
+      "consequence": "Any logged-in user can read the total and discount code of every order by enumerating ids.",
+      "fix": "Add owner=request.user to the get_object_or_404 lookup, as redeem already does.",
+      "suggested_change": "    order = get_object_or_404(Order, pk=order_id, owner=request.user)",
+      "source": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "orders/models.py",
+      "line_number": 20,
+      "line_end": 20,
+      "title": "Decimal multiplied by float",
+      "problem": "apply_discount multiplies the Decimal total by the float 0.9. Python raises TypeError for Decimal times float.",
+      "consequence": "Every redeem request with the valid WELCOME10 code crashes with a server error. No user can apply the discount.",
+      "fix": "Multiply by Decimal(\"0.9\") and quantize the result to two decimal places.",
+      "suggested_change": "        self.total = (self.total * Decimal(\"0.9\")).quantize(Decimal(\"0.01\"))",
+      "source": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "orders/models.py",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "New model field has no migration",
+      "problem": "The change adds the discount_code field to Order. The migrations folder holds only 0001_initial, and that migration has no discount_code column.",
+      "consequence": "Every Order query, including the existing order list, fails because the database has no discount_code column.",
+      "fix": "Run makemigrations and commit the generated migration that adds discount_code.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.75,
+      "file_path": "orders/views.py",
+      "line_number": 22,
+      "line_end": 22,
+      "title": "CSRF protection disabled on session-authenticated POST",
+      "problem": "redeem changes order state for the session user. The csrf_exempt decorator turns off the CsrfViewMiddleware check that the project's settings enable.",
+      "consequence": "A third-party site can make a logged-in user's browser change that user's order without consent.",
+      "fix": "Remove the csrf_exempt decorator. Have clients send the CSRF token with the POST.",
+      "suggested_change": null,
+      "source": "semgrep:python.django.security.audit.csrf-exempt.no-csrf-exempt",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.7,
+      "file_path": "orders/models.py",
+      "line_number": 18,
+      "line_end": 22,
+      "title": "Once-per-order check races with concurrent redeems",
+      "problem": "apply_discount checks discount_code on the in-memory instance and then writes the total. Two concurrent redeem requests can both pass the check before either saves.",
+      "consequence": "The second redeem discounts the order a second time. The order then loses more than the intended 10 percent.",
+      "fix": "Apply the discount with a conditional update filtered on discount_code being empty. Alternatively, lock the row with select_for_update inside a transaction.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "orders/models.py",
+      "line_number": 16,
+      "line_end": 22,
+      "title": "New discount and view behaviour has no tests",
+      "problem": "The repository contains no test files. Nothing tests apply_discount, order_detail or redeem.",
+      "consequence": "The crash in apply_discount and the missing ownership check in order_detail reached review undetected.",
+      "fix": "Add tests for a valid code, an invalid code and a repeated redeem. Add a test that a user cannot read another user's order.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

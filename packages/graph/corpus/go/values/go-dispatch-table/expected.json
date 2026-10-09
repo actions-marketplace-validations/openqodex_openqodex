@@ -1,0 +1,42 @@
+{
+  "guards": "lists each function of a Go map literal as a possible callee of an index call on it, and keeps the call's gap project-wide, since other modules or files can change the table",
+  "callers": [
+    {
+      "to": "app/handlers.go#handleA",
+      "site": "app/route.go:6",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "app/handlers.go#handleB",
+      "site": "app/route.go:6",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "app/handlers.go#handleA",
+      "site": "app/route.go:3",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "app/handlers.go#handleB",
+      "site": "app/route.go:3",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "app/route.go",
+      "line": 6,
+      "cause": "dynamic",
+      "scope": "project"
+    }
+  ],
+  "floor": {
+    "app/handlers.go#handleA": true
+  }
+}

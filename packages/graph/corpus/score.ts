@@ -12,14 +12,19 @@
 // as 1):
 // - precision: certain sites into the case's touched, removed and expected
 //   target symbols that expected.json lists as certain callers.
-// - recall: expected callers found at their tier (certain and likely apart),
-//   export changes with their consumers, removed symbols, moved symbols.
-// - validity: sites of every edge, import and miss that pass validateEvidence.
+// - recall: expected callers found at their tier (certain, likely and
+//   possible apart) and edge kind when one is named, export changes with
+//   their consumers, removed symbols, moved symbols, dispatch records with
+//   their candidates, and references (uses_value, uses_type, overrides).
+// - validity: sites of every edge, reference, import and miss that pass
+//   validateEvidence.
 // - gaps: expected unknowns found with their cause, and floor flags as expected.
 // - cuts: expected cuts found with their omitted count, or null.
 // - controls: negative controls that must hold (a consumer never broken, a
-//   call classified external and never a gap or an edge, every file read).
-// The gate is 1 on every score.
+//   call classified external and never a gap or an edge, every file read, a
+//   symbol never reached from a site, a site that leaves no unknown).
+// The gate is 1 on every score. The candidate burden (possible sites into
+// the case's targets that no expected caller names) is reported, never gated.
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -27,7 +32,11 @@ import { join, relative } from "node:path";
 import { getChange } from "@openqodex/core";
 import type { ImpactSite, ImpactSummary } from "@openqodex/core";
 import { buildGraph, detectImpact, validateEvidence } from "../src/index.js";
-import type { EvidenceKind, Graph } from "../src/index.js";
+import type { EdgeKind, EvidenceKind, Graph, Tier } from "../src/index.js";
+
+// The edge kinds a caller list walks, and the uses that are not calls.
+export type CallerKind = "calls" | "inherits" | "implements" | "dispatches_to" | "may_invoke";
+export type ReferenceKind = "uses_value" | "uses_type" | "overrides";
 
 // A symbol is `<file>#<name>` or `<file>#<Owner>.<name>`, with an optional
 // `@<line>` when two definitions of one file share the name. A site is
@@ -36,8 +45,18 @@ export type Expected = {
   guards: string; // the failure the case guards, in one line: the test name
   knownFailure?: string; // what the graph does wrong today, when the case fails because of it
   build?: { maxFileBytes?: number }; // build settings the case needs
-  callers?: { to: string; site: string; tier: "certain" | "likely"; note?: string }[];
+  // `kind`: the edge kind the site must have, when given.
+  callers?: { to: string; site: string; tier: Tier; kind?: CallerKind; note?: string }[];
   notCertain?: { to: string; site: string }[];
+  // No edge into `to` at the site: in the callers profile, the references
+  // and the impact's caller and possible paths. With `kind`, only edges of
+  // that kind count (a value use may stand where no call may).
+  notReached?: { to: string; site: string; kind?: EdgeKind }[];
+  // The dispatch record at the site: its candidates exactly (as symbol
+  // specs, in any order), how many it kept, how many it left out.
+  dispatch?: { site: string; candidates?: string[]; count?: number; omitted?: number }[];
+  references?: { to: string; site: string; kind: ReferenceKind; tier: Tier }[];
+  noUnknown?: { file: string; line: number; cause?: string }[]; // a site that leaves no unknown (of that cause)
   exports?: { file: string; name: string; change: "removed" | "retargeted"; consumers: string[] }[];
   removed?: string[]; // removed and not moved
   moved?: { from: string; to: string; renamed: boolean }[];
@@ -56,11 +75,12 @@ export type CaseScore = {
   guards: string;
   knownFailure: string | null;
   precision: Ratio;
-  recall: { certain: Ratio; likely: Ratio; exports: Ratio; removed: Ratio; moved: Ratio };
+  recall: { certain: Ratio; likely: Ratio; possible: Ratio; exports: Ratio; removed: Ratio; moved: Ratio; dispatch: Ratio; references: Ratio };
   validity: Ratio;
   gaps: Ratio;
   cuts: Ratio;
   controls: Ratio;
+  burden: number; // possible sites into the targets no expected caller names; reported, never a gate
   failures: string[]; // one line per check that did not hold
   pass: boolean;
   ms: number;
@@ -116,26 +136,40 @@ export function matches(spec: string, id: string): boolean {
   return (i > p.indexOf("#") ? p.slice(0, i) : p) === spec;
 }
 
-type Site = { to: string; site: ImpactSite };
+const siteOf = (s: ImpactSite): string => `${s.file}:${s.line}`;
+
+type Site = { to: string; kind: EdgeKind; site: ImpactSite };
 
 // The sites the answer states into `targets`: every edge into them the graph
-// holds (what the packet carries), and every caller path the impact lists
-// (a removed symbol's surviving callers come from there).
+// holds (what the packet carries), and every caller path the impact lists,
+// proved or possible (a removed symbol's surviving callers come from there).
 function answerSites(graph: Graph, impact: ImpactSummary, targets: Set<string>): Site[] {
   const seen = new Set<string>();
   const out: Site[] = [];
-  const add = (to: string, site: ImpactSite) => {
-    const k = `${to}\0${site.file}:${site.line}:${site.column}`;
+  const add = (to: string, kind: EdgeKind, site: ImpactSite) => {
+    const k = `${to}\0${kind}\0${site.file}:${site.line}:${site.column}`;
     if (seen.has(k)) return;
     seen.add(k);
-    out.push({ to, site });
+    out.push({ to, kind, site });
   };
-  for (const id of targets) for (const e of graph.in.get(id) ?? []) for (const s of e.sites) add(e.to, s);
-  for (const p of impact.callers) for (const e of p.edges) if (targets.has(e.to)) for (const s of e.sites) add(e.to, s);
+  for (const id of targets) for (const e of graph.in.get(id) ?? []) for (const s of e.sites) add(e.to, e.kind, s);
+  for (const p of [...impact.callers, ...(impact.possible ?? [])]) for (const e of p.edges) if (targets.has(e.to)) for (const s of e.sites) add(e.to, e.kind, s);
   return out;
 }
 
-const siteOf = (s: ImpactSite): string => `${s.file}:${s.line}`;
+// Every edge of any kind into `id` the answer holds at a site: the callers
+// profile, the references, and the impact's caller and possible paths.
+function edgesAt(graph: Graph, impact: ImpactSummary, id: string, site: string): { kind: EdgeKind; site: ImpactSite }[] {
+  const out: { kind: EdgeKind; site: ImpactSite }[] = [];
+  const take = (kind: EdgeKind, sites: ImpactSite[]) => {
+    for (const s of sites) if (siteOf(s) === site) out.push({ kind, site: s });
+  };
+  for (const e of graph.in.get(id) ?? []) take(e.kind, e.sites);
+  // A graph built before references existed has no refsIn.
+  for (const e of graph.refsIn?.get(id) ?? []) take(e.kind, e.sites);
+  for (const p of [...impact.callers, ...(impact.possible ?? [])]) for (const e of p.edges) if (e.to === id) take(e.kind, e.sites);
+  return out;
+}
 
 function evidenceOf(s: ImpactSite) {
   return { kind: s.evidence as EvidenceKind, tier: s.tier, via: s.via, note: s.note, rule: s.rule };
@@ -144,7 +178,7 @@ function evidenceOf(s: ImpactSite) {
 export function scoreAnswer(name: string, expected: Expected, graph: Graph, impact: ImpactSummary): Omit<CaseScore, "ms"> {
   const failures: string[] = [];
   const precision = ratio();
-  const recall = { certain: ratio(), likely: ratio(), exports: ratio(), removed: ratio(), moved: ratio() };
+  const recall = { certain: ratio(), likely: ratio(), possible: ratio(), exports: ratio(), removed: ratio(), moved: ratio(), dispatch: ratio(), references: ratio() };
   const validity = ratio();
   const gaps = ratio();
   const cuts = ratio();
@@ -154,9 +188,10 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
   const allIds = [...graph.nodes.keys(), ...impact.symbols.map((s) => s.id)];
   const idsOf = (spec: string) => [...new Set(allIds.filter((id) => matches(spec, id)))];
   const targets = new Set<string>([...impact.touched, ...impact.removed]);
-  for (const c of [...(expected.callers ?? []), ...(expected.notCertain ?? [])]) {
-    const ids = idsOf(c.to);
-    if (ids.length === 0) failures.push(`no symbol ${c.to} in the graph`);
+  const named = [...(expected.callers ?? []), ...(expected.notCertain ?? []), ...(expected.notReached ?? []), ...(expected.references ?? [])].map((c) => c.to);
+  for (const spec of new Set(named)) {
+    const ids = idsOf(spec);
+    if (ids.length === 0) failures.push(`no symbol ${spec} in the graph`);
     for (const id of ids) targets.add(id);
   }
   const sites = answerSites(graph, impact, targets);
@@ -174,11 +209,16 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
     if (bad) failures.push(`negative control broken: ${n.site} binds certain to ${plain(bad.to)} (${bad.site.rule})`);
   }
 
-  // ---------- recall: callers by tier ----------
+  // ---------- recall: callers by tier and kind ----------
   for (const c of expected.callers ?? []) {
     const r = recall[c.tier];
     r.of++;
-    const found = sites.filter((s) => siteOf(s.site) === c.site && matches(c.to, s.to));
+    const anyKind = sites.filter((s) => siteOf(s.site) === c.site && matches(c.to, s.to));
+    const found = c.kind === undefined ? anyKind : anyKind.filter((s) => s.kind === c.kind);
+    if (found.length === 0 && anyKind.length > 0) {
+      failures.push(`${c.site} to ${c.to} is ${[...new Set(anyKind.map((s) => s.kind))].join(", ")}, expected ${String(c.kind)}`);
+      continue;
+    }
     const atTier = found.find((s) => s.site.tier === c.tier);
     if (!atTier) {
       failures.push(found.length > 0 ? `${c.site} to ${c.to} is ${found.map((s) => s.site.tier).join(", ")}, expected ${c.tier}` : `caller not found: ${c.site} to ${c.to}`);
@@ -227,6 +267,40 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
     else recall.moved.hit++;
   }
 
+  // ---------- recall: dispatch records ----------
+  // A graph built before dispatch existed has no records.
+  const records = graph.dispatch ?? [];
+  for (const x of expected.dispatch ?? []) {
+    recall.dispatch.of++;
+    const here = records.filter((d) => `${d.file}:${d.line}` === x.site);
+    if (here.length === 0) {
+      failures.push(`no dispatch record at ${x.site}`);
+      continue;
+    }
+    const wrong = (d: (typeof records)[number]): string | null => {
+      const ids = d.candidates;
+      if (x.candidates !== undefined) {
+        const exact = ids.length === x.candidates.length && x.candidates.every((spec) => ids.some((id) => matches(spec, id))) && ids.every((id) => x.candidates?.some((spec) => matches(spec, id)));
+        if (!exact) return `candidates ${ids.map(plain).join(", ") || "none"}, expected ${x.candidates.join(", ")}`;
+      }
+      if (x.count !== undefined && ids.length !== x.count) return `${ids.length} candidates kept, expected ${x.count}`;
+      if (x.omitted !== undefined && d.total - ids.length !== x.omitted) return `${d.total - ids.length} candidates left out, expected ${x.omitted}`;
+      return null;
+    };
+    const why = here.map(wrong);
+    if (why.includes(null)) recall.dispatch.hit++;
+    else failures.push(`dispatch record at ${x.site}: ${why.join("; ")}`);
+  }
+
+  // ---------- recall: references ----------
+  for (const x of expected.references ?? []) {
+    recall.references.of++;
+    const found = idsOf(x.to).flatMap((id) => (graph.refsIn?.get(id) ?? []).flatMap((e) => e.sites.filter((s) => siteOf(s) === x.site).map((s) => ({ kind: e.kind, tier: s.tier }))));
+    if (found.some((f) => f.kind === x.kind && f.tier === x.tier)) recall.references.hit++;
+    else if (found.length > 0) failures.push(`${x.site} references ${x.to} as ${found.map((f) => `${f.kind} ${f.tier}`).join(", ")}, expected ${x.kind} ${x.tier}`);
+    else failures.push(`reference not found: ${x.site} ${x.kind} ${x.to}`);
+  }
+
   // ---------- evidence validity ----------
   const checked = new Set<string>();
   const check = (where: string, s: ImpactSite) => {
@@ -239,6 +313,7 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
     else failures.push(`invalid evidence at ${siteOf(s)} (${where}, ${s.rule}): ${why}`);
   };
   for (const e of graph.edges) for (const s of e.sites) check(`${e.kind} ${plain(e.to)}`, s);
+  for (const e of graph.references ?? []) for (const s of e.sites) check(`${e.kind} ${plain(e.to)}`, s);
   for (const list of graph.importers.values()) for (const e of list) for (const s of e.sites) check(`imports ${e.to}`, s);
   for (const m of graph.misses) check(`miss ${m.target}#${m.name}`, m.site);
 
@@ -300,6 +375,21 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
     if (graph.status.notRead.length === 0) controls.hit++;
     else failures.push(`files not read: ${graph.status.notRead.map((n) => `${n.file} (${n.reason})`).join(", ")}`);
   }
+  for (const n of expected.notReached ?? []) {
+    controls.of++;
+    const bad = idsOf(n.to).flatMap((id) => edgesAt(graph, impact, id, n.site)).filter((e) => n.kind === undefined || e.kind === n.kind);
+    if (bad.length === 0) controls.hit++;
+    else failures.push(`negative control broken: ${n.site} reaches ${n.to} by ${[...new Set(bad.map((e) => `${e.kind} ${e.site.tier} (${e.site.rule})`))].join(", ")}`);
+  }
+  for (const u of expected.noUnknown ?? []) {
+    controls.of++;
+    const there = graph.unknowns.filter((x) => x.file === u.file && x.line === u.line && (u.cause === undefined || x.cause === u.cause));
+    if (there.length === 0) controls.hit++;
+    else failures.push(`${u.file}:${u.line} leaves an unknown it should not: ${there.map((x) => `${x.cause}/${x.scope}`).join(", ")}`);
+  }
+
+  // ---------- candidate burden (reported, never a gate) ----------
+  const burden = sites.filter((s) => s.site.tier === "possible" && !(expected.callers ?? []).some((c) => c.tier === "possible" && c.site === siteOf(s.site) && matches(c.to, s.to))).length;
 
   const all = [precision, ...Object.values(recall), validity, gaps, cuts, controls];
   return {
@@ -312,6 +402,7 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
     gaps,
     cuts,
     controls,
+    burden,
     failures,
     pass: failures.length === 0 && all.every((r) => r.hit === r.of),
   };
@@ -342,11 +433,12 @@ export async function scoreCase(dir: string, name = dir): Promise<CaseScore> {
       guards: expected.guards,
       knownFailure: expected.knownFailure ?? null,
       precision: empty,
-      recall: { certain: empty, likely: empty, exports: empty, removed: empty, moved: empty },
+      recall: { certain: empty, likely: empty, possible: empty, exports: empty, removed: empty, moved: empty, dispatch: empty, references: empty },
       validity: empty,
       gaps: empty,
       cuts: empty,
       controls: empty,
+      burden: 0,
       failures: [`the case did not run: ${(error as Error).stack ?? String(error)}`],
       pass: false,
       ms: Math.round(performance.now() - started),
@@ -381,11 +473,12 @@ export function totalsOf(cases: CaseScore[]): CorpusTotals {
     cases: cases.length,
     passed: cases.filter((c) => c.pass).length,
     precision: ratio(),
-    recall: { certain: ratio(), likely: ratio(), exports: ratio(), removed: ratio(), moved: ratio() },
+    recall: { certain: ratio(), likely: ratio(), possible: ratio(), exports: ratio(), removed: ratio(), moved: ratio(), dispatch: ratio(), references: ratio() },
     validity: ratio(),
     gaps: ratio(),
     cuts: ratio(),
     controls: ratio(),
+    burden: 0,
   };
   for (const c of cases) {
     t.precision = add(t.precision, c.precision);
@@ -394,6 +487,7 @@ export function totalsOf(cases: CaseScore[]): CorpusTotals {
     t.gaps = add(t.gaps, c.gaps);
     t.cuts = add(t.cuts, c.cuts);
     t.controls = add(t.controls, c.controls);
+    t.burden += c.burden;
   }
   return t;
 }

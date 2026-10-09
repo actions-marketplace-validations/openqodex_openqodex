@@ -1,0 +1,20 @@
+{
+  "guards": "binds a call to a method of a module-level object literal as certain, in the same file and through an import",
+  "callers": [
+    {
+      "to": "src/api.ts#api.run",
+      "site": "src/main.ts:4",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/api.ts#api.run",
+      "site": "src/api.ts:9",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
+  "floor": {
+    "src/api.ts#api.run": false
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "guards": "discloses a Go call to a method two embedded types define at the same depth as ambiguous, and binds it to neither",
+  "notReached": [
+    {
+      "to": "pkg/left.go#Left.M",
+      "site": "pkg/both.go:10"
+    },
+    {
+      "to": "pkg/right.go#Right.M",
+      "site": "pkg/both.go:10"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "pkg/both.go",
+      "line": 10,
+      "cause": "ambiguous"
+    }
+  ],
+  "floor": {
+    "pkg/left.go#Left.M": true
+  }
+}

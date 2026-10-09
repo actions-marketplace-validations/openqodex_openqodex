@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)
+Change 708d34803616 against HEAD, 2 files, +13 -5
+Summary: safeGit now returns a GitResult object with code, stdout and stderr instead of a stdout string, and no longer throws on failure. The GitResult type is also exported from the core package.
+1. Critical bug: Callers still treat the safeGit result as a string (packages/core/src/safe-git.ts:10-17)
+2. Major bug: Failure signal moved from a thrown error to a return code (packages/core/src/safe-git.ts:14-17)
+3. Minor maintainability: Changed safeGit behaviour has no covering test (packages/core/src/safe-git.ts:10-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

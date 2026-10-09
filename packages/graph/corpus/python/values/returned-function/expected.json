@@ -1,0 +1,58 @@
+{
+  "guards": "lists each function a Python callee returns by name as a possible callee where the returned value is called, directly or through a name",
+  "callers": [
+    {
+      "to": "pkg/pick.py#pick",
+      "site": "pkg/run.py:5",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "pkg/pick.py#pick",
+      "site": "pkg/run.py:9",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "pkg/pick.py#on_a",
+      "site": "pkg/run.py:5",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "pkg/pick.py#on_b",
+      "site": "pkg/run.py:5",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "pkg/pick.py#on_a",
+      "site": "pkg/run.py:10",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "pkg/pick.py#on_b",
+      "site": "pkg/run.py:10",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "pkg/pick.py#on_a",
+      "site": "pkg/pick.py:11",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "pkg/pick.py#on_b",
+      "site": "pkg/pick.py:12",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "pkg/pick.py#on_a": true
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "id": "ts-interface-dispatch-break",
+  "guards": "an implementation behind an interface that now throws where the interface promises an empty string is reported with the callers that reach it only through the interface, among many other calls of a method named get",
+  "language": "typescript",
+  "framework": "node-http",
+  "clean": false,
+  "graph": {
+    "callers": [
+      "src/session.ts:4",
+      "src/flags.ts:9"
+    ],
+    "floors": [
+      "src/cache/sql-cache.ts#get"
+    ]
+  },
+  "bugs": [
+    {
+      "id": "cache-get-throws-on-miss",
+      "file": "src/cache/sql-cache.ts",
+      "lines": [
+        11,
+        17
+      ],
+      "anchor": {
+        "line": 14,
+        "text": "throw new Error(`no fresh entry for ${key}`);"
+      },
+      "mentions": [
+        "readSession",
+        "isEnabled",
+        "session.ts",
+        "flags.ts",
+        "interface",
+        "Cache"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning",
+        "graph"
+      ],
+      "truth": "SqlCache.get now throws for a missing or stale key, but the Cache interface it implements promises an empty string for a key that holds nothing, and readSession and isEnabled call it through that interface and test for an empty string, so a first visit or an unset flag throws inside the request handler and crashes the server. The fix is to return an empty string for a missing or stale row, or change the interface and every caller together."
+    }
+  ]
+}

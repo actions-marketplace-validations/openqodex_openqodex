@@ -1,0 +1,19 @@
+[
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "main.go",
+    "inside": true,
+    "range": [
+      1,
+      25
+    ],
+    "ok": true
+  }
+]

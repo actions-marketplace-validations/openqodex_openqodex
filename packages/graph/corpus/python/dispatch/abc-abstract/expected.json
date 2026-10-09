@@ -1,0 +1,53 @@
+{
+  "guards": "never lists a Python abstract method as a dispatch candidate, whether marked by @abstractmethod or by a body that only raises NotImplementedError",
+  "callers": [
+    {
+      "to": "store/repo.py#Repo.find",
+      "site": "store/run.py:5",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "store/sql.py#SqlRepo.find",
+      "site": "store/run.py:5",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/mem.py#MemRepo.find",
+      "site": "store/run.py:5",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/repo.py#Repo.save",
+      "site": "store/run.py:9",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "store/sql.py#SqlRepo.save",
+      "site": "store/run.py:9",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "store/run.py:5",
+      "candidates": [
+        "store/sql.py#SqlRepo.find",
+        "store/mem.py#MemRepo.find"
+      ]
+    },
+    {
+      "site": "store/run.py:9",
+      "candidates": [
+        "store/sql.py#SqlRepo.save"
+      ]
+    }
+  ],
+  "floor": {
+    "store/sql.py#SqlRepo.find": true
+  }
+}

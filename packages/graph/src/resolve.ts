@@ -24,8 +24,8 @@ import type { ProjectModel } from "./discovery/projects.js";
 import { governingTsconfig, isGoStdlib, isNodeBuiltin, isPyStdlib, isRubyStdlib, linkageOf, metadataUnknown, nodeProjectOf, normalisePy, packageName, pathLinkOff } from "./discovery/projects.js";
 import type { Cause, Cut, EvidenceKind, Shape, Tier, Via } from "./model/records.js";
 import { weakest } from "./model/records.js";
-import type { BoundImport, CallFact, DefFact, Family, FileFacts, GraphEdge, GraphNode, GraphSite, Miss, TypeRef, UnknownSite } from "./types.js";
-import { familyOf } from "./types.js";
+import type { BoundImport, CallFact, DefFact, DispatchSite, EdgeKind, Family, FileFacts, GraphEdge, GraphNode, GraphSite, InvocationSummary, Miss, TypeRef, UnknownSite, ValueRef } from "./types.js";
+import { CALLER_KINDS, familyOf } from "./types.js";
 
 const MAX_DEPTH = 8; // re-export and base-class chains
 // Files the walk of `export *` may open in one world. Each file is walked
@@ -37,7 +37,13 @@ export const EXPORT_WALK_STEPS = 4096;
 // back on itself, which no cache can shorten.
 export const EXPORT_LOOKUP_STEPS = 10_000;
 export const HUB_FILES = 8; // a name defined in more files never binds without evidence
-export const RESOLVER_VERSION = 7;
+// A call through an interface or a base type keeps at most this many
+// implementations or overrides as possible targets; the rest is a gap.
+export const DISPATCH_CAP = 32;
+// 8: dispatch through interfaces and base types, language lookup orders
+// (Python C3, Go embedding depth, Ruby mixins), value and type uses,
+// may_invoke, overrides and implements.
+export const RESOLVER_VERSION = 8;
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -146,7 +152,10 @@ export type ResolveInput = {
 
 export type Resolved = {
   nodes: Map<string, GraphNode>;
-  edges: GraphEdge[];
+  edges: GraphEdge[]; // the callers profile
+  references: GraphEdge[]; // overrides, uses_value, uses_type
+  dispatch: DispatchSite[];
+  summaries: Map<string, InvocationSummary>;
   importers: Map<string, GraphEdge[]>;
   defsByFile: Map<string, GraphNode[]>;
   misses: Miss[];
@@ -221,7 +230,9 @@ export function createWorld(input: ResolveInput): World {
   const pkgName = new Map<string, string>(); // Go folder to package name
   const classes = new Map<string, ClassInfo>();
   const classOfId = new Map<string, string>();
-  const methods = new Map<string, Map<string, string[]>>();
+  // Methods per class key and name, one map per side: called on the class
+  // itself ("s") and on an instance ("i").
+  const methodsOn = { s: new Map<string, Map<string, string[]>>(), i: new Map<string, Map<string, string[]>>() };
   const rbTop = new Map<string, string[]>(); // Ruby methods outside any class
   const filesByName = new Map<string, Set<string>>(); // family:name to defining files
 
@@ -254,7 +265,7 @@ export function createWorld(input: ResolveInput): World {
   // Methods called on the class itself ("s") and on an instance ("i") are
   // indexed apart; Python methods are reachable both ways.
   type Side = "s" | "i";
-  const sideKey = (key: string, side: Side) => `${key}\u0000${side}`;
+
 
   // ---------- index the definitions ----------
   for (const { path, facts: f } of input.files) {
@@ -275,8 +286,12 @@ export function createWorld(input: ResolveInput): World {
       names.add(path);
       if (d.kind === "method") {
         const key = classKey(family, path, d.owner ?? "");
-        if (family === "python" || d.static) push(nameIndex(methods, sideKey(key, "s")), d.name, id);
-        if (family === "python" || !d.static) push(nameIndex(methods, sideKey(key, "i")), d.name, id);
+        // A method of an object literal made a module runs on the module
+        // itself and on whatever value the literal is given to (an object
+        // typed by an interface it implements).
+        const both = family === "python" || (family === "js" && d.static === true && classes.get(key)?.ids.every((x) => defById.get(x)?.kind === "module") === true);
+        if (both || d.static) push(nameIndex(methodsOn.s, key), d.name, id);
+        if (both || !d.static) push(nameIndex(methodsOn.i, key), d.name, id);
       } else if (family === "go") {
         if (d.topLevel) push(nameIndex(pkgTop, pkgOf(path)), d.name, id);
       } else if (family === "ruby" && d.kind === "function") {
@@ -669,9 +684,17 @@ export function createWorld(input: ResolveInput): World {
     },
 
     // The method and the evidence of the inheritance steps to the class
-    // that defines it (null when the class itself does).
-    members(key: string, name: string, side: Side): { ids: string[]; ev: Ev | null } | null {
+    // that defines it (null when the class itself does), by the language's
+    // lookup order; a gap when that order cannot be established.
+    members(key: string, name: string, side: Side): Lookup {
       return methodOn(key, name, side, 0);
+    },
+
+    // The classes that extend, include or implement a class key directly,
+    // and for a Go interface or a Python Protocol, the types whose method
+    // set covers it. An empty answer is a read too.
+    implementers(key: string): string[] {
+      return childrenOf(key);
     },
   };
 
@@ -947,6 +970,7 @@ export function createWorld(input: ResolveInput): World {
     const key = value.ids.length === 1 ? classOfId.get(value.ids[0] as string) : undefined;
     if (!key) return null;
     const m = index.members(key, name, "s");
+    if (m && "gap" in m) return { v: "gap", cause: m.gap, note: m.note, candidates: null };
     return m ? { v: "sym", ids: m.ids, ev: m.ev ? chain(value.ev, m.ev) : value.ev } : { v: "miss", target: key, name, ev: value.ev };
   };
 
@@ -971,7 +995,7 @@ export function createWorld(input: ResolveInput): World {
   // name's binding. A function's name stands for its declared result type
   // at the position the call took. `ext`: the type comes from a dependency.
   type TypeHit = { key: string; ev: Ev } | "ext" | null;
-  const typeKey = (file: string, family: Family, t: TypeRef, depth = 0): TypeHit => {
+  const typeKey = (file: string, family: Family, t: TypeRef, depth = 0, asType = false): TypeHit => {
     if (t.elem || depth > MAX_DEPTH) return null;
     if (family === "ruby") {
       const key = rbConst(t.name, t.qualifier);
@@ -990,6 +1014,7 @@ export function createWorld(input: ResolveInput): World {
     if (v?.v !== "sym" || v.ids.length !== 1) return null;
     const cls = classOfId.get(v.ids[0] as string);
     if (cls) return { key: cls, ev: v.ev };
+    if (asType) return null;
     const def = defById.get(v.ids[0] as string);
     const result = def?.results?.[t.result ?? 0];
     if (!def || !result) return null;
@@ -1032,64 +1057,456 @@ export function createWorld(input: ResolveInput): World {
     return false;
   };
 
-  const baseKeys = new Map<string, { keys: string[]; evs: Ev[]; outside: boolean }>();
+  // `order`: every base a member may come from, in the order written: one
+  // in the graph by its index into `keys`, one outside it by its spelling.
+  type Slot = { i: number } | { outside: string; rel: TypeRef["rel"] };
+  type Bases = { keys: string[]; evs: Ev[]; rels: TypeRef["rel"][]; refs: TypeRef[]; outside: boolean; order: Slot[] };
+  const baseKeys = new Map<string, Bases>();
   // The in-repo base classes of a class, each with the evidence of the name
-  // that binds it, and whether any base is outside the graph.
-  const basesOf = (key: string): { keys: string[]; evs: Ev[]; outside: boolean } => {
+  // that binds it, how the class takes it (extends, implements, a Ruby
+  // mixin), and whether a base it inherits members from is outside the
+  // graph (an implemented interface outside it brings no member).
+  const basesOf = (key: string): Bases => {
     let out = baseKeys.get(key);
     if (out) return out;
-    out = { keys: [], evs: [], outside: false };
+    out = { keys: [], evs: [], rels: [], refs: [], outside: false, order: [] };
     baseKeys.set(key, out);
     const info = classes.get(key);
     if (!info) return out;
     for (const b of info.bases) {
       const k = typeKey(info.file, info.family, b);
       if (k !== null && k !== "ext" && k.key !== key) {
+        out.order.push({ i: out.keys.length });
         out.keys.push(k.key);
         out.evs.push(k.ev);
-      } else if (k === null || k === "ext") out.outside = true;
+        out.rels.push(b.rel);
+        out.refs.push(b);
+      } else if ((k === null || k === "ext") && b.rel !== "implements") {
+        // An implemented interface outside the graph brings no member; any other base may.
+        out.outside = true;
+        out.order.push({ outside: info.family === "ruby" || b.qualifier === null ? b.name : `${b.qualifier}.${b.name}`, rel: b.rel });
+      }
     }
     return out;
+  };
+
+  // A member found past a base outside the graph that the language looks
+  // in first: that base may define it, so the binding is likely at most.
+  const pastOutside = (outside: string, name: string, ev: Ev | null): Ev => {
+    const caveat: Ev = { kind: "same-scope", tier: "likely", via: null, note: `The lookup passes ${outside}, a class outside the graph, before it finds ${name}; the graph assumes ${outside} does not define it.`, rule: "lookup-past-outside" };
+    return ev ? chain(ev, caveat) : caveat;
   };
 
   // A step from a class to its base: the base binding's evidence, then
   // what was found past it. The weakest step decides the tier.
   const throughBase = (base: Ev, past: Ev | null): Ev => (past ? chain(base, past) : base);
 
-  function methodOn(key: string, name: string, side: Side, depth: number): { ids: string[]; ev: Ev | null } | null {
-    if (depth > MAX_DEPTH) return null;
-    const own = methods.get(sideKey(key, side))?.get(name);
+  // A member found by a lookup: its definitions and the evidence of the
+  // steps to the class that defines it; a gap when the language's order
+  // cannot pick one; null when no class on the way defines it.
+  type Lookup = { ids: string[]; ev: Ev | null } | { gap: Cause; note: string } | null;
+  const ownMethods = (key: string, name: string, side: Side): string[] | undefined => methodsOn[side].get(key)?.get(name);
+  const shortKey = (key: string) => key.slice(key.lastIndexOf("::") + 2) || key;
+  const stepped = (base: Ev, hit: Lookup): Lookup => (hit && "ids" in hit ? { ids: hit.ids, ev: throughBase(base, hit.ev) } : hit);
+
+  // A lookup's answer depends only on the class, the member and the side,
+  // so each is made once.
+  const lookupMemo = { s: new Map<string, Map<string, Lookup>>(), i: new Map<string, Map<string, Lookup>>() };
+  function methodOn(key: string, name: string, side: Side, _depth = 0): Lookup {
+    let perKey = lookupMemo[side].get(key);
+    if (!perKey) lookupMemo[side].set(key, (perKey = new Map()));
+    const kept = perKey.get(name);
+    if (kept !== undefined) return kept;
+    const family = classes.get(key)?.family;
+    const out = family === "python" ? pyLookup(key, name, side) : family === "go" ? goLookup(key, name, side) : family === "ruby" ? rbLookup(key, name, side, 0, new Set()) : firstWins(key, name, side);
+    perKey.set(name, out);
+    return out;
+  }
+
+  // TypeScript and JavaScript: the class, then its superclass chain, then
+  // the interfaces it implements, in the order written, depth first. Each
+  // class is visited once: one met again by another path holds nothing
+  // new, so interfaces that each extend many others cost their number, not
+  // the number of paths through them.
+  function firstWins(key: string, name: string, side: Side): Lookup {
+    const own = ownMethods(key, name, side);
     if (own) return { ids: own, ev: null };
-    // A Ruby module's instance methods are called on the module itself
-    // through module_function or extend self.
-    const info = classes.get(key);
-    if (side === "s" && info?.family === "ruby" && info.ids.every((id) => defById.get(id)?.kind === "module")) {
-      const viaModule = methods.get(sideKey(key, "i"))?.get(name);
-      if (viaModule) return { ids: viaModule, ev: null };
-    }
-    const b = basesOf(key);
-    for (let i = 0; i < b.keys.length; i++) {
-      const hit = methodOn(b.keys[i] as string, name, side, depth + 1);
-      if (hit) return { ids: hit.ids, ev: throughBase(b.evs[i] as Ev, hit.ev) };
+    const seen = new Set([key]);
+    const stack: ({ key: string; ev: Ev } | { outside: string })[] = [];
+    const pushBases = (k: string, ev: Ev | null) => {
+      const b = basesOf(k);
+      for (let j = b.order.length - 1; j >= 0; j--) {
+        const slot = b.order[j] as Slot;
+        if ("outside" in slot) stack.push({ outside: slot.outside });
+        else stack.push({ key: b.keys[slot.i] as string, ev: ev ? chain(ev, b.evs[slot.i] as Ev) : (b.evs[slot.i] as Ev) });
+      }
+    };
+    pushBases(key, null);
+    let outside: string | null = null;
+    while (stack.length > 0) {
+      const top = stack.pop() as { key: string; ev: Ev } | { outside: string };
+      if ("outside" in top) {
+        outside ??= top.outside;
+        continue;
+      }
+      if (seen.has(top.key)) continue;
+      seen.add(top.key);
+      const found = ownMethods(top.key, name, side);
+      if (found) return { ids: found, ev: outside ? pastOutside(outside, name, top.ev) : top.ev };
+      pushBases(top.key, top.ev);
     }
     return null;
   }
 
-  // Whether any class in the base chain of `key` is outside the graph.
-  const outsideBase = (key: string, depth = 0): boolean => {
-    if (depth > MAX_DEPTH) return true;
+  // Python: the C3 linearisation of the class over its bases in the graph,
+  // with the evidence of the steps to each class on it; null when it
+  // cannot be established (an inconsistent or cyclic hierarchy, or one
+  // deeper than the graph follows).
+  const mroMemo = new Map<string, { keys: string[]; evs: (Ev | null)[] } | null>();
+  const mroOpen = new Set<string>();
+  function mro(key: string, depth = 0): { keys: string[]; evs: (Ev | null)[] } | null {
+    const kept = mroMemo.get(key);
+    if (kept !== undefined) return kept;
+    if (depth > MAX_DEPTH || mroOpen.has(key)) return null;
+    mroOpen.add(key);
     const b = basesOf(key);
-    return b.outside || b.keys.some((k) => outsideBase(k, depth + 1));
+    const lists: { keys: string[]; evs: (Ev | null)[] }[] = [];
+    // A base outside the graph keeps its place, named by its spelling with a
+    // leading "?", so a lookup that reaches it knows the member may be there.
+    const heads: string[] = [];
+    let failed = false;
+    for (const slot of b.order) {
+      if (failed) break;
+      if ("outside" in slot) {
+        lists.push({ keys: [`?${slot.outside}`], evs: [null] });
+        heads.push(`?${slot.outside}`);
+        continue;
+      }
+      const sub = mro(b.keys[slot.i] as string, depth + 1);
+      if (!sub) failed = true;
+      else {
+        lists.push({ keys: sub.keys, evs: sub.evs.map((e) => throughBase(b.evs[slot.i] as Ev, e)) });
+        heads.push(b.keys[slot.i] as string);
+      }
+    }
+    mroOpen.delete(key);
+    let out: { keys: string[]; evs: (Ev | null)[] } | null = null;
+    if (!failed) {
+      const evOf = new Map<string, Ev | null>();
+      for (const l of lists) l.keys.forEach((k, j) => evOf.has(k) || evOf.set(k, l.evs[j] ?? null));
+      const seqs = [...lists.map((l) => [...l.keys]), heads];
+      const keys = [key];
+      const evs: (Ev | null)[] = [null];
+      for (;;) {
+        const live = seqs.filter((s) => s.length > 0);
+        if (live.length === 0) break;
+        const head = live.map((s) => s[0] as string).find((h) => !live.some((s) => s.indexOf(h) > 0));
+        if (head === undefined) {
+          failed = true;
+          break;
+        }
+        keys.push(head);
+        evs.push(evOf.get(head) ?? null);
+        for (const s of live) if (s[0] === head) s.shift();
+      }
+      if (!failed) out = { keys, evs };
+    }
+    if (depth === 0 || out !== null) mroMemo.set(key, out);
+    return out;
+  }
+  function pyLookup(key: string, name: string, side: Side): Lookup {
+    const order = mro(key);
+    if (!order) {
+      const own = ownMethods(key, name, side);
+      if (own) return { ids: own, ev: null };
+      return basesOf(key).keys.length > 0 ? { gap: "ambiguous", note: `the method resolution order of ${shortKey(key)} cannot be established (an inconsistent, cyclic or very deep hierarchy)` } : null;
+    }
+    let outside: string | null = null;
+    for (let i = 0; i < order.keys.length; i++) {
+      const k = order.keys[i] as string;
+      if (k.startsWith("?")) {
+        outside ??= k.slice(1);
+        continue;
+      }
+      const own = ownMethods(k, name, side);
+      if (own) return { ids: own, ev: outside ? pastOutside(outside, name, order.evs[i] ?? null) : (order.evs[i] ?? null) };
+    }
+    return null;
+  }
+
+  // Go: the shallowest embedding depth wins; two at the same depth is an
+  // ambiguous selector Go itself refuses, and so is one type reached along
+  // two paths at that depth (two embedded types that both embed it). Each
+  // level counts the paths to each type, up to two, and expands each type
+  // once; a type met at a shallower depth is not walked again.
+  function goLookup(key: string, name: string, side: Side): Lookup {
+    let level = new Map<string, { paths: number; ev: Ev | null }>([[key, { paths: 1, ev: null }]]);
+    const done = new Set<string>();
+    // An embedded type outside the graph at this depth or above may define it too.
+    let outside: string | null = null;
+    for (let depth = 0; depth <= MAX_DEPTH && level.size > 0; depth++) {
+      const hits: { key: string; ids: string[]; paths: number; ev: Ev | null }[] = [];
+      for (const [k, x] of level) {
+        done.add(k);
+        const own = ownMethods(k, name, side);
+        if (own) hits.push({ key: k, ids: own, paths: x.paths, ev: x.ev });
+      }
+      const paths = hits.reduce((n, h) => n + h.paths, 0);
+      if (paths === 1) {
+        const hit = hits[0] as { ids: string[]; ev: Ev | null };
+        return { ids: hit.ids, ev: outside ? pastOutside(outside, name, hit.ev) : hit.ev };
+      }
+      if (paths > 1) {
+        const why = hits.length > 1 ? `from ${hits.length} embedded types at the same depth (${hits.map((h) => shortKey(h.key)).join(", ")})` : `from ${shortKey((hits[0] as { key: string }).key)} along two embedding paths at the same depth`;
+        return { gap: "ambiguous", note: `${name} is promoted ${why}, a selector Go refuses` };
+      }
+      const next = new Map<string, { paths: number; ev: Ev | null }>();
+      for (const [k, x] of level) {
+        const b = basesOf(k);
+        for (const slot of b.order) if ("outside" in slot) outside ??= slot.outside;
+        b.keys.forEach((base, i) => {
+          if (done.has(base)) return;
+          const kept = next.get(base);
+          if (kept) kept.paths = Math.min(2, kept.paths + x.paths);
+          else next.set(base, { paths: x.paths, ev: x.ev ? chain(x.ev, b.evs[i] as Ev) : (b.evs[i] as Ev) });
+        });
+      }
+      level = next;
+    }
+    return null;
+  }
+
+  // Ruby: on an instance, the prepended modules (the last prepended
+  // first), the class, the included modules (the last included first),
+  // then the superclass; on the class, its own class methods, the modules
+  // it extends (the last first), then the superclass's class methods.
+  // `seen`: the modules and classes this lookup has entered, each entered once.
+  function rbLookup(key: string, name: string, side: Side, depth: number, seen: Set<string>): Lookup {
+    const entry = `${side} ${key}`;
+    if (depth > MAX_DEPTH || seen.has(entry)) return null;
+    seen.add(entry);
+    const b = basesOf(key);
+    const by = (rel: TypeRef["rel"]) => b.order.filter((slot) => ("outside" in slot ? slot.rel : b.rels[slot.i]) === rel);
+    let outside: string | null = null;
+    const through = (slots: Slot[], at: Side): Lookup => {
+      for (const slot of slots) {
+        if ("outside" in slot) {
+          outside ??= slot.outside;
+          continue;
+        }
+        const hit = rbLookup(b.keys[slot.i] as string, name, at, depth + 1, seen);
+        if (hit && "ids" in hit && outside) return { ids: hit.ids, ev: pastOutside(outside, name, throughBase(b.evs[slot.i] as Ev, hit.ev)) };
+        if (hit) return stepped(b.evs[slot.i] as Ev, hit);
+      }
+      return null;
+    };
+    if (side === "i") {
+      const pre = through(by("prepend").reverse(), "i");
+      if (pre) return pre;
+      const own = ownMethods(key, name, "i");
+      if (own) return { ids: own, ev: null };
+      return through(by("include").reverse(), "i") ?? through(by(undefined), "i");
+    }
+    const own = ownMethods(key, name, "s");
+    if (own) return { ids: own, ev: null };
+    // A Ruby module's instance methods are called on the module itself
+    // through module_function or extend self.
+    const info = classes.get(key);
+    if (info?.ids.every((id) => defById.get(id)?.kind === "module")) {
+      const viaModule = ownMethods(key, name, "i");
+      if (viaModule) return { ids: viaModule, ev: null };
+    }
+    return through(by("extend").reverse(), "i") ?? through(by(undefined), "s");
+  }
+
+  // Whether any class in the base chain of `key` is outside the graph,
+  // each class looked at once.
+  const outsideMemo = new Map<string, boolean>();
+  const outsideBase = (key: string): boolean => {
+    const kept = outsideMemo.get(key);
+    if (kept !== undefined) return kept;
+    let out = false;
+    const seen = new Set<string>();
+    const stack = [key];
+    while (stack.length > 0 && !out) {
+      const k = stack.pop() as string;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const b = basesOf(k);
+      if (b.outside) out = true;
+      b.keys.forEach((base, i) => {
+        if (b.rels[i] !== "implements") stack.push(base);
+      });
+    }
+    outsideMemo.set(key, out);
+    return out;
   };
 
-  const fieldKey = (key: string, field: string, depth = 0): TypeHit => {
+  // ---------- implementers: subclasses, implementers and method sets ----------
+  // Which classes extend, include, prepend or implement each class key.
+  // Go embedding is not inheritance: a Go type is reached only through
+  // the method sets of interfaces.
+  let subIndex: Map<string, { key: string; i: number }[]> | null = null;
+  const subsOf = (key: string): { key: string; i: number }[] => {
+    if (subIndex === null) {
+      const built = new Map<string, { key: string; i: number }[]>();
+      for (const [k, info] of classes) {
+        if (info.family === "go") continue;
+        const b = basesOf(k);
+        b.keys.forEach((base, i) => {
+          if (b.rels[i] !== "extend") push(built, base, { key: k, i });
+        });
+      }
+      subIndex = built;
+    }
+    return subIndex.get(key) ?? [];
+  };
+
+  // A name from Python's typing module (`Protocol`, `typing.Protocol`).
+  const isTyping = (file: string, t: TypeRef, name: string): boolean => {
+    if (t.name !== name) return false;
+    if (t.qualifier === null) {
+      const b = index.bindings(file).names.get(name);
+      return b?.kind === "named" && b.imported === name && b.mod !== null && "ext" in b.mod && TYPING.has(b.mod.ext);
+    }
+    if (t.qualifier.includes(".")) return false;
+    const b = index.bindings(file).names.get(t.qualifier);
+    return b?.kind === "pyns" && TYPING.has(b.dotted);
+  };
+  const protocolMemo = new Map<string, boolean>();
+  const isProtocol = (key: string): boolean => {
+    let v = protocolMemo.get(key);
+    if (v !== undefined) return v;
+    const info = classes.get(key);
+    v = info?.family === "python" && info.bases.some((b) => isTyping(info.file, b, "Protocol"));
+    protocolMemo.set(key, v);
+    return v;
+  };
+  // A TypeScript interface, a Go interface type or a Python Protocol: a
+  // contract whose members other types implement.
+  const isIface = (key: string): boolean => classes.get(key)?.ids.some((id) => defById.get(id)?.iface === true) === true || isProtocol(key);
+
+  // The member names a Go interface or a Python Protocol declares, its
+  // bases' included; null when a base is outside the graph (the set is not
+  // literal) or it declares none.
+  const contractMemo = new Map<string, Set<string> | null>();
+  const contractNames = (key: string, depth = 0): Set<string> | null => {
+    const kept = contractMemo.get(key);
+    if (kept !== undefined) return kept;
     if (depth > MAX_DEPTH) return null;
+    const info = classes.get(key);
+    let out: Set<string> | null = new Set(methodsOn.i.get(key)?.keys() ?? []);
+    for (const b of info?.bases ?? []) {
+      const k = typeKey(info?.file ?? "", info?.family ?? "go", b);
+      if (k !== null && k !== "ext" && k.key !== key) {
+        const sub = contractNames(k.key, depth + 1);
+        if (sub === null) out = null;
+        else for (const n of sub) out?.add(n);
+      } else if (!(info?.family === "python" && (isTyping(info.file, b, "Protocol") || isTyping(info.file, b, "Generic")))) out = null;
+      if (out === null) break;
+    }
+    if (out !== null && out.size === 0) out = null;
+    contractMemo.set(key, out);
+    return out;
+  };
+  // The member names a type has: its own and those it inherits or that
+  // embedding promotes.
+  const namesMemo = new Map<string, Set<string>>();
+  const memberNames = (key: string, depth = 0): Set<string> => {
+    const kept = namesMemo.get(key);
+    if (kept) return kept;
+    const out = new Set<string>(methodsOn.i.get(key)?.keys() ?? []);
+    namesMemo.set(key, out);
+    if (depth <= MAX_DEPTH) for (const k of basesOf(key).keys) for (const n of memberNames(k, depth + 1)) out.add(n);
+    return out;
+  };
+  // Per family and member name, the types that have it: built once.
+  const typesByName = new Map<Family, Map<string, string[]>>();
+  const typesNamed = (family: Family, name: string): string[] => {
+    let byName = typesByName.get(family);
+    if (!byName) {
+      byName = new Map();
+      typesByName.set(family, byName);
+      for (const [k, info] of classes) {
+        if (info.family !== family || isIface(k)) continue;
+        for (const n of memberNames(k)) push(byName, n, k);
+      }
+    }
+    return byName.get(name) ?? [];
+  };
+  // The types whose members cover every member of a Go interface or a
+  // Python Protocol, by name: Go's satisfaction, a Protocol's structural match.
+  const methodSetMemo = new Map<string, string[]>();
+  const methodSetImplementers = (key: string): string[] => {
+    const kept = methodSetMemo.get(key);
+    if (kept) return kept;
+    let out: string[] = [];
+    const info = classes.get(key);
+    const names = info && (info.family === "go" || isProtocol(key)) && isIface(key) ? contractNames(key) : null;
+    if (info && names) {
+      const [first, ...rest] = [...names];
+      out = typesNamed(info.family, first as string).filter((k) => k !== key && rest.every((n) => memberNames(k).has(n)));
+    }
+    methodSetMemo.set(key, out);
+    return out;
+  };
+
+  // The classes directly below a class key: subclasses, includers,
+  // declared implementers, and for a Go interface or a Python Protocol the
+  // types matching its method set. A generic argument never drops one:
+  // TypeScript compares `Repo<A>` and `Repo<B>` by the shapes of A and B,
+  // which the graph does not hold whole, so a difference is never proved.
+  function childrenOf(key: string): string[] {
+    const out: string[] = [];
+    for (const s of subsOf(key)) out.push(s.key);
+    if (isIface(key)) for (const k of methodSetImplementers(key)) out.push(k);
+    return out;
+  }
+
+  // The implementations or overrides a call bound to `declared` on `key`
+  // may run: for each class below `key`, the method its own lookup finds,
+  // never an abstract member nor the declared one, in path and line order.
+  // Per class key, then per member name and side: the declared member
+  // follows from those, so it is no part of the key.
+  const dispatchMemo = new Map<string, Map<string, string[]>>();
+  const dispatchTargets = (key: string, name: string, side: Side, declared: readonly string[]): string[] => {
+    let perKey = dispatchMemo.get(key);
+    if (!perKey) dispatchMemo.set(key, (perKey = new Map()));
+    const memoKey = side === "i" ? name : `${name} s`;
+    const kept = perKey.get(memoKey);
+    if (kept) return kept;
+    const skip = new Set(declared);
+    const found = new Set<string>();
+    const seen = new Set<string>([key]);
+    const queue = childrenOf(key);
+    for (let i = 0; i < queue.length && seen.size < 100_000; i++) {
+      if (i % 1024 === 1023) checkBudget();
+      const k = queue[i] as string;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const hit = methodOn(k, name, side, 0);
+      if (hit && "ids" in hit) for (const id of hit.ids) if (!skip.has(id) && defById.get(id)?.abstract !== true) found.add(id);
+      for (const c of childrenOf(k)) if (!seen.has(c)) queue.push(c);
+    }
+    const out = [...found].sort((a, b) => {
+      const x = defById.get(a);
+      const y = defById.get(b);
+      return (x?.file ?? a).localeCompare(y?.file ?? b) || (x?.line ?? 0) - (y?.line ?? 0) || a.localeCompare(b);
+    });
+    perKey.set(memoKey, out);
+    return out;
+  };
+
+  // `seen`: the classes this lookup has entered, each entered once.
+  const fieldKey = (key: string, field: string, depth = 0, seen = new Set<string>()): TypeHit => {
+    if (depth > MAX_DEPTH || seen.has(key)) return null;
+    seen.add(key);
     const info = classes.get(key);
     const t = info?.fields.get(field);
     if (info && t) return typeKey(info.file, info.family, t);
     const b = basesOf(key);
     for (let i = 0; i < b.keys.length; i++) {
-      const hit = fieldKey(b.keys[i] as string, field, depth + 1);
+      const hit = fieldKey(b.keys[i] as string, field, depth + 1, seen);
       if (hit === "ext") return hit;
       if (hit) return { key: hit.key, ev: throughBase(b.evs[i] as Ev, hit.ev) };
     }
@@ -1105,8 +1522,11 @@ export function createWorld(input: ResolveInput): World {
   };
 
   // ---------- calls ----------
+  // Where a call bound through a type that others extend or implement may
+  // also go: the static type and the side.
+  type Dispatch = { key: string; side: Side };
   type Outcome =
-    | { ids: string[]; ev: Ev }
+    | { ids: string[]; ev: Ev; dispatch?: Dispatch }
     | { miss: { target: string; name: string }; ev: Ev; cause: Cause }
     | { ext: true }
     | "ignore"
@@ -1136,6 +1556,7 @@ export function createWorld(input: ResolveInput): World {
     const info = classes.get(key);
     if (name === "new" && side === "s" && info?.family === "ruby") return { ids: info.ids, ev };
     const hit = index.members(key, name, side);
+    if (hit && "gap" in hit) return { unknown: hit.gap, shape: "typed", note: hit.note };
     if (hit) return { ids: hit.ids, ev: hit.ev ? chain(ev, hit.ev) : ev };
     // Not on the class or its bases in the repository: inherited from a
     // base outside the graph, or gone.
@@ -1167,6 +1588,7 @@ export function createWorld(input: ResolveInput): World {
 
   const resolveCall = (file: string, family: Family, call: CallFact, caller: Def | undefined): Outcome => {
     const r = call.recv;
+    if (call.dynamic && call.result !== undefined) return { unknown: "dynamic", shape: "other", note: "a call of what another call returned: the graph cannot tell which function that is", scope: "project" };
     if (call.dynamic) return { unknown: "dynamic", shape: "other", note: "a computed callee: the graph cannot tell which function it calls", scope: "project" };
     const builtin = BUILTINS[family].has(call.name);
     switch (r.kind) {
@@ -1197,15 +1619,19 @@ export function createWorld(input: ResolveInput): World {
           if (typeof global === "object" && "ids" in global) return global;
           if (builtin) return { ext: true };
         }
-        return out;
+        // this or self may be an instance of a subclass that overrides the
+        // method; a Go value is never anything but its own type.
+        return withDispatch(out, family !== "go" || isIface(key.key) ? { key: key.key, side } : null);
       }
       case "super": {
         const key = enclosingClass(file, family, caller);
         const bases = key ? basesOf(key) : null;
-        const base = bases?.keys[0];
-        if (!base) return key && outsideBase(key) ? { unknown: "no-receiver-type", shape: "self", note: "the base class is outside the graph" } : { unknown: "no-receiver-type", shape: "self" };
+        // The superclass, never an implemented interface.
+        const at = bases ? bases.rels.findIndex((rel) => rel !== "implements") : -1;
+        const base = bases?.keys[at];
+        if (!bases || !base) return key && outsideBase(key) ? { unknown: "no-receiver-type", shape: "self", note: "the base class is outside the graph" } : { unknown: "no-receiver-type", shape: "self" };
         // super is the base class as the class's own declaration binds it.
-        const superEv = chain({ kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-super" }, bases.evs[0] as Ev);
+        const superEv = chain({ kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-super" }, bases.evs[at] as Ev);
         return onClass(base, call.name, call.static ? "s" : "i", superEv);
       }
       case "type": {
@@ -1228,7 +1654,13 @@ export function createWorld(input: ResolveInput): World {
         const key = followPath(t, r.path);
         if (key === "ext") return { ext: true };
         if (key === null) return { unknown: "no-receiver-type", shape: "typed", note: "a field whose type no rule knows" };
-        return onClass(key.key, call.name, "i", { ...key.ev, kind: receiverKind(r.type, r.path), rule: "receiver-type" });
+        const kind = receiverKind(r.type, r.path);
+        const out = onClass(key.key, call.name, "i", { ...key.ev, kind, rule: "receiver-type" });
+        // A value a constructor made here is of that class alone; one typed
+        // by an annotation, a declared result or a field may be any class
+        // below it. In Go only an interface has implementations.
+        const dispatches = family === "go" ? isIface(key.key) : kind !== "receiver-constructor";
+        return withDispatch(out, dispatches ? { key: key.key, side: "i" } : null);
       }
       case "name": {
         if (family === "ruby") {
@@ -1254,25 +1686,127 @@ export function createWorld(input: ResolveInput): World {
     }
   };
 
-  const siteOf = (file: string, line: number, column: number, ev: Ev): GraphSite => ({ file, line, column, tier: ev.tier, evidence: ev.kind, via: ev.via ? { file: ev.via.file, line: ev.via.line, spec: ev.via.spec } : null, note: ev.note, rule: ev.rule });
+  // The outcomes onClass returns are made per call, so the dispatch is set on it in place.
+  const withDispatch = (out: Outcome, d: Dispatch | null): Outcome => {
+    if (d !== null && typeof out === "object" && "ids" in out) out.dispatch = d;
+    return out;
+  };
+
+  // `rule`: the rule that made the edge, when it is not the one that bound
+  // the name (a value use, a type use, an override rest on a binding).
+  const siteOf = (file: string, line: number, column: number, ev: Ev, rule?: string): GraphSite => ({ file, line, column, tier: ev.tier, evidence: ev.kind, via: ev.via ? { file: ev.via.file, line: ev.via.line, spec: ev.via.spec } : null, note: ev.note, rule: rule ?? ev.rule });
 
   const stableTargets = (out: Outcome): string[] | null => (typeof out === "object" && "ids" in out ? [...new Set(out.ids.map(stableKey))].sort() : null);
 
+  // ---------- values: what a name in value position stands for ----------
+  const defOf = (file: string, index: number): Def | undefined => {
+    const id = defIdsOf(file)[index];
+    return id === undefined ? undefined : defById.get(id);
+  };
+  const defIdsMemo = new Map<string, string[]>();
+  const defIdsOf = (file: string): string[] => {
+    let ids = defIdsMemo.get(file);
+    if (!ids) defIdsMemo.set(file, (ids = (facts.get(file)?.defs ?? []).map((d) => symbolId(file, d))));
+    return ids;
+  };
+  const valueMemo = new Map<string, ({ ids: string[]; ev: Ev } | null | undefined)[]>();
+  // The functions or methods a value reference names, with the evidence of
+  // its binding; null for anything else (a class, a constant, a module,
+  // a name the graph cannot bind).
+  const valueOf = (file: string, i: number): { ids: string[]; ev: Ev } | null => {
+    let perFile = valueMemo.get(file);
+    if (!perFile) valueMemo.set(file, (perFile = []));
+    const kept = perFile[i];
+    if (kept !== undefined) return kept;
+    let out: { ids: string[]; ev: Ev } | null = null;
+    const f = facts.get(file);
+    const ref = f?.values[i];
+    if (f && ref) {
+      const asCall: CallFact = { name: ref.name, line: ref.line, column: ref.column, caller: ref.caller, recv: ref.recv };
+      if (ref.local !== undefined) asCall.local = ref.local;
+      if (ref.bound) asCall.bound = ref.bound;
+      const r = resolveCall(file, familyOf(f.lang), asCall, ref.caller >= 0 ? defOf(file, ref.caller) : undefined);
+      if (typeof r === "object" && "ids" in r) {
+        const ids = r.ids.filter((id) => {
+          const d = defById.get(id);
+          return d !== undefined && (d.kind === "function" || d.kind === "method");
+        });
+        if (ids.length > 0) out = { ids, ev: r.ev };
+      }
+    }
+    perFile[i] = out;
+    return out;
+  };
+  // The functions a function returns by name, made once per function.
+  const returnsMemo = new Map<string, string[]>();
+  const returnsOf = (id: string): string[] => {
+    const kept = returnsMemo.get(id);
+    if (kept) return kept;
+    const d = defById.get(id);
+    const out = new Set<string>();
+    for (const r of d?.returns ?? []) for (const x of valueOf(d?.file ?? "", r)?.ids ?? []) out.add(x);
+    const list = [...out];
+    returnsMemo.set(id, list);
+    return list;
+  };
+
+  // The build's time budget, checked inside a file as well as between
+  // files: one file can hold enough work to run far past it. When it runs
+  // out, the file being resolved stops where it is and is listed with the
+  // files whose calls were not resolved.
+  class BudgetStop extends Error {}
+  const checkBudget = () => {
+    if (input.stop?.()) throw new BudgetStop("budget");
+  };
+
   // ---------- the world ----------
   const resolveAll = (): Resolved => {
-    const edgeMap = new Map<string, GraphEdge>();
-    const addEdge = (from: string, to: string, kind: GraphEdge["kind"], site: GraphSite) => {
-      const k = `${from}\u0000${to}\u0000${kind}`;
-      let e = edgeMap.get(k);
+    // One edge per (from, to, kind), found by the ids themselves: building
+    // a key string per site was the resolver's largest cost on vscode.
+    const callerEdges: GraphEdge[] = [];
+    const refEdges: GraphEdge[] = [];
+    const edgeAt = new Map<string, Map<string, Map<EdgeKind, GraphEdge>>>();
+    const addEdge = (from: string, to: string, kind: EdgeKind, site: GraphSite) => {
+      let byTo = edgeAt.get(from);
+      if (!byTo) edgeAt.set(from, (byTo = new Map()));
+      let byKind = byTo.get(to);
+      if (!byKind) byTo.set(to, (byKind = new Map()));
+      let e = byKind.get(kind);
       if (!e) {
         e = { from, to, kind, tier: site.tier, sites: [] };
-        edgeMap.set(k, e);
+        byKind.set(kind, e);
+        (CALLER_KINDS.has(kind) ? callerEdges : refEdges).push(e);
       }
       if (weakest(e.tier, site.tier) === e.tier && e.tier !== site.tier) e.tier = site.tier;
       e.sites.push(site);
     };
     const misses: Miss[] = [];
     const unknowns: UnknownSite[] = [];
+    const dispatch: DispatchSite[] = [];
+    // Notes and proofs shared by the sites that say the same thing.
+    const evMemo = new Map<string, Ev>();
+    const dispatchEv = (declared: string, contract: boolean, count: number): Ev => {
+      const k = `${declared} ${contract ? 1 : 0} ${count}`;
+      let ev = evMemo.get(k);
+      if (!ev) {
+        const rule = contract ? "dispatch-implements" : "dispatch-override";
+        ev = { kind: rule, tier: "possible", via: null, note: `A call to ${declared} may run this ${contract ? "implementation" : "override"}, one of ${count}; which one runs is not proved.`, rule };
+        evMemo.set(k, ev);
+      }
+      return ev;
+    };
+    const tsIface = new Map<string, boolean>();
+    const isTsInterface = (key: string): boolean => {
+      let v = tsIface.get(key);
+      if (v === undefined) tsIface.set(key, (v = classes.get(key)?.family === "js" && classes.get(key)?.ids.some((id) => defById.get(id)?.iface === true) === true));
+      return v;
+    };
+    const openNotes = new Map<string, string>();
+    const openShapeNote = (key: string): string => {
+      let note = openNotes.get(key);
+      if (note === undefined) openNotes.set(key, (note = `a value of the interface ${shortKey(key)} may be any object of that shape; only classes that declare implements ${shortKey(key)} are listed as possible targets`));
+      return note;
+    };
     let unresolvedSites = 0;
     let externalSites = 0;
     const budgetFiles: string[] = [];
@@ -1284,11 +1818,75 @@ export function createWorld(input: ResolveInput): World {
         budgetFiles.push(path);
         continue;
       }
+      try {
+        resolveFile(path, f);
+      } catch (error) {
+        if (!(error instanceof BudgetStop)) throw error;
+        stopped = true;
+        budgetFiles.push(path);
+      }
+    }
+    function resolveFile(path: string, f: FileFacts): void {
       const family = familyOf(f.lang);
       const defIds = f.defs.map((d) => symbolId(path, d));
-      for (const call of f.calls) {
-        const callerId = call.caller >= 0 ? (defIds[call.caller] as string) : path;
+      const callerOf = (i: number): string => (i >= 0 ? (defIds[i] as string) : path);
+      // The functions each literal table holds, made once per table: a
+      // table called from many places is read once, not once per call.
+      const tableIdsMemo = new Map<number, string[]>();
+      const tableIds = (index: number): string[] => {
+        let ids = tableIdsMemo.get(index);
+        if (!ids) tableIdsMemo.set(index, (ids = [...new Set((f.tables[index]?.values ?? []).flatMap((i) => valueOf(path, i)?.ids ?? []))]));
+        return ids;
+      };
+      // The value references passed to each call, by the call's index.
+      const argsOf = new Map<number, number[]>();
+      f.values.forEach((v, i) => {
+        if (v.call !== undefined) push(argsOf, v.call, i);
+      });
+      for (const [ci, call] of f.calls.entries()) {
+        if (ci % 64 === 63) checkBudget();
+        const callerId = callerOf(call.caller);
         const caller = call.caller >= 0 ? defById.get(callerId) : undefined;
+        const shape: Shape = call.recv.kind === "none" ? "bare" : call.recv.kind === "self" || call.recv.kind === "super" ? "self" : call.recv.kind === "type" ? "typed" : call.recv.kind === "name" ? "name" : "other";
+        // A local given one function once: calling it may run that function.
+        if (call.alias !== undefined) {
+          const v = valueOf(path, call.alias);
+          const ref = f.values[call.alias];
+          if (v && ref) {
+            const ev: Ev = { kind: "value-alias", tier: "possible", via: null, note: `${call.name} is given ${ref.name} at line ${ref.line}, so calling it may run it.`, rule: "value-alias" };
+            for (const t of v.ids) addEdge(callerId, t, "may_invoke", siteOf(path, call.line, call.column, ev));
+            continue;
+          }
+        }
+        // What a call returned, called: the functions that callee returns by name.
+        if (call.result !== undefined) {
+          const inner = f.calls[call.result];
+          const got = inner ? resolveCall(path, family, inner, inner.caller >= 0 ? defById.get(callerOf(inner.caller)) : undefined) : "ignore";
+          const callees = typeof got === "object" && "ids" in got ? got.ids : [];
+          const targets = callees.length === 1 ? returnsOf(callees[0] as string) : [...new Set(callees.flatMap(returnsOf))];
+          if (targets.length > 0) {
+            const by = defById.get(callees[0] as string)?.name ?? "the callee";
+            const ev: Ev = { kind: "returned-value", tier: "possible", via: null, note: `${by} returns it by name, and what ${by} returns is called here.`, rule: "returned-value" };
+            const site = siteOf(path, call.line, call.column, ev);
+            for (const t of targets.slice(0, DISPATCH_CAP)) addEdge(callerId, t, "may_invoke", site);
+            if (targets.length > DISPATCH_CAP) {
+              unknowns.push({ file: path, line: call.line, column: call.column, name: "", cause: "fan-out-capped", shape, caller: callerId, scope: "file", note: `${by} returns ${targets.length.toLocaleString("en-US")} functions by name; the ${(targets.length - DISPATCH_CAP).toLocaleString("en-US")} past the first ${DISPATCH_CAP} are not listed as possible targets of this call` });
+            }
+            // A callee that also returns something else (a parameter, a
+            // call) may hand back any function: the call keeps its gap.
+            if (!callees.some((id) => defById.get(id)?.returnsOther === true)) continue;
+          }
+        }
+        // A computed call on a literal table may call any of its entries;
+        // at most DISPATCH_CAP of them are listed, and the gap says how many are not.
+        const table = call.table !== undefined ? f.tables[call.table] : undefined;
+        const entries = table && call.table !== undefined ? tableIds(call.table) : [];
+        const listed = entries.length > DISPATCH_CAP ? entries.slice(0, DISPATCH_CAP) : entries;
+        if (table && listed.length > 0) {
+          const ev: Ev = { kind: "value-table", tier: "possible", via: null, note: `${table.name}[...] may call it: it is an entry of the table at line ${table.line}.`, rule: "value-table" };
+          const site = siteOf(path, call.line, call.column, ev);
+          for (const t of listed) addEdge(callerId, t, "may_invoke", site);
+        }
         const out = resolveCall(path, family, call, caller);
         if (out === "ignore") continue;
         if ("ext" in out) {
@@ -1301,6 +1899,21 @@ export function createWorld(input: ResolveInput): World {
           const u: UnknownSite = { file: path, line: call.line, column: call.column, name: call.name, cause: out.unknown, shape: out.shape, caller: callerId, scope: out.scope ?? "file" };
           if (out.note) u.note = out.note;
           if (out.candidates) u.candidates = out.candidates;
+          // A table nothing else can change narrows the gap to its entries
+          // (or a key it does not hold). One that may change elsewhere keeps
+          // the gap's whole scope: a function put in it later may be called.
+          if (table && listed.length > 0) {
+            u.candidates = listed;
+            const which =
+              entries.length > listed.length
+                ? `one of its ${entries.length.toLocaleString("en-US")} entries, of which the first ${listed.length} are listed as possible targets and ${(entries.length - listed.length).toLocaleString("en-US")} are not`
+                : "one of its entries, listed as possible targets";
+            if (table.open) u.note = `a computed member of the table ${table.name} (line ${table.line}), which may be changed elsewhere (it is exported, a module's or a package's, written through a member or an index, or passed on): ${which}, or any function put in it`;
+            else {
+              u.scope = "file";
+              u.note = `a computed member of the table ${table.name} (line ${table.line}): ${which}, or a key the table does not hold`;
+            }
+          }
           unknowns.push(u);
           continue;
         }
@@ -1308,7 +1921,6 @@ export function createWorld(input: ResolveInput): World {
           misses.push({ target: out.miss.target, name: out.miss.name, from: callerId, site: siteOf(path, call.line, call.column, out.ev) });
           if (call.implicit) continue;
           unresolvedSites++;
-          const shape: Shape = call.recv.kind === "none" ? "bare" : call.recv.kind === "self" || call.recv.kind === "super" ? "self" : call.recv.kind === "type" ? "typed" : call.recv.kind === "name" ? "name" : "other";
           unknowns.push({
             file: path,
             line: call.line,
@@ -1321,7 +1933,7 @@ export function createWorld(input: ResolveInput): World {
             note:
               out.cause === "miss"
                 ? `no definition of ${call.name} where the evidence points (${out.miss.target.split("\u0000").join(" ")})`
-                : `${out.miss.target.split("::").pop()} is an interface or a type alias, or inherits from a class outside the graph`,
+                : `${out.miss.target.split("::").pop()} is an interface or a type alias without that member, or inherits from a class outside the graph`,
           });
           continue;
         }
@@ -1329,8 +1941,64 @@ export function createWorld(input: ResolveInput): World {
         // (overloads, a reopened Ruby class): each gets the site.
         // A recursive call is kept as a self-edge; the impact walk stops cycles.
         for (const to of out.ids) addEdge(callerId, to, "calls", siteOf(path, call.line, call.column, out.ev));
+        // Through a type others extend or implement: each implementation or
+        // override that may run instead, possible, capped per site.
+        if (out.dispatch) {
+          const d = out.dispatch;
+          const targets = dispatchTargets(d.key, call.name, d.side, out.ids);
+          const contract = isIface(d.key) || out.ids.every((id) => defById.get(id)?.abstract === true);
+          const rule = contract ? "dispatch-implements" : "dispatch-override";
+          const declared = `${shortKey(d.key)}.${call.name}`;
+          if (targets.length > 0) {
+            const kept = targets.length > DISPATCH_CAP ? targets.slice(0, DISPATCH_CAP) : targets;
+            dispatch.push({ file: path, line: call.line, column: call.column, caller: callerId, name: call.name, declared: out.ids, candidates: kept, total: targets.length, rule });
+            // Every target of one call shares its site: the same place, proof and note.
+            const site = siteOf(path, call.line, call.column, dispatchEv(declared, contract, targets.length));
+            for (const t of kept) addEdge(callerId, t, "dispatches_to", site);
+            if (targets.length > DISPATCH_CAP) {
+              unknowns.push({ file: path, line: call.line, column: call.column, name: call.name, cause: "fan-out-capped", shape, caller: callerId, scope: "file", note: `the call may run ${targets.length} implementations or overrides of ${declared}; the ${targets.length - DISPATCH_CAP} past the first ${DISPATCH_CAP} in path order are not listed` });
+            }
+          }
+          // A TypeScript interface admits any value of its shape, declared or not.
+          if (family === "js" && isTsInterface(d.key)) {
+            unknowns.push({ file: path, line: call.line, column: call.column, name: call.name, cause: "unsupported-rule", shape, caller: callerId, scope: "file", note: openShapeNote(d.key) });
+          }
+        }
+        // A function passed to a callee whose body calls that parameter.
+        if (out.ev.tier !== "possible") {
+          for (const id of out.ids) {
+            const callee = defById.get(id);
+            if (!callee?.invokes || !callee.params) continue;
+            for (const ri of argsOf.get(ci) ?? []) {
+              const ref = f.values[ri] as ValueRef;
+              const param = ref.key !== undefined ? callee.params.indexOf(ref.key) : (ref.arg ?? -1);
+              if (param < 0 || !callee.invokes.includes(param)) continue;
+              const v = valueOf(path, ri);
+              if (!v) continue;
+              const ev: Ev = { kind: "invocation-summary", tier: "possible", via: null, note: `Passed to ${callee.name} (${callee.file}:${callee.line}), whose body calls its parameter ${callee.params[param]}.`, rule: "invocation-summary" };
+              for (const t of v.ids) if (t !== callerId) addEdge(callerId, t, "may_invoke", siteOf(path, ref.line, ref.column, ev));
+            }
+          }
+        }
       }
-      // Inheritance: class to base class.
+      // Uses as a value: a function or method named where it is not called.
+      f.values.forEach((ref, i) => {
+        const v = valueOf(path, i);
+        if (!v) return;
+        const from = callerOf(ref.caller);
+        for (const to of v.ids) if (to !== from) addEdge(from, to, "uses_value", siteOf(path, ref.line, ref.column, v.ev, "value-ref"));
+      });
+      // Uses as a type: a class, interface or type named in an annotation, a cast or a type test.
+      if (f.typeCuts) {
+        unknowns.push({ file: path, line: 0, column: 0, name: "", cause: "unsupported-rule", shape: "other", caller: path, scope: "file", note: `${f.typeCuts} type ${f.typeCuts === 1 ? "annotation is" : "annotations are"} too large to read whole (over 4,096 parts); the types past the cut are not recorded as type uses` });
+      }
+      for (const t of f.types) {
+        const k = typeKey(path, family, t.ref, 0, true);
+        if (k === null || k === "ext") continue;
+        const from = callerOf(t.caller);
+        for (const to of classes.get(k.key)?.ids ?? []) if (to !== from) addEdge(from, to, "uses_type", siteOf(path, t.ref.line, t.ref.column, k.ev, "type-use"));
+      }
+      // Inheritance: class to base class; an implemented interface apart.
       f.defs.forEach((d, i) => {
         if (d.bases.length === 0) return;
         for (const b of d.bases) {
@@ -1340,10 +2008,73 @@ export function createWorld(input: ResolveInput): World {
           if (!info) continue;
           for (const to of info.ids) {
             if (to === defIds[i]) continue;
-            addEdge(defIds[i] as string, to, "inherits", siteOf(path, b.line, b.column, key.ev));
+            addEdge(defIds[i] as string, to, b.rel === "implements" ? "implements" : "inherits", siteOf(path, b.line, b.column, key.ev));
           }
         }
       });
+      // Overrides: a method to the member of a base it overrides or implements.
+      if (family !== "go") {
+        f.defs.forEach((d, i) => {
+          if (d.kind !== "method") return;
+          const key = classKey(family, path, d.owner ?? "");
+          const b = basesOf(key);
+          const side: Side = methodsOn.i.get(key)?.has(d.name) ? "i" : "s";
+          b.keys.forEach((base, j) => {
+            if (b.rels[j] === "extend") return;
+            const hit = methodOn(base, d.name, side, 0);
+            if (!hit || !("ids" in hit)) return;
+            const ev = throughBase(b.evs[j] as Ev, hit.ev);
+            for (const to of hit.ids) if (to !== defIds[i]) addEdge(defIds[i] as string, to, "overrides", siteOf(path, d.line, d.column, ev, "override"));
+          });
+        });
+      }
+    }
+
+    // Method sets: a Go type or a Python class that defines every member of
+    // an interface or a Protocol without declaring it, likely by its names.
+    const matched = new Set<string>();
+    for (const [key, info] of classes) {
+      if (stopped || !(info.family === "go" || info.family === "python") || !isIface(key)) continue;
+      const names = contractNames(key);
+      if (!names) continue;
+      const declared = new Set(subsOf(key).map((s) => s.key));
+      for (const t of methodSetImplementers(key)) {
+        const tInfo = classes.get(t);
+        if (!tInfo || declared.has(t)) continue;
+        const pointer = [...names].some((n) => {
+          const h = methodOn(t, n, "i", 0);
+          return h !== null && "ids" in h && h.ids.some((id) => defById.get(id)?.pointer === true);
+        });
+        const what = info.family === "go" && pointer ? `*${shortKey(t)}` : shortKey(t);
+        const how = info.family === "go" ? (pointer ? `; some have pointer receivers, so only ${what} implements it` : "; all have value receivers") : "";
+        const ev: Ev = {
+          kind: "method-set",
+          tier: "likely",
+          via: null,
+          note: `${what} defines every member of ${shortKey(key)} by name${how}; the signatures are not compared.`,
+          rule: info.family === "go" ? (pointer ? "go-method-set-pointer" : "go-method-set-value") : "py-protocol-match",
+        };
+        for (const from of tInfo.ids) {
+          const at = defById.get(from);
+          if (!at) continue;
+          for (const to of info.ids) addEdge(from, to, "implements", siteOf(at.file, at.line, at.column, ev));
+        }
+        for (const n of names) {
+          const mine = methodOn(t, n, "i", 0);
+          const theirs = methodOn(key, n, "i", 0);
+          if (!mine || !("ids" in mine) || !theirs || !("ids" in theirs)) continue;
+          for (const from of mine.ids) {
+            const at = defById.get(from);
+            if (!at) continue;
+            for (const to of theirs.ids) {
+              const k = `${from}\u0000${to}`;
+              if (from === to || matched.has(k)) continue;
+              matched.add(k);
+              addEdge(from, to, "overrides", siteOf(at.file, at.line, at.column, ev, "method-set-override"));
+            }
+          }
+        }
+      }
     }
 
     // ---------- importers ----------
@@ -1365,7 +2096,11 @@ export function createWorld(input: ResolveInput): World {
     // A manifest or tsconfig the model could not read, parse or follow: one unknown each.
     for (const g of model.unreadable) unknowns.push(metadataUnknown(g));
 
-    return { nodes, edges: [...edgeMap.values()], importers, defsByFile, misses, unknowns, unresolvedSites, externalSites, budgetFiles };
+    // What each function does with its parameters and what it returns by name.
+    const summaries = new Map<string, InvocationSummary>();
+    for (const [id, d] of defById) if (d.invokes || d.returns) summaries.set(id, { params: d.params ?? [], invokes: d.invokes ?? [], returns: returnsOf(id), returnsOther: d.returnsOther === true });
+
+    return { nodes, edges: callerEdges, references: refEdges, dispatch, summaries, importers, defsByFile, misses, unknowns, unresolvedSites, externalSites, budgetFiles };
   };
 
   const trace = (files: Iterable<string>): SiteTrace[] => {

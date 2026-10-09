@@ -1,0 +1,105 @@
+{
+  "version": 2,
+  "change_id": "f40fe5221f97",
+  "summary": "Turns the search page into a client component. It reads q from the URL, fetches matching products and renders them in a list.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/search/page.tsx",
+      "line_number": 21,
+      "line_end": 21,
+      "title": "URL query injected as raw HTML",
+      "problem": "The heading puts the q URL parameter into dangerouslySetInnerHTML without escaping. React therefore renders attacker-supplied markup as HTML.",
+      "consequence": "An attacker can send a crafted search link that runs script in the victim's session. That script can steal data or act as the victim.",
+      "fix": "Render the query as a normal text child so React escapes it.",
+      "suggested_change": "      <h1>Results for {query}</h1>",
+      "source": "lens:react-dangerously-set-inner-html",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.92,
+      "file_path": "app/search/page.tsx",
+      "line_number": 15,
+      "line_end": 17,
+      "title": "Effect without dependencies refetches forever",
+      "problem": "The effect has no dependency array, so it runs after every render. Each response calls setResults with a new array, which triggers another render and another fetch.",
+      "consequence": "The page sends search requests in an endless loop. This loads the catalog API and wastes the user's bandwidth.",
+      "fix": "Give the effect a dependency array containing query.",
+      "suggested_change": "  useEffect(() => {\n    searchProducts(query).then(setResults);\n  }, [query]);",
+      "source": "oxlint:react-hooks/exhaustive-deps",
+      "candidate": "c1"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/search/page.tsx",
+      "line_number": 10,
+      "line_end": 13,
+      "title": "Hooks called after a conditional return",
+      "problem": "The early return for an empty query runs before useState and useEffect. The component therefore calls a different number of hooks depending on q.",
+      "consequence": "React throws a hooks-order error when q is added or cleared during client navigation. The page then crashes.",
+      "fix": "Call useState and useEffect before the early return. Inside the effect, skip the fetch when query is empty.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "app/search/page.tsx",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Search form removed with no replacement",
+      "problem": "The change deletes the search form. Without q, the page now only says to type a search term and gives no input.",
+      "consequence": "Users who open /search directly have no way to enter a query.",
+      "fix": "Keep the form with the q input on the page, at least when no query is present.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "app/search/page.tsx",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Search failure rejection is never handled",
+      "problem": "searchProducts throws when the response is not ok, but the effect chains no catch. The rejected promise floats unhandled.",
+      "consequence": "A failed search shows the user an empty list with no error message. The browser also logs an unhandled rejection.",
+      "fix": "Add a catch that records an error state and renders a failure message.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "info",
+      "category": "maintainability",
+      "confidence": 0.7,
+      "file_path": "app/search/page.tsx",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "New search behaviour has no covering test",
+      "problem": "SearchPage now fetches and renders results from the URL query. No test in the change covers this behaviour.",
+      "consequence": "Regressions in the fetch, empty-query or rendering paths can ship unnoticed.",
+      "fix": "Add a component test that mocks searchProducts and checks the empty-query and results cases.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The list items are stateless text elements, and each fetch replaces the whole list. A missing key here only causes a dev warning.",
+      "file_path": "app/search/page.tsx",
+      "line_number": 24
+    }
+  ]
+}

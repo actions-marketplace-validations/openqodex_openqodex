@@ -46,10 +46,11 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `python-caller-break` | Python | a function that may now return `None`, with callers in another `src` package that add and divide its result (major; reasoning, graph) |
 | `rails-controller-model` | Ruby, Rails | SQL built from params (critical), `destroy` left out of the admin check (critical), `permit!` (major), a welcome email on every save (major); brakeman, semgrep, reasoning |
 | `suppression-comments` | Python, JavaScript | a shell injection hidden by `# nosec` (critical), an `eval` hidden by `eslint-disable` and `nosemgrep` (critical); a harmless `# noqa: E501` that must not be reported |
+| `ts-interface-dispatch-break` | TypeScript | an implementation of a `Cache` interface whose `get` now throws where the interface promises an empty string, called only through the interface from two files among many other calls named `get` (major; reasoning, graph) |
 | `ts-removed-export` | TypeScript | a renamed export still imported by a file outside the change (major; reasoning, graph); nothing in the diff shows it |
 | `ts-workspace-caller-break` | TypeScript, pnpm workspace | `safeGit` changed from returning a string to returning an object, with callers in another package (major; reasoning, graph) |
 
-Thirty-seven planted bugs in all: 11 critical, 20 major, 6 minor.
+Thirty-eight planted bugs in all: 11 critical, 21 major, 6 minor.
 
 Each case is a folder under `benchmark/cases/<case>/`: `case.json` (the spec), `base/` (the base commit), `change/` (the files the change writes) and an optional `delete.txt`. `demo-polyglot` reads `examples/demo-repo` instead, and its secret is generated when the case is built, the same value every time, never committed. The repositories are built in a temporary folder; none is committed. `node benchmark/build.mjs <case>` builds one so you can read it.
 
@@ -61,7 +62,7 @@ From a clone, with Node 22, Claude Code installed and logged in:
 pnpm install
 node benchmark/build-cli.mjs           # pnpm build, and a record of the commit and tree it built from
 node benchmark/run.mjs --dry-run       # print the plan, run nothing
-node benchmark/run.mjs                 # 14 cases, graph off and on, 3 repeats: 84 reviews
+node benchmark/run.mjs                 # 15 cases, graph off and on, 3 repeats: 90 reviews
 node benchmark/score.mjs benchmark/results/<date>-<commit>
 ```
 
@@ -138,6 +139,34 @@ What it showed:
 - Three spec errors in this run's cases were found by reading the reviews, and are fixed for the next run (this run keeps its own copies): the Rails reviewer found the admin check missing from `destroy` at the `destroy` action, a place the spec did not list (2 reviews); the Next.js change drops the base page's search form by accident, a real bug the reviewer reported 5 times, each counted false; and `permit!` sat behind the admin check, so the plant was weak and was never reported (0 of 6). The case now plants it in a self-service profile update. Of the 8 false findings, 7 come from the first two errors. The eighth is real but was not listed: a path traversal in the suppression case's thumbnail command, which the earlier rules had credited to the planted shell injection on the same line. The case now lists it as a side issue.
 - The reviewer also asked for tests about once per review (32 and 31 findings); these are counted apart, as the scoring rules above say.
 - The wording pass (`judge.json`, judged by `claude-sonnet-5`, which never blocks) read the 203 findings that the earlier rules matched to a planted bug. Graph off and on: the problem sentence was plain in 86% and 90% and correct in 97% and 98%; the consequence plain in 86% and 85%, correct in 97% and 92%; the fix plain in 91% and 95%, correct in 97% and 98%. The judge's answer for 8 findings did not parse.
+
+## The phase 2 run
+
+`benchmark/results/2026-10-09-ac9cdae`: build `ac9cdae` (openqodex 0.10.0 with phase 2 of the code graph: calls through interfaces and base classes, functions used as values, type and value uses), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, on the same Mac with Node 22. 15 cases, graph on only, 1 repeat. The run is marked dirty because 18 untracked scratch files sat under `.tmp/` in the build's tree; the product code is the commit's. The fixes from the phase's code review came after this build. They change how sure some edges are, not what the five graph cases' briefs say: scored again on the final build with the same brief checks, those briefs still name every gap and every caller.
+
+The `django-model-view` review failed: the Mac went to sleep a second after it started, and the run stopped it after 1,521 s with no report. That one review ran again on the same build, in `benchmark/results/2026-10-09-ac9cdae-django-retry`, and completed. The phase 2 column takes `django-model-view` from that folder and every other case from the run. Each folder is scored with its own specs (`score.json`). The first run is scored with `cases-v2/`, as in its own table. `score.mjs --against` scores the earlier run with that run's own specs, which predate the words each plant needs, so this comparison calls the scorer's functions directly (#73).
+
+| Measure (graph on) | First run, `752b77f`, 3 repeats | Phase 2, `ac9cdae`, 1 repeat |
+|---|---|---|
+| Planted bugs found | 99/111 (89%) | 33/38 (87%) |
+| critical | 32/33 | 12/12 |
+| major | 57/60 | 20/20 |
+| minor | 10/18 | 1/6 |
+| Findings that are planted bugs | 99/103 (96%) | 33/33 (100%) |
+| False findings | 4 | 0 |
+| Clean changes with no finding | 6/6 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 7/7 |
+| Graph gaps disclosed in the brief | 3/6 | 3/3 |
+| Time per review, mean | 25 s | 34 s |
+| Cost per review, mean | $0.11 | $0.11 |
+
+What it showed:
+
+- The line this phase moved is the graph gaps. In `js-dynamic-dispatch-gap` the brief now names the computed call `table[action](id)` and lists the table's entries as its possible targets: 2 of 2 checks, where each review of the first run passed 1 of 2.
+- The new case, `ts-interface-dispatch-break`, plants a bug that only a call through an interface reaches. Its brief listed both callers that reach it through the `Cache` interface as possible callers and called the list a floor (3 of 3 checks), and the review found the bug. Graph off was not run, so this run does not show whether the graph made the difference.
+- On the 14 cases both runs hold, the review found 32 of 37 plants: every critical and major one. The five misses are minor: three Dockerfile issues and a shell loop in the demo repository that the scanners raised and the reviewer dropped, as in the first run, and the list items without keys in the Next.js case.
+- No finding was false. Three findings matched side issues the cases list as real but not planted: the Next.js search form the change drops (listed since the first run, where it counted false 5 times), the Next.js search failure that is never caught, and the race between two redemptions in the Django case.
+- The mean time rests on one demo review of 98 s, 82 s of it the reviewer's; the first run's three demo reviews with the graph on took 47 s, 83 s and 50 s. The median review took 28 s.
 
 ## Claims cite a run
 

@@ -55,7 +55,7 @@ describe("the correctness corpus", () => {
     const t = totalsOf(counted);
     const all = scored.totals;
     const line = (x: typeof t) =>
-      `cases ${x.passed}/${x.cases} pass; precision ${x.precision.hit}/${x.precision.of}; recall certain ${x.recall.certain.hit}/${x.recall.certain.of}, likely ${x.recall.likely.hit}/${x.recall.likely.of}, exports ${x.recall.exports.hit}/${x.recall.exports.of}, removed ${x.recall.removed.hit}/${x.recall.removed.of}, moved ${x.recall.moved.hit}/${x.recall.moved.of}; validity ${x.validity.hit}/${x.validity.of}; gaps ${x.gaps.hit}/${x.gaps.of}; cuts ${x.cuts.hit}/${x.cuts.of}; controls ${x.controls.hit}/${x.controls.of}`;
+      `cases ${x.passed}/${x.cases} pass; precision ${x.precision.hit}/${x.precision.of}; recall certain ${x.recall.certain.hit}/${x.recall.certain.of}, likely ${x.recall.likely.hit}/${x.recall.likely.of}, possible ${x.recall.possible.hit}/${x.recall.possible.of}, exports ${x.recall.exports.hit}/${x.recall.exports.of}, removed ${x.recall.removed.hit}/${x.recall.removed.of}, moved ${x.recall.moved.hit}/${x.recall.moved.of}, dispatch ${x.recall.dispatch.hit}/${x.recall.dispatch.of}, references ${x.recall.references.hit}/${x.recall.references.of}; validity ${x.validity.hit}/${x.validity.of}; gaps ${x.gaps.hit}/${x.gaps.of}; cuts ${x.cuts.hit}/${x.cuts.of}; controls ${x.controls.hit}/${x.controls.of}; candidate burden ${x.burden}`;
     console.log(`corpus totals, every case: ${line(all)}`);
     console.log(`corpus totals, known failures left out: ${line(t)}`);
     expect(value(t.precision)).toBe(1);

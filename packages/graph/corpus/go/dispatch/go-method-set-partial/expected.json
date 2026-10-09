@@ -1,0 +1,41 @@
+{
+  "guards": "never treats a Go type that defines only some of an interface's methods as an implementation",
+  "callers": [
+    {
+      "to": "store/store.go#Store.Get",
+      "site": "store/store.go:9",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "store/full.go#Full.Get",
+      "site": "store/store.go:9",
+      "tier": "possible",
+      "kind": "dispatches_to"
+    },
+    {
+      "to": "store/store.go#Store",
+      "site": "store/full.go:3",
+      "tier": "likely",
+      "kind": "implements"
+    }
+  ],
+  "notReached": [
+    {
+      "to": "store/half.go#Half.Get",
+      "site": "store/store.go:9"
+    },
+    {
+      "to": "store/store.go#Store",
+      "site": "store/half.go:3"
+    }
+  ],
+  "dispatch": [
+    {
+      "site": "store/store.go:9",
+      "candidates": [
+        "store/full.go#Full.Get"
+      ]
+    }
+  ]
+}

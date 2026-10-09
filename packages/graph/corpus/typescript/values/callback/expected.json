@@ -1,0 +1,28 @@
+{
+  "guards": "lists the caller that passes a function to an in-repo function which calls that parameter as a possible caller of the function passed",
+  "callers": [
+    {
+      "to": "src/each.ts#each",
+      "site": "src/main.ts:5",
+      "tier": "certain",
+      "kind": "calls"
+    },
+    {
+      "to": "src/log.ts#helper",
+      "site": "src/main.ts:5",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/log.ts#helper",
+      "site": "src/main.ts:5",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "floor": {
+    "src/log.ts#helper": true
+  }
+}

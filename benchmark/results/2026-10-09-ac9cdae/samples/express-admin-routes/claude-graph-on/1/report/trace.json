@@ -1,0 +1,59 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/admin.js",
+    "inside": true,
+    "range": [
+      1,
+      27
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/server.js",
+    "inside": true,
+    "range": [
+      1,
+      8
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/auth.js",
+    "inside": true,
+    "range": [
+      1,
+      10
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/db.js",
+    "inside": true,
+    "range": [
+      1,
+      12
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "package.json",
+    "inside": true,
+    "range": [
+      1,
+      13
+    ],
+    "ok": true
+  }
+]

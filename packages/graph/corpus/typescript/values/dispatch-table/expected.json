@@ -1,0 +1,42 @@
+{
+  "guards": "lists each function of a literal table as a possible callee of a computed call on that table, and keeps the call's gap narrowed to the file",
+  "callers": [
+    {
+      "to": "src/handlers.ts#onSave",
+      "site": "src/router.ts:6",
+      "tier": "possible",
+      "kind": "may_invoke"
+    },
+    {
+      "to": "src/handlers.ts#onRemove",
+      "site": "src/router.ts:6",
+      "tier": "possible",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/handlers.ts#onSave",
+      "site": "src/router.ts:3",
+      "kind": "uses_value",
+      "tier": "certain"
+    },
+    {
+      "to": "src/handlers.ts#onRemove",
+      "site": "src/router.ts:3",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/router.ts",
+      "line": 6,
+      "cause": "dynamic",
+      "scope": "file"
+    }
+  ],
+  "floor": {
+    "src/handlers.ts#onSave": true
+  }
+}

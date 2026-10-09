@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "change_id": "4dd55d237fe92e4ff6bc6f9fa837b4d38e552878b120ebdbb030177dbb0874bc",
+  "config_hash": "bb5a14e29e83019aee75407355284dc4e41382c99ceb8724b852c108e08210d3",
+  "created_at": "2026-10-09T02:51:34.655Z",
+  "lenses": [
+    {
+      "name": "pii-in-url-or-log",
+      "confidenceFloor": 0.7
+    },
+    {
+      "name": "sql-string-concatenation",
+      "confidenceFloor": 0.75
+    }
+  ],
+  "instructions_hash": null,
+  "runtime_version": "0.10.0"
+}

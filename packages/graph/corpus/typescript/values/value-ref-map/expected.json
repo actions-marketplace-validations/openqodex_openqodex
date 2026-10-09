@@ -1,0 +1,18 @@
+{
+  "guards": "records a function passed to code outside the repository as a value use, never as a possible caller",
+  "notReached": [
+    {
+      "to": "src/format.ts#label",
+      "site": "src/list.ts:4",
+      "kind": "may_invoke"
+    }
+  ],
+  "references": [
+    {
+      "to": "src/format.ts#label",
+      "site": "src/list.ts:4",
+      "kind": "uses_value",
+      "tier": "certain"
+    }
+  ]
+}

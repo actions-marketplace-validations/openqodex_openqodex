@@ -1,0 +1,26 @@
+{
+  "guards": "never dispatches a Go call on a struct receiver to a method of a struct that embeds it",
+  "callers": [
+    {
+      "to": "pkg/inner.go#Inner.M",
+      "site": "pkg/inner.go:10",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
+  "notReached": [
+    {
+      "to": "pkg/outer.go#Outer.M",
+      "site": "pkg/inner.go:10"
+    }
+  ],
+  "noUnknown": [
+    {
+      "file": "pkg/inner.go",
+      "line": 10
+    }
+  ],
+  "floor": {
+    "pkg/outer.go#Outer.M": false
+  }
+}

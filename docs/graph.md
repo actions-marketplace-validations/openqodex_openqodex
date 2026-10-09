@@ -8,7 +8,8 @@ For a review, the brief's block "What this change reaches" lists:
 
 - the symbols the change touches, removes or moves (a move under another name is found by the same body);
 - the public names the change removed or bound to another definition, compared in the base and the changed version, with every place that used them and what each binds now;
-- who calls the touched code, one and two hops out, certain callers first;
+- who calls the touched code, one and two hops out, certain callers first, then the possible ones apart (calls through an interface or a base type, functions used as values; see "Dispatch, values and types");
+- where the touched code is used as a value or named as a type, and what implements or overrides it;
 - what the touched code calls, and the files that import a changed file;
 - what the graph could not see near the change, and whether each caller list is complete or a floor.
 
@@ -20,7 +21,7 @@ Every call site on a line carries the evidence that proved it and one of these l
 
 - certain: an import that names the symbol, a definition in the same scope or Go package, or a receiver whose type a constructor, an annotation, a declared result or `this`/`self` gives, and every step it rests on is proved the same way. A name match alone is never certain.
 - likely: a stated convention picked the one target. The line says which convention, for example a workspace package reached through its built `dist` entry with no tsconfig `paths`, project reference or source condition mapping it to source, or a Ruby constant found by the autoload convention.
-- possible: the call reaches one of several definitions and nothing picks one, such as a name that two `export *` statements bring from different modules (JavaScript exports neither; a bundler may pick one). Each candidate is listed with the note. Calls through interfaces, also possible, come in a later release.
+- possible: the call may reach this definition and nothing proves it does: a name that two `export *` statements bring from different modules (JavaScript exports neither; a bundler may pick one), a call through an interface or a base type that one of several implementations answers, or a function used as a value that a callee, an alias, a table or a returned value may call. Each candidate is listed with the note. A possible caller is never proof that the code runs, and never counted with the certain and likely ones.
 
 A step through inheritance is part of the proof: a method found on a base class is no surer than the binding of that base class, for a call on an instance and for `super`.
 
@@ -50,20 +51,21 @@ A step through inheritance is part of the proof: a method found on a base class 
 A call no rule can bind is kept as an unknown with its cause, never dropped:
 
 - external: the name comes from a declared dependency or the standard library. Only these are external; an import of a module that is not in the repository and that no manifest declares is a miss.
-- no-receiver-type: a method called on a value whose type no rule knows, or on an interface or a type alias (calls through interfaces come later).
+- no-receiver-type: a method called on a value whose type no rule knows, or a member that an interface or a type alias does not declare.
 - untyped-receiver: a method called on a value typed `any`, `unknown`, `object` or an object type written in place such as `{ save(): number }` (Python `object` or `Any`, Go `any`). It may reach any method of that name, so it is never counted as external.
 - not-exported: a path of a workspace package that its `exports` map does not expose.
-- dynamic: a call through a parameter, a local value or a computed member such as `handlers[key]()`. Such a call could reach any function of its project.
+- dynamic: a call through a parameter, a local value, a computed member such as `handlers[key]()`, or what another call returned. Such a call could reach any function of its project; on a literal table that nothing else can change it is narrowed to the table's entries.
 - miss: the evidence names a place where no such symbol exists now.
 - ambiguous: several definitions could be meant and nothing picks one.
-- budget: the time budget ran out before the file's calls were resolved.
+- budget: the time budget ran out before every call of the file was resolved. The budget is checked inside a file as well as between files, so one file that holds a great deal of work stops where it is.
 - export-chain-too-deep: the name is re-exported or aliased through more than 8 modules, and the graph stops following it there.
-- unsupported-rule: the evidence leads somewhere no rule binds through, such as a `file:` dependency into a folder of the repository that is no workspace package.
+- unsupported-rule: the evidence leads somewhere no rule binds through, such as a `file:` dependency into a folder of the repository that is no workspace package, or a call through a TypeScript interface, which any object of its shape may answer without declaring `implements`, or a type annotation too large to read whole (over 4,096 parts), whose types past the cut are not recorded as type uses.
+- fan-out-capped: a call through an interface or a base type may run more than 32 implementations or overrides; the ones past the first 32 in path order are not listed.
 - metadata-unreadable: a manifest, lockfile or tsconfig the graph could not read, parse or follow; the note names the file and what failed.
 
-A caller list is a floor, and the brief says so with the reasons, when a call of the same name could not be bound, a call through a value in the symbol's project could reach it, a file of its project was not read, a file that imports it was not resolved, a manifest or tsconfig governing its folder could not be read, or a walk was cut at it. Zero callers on a floor never means unused.
+A caller list is a floor, and the brief says so with the reasons, when a call of the same name could not be bound to one definition, a call may reach it only possibly, a call through a value in the symbol's project could reach it, a file of its project was not read, a file that imports it was not resolved, a manifest or tsconfig governing its folder could not be read, or a walk was cut at it. Zero callers on a floor never means unused.
 
-Every cut is recorded with what it left out: a symbol with more than 40 callers keeps its 20 nearest in the brief, the second hop keeps 20 callers of each caller, the walk stops at 200 symbols (what lies past that frontier is not counted), the brief shows 60 call sites, the summary keeps the first 200 places that used each changed public name (the brief shows 8), and the walk of `export *` re-exports opens at most 4,096 files in one version of the code (names re-exported past that are not compared). Each barrel file is walked once, so two files that `export *` from each other end the walk where the cycle closes.
+Every cut is recorded with what it left out: a symbol with more than 40 callers keeps its 20 nearest in the brief, the second hop keeps 20 callers of each caller, the walk stops at 200 symbols (what lies past that frontier is not counted), the brief shows 60 call sites, the summary keeps the first 200 places that used each changed public name (the brief shows 8), and the walk of `export *` re-exports opens at most 4,096 files in one version of the code (names re-exported past that are not compared). A call through an interface or a base type, a computed call on a table, and a call of a returned function each keep at most 32 possible targets, and the gap says how many were left out; the hub rule holds for the possible callers apart (20 of more than 40 listed), the brief shows 20 possible call sites, and the summary keeps 200 uses of each kind per symbol. Each barrel file is walked once, so two files that `export *` from each other end the walk where the cycle closes.
 
 Languages: TypeScript, TSX, JavaScript, Python, Go and Ruby. Files under `node_modules`, `dist`, `build`, `out`, `vendor` and the like, declaration files and minified files are left out.
 
@@ -115,11 +117,13 @@ A large repository may be partial on its first reviews: the `graph.max_files` ca
 - `changes.json`: every public name the change removed or bound elsewhere, every place that used each one with what it binds now (past the summary's cut), and the removed and moved symbols.
 - `callers/<key>.json`: every caller of each touched or removed symbol, in pages of 500, past any cut the brief makes.
 - `second-hop/<key>.json`, `callees/<key>.json`, `importers/<key>.json`: the same for the second hop, what the touched code calls, and who imports a changed file.
+- `implementers/<key>.json`: what implements, overrides or extends a touched or removed symbol, and every call through it that may run another implementation, with its candidates, their total and how many past the cap are not listed.
+- `references/<key>.json`: where a touched or removed symbol is used as a value or named as a type.
 - `unknowns.json`: what the graph could not see near the change, with causes.
 - `status.json`, `capabilities.json`: how the graph was built and what it can see.
 - `base/<key>.txt`: the base version of each removed or moved symbol, labelled as not the code under review.
 
-`changes.json` and the files under `callers/`, `second-hop/`, `callees/` and `importers/` come in pages of 500 items. Each page names the next one in `next` (`changes.2.json`, then `changes.3.json`). Each page says `total`, the items on all the pages, and `totalExact`, true when they are the whole list. When they are not, `cut.omitted` says how many are missing, or is null when that cannot be counted.
+Every item of `callers/`, `second-hop/`, `implementers/` and `references/` says its level (`tier`: certain, likely or possible), and each page counts them (`counts`). `changes.json` and the files under `callers/`, `second-hop/`, `callees/`, `importers/`, `implementers/` and `references/` come in pages of 500 items. Each page names the next one in `next` (`changes.2.json`, then `changes.3.json`). Each page says `total`, the items on all the pages, and `totalExact`, true when they are the whole list. When they are not, `cut.omitted` says how many are missing, or is null when that cannot be counted.
 
 Every file passes through the review's secret redaction. A repository that holds a path named `.openqodex-review` stops the review instead of being overwritten.
 
@@ -146,3 +150,27 @@ openqodex graph explain <edge id>
 ## Settings
 
 The `graph` keys of `.openqodex/config.yaml` are in `config`: `graph.enabled`, `graph.budget_ms`, `graph.max_files` (new parses per build), `graph.max_file_bytes`, `graph.max_cache_mb` and `graph.max_heap_mb`. `--no-graph` turns the graph off for one review.
+
+## Dispatch, values and types
+
+A call through an interface or a base type binds to the member it declares, at the level its type is proved (an annotation, a declared result, a field type, `this` or `self`). Each implementation or override that may run instead is then a possible caller of the call's site, found by each class's own lookup, so an inherited implementation counts and an abstract member never does:
+
+- TypeScript and JavaScript: the class, then its superclass chain, then the interfaces it implements. Implementations are the classes that declare `implements`, their subclasses, interfaces that extend it, and a module-level `const x: Repo = { ... }`. A call through an interface also leaves an `unsupported-rule` gap, since an object of the same shape may answer it without declaring anything. A generic argument never drops an implementation: TypeScript compares `Repo<A>` and `Repo<B>` by the shapes of `A` and `B`, which the graph does not hold whole.
+- Python: the C3 method resolution order, so in `class D(B, C)` with `B(A)` and `C(A)` a method of `C` wins over `A`'s; an order that cannot be established is an `ambiguous` gap. Implementations are subclasses; for a `typing.Protocol`, also any class whose methods cover every member of the Protocol by name (likely: the signatures are not compared). Abstract members are those marked `@abstractmethod`; a method whose body only raises `NotImplementedError`, or is `...`, still runs when called, so it is an implementation like any other.
+- Go: only an interface dispatches. Its implementations are the types whose method set, their own methods and those promoted by embedding at the shallowest depth, covers every method of the interface by name (likely; a pointer receiver means only the pointer type implements it). Two methods promoted at the same depth are an `ambiguous` gap, as Go refuses the selector. An interface that embeds one from outside the repository has no method-set implementations.
+- Ruby: prepended modules (the last first), the class, included modules (the last first), then the superclass; on the class itself, its class methods, then the modules it extends, then the superclass's.
+
+A value a constructor made in the same scope (`const r = new SqlRepo()`, `r = SqlRepo()`, `r := &Sql{}`), `super` and an explicit class name bind to that class alone. `this` and `self` dispatch to the overrides in subclasses. At most 32 implementations are kept per call, in path order; the rest is a `fan-out-capped` gap.
+
+A function named where it is not called (an argument, the right side of an assignment, a returned value, an entry of an object, dict, list or map, a JSX attribute) is used as a value. It is a possible caller only when the graph reads why it may run:
+
+- a callee in the repository whose body calls that parameter (`each(items, helper)` where `each` calls `cb`): the caller that passes it may run it;
+- a local given it once (`const fn = helper; fn()`);
+- a computed call on a literal table (`handlers[key]()` where `handlers = { save: onSave }`), which keeps its `dynamic` gap. The gap is narrowed to the table's entries only when nothing else can change the table: it is not exported, not a Python module's or a Go package's, never written through a member or an index, never passed on, and no method is called on it. Otherwise a function put in it later may be called, and the gap keeps the whole project;
+- a function returned by name and then called (`pick(k)()`).
+
+A wrapper that never calls its parameter, or returns something else, gives no possible caller to what it was given. A function passed to code outside the repository (`items.map(helper)`) is a use as a value and nothing more.
+
+A class, interface or type named in an annotation, a cast (`as`, `satisfies`), `instanceof` or `isinstance` is a use as a type, and a method that overrides or implements a member of a base type is recorded as such: both are listed under a touched symbol, apart from its callers.
+
+Not yet: field reads and writes, decorators, the alternatives of a union type, and TypeScript classes that match an interface without declaring it. The `implementers` and `references` operations of the graph commands come with the query layer.
