@@ -14,3 +14,6 @@ export { query, OPERATIONS, resolveTarget, edgeId } from "./query/engine.js";
 export type { Answer, Candidate, Item, Operation, Request, Session, Target } from "./query/engine.js";
 export { graphOf } from "./session.js";
 export { writePacket, PACKET_DIR, PACKET_ROOT, PacketCollision, PacketLeak } from "./review/packet.js";
+export { blobId } from "./capture/inventory.js";
+export type { ListedFile } from "./capture/inventory.js";
+export { showBlob } from "./capture/git.js";
