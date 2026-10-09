@@ -59,8 +59,8 @@ function cli(cwd: string, ...args: string[]) {
 }
 
 const clients: Client[] = [];
-async function connect(cwd: string): Promise<{ client: Client; transport: StdioClientTransport }> {
-  const transport = new StdioClientTransport({ command: process.execPath, args: [BIN, "mcp"], cwd, env, stderr: "pipe" });
+async function connect(cwd: string, more: Record<string, string> = {}): Promise<{ client: Client; transport: StdioClientTransport }> {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [BIN, "mcp"], cwd, env: { ...env, ...more }, stderr: "pipe" });
   const client = new Client({ name: "openqodex-test", version: "1.0.0" });
   await client.connect(transport);
   clients.push(client);
@@ -174,6 +174,9 @@ describe("the held build", () => {
       expect(b.status, b.stderr).toBe(0);
     }
     expect(existsSync(join(root, ".openqodex", "graph", "generations", held))).toBe(true);
+    // The server looks for edits at most once a second; three quick builds
+    // can take less.
+    await new Promise((r) => setTimeout(r, 1100));
     const later = await ask(client, "graph_callers", { symbol: "core" });
     expect(later.answer.graph.generation).toBe(held);
     expect(later.answer.counts.certain).toBe(12);
@@ -207,7 +210,9 @@ describe("the held build", () => {
   it("says why when started outside a repository, and keeps serving (8)", async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), "oq-mcp-nogit-")));
     dirs.push(outside);
-    const { client } = await connect(outside);
+    // git looks no higher than the folder's parent: the temporary folder
+    // may itself sit inside a repository.
+    const { client } = await connect(outside, { GIT_CEILING_DIRECTORIES: dirname(outside) });
     const { answer, isError } = await ask(client, "graph_status");
     expect(isError).toBe(true);
     expect(answer.error?.code).toBe("refused");
