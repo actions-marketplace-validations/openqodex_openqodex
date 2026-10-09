@@ -253,7 +253,7 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
     const files = { "Cargo.toml": '[package]\nname = "miss"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nitoa = "=0.1.1"\n', "Cargo.lock": lock, "src/main.rs": "fn main() {}\n" };
     const { result, hosts } = await withLoggingProxy(() => scan({ scanner: "cargo-deny", rule: "", files, anchor: "" }));
     expect(result.scan.scanners[0]).toMatchObject({ status: "failed" });
-    expect(result.scan.scanners[0]!.reason).toMatch(/the crates of Cargo\.lock are not all in your Cargo cache .*itoa v0\.1\.1.*run `cargo fetch`/);
+    expect(result.scan.scanners[0]!.reason).toMatch(/the crates of Cargo\.lock are not all in your Cargo cache \((?:failed to download `itoa v0\.1\.1`|no matching package named `itoa` found)\); run `cargo fetch`/);
     expect(hosts).toEqual(["github.com"]);
   }, 300_000);
 

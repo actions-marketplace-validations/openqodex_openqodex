@@ -79,6 +79,11 @@ describe("metadataFailure", () => {
     expect(metadataFailure(fixture("metadata-missing.txt"), "rust")).toBe(
       "the crates of rust/Cargo.lock are not all in your Cargo cache (failed to download `itoa v0.1.1`); run `cargo fetch` in rust/ once",
     );
+    // Cargo 1.99, when its index cache has never seen the crate.
+    const unseen = "error: no matching package named `itoa` found\nlocation searched: crates.io index\nrequired by package `miss v0.1.0 (/x)`\nnote: offline mode (via `--frozen`) can sometimes cause surprising resolution failures\n";
+    expect(metadataFailure(unseen, "")).toBe(
+      "the crates of Cargo.lock are not all in your Cargo cache (no matching package named `itoa` found); run `cargo fetch` in the repository root once",
+    );
     expect(metadataFailure("error: the lock file /x/Cargo.lock needs to be updated but --frozen was passed to prevent this\n", "")).toBe(
       "cargo metadata failed: error: the lock file /x/Cargo.lock needs to be updated but --frozen was passed to prevent this",
     );

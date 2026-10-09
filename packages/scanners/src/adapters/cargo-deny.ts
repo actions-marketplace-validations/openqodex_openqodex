@@ -91,7 +91,9 @@ export function metadataFailure(stderr: string, folder: string): string {
   const lock = folder === "" ? "Cargo.lock" : `${folder}/Cargo.lock`;
   const where = folder === "" ? "the repository root" : `${folder}/`;
   if (/--frozen was specified|--offline was specified|offline mode/.test(stderr)) {
-    const what = /failed to download [^\n]*/.exec(stderr)?.[0];
+    // A crate the cache holds in its index but not its files fails to
+    // download; a crate the index cache has never seen is not found.
+    const what = /failed to download [^\n]*|no matching package named `[^`\n]*` found/.exec(stderr)?.[0];
     return `the crates of ${lock} are not all in your Cargo cache${what ? ` (${what.trim()})` : ""}; run \`cargo fetch\` in ${where} once`;
   }
   const lines = stderr.trim().split("\n").filter((l) => l.trim() !== "");
