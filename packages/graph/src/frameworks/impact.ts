@@ -25,9 +25,10 @@ export function frameworkPacket(graph: Graph, impact: { touched: readonly string
   if (!layer || !impact.frameworks) return null;
   const routes = new Map<string, Record<string, unknown>>();
   const asRow = (r: Registration) => ({ registration: r.id, plugin: r.plugin, app: r.app, methods: r.methods, pattern: r.pattern, partial: r.partial ?? null, name: r.name, site: r.site, handler: r.handler, mounted: r.mounted, mountedVia: r.mountedVia });
-  for (const row of impact.frameworks.routes) {
-    const r = layer.entity(row.registration);
-    if (r && r.kind === "registration") routes.set(r.id, { ...asRow(r), declared: row.declared, reaches: [] });
+  const declared = new Set(impact.frameworks.routes.filter((r) => r.declared).map((r) => r.registration));
+  for (const id of impact.frameworks.routeIds ?? impact.frameworks.routes.map((r) => r.registration)) {
+    const r = layer.entity(id);
+    if (r && r.kind === "registration") routes.set(r.id, { ...asRow(r), declared: declared.has(r.id) || undefined, reaches: [] });
   }
   const tests: Record<string, unknown>[] = [];
   const renders: Record<string, unknown>[] = [];
@@ -45,10 +46,12 @@ export function frameworkPacket(graph: Graph, impact: { touched: readonly string
     for (const e of layer.edgesFrom(seed)) if (e.kind === "renders") renders.push({ from: seed, to: layer.entity(e.to), evidence: e.evidence });
     for (const e of layer.edgesTo(seed)) if (e.kind === "changes_schema") migrations.push({ model: seed, migration: e.from, evidence: e.evidence });
   }
+  const unknowns = layer.unknownsIn(new Set(impact.frameworks.changedFiles ?? []));
   return {
     routes: [...routes.values()],
     routesTotal: routes.size,
     walkCut: cut,
+    unknowns,
     tests,
     renders,
     migrations,
@@ -202,5 +205,7 @@ export function frameworkImpact(graph: Graph, change: Pick<Change, "files" | "co
     roles: roles.slice(0, MAX_ROWS),
     unknown: unknowns.slice(0, MAX_ROWS).map((u) => ({ file: u.site?.file ?? ("file" in u.scope ? u.scope.file : null), line: u.site?.line ?? null, cause: u.cause, note: u.note })),
     unknownTotal: unknowns.length,
+    changedFiles: [...allChanged].sort(),
+    routeIds: routeRows.map((r) => r.registration),
   };
 }

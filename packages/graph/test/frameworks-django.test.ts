@@ -237,6 +237,56 @@ describe("the Django plugin on hostile input", () => {
     expect(registrations).toBeLessThanOrEqual(10_000);
   }, 120_000);
 
+  // A 600-route table under twenty prefixes: 12,000 registrations, past the
+  // 10,000 one application keeps.
+  const capped = {
+    "requirements.txt": "Django==5.0\n",
+    "mysite/__init__.py": "",
+    "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n',
+    "mysite/urls.py": `from django.urls import include, path\n\nurlpatterns = [\n${Array.from({ length: 20 }, (_, i) => `    path("p${i}/", include("mysite.table")),\n`).join("")}]\n`,
+    "mysite/table.py": `from django.urls import path\n\nfrom mysite import views\n\nurlpatterns = [\n${Array.from({ length: 600 }, (_, i) => `    path("r${i}/", views.page),\n`).join("")}]\n`,
+    "mysite/views.py": "def page(request):\n    return None\n",
+  };
+
+  it("says when an application's routes pass the registration cap, so the routes it leaves out are a gap, never silent", async () => {
+    const root = makeRepo(capped);
+    commitAll(root);
+    const graph = await buildGraph({ repoRoot: root, store: null });
+    const data = graph.frameworks;
+    expect(data?.entities.filter((e) => e.kind === "registration").length).toBe(10_000);
+    const gap = data?.unknowns.find((u) => u.plugin === "django" && u.cause === "fan-out-capped" && "app" in u.scope);
+    expect(gap?.note).toContain("10000");
+  }, 120_000);
+
+  it("carries an application's gaps into the brief and the packet for a change in that application", async () => {
+    const root = makeRepo(capped);
+    commitAll(root);
+    writeFiles(root, { "mysite/views.py": "def page(request):\n    return 1\n" });
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const g = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const impact = detectImpact(g, change);
+    expect(impact.frameworks?.unknown.some((u) => u.cause === "fan-out-capped")).toBe(true);
+    const packet = await writePacket({ root, repoRoot: root, graph: g, impact, baseSha: change.baseSha, secrets: [] });
+    const held = JSON.parse(readFileSync(join(root, PACKET_DIR, "frameworks.json"), "utf8")) as { unknowns: { cause: string }[] };
+    expect(held.unknowns.some((u) => u.cause === "fan-out-capped")).toBe(true);
+    impact.packet = packet.dir;
+    expect(renderImpactBlock(impact)).toMatch(/What the framework plugins could not see[\s\S]*fan-out-capped/);
+  }, 120_000);
+
+  it("writes every route a change declares into the packet when no handler changes, past the summary's forty", async () => {
+    const root = makeRepo({ ...capped, "mysite/urls.py": 'from django.urls import path\n\nfrom mysite import views\n\nurlpatterns = []\n' });
+    commitAll(root);
+    writeFiles(root, { "mysite/urls.py": `from django.urls import path\n\nfrom mysite import views\n\nurlpatterns = [\n${Array.from({ length: 50 }, (_, i) => `    path("n${i}/", views.page),\n`).join("")}]\n` });
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const g = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const impact = detectImpact(g, change);
+    expect(impact.touched).toEqual([]);
+    expect(impact.frameworks?.routesTotal).toBe(50);
+    await writePacket({ root, repoRoot: root, graph: g, impact, baseSha: change.baseSha, secrets: [] });
+    const held = JSON.parse(readFileSync(join(root, PACKET_DIR, "frameworks.json"), "utf8")) as { routes: { pattern: string }[] };
+    expect(held.routes.map((r) => r.pattern).sort()).toEqual(Array.from({ length: 50 }, (_, i) => `n${i}/`).sort());
+  }, 120_000);
+
   it("resolves a models module of 25,000 classes and one field, and settings reads nested deep, in under a second", async () => {
     const models = `from django.db import models\n\n\nclass First(models.Model):\n    f = models.IntegerField()\n${Array.from({ length: 25_000 }, (_, i) => `class M${i}(models.Model): pass\n`).join("")}`;
     const deep = `from django.conf import settings\n\n\ndef f():\n    return ${"(".repeat(200)}settings.KEY${")".repeat(200)}\n`;

@@ -412,6 +412,10 @@ export type ImpactFrameworks = {
   roles: { target: string; name: string; role: string; detail: string | null }[];
   unknown: { file: string | null; line: number | null; cause: string; note: string }[];
   unknownTotal: number;
+  // Uncut, for the review packet: the changed files the section read, and
+  // the id of every route it lists before the summary's cut.
+  changedFiles?: string[];
+  routeIds?: string[];
 };
 
 // ---------- review ----------

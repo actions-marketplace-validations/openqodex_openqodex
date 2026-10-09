@@ -43,6 +43,9 @@ export type FrameworkLayer = {
   entitiesIn(file: string): Entity[];
   // Tests that reference, call or may request the symbol.
   testsOf(symbol: string, depth?: number): TestLink[];
+  // What the plugins could not see in these files, and every gap with no
+  // site of the applications and projects that hold them (a cap, a budget,
+  // a computed root URL module): those can hide anything in the files.
   unknownsIn(files: ReadonlySet<string>): FrameworkUnknown[];
 };
 
@@ -174,6 +177,15 @@ function makeLayer(graph: Graph, data: FrameworkData): FrameworkLayer {
     registrationsIn: (file) => registrationsByFile.get(file) ?? [],
     entitiesIn: (file) => byFile.get(file) ?? [],
     testsOf,
-    unknownsIn: (files) => data.unknowns.filter((u) => (u.site !== null && files.has(u.site.file)) || ("file" in u.scope && files.has(u.scope.file))),
+    unknownsIn: (files) => {
+      const projects = new Set([...files].map((f) => graph.projectOf(f)));
+      const apps = new Set(data.apps.filter((a) => projects.has(a.project)).map((a) => a.id));
+      return data.unknowns.filter((u) => {
+        if (u.site !== null) return files.has(u.site.file);
+        if ("file" in u.scope) return files.has(u.scope.file);
+        if ("app" in u.scope) return apps.has(u.scope.app);
+        return projects.has(u.scope.project);
+      });
+    },
   };
 }
