@@ -17,7 +17,7 @@ describe("scan with an empty tools folder and installs off", () => {
   it("exits 0 and lists every scanner the change needs as not installed, with its reason", () => {
     expect(status).toBe(0);
     const missing = found.scanners.filter((s) => s.status === "not_installed");
-    expect(missing.map((s) => s.scanner).sort()).toEqual(["actionlint", "bandit", "gitleaks", "hadolint", "osv-scanner", "ruff", "semgrep", "shellcheck"]);
+    expect(missing.map((s) => s.scanner).sort()).toEqual(["actionlint", "bandit", "checkov", "gitleaks", "hadolint", "kube-linter", "kubeconform", "osv-scanner", "ruff", "semgrep", "shellcheck", "sqlfluff", "squawk", "tflint", "trivy", "zizmor"]);
     expect(missing.filter((s) => !s.reason)).toEqual([]);
   });
   it("still runs the in-process SQL scanner", () => {

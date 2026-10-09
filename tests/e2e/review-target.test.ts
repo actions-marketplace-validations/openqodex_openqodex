@@ -650,13 +650,15 @@ describe("a changed scanner settings file", () => {
       expect(settingsTokens(scan(`settings-ruff-${label}`, dir)), label).toEqual(["ruff:settings-file pyproject.toml"]);
     }
   });
-  it("a pyproject.toml too large to read raises the ruff note rather than none", () => {
+  // ruff and SQLFluff both read pyproject.toml, so a file too large to read
+  // may hide either one's findings: both notes are raised.
+  it("a pyproject.toml too large to read raises the ruff and SQLFluff notes rather than none", () => {
     const dir = fresh();
     write(dir, "pyproject.toml", '[project]\nname = "app"\n');
     commitAll(dir, "Project file");
     git(dir, "push", "-q", "origin", "HEAD:main", "-f");
     write(dir, "pyproject.toml", `[project]\nname = "app"\n# ${"x".repeat(1024 * 1024 + 10)}\n`);
-    expect(settingsTokens(scan("settings-ruff-unreadable", dir))).toEqual(["ruff:settings-file pyproject.toml"]);
+    expect(settingsTokens(scan("settings-ruff-unreadable", dir))).toEqual(["ruff:settings-file pyproject.toml", "sqlfluff:settings-file pyproject.toml"]);
   });
   it("a root .gitleaksignore added with a secret is a candidate in the agent's brief", () => {
     const dir = fresh();

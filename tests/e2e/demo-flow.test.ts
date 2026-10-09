@@ -113,8 +113,8 @@ describe("scan", () => {
   it("reports nothing on a file the change did not touch", () => {
     expect(scanReport.findings.filter((f) => !planted.includes(f.file_path)).map((f) => `${f.file_path}:${f.source}`)).toEqual([]);
   });
-  it("lists all thirteen builtin scanners and ran every scanner a planted bug names", () => {
-    expect(scanReport.scanners).toHaveLength(13);
+  it("lists all twenty-two builtin scanners and ran every scanner a planted bug names", () => {
+    expect(scanReport.scanners).toHaveLength(22);
     const needed = new Set(expected.bugs.flatMap((b) => b.detectors ?? []).map((d) => d.scanner).filter((s) => !(["semgrep", "osv-scanner"].includes(s) && skipNetwork(s))));
     for (const name of needed) expect(scanReport.scanners.find((s) => s.scanner === name)?.status, name).toBe("ran");
   });
