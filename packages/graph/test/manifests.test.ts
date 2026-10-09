@@ -4,7 +4,8 @@
 // the graph. Ways they could fail, one test each:
 // 1. A pattern whose repetitions overlap backtracks on a long hostile line,
 //    so one reader takes seconds or never ends: every reader must read a
-//    1 MiB hostile input in about four times the CPU time of 256 KiB.
+//    1 MiB hostile input in about four times the CPU time of 256 KiB, each
+//    run repeated until the smaller passes the noise.
 // 2. A manifest or a lockfile over its byte cap is read anyway.
 // 3. A linear reader stops reading what it must (the positive controls).
 // 4. Stripping a trailing comma or a comment from a tsconfig changes the
@@ -35,7 +36,7 @@ import {
 } from "../src/discovery/manifests.js";
 import { query } from "../src/query/engine.js";
 import { RepoReader } from "../src/safe-fs.js";
-import { cpuMs, expectLinear } from "../src/test-timing.js";
+import { cpuMs, expectLinear, expectLinearRepeated, repeatedCpuMs } from "../src/test-timing.js";
 import { makeRepo } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
@@ -47,14 +48,15 @@ const MiB = 1024 * 1024;
 const shape = (head: string, unit: string, tail = "") => (size: number) => head + unit.repeat(Math.ceil((size - head.length - tail.length) / unit.length)) + tail;
 const pad = (head: string, unit: string, tail = "") => shape(head, unit, tail)(MiB);
 
-// Runs `read` on each shape at 256 KiB and at 1 MiB: its CPU time grows
-// about four times, never sixteen.
+// Runs `read` on each shape at 256 KiB and at 1 MiB, the cap the build reads
+// a manifest under, each run repeated until the smaller passes the noise
+// (src/test-timing.ts): the CPU time grows about four times, never sixteen.
 async function linear(shapes: ((size: number) => string)[], read: (text: string) => unknown): Promise<void> {
   for (const [i, make] of shapes.entries()) {
     const small = make(MiB / 4);
     const large = make(MiB);
     expect(large.length).toBeGreaterThanOrEqual(MiB - 64);
-    expectLinear(`input ${i + 1} at 256 KiB and at 1 MiB`, await cpuMs(() => read(small)), await cpuMs(() => read(large)));
+    await expectLinearRepeated(`input ${i + 1} at 256 KiB and at 1 MiB`, repeatedCpuMs(() => read(small)), repeatedCpuMs(() => read(large)));
   }
 }
 

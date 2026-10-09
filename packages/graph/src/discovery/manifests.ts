@@ -182,21 +182,27 @@ export function pnpmLinks(text: string): Map<string, Map<string, Linkage>> {
 export function yarnLock(text: string): { workspace: Set<string>; published: Set<string> } {
   const workspace = new Set<string>();
   const published = new Set<string>();
+  // The package names of the entry being read, each `name@range` of its
+  // header cut to the name. One pass over the header, one string per name:
+  // a header of two hundred thousand entries listed whole, then each cut in
+  // two, cost eight times as much per byte at 1 MiB as at 256 KiB.
   let names: string[] = [];
-  const nameOf = (entry: string) => {
-    const at = entry.lastIndexOf("@");
-    return at > 0 ? { name: entry.slice(0, at), range: entry.slice(at + 1) } : null;
-  };
   for (const line of lines(text)) {
     if (line === "" || line.startsWith("#")) continue;
     if (line[0] !== " " && line.endsWith(":")) {
-      names = line
-        .slice(0, -1)
-        .split(",")
-        .map((k) => unquote(k));
-      for (const k of names) {
-        const n = nameOf(k);
-        if (n && n.range.startsWith("workspace:")) workspace.add(n.name);
+      names = [];
+      const header = line.slice(0, -1);
+      for (let start = 0; start <= header.length; ) {
+        let end = header.indexOf(",", start);
+        if (end === -1) end = header.length;
+        const entry = unquote(header.slice(start, end));
+        const at = entry.lastIndexOf("@");
+        if (at > 0) {
+          const name = entry.slice(0, at);
+          names.push(name);
+          if (entry.startsWith("workspace:", at + 1)) workspace.add(name);
+        }
+        start = end + 1;
       }
       continue;
     }
@@ -207,10 +213,7 @@ export function yarnLock(text: string): { workspace: Set<string>; published: Set
     if (value.startsWith(":")) value = value.slice(1);
     value = unquote(value.trim());
     if (value.startsWith("http:") || value.startsWith("https:") || value.includes("@npm:") || value.startsWith("npm:")) {
-      for (const k of names) {
-        const n = nameOf(k);
-        if (n) published.add(n.name);
-      }
+      for (const name of names) published.add(name);
     }
   }
   return { workspace, published };
@@ -443,26 +446,51 @@ export function setupCfgRequires(text: string): string[] {
 }
 
 // The words of a line split on blanks, without a regular expression.
-function words(line: string): string[] {
+// The first `max` words of a line, split at spaces and tabs: one pass that
+// cuts each word out by its ends and stops at the last one asked for. A word
+// built a character at a time cost eight times as much per byte at 1 MiB as
+// at 256 KiB, the garbage collector moving the growing string, and a line of
+// half a million words was listed whole to read its first three.
+function words(line: string, max: number): string[] {
   const out: string[] = [];
-  let cur = "";
-  for (const c of line) {
-    if (c === " " || c === "\t") {
-      if (cur !== "") out.push(cur);
-      cur = "";
-    } else cur += c;
+  let start = -1;
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charCodeAt(i);
+    if (c === 32 || c === 9) {
+      if (start !== -1) {
+        out.push(line.slice(start, i));
+        if (out.length === max) return out;
+      }
+      start = -1;
+    } else if (start === -1) start = i;
   }
-  if (cur !== "") out.push(cur);
+  if (start !== -1) out.push(line.slice(start));
   return out;
+}
+
+// Each line of `text` without its line break (and a `\r` before it), in
+// order, as `lines` gives them, in one pass that holds no array of lines;
+// `each` returns false to stop.
+function eachLine(text: string, each: (line: string) => boolean | void): void {
+  for (let start = 0; start <= text.length; ) {
+    let end = text.indexOf("\n", start);
+    if (end === -1) end = text.length;
+    const line = text.charCodeAt(end - 1) === 13 && end > start ? text.slice(start, end - 1) : text.slice(start, end);
+    if (each(line) === false) return;
+    start = end + 1;
+  }
 }
 
 // go.mod's module path.
 export function goModule(text: string): string | null {
-  for (const raw of lines(text)) {
-    const w = words(beforeSlashes(raw));
-    if (w[0] === "module" && w[1] !== undefined) return unquote(w[1]);
-  }
-  return null;
+  let found: string | null = null;
+  eachLine(text, (raw) => {
+    const w = words(beforeSlashes(raw), 2);
+    if (w[0] !== "module" || w[1] === undefined) return true;
+    found = unquote(w[1]);
+    return false;
+  });
+  return found;
 }
 
 const beforeSlashes = (line: string): string => {
@@ -474,17 +502,18 @@ const beforeSlashes = (line: string): string => {
 export function goModRequires(text: string): string[] {
   const out: string[] = [];
   let block = false;
-  for (const raw of lines(text)) {
-    const w = words(beforeSlashes(raw));
+  eachLine(text, (raw) => {
+    // Three words decide a line: `require path version` or `path version`.
+    const w = words(beforeSlashes(raw), 3);
     if (block) {
       if (w[0] === ")") block = false;
       else if (w.length >= 2 && w[0] !== undefined) out.push(unquote(w[0]));
-      continue;
+      return;
     }
-    if (w[0] !== "require") continue;
+    if (w[0] !== "require") return;
     if (w[1] === "(") block = true;
     else if (w[1] !== undefined && w[2] !== undefined) out.push(unquote(w[1]));
-  }
+  });
   return out;
 }
 
