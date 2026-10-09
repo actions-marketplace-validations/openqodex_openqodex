@@ -134,6 +134,17 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
     expect(result.scan.candidates.filter((c) => c.source === "kubeconform").map((c) => [c.ruleId, c.lineStart])).toEqual([["type", line]]);
   }, 300_000);
 
+  // kubeconform names every unknown field of a mapping in one message,
+  // sorted: each is anchored on its own line, so a change to any of them
+  // keeps its error.
+  it("kubeconform anchors each unknown field of one mapping on its own line", async () => {
+    if (offline()) return;
+    const text = PRIVILEGED.replace("  replicas: 1\n", "  replicas: 1\n  old: 1\n  new: 2\n");
+    const result = await scanChanged("kubeconform", { "k8s/web.yaml": text }, { "k8s/web.yaml": [7] });
+    expect(result.scan.scanners[0]!.status, result.scan.scanners[0]!.reason ?? "").toBe("ran");
+    expect(result.scan.candidates.filter((c) => c.source === "kubeconform").map((c) => [c.ruleId, c.lineStart, c.message.includes("'old'")])).toEqual([["additional-properties", 7, true]]);
+  }, 300_000);
+
   // kube-linter runs only on the changed files, so a check that needs the
   // object a Service selects, kept in another file, would report every
   // Service changed alone. Those checks are not in OpenQodex's set.

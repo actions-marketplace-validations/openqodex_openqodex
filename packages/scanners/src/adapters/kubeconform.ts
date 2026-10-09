@@ -287,21 +287,27 @@ export function parseKubeconformJson(
         .split("/")
         .slice(1)
         .map((s) => s.replaceAll("~1", "/").replaceAll("~0", "~"));
-      // An extra field is anchored on itself, not on the object holding it.
-      const extra = /^additional properties '([^']+)'/.exec(leaf.text)?.[1];
-      if (extra !== undefined) segments.push(extra);
-      const line = doc === null ? 1 : pathLine(doc, segments).line;
       const { rule, severity } = ruleFor(leaf.text);
-      findings.push({
-        source: "kubeconform",
-        ruleId: rule,
-        filePath: rel,
-        lineStart: line,
-        lineEnd: line,
-        severity,
-        message: trimMessage(`${kind} ${name}: ${leaf.path || "/"}: ${leaf.text}`),
-        reference: "https://kubernetes.io/docs/reference/kubernetes-api/",
-      });
+      // Extra fields: kubeconform names them all in one message, sorted.
+      // Each is a finding of its own, anchored on itself, so a change to any
+      // one of them keeps its error.
+      const extras = /^additional properties (.+) not allowed$/.exec(leaf.text)?.[1];
+      const names = extras === undefined ? [] : [...extras.matchAll(/'([^']*)'/g)].map((m) => m[1] as string);
+      for (const extra of names.length > 0 ? names : [null]) {
+        const at = extra === null ? segments : [...segments, extra];
+        const line = doc === null ? 1 : pathLine(doc, at).line;
+        const text = extra === null ? leaf.text : `additional property '${extra}' not allowed`;
+        findings.push({
+          source: "kubeconform",
+          ruleId: rule,
+          filePath: rel,
+          lineStart: line,
+          lineEnd: line,
+          severity,
+          message: trimMessage(`${kind} ${name}: ${leaf.path || "/"}: ${text}`),
+          reference: "https://kubernetes.io/docs/reference/kubernetes-api/",
+        });
+      }
     }
   }
   return { findings, failed };
