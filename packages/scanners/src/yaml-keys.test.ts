@@ -107,12 +107,56 @@ describe("YAML key reading on hostile input (7)", () => {
     ["deep block nesting", Array.from({ length: 5_000 }, (_, i) => `${" ".repeat(i)}k${i}:`).join("\n")],
     ["an alias bomb", ["a: &a [x, x, x, x, x, x, x, x, x, x]", ...Array.from({ length: 20 }, (_, i) => `${String.fromCharCode(98 + i)}: &${String.fromCharCode(98 + i)} [${Array(10).fill(`*${String.fromCharCode(97 + i)}`).join(", ")}]`)].join("\n")],
     ["a merge-key bomb", ["a: &a {k: 1}", ...Array.from({ length: 20 }, (_, i) => `${String.fromCharCode(98 + i)}: &${String.fromCharCode(98 + i)} {${Array.from({ length: 10 }, (_, j) => `<<: *${String.fromCharCode(97 + i)}${j === 0 ? "" : ""}`)[0]}, x${i}: [${Array(10).fill(`*${String.fromCharCode(97 + i)}`).join(", ")}]}`)].join("\n")],
-    ["one long line", `k: ${"a ".repeat(500_000)}\n`],
-    ["many keys", Array.from({ length: 100_000 }, (_, i) => `k${i}: v`).join("\n")],
   ];
   for (const [what, text] of cases) {
     it(what, () => {
       expect(fast(text)).toBeLessThan(2000);
     });
+  }
+
+  // Input that grows with its size is checked by the ratio of two sizes,
+  // which a slow runner does not change: a linear reader takes about four
+  // times as long for about four times the input, one that rescans sixteen;
+  // the bound is the middle of the two.
+  // CPU time of the fastest of three runs, after one that is not counted,
+  // on flat text. The larger size stays under MAX_KEY_BYTES, past which the
+  // raw lines are read instead and the parser goes unmeasured. The bound at
+  // 1 MB fails only a gross slowdown: a Linux runner took 2.7 s of wall time
+  // for "many keys" at 1.1 MB.
+  const MB = 1024 * 1024;
+  const timed = (made: string) => {
+    const text = Buffer.from(made, "utf8").toString("utf8");
+    yamlKeys(text);
+    const runs: number[] = [];
+    for (let r = 0; r < 3; r++) {
+      const before = process.cpuUsage();
+      yamlKeys(text);
+      const used = process.cpuUsage(before);
+      runs.push((used.user + used.system) / 1000);
+    }
+    return Math.min(...runs);
+  };
+  const lines = (size: number, line: (i: number) => string) => {
+    const out: string[] = [];
+    let length = 0;
+    for (let i = 0; length < size; i++) {
+      const l = line(i);
+      out.push(l);
+      length += l.length + 1;
+    }
+    return out.join("\n");
+  };
+  const growing: [string, (size: number) => string][] = [
+    ["one long line", (size) => `k: ${"a ".repeat(Math.ceil(size / 2))}\n`],
+    ["many keys", (size) => lines(size, (i) => `k${i}: v`)],
+  ];
+  for (const [what, make] of growing) {
+    it(`${what}, at 1 MB and four times that`, () => {
+      const small = timed(make(MB));
+      expect(MAX_KEY_BYTES).toBeGreaterThan(4 * MB - 64 * 1024);
+      const large = timed(make(4 * MB - 64 * 1024));
+      expect(large / Math.max(small, 20), `${small.toFixed(0)} ms for 1 MB, ${large.toFixed(0)} ms for 3.94 MB of CPU time`).toBeLessThan(8);
+      expect(small).toBeLessThan(8000);
+    }, 180_000);
   }
 });
