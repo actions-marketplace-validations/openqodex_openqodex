@@ -792,6 +792,25 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const dir = posix.dirname(file);
     return posix.basename(dir) === "models" || posix.basename(dir) === "migrations" ? posix.dirname(dir) : dir;
   };
+  // The field class a model attribute's constructor names: Django's own
+  // (certain), or a repository class whose base binds to one (likely).
+  const fieldClass = (file: string, ctor: Ref, line: number): { name: string; tier: Tier; note: string | null } | null => {
+    const name = canonical(index, file, ctor, { line });
+    if (name !== null) return name.startsWith("django.db.models.") || name.startsWith("django.contrib.") ? { name, tier: "certain", note: null } : null;
+    const lk = index.lookup(file, ctor);
+    if (lk.kind !== "symbol") return null;
+    for (const id of lk.ids) {
+      const cls = index.node(id);
+      if (!cls || cls.kind !== "class") continue;
+      const def = index.languageFacts(cls.file)?.defs.find((d) => d.kind === "class" && d.name === cls.name && d.line === cls.startLine);
+      for (const b of def?.bases ?? []) {
+        const base = canonical(index, cls.file, [...(b.qualifier ? b.qualifier.split(".") : []), b.name]);
+        if (base?.startsWith("django.db.models.")) return { name: base, tier: "likely", note: `a field class of the repository whose base is ${base}` };
+      }
+    }
+    return null;
+  };
+
   // App folders by label: every folder that holds a models module.
   const appDirs = new Map<string, Set<string>>();
   for (const p of index.paths()) {
@@ -823,9 +842,13 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     } else out.gap({ site: siteOf(m.file, table), scope: { file: m.file }, affects: ["maps_to"], cause: "dynamic", name: "db_table", note: "the table name is computed" });
     for (const f of byOwner(m.file, "field").get(m.node.name) ?? []) {
       const fsite = siteOf(m.file, f);
+      // A field is proved by its constructor: Django's own field class, or
+      // a class of the repository whose base is one (likely).
+      const field = fieldClass(m.file, f.ctor, f.line);
+      if (field === null) continue;
       const id = out.entity({ kind: "model_field", id: entityId(PLUGIN, app, "model_field", `${m.node.id}.${f.name}`), plugin: PLUGIN, app, name: `${m.node.name}.${f.name}`, site: fsite, file: null, detail: show(f.ctor) });
-      out.edge({ from: m.node.id, to: id, kind: "declares_field", plugin: PLUGIN, app, evidence: ev("declaration", "certain", fsite, RULES.models, null) });
-      const tail = f.ctor[f.ctor.length - 1] as string;
+      out.edge({ from: m.node.id, to: id, kind: "declares_field", plugin: PLUGIN, app, evidence: ev("declaration", field.tier, fsite, RULES.models, field.note) });
+      const tail = field.name.slice(field.name.lastIndexOf(".") + 1);
       if (!RELATED_FIELDS.has(tail) || f.related === null) continue;
       if (typeof f.related === "string") {
         if (f.related === "self") {
