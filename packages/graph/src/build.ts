@@ -152,6 +152,18 @@ class Parsers {
   }
 }
 
+// One file's local facts from its text, parsed and extracted exactly as a
+// build does it, with the same limit on one parse. Null when the parse was
+// stopped at MAX_PARSE_MS. The parser and the tree are freed before it returns.
+export async function extractFacts(lang: Lang, content: string): Promise<FileFacts | null> {
+  const parsers = new Parsers();
+  try {
+    return await parsers.facts(lang, content, Number.POSITIVE_INFINITY);
+  } finally {
+    parsers.close();
+  }
+}
+
 const MANIFESTS = /(^|\/)(package\.json|tsconfig\.json|jsconfig\.json|pnpm-workspace\.yaml|pyproject\.toml|setup\.cfg|go\.mod|go\.work|Gemfile)$/;
 export function isManifest(path: string): boolean {
   return MANIFESTS.test(path);
