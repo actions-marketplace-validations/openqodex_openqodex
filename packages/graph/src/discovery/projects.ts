@@ -21,6 +21,7 @@ import { FolderReader, type Id } from "@openqodex/core";
 import type { Relation } from "../model/records.js";
 import type { RepoReader } from "../safe-fs.js";
 import type { UnknownSite } from "../types.js";
+import { keptText } from "../frameworks/shared/kept.js";
 import { globMatch } from "./glob.js";
 import { LOCKFILE_BYTES, MANIFEST_BYTES, gemfileGems, goModRequires, normalisePy, parseJsonc, pnpmLinks, pnpmPackages, pyprojectDeps, requirementsDeps, requirementsIncludes, setupCfgRequires, yarnLock } from "./manifests.js";
 import type { Linkage } from "./manifests.js";
@@ -112,6 +113,32 @@ export const GAP_RULES: Record<MetadataKind, { affects: Relation[]; lacks: strin
 };
 
 // The unknown record of a gap, for the project the file governs.
+
+// A requirements include as a gap names it: a URL with no user, password,
+// query or fragment, and the rest kept by the rule framework facts keep a
+// string by (shared/kept.ts: bounded, key-shaped text redacted). One the
+// rule does not keep is named only as a file.
+function includeShown(spec: string): string {
+  let t = spec;
+  const scheme = t.indexOf("://");
+  if (scheme >= 0) {
+    const rest = t.slice(scheme + 3);
+    let end = rest.length;
+    for (const stop of ["/", "?", "#"]) {
+      const i = rest.indexOf(stop);
+      if (i >= 0 && i < end) end = i;
+    }
+    const authority = rest.slice(0, end);
+    let path = rest.slice(end);
+    for (const stop of ["?", "#"]) {
+      const i = path.indexOf(stop);
+      if (i >= 0) path = path.slice(0, i);
+    }
+    t = `${t.slice(0, scheme + 3)}${authority.slice(authority.lastIndexOf("@") + 1)}${path}`;
+  }
+  return keptText(t) ?? "a file";
+}
+
 export function metadataUnknown(g: MetadataGap): UnknownSite {
   return { file: g.file, line: 0, column: 0, name: "", cause: "metadata-unreadable", shape: "other", caller: g.file, scope: "project", note: g.note };
 }
@@ -429,18 +456,19 @@ export function discoverProjects(all: readonly string[], reader: RepoReader, loo
       const text = read(path, MANIFEST_BYTES, dir, "python-manifest");
       for (const n of requirementsDeps(text)) model.pyDeclared.add(n);
       for (const spec of requirementsIncludes(text)) {
+        const shown = includeShown(spec);
         const target = spec.includes("://") || spec.startsWith("/") ? null : posix.normalize(posix.join(dir, spec));
         if (target === null || target === ".." || target.startsWith("../")) {
-          gap(path, dir, "python-manifest", `includes ${spec}, which is outside the repository and is not read`);
+          gap(path, dir, "python-manifest", `includes ${shown}, which is outside the repository and is not read`);
           continue;
         }
         if (requirementsRead.has(target)) continue;
         if (!known.has(target)) {
-          gap(path, dir, "python-manifest", `includes ${spec}, which is not in the repository`);
+          gap(path, dir, "python-manifest", `includes ${shown}, which is not in the repository`);
           continue;
         }
         if (includesLeft <= 0) {
-          gap(path, dir, "python-manifest", `includes more than ${MAX_REQUIREMENT_INCLUDES} requirements files in all; ${spec} and the rest are not read`);
+          gap(path, dir, "python-manifest", `includes more than ${MAX_REQUIREMENT_INCLUDES} requirements files in all; ${shown} and the rest are not read`);
           continue;
         }
         includesLeft--;

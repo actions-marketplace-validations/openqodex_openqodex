@@ -14,6 +14,7 @@ import type { Tier } from "../../model/records.js";
 import type { CallFact, DefFact, GraphNode } from "../../types.js";
 import { appId, entityId } from "../plugin.js";
 import type { Detection, Entity, FrameworkEdge, FrameworkEdgeKind, FrameworkEvidence, FrameworkEvidenceKind, FrameworkUnknown, Lookup, PluginIndex, PluginOutput, Registration, Role, RoleAssignment, Site } from "../plugin.js";
+import { keptName } from "../shared/kept.js";
 import { isDynamic } from "../shared/literals.js";
 import type { Lit } from "../shared/literals.js";
 import { HTTP_METHODS } from "./facts.js";
@@ -835,10 +836,15 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   }
 
   // ---------- templates ----------
-  const templates = new Map<string, string[]>(); // a template name to the files that hold it
-  const templatesNear = new Map<string, string[]>(); // a project and a template name to the files of the project that hold it
+  // A template name to the files that hold it, and a project and a template
+  // name to the files of the project that hold it, each name in the form
+  // the facts keep a template name in (shared/kept.ts `keptName`), so a
+  // name the facts redacted still finds its file.
+  const templates = new Map<string, string[]>();
+  const templatesNear = new Map<string, string[]>();
   for (const p of index.paths()) {
-    for (const name of templateNames(p)) {
+    for (const plain of templateNames(p)) {
+      const name = keptName(plain);
       (templates.get(name) ?? templates.set(name, []).get(name))?.push(p);
       const k = `${index.projectOf(p)}\0${name}`;
       (templatesNear.get(k) ?? templatesNear.set(k, []).get(k))?.push(p);

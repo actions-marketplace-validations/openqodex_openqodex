@@ -152,7 +152,8 @@ describe("the framework part of the brief", () => {
   }, 60_000);
 
   it("cuts a long repository string to 120 characters inside its literal, so one value cannot flood the brief", async () => {
-    const long = "seg/".repeat(200);
+    // Under the 512 characters a fact keeps (a longer literal is not kept at all), over the 120 the brief shows.
+    const long = "seg/".repeat(100);
     const root = makeRepo({
       "requirements.txt": "Django==5.0\n",
       "mysite/__init__.py": "",

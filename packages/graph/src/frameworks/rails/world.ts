@@ -6,6 +6,7 @@ import { symbolId } from "../../resolve.js";
 import type { DefFact } from "../../types.js";
 import type { Detection, PluginIndex, Site } from "../plugin.js";
 import { appId } from "../plugin.js";
+import { keptName } from "../shared/kept.js";
 import type { ClassFact, RailsFact, VisibilityFact } from "./facts.js";
 import { underscore } from "./inflect.js";
 
@@ -13,7 +14,8 @@ export const PLUGIN = "rails";
 // 2: 1-based columns, as the language facts.
 // 3: a route keeps only the options it reads, and no query string or URL user.
 // 4: a kept literal is bounded, with key-shaped text redacted; a target only as controller#action.
-export const VERSION = 4;
+// 5: a literal over the bound is not kept, and a redacted run is named by its hash.
+export const VERSION = 5;
 
 export type App = {
   id: string;
@@ -336,7 +338,10 @@ export class RailsWorld {
 
   // The view files of an application by logical name: "posts/show" for
   // app/views/posts/show.html.erb, "posts/_form" for a partial. Several
-  // files share a name when they differ by format or handler.
+  // files share a name when they differ by format or handler. Each name is
+  // in the form the facts keep a name in (shared/kept.ts `keptName`), so a
+  // name the facts redacted still finds its view: a lookup puts its name in
+  // that form too.
   views(app: App): Map<string, string[]> {
     const kept = this.viewsCache.get(app.id);
     if (kept) return kept;
@@ -351,7 +356,7 @@ export class RailsWorld {
       const base = rel.slice(slash + 1);
       const dot = base.indexOf(".");
       if (dot <= 0) continue;
-      const logical = `${rel.slice(0, slash + 1)}${base.slice(0, dot)}`;
+      const logical = keptName(`${rel.slice(0, slash + 1)}${base.slice(0, dot)}`);
       (map.get(logical) ?? map.set(logical, []).get(logical))?.push(p);
     }
     for (const list of map.values()) list.sort();

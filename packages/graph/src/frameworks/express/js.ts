@@ -12,6 +12,7 @@
 // chain to MAX_NAME_PARTS parts, a string to MAX_STRING characters, and the
 // walk over a tree is one pass with no step back up the parents.
 import type { Node } from "web-tree-sitter";
+import { assembledText } from "../shared/kept.js";
 
 // The largest file a JavaScript plugin reads, in bytes. A larger file gets
 // one fact of kind "too-large" and nothing else; resolve turns it into an
@@ -482,7 +483,8 @@ export function evaluate(e: Expr, constant: (path: string[]) => string | null): 
       }
       if (out.length > MAX_STRING) return null;
     }
-    return out;
+    // The value the pieces make, kept by the same rule as one literal.
+    return assembledText(out);
   }
   return null;
 }

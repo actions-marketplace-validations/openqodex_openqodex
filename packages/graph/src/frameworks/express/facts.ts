@@ -9,7 +9,7 @@
 // imports, so a fact never claims what only another file can prove.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
-import { keepParts, ledForm, rootedPathText, segmentText } from "../shared/kept.js";
+import { eitherPathText, eitherSegmentText, keepParts, ledForm } from "../shared/kept.js";
 import type { Expr } from "./js.js";
 import type { Up } from "./js.js";
 import { exported, FN_TYPES, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, patternNames, pos, readExpr, stringValue, walk } from "./js.js";
@@ -184,35 +184,67 @@ export function readFacts(root: Node): ExpressFact[] {
 }
 
 // ---------- the literals the facts keep ----------
-// A string is kept only where resolve reads one (shared/kept.ts): the
-// path or prefix a watched call or a `route(...)` call is given first, and
-// a module constant such a path names. Every other literal, in a handler,
-// an option, a header, a value or an export, is kept as `other`, and a
+// A string is kept only where resolve reads one, by the one rule of
+// shared/kept.ts: the path or prefix a watched call or a `route(...)` call
+// is given first, read in the "either" form (the call may be a route or a
+// test agent's request), and a constant such a path names, the very
+// binding the path reads. Every other literal, in a handler, an option, a
+// header, a value, an object's key or an export, is kept as `other`, and a
 // test block keeps no title.
 const unread = (e: Expr): Expr => ({ t: "other", line: e.line, column: e.column });
 // The calls whose first argument is a path or a prefix.
 const PATH_FIRST = new Set<string>([...HTTP_METHODS, "del", "use", "route"]);
 
 function keepRead(facts: ExpressFact[]): ExpressFact[] {
-  // Each name a path reads, and the forms it is read in: a whole path or its
-  // first piece, or a later piece of one (shared/kept.ts, `ledForm`).
+  // The scope a name read at a scope binds to, as resolve binds it: the
+  // innermost function around the read that declares the name, else the
+  // module (0).
+  const scopes = new Map<number, { parent: number; names: Set<string>; all: boolean }>();
+  for (const f of facts) if (f.kind === "scope") scopes.set(f.line, { parent: f.parent, names: new Set(f.names), all: f.all });
+  const binding = (name: string, scope: number): number => {
+    let at = scope;
+    for (let guard = 0; at !== 0 && guard <= scopes.size; guard++) {
+      const s = scopes.get(at);
+      if (!s || s.all || s.names.has(name)) return at;
+      at = s.parent;
+    }
+    return 0;
+  };
+  // The writes of each binding, and its constant: the one write, a string.
+  const writes = new Map<string, Extract<ExpressFact, { kind: "value" }>[]>();
+  const key = (name: string, at: number) => `${at}\0${name}`;
+  for (const f of facts) {
+    if (f.kind !== "value") continue;
+    const k = key(f.name, binding(f.name, f.scope));
+    (writes.get(k) ?? writes.set(k, []).get(k))?.push(f);
+  }
+  const constantIn = (scope: number) => (name: string): string | null => {
+    const w = writes.get(key(name, binding(name, scope)));
+    return w && w.length === 1 && w[0]?.value.t === "str" ? w[0].value.v : null;
+  };
+  // Each binding a path reads, and the forms it is read in: a whole path or
+  // its first piece, or a later piece of one (shared/kept.ts, `ledForm`).
   const used = new Map<string, Set<"path" | "segment">>();
-  const led: { name: string; lead: { s: string } | { ref: string[] } }[] = [];
+  const led: { name: string; at: number; lead: { s: string } | { ref: string[] } }[] = [];
+  let at = 0; // the scope of the fact being read
   const use = (ref: string[], lead: { s: string } | { ref: string[] } | null = null) => {
     if (ref.length !== 1) return;
-    if (lead === null) (used.get(ref[0] as string) ?? used.set(ref[0] as string, new Set()).get(ref[0] as string))?.add("path");
-    else led.push({ name: ref[0] as string, lead });
+    const name = ref[0] as string;
+    if (lead === null) {
+      const k = key(name, binding(name, at));
+      (used.get(k) ?? used.set(k, new Set()).get(k))?.add("path");
+    } else led.push({ name, at, lead });
   };
   // An expression read as a path: a literal in the form resolve reads it, a
   // name whose constant it may need, or a list of those.
   const path = (e: Expr): Expr => {
     switch (e.t) {
       case "str": {
-        const v = rootedPathText(e.v);
+        const v = eitherPathText(e.v);
         return v === null ? unread(e) : { ...e, v };
       }
       case "dyn": {
-        const parts = e.parts ? keepParts(e.parts, rootedPathText, use) : null;
+        const parts = e.parts ? keepParts(e.parts, "either", use, constantIn(at)) : null;
         return parts === null ? unread(e) : { ...e, parts };
       }
       case "ref":
@@ -225,7 +257,8 @@ function keepRead(facts: ExpressFact[]): ExpressFact[] {
     }
   };
   // An expression read only for its names and calls: no literal in it,
-  // except the path a `route(...)` call in a chain is given.
+  // except the path a `route(...)` call in a chain is given; an object
+  // keeps no key.
   const names = (e: Expr): Expr => {
     switch (e.t) {
       case "str":
@@ -241,12 +274,13 @@ function keepRead(facts: ExpressFact[]): ExpressFact[] {
       case "array":
         return { ...e, items: e.items.map(names) };
       case "object":
-        return { ...e, props: e.props.map((p) => ({ key: p.key, value: names(p.value) })) };
+        return { ...e, props: e.props.map((p) => ({ key: "", value: names(p.value) })) };
       default:
         return e;
     }
   };
   const out: ExpressFact[] = facts.map((f) => {
+    at = "scope" in f ? f.scope : 0;
     switch (f.kind) {
       case "call":
         return { ...f, recv: names(f.recv), args: f.args.map((a, i) => (i === 0 && PATH_FIRST.has(f.prop) ? path(a) : names(a))) };
@@ -262,18 +296,16 @@ function keepRead(facts: ExpressFact[]): ExpressFact[] {
         return f;
     }
   });
-  // A module constant as resolve reads one: the one write of a top-level name, a string.
-  const constant = (name: string): string | null => {
-    const writes = facts.filter((f): f is Extract<ExpressFact, { kind: "value" }> => f.kind === "value" && f.name === name && f.top);
-    return writes.length === 1 && writes[0]?.value.t === "str" ? writes[0].value.v : null;
-  };
-  for (const l of led) (used.get(l.name) ?? used.set(l.name, new Set()).get(l.name))?.add(ledForm(l.lead, constant));
-  // A constant is kept only when a path names it, in the form that path reads it in.
+  for (const l of led) {
+    const k = key(l.name, binding(l.name, l.at));
+    (used.get(k) ?? used.set(k, new Set()).get(k))?.add(ledForm(l.lead, constantIn(l.at)));
+  }
+  // A string is kept only for a binding a path reads, in the form that path reads it in.
   return out.map((f) => {
     if (f.kind !== "value" || f.value.t !== "str") return f;
     const str = f.value;
-    const forms = used.get(f.name);
-    const v = forms ? ([...forms].map((form) => (form === "path" ? rootedPathText : segmentText)(str.v)).find((x) => x !== null) ?? null) : null;
+    const forms = used.get(key(f.name, binding(f.name, f.scope)));
+    const v = forms ? ([...forms].map((form) => (form === "path" ? eitherPathText : eitherSegmentText)(str.v)).find((x) => x !== null) ?? null) : null;
     return { ...f, value: v === null ? unread(str) : { ...str, v } };
   });
 }

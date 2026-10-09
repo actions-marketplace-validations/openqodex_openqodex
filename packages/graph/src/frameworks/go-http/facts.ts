@@ -15,7 +15,7 @@
 // function of a node comes from a stack kept during the one walk over the
 // tree, never from a walk up its parents.
 import type { Node } from "web-tree-sitter";
-import { keepParts, keptShape, ledForm, methodText, rootedPathText, segmentText, urlParts } from "../shared/kept.js";
+import { assembledText, keepParts, keptShape, ledForm, methodText, requestPathText, requestSegmentText, routePathText, routeSegmentText, urlParts } from "../shared/kept.js";
 import type { FrameworkFactBase } from "../plugin.js";
 
 export const MAX_SOURCE_BYTES = 256 * 1024;
@@ -377,12 +377,16 @@ const namedChildren = (list: Node | null): Node[] => {
 };
 
 // ---------- the literals the facts keep ----------
-// A string is kept only where resolve reads one (shared/kept.ts): the
-// pattern Handle and HandleFunc are given, the prefix http.StripPrefix is
-// given, the method and target of a request, and a package constant one of
-// those names. Every other literal, in a handler, a value, a server or an
-// address, is kept as `other`, and an unused constant is not kept.
-type Form = "pattern" | "path" | "method" | "target" | "segment";
+// A string is kept only where resolve reads one, by the one rule of
+// shared/kept.ts: the pattern Handle and HandleFunc are given and the
+// prefix http.StripPrefix is given, as the mux reads them (a route), the
+// method and target of a request (a request: nothing from a "?" or a "#"
+// on), and a package constant one of those names. Every other literal, in
+// a handler, a value, a server or an address, is kept as `other`, and an
+// unused constant is not kept.
+// "segment" and "tsegment": a later piece of a route's and of a request's
+// path; "tpath": a constant after an address, kept only as a request path.
+type Form = "pattern" | "path" | "method" | "target" | "tpath" | "segment" | "tsegment";
 const unread = (e: Expr): Expr => ({ t: "other", line: e.line, column: e.column });
 const isHostChar = (c: number) => (c >= 48 && c <= 58) || ((c | 32) >= 97 && (c | 32) <= 122) || c === 45 || c === 46 || c === 91 || c === 93;
 
@@ -416,15 +420,23 @@ function targetText(s: string): string {
   if (u) return u.origin + u.path;
   return (s.split("#")[0] as string).split("?")[0] as string;
 }
-const FORMS: Record<Form, (s: string) => string | null> = { pattern: keptShape(patternText), path: rootedPathText, method: methodText, target: keptShape(targetText), segment: segmentText };
+const FORMS: Record<Form, (s: string) => string | null> = { pattern: keptShape(patternText), path: routePathText, method: methodText, target: keptShape(targetText), tpath: requestPathText, segment: routeSegmentText, tsegment: requestSegmentText };
+// The path form of each place a text is read in.
+const PATH_FORM: Partial<Record<Form, "route" | "request">> = { pattern: "route", path: "route", target: "request" };
 
 function keepRead(facts: GoHttpFact[]): GoHttpFact[] {
+  // A package constant of this file, as resolve reads one.
+  const constant = (name: string): string | null => {
+    for (const f of facts) if (f.kind === "const" && f.name === name) return f.value;
+    return null;
+  };
   const used = new Map<string, Set<Form>>();
   const use = (ref: string[], form: Form) => {
     if (ref.length === 1) (used.get(ref[0] as string) ?? used.set(ref[0] as string, new Set()).get(ref[0] as string))?.add(form);
   };
-  // Names read as a later piece of a concatenation, with the piece that leads them.
-  const led: { ref: string[]; lead: Part }[] = [];
+  // Names read as a later piece of a concatenation, with the piece that
+  // leads them and the form of the text they are a piece of.
+  const led: { ref: string[]; lead: Part; form: Form }[] = [];
   const text = (e: Expr | undefined, form: Form): Expr | undefined => {
     if (e === undefined) return e;
     switch (e.t) {
@@ -433,12 +445,20 @@ function keepRead(facts: GoHttpFact[]): GoHttpFact[] {
         return v === null ? unread(e) : { ...e, v };
       }
       case "dyn": {
-        if (!e.parts || form === "method") return unread(e);
-        const parts = keepParts(e.parts, FORMS[form], (ref, lead) => {
-          if (e.parts?.some((p) => "ref" in p && p.ref === ref && p.local)) return;
-          if (lead === null) use(ref, form);
-          else led.push({ ref, lead });
-        });
+        const pathForm = PATH_FORM[form];
+        if (!e.parts || !pathForm) return unread(e);
+        const own = form === "pattern" || form === "target" ? FORMS[form] : null;
+        const parts = keepParts(
+          e.parts,
+          pathForm,
+          (ref, lead) => {
+            if (e.parts?.some((p) => "ref" in p && p.ref === ref && p.local)) return;
+            if (lead === null) use(ref, form);
+            else led.push({ ref, lead, form });
+          },
+          (name) => constant(name),
+          own,
+        );
         return parts === null ? unread(e) : { ...e, parts };
       }
       case "ref":
@@ -480,12 +500,12 @@ function keepRead(facts: GoHttpFact[]): GoHttpFact[] {
         return f;
     }
   });
-  // A package constant of this file, as resolve reads one.
-  const constant = (name: string): string | null => {
-    for (const f of facts) if (f.kind === "const" && f.name === name) return f.value;
-    return null;
-  };
-  for (const l of led) use(l.ref, ledForm(l.lead, constant));
+  // A later piece is kept as a piece of the path it is in; after an
+  // address of another host, only as a path of its own.
+  for (const l of led) {
+    const lf = ledForm(l.lead, constant);
+    use(l.ref, l.form === "target" ? (lf === "segment" ? "tsegment" : "tpath") : lf === "segment" ? "segment" : "path");
+  }
   // A constant is kept, in the form a use reads it in, only when some use reads it.
   const kept: GoHttpFact[] = [];
   for (const f of out) {
@@ -739,7 +759,8 @@ export function evaluate(e: Expr, constant: (name: string) => string | null): st
         out += v;
       }
     }
-    return out;
+    // The value the pieces make, kept by the same rule as one literal.
+    return assembledText(out);
   }
   return null;
 }

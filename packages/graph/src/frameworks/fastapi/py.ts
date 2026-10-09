@@ -8,6 +8,7 @@
 // with the count of the ones it left out. A deep or wide expression in a
 // file a stranger wrote costs the same as a small one.
 import type { Node } from "web-tree-sitter";
+import { assembledText } from "../shared/kept.js";
 
 // Positions as the language facts give them: 1-based line and column.
 export type Pos = { line: number; column: number };
@@ -324,7 +325,8 @@ export function evaluate(e: Expr, constant: (path: string[]) => string | null): 
         out += v;
       }
     }
-    return out;
+    // The value the pieces make, kept by the same rule as one literal.
+    return assembledText(out);
   }
   return null;
 }

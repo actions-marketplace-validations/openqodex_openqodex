@@ -15,7 +15,8 @@ import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 // 2: a local name carries the declaration it reads (block identity).
 // 3: a read limit marks what it cut, and a call or a literal counts what it left out.
 // 4: a receiver typed as a mux (field, call result) is listed; what cannot be bound is said.
-export const VERSION = 6;
+// 7: every kept string follows the one rule of shared/kept.ts.
+export const VERSION = 7;
 const SUPPORTED = "Go 1.22 and later net/http";
 
 const app = "go-http-app";

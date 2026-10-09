@@ -104,10 +104,11 @@ describe("the Django and Rails plugins on a repository with a key written in man
     // The routes still resolve: each is registered and bound to its handler.
     const at = (site: string) => (graph.frameworks?.entities ?? []).find((e): e is Registration => e.kind === "registration" && `${e.site.file}:${e.site.line}` === site);
     expect(at("py/mysite/urls.py:6")?.handler.status).toBe("bound");
-    expect(at("py/mysite/urls.py:6")?.pattern).toBe("hooks/[redacted]/");
+    // The key is named by the hash of its run, so the route still matches the request that names the same key.
+    expect(at("py/mysite/urls.py:6")?.pattern).toMatch(/^hooks\/\[redacted:[0-9a-f]{8}\]\/$/);
     expect(at("rb/config/routes.rb:2")?.handler.status).toBe("bound");
-    expect(at("rb/config/routes.rb:2")?.pattern).toBe("/hooks/[redacted]");
-    expect(brief).toContain("hooks/[redacted]/");
+    expect(at("rb/config/routes.rb:2")?.pattern).toMatch(/^\/hooks\/\[redacted:[0-9a-f]{8}\]$/);
+    expect(brief).toMatch(/hooks\/\[redacted:[0-9a-f]{8}\]\//);
   }, 120_000);
 
   it("copy the key into no facts file, no packet and no brief, and still build the routes", async () => {

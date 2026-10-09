@@ -9,7 +9,8 @@ import type { NextFact } from "./facts.js";
 import { isNextFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 3;
+// 4: every kept string follows the one rule of shared/kept.ts.
+export const VERSION = 4;
 const SUPPORTED = "Next.js 13.4 to 15";
 
 const app = "nextjs-app";

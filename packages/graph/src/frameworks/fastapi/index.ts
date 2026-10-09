@@ -12,7 +12,8 @@ import type { FastApiFact } from "./facts.js";
 import { isFastApiFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 4;
+// 5: every kept string follows the one rule of shared/kept.ts.
+export const VERSION = 5;
 const SUPPORTED = "FastAPI 0.100 and later";
 
 const app = "fastapi-app";

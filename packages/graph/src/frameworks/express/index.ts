@@ -10,7 +10,8 @@ import type { ExpressFact } from "./facts.js";
 import { isExpressFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 4;
+// 5: every kept string follows the one rule of shared/kept.ts.
+export const VERSION = 5;
 
 const app = "express-app";
 

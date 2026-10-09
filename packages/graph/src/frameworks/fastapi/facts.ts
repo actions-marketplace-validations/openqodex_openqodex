@@ -11,9 +11,9 @@
 // can prove.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
-import { keepParts, keptShape, ledForm, methodText, nameText, rootedPathText, segmentText } from "../shared/kept.js";
+import { keepParts, keptShape, ledForm, methodText, nameText, requestPathText, requestSegmentText, routePathText, routeSegmentText, urlParts } from "../shared/kept.js";
 import type { Expr, Kw, Part, Scope } from "./py.js";
-import { isExpr, isKws, MAX_ARGS, namePath, pos, readExpr, show, walkScoped } from "./py.js";
+import { isExpr, isKws, MAX_ARGS, namePath, pos, readExpr, walkScoped } from "./py.js";
 
 // The most bytes of one file the plugin reads; a larger file gets one
 // "too-large" fact and nothing else, and resolve says so with an unknown.
@@ -250,8 +250,8 @@ export function readFacts(root: Node): FastApiFact[] {
           const method = fn?.type === "attribute" ? (fn.childForFieldName("attribute")?.text ?? "") : "";
           const recv = fn?.type === "attribute" ? namePath(fn.childForFieldName("object")) : null;
           const route = recv !== null && ROUTE_DECORATORS.has(method);
-          // The decorator is named by what it calls, never by its arguments, which may hold any literal.
-          decorators.push({ ...pos(d), text: show(readExpr(fn ?? expr)), route, recv, method, call: route ? expr : null });
+          // The decorator is named by what it calls, never by its arguments at any depth, which may hold any literal.
+          decorators.push({ ...pos(d), text: bare(readExpr(fn ?? expr)), route, recv, method, call: route ? expr : null });
         }
         let deps: { params: ParamDep[]; omitted: number } | null = null;
         decorators.forEach((d, i) => {
@@ -334,27 +334,85 @@ export function readFacts(root: Node): FastApiFact[] {
 }
 
 // ---------- the literals the facts keep ----------
-// A string is kept only where resolve reads one (shared/kept.ts): a
-// route's path, methods and name, an include's prefix, a router's prefix, a
-// request's method and target, and a module constant one of those names.
-// Every other literal, in any argument, keyword, decorator or value, is
-// kept as `other`.
-type Form = "path" | "target" | "method" | "name" | "segment";
+// A string is kept only where resolve reads one, by the one rule of
+// shared/kept.ts: a route's path, methods and name, an include's prefix
+// and a router's prefix, as FastAPI reads them (a route: kept whole), a
+// request's method and target (a request: nothing from a "?" or a "#" on),
+// and a module constant one of those names where no function around the
+// use binds the name. Every other literal, in any argument, keyword,
+// decorator (at any depth) or value, is kept as `other`.
+// "segment" and "tsegment": a later piece of a route's and of a request's
+// path; "tpath": a constant a request's target names, kept as a path.
+type Form = "path" | "target" | "tpath" | "method" | "name" | "segment" | "tsegment";
 
 const unread = (e: Expr): Expr => ({ t: "other", line: e.line, column: e.column });
 
-// A request target written as a literal: a path, an absolute URL's path,
-// or a path relative to the test client's base URL, whose path is "/".
-function targetText(s: string): string | null {
-  return rootedPathText(s) ?? `/${s.split("#")[0]?.split("?")[0] ?? ""}`;
+// A decorator as the facts name it: what it calls, with every argument
+// left out at every depth (`factory(...)()` for `@factory("x")()`).
+function bare(e: Expr): string {
+  switch (e.t) {
+    case "ref":
+      return e.path.join(".");
+    case "call":
+      return `${bare(e.fn)}(...)`;
+    default:
+      return "an expression";
+  }
 }
-const FORMS: Record<Form, (s: string) => string | null> = { path: rootedPathText, target: keptShape(targetText), method: methodText, name: nameText, segment: segmentText };
+
+// A request target written as a literal: an absolute URL's path, or the
+// text before a query or a fragment, which may be relative to the test
+// client's base URL (resolve joins it to that URL's path).
+function targetText(s: string): string | null {
+  const u = urlParts(s);
+  if (u) return u.path;
+  const at = [s.indexOf("?"), s.indexOf("#")].filter((i) => i >= 0);
+  return at.length > 0 ? s.slice(0, Math.min(...at)) : s;
+}
+const FORMS: Record<Form, (s: string) => string | null> = { path: routePathText, target: keptShape(targetText), tpath: requestPathText, method: methodText, name: nameText, segment: routeSegmentText, tsegment: requestSegmentText };
+// The path form of each place a text is read in.
+const PATH_FORM: Partial<Record<Form, "route" | "request">> = { path: "route", target: "request" };
 
 function keepRead(facts: FastApiFact[]): FastApiFact[] {
+  // The scopes of the file. A name read at a scope reads a module constant
+  // only when no function around the read binds it (a class body's names
+  // are seen only inside that body, as Python reads them).
+  const frames = new Map<number, ScopeFrame>();
+  for (const f of facts) if (f.kind === "scopes") for (const fr of f.frames) frames.set(fr.line, fr);
+  const readsModule = (name: string, scope: number): boolean => {
+    let at = frames.get(scope);
+    let first = true;
+    for (let guard = 0; at && at.line !== 0 && guard <= frames.size; guard++) {
+      if ((!at.cls || first) && (at.more || at.names.includes(name) || at.imports.some((i) => i.local === name))) return false;
+      first = false;
+      at = frames.get(at.parent);
+    }
+    return at !== undefined || scope === 0;
+  };
+  // A module constant as resolve reads one: every module-level assignment gives the same string.
+  const constant = (name: string): string | null => {
+    let v: string | null = null;
+    for (const f of facts) {
+      if (f.kind !== "value" || f.name !== name || f.scope !== 0) continue;
+      if (f.value.t !== "str" || (v !== null && v !== f.value.v)) return null;
+      v = f.value.v;
+    }
+    return v;
+  };
+  // The names a test client is bound to in this file (`client = TestClient(app)`,
+  // `with TestClient(app) as client:`): only a request on one of them, or on
+  // a client made in place, keeps a target that is relative to its base URL.
+  const isClientCall = (e: Expr): boolean => e.t === "call" && e.fn.t === "ref" && e.fn.path[e.fn.path.length - 1] === "TestClient";
+  const clients = new Set<string>();
+  for (const f of facts) if (f.kind === "value" && isClientCall(f.value)) clients.add(f.name);
   const used = new Map<string, Set<Form>>();
-  const use = (name: string, form: Form) => (used.get(name) ?? used.set(name, new Set()).get(name))?.add(form);
-  // Names read as a later piece of a concatenation, with the piece that leads them.
-  const led: { name: string; lead: Part }[] = [];
+  let at = 0; // the scope of the fact being read
+  const use = (name: string, form: Form) => {
+    if (readsModule(name, at)) (used.get(name) ?? used.set(name, new Set()).get(name))?.add(form);
+  };
+  // Names read as a later piece of a concatenation, with the piece that
+  // leads them and the form of the text they are a piece of.
+  const led: { name: string; lead: Part; form: Form }[] = [];
   // An expression read only for its names and calls: no literal in it.
   const names = (e: Expr): Expr => {
     switch (e.t) {
@@ -369,46 +427,57 @@ function keepRead(facts: FastApiFact[]): FastApiFact[] {
         return e;
     }
   };
-  // An expression read as a path, a target, a method or a name.
-  const text = (e: Expr | undefined, form: Form): Expr | undefined => {
+  // An expression read as a path, a target, a method or a name. A target a
+  // non-client may be asked for (`lookup.get("key")`) keeps only a path.
+  const text = (e: Expr | undefined, form: Form, client = true): Expr | undefined => {
     if (e === undefined) return e;
+    const own = form === "target" && !client ? (s: string) => (targetText(s)?.startsWith("/") ? FORMS.target(s) : null) : FORMS[form];
     switch (e.t) {
       case "str": {
-        const v = FORMS[form](e.v);
+        const v = own(e.v);
         return v === null ? unread(e) : { ...e, v };
       }
       case "dyn": {
-        if (!e.parts || form === "method" || form === "name") return unread(e);
-        const parts = keepParts(e.parts, FORMS[form], (ref, lead) => {
-          if (ref.length !== 1) return;
-          if (lead === null) use(ref[0] as string, form === "target" ? "path" : form);
-          else led.push({ name: ref[0] as string, lead });
-        });
+        const pathForm = PATH_FORM[form];
+        if (!e.parts || !pathForm) return unread(e);
+        const parts = keepParts(
+          e.parts,
+          pathForm,
+          (ref, lead) => {
+            if (ref.length !== 1) return;
+            if (lead === null) use(ref[0] as string, form === "target" ? "tpath" : form);
+            else if (readsModule(ref[0] as string, at)) led.push({ name: ref[0] as string, lead, form });
+          },
+          (name) => (readsModule(name, at) ? constant(name) : null),
+          form === "target" ? own : null,
+        );
         return parts === null ? unread(e) : { ...e, parts };
       }
       case "ref":
-        if (e.path.length === 1) use(e.path[0] as string, form === "target" ? "path" : form);
+        if (e.path.length === 1) use(e.path[0] as string, form === "target" ? "tpath" : form);
         return e;
       case "list":
-        return { ...e, items: e.items.map((x) => text(x, form) as Expr) };
+        return { ...e, items: e.items.map((x) => text(x, form, client) as Expr) };
       default:
         return names(e);
     }
   };
   // Arguments and keywords: those `read` names in the form it gives, the rest by names only.
-  const args = (list: Expr[], read: (Form | null)[]): Expr[] => list.map((a, i) => (read[i] ? (text(a, read[i] as Form) as Expr) : names(a)));
-  const kws = (list: Kw[], read: Record<string, Form>): Kw[] => list.map((k) => ({ key: k.key, value: read[k.key] ? (text(k.value, read[k.key] as Form) as Expr) : names(k.value) }));
+  const args = (list: Expr[], read: (Form | null)[], client = true): Expr[] => list.map((a, i) => (read[i] ? (text(a, read[i] as Form, client) as Expr) : names(a)));
+  const kws = (list: Kw[], read: Record<string, Form>, client = true): Kw[] => list.map((k) => ({ key: k.key, value: read[k.key] ? (text(k.value, read[k.key] as Form, client) as Expr) : names(k.value) }));
   const ROUTE_KW: Record<string, Form> = { path: "path", methods: "method", name: "name" };
   const out: FastApiFact[] = facts.map((f) => {
+    at = "scope" in f ? f.scope : 0;
     switch (f.kind) {
       case "route":
         return { ...f, args: args(f.args, ["path"]), kw: kws(f.kw, ROUTE_KW), params: f.params.map((p) => ({ call: names(p.call), type: p.type && names(p.type) })) };
       case "call": {
         const recv = names(f.recv);
-        if (f.prop === "request") return { ...f, recv, args: args(f.args, ["method", "target"]), kw: kws(f.kw, { method: "method", url: "target" }) };
+        const client = isClientCall(f.recv) || (f.recv.t === "ref" && f.recv.path.length === 1 && clients.has(f.recv.path[0] as string));
+        if (f.prop === "request") return { ...f, recv, args: args(f.args, ["method", "target"], client), kw: kws(f.kw, { method: "method", url: "target" }, client) };
         if (f.prop === "include_router") return { ...f, recv, args: args(f.args, []), kw: kws(f.kw, { prefix: "path" }) };
         if (f.prop === "add_api_route" || f.prop === "add_api_websocket_route") return { ...f, recv, args: args(f.args, ["path"]), kw: kws(f.kw, ROUTE_KW) };
-        return { ...f, recv, args: args(f.args, ["target"]), kw: kws(f.kw, { url: "target" }) };
+        return { ...f, recv, args: args(f.args, ["target"], client), kw: kws(f.kw, { url: "target" }, client) };
       }
       case "value":
         // A router's prefix is read; a string is decided below, once every use is known.
@@ -418,23 +487,17 @@ function keepRead(facts: FastApiFact[]): FastApiFact[] {
         return f;
     }
   });
-  // A module constant as resolve reads one: every module-level assignment gives the same string.
-  const constant = (name: string): string | null => {
-    let v: string | null = null;
-    for (const f of facts) {
-      if (f.kind !== "value" || f.name !== name || f.scope !== 0) continue;
-      if (f.value.t !== "str" || (v !== null && v !== f.value.v)) return null;
-      v = f.value.v;
-    }
-    return v;
-  };
-  for (const l of led) use(l.name, ledForm(l.lead, constant));
-  // A constant is kept, in the form a use reads it in, only when some use reads it.
+  for (const l of led) {
+    const lf = ledForm(l.lead, constant);
+    use(l.name, l.form === "target" ? (lf === "segment" ? "tsegment" : "tpath") : lf === "segment" ? "segment" : "path");
+  }
+  // A module constant is kept, in the form a use reads it in, only when some
+  // use reads it; a function's own value is never a constant resolve reads.
   return out.map((f) => {
     if (f.kind !== "value" || f.value.t !== "str") return f;
-    const forms = used.get(f.name);
+    const forms = f.scope === 0 ? used.get(f.name) : undefined;
     const str = f.value;
-    const v = forms ? ([...forms].map((form) => (form === "target" ? rootedPathText : FORMS[form])(str.v)).find((x) => x !== null) ?? null) : null;
+    const v = forms ? ([...forms].map((form) => FORMS[form](str.v)).find((x) => x !== null) ?? null) : null;
     return { ...f, value: v === null ? unread(str) : { ...str, v } };
   });
 }

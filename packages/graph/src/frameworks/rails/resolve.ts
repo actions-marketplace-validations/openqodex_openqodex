@@ -17,6 +17,7 @@ import type { Draft } from "./routes.js";
 import { Budget, expandRoutes } from "./routes.js";
 import type { App, ClassInfo } from "./world.js";
 import { FRAMEWORK_BASES, MAX_CHAIN, PLUGIN, RailsWorld, appsFrom, relTo, under } from "./world.js";
+import { keptName } from "../shared/kept.js";
 
 // The view folder of a controller ("admin/posts" for Admin::PostsController)
 // and of a mailer ("user_mailer"); null for another class.
@@ -327,7 +328,7 @@ class Resolver {
       return;
     }
     // Rails renders the action's view when no method of that name exists.
-    const views = this.w.views(app).get(`${controller}/${action}`) ?? [];
+    const views = this.w.views(app).get(keptName(`${controller}/${action}`)) ?? [];
     if (!("id" in hit) && views.length > 0) {
       reg.handler.status = "bound";
       reg.handler.targets = views.map((v) => this.template(app, v));
@@ -473,7 +474,7 @@ class Resolver {
         if (f.mode !== "action" && v.includes("/")) {
           const cut = v.lastIndexOf("/");
           const logical = f.mode === "partial" ? `${v.slice(0, cut)}/_${v.slice(cut + 1)}` : v;
-          if (!this.viewEdges(app, m.id, views.get(logical) ?? [], site, "template-literal", "likely", `the view is found by the app/views folder convention for ${quoted}`)) this.missingView(app, m.id, logical, site, "template-literal");
+          if (!this.viewEdges(app, m.id, views.get(keptName(logical)) ?? [], site, "template-literal", "likely", `the view is found by the app/views folder convention for ${quoted}`)) this.missingView(app, m.id, logical, site, "template-literal");
           continue;
         }
         const leaf = f.mode === "partial" ? `_${v}` : v;
@@ -492,7 +493,7 @@ class Resolver {
   private folderEdges(app: App, cls: ClassInfo, from: string, leaf: string, folders: ReturnType<Resolver["viewFolders"]>, views: Map<string, string[]>, site: Site, kind: "template-literal" | "template-implicit", quoted: string | null): boolean {
     let found = false;
     for (const { folder, owner } of folders.own) {
-      const files = views.get(`${folder}/${leaf}`) ?? [];
+      const files = views.get(keptName(`${folder}/${leaf}`)) ?? [];
       if (files.length === 0) continue;
       const where = owner.id === cls.id ? "" : ` in the folder of ${owner.name}, which ${cls.name} inherits from`;
       const note = quoted !== null ? `the view is found by the app/views folder convention for ${quoted}${where}` : `Rails renders app/views/${folder}/${leaf} when the action does not render another template${where}`;
@@ -500,7 +501,7 @@ class Resolver {
       break;
     }
     for (const { folder, owner } of folders.down) {
-      const files = views.get(`${folder}/${leaf}`) ?? [];
+      const files = views.get(keptName(`${folder}/${leaf}`)) ?? [];
       if (files.length === 0) continue;
       found = this.viewEdges(app, from, files, site, kind, "possible", `rendered on an instance of ${owner.name}, which inherits from ${cls.name}; Rails looks the view up in that folder first`) || found;
     }
