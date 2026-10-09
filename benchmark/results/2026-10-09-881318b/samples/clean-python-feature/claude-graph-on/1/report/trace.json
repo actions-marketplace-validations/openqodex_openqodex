@@ -1,0 +1,12 @@
+[
+  {
+    "tool": "Read",
+    "path": "ledger/money.py",
+    "inside": true,
+    "range": [
+      1,
+      15
+    ],
+    "ok": true
+  }
+]

@@ -1,0 +1,51 @@
+{
+  "guards": "follows include() of an imported URL module, keeps a router value used as a view as unresolved, never missing, and binds a string foreign key to a class whose model base is outside the repository",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "site_app/extra_urls.py:6",
+        "pattern": "extra/ping/",
+        "handler": "site_app/views.py#ping",
+        "status": "bound"
+      },
+      {
+        "site": "site_app/urls.py:10",
+        "pattern": "api/v2/",
+        "status": "unresolved",
+        "handler": null
+      }
+    ],
+    "edges": [
+      {
+        "kind": "mounts",
+        "from": "site_app/urls.py",
+        "to": "site_app/extra_urls.py",
+        "tier": "certain"
+      },
+      {
+        "kind": "uses_type",
+        "from": "site_app/blog/models.py#Post",
+        "to": "site_app/people/models.py#Person",
+        "tier": "likely"
+      }
+    ],
+    "notUnknowns": [
+      {
+        "file": "site_app/urls.py",
+        "line": 8,
+        "cause": "unsupported-rule"
+      },
+      {
+        "file": "site_app/urls.py",
+        "line": 10,
+        "cause": "miss"
+      },
+      {
+        "file": "site_app/blog/models.py",
+        "line": 5,
+        "cause": "miss"
+      }
+    ]
+  }
+}

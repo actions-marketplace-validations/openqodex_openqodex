@@ -1,0 +1,14 @@
+{
+  "name": "people-ui",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@acme/ui": "^2.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.2.0",
+    "vitest": "^3.2.4"
+  }
+}

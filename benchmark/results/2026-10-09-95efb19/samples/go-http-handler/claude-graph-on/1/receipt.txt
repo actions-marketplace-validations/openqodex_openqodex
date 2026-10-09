@@ -1,0 +1,11 @@
+Passed with warnings: 6 findings (3 critical, 3 minor)
+Change abd88064b93d against HEAD, 2 files, +68 -1
+Summary: Adds three GET endpoints to the directory API: a user search backed by SQL, an in-memory per-key request counter, and an upstream status probe. main.go wires them onto the mux.
+1. Critical security: SQL query built from the name query parameter (internal/api/handler.go:34-35)
+2. Critical bug: Mutex stays locked on the missing-key return (internal/api/handler.go:61-64)
+3. Critical bug: Body closed before the error check in fetchStatus (internal/api/handler.go:83-84)
+4. Minor bug: Row iteration error ignored in Search (internal/api/handler.go:53-54)
+5. Minor bug: Upstream request has no timeout (internal/api/handler.go:82)
+6. Minor maintainability: New endpoints have no covering tests (internal/api/handler.go:32-88)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

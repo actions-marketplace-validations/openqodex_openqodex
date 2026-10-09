@@ -24,7 +24,7 @@
 //    TypeScript alias of `any`, counts as external or as an unknown type,
 //    while a class the repository names `Any` is taken for typing's.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, floorReasons, renderImpactBlock } from "../src/index.js";
@@ -34,14 +34,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function graphOf(files: Record<string, string>): Promise<Graph> {
   const root = makeRepo(files);
-  repos.push(root);
   return buildGraph({ repoRoot: root, store: null });
 }
 
@@ -135,7 +129,6 @@ describe("certainty", () => {
       "packages/b/src/mid.ts": 'import { core } from "a";\nexport function mid() {\n  return core();\n}\n',
       "packages/b/src/top.ts": 'import { mid } from "./mid";\nexport function top() {\n  return mid();\n}\n',
     });
-    repos.push(root);
     commitAll(root);
     writeFileSync(join(root, "packages/a/src/index.ts"), "export function core() {\n  return 2;\n}\n");
     const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });

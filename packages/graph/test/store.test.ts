@@ -112,19 +112,17 @@ import { openStore } from "../src/store/store.js";
 import { buildIdTime, type GraphStore, type PublishResult } from "../src/store/types.js";
 import { factsOf, keyOf, publishInput } from "./fixtures/store/input.js";
 import { callSites, commitAll, git, makeRepo, symbol } from "./helpers.js";
-import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+import { adoptTempDir, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
 const HOUR = 3600_000;
 const here = dirname(fileURLToPath(import.meta.url));
-const cleanup: string[] = [];
 let bundle = "";
 // OpenQodex's home for every store here, the child processes' included:
 // the record of the builds each store published lives there, never in the
 // developer's own ~/.openqodex.
 const HOME = tempDir("oq-store-home-");
-cleanup.push(HOME);
 
 // store-child.ts bundled with esbuild (the bundler tsup uses) into one .mjs
 // file a child `node` process runs; the code is this repo's own, unchanged.
@@ -133,7 +131,6 @@ beforeAll(async () => {
   const tsup = dirname(require.resolve("tsup/package.json"));
   const esbuild = createRequire(join(tsup, "package.json"))("esbuild") as { build: (options: Record<string, unknown>) => Promise<unknown> };
   const dir = tempDir("oq-store-child-");
-  cleanup.push(dir);
   bundle = join(dir, "child.mjs");
   await esbuild.build({
     entryPoints: [join(here, "store-child.ts")],
@@ -146,10 +143,6 @@ beforeAll(async () => {
     banner: { js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);' },
   });
 }, 60_000);
-
-afterAll(() => {
-  for (const d of cleanup) rmSync(d, { recursive: true, force: true });
-});
 
 type ChildDone = { out: Record<string, unknown> | null; signal: NodeJS.Signals | null; startedAt: number; exitedAt: number; stderr: string };
 
@@ -183,13 +176,11 @@ function child(command: Record<string, unknown>): { proc: ChildProcess; done: Pr
 function repo(): string {
   const root = makeRepo({ "a.ts": "export const a = 1;\n" });
   commitAll(root);
-  cleanup.push(root);
   return root;
 }
 
 function outside(): string {
   const dir = tempDir("oq-store-out-");
-  cleanup.push(dir);
   return dir;
 }
 
@@ -1085,7 +1076,6 @@ describe("the record of facts and builds", () => {
       "b.ts": 'import { f } from "./a.js";\n\nexport function g(): number {\n  return f(); // CALL\n}\n',
     };
     const root = makeRepo(files);
-    cleanup.push(root);
     commitAll(root);
     const first = await buildGraph({ repoRoot: root, store: await storeOf(root), mode: "fresh" });
     expect(callSites(first, symbol(first, "a.ts", "f"))).toEqual(["b.ts:4"]);
@@ -1145,7 +1135,7 @@ describe("the record of facts and builds", () => {
     // A moved aside and a copy put at its path: the same path, another folder.
     const aside = `${a}-aside`;
     renameSync(a, aside);
-    cleanup.push(aside);
+    adoptTempDir(aside);
     cpSync(aside, a, { recursive: true });
     const copy = await storeOf(a);
     expect(ids(copy)).toEqual([]);
@@ -1186,7 +1176,6 @@ describe("the record of facts and builds", () => {
   it("30. facts a process wrote before it was killed, without publishing, are parsed again by the next build", async () => {
     const text = "export function a(): number {\n  return 1;\n}\n";
     const root = makeRepo({ "a.ts": text });
-    cleanup.push(root);
     commitAll(root);
     const key = factsKey("typescript", blobId(Buffer.from(text)));
     const run = child({ cmd: "write-facts", repo: root, entries: [[key, factsOf("planted")]] });

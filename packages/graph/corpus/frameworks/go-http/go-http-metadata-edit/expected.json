@@ -1,0 +1,15 @@
+{
+  "guards": "binds a handler and follows a mux mounted from another package once go.mod names the module the imports use, with no edit to the files that hold them",
+  "frameworks": {
+    "plugin": "go-http",
+    "apps": 2,
+    "registrations": [
+      { "site": "main.go:11", "methods": ["GET"], "pattern": "/ping", "handler": "handlers/ping.go#Ping", "status": "bound", "mounted": true },
+      { "site": "handlers/api.go:9", "methods": ["GET"], "pattern": "/api/version", "handler": "handlers/api.go#Version", "status": "bound" }
+    ],
+    "edges": [
+      { "kind": "mounts", "from": "fw:go-http:app:main.go:10", "to": "fw:go-http:app:handlers/api.go:6", "tier": "certain" }
+    ],
+    "roles": [{ "target": "handlers/ping.go#Ping", "role": "route_handler", "detail": "net/http" }]
+  }
+}

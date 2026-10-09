@@ -1,0 +1,28 @@
+{
+  "guards": "keeps a Django route whose view the change deleted, with the handler missing and the gap named",
+  "removed": [
+    "blog/views.py#post_detail"
+  ],
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "blog/urls.py:8",
+        "pattern": "blog/<int:pk>/",
+        "status": "missing",
+        "handler": null
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "blog/urls.py",
+        "line": 8,
+        "cause": "miss"
+      }
+    ],
+    "brief": [
+      "Risk: high",
+      "| `ANY blog/<int:pk>/` | `blog:post-detail` | `blog/urls.py:8` | `views.post_detail` | no handler now: the handler is missing |"
+    ]
+  }
+}

@@ -1,0 +1,2012 @@
+{
+  "run": "benchmark/results/2026-10-09-881318b",
+  "build": {
+    "commit": "881318b52c606c1d3dd53dcceba63dce2b47e423",
+    "short": "881318b",
+    "tree": "64abd7c22e76dbd262053820decdb35a36ccac53",
+    "commitTree": "64abd7c22e76dbd262053820decdb35a36ccac53",
+    "dirty": false,
+    "bundleHash": "6da09418dcb273727d1b3851a4cb1851fe3d1c052fa617a5bbdf07522629e6e9",
+    "builtAt": "2026-10-09T06:05:42.811Z",
+    "builtWithNode": "v22.23.3",
+    "cli": "packages/cli/dist/bin.js",
+    "cliVersion": "0.10.0"
+  },
+  "reviewer": {
+    "name": "claude",
+    "version": "2.1.295",
+    "model": "claude-opus-5-5",
+    "modelFrom": "the model Claude Code names in its answer"
+  },
+  "repeat": 1,
+  "planned": 15,
+  "saved": 15,
+  "secondAttempts": 0,
+  "unrecorded": 0,
+  "ended": {
+    "at": "2026-10-09T06:24:05.117Z",
+    "how": "finished",
+    "why": null,
+    "reviewsWithAnAttempt": 15,
+    "planned": 15
+  },
+  "resumes": [],
+  "specsFrom": "the run's own cases/",
+  "specsDiffer": [],
+  "byConfig": {
+    "claude-graph-on": {
+      "samples": 15,
+      "complete": 15,
+      "incomplete": 0,
+      "failed": 0,
+      "recall": {
+        "hit": 35,
+        "of": 38
+      },
+      "bySeverity": {
+        "critical": {
+          "hit": 12,
+          "of": 12
+        },
+        "major": {
+          "hit": 20,
+          "of": 20
+        },
+        "minor": {
+          "hit": 3,
+          "of": 6
+        },
+        "nitpick": {
+          "hit": 0,
+          "of": 0
+        },
+        "info": {
+          "hit": 0,
+          "of": 0
+        }
+      },
+      "precision": {
+        "hit": 35,
+        "of": 35
+      },
+      "controls": {
+        "hit": 2,
+        "of": 2
+      },
+      "gaps": {
+        "hit": 1,
+        "of": 2
+      },
+      "callers": {
+        "hit": 5,
+        "of": 5
+      },
+      "falseFindings": 0,
+      "nearMisses": 0,
+      "wrongKinds": 0,
+      "accepted": 2,
+      "duplicates": 2,
+      "testGaps": 13,
+      "wallMs": {
+        "n": 15,
+        "mean": 27111.866666666665,
+        "median": 21806,
+        "total": 406678
+      },
+      "reviewerMs": {
+        "n": 15,
+        "mean": 22608.466666666667,
+        "median": 17083,
+        "total": 339127
+      },
+      "costUsd": {
+        "n": 15,
+        "mean": 0.11678217333333334,
+        "median": 0.10220939999999999,
+        "total": 1.7517326
+      },
+      "turns": {
+        "n": 15,
+        "mean": 4.2,
+        "median": 4,
+        "total": 63
+      },
+      "inputTokens": {
+        "n": 15,
+        "mean": 33125.2,
+        "median": 34793,
+        "total": 496878
+      },
+      "outputTokens": {
+        "n": 15,
+        "mean": 2371.4,
+        "median": 1670,
+        "total": 35571
+      }
+    }
+  },
+  "byCase": {
+    "clean-python-feature": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 0,
+          "of": 0
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 0,
+            "of": 0
+          },
+          "major": {
+            "hit": 0,
+            "of": 0
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 0,
+          "of": 0
+        },
+        "controls": {
+          "hit": 1,
+          "of": 1
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 0,
+        "wallMs": {
+          "n": 1,
+          "mean": 19019,
+          "median": 19019,
+          "total": 19019
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 14303,
+          "median": 14303,
+          "total": 14303
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.067352,
+          "median": 0.067352,
+          "total": 0.067352
+        },
+        "turns": {
+          "n": 1,
+          "mean": 2,
+          "median": 2,
+          "total": 2
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 21733,
+          "median": 21733,
+          "total": 21733
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 728,
+          "median": 728,
+          "total": 728
+        }
+      }
+    },
+    "clean-ts-refactor": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 0,
+          "of": 0
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 0,
+            "of": 0
+          },
+          "major": {
+            "hit": 0,
+            "of": 0
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 0,
+          "of": 0
+        },
+        "controls": {
+          "hit": 1,
+          "of": 1
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 0,
+        "wallMs": {
+          "n": 1,
+          "mean": 16465,
+          "median": 16465,
+          "total": 16465
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 12144,
+          "median": 12144,
+          "total": 12144
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.0599,
+          "median": 0.0599,
+          "total": 0.0599
+        },
+        "turns": {
+          "n": 1,
+          "mean": 3,
+          "median": 3,
+          "total": 3
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 21838,
+          "median": 21838,
+          "total": 21838
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 290,
+          "median": 290,
+          "total": 290
+        }
+      }
+    },
+    "demo-polyglot": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 10,
+          "of": 12
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 2,
+            "of": 2
+          },
+          "major": {
+            "hit": 5,
+            "of": 5
+          },
+          "minor": {
+            "hit": 3,
+            "of": 5
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 10,
+          "of": 10
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 91158,
+          "median": 91158,
+          "total": 91158
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 86554,
+          "median": 86554,
+          "total": 86554
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.3727024,
+          "median": 0.3727024,
+          "total": 0.3727024
+        },
+        "turns": {
+          "n": 1,
+          "mean": 5,
+          "median": 5,
+          "total": 5
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 52979,
+          "median": 52979,
+          "total": 52979
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 11388,
+          "median": 11388,
+          "total": 11388
+        }
+      }
+    },
+    "django-model-view": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 4,
+          "of": 4
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 3,
+            "of": 3
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 4,
+          "of": 4
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 27908,
+          "median": 27908,
+          "total": 27908
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 22736,
+          "median": 22736,
+          "total": 22736
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.11626900000000001,
+          "median": 0.11626900000000001,
+          "total": 0.11626900000000001
+        },
+        "turns": {
+          "n": 1,
+          "mean": 5,
+          "median": 5,
+          "total": 5
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 35292,
+          "median": 35292,
+          "total": 35292
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 2339,
+          "median": 2339,
+          "total": 2339
+        }
+      }
+    },
+    "express-admin-routes": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 2,
+          "of": 2
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 2,
+          "of": 2
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 21851,
+          "median": 21851,
+          "total": 21851
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 17890,
+          "median": 17890,
+          "total": 17890
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.10220939999999999,
+          "median": 0.10220939999999999,
+          "total": 0.10220939999999999
+        },
+        "turns": {
+          "n": 1,
+          "mean": 7,
+          "median": 7,
+          "total": 7
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 47027,
+          "median": 47027,
+          "total": 47027
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1670,
+          "median": 1670,
+          "total": 1670
+        }
+      }
+    },
+    "express-route-param": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 1,
+          "of": 1
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 0,
+            "of": 0
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 1,
+          "of": 1
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 16202,
+          "median": 16202,
+          "total": 16202
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 11669,
+          "median": 11669,
+          "total": 11669
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.0812234,
+          "median": 0.0812234,
+          "total": 0.0812234
+        },
+        "turns": {
+          "n": 1,
+          "mean": 5,
+          "median": 5,
+          "total": 5
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 34793,
+          "median": 34793,
+          "total": 34793
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 947,
+          "median": 947,
+          "total": 947
+        }
+      }
+    },
+    "flask-path-traversal": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 2,
+          "of": 2
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 2,
+          "of": 2
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 1,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 24050,
+          "median": 24050,
+          "total": 24050
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 19347,
+          "median": 19347,
+          "total": 19347
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.089854,
+          "median": 0.089854,
+          "total": 0.089854
+        },
+        "turns": {
+          "n": 1,
+          "mean": 3,
+          "median": 3,
+          "total": 3
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 20669,
+          "median": 20669,
+          "total": 20669
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 2033,
+          "median": 2033,
+          "total": 2033
+        }
+      }
+    },
+    "go-http-handler": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 3,
+          "of": 3
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 2,
+            "of": 2
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 3,
+          "of": 3
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 21806,
+          "median": 21806,
+          "total": 21806
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 17083,
+          "median": 17083,
+          "total": 17083
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.108931,
+          "median": 0.108931,
+          "total": 0.108931
+        },
+        "turns": {
+          "n": 1,
+          "mean": 3,
+          "median": 3,
+          "total": 3
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 38641,
+          "median": 38641,
+          "total": 38641
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1744,
+          "median": 1744,
+          "total": 1744
+        }
+      }
+    },
+    "js-dynamic-dispatch-gap": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 1,
+          "of": 1
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 0,
+            "of": 0
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 1,
+          "of": 1
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 1,
+          "of": 2
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 18884,
+          "median": 18884,
+          "total": 18884
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 14044,
+          "median": 14044,
+          "total": 14044
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.0826668,
+          "median": 0.0826668,
+          "total": 0.0826668
+        },
+        "turns": {
+          "n": 1,
+          "mean": 6,
+          "median": 6,
+          "total": 6
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 32024,
+          "median": 32024,
+          "total": 32024
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1330,
+          "median": 1330,
+          "total": 1330
+        }
+      }
+    },
+    "nextjs-react-hooks": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 3,
+          "of": 4
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 2,
+            "of": 2
+          },
+          "minor": {
+            "hit": 0,
+            "of": 1
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 3,
+          "of": 3
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 2,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 39552,
+          "median": 39552,
+          "total": 39552
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 35281,
+          "median": 35281,
+          "total": 35281
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.16251580000000002,
+          "median": 0.16251580000000002,
+          "total": 0.16251580000000002
+        },
+        "turns": {
+          "n": 1,
+          "mean": 4,
+          "median": 4,
+          "total": 4
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 36574,
+          "median": 36574,
+          "total": 36574
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 4222,
+          "median": 4222,
+          "total": 4222
+        }
+      }
+    },
+    "python-caller-break": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 1,
+          "of": 1
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 0,
+            "of": 0
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 1,
+          "of": 1
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 2,
+          "of": 2
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 12308,
+          "median": 12308,
+          "total": 12308
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 8012,
+          "median": 8012,
+          "total": 8012
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.055721200000000005,
+          "median": 0.055721200000000005,
+          "total": 0.055721200000000005
+        },
+        "turns": {
+          "n": 1,
+          "mean": 4,
+          "median": 4,
+          "total": 4
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 18933,
+          "median": 18933,
+          "total": 18933
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 715,
+          "median": 715,
+          "total": 715
+        }
+      }
+    },
+    "rails-controller-model": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 4,
+          "of": 4
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 3,
+            "of": 3
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 4,
+          "of": 4
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 35976,
+          "median": 35976,
+          "total": 35976
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 31553,
+          "median": 31553,
+          "total": 31553
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.155398,
+          "median": 0.155398,
+          "total": 0.155398
+        },
+        "turns": {
+          "n": 1,
+          "mean": 5,
+          "median": 5,
+          "total": 5
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 50847,
+          "median": 50847,
+          "total": 50847
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 3606,
+          "median": 3606,
+          "total": 3606
+        }
+      }
+    },
+    "suppression-comments": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 2,
+          "of": 2
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 2,
+            "of": 2
+          },
+          "major": {
+            "hit": 0,
+            "of": 0
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 2,
+          "of": 2
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 22601,
+          "median": 22601,
+          "total": 22601
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 18168,
+          "median": 18168,
+          "total": 18168
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.1043736,
+          "median": 0.1043736,
+          "total": 0.1043736
+        },
+        "turns": {
+          "n": 1,
+          "mean": 1,
+          "median": 1,
+          "total": 1
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 13213,
+          "median": 13213,
+          "total": 13213
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1848,
+          "median": 1848,
+          "total": 1848
+        }
+      }
+    },
+    "ts-removed-export": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 1,
+          "of": 1
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 0,
+            "of": 0
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 1,
+          "of": 1
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 1,
+          "of": 1
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 18429,
+          "median": 18429,
+          "total": 18429
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 14074,
+          "median": 14074,
+          "total": 14074
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.07996,
+          "median": 0.07996,
+          "total": 0.07996
+        },
+        "turns": {
+          "n": 1,
+          "mean": 4,
+          "median": 4,
+          "total": 4
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 31594,
+          "median": 31594,
+          "total": 31594
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1252,
+          "median": 1252,
+          "total": 1252
+        }
+      }
+    },
+    "ts-workspace-caller-break": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 1,
+          "of": 1
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 0,
+            "of": 0
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 1,
+          "of": 1
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 2,
+          "of": 2
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 1,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 20469,
+          "median": 20469,
+          "total": 20469
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 16269,
+          "median": 16269,
+          "total": 16269
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.112656,
+          "median": 0.112656,
+          "total": 0.112656
+        },
+        "turns": {
+          "n": 1,
+          "mean": 6,
+          "median": 6,
+          "total": 6
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 40721,
+          "median": 40721,
+          "total": 40721
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1459,
+          "median": 1459,
+          "total": 1459
+        }
+      }
+    }
+  },
+  "stability": {
+    "claude-graph-on": [
+      {
+        "case": "demo-polyglot",
+        "bug": "secret",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "sql-injection",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "docker-latest-base",
+        "severity": "minor",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "docker-apt-install",
+        "severity": "minor",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "docker-add",
+        "severity": "minor",
+        "found": 0,
+        "of": 1,
+        "via": {},
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "docker-pip-cache",
+        "severity": "minor",
+        "found": 0,
+        "of": 1,
+        "via": {},
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "docker-root",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "vulnerable-lodash",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "shell-rm-unquoted",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "shell-ls-loop",
+        "severity": "minor",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "workflow-injection",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "demo-polyglot",
+        "bug": "pagination-off-by-one",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "django-model-view",
+        "bug": "decimal-times-float",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "django-model-view",
+        "bug": "missing-migration",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "django-model-view",
+        "bug": "order-detail-any-owner",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "django-model-view",
+        "bug": "csrf-exempt-redeem",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "express-admin-routes",
+        "bug": "delete-without-admin",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "express-admin-routes",
+        "bug": "foreach-async-not-awaited",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "express-route-param",
+        "bug": "param-name-not-in-route",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "flask-path-traversal",
+        "bug": "download-path-traversal",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "flask-path-traversal",
+        "bug": "debug-on-all-interfaces",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "go-http-handler",
+        "bug": "sprintf-sql",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "go-http-handler",
+        "bug": "mutex-held-on-return",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "go-http-handler",
+        "bug": "defer-close-before-err",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "js-dynamic-dispatch-gap",
+        "bug": "async-handler-sync-caller",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "nextjs-react-hooks",
+        "bug": "hook-after-early-return",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "nextjs-react-hooks",
+        "bug": "effect-without-deps",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "nextjs-react-hooks",
+        "bug": "query-as-html",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "nextjs-react-hooks",
+        "bug": "list-without-key",
+        "severity": "minor",
+        "found": 0,
+        "of": 1,
+        "via": {},
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "python-caller-break",
+        "bug": "none-return-breaks-callers",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "rails-controller-model",
+        "bug": "where-interpolation",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "rails-controller-model",
+        "bug": "destroy-skips-admin",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "rails-controller-model",
+        "bug": "permit-all",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "rails-controller-model",
+        "bug": "welcome-on-every-save",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "suppression-comments",
+        "bug": "nosec-shell-injection",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "suppression-comments",
+        "bug": "suppressed-eval",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "ts-removed-export",
+        "bug": "removed-export-still-imported",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "ts-workspace-caller-break",
+        "bug": "safegit-return-shape",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      }
+    ]
+  },
+  "briefFailures": {
+    "claude-graph-on": [
+      {
+        "what": "js-dynamic-dispatch-gap: the brief does not name the dynamic call at src/router.js:7 as unseen",
+        "samples": 1
+      }
+    ]
+  },
+  "falseFindings": [],
+  "comparedWith": null
+}

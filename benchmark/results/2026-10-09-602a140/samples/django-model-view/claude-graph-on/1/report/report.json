@@ -1,0 +1,558 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "low",
+    "build": {
+      "durationMs": 70,
+      "cacheHits": 2,
+      "parses": 12,
+      "eligibleFiles": 11,
+      "parsedFiles": 11,
+      "omittedFiles": 0,
+      "unresolvedSites": 4,
+      "externalSites": 33,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "orders/models.py#Order@7:7",
+        "file": "orders/models.py",
+        "name": "Order",
+        "kind": "class",
+        "startLine": 7,
+        "endLine": 22,
+        "snapshot": "current"
+      },
+      {
+        "id": "orders/models.py#Order.apply_discount@16:9",
+        "file": "orders/models.py",
+        "name": "apply_discount",
+        "kind": "method",
+        "startLine": 16,
+        "endLine": 22,
+        "snapshot": "current"
+      },
+      {
+        "id": "orders/views.py#order_detail@16:5",
+        "file": "orders/views.py",
+        "name": "order_detail",
+        "kind": "function",
+        "startLine": 16,
+        "endLine": 19,
+        "snapshot": "current"
+      },
+      {
+        "id": "orders/views.py#redeem@22:5",
+        "file": "orders/views.py",
+        "name": "redeem",
+        "kind": "function",
+        "startLine": 22,
+        "endLine": 28,
+        "snapshot": "current"
+      },
+      {
+        "id": "orders/views.py",
+        "file": "orders/views.py",
+        "name": "views.py",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 28,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "orders/models.py#Order@7:7",
+      "orders/models.py#Order.apply_discount@16:9",
+      "orders/views.py#order_detail@16:5",
+      "orders/views.py#redeem@22:5"
+    ],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [
+      {
+        "from": "orders/views.py",
+        "to": "orders/models.py",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "orders/views.py",
+            "line": 7,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "orders/views.py",
+              "line": 7,
+              "spec": ".models"
+            },
+            "note": null,
+            "rule": "py-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": false,
+      "seeds": [
+        {
+          "seed": "orders/models.py#Order@7:7",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "orders/models.py#Order.apply_discount@16:9",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "orders/views.py#order_detail@16:5",
+          "floor": false,
+          "reasons": []
+        },
+        {
+          "seed": "orders/views.py#redeem@22:5",
+          "floor": false,
+          "reasons": []
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 4
+      },
+      "near": [
+        {
+          "file": "orders/models.py",
+          "line": 22,
+          "name": "save",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "Order is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "orders/views.py",
+          "line": 12,
+          "name": "order_by",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type Order.objects.filter is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "orders/views.py",
+          "line": 12,
+          "name": "filter",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "orders/views.py",
+          "line": 27,
+          "name": "get",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 4,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/",
+    "frameworks": {
+      "plugins": [
+        {
+          "id": "django",
+          "status": "ok",
+          "reason": null,
+          "apps": 1
+        }
+      ],
+      "routes": [
+        {
+          "plugin": "django",
+          "app": "fw:django:app:shop/settings.py:9",
+          "registration": "fw:django:registration:fw:django:app:shop/settings.py:9:orders/urls.py:7:5<shop/urls.py:4",
+          "methods": [
+            "*"
+          ],
+          "pattern": "orders/<int:order_id>/",
+          "partial": null,
+          "name": "order-detail",
+          "site": {
+            "file": "orders/urls.py",
+            "line": 7
+          },
+          "handler": "views.order_detail",
+          "status": "bound",
+          "mounted": true,
+          "reach": {
+            "seed": "orders/views.py#order_detail@16:5",
+            "seedName": "order_detail",
+            "hops": 0,
+            "tier": "certain",
+            "note": null
+          },
+          "declared": true
+        },
+        {
+          "plugin": "django",
+          "app": "fw:django:app:shop/settings.py:9",
+          "registration": "fw:django:registration:fw:django:app:shop/settings.py:9:orders/urls.py:8:5<shop/urls.py:4",
+          "methods": [
+            "*"
+          ],
+          "pattern": "orders/<int:order_id>/redeem/",
+          "partial": null,
+          "name": "order-redeem",
+          "site": {
+            "file": "orders/urls.py",
+            "line": 8
+          },
+          "handler": "views.redeem",
+          "status": "bound",
+          "mounted": true,
+          "reach": {
+            "seed": "orders/views.py#redeem@22:5",
+            "seedName": "redeem",
+            "hops": 0,
+            "tier": "certain",
+            "note": null
+          },
+          "declared": true
+        }
+      ],
+      "routesTotal": 2,
+      "renders": [],
+      "renderedBy": [],
+      "models": [
+        {
+          "model": "orders/models.py#Order@7:7",
+          "name": "Order",
+          "migrations": [
+            {
+              "file": "orders/migrations/0001_initial.py",
+              "line": 16,
+              "operation": "CreateModel order"
+            }
+          ]
+        }
+      ],
+      "migrations": [],
+      "tests": [],
+      "testsTotal": 0,
+      "roles": [
+        {
+          "target": "orders/models.py#Order@7:7",
+          "name": "Order",
+          "role": "model",
+          "detail": null
+        }
+      ],
+      "unknown": [],
+      "unknownTotal": 0,
+      "changedFiles": [
+        "orders/models.py",
+        "orders/urls.py",
+        "orders/views.py"
+      ],
+      "routeIds": [
+        "fw:django:registration:fw:django:app:shop/settings.py:9:orders/urls.py:7:5<shop/urls.py:4",
+        "fw:django:registration:fw:django:app:shop/settings.py:9:orders/urls.py:8:5<shop/urls.py:4"
+      ]
+    }
+  },
+  "change_id": "c856f8e5689fd3225b2702bca8903f9dc3121010f42c3eeca722dc2446bb16b3",
+  "base": {
+    "ref": "HEAD",
+    "sha": "808d7740caeccd9092adcbcd29e39ce3e6753b14"
+  },
+  "generated_at": "2026-10-09T05:59:31.021Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a discount_code field and an Order.apply_discount method. Adds order detail and redeem endpoints under the orders URLs.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "orders/views.py",
+      "line_number": 18,
+      "line_end": 18,
+      "title": "Order detail lookup ignores the owner",
+      "description": "The order_detail view fetches the order by primary key alone. It never checks that request.user owns the order. Any logged-in user can read the total and discount code of every order by changing the id in the URL. Add owner=request.user to the get_object_or_404 lookup, as the redeem view already does.",
+      "suggested_change": "    order = get_object_or_404(Order, pk=order_id, owner=request.user)",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The order_detail view fetches the order by primary key alone. It never checks that request.user owns the order.",
+      "consequence": "Any logged-in user can read the total and discount code of every order by changing the id in the URL.",
+      "fix": "Add owner=request.user to the get_object_or_404 lookup, as the redeem view already does."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "orders/models.py",
+      "line_number": 20,
+      "line_end": 20,
+      "title": "Decimal total multiplied by a float",
+      "description": "The apply_discount method multiplies a Decimal total by the float 0.9. Python raises TypeError when it mixes Decimal and float in multiplication. Every redeem request with the WELCOME10 code returns a server error. No user can ever apply the discount. Multiply by Decimal(\"0.9\") and quantize the result to two decimal places.",
+      "suggested_change": "        self.total = (self.total * Decimal(\"0.9\")).quantize(Decimal(\"0.01\"))",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The apply_discount method multiplies a Decimal total by the float 0.9. Python raises TypeError when it mixes Decimal and float in multiplication.",
+      "consequence": "Every redeem request with the WELCOME10 code returns a server error. No user can ever apply the discount.",
+      "fix": "Multiply by Decimal(\"0.9\") and quantize the result to two decimal places."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "orders/models.py",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "New model field has no migration",
+      "description": "The change adds discount_code to Order, but orders/migrations has only 0001_initial. That migration does not create a discount_code column. Every Order query selects a column the database lacks, so order_list, order_detail and redeem all fail. Run makemigrations and commit the new migration that adds discount_code.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds discount_code to Order, but orders/migrations has only 0001_initial. That migration does not create a discount_code column.",
+      "consequence": "Every Order query selects a column the database lacks, so order_list, order_detail and redeem all fail.",
+      "fix": "Run makemigrations and commit the new migration that adds discount_code."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.75,
+      "file_path": "orders/views.py",
+      "line_number": 22,
+      "line_end": 22,
+      "title": "CSRF protection disabled on a state-changing view",
+      "description": "The redeem view changes an order and authenticates by session cookie. The decorator turns off CSRF checks for it. Any third-party site can make a logged-in user's browser submit redeem requests against that user's orders. Remove the csrf_exempt decorator and send the CSRF token from the client.",
+      "suggested_change": null,
+      "source": "semgrep:python.django.security.audit.csrf-exempt.no-csrf-exempt",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The redeem view changes an order and authenticates by session cookie. The decorator turns off CSRF checks for it.",
+      "consequence": "Any third-party site can make a logged-in user's browser submit redeem requests against that user's orders.",
+      "fix": "Remove the csrf_exempt decorator and send the CSRF token from the client."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "orders/models.py",
+      "line_number": 16,
+      "line_end": 22,
+      "title": "New discount and view behaviour has no tests",
+      "description": "The change adds apply_discount, order_detail and redeem without any test. The repository contains no test files. A test would have caught the Decimal crash and the missing owner check before the push. Add tests for discount application, repeat redemption, and access to another user's order.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds apply_discount, order_detail and redeem without any test. The repository contains no test files.",
+      "consequence": "A test would have caught the Decimal crash and the missing owner check before the push.",
+      "fix": "Add tests for discount application, repeat redemption, and access to another user's order."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 1,
+      "keptCount": 1,
+      "durationMs": 4312,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 33,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 15,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 68,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 29,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 67648,
+      "started_at": "2026-10-09T05:59:07.183Z",
+      "ended_at": "2026-10-09T05:59:31.022Z",
+      "duration_ms": 23838,
+      "rounds": 1,
+      "usage": {
+        "turns": 4,
+        "input_tokens": 36409,
+        "output_tokens": 2319,
+        "cost_usd": 0.1164512
+      }
+    },
+    "snapshot": {
+      "change_id": "c856f8e5689fd3225b2702bca8903f9dc3121010f42c3eeca722dc2446bb16b3",
+      "tree": "8b08dedebac0fcec407ebb3ff3c9b734a46948ef",
+      "before": "fc9a1f73bfd85b9aa1fdb92e967cbd358782737dc14d1f5a6cb476d1ad05a548",
+      "after": "fc9a1f73bfd85b9aa1fdb92e967cbd358782737dc14d1f5a6cb476d1ad05a548"
+    },
+    "candidates": {
+      "total": 1,
+      "disposed": 1
+    },
+    "coverage": {
+      "hunks": 5,
+      "covered": 5,
+      "unread": [],
+      "files_read": [
+        "orders/migrations/0001_initial.py",
+        "orders/models.py"
+      ],
+      "files_not_read": [
+        "orders/urls.py",
+        "orders/views.py"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

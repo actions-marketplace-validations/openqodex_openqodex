@@ -1,0 +1,48 @@
+{
+  "id": "js-dynamic-dispatch-gap",
+  "guards": "a handler made async is reported with the caller that reaches it only through a computed member call, and the brief says the graph could not bind that call",
+  "language": "javascript",
+  "framework": "node-http",
+  "clean": false,
+  "graph": {
+    "gaps": [
+      {
+        "file": "src/router.js",
+        "line": 7,
+        "cause": "dynamic"
+      }
+    ],
+    "floors": [
+      "src/handlers.js#onSave"
+    ]
+  },
+  "bugs": [
+    {
+      "id": "async-handler-sync-caller",
+      "file": "src/handlers.js",
+      "lines": [
+        6,
+        10
+      ],
+      "anchor": {
+        "line": 6,
+        "text": "export async function onSave"
+      },
+      "mentions": [
+        "dispatch",
+        "router",
+        "main.js",
+        "res.end",
+        "table"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "onSave now returns a Promise, but dispatch in router.js returns the handler's result as it is and main.js passes it to res.end, which throws for a value that is not a string or a buffer; a failed write is never handled. The fix is to make dispatch async and await the handler in main.js, with an error answer when the write fails."
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "guards": "registers only the URL list Django serves when urlpatterns is replaced, and both branches of a conditional assignment with a gap",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "mysite/urls.py:11",
+        "pattern": "new/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:16",
+        "pattern": "debug/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/branchy.py:7",
+        "pattern": "branchy/a/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/branchy.py:9",
+        "pattern": "branchy/b/",
+        "status": "bound"
+      }
+    ],
+    "notRegistrations": [
+      "mysite/urls.py:7"
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/branchy.py",
+        "cause": "dynamic"
+      }
+    ]
+  }
+}

@@ -431,10 +431,11 @@ export function staleRuntimes(home: string, now = Date.now()): string[] {
 }
 
 // What still calls the launcher once this run is done: recorded agent hooks
-// (including one in a file that could not be parsed) and recorded git hooks
+// (including one in a file that could not be parsed), recorded MCP server
+// entries of user scope, which run it by its path, and recorded git hooks
 // that are still on disk as we wrote them.
 export function launcherUsers(record: InstallRecord): string[] {
-  const hooks = record.hooks.filter((h) => h.usesLauncher).map((h) => h.path);
+  const hooks = [...record.hooks, ...record.mcp].filter((h) => h.usesLauncher).map((h) => h.path);
   const gitHooks = record.files.filter((f) => f.usesLauncher && ownedFile(record, f.path, readText(f.path))).map((f) => f.path);
   return [...new Set([...hooks, ...gitHooks])];
 }

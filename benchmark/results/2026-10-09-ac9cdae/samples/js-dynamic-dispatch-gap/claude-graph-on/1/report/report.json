@@ -1,0 +1,500 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "medium",
+    "build": {
+      "durationMs": 71,
+      "cacheHits": 0,
+      "parses": 5,
+      "eligibleFiles": 4,
+      "parsedFiles": 4,
+      "omittedFiles": 0,
+      "unresolvedSites": 7,
+      "externalSites": 9,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "src/handlers.js#onSave@6:23",
+        "file": "src/handlers.js",
+        "name": "onSave",
+        "kind": "function",
+        "startLine": 6,
+        "endLine": 10,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/router.js#dispatch@5:17",
+        "file": "src/router.js",
+        "name": "dispatch",
+        "kind": "function",
+        "startLine": 5,
+        "endLine": 8,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/main.js",
+        "file": "src/main.js",
+        "name": "main.js",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 1,
+        "snapshot": "current"
+      },
+      {
+        "id": "src/router.js",
+        "file": "src/router.js",
+        "name": "router.js",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 8,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "src/handlers.js#onSave@6:23"
+    ],
+    "removed": [],
+    "callers": [],
+    "possible": [
+      {
+        "seed": "src/handlers.js#onSave@6:23",
+        "edges": [
+          {
+            "from": "src/router.js#dispatch@5:17",
+            "to": "src/handlers.js#onSave@6:23",
+            "kind": "may_invoke",
+            "sites": [
+              {
+                "file": "src/router.js",
+                "line": 7,
+                "column": 10,
+                "tier": "possible",
+                "evidence": "value-table",
+                "via": null,
+                "note": "table[...] may call it: it is an entry of the table at line 3.",
+                "rule": "value-table"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "src/handlers.js#onSave@6:23",
+        "edges": [
+          {
+            "from": "src/router.js#dispatch@5:17",
+            "to": "src/handlers.js#onSave@6:23",
+            "kind": "may_invoke",
+            "sites": [
+              {
+                "file": "src/router.js",
+                "line": 7,
+                "column": 10,
+                "tier": "possible",
+                "evidence": "value-table",
+                "via": null,
+                "note": "table[...] may call it: it is an entry of the table at line 3.",
+                "rule": "value-table"
+              }
+            ]
+          },
+          {
+            "from": "src/main.js",
+            "to": "src/router.js#dispatch@5:17",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "src/main.js",
+                "line": 9,
+                "column": 11,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "src/main.js",
+                  "line": 2,
+                  "spec": "./router.js"
+                },
+                "note": null,
+                "rule": "js-relative"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "references": [
+      {
+        "seed": "src/handlers.js#onSave@6:23",
+        "edge": {
+          "from": "src/router.js",
+          "to": "src/handlers.js#onSave@6:23",
+          "kind": "uses_value",
+          "sites": [
+            {
+              "file": "src/router.js",
+              "line": 3,
+              "column": 23,
+              "tier": "certain",
+              "evidence": "import",
+              "via": {
+                "file": "src/router.js",
+                "line": 1,
+                "spec": "./handlers.js"
+              },
+              "note": null,
+              "rule": "value-ref"
+            }
+          ]
+        }
+      }
+    ],
+    "callees": [],
+    "importers": [
+      {
+        "from": "src/router.js",
+        "to": "src/handlers.js",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "src/router.js",
+            "line": 1,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "src/router.js",
+              "line": 1,
+              "spec": "./handlers.js"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [
+        {
+          "seed": "src/handlers.js#onSave@6:23",
+          "floor": true,
+          "reasons": [
+            "1 call may reach it through an interface, a base type or a function value, and none is proved to"
+          ]
+        }
+      ],
+      "causes": {
+        "no-receiver-type": 6,
+        "dynamic": 1
+      },
+      "near": [
+        {
+          "file": "src/handlers.js",
+          "line": 7,
+          "name": "set",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/handlers.js",
+          "line": 13,
+          "name": "delete",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/main.js",
+          "line": 7,
+          "name": "filter",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/main.js",
+          "line": 7,
+          "name": "split",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "the type URL is not found in the graph",
+          "candidates": null
+        },
+        {
+          "file": "src/main.js",
+          "line": 8,
+          "name": "setHeader",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/main.js",
+          "line": 9,
+          "name": "end",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "src/router.js",
+          "line": 7,
+          "name": null,
+          "cause": "dynamic",
+          "scope": "file",
+          "note": "a computed member of the table table (line 3): one of its entries, listed as possible targets, or a key the table does not hold",
+          "candidates": [
+            "src/handlers.js#onSave@6:23",
+            "src/handlers.js#onDelete@12:17"
+          ]
+        }
+      ],
+      "nearTotal": 7,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/"
+  },
+  "change_id": "eab11e18f84221226f4ce5843d6ea575229c250001f8772e88b45876b1772879",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d031f5ce5b090014879d0b133ee908da99132302"
+  },
+  "generated_at": "2026-10-09T02:50:10.455Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "onSave becomes async and writes the whole store to data/notes.json after each save. The router and HTTP server still treat its return value as a string.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Async onSave breaks the synchronous dispatch caller",
+      "description": "onSave now returns a Promise, and dispatch in src/router.js:7 passes that Promise back unchanged. The server in src/main.js:9 then calls res.end with that Promise instead of a string. Node's res.end throws a TypeError on a Promise argument, so every POST /save crashes the server process. The writeFile promise also floats, so a write failure becomes an unhandled rejection. Make dispatch async and have the server await it before calling res.end. The server should catch errors and answer with a 500 status.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null,
+      "notes": [],
+      "problem": "onSave now returns a Promise, and dispatch in src/router.js:7 passes that Promise back unchanged. The server in src/main.js:9 then calls res.end with that Promise instead of a string.",
+      "consequence": "Node's res.end throws a TypeError on a Promise argument, so every POST /save crashes the server process. The writeFile promise also floats, so a write failure becomes an unhandled rejection.",
+      "fix": "Make dispatch async and have the server await it before calling res.end. The server should catch errors and answer with a 500 status."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "New snapshot write has no covering test",
+      "description": "onSave now writes the store to a file and returns a Promise. The repository has no test that covers this behaviour. Regressions in the save path, such as the broken caller, reach production without being caught. Add a test that dispatches a save and checks both the response text and the snapshot file contents.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "onSave now writes the store to a file and returns a Promise. The repository has no test that covers this behaviour.",
+      "consequence": "Regressions in the save path, such as the broken caller, reach production without being caught.",
+      "fix": "Add a test that dispatches a save and checks both the response text and the snapshot file contents."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 6231,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 92,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 100,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 5,
+    "deletions": 1
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 63898,
+      "started_at": "2026-10-09T02:49:53.210Z",
+      "ended_at": "2026-10-09T02:50:10.456Z",
+      "duration_ms": 17245,
+      "rounds": 2,
+      "usage": {
+        "turns": 7,
+        "input_tokens": 46926,
+        "output_tokens": 1681,
+        "cost_usd": 0.104016
+      }
+    },
+    "snapshot": {
+      "change_id": "eab11e18f84221226f4ce5843d6ea575229c250001f8772e88b45876b1772879",
+      "tree": "62b33ef51b4e5ae2114be88c18885cbb7bbf4e6e",
+      "before": "5ebf451988a05482f929ad9fc7af280c84f612178d28c6d221c76bc567c1d630",
+      "after": "5ebf451988a05482f929ad9fc7af280c84f612178d28c6d221c76bc567c1d630"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "package.json",
+        "src/handlers.js",
+        "src/main.js",
+        "src/router.js"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

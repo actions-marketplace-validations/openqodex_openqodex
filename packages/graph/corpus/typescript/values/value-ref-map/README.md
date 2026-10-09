@@ -1,0 +1,1 @@
+labels calls `items.map(label)`. Array.prototype.map is outside the repository, so the graph cannot read whether or how it calls label. The change edits label. The site must be a certain uses_value reference so the reviewer sees that labels depends on label, and it must never be a may_invoke edge: a may_invoke edge is a claim about a body the graph read.

@@ -7,4 +7,4 @@ export { renderHtml, renderUnavailableHtml } from "./html.js";
 export type { HtmlInput } from "./html.js";
 export { DISPLAY_MAX_BYTES, DISPLAY_MAX_ROWS, buildDisplay, buildExcerptDisplay, checkDisplay, displayJson, parseHunks } from "./display.js";
 export type { Display, DisplayFile, DisplayHunk, DisplayRow } from "./display.js";
-export { display, orderFindings } from "./common.js";
+export { display, escapeMarkdown, orderFindings } from "./common.js";

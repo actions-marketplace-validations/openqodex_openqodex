@@ -1,0 +1,14 @@
+{
+  "guards": "detects no Rails application, registration or role when the Gemfile does not declare rails",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 0,
+    "none": [
+      "registration",
+      "handles",
+      "renders",
+      "tests",
+      "role"
+    ]
+  }
+}

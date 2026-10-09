@@ -1,0 +1,54 @@
+{
+  "guards": "binds Express routes to their handlers under each mount prefix, keeps a missing, wrapped or computed handler's registration, and never merges two applications",
+  "callers": [
+    {
+      "to": "src/handlers/users.ts#getUser",
+      "site": "tests/users.test.ts:15",
+      "tier": "certain"
+    }
+  ],
+  "removed": ["src/handlers/users.ts#removeUser"],
+  "frameworks": {
+    "plugin": "express",
+    "apps": 2,
+    "registrations": [
+      { "site": "src/app.ts:10", "methods": ["GET"], "pattern": "/health", "handler": "src/handlers/health.ts#health", "status": "bound", "mounted": true },
+      { "site": "src/app.ts:11", "methods": ["GET"], "pattern": "/health", "handler": "src/handlers/health.ts#status", "status": "bound" },
+      { "site": "src/admin.ts:11", "methods": ["GET"], "pattern": "/health", "handler": "src/handlers/health.ts#status", "status": "bound" },
+      { "site": "src/routes/users.ts:7", "methods": ["GET"], "pattern": "/users", "handler": "src/handlers/users.ts#listUsers" },
+      { "site": "src/routes/users.ts:8", "methods": ["GET"], "pattern": "/users/:id", "handler": "src/handlers/users.ts#getUser", "status": "bound", "mounted": true },
+      { "site": "src/routes/users.ts:9", "methods": ["POST"], "pattern": "/users", "handler": "src/handlers/users.ts#createUser" },
+      { "site": "src/routes/users.ts:10", "methods": ["DELETE"], "pattern": "/users/:id", "handler": null, "status": "missing" },
+      { "site": "src/routes/items.ts:7", "methods": ["GET"], "pattern": "/items", "handler": "src/handlers/items.ts#listItems" },
+      { "site": "src/routes/items.ts:8", "methods": ["GET"], "pattern": "/items/:id", "handler": null, "status": "unresolved" },
+      { "site": "src/routes/orphan.ts:11", "methods": ["GET"], "pattern": "/lost", "handler": "src/routes/orphan.ts#lost", "mounted": false }
+    ],
+    "edges": [
+      { "kind": "mounts", "from": "fw:express:app:src/app.ts:7", "to": "fw:express:router:src/routes/users.ts:5", "tier": "certain" },
+      { "kind": "mounts", "from": "fw:express:app:src/app.ts:7", "to": "fw:express:router:src/routes/items.ts:5", "tier": "certain" },
+      { "kind": "applies_middleware", "from": "registration:src/routes/users.ts:8", "to": "src/middleware.ts#logRequests", "tier": "certain" },
+      { "kind": "applies_middleware", "from": "registration:src/routes/users.ts:8", "to": "src/middleware.ts#requireAuth", "tier": "certain" },
+      { "kind": "applies_middleware", "from": "registration:src/routes/users.ts:9", "to": "src/middleware.ts#validate", "tier": "certain" },
+      { "kind": "tests", "from": "tests/users.test.ts", "to": "registration:src/routes/users.ts:8", "tier": "likely", "category": "route-request" },
+      { "kind": "tests", "from": "tests/users.test.ts", "to": "src/handlers/users.ts#getUser", "tier": "certain", "category": "direct-call" }
+    ],
+    "roles": [
+      { "target": "src/handlers/users.ts#getUser", "role": "route_handler", "detail": "express" },
+      { "target": "src/middleware.ts#onError", "role": "middleware", "detail": "error-handler" },
+      { "target": "src/middleware.ts#requireAuth", "role": "middleware", "detail": "express" },
+      { "target": "tests/users.test.ts", "role": "test", "detail": "supertest" }
+    ],
+    "unknowns": [
+      { "file": "src/routes/users.ts", "line": 10, "cause": "miss" },
+      { "file": "src/routes/items.ts", "line": 8, "cause": "unsupported-rule" },
+      { "file": "src/app.ts", "line": 17, "cause": "dynamic" }
+    ],
+    "notEdges": [
+      { "kind": "mounts", "from": "fw:express:app:src/admin.ts:5" },
+      { "kind": "handles", "from": "registration:src/cache.ts:9" },
+      { "kind": "applies_middleware", "from": "registration:src/admin.ts:11" },
+      { "kind": "handles", "to": "src/handlers/items.ts#getItem" },
+      { "kind": "handles", "from": "registration:src/app.ts:17" }
+    ]
+  }
+}

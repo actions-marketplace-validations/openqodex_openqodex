@@ -1,0 +1,74 @@
+{
+  "guards": "makes Django REST framework routes only for the actions a viewset has, with the router's trailing slash option",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "mysite/api.py:24",
+        "pattern": "api/lists",
+        "methods": [
+          "GET"
+        ],
+        "name": "lists-list"
+      },
+      {
+        "site": "mysite/api.py:25",
+        "pattern": "api/all",
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "name": "all-list"
+      },
+      {
+        "site": "mysite/api.py:25",
+        "pattern": "api/all/<pk>",
+        "methods": [
+          "DELETE",
+          "GET",
+          "PATCH",
+          "PUT"
+        ],
+        "name": "all-detail"
+      },
+      {
+        "site": "mysite/api.py:26",
+        "pattern": "api/ro",
+        "methods": [
+          "GET"
+        ],
+        "name": "ro-list"
+      },
+      {
+        "site": "mysite/api.py:26",
+        "pattern": "api/ro/<pk>",
+        "methods": [
+          "GET"
+        ],
+        "name": "ro-detail"
+      },
+      {
+        "site": "mysite/api.py:27",
+        "pattern": "api/unknown",
+        "methods": [
+          "*"
+        ],
+        "name": "unknown-list"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "from": "registration:mysite/api.py:24",
+        "to": "mysite/api.py#ListOnly.retrieve"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/api.py",
+        "line": 27,
+        "cause": "unsupported-rule"
+      }
+    ]
+  }
+}

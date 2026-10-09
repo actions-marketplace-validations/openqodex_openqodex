@@ -1,0 +1,611 @@
+{
+  "run": "benchmark/results/2026-10-09-4a7d198",
+  "build": {
+    "commit": "4a7d198375bf5dd8607a17c12da96cbee0ce956b",
+    "short": "4a7d198",
+    "tree": "4c33e3a2d40bb9137f51c1e043fabe6203b84c15",
+    "commitTree": "4c33e3a2d40bb9137f51c1e043fabe6203b84c15",
+    "dirty": false,
+    "bundleHash": "0777470dcafe7f12f54a5211f88e2f01c1865c851f73b5d82225d62c05f510ce",
+    "builtAt": "2026-10-09T14:36:59.782Z",
+    "builtWithNode": "v22.23.3",
+    "cli": "packages/cli/dist/bin.js",
+    "cliVersion": "0.10.0"
+  },
+  "reviewer": {
+    "name": "claude",
+    "version": "2.1.295",
+    "model": "claude-opus-5-5",
+    "modelFrom": "the model Claude Code names in its answer"
+  },
+  "repeat": 1,
+  "planned": 4,
+  "saved": 4,
+  "secondAttempts": 0,
+  "unrecorded": 0,
+  "ended": {
+    "at": "2026-10-09T14:38:35.140Z",
+    "how": "finished",
+    "why": null,
+    "reviewsWithAnAttempt": 4,
+    "planned": 4
+  },
+  "resumes": [],
+  "specsFrom": "the run's own cases/",
+  "specsDiffer": [],
+  "byConfig": {
+    "claude-graph-on": {
+      "samples": 4,
+      "complete": 4,
+      "incomplete": 0,
+      "failed": 0,
+      "recall": {
+        "hit": 8,
+        "of": 8
+      },
+      "bySeverity": {
+        "critical": {
+          "hit": 5,
+          "of": 5
+        },
+        "major": {
+          "hit": 3,
+          "of": 3
+        },
+        "minor": {
+          "hit": 0,
+          "of": 0
+        },
+        "nitpick": {
+          "hit": 0,
+          "of": 0
+        },
+        "info": {
+          "hit": 0,
+          "of": 0
+        }
+      },
+      "precision": {
+        "hit": 8,
+        "of": 8
+      },
+      "controls": {
+        "hit": 0,
+        "of": 0
+      },
+      "gaps": {
+        "hit": 0,
+        "of": 0
+      },
+      "callers": {
+        "hit": 0,
+        "of": 0
+      },
+      "falseFindings": 0,
+      "nearMisses": 0,
+      "wrongKinds": 0,
+      "accepted": 0,
+      "duplicates": 0,
+      "testGaps": 4,
+      "wallMs": {
+        "n": 4,
+        "mean": 21646.5,
+        "median": 22232.5,
+        "total": 86586
+      },
+      "reviewerMs": {
+        "n": 4,
+        "mean": 17671.5,
+        "median": 18208,
+        "total": 70686
+      },
+      "costUsd": {
+        "n": 4,
+        "mean": 0.10345505,
+        "median": 0.11032900000000001,
+        "total": 0.4138202
+      },
+      "turns": {
+        "n": 4,
+        "mean": 4.25,
+        "median": 4.5,
+        "total": 17
+      },
+      "inputTokens": {
+        "n": 4,
+        "mean": 35463.75,
+        "median": 33637.5,
+        "total": 141855
+      },
+      "outputTokens": {
+        "n": 4,
+        "mean": 1657,
+        "median": 1786.5,
+        "total": 6628
+      }
+    }
+  },
+  "byCase": {
+    "django-renamed-view": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 1,
+          "of": 1
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 0,
+            "of": 0
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 1,
+          "of": 1
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 16810,
+          "median": 16810,
+          "total": 16810
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 12620,
+          "median": 12620,
+          "total": 12620
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.0814086,
+          "median": 0.0814086,
+          "total": 0.0814086
+        },
+        "turns": {
+          "n": 1,
+          "mean": 7,
+          "median": 7,
+          "total": 7
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 40271,
+          "median": 40271,
+          "total": 40271
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1022,
+          "median": 1022,
+          "total": 1022
+        }
+      }
+    },
+    "express-admin-routes": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 2,
+          "of": 2
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 1,
+            "of": 1
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 2,
+          "of": 2
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 25311,
+          "median": 25311,
+          "total": 25311
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 21650,
+          "median": 21650,
+          "total": 21650
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.10898260000000001,
+          "median": 0.10898260000000001,
+          "total": 0.10898260000000001
+        },
+        "turns": {
+          "n": 1,
+          "mean": 7,
+          "median": 7,
+          "total": 7
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 60907,
+          "median": 60907,
+          "total": 60907
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1740,
+          "median": 1740,
+          "total": 1740
+        }
+      }
+    },
+    "go-http-handler": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 3,
+          "of": 3
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 1,
+            "of": 1
+          },
+          "major": {
+            "hit": 2,
+            "of": 2
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 3,
+          "of": 3
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 21812,
+          "median": 21812,
+          "total": 21812
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 17904,
+          "median": 17904,
+          "total": 17904
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.1116754,
+          "median": 0.1116754,
+          "total": 0.1116754
+        },
+        "turns": {
+          "n": 1,
+          "mean": 2,
+          "median": 2,
+          "total": 2
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 27004,
+          "median": 27004,
+          "total": 27004
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 1833,
+          "median": 1833,
+          "total": 1833
+        }
+      }
+    },
+    "suppression-comments": {
+      "claude-graph-on": {
+        "samples": 1,
+        "complete": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "recall": {
+          "hit": 2,
+          "of": 2
+        },
+        "bySeverity": {
+          "critical": {
+            "hit": 2,
+            "of": 2
+          },
+          "major": {
+            "hit": 0,
+            "of": 0
+          },
+          "minor": {
+            "hit": 0,
+            "of": 0
+          },
+          "nitpick": {
+            "hit": 0,
+            "of": 0
+          },
+          "info": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "precision": {
+          "hit": 2,
+          "of": 2
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "gaps": {
+          "hit": 0,
+          "of": 0
+        },
+        "callers": {
+          "hit": 0,
+          "of": 0
+        },
+        "falseFindings": 0,
+        "nearMisses": 0,
+        "wrongKinds": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "testGaps": 1,
+        "wallMs": {
+          "n": 1,
+          "mean": 22653,
+          "median": 22653,
+          "total": 22653
+        },
+        "reviewerMs": {
+          "n": 1,
+          "mean": 18512,
+          "median": 18512,
+          "total": 18512
+        },
+        "costUsd": {
+          "n": 1,
+          "mean": 0.11175360000000001,
+          "median": 0.11175360000000001,
+          "total": 0.11175360000000001
+        },
+        "turns": {
+          "n": 1,
+          "mean": 1,
+          "median": 1,
+          "total": 1
+        },
+        "inputTokens": {
+          "n": 1,
+          "mean": 13673,
+          "median": 13673,
+          "total": 13673
+        },
+        "outputTokens": {
+          "n": 1,
+          "mean": 2033,
+          "median": 2033,
+          "total": 2033
+        }
+      }
+    }
+  },
+  "stability": {
+    "claude-graph-on": [
+      {
+        "case": "django-renamed-view",
+        "bug": "route-names-missing-view",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "express-admin-routes",
+        "bug": "delete-without-admin",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "express-admin-routes",
+        "bug": "foreach-async-not-awaited",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "go-http-handler",
+        "bug": "sprintf-sql",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "go-http-handler",
+        "bug": "mutex-held-on-return",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "go-http-handler",
+        "bug": "defer-close-before-err",
+        "severity": "major",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 0
+      },
+      {
+        "case": "suppression-comments",
+        "bug": "nosec-shell-injection",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "scanner": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      },
+      {
+        "case": "suppression-comments",
+        "bug": "suppressed-eval",
+        "severity": "critical",
+        "found": 1,
+        "of": 1,
+        "via": {
+          "reviewer": 1
+        },
+        "near": 0,
+        "wrongKind": 0,
+        "dropped": 1
+      }
+    ]
+  },
+  "briefFailures": {
+    "claude-graph-on": []
+  },
+  "falseFindings": [],
+  "comparedWith": null
+}

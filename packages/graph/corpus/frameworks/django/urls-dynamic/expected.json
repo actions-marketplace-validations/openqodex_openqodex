@@ -1,0 +1,59 @@
+{
+  "guards": "reports computed Django routes, includes, views and request paths as dynamic gaps and keeps their registrations",
+  "frameworks": {
+    "plugin": "django",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "mysite/urls.py:9",
+        "pattern": null,
+        "handler": "api/views.py#status",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:11",
+        "pattern": "fixed/",
+        "status": "dynamic",
+        "handler": null
+      },
+      {
+        "site": "mysite/urls.py:12",
+        "pattern": "ok/",
+        "handler": "api/views.py#ok",
+        "status": "bound"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/urls.py",
+        "line": 9,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 10,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 11,
+        "cause": "dynamic"
+      },
+      {
+        "file": "api/tests.py",
+        "line": 7,
+        "cause": "dynamic"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "mounts",
+        "to": "api/urls.py"
+      },
+      {
+        "kind": "tests",
+        "from": "api/tests.py#ApiTests.test_status"
+      }
+    ]
+  }
+}

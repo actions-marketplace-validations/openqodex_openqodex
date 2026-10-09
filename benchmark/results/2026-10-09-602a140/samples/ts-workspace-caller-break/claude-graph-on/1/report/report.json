@@ -1,0 +1,602 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "ok",
+    "reasons": [],
+    "risk": "medium",
+    "build": {
+      "durationMs": 74,
+      "cacheHits": 0,
+      "parses": 7,
+      "eligibleFiles": 5,
+      "parsedFiles": 5,
+      "omittedFiles": 0,
+      "unresolvedSites": 6,
+      "externalSites": 5,
+      "mode": "fresh",
+      "generation": null
+    },
+    "symbols": [
+      {
+        "id": "packages/core/src/safe-git.ts#GitResult@6:13",
+        "file": "packages/core/src/safe-git.ts",
+        "name": "GitResult",
+        "kind": "type",
+        "startLine": 6,
+        "endLine": 6,
+        "snapshot": "current"
+      },
+      {
+        "id": "packages/core/src/safe-git.ts#safeGit@10:23",
+        "file": "packages/core/src/safe-git.ts",
+        "name": "safeGit",
+        "kind": "function",
+        "startLine": 10,
+        "endLine": 18,
+        "snapshot": "current"
+      },
+      {
+        "id": "packages/cli/src/branch.ts#currentBranch@4:23",
+        "file": "packages/cli/src/branch.ts",
+        "name": "currentBranch",
+        "kind": "function",
+        "startLine": 4,
+        "endLine": 11,
+        "snapshot": "current"
+      },
+      {
+        "id": "packages/cli/src/status.ts#changedFiles@4:23",
+        "file": "packages/cli/src/status.ts",
+        "name": "changedFiles",
+        "kind": "function",
+        "startLine": 4,
+        "endLine": 10,
+        "snapshot": "current"
+      },
+      {
+        "id": "packages/cli/src/main.ts",
+        "file": "packages/cli/src/main.ts",
+        "name": "main.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 1,
+        "snapshot": "current"
+      },
+      {
+        "id": "packages/cli/src/branch.ts",
+        "file": "packages/cli/src/branch.ts",
+        "name": "branch.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 11,
+        "snapshot": "current"
+      },
+      {
+        "id": "packages/cli/src/status.ts",
+        "file": "packages/cli/src/status.ts",
+        "name": "status.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 10,
+        "snapshot": "current"
+      },
+      {
+        "id": "packages/core/src/index.ts",
+        "file": "packages/core/src/index.ts",
+        "name": "index.ts",
+        "kind": "file",
+        "startLine": 1,
+        "endLine": 1,
+        "snapshot": "current"
+      }
+    ],
+    "touched": [
+      "packages/core/src/safe-git.ts#GitResult@6:13",
+      "packages/core/src/safe-git.ts#safeGit@10:23"
+    ],
+    "removed": [],
+    "callers": [
+      {
+        "seed": "packages/core/src/safe-git.ts#safeGit@10:23",
+        "edges": [
+          {
+            "from": "packages/cli/src/branch.ts#currentBranch@4:23",
+            "to": "packages/core/src/safe-git.ts#safeGit@10:23",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "packages/cli/src/branch.ts",
+                "line": 6,
+                "column": 24,
+                "tier": "likely",
+                "evidence": "workspace-package",
+                "via": {
+                  "file": "packages/cli/src/branch.ts",
+                  "line": 1,
+                  "spec": "@acme/core"
+                },
+                "note": "Bound through @acme/core's entry packages/core/dist/index.js, built from packages/core/src/index.ts; no tsconfig paths, project reference or active source condition maps @acme/core to its source.",
+                "rule": "workspace-dist-src"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "packages/core/src/safe-git.ts#safeGit@10:23",
+        "edges": [
+          {
+            "from": "packages/cli/src/status.ts#changedFiles@4:23",
+            "to": "packages/core/src/safe-git.ts#safeGit@10:23",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "packages/cli/src/status.ts",
+                "line": 5,
+                "column": 21,
+                "tier": "likely",
+                "evidence": "workspace-package",
+                "via": {
+                  "file": "packages/cli/src/status.ts",
+                  "line": 1,
+                  "spec": "@acme/core"
+                },
+                "note": "Bound through @acme/core's entry packages/core/dist/index.js, built from packages/core/src/index.ts; no tsconfig paths, project reference or active source condition maps @acme/core to its source.",
+                "rule": "workspace-dist-src"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "seed": "packages/core/src/safe-git.ts#safeGit@10:23",
+        "edges": [
+          {
+            "from": "packages/cli/src/branch.ts#currentBranch@4:23",
+            "to": "packages/core/src/safe-git.ts#safeGit@10:23",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "packages/cli/src/branch.ts",
+                "line": 6,
+                "column": 24,
+                "tier": "likely",
+                "evidence": "workspace-package",
+                "via": {
+                  "file": "packages/cli/src/branch.ts",
+                  "line": 1,
+                  "spec": "@acme/core"
+                },
+                "note": "Bound through @acme/core's entry packages/core/dist/index.js, built from packages/core/src/index.ts; no tsconfig paths, project reference or active source condition maps @acme/core to its source.",
+                "rule": "workspace-dist-src"
+              }
+            ]
+          },
+          {
+            "from": "packages/cli/src/main.ts",
+            "to": "packages/cli/src/branch.ts#currentBranch@4:23",
+            "kind": "calls",
+            "sites": [
+              {
+                "file": "packages/cli/src/main.ts",
+                "line": 5,
+                "column": 22,
+                "tier": "certain",
+                "evidence": "import",
+                "via": {
+                  "file": "packages/cli/src/main.ts",
+                  "line": 1,
+                  "spec": "./branch.js"
+                },
+                "note": null,
+                "rule": "js-relative"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "callees": [],
+    "importers": [
+      {
+        "from": "packages/cli/src/branch.ts",
+        "to": "packages/core/src/index.ts",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "packages/cli/src/branch.ts",
+            "line": 1,
+            "column": 1,
+            "tier": "likely",
+            "evidence": "workspace-package",
+            "via": {
+              "file": "packages/cli/src/branch.ts",
+              "line": 1,
+              "spec": "@acme/core"
+            },
+            "note": "Bound through @acme/core's entry packages/core/dist/index.js, built from packages/core/src/index.ts; no tsconfig paths, project reference or active source condition maps @acme/core to its source.",
+            "rule": "workspace-dist-src"
+          }
+        ]
+      },
+      {
+        "from": "packages/cli/src/status.ts",
+        "to": "packages/core/src/index.ts",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "packages/cli/src/status.ts",
+            "line": 1,
+            "column": 1,
+            "tier": "likely",
+            "evidence": "workspace-package",
+            "via": {
+              "file": "packages/cli/src/status.ts",
+              "line": 1,
+              "spec": "@acme/core"
+            },
+            "note": "Bound through @acme/core's entry packages/core/dist/index.js, built from packages/core/src/index.ts; no tsconfig paths, project reference or active source condition maps @acme/core to its source.",
+            "rule": "workspace-dist-src"
+          }
+        ]
+      },
+      {
+        "from": "packages/core/src/index.ts",
+        "to": "packages/core/src/safe-git.ts",
+        "kind": "imports",
+        "sites": [
+          {
+            "file": "packages/core/src/index.ts",
+            "line": 1,
+            "column": 1,
+            "tier": "certain",
+            "evidence": "import",
+            "via": {
+              "file": "packages/core/src/index.ts",
+              "line": 1,
+              "spec": "./safe-git.js"
+            },
+            "note": null,
+            "rule": "js-relative"
+          }
+        ]
+      }
+    ],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [
+        {
+          "seed": "packages/core/src/safe-git.ts#GitResult@6:13",
+          "floor": true,
+          "reasons": [
+            "1 call goes through a value (a callback or a computed member) in packages/core, and could reach it"
+          ]
+        },
+        {
+          "seed": "packages/core/src/safe-git.ts#safeGit@10:23",
+          "floor": true,
+          "reasons": [
+            "1 call goes through a value (a callback or a computed member) in packages/core, and could reach it"
+          ]
+        }
+      ],
+      "causes": {
+        "dynamic": 1,
+        "no-receiver-type": 5
+      },
+      "near": [
+        {
+          "file": "packages/core/src/safe-git.ts",
+          "line": 12,
+          "name": "run",
+          "cause": "dynamic",
+          "scope": "project",
+          "note": "a call through a parameter or a local value",
+          "candidates": null
+        },
+        {
+          "file": "packages/cli/src/branch.ts",
+          "line": 7,
+          "name": "trim",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "GitResult is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "packages/cli/src/status.ts",
+          "line": 9,
+          "name": "map",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        },
+        {
+          "file": "packages/cli/src/status.ts",
+          "line": 8,
+          "name": "filter",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "what out.split returns is not known to the graph",
+          "candidates": null
+        },
+        {
+          "file": "packages/cli/src/status.ts",
+          "line": 7,
+          "name": "split",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": "GitResult is an interface or a type alias, or inherits from a class outside the graph",
+          "candidates": null
+        },
+        {
+          "file": "packages/cli/src/status.ts",
+          "line": 9,
+          "name": "slice",
+          "cause": "no-receiver-type",
+          "scope": "file",
+          "note": null,
+          "candidates": null
+        }
+      ],
+      "nearTotal": 6,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": ".openqodex-review/graph/",
+    "frameworks": {
+      "plugins": [],
+      "routes": [],
+      "routesTotal": 0,
+      "renders": [],
+      "renderedBy": [],
+      "models": [],
+      "migrations": [],
+      "tests": [],
+      "testsTotal": 0,
+      "roles": [],
+      "unknown": [],
+      "unknownTotal": 0,
+      "changedFiles": [
+        "packages/core/src/index.ts",
+        "packages/core/src/safe-git.ts"
+      ],
+      "routeIds": []
+    }
+  },
+  "change_id": "708d34803616c923cd9d24b87ddfecbe9b1bab242ea6d3ebbd39449296a0d34a",
+  "base": {
+    "ref": "HEAD",
+    "sha": "694f36594a52bffead4c297851546c721dc21367"
+  },
+  "generated_at": "2026-10-09T06:04:38.451Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "safeGit now returns a { code, stdout, stderr } object instead of the stdout string, and it no longer throws when git fails. index.ts also exports the new GitResult type.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 17,
+      "title": "safeGit return shape change breaks both CLI callers",
+      "description": "safeGit now returns a GitResult object and no longer throws. currentBranch in packages/cli/src/branch.ts:7 and changedFiles in packages/cli/src/status.ts:7 still call string methods on that result and rely on a throw. In currentBranch, trim throws a TypeError and the catch returns null, so main.ts always exits early. In changedFiles, split throws a TypeError, and failed git commands no longer reach callers as errors. Update currentBranch to return null when code is not 0 and otherwise trim stdout. Update changedFiles to check code and split stdout.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null,
+      "notes": [],
+      "problem": "safeGit now returns a GitResult object and no longer throws. currentBranch in packages/cli/src/branch.ts:7 and changedFiles in packages/cli/src/status.ts:7 still call string methods on that result and rely on a throw.",
+      "consequence": "In currentBranch, trim throws a TypeError and the catch returns null, so main.ts always exits early. In changedFiles, split throws a TypeError, and failed git commands no longer reach callers as errors.",
+      "fix": "Update currentBranch to return null when code is not 0 and otherwise trim stdout. Update changedFiles to check code and split stdout."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 13,
+      "line_end": 16,
+      "title": "No test covers the new safeGit result and error path",
+      "description": "safeGit gained a new return shape and a catch branch that maps errors to an exit code. No test in this change exercises either path. A test calling currentBranch or changedFiles would have caught the broken callers before the push. Add tests that call safeGit with a succeeding and a failing git command and check code, stdout and stderr.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "safeGit gained a new return shape and a catch branch that maps errors to an exit code. No test in this change exercises either path.",
+      "consequence": "A test calling currentBranch or changedFiles would have caught the broken callers before the push.",
+      "fix": "Add tests that call safeGit with a succeeding and a failing git command and check code, stdout and stderr."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 4860,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 72,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 28,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 2,
+    "additions": 13,
+    "deletions": 5
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 70004,
+      "started_at": "2026-10-09T06:04:14.750Z",
+      "ended_at": "2026-10-09T06:04:38.451Z",
+      "duration_ms": 23701,
+      "rounds": 2,
+      "usage": {
+        "turns": 6,
+        "input_tokens": 53486,
+        "output_tokens": 2248,
+        "cost_usd": 0.1330012
+      }
+    },
+    "snapshot": {
+      "change_id": "708d34803616c923cd9d24b87ddfecbe9b1bab242ea6d3ebbd39449296a0d34a",
+      "tree": "0003a4605f48089d0f0d4e8b24b75073f8319648",
+      "before": "330edb7c8f4250f941cedb58112760fd5210ee93224d47709a8c207689a6bfbc",
+      "after": "330edb7c8f4250f941cedb58112760fd5210ee93224d47709a8c207689a6bfbc"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 2,
+      "covered": 2,
+      "unread": [],
+      "files_read": [
+        "packages/cli/src/branch.ts",
+        "packages/cli/src/main.ts",
+        "packages/cli/src/status.ts"
+      ],
+      "files_not_read": [
+        "packages/core/src/index.ts",
+        "packages/core/src/safe-git.ts"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

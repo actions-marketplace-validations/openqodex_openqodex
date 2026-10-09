@@ -1,0 +1,19 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/main.ts",
+    "inside": true,
+    "range": [
+      1,
+      9
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

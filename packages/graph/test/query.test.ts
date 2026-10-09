@@ -13,7 +13,7 @@
 // 6. Search results are counted as callers.
 // 7. An operation that did not run says nothing about which graph answered.
 import { afterAll, describe, expect, it } from "vitest";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, symbolKey } from "../src/index.js";
@@ -25,14 +25,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function session(files: Record<string, string>): Promise<{ root: string; s: Session }> {
   const root = makeRepo(files);
-  repos.push(root);
   const graph = await buildGraph({ repoRoot: root, store: null });
   return { root, s: { graph, generation: "test-build", treeSha: null, builtAt: null, laterEditsKnown: false } };
 }
@@ -72,7 +66,6 @@ describe("the graph query", () => {
     const files: Record<string, string> = { "src/core.ts": "export function core(): number {\n  return 1;\n}\n" };
     for (let i = 0; i < 25; i++) files[`src/c${i}.ts`] = `import { core } from "./core.js";\nexport function c${i}() {\n  return core();\n}\n`;
     const root = makeRepo(files);
-    repos.push(root);
     commitAll(root);
     writeFiles(root, { "src/core.ts": "export function core(): number {\n  return 2;\n}\n" });
     const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });

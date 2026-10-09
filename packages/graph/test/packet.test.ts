@@ -20,7 +20,7 @@
 //    the rest from changes.json, which claims to hold every one.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, renderImpactBlock, symbolKey } from "../src/index.js";
@@ -30,14 +30,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function reviewed(before: Record<string, string>, after: Record<string, string>) {
   const root = makeRepo(before);
-  repos.push(root);
   const sha = commitAll(root);
   writeFiles(root, after);
   const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });

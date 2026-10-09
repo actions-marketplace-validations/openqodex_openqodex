@@ -1,0 +1,11 @@
+{
+  "guards": "finds the FastAPI routes of an unchanged file once a manifest change declares fastapi",
+  "frameworks": {
+    "plugin": "fastapi",
+    "apps": 1,
+    "registrations": [
+      { "site": "service/main.py:8", "methods": ["GET"], "pattern": "/ping", "handler": "service/main.py#ping", "status": "bound", "mounted": true }
+    ],
+    "roles": [{ "target": "service/main.py#ping", "role": "route_handler", "detail": "fastapi" }]
+  }
+}

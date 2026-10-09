@@ -1,0 +1,36 @@
+[
+  {
+    "tool": "Grep",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "orders/urls.py",
+    "inside": true,
+    "range": [
+      1,
+      10
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "orders/views.py",
+    "inside": true,
+    "range": [
+      1,
+      17
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

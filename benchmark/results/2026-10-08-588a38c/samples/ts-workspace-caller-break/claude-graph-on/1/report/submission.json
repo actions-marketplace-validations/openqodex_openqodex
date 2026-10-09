@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "708d34803616",
+  "summary": "safeGit now returns an object with code, stdout and stderr, and no longer throws when git fails. The change also exports the new GitResult type from the core package.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.93,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 14,
+      "title": "safeGit return type changed but callers still expect a string",
+      "problem": "safeGit now resolves to a GitResult object instead of the stdout string. currentBranch in packages/cli/src/branch.ts:7 still calls name.trim(), and changedFiles in packages/cli/src/status.ts:6 still calls out.split().",
+      "consequence": "In currentBranch, trim throws a TypeError, its catch swallows it, and it always returns null. The CLI in main.ts then always prints \"not a git repository\" and exits 1.",
+      "fix": "Update currentBranch and changedFiles to read result.stdout in the same change. Another option is to keep a string-returning wrapper for existing callers.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 15,
+      "line_end": 18,
+      "title": "Removed throw breaks callers that rely on git failures",
+      "problem": "safeGit now catches every git failure and returns a non-zero code instead of throwing. currentBranch in packages/cli/src/branch.ts:8 detects a missing repository only through that throw.",
+      "consequence": "If currentBranch reads stdout but not code, it returns an empty string outside a repository instead of null. main.ts then carries on, and changedFiles reports zero changes instead of an error.",
+      "fix": "Make currentBranch and changedFiles check result.code and handle non-zero codes. For example, currentBranch should return null when the code is not 0.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 18,
+      "title": "Changed safeGit behaviour has no covering test",
+      "problem": "This change gives safeGit a new return shape and a new error path. No test file in the repository exercises safeGit.",
+      "consequence": "Nothing would catch a regression in the code or stderr mapping. The broken callers also went unnoticed.",
+      "fix": "Add tests for safeGit covering a successful command and a failing command. Also add tests for currentBranch outside a repository.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

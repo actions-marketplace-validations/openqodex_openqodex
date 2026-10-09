@@ -1,0 +1,21 @@
+{
+  "guards": "declares a model field only when its constructor is Django's field, never by a name ending in Field",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Note",
+        "to": "model_field:Note.title",
+        "tier": "certain"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "declares_field",
+        "from": "mysite/models.py#Note",
+        "to": "model_field:Note.label"
+      }
+    ]
+  }
+}

@@ -7,12 +7,16 @@
 //    after a key) is kept in the summary impact.json is written from, or
 //    in a file of the review's packet, because a field named `id` is
 //    exempt from the redaction.
+// 3. A secret the scanners found that sits in a route path, which the
+//    framework plugins keep because it is not shaped like a key, reaches
+//    the brief's framework lines or the packet's frameworks.json, because
+//    those lines are built outside the summary and packet redaction.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DEFAULT_CONFIG, getChange } from "@openqodex/core";
-import { writePacket } from "@openqodex/graph";
+import { renderImpactBlock, writePacket } from "@openqodex/graph";
 import { buildGraphRun } from "../src/pipeline.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
@@ -97,6 +101,41 @@ describe("the review's graph run", () => {
     };
     walk(join(snapshot, packet.dir));
     expect(files.length).toBeGreaterThan(0);
+    for (const f of files) expect(readFileSync(f, "utf8"), f).not.toContain(secret);
+  });
+
+  it("keeps a secret in a route path out of the summary, the brief's framework lines and every packet file (3)", async () => {
+    // Not shaped like a key, so the plugin's facts keep it as the route's path; only the scanners know it.
+    const secret = ["hunter2", "open", "sesame"].join("-");
+    const root = repo({
+      "package.json": '{ "name": "api", "private": true, "type": "module", "dependencies": { "express": "^5.1.0" } }\n',
+      "src/server.js": `import express from "express";\nimport { listItems } from "./items.js";\n\nconst app = express();\napp.get("/${secret}/items", listItems);\napp.listen(3000);\n`,
+      "src/items.js": "export function listItems(_req, res) {\n  res.json([]);\n}\n",
+    });
+    writeFileSync(join(root, "src/items.js"), "export function listItems(_req, res) {\n  res.json([1]);\n}\n");
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const p = { repoRoot: root, workDir: root, config: structuredClone(DEFAULT_CONFIG), change, scan: null, secrets: [secret] };
+    const run = await buildGraphRun(p, { quiet: true } as never, false, false);
+    // The plugin kept the route: the graph holds the path, and the summary lists the route, redacted.
+    expect(JSON.stringify(run.graph?.frameworks?.entities ?? [])).toContain(secret);
+    expect(run.impact.frameworks?.routes.length).toBeGreaterThan(0);
+    expect(JSON.stringify(run.impact)).not.toContain(secret);
+    const block = renderImpactBlock(run.impact);
+    expect(block).toContain("/[redacted]/items");
+    expect(block).not.toContain(secret);
+    const snapshot = tempDir("oq-graph-run-snapshot-");
+    dirs.push(snapshot);
+    const packet = await writePacket({ root: snapshot, repoRoot: root, graph: run.graph as never, impact: run.impact, baseSha: change.baseSha, secrets: [secret] });
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else files.push(path);
+      }
+    };
+    walk(join(snapshot, packet.dir));
+    expect(files.some((f) => f.endsWith("frameworks.json"))).toBe(true);
     for (const f of files) expect(readFileSync(f, "utf8"), f).not.toContain(secret);
   });
 });

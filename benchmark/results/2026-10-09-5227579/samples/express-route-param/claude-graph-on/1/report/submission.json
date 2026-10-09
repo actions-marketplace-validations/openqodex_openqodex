@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "256602956034",
+  "summary": "The getUser handler now reads the user id from a different route param, puts the id in its 404 message, and adds a fetchedAt timestamp to the response.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "src/handlers/users.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Handler reads a route param that does not exist",
+      "problem": "The route at src/routes/users.js:7 declares the param as :id. The handler destructures userId from req.params, so userId is always undefined.",
+      "consequence": "findUser(undefined) always returns nothing, so GET /users/:id answers 404 for every user. The error message also says \"no user with id undefined\".",
+      "fix": "Read the id param that the route declares.",
+      "suggested_change": "  const { id: userId } = req.params;",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/handlers/users.js",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Changed getUser behaviour has no covering test",
+      "problem": "The change alters the param lookup, the 404 body and the response shape. No test in the repository exercises getUser.",
+      "consequence": "A test would have caught the broken param lookup before this push.",
+      "fix": "Add a test for GET /users/:id that checks the found case and the not-found case.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

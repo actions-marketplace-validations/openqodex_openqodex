@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "1957ed62c932",
+  "summary": "Adds to_display, which formats integer cents as a signed dollar string with thousands separators. Also adds balance_line, which builds a statement line from the balance of the entries, plus tests for both.",
+  "findings": [],
+  "dropped": [
+    {
+      "candidate": "c1",
+      "reason": "The assert sits in a pytest test function, where plain asserts are the normal idiom. Production code never runs this file.",
+      "file_path": "tests/test_money.py",
+      "line_number": 21
+    },
+    {
+      "candidate": "c2",
+      "reason": "The assert sits in a pytest test function, where plain asserts are the normal idiom. Production code never runs this file.",
+      "file_path": "tests/test_money.py",
+      "line_number": 22
+    },
+    {
+      "candidate": "c3",
+      "reason": "The assert sits in a pytest test function, where plain asserts are the normal idiom. Production code never runs this file.",
+      "file_path": "tests/test_money.py",
+      "line_number": 23
+    },
+    {
+      "candidate": "c4",
+      "reason": "The assert sits in a pytest test function, where plain asserts are the normal idiom. Production code never runs this file.",
+      "file_path": "tests/test_money.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c5",
+      "reason": "The assert sits in a pytest test function, where plain asserts are the normal idiom. Production code never runs this file.",
+      "file_path": "tests/test_money.py",
+      "line_number": 28
+    }
+  ]
+}

@@ -3,8 +3,10 @@
 // JSON lines (index/*.jsonl). Reading an index back gives the same Graph
 // the build made: retained equals fresh (test/session.test.ts checks).
 import type { ProjectModel } from "../discovery/projects.js";
+import { FRAMEWORK_DATA_VERSION } from "../frameworks/stage.js";
+import type { FrameworkData } from "../frameworks/stage.js";
 import { projectFolder } from "../resolve.js";
-import type { Graph, GraphEdge, GraphNode, GraphSite, GraphStatus, Miss, UnknownSite } from "../types.js";
+import type { DispatchSite, Graph, GraphEdge, GraphNode, GraphSite, GraphStatus, InvocationSummary, Miss, UnknownSite } from "../types.js";
 import type { OpenGeneration } from "./types.js";
 
 type Plain = Record<string, unknown>;
@@ -61,8 +63,10 @@ const parseLines = <T>(text: string | null): T[] | null => {
 // string (a path, a symbol id, a note) is written once in
 // index/strings.json and rows are arrays that name strings by their
 // number. Measured on vscode: the plain JSON lines were 552 MB, past the
-// folder's 512 MB bound on their own.
-export const INDEX_FORMAT = 2;
+// folder's 512 MB bound on their own. 3: the uses that are not calls
+// (references), the dispatch sites and the invocation summaries. 4: the
+// framework layer's data (index/frameworks.json).
+export const INDEX_FORMAT = 4;
 
 type Row = (number | number[])[];
 
@@ -108,6 +112,9 @@ export function writeIndex(g: Graph): Record<string, string> {
   const importers = [...g.importers.values()].flat().map(e.edge);
   const misses = g.misses.map((m) => [e.s(m.target), e.s(m.name), e.s(m.from), e.site(m.site)]);
   const unknowns = g.unknowns.map((u) => [e.s(u.file), u.line, u.column, e.s(u.name), e.s(u.cause), e.s(u.shape), e.s(u.caller), u.scope === "project" ? 1 : 0, e.s(u.note), u.candidates ? u.candidates.map(e.s) : -1]);
+  const references = g.references.map(e.edge);
+  const dispatch = g.dispatch.map((x) => [e.s(x.file), x.line, x.column, e.s(x.caller), e.s(x.name), x.declared.map(e.s), x.candidates.map(e.s), x.total, e.s(x.rule)]);
+  const summaries = [...g.summaries].map(([id, x]) => [e.s(id), x.params.map(e.s), x.invokes, x.returns.map(e.s), x.returnsOther ? 1 : 0]);
   return {
     "index/format.json": JSON.stringify({ format: INDEX_FORMAT }),
     "index/strings.json": JSON.stringify(e.table),
@@ -116,7 +123,11 @@ export function writeIndex(g: Graph): Record<string, string> {
     "index/importers.jsonl": lines(importers),
     "index/misses.jsonl": lines(misses),
     "index/unknowns.jsonl": lines(unknowns),
+    "index/references.jsonl": lines(references),
+    "index/dispatch.jsonl": lines(dispatch),
+    "index/summaries.jsonl": lines(summaries),
     "index/status.json": JSON.stringify(g.status),
+    "index/frameworks.json": JSON.stringify(g.frameworks ?? null),
   };
 }
 
@@ -139,9 +150,12 @@ export function readIndex(gen: OpenGeneration): (Omit<Graph, "repoRoot"> & { rep
   const importerRows = rows("index/importers.jsonl");
   const missRows = rows("index/misses.jsonl");
   const unknownRows = rows("index/unknowns.jsonl");
+  const referenceRows = rows("index/references.jsonl");
+  const dispatchRows = rows("index/dispatch.jsonl");
+  const summaryRows = rows("index/summaries.jsonl");
   const statusText = gen.read("index/status.json");
   const projectsText = gen.read("projects.json");
-  if (!nodeRows || !edgeRows || !importerRows || !missRows || !unknownRows || statusText === null || projectsText === null) return null;
+  if (!nodeRows || !edgeRows || !importerRows || !missRows || !unknownRows || !referenceRows || !dispatchRows || !summaryRows || statusText === null || projectsText === null) return null;
   let status: GraphStatus;
   let projects: { model: Plain; goModules: [string, string][] };
   try {
@@ -161,7 +175,26 @@ export function readIndex(gen: OpenGeneration): (Omit<Graph, "repoRoot"> & { rep
       if (Array.isArray(r[9])) u.candidates = (r[9] as number[]).map(d.s);
       return u;
     });
-    return assemble(nodes, edgeRows.map(d.edge), importerRows.map(d.edge), misses, unknowns, status, deserializeModel(projects.model), projects.goModules);
+    const dispatch = dispatchRows.map((r): DispatchSite => ({
+      file: d.s(r[0] as number),
+      line: r[1] as number,
+      column: r[2] as number,
+      caller: d.s(r[3] as number),
+      name: d.s(r[4] as number),
+      declared: (r[5] as number[]).map(d.s),
+      candidates: (r[6] as number[]).map(d.s),
+      total: r[7] as number,
+      rule: d.s(r[8] as number) as DispatchSite["rule"],
+    }));
+    const summaries = new Map<string, InvocationSummary>(summaryRows.map((r) => [d.s(r[0] as number), { params: (r[1] as number[]).map(d.s), invokes: r[2] as number[], returns: (r[3] as number[]).map(d.s), returnsOther: r[4] === 1 }]));
+    const extra = { references: referenceRows.map(d.edge), dispatch, summaries };
+    const graph = assemble(nodes, edgeRows.map(d.edge), importerRows.map(d.edge), misses, unknowns, status, deserializeModel(projects.model), projects.goModules, extra);
+    const frameworks = JSON.parse(gen.read("index/frameworks.json") ?? "null") as FrameworkData | null;
+    if (frameworks !== null) {
+      if (typeof frameworks !== "object" || frameworks.version !== FRAMEWORK_DATA_VERSION || !Array.isArray(frameworks.edges) || !Array.isArray(frameworks.entities)) return null;
+      graph.frameworks = frameworks;
+    }
+    return graph;
   } catch {
     return null;
   }
@@ -176,6 +209,7 @@ export function assemble(
   status: GraphStatus,
   model: ProjectModel,
   goModules: [string, string][],
+  extra: Pick<Graph, "references" | "dispatch" | "summaries"> = { references: [], dispatch: [], summaries: new Map() },
 ): Graph {
   const nodes = new Map<string, GraphNode>();
   const defsByFile = new Map<string, GraphNode[]>();
@@ -189,6 +223,12 @@ export function assemble(
   for (const e of edges) {
     (graphIn.get(e.to) ?? graphIn.set(e.to, []).get(e.to))?.push(e);
     (graphOut.get(e.from) ?? graphOut.set(e.from, []).get(e.from))?.push(e);
+  }
+  const refsIn = new Map<string, GraphEdge[]>();
+  const refsOut = new Map<string, GraphEdge[]>();
+  for (const e of extra.references) {
+    (refsIn.get(e.to) ?? refsIn.set(e.to, []).get(e.to))?.push(e);
+    (refsOut.get(e.from) ?? refsOut.set(e.from, []).get(e.from))?.push(e);
   }
   const importers = new Map<string, GraphEdge[]>();
   for (const e of importerEdges) (importers.get(e.to) ?? importers.set(e.to, []).get(e.to))?.push(e);
@@ -205,6 +245,11 @@ export function assemble(
     edges,
     in: graphIn,
     out: graphOut,
+    references: extra.references,
+    refsIn,
+    refsOut,
+    dispatch: extra.dispatch,
+    summaries: extra.summaries,
     importers,
     defsByFile,
     removed: new Map(),

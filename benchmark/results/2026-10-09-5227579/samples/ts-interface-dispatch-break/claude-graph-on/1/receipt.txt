@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 minor)
+Change 0694dbc5baec against HEAD, 1 file, +5 -1
+Summary: SqlCache.get now throws an error when a key is missing or older than 15 minutes, where it used to return an empty string.
+1. Critical bug: Missing key now throws, breaking the Cache contract (src/cache/sql-cache.ts:13-15)
+2. Minor maintainability: Expiry behaviour has no covering test (src/cache/sql-cache.ts:13)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

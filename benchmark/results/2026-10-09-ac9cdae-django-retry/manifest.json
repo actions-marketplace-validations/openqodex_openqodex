@@ -1,0 +1,64 @@
+{
+  "version": 2,
+  "started_at": "2026-10-09T02:54:28.644Z",
+  "build": {
+    "commit": "ac9cdae1c68edbc466b8fc6faad0d8860635d8b4",
+    "short": "ac9cdae",
+    "tree": "706996fb0515522d8d5c80e903da9443113eb521",
+    "commitTree": "1155678de043a09dfe7b083d4b783e07badc8083",
+    "dirty": true,
+    "bundleHash": "18aaa1db66265eb155e9bb702944e2fefc17fbd867c916a12538efbc9acc67df",
+    "builtAt": "2026-10-09T00:16:57.660Z",
+    "builtWithNode": "v22.23.3",
+    "cli": "packages/cli/dist/bin.js",
+    "cliVersion": "0.10.0"
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "27.2.0",
+    "arch": "arm64",
+    "cpu": "Apple M5 Pro",
+    "cpus": 15,
+    "memoryGb": 48,
+    "node": "v22.23.3"
+  },
+  "reviewer": {
+    "name": "claude",
+    "version": "2.1.295",
+    "model": "claude-opus-5-5",
+    "modelFrom": "the model Claude Code names in its answer"
+  },
+  "reviewers": {
+    "claude": {
+      "name": "claude",
+      "version": "2.1.295",
+      "model": "claude-opus-5-5",
+      "modelFrom": "the model Claude Code names in its answer"
+    }
+  },
+  "review": {
+    "web": "on",
+    "timeoutSeconds": 900,
+    "reportDir": true,
+    "flags": "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]"
+  },
+  "cases": [
+    "django-model-view"
+  ],
+  "caseHashes": {
+    "django-model-view": "1c282ee07c951ee13f4ad73f54914f4b6c786ab23fd84b47eca2b4a2af94bfa7"
+  },
+  "configs": [
+    "claude-graph-on"
+  ],
+  "repeat": 1,
+  "concurrency": 1,
+  "planned": 1,
+  "ended": {
+    "at": "2026-10-09T02:55:11.752Z",
+    "how": "finished",
+    "why": null,
+    "reviewsWithAnAttempt": 1,
+    "planned": 1
+  }
+}

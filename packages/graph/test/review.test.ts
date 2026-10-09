@@ -26,7 +26,7 @@
 //     assignment, so a call to the name links to an import or a definition
 //     the assignment replaced.
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, openStore } from "../src/index.js";
@@ -36,13 +36,8 @@ import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 const home = makeHome();
-const dirs: string[] = [home];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
 function repo(files: Record<string, string>): string {
   const root = makeRepo(files);
-  dirs.push(root);
   return root;
 }
 const cacheOf = (root: string) => join(root, ".openqodex", "graph");
@@ -60,7 +55,6 @@ describe("a hostile repo", () => {
   it("never writes or deletes through a cache folder that is a link (1)", async () => {
     const root = repo({ "a.ts": "export function a() {}\n" });
     const outside = tempDir("oq-outside-");
-    dirs.push(outside);
     const victim = join(outside, `${"a".repeat(40)}.json`);
     writeFileSync(victim, "keep");
     mkdirSync(join(root, ".openqodex"));
@@ -99,7 +93,6 @@ describe("a hostile repo", () => {
 
   it("does not read a tsconfig.json that links outside the repo (3)", async () => {
     const outside = tempDir("oq-outside-");
-    dirs.push(outside);
     writeFileSync(join(outside, "tsconfig.json"), '{ "compilerOptions": { "baseUrl": ".", "paths": { "@lib/*": ["src/*"] } } }');
     const root = repo({ "src/a.ts": "export function a() {}\n", "src/b.ts": 'import { a } from "@lib/a";\nexport const b = () => a();\n' });
     symlinkSync(join(outside, "tsconfig.json"), join(root, "tsconfig.json"));

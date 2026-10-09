@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "change_id": "32c939b7a434",
+  "summary": "Extracts a shared setting helper and named default constants for port and host lookup, and adds unit tests for both functions.",
+  "findings": [],
+  "dropped": []
+}

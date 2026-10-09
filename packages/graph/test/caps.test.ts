@@ -13,23 +13,19 @@
 // 6. One file whose parse runs away (tree-sitter on an unclosed comment)
 //    holds the build past every budget.
 import { afterAll, describe, expect, it } from "vitest";
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, openStore } from "../src/index.js";
+import { LOOSE_BOUND_MS, onceOnCpu } from "../src/test-timing.js";
 import { commitAll, makeHome, makeRepo, writeFiles } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
 const home = makeHome();
-const repos: string[] = [home];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
 function repo(files: Record<string, string>): string {
   const root = makeRepo(files);
-  repos.push(root);
   return root;
 }
 const many = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`src/f${i}.ts`, `export function f${i}() {\n  return ${i};\n}\n`]));
@@ -96,9 +92,11 @@ describe("the caps of a build", () => {
 
   it("stops one runaway parse at its time limit and records the file (6)", async () => {
     const root = repo({ "slow.ts": `export function f() {\n  return 1; ${"/* x ".repeat(100_000)}\n}\n`, "ok.ts": "export function ok() {}\n" });
-    const t0 = performance.now();
-    const g = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 60_000 });
-    expect(performance.now() - t0).toBeLessThan(5000);
+    // The parser takes the square of this file's length (an unclosed comment
+    // full of openers), so its time cannot grow linearly: the build stops it
+    // at MAX_PARSE_MS and the whole build stays under the loose bound.
+    const { value: g, cpuMs } = await onceOnCpu(() => buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 60_000 }));
+    expect(cpuMs, `${cpuMs.toFixed(0)} ms of CPU time`).toBeLessThan(LOOSE_BOUND_MS);
     expect(g.status.notRead).toEqual([{ file: "slow.ts", reason: "slow-parse" }]);
     expect(g.defsByFile.has("ok.ts")).toBe(true);
   });

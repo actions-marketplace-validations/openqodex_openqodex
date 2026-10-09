@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "09f3ac8900f8",
+  "summary": "Adds two admin routes: a single-user delete and a bulk purge that removes a list of user ids.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Delete route without admin check",
+      "problem": "The delete route omits the requireAdmin middleware that its sibling routes on lines 7 and 16 use. server.js mounts the router with no app-level auth, so nothing else guards it.",
+      "consequence": "Any unauthenticated caller can delete any user by sending DELETE /admin/users/:id.",
+      "fix": "Add requireAdmin to the route, matching the other admin routes.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 24,
+      "title": "Floating promises in purge loop",
+      "problem": "The forEach callback is async, so each removeUser promise is discarded and nothing awaits or catches it. db.removeUser throws for any unknown id, and the handler responds before the deletions finish.",
+      "consequence": "One unknown id in the list raises an unhandled rejection, which crashes the Node process. The response also reports every id as removed even when deletions fail.",
+      "fix": "Collect the promises and await them with Promise.all or Promise.allSettled before responding, and report only the ids that succeeded.",
+      "suggested_change": "  const results = await Promise.allSettled(ids.map((id) => db.removeUser(id)));\n  const removed = results.filter((r) => r.status === \"fulfilled\").length;\n  res.json({ removed });",
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 16,
+      "line_end": 26,
+      "title": "New routes have no tests",
+      "problem": "The change adds two routes with a validation branch and a bulk path. The repository has no test file exercising them.",
+      "consequence": "The missing auth guard and the discarded promises in this change would both have surfaced under a basic route test.",
+      "fix": "Add tests covering the 400 branch, the admin-only guard on both routes, and purge with an unknown id.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

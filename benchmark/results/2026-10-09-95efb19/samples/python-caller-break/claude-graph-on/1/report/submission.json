@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "9f4d6ef41c2c",
+  "summary": "Changes tax_for to return None for unknown regions instead of zero tax. Both callers in the shop package do arithmetic on the result.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "None return crashes both callers for unknown regions",
+      "problem": "tax_for now returns None for any region not in RATES. order_total in checkout.py adds that None to an int, and tax_line in receipt.py divides it by 100.",
+      "consequence": "Checkout and receipt printing raise TypeError for every customer outside the three listed regions. Before this change those customers paid zero tax and completed checkout.",
+      "fix": "Keep returning 0 for unknown regions, or update order_total and tax_line to handle None before doing arithmetic.",
+      "suggested_change": "        return 0",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 7,
+      "line_end": 8,
+      "title": "New unknown-region branch has no covering test",
+      "problem": "The change adds a branch that returns None for unknown regions. The repository contains no test files, so nothing exercises this branch or its callers.",
+      "consequence": "The caller breakage in checkout.py and receipt.py goes unnoticed until a customer in an unlisted region hits it in production.",
+      "fix": "Add a test for tax_for with an unknown region, and tests for order_total and tax_line with the same input.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

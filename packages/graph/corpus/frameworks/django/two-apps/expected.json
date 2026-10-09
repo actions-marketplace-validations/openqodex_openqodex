@@ -1,0 +1,48 @@
+{
+  "guards": "keeps two Django applications' equal routes apart and lists only the changed application's route",
+  "callers": [
+    {
+      "to": "site_a/alpha/views.py#check",
+      "site": "site_a/alpha/views.py:6",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "django",
+    "apps": 2,
+    "registrations": [
+      {
+        "site": "site_a/alpha/urls.py:6",
+        "pattern": "health/",
+        "handler": "site_a/alpha/views.py#health",
+        "status": "bound",
+        "mounted": true
+      },
+      {
+        "site": "site_b/beta/urls.py:6",
+        "pattern": "health/",
+        "handler": "site_b/beta/views.py#health",
+        "status": "bound",
+        "mounted": true
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "from": "registration:site_a/alpha/urls.py:6",
+        "to": "site_b/beta/views.py#health"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:site_b/beta/urls.py:6",
+        "to": "site_a/alpha/views.py#health"
+      }
+    ],
+    "brief": [
+      "| `ANY health/` | `health` | `site_a/alpha/urls.py:6` | `views.health` | reaches `check` in 1 hop (certain) |"
+    ],
+    "notBrief": [
+      "site_b/beta/urls.py"
+    ]
+  }
+}

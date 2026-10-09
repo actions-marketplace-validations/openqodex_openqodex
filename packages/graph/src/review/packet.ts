@@ -6,8 +6,11 @@
 // stops the review rather than being overwritten.
 //
 // Every caller the graph retained is on a page, past any display cut, read
-// from the graph and never from the summary's cut lists; an unexplored
-// frontier (the walk limit) is a gap, never a page. A page that holds less
+// from the graph and never from the summary's cut lists, each with its tier
+// (certain, likely or possible) and each page with its counts per tier; an
+// unexplored frontier (the walk limit) is a gap, never a page. What
+// implements or overrides a touched symbol, and where it is used as a value
+// or a type, have pages of their own. A page that holds less
 // than the whole list says so and by how many. Every text
 // carries no secret the scanners found: every string inside every value is
 // redacted before it is serialized (a quote or a backslash in a secret would
@@ -15,12 +18,15 @@
 // checked after it is written; a secret found there stops the review.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { redactSecrets } from "@openqodex/core";
+import { display, redactSecrets } from "@openqodex/core";
 import type { ImpactSummary } from "@openqodex/core";
 import { showBlob } from "../capture/git.js";
-import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION } from "../model/records.js";
+import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION, POSSIBLE_KINDS } from "../model/records.js";
 import { callersOfRemoved, isTestPath, toImpactUnknown } from "../impact.js";
-import { symbolKey } from "../render.js";
+import { frameworkPacket } from "../frameworks/impact.js";
+import type { FrameworkUnknown } from "../frameworks/plugin.js";
+import { PLUGINS } from "../frameworks/registry.js";
+import { code, path as escapedPath, symbolKey } from "../render.js";
 import type { Graph, GraphEdge } from "../types.js";
 
 export const PACKET_ROOT = ".openqodex-review";
@@ -33,7 +39,7 @@ const MAX_BASE_BYTES = 1024 * 1024; // a base file larger than this gives no exc
 export class PacketCollision extends Error {}
 export class PacketLeak extends Error {}
 
-type Item = { from: string; fromName: string | null; to: string; kind: GraphEdge["kind"]; site: GraphEdge["sites"][number] };
+type Item = { from: string; fromName: string | null; to: string; kind: GraphEdge["kind"]; tier: GraphEdge["tier"]; site: GraphEdge["sites"][number] };
 // What a page leaves out of its list: the count when known, null when not.
 type PageCut = { omitted: number | null; note: string } | null;
 
@@ -78,10 +84,17 @@ export async function writePacket(args: {
     files.push({ path, about: redact(about) });
   };
   const nameOf = (id: string) => graph.nodes.get(id)?.name ?? impact.symbols.find((s) => s.id === id)?.name ?? null;
+  const RANK = { certain: 0, likely: 1, possible: 2 } as const;
   const toItems = (edges: Pick<GraphEdge, "from" | "to" | "kind" | "sites">[], end: "from" | "to"): Item[] =>
     edges
-      .flatMap((e) => e.sites.map((site) => ({ from: e.from, fromName: nameOf(end === "from" ? e.from : e.to), to: e.to, kind: e.kind, site })))
-      .sort((a, b) => Number(isTestPath(a.site.file)) - Number(isTestPath(b.site.file)) || a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line);
+      .flatMap((e) => e.sites.map((site) => ({ from: e.from, fromName: nameOf(end === "from" ? e.from : e.to), to: e.to, kind: e.kind, tier: site.tier, site })))
+      .sort((a, b) => RANK[a.tier] - RANK[b.tier] || Number(isTestPath(a.site.file)) - Number(isTestPath(b.site.file)) || a.site.file.localeCompare(b.site.file) || a.site.line - b.site.line);
+  // How many items of a list are certain, likely and possible.
+  const tiers = (items: Item[]) => {
+    const c = { certain: 0, likely: 0, possible: 0 };
+    for (const i of items) c[i.tier]++;
+    return c;
+  };
   // A list split into pages of PAGE_ITEMS: <base>.json, then <base>.2.json, ...
   // `total` counts the items on the pages, `totalExact` is true when they
   // are the whole list, and `cut` says otherwise what is missing.
@@ -128,62 +141,103 @@ export async function writePacket(args: {
   for (const seed of seeds) {
     const f = floorOf.get(seed);
     const base = `callers/${symbolKey(seed)}`;
-    const about = `every caller of \`${nameOf(seed) ?? seed}\``;
+    const about = `every caller of ${code(nameOf(seed) ?? seed)}`;
     const head = { symbol: seed, name: nameOf(seed), floor: f?.floor ?? true, reasons: f?.reasons ?? [] };
     const held = removedEdges.get(seed) ?? (graph.nodes.has(seed) ? (graph.in.get(seed) ?? []) : null);
     if (held !== null) {
-      pages(base, about, head, toItems(held.filter((e) => e.from !== seed), "from"));
+      const items = toItems(held.filter((e) => e.from !== seed), "from");
+      pages(base, about, { ...head, counts: tiers(items) }, items);
       continue;
     }
     // A symbol this graph does not hold: only the first hop the summary
     // kept is here, and a hub cut or the walk limit may have shortened it.
-    const kept = impact.callers.filter((p) => p.seed === seed && p.edges.length === 1).map((p) => p.edges[0]);
+    const kept = [...impact.callers, ...(impact.possible ?? [])].filter((p) => p.seed === seed && p.edges.length === 1).map((p) => p.edges[0]);
     const listed = kept.reduce((n, e) => n + e.sites.length, 0);
     const hub = impact.hubs.find((h) => h.symbol === seed);
     const omitted = hub ? hub.sites - listed : impact.cuts.some((c) => c.by === "walk-limit") ? null : 0;
     const cut = omitted === 0 ? null : { omitted, note: `the graph this packet was written from does not hold this symbol, so these are the call sites the summary kept${omitted === null ? "; the walk limit may have left out more, not counted" : ""}` };
-    pages(base, about, head, toItems(kept, "from"), cut);
+    const items = toItems(kept, "from");
+    pages(base, about, { ...head, counts: tiers(items) }, items, cut);
+  }
+
+  // What implements or overrides each touched and removed symbol, and the
+  // calls through it that fan out: each with its candidates and their count.
+  for (const seed of seeds) {
+    if (!graph.nodes.has(seed)) continue;
+    const below = [...(graph.refsIn.get(seed) ?? []).filter((e) => e.kind === "overrides"), ...(graph.in.get(seed) ?? []).filter((e) => e.kind === "implements" || e.kind === "inherits")];
+    const fanOut = graph.dispatch.filter((d) => d.declared.includes(seed) || d.candidates.includes(seed));
+    if (below.length === 0 && fanOut.length === 0) continue;
+    const items = toItems(below, "from");
+    pages(`implementers/${symbolKey(seed)}`, `what implements, overrides or extends ${code(nameOf(seed) ?? seed)}, and the calls through it that may run another implementation`, { symbol: seed, name: nameOf(seed), counts: tiers(items), dispatch: fanOut.map((d) => ({ ...d, omitted: d.total - d.candidates.length })) }, items);
+  }
+  // Where each touched and removed symbol is used as a value or named as a type.
+  for (const seed of seeds) {
+    const uses = (graph.refsIn.get(seed) ?? []).filter((e) => (e.kind === "uses_value" || e.kind === "uses_type") && e.from !== seed);
+    if (uses.length === 0) continue;
+    const items = toItems(uses, "from");
+    pages(`references/${symbolKey(seed)}`, `where ${code(nameOf(seed) ?? seed)} is used as a value or named as a type`, { symbol: seed, name: nameOf(seed), counts: tiers(items) }, items);
   }
   // Every caller of each first-hop caller: the second hop past its cut.
-  const firstHop = new Set(impact.callers.filter((p) => p.edges.length >= 1).map((p) => p.edges[0].from));
+  const firstHop = new Set([...impact.callers, ...(impact.possible ?? [])].filter((p) => p.edges.length >= 1).map((p) => p.edges[0].from));
   for (const caller of firstHop) {
     if (graph.nodes.get(caller)?.kind === "file") continue;
     const incoming = (graph.in.get(caller) ?? []).filter((e) => e.from !== caller);
     if (incoming.length === 0) continue;
-    pages(`second-hop/${symbolKey(caller)}`, `every caller of \`${nameOf(caller) ?? caller}\`, a caller of the change`, { symbol: caller, name: nameOf(caller) }, toItems(incoming, "from"));
+    const items = toItems(incoming, "from");
+    pages(`second-hop/${symbolKey(caller)}`, `every caller of ${code(nameOf(caller) ?? caller)}, a caller of the change`, { symbol: caller, name: nameOf(caller), counts: tiers(items) }, items);
   }
   for (const seed of impact.touched) {
     const out = graph.out.get(seed) ?? [];
-    if (out.length > 0) pages(`callees/${symbolKey(seed)}`, `everything \`${nameOf(seed) ?? seed}\` calls`, { symbol: seed, name: nameOf(seed) }, toItems(out, "to"));
+    if (out.length > 0) pages(`callees/${symbolKey(seed)}`, `everything ${code(nameOf(seed) ?? seed)} calls`, { symbol: seed, name: nameOf(seed) }, toItems(out, "to"));
   }
   const changed = new Set(impact.touched.map((id) => graph.nodes.get(id)?.file).filter((f): f is string => !!f));
   for (const e of impact.importers) changed.add(e.to);
   for (const file of changed) {
     const importers = graph.importers.get(file) ?? [];
-    if (importers.length > 0) pages(`importers/${symbolKey(file)}`, `every file that imports ${file}`, { file }, importers.map((e) => ({ from: e.from, site: e.sites[0] })));
+    if (importers.length > 0) pages(`importers/${symbolKey(file)}`, `every file that imports ${escapedPath(file)}`, { file }, importers.map((e) => ({ from: e.from, site: e.sites[0] })));
   }
 
   // What the graph could not see: in the changed files, their callers' files,
   // and the calls through values in the seeds' projects.
-  const near = new Set<string>([...changed, ...impact.callers.flatMap((p) => p.edges.flatMap((e) => e.sites.map((s) => s.file)))]);
+  const near = new Set<string>([...changed, ...[...impact.callers, ...(impact.possible ?? [])].flatMap((p) => p.edges.flatMap((e) => e.sites.map((s) => s.file)))]);
   const projects = new Set(seeds.map((id) => graph.nodes.get(id)?.file ?? impact.symbols.find((s) => s.id === id)?.file).filter((f): f is string => !!f).map((f) => graph.projectOf(f)));
   const unknowns = graph.unknowns.filter((u) => near.has(u.file) || (u.scope === "project" && projects.has(graph.projectOf(u.file))));
-  write("unknowns.json", "what the graph could not see near the change, with causes", {
-    total: unknowns.length,
+  // With the framework layer's gaps of the change (frameworks.json holds
+  // them in full), each named by its plugin.
+  const fw = frameworkPacket(graph, impact);
+  const fwUnknowns = ((fw?.unknowns ?? []) as FrameworkUnknown[]).map((u) => ({
+    file: u.site?.file ?? ("file" in u.scope ? u.scope.file : null),
+    line: u.site?.line ?? null,
+    name: u.name,
+    cause: u.cause,
+    scope: "file" in u.scope ? "file" : "project",
+    note: u.note,
+    candidates: null,
+    plugin: u.plugin,
+  }));
+  const allUnknowns = [...unknowns.map(toImpactUnknown), ...fwUnknowns];
+  write("unknowns.json", "what the graph and its framework plugins could not see near the change, with causes", {
+    total: allUnknowns.length,
     totalExact: true,
-    shown: Math.min(unknowns.length, MAX_UNKNOWNS),
-    items: unknowns.slice(0, MAX_UNKNOWNS).map(toImpactUnknown),
+    shown: Math.min(allUnknowns.length, MAX_UNKNOWNS),
+    items: allUnknowns.slice(0, MAX_UNKNOWNS),
     notRead: graph.status.notRead,
     cuts: impact.cuts,
   });
+  if (fw) write("frameworks.json", "every route, template, migration and test link of the change that the brief's framework tables cut", fw);
   write("status.json", "how the graph was built: counts, mode, generation, what it left out", { apiVersion: API_VERSION, ...graph.status });
   write("capabilities.json", "what this installation's graph can see", {
     apiVersion: API_VERSION,
     modelVersion: MODEL_VERSION,
     languages: ["typescript", "tsx", "javascript", "python", "go", "ruby"],
-    relations: ["calls", "inherits", "imports"],
-    tiers: { certain: [...CERTAIN_KINDS], likely: ["autoload", "workspace-package by the dist to src or src/index convention", "ts-paths when the tsconfig's globs do not list the file"], possible: [] },
-    notYet: ["calls through interfaces and base classes (phase 2)", "functions used as values (phase 2)", "routes, handlers and tests (phase 4)"],
+    relations: ["calls", "inherits", "implements", "dispatches_to", "may_invoke", "overrides", "uses_value", "uses_type", "imports"],
+    tiers: {
+      certain: [...CERTAIN_KINDS],
+      likely: ["autoload", "workspace-package by the dist to src or src/index convention", "ts-paths when the tsconfig's globs do not list the file", "method-set: a Go type or a Python class that defines every member of an interface or a Protocol by name"],
+      possible: [...POSSIBLE_KINDS],
+    },
+    frameworks: PLUGINS.map((p) => ({ id: p.id, version: p.version, supportedVersions: p.supportedVersions, rules: p.capabilities().rules.map((r) => r.id) })),
+    notYet: ["field reads and writes, and decorators", `routes, handlers and tests of frameworks other than ${PLUGINS.map((p) => p.id).join(", ")} (phase 4)`],
   });
 
   // The base version of each removed or moved symbol, as the base had it.
@@ -192,10 +246,12 @@ export async function writePacket(args: {
       const bytes = await showBlob(args.repoRoot, args.baseSha, s.file, MAX_BASE_BYTES);
       if (bytes === null) continue;
       const lines = bytes.toString("utf8").split("\n").slice(s.startLine - 1, Math.min(s.endLine, s.startLine - 1 + MAX_BASE_LINES));
-      write(`base/${symbolKey(s.id)}.txt`, `the base version of \`${s.name}\` (${s.file}:${s.startLine}), from before the change`, `# base version of ${s.name}, ${s.file}:${s.startLine}-${s.endLine}; this is not the code under review\n${lines.join("\n")}\n`);
+      write(`base/${symbolKey(s.id)}.txt`, `the base version of ${code(s.name)} (${escapedPath(s.file)}:${s.startLine}), from before the change`, `# base version of ${display(s.name)}, ${display(s.file)}:${s.startLine}-${s.endLine}; this is not the code under review\n${lines.join("\n")}\n`);
     }
   }
 
+  // Each line's words name repository text through the brief's own helpers
+  // (render.ts): a name as a code span, a path escaped, on one line (#71).
   const index = [
     "# The code graph's files for this review",
     "",

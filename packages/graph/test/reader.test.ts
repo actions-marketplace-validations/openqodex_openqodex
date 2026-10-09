@@ -11,7 +11,7 @@
 //    checkout in) the file of that name outside decides whether the path
 //    is listed as too big or unreadable: its size reaches the report.
 import { afterAll, describe, expect, it } from "vitest";
-import { renameSync, rmSync, symlinkSync } from "node:fs";
+import { renameSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph } from "../src/index.js";
 import { RepoReader } from "../src/safe-fs.js";
@@ -20,21 +20,14 @@ import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const dirs: string[] = [];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
-
 function temp(prefix: string): string {
   const d = tempDir(prefix);
-  dirs.push(d);
   return d;
 }
 
 describe("the repository reader", () => {
   it("reads nothing through a folder swapped for a link after an earlier read found it a real folder (1)", () => {
     const root = makeRepo({ "src/lib/a.ts": "export const inside = 1;\n" });
-    dirs.push(root);
     const outside = temp("oq-outside-");
     writeFiles(outside, { "lib/a.ts": "export const outside = 1;\n" });
     const reader = new RepoReader(root);
@@ -48,7 +41,6 @@ describe("the repository reader", () => {
 
   it("lists a source file under a folder that became a link as unreadable, never by the size of the file of that name outside (2)", async () => {
     const root = makeRepo({ "src/a.ts": "export const a = 1;\n", "main.ts": "export const m = 1;\n" });
-    dirs.push(root);
     commitAll(root);
     const outside = temp("oq-outside-");
     writeFiles(outside, { "a.ts": `export const big = "${"x".repeat(4096)}";\n` });

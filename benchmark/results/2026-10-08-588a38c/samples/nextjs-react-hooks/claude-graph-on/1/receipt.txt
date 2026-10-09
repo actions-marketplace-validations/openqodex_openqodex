@@ -1,0 +1,12 @@
+Passed with warnings: 7 findings (1 critical, 3 major, 3 minor)
+Change f40fe5221f97 against HEAD, 1 file, +23 -5
+Summary: Turns the search page into a client component that reads q from the URL, fetches matching products and renders them in a list. It also removes the search form.
+1. Critical security: URL query rendered as raw HTML (app/search/page.tsx:21)
+2. Major bug: Effect refetches on every render (app/search/page.tsx:15-17)
+3. Major bug: Hooks called after a conditional return (app/search/page.tsx:10-13)
+4. Major bug: Search form removed with no replacement (app/search/page.tsx:11)
+5. Minor bug: Search failure is never handled (app/search/page.tsx:16)
+6. Minor bug: List items have no key (app/search/page.tsx:24)
+7. Minor maintainability: New search behaviour has no test (app/search/page.tsx:8-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md
