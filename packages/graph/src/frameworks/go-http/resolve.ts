@@ -955,6 +955,10 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       const verb = method === "" ? "GET" : method.toUpperCase();
       const unread = (cause: Cause, note: string) => gap({ plugin: PLUGIN, site, scope: { file }, affects: ["tests"], cause, name: show(tArg), note, count: null, exact: false });
       const hits: Registration[] = [];
+      if (!req.path.startsWith("/")) {
+        unread("unsupported-rule", `the request target ${req.path.slice(0, 80)} is neither a path nor an absolute URL, so the route it reaches is not known`);
+        continue;
+      }
       const xs = segments(req.path);
       if (!xs) {
         unread("fan-out-capped", `the request path ${req.path.slice(0, 80)} has more than ${MAX_PATTERN_SEGMENTS} segments, so it is not matched against any route`);

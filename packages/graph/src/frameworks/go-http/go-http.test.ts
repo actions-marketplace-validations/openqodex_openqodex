@@ -458,6 +458,16 @@ describe("the net/http plugin on small repositories", () => {
     expect(at(13)).toEqual(["fan-out-capped", "unsupported-rule"]);
   });
 
+  it("says a request target that is neither a path nor an absolute URL is unread, never blaming the segment cap", async () => {
+    const g = await graphOf({
+      "main.go": `${GO_HEAD}func h(w http.ResponseWriter, r *http.Request) {}\n\nfunc main() {\n\tmux := http.NewServeMux()\n\tmux.HandleFunc("/items", h)\n\thttp.ListenAndServe(":8080", mux)\n}\n`,
+      "main_test.go": `package main\n\nimport (\n\t"net/http/httptest"\n\t"testing"\n)\n\nfunc TestBare(t *testing.T) {\n\thttptest.NewRequest("GET", "items", nil)\n}\n`,
+    });
+    const gaps = goUnknowns(g).filter((u) => u.site?.file === "main_test.go" && u.site.line === 9 && u.affects.includes("tests"));
+    expect(gaps.map((u) => u.cause)).toEqual(["unsupported-rule"]);
+    expect(gaps[0]?.note).not.toContain("segments");
+  });
+
   it("never reads a list cut short by a read limit as complete: a long pattern, a long wrapper chain, a server whose handler lies past the budget", async () => {
     const longPath = `/${"x".repeat(2100)}`;
     const eater = `d(${Array.from({ length: 20 }, () => `d(${Array.from({ length: 20 }, (_, i) => i).join(", ")})`).join(", ")})`;
