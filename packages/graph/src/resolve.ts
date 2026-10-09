@@ -1057,7 +1057,10 @@ export function createWorld(input: ResolveInput): World {
     return false;
   };
 
-  type Bases = { keys: string[]; evs: Ev[]; rels: TypeRef["rel"][]; refs: TypeRef[]; outside: boolean };
+  // `order`: every base a member may come from, in the order written: one
+  // in the graph by its index into `keys`, one outside it by its spelling.
+  type Slot = { i: number } | { outside: string; rel: TypeRef["rel"] };
+  type Bases = { keys: string[]; evs: Ev[]; rels: TypeRef["rel"][]; refs: TypeRef[]; outside: boolean; order: Slot[] };
   const baseKeys = new Map<string, Bases>();
   // The in-repo base classes of a class, each with the evidence of the name
   // that binds it, how the class takes it (extends, implements, a Ruby
@@ -1066,20 +1069,32 @@ export function createWorld(input: ResolveInput): World {
   const basesOf = (key: string): Bases => {
     let out = baseKeys.get(key);
     if (out) return out;
-    out = { keys: [], evs: [], rels: [], refs: [], outside: false };
+    out = { keys: [], evs: [], rels: [], refs: [], outside: false, order: [] };
     baseKeys.set(key, out);
     const info = classes.get(key);
     if (!info) return out;
     for (const b of info.bases) {
       const k = typeKey(info.file, info.family, b);
       if (k !== null && k !== "ext" && k.key !== key) {
+        out.order.push({ i: out.keys.length });
         out.keys.push(k.key);
         out.evs.push(k.ev);
         out.rels.push(b.rel);
         out.refs.push(b);
-      } else if ((k === null || k === "ext") && b.rel !== "implements") out.outside = true;
+      } else if ((k === null || k === "ext") && b.rel !== "implements") {
+        // An implemented interface outside the graph brings no member; any other base may.
+        out.outside = true;
+        out.order.push({ outside: info.family === "ruby" || b.qualifier === null ? b.name : `${b.qualifier}.${b.name}`, rel: b.rel });
+      }
     }
     return out;
+  };
+
+  // A member found past a base outside the graph that the language looks
+  // in first: that base may define it, so the binding is likely at most.
+  const pastOutside = (outside: string, name: string, ev: Ev | null): Ev => {
+    const caveat: Ev = { kind: "same-scope", tier: "likely", via: null, note: `The lookup passes ${outside}, a class outside the graph, before it finds ${name}; the graph assumes ${outside} does not define it.`, rule: "lookup-past-outside" };
+    return ev ? chain(ev, caveat) : caveat;
   };
 
   // A step from a class to its base: the base binding's evidence, then
@@ -1117,18 +1132,27 @@ export function createWorld(input: ResolveInput): World {
     const own = ownMethods(key, name, side);
     if (own) return { ids: own, ev: null };
     const seen = new Set([key]);
-    const stack: { key: string; ev: Ev }[] = [];
+    const stack: ({ key: string; ev: Ev } | { outside: string })[] = [];
     const pushBases = (k: string, ev: Ev | null) => {
       const b = basesOf(k);
-      for (let i = b.keys.length - 1; i >= 0; i--) stack.push({ key: b.keys[i] as string, ev: ev ? chain(ev, b.evs[i] as Ev) : (b.evs[i] as Ev) });
+      for (let j = b.order.length - 1; j >= 0; j--) {
+        const slot = b.order[j] as Slot;
+        if ("outside" in slot) stack.push({ outside: slot.outside });
+        else stack.push({ key: b.keys[slot.i] as string, ev: ev ? chain(ev, b.evs[slot.i] as Ev) : (b.evs[slot.i] as Ev) });
+      }
     };
     pushBases(key, null);
+    let outside: string | null = null;
     while (stack.length > 0) {
-      const top = stack.pop() as { key: string; ev: Ev };
+      const top = stack.pop() as { key: string; ev: Ev } | { outside: string };
+      if ("outside" in top) {
+        outside ??= top.outside;
+        continue;
+      }
       if (seen.has(top.key)) continue;
       seen.add(top.key);
       const found = ownMethods(top.key, name, side);
-      if (found) return { ids: found, ev: top.ev };
+      if (found) return { ids: found, ev: outside ? pastOutside(outside, name, top.ev) : top.ev };
       pushBases(top.key, top.ev);
     }
     return null;
@@ -1147,18 +1171,30 @@ export function createWorld(input: ResolveInput): World {
     mroOpen.add(key);
     const b = basesOf(key);
     const lists: { keys: string[]; evs: (Ev | null)[] }[] = [];
+    // A base outside the graph keeps its place, named by its spelling with a
+    // leading "?", so a lookup that reaches it knows the member may be there.
+    const heads: string[] = [];
     let failed = false;
-    for (let i = 0; i < b.keys.length && !failed; i++) {
-      const sub = mro(b.keys[i] as string, depth + 1);
+    for (const slot of b.order) {
+      if (failed) break;
+      if ("outside" in slot) {
+        lists.push({ keys: [`?${slot.outside}`], evs: [null] });
+        heads.push(`?${slot.outside}`);
+        continue;
+      }
+      const sub = mro(b.keys[slot.i] as string, depth + 1);
       if (!sub) failed = true;
-      else lists.push({ keys: sub.keys, evs: sub.evs.map((e) => throughBase(b.evs[i] as Ev, e)) });
+      else {
+        lists.push({ keys: sub.keys, evs: sub.evs.map((e) => throughBase(b.evs[slot.i] as Ev, e)) });
+        heads.push(b.keys[slot.i] as string);
+      }
     }
     mroOpen.delete(key);
     let out: { keys: string[]; evs: (Ev | null)[] } | null = null;
     if (!failed) {
       const evOf = new Map<string, Ev | null>();
       for (const l of lists) l.keys.forEach((k, j) => evOf.has(k) || evOf.set(k, l.evs[j] ?? null));
-      const seqs = [...lists.map((l) => [...l.keys]), [...b.keys]];
+      const seqs = [...lists.map((l) => [...l.keys]), heads];
       const keys = [key];
       const evs: (Ev | null)[] = [null];
       for (;;) {
@@ -1185,9 +1221,15 @@ export function createWorld(input: ResolveInput): World {
       if (own) return { ids: own, ev: null };
       return basesOf(key).keys.length > 0 ? { gap: "ambiguous", note: `the method resolution order of ${shortKey(key)} cannot be established (an inconsistent, cyclic or very deep hierarchy)` } : null;
     }
+    let outside: string | null = null;
     for (let i = 0; i < order.keys.length; i++) {
-      const own = ownMethods(order.keys[i] as string, name, side);
-      if (own) return { ids: own, ev: order.evs[i] ?? null };
+      const k = order.keys[i] as string;
+      if (k.startsWith("?")) {
+        outside ??= k.slice(1);
+        continue;
+      }
+      const own = ownMethods(k, name, side);
+      if (own) return { ids: own, ev: outside ? pastOutside(outside, name, order.evs[i] ?? null) : (order.evs[i] ?? null) };
     }
     return null;
   }
@@ -1197,17 +1239,23 @@ export function createWorld(input: ResolveInput): World {
   function goLookup(key: string, name: string, side: Side): Lookup {
     let level: { key: string; ev: Ev | null }[] = [{ key, ev: null }];
     const seen = new Set([key]);
+    // An embedded type outside the graph at this depth or above may define it too.
+    let outside: string | null = null;
     for (let depth = 0; depth <= MAX_DEPTH && level.length > 0; depth++) {
       const hits: { key: string; ids: string[]; ev: Ev | null }[] = [];
       for (const x of level) {
         const own = ownMethods(x.key, name, side);
         if (own) hits.push({ key: x.key, ids: own, ev: x.ev });
       }
-      if (hits.length === 1) return { ids: (hits[0] as { ids: string[] }).ids, ev: (hits[0] as { ev: Ev | null }).ev };
+      if (hits.length === 1) {
+        const hit = hits[0] as { ids: string[]; ev: Ev | null };
+        return { ids: hit.ids, ev: outside ? pastOutside(outside, name, hit.ev) : hit.ev };
+      }
       if (hits.length > 1) return { gap: "ambiguous", note: `${name} is promoted from ${hits.length} embedded types at the same depth (${hits.map((h) => shortKey(h.key)).join(", ")}), a selector Go refuses` };
       const next: { key: string; ev: Ev | null }[] = [];
       for (const x of level) {
         const b = basesOf(x.key);
+        for (const slot of b.order) if ("outside" in slot) outside ??= slot.outside;
         b.keys.forEach((k, i) => {
           if (seen.has(k)) return;
           seen.add(k);
@@ -1229,11 +1277,17 @@ export function createWorld(input: ResolveInput): World {
     if (depth > MAX_DEPTH || seen.has(entry)) return null;
     seen.add(entry);
     const b = basesOf(key);
-    const by = (rel: TypeRef["rel"]) => b.keys.map((_, i) => i).filter((i) => b.rels[i] === rel);
-    const through = (indices: number[], at: Side): Lookup => {
-      for (const i of indices) {
-        const hit = rbLookup(b.keys[i] as string, name, at, depth + 1, seen);
-        if (hit) return stepped(b.evs[i] as Ev, hit);
+    const by = (rel: TypeRef["rel"]) => b.order.filter((slot) => ("outside" in slot ? slot.rel : b.rels[slot.i]) === rel);
+    let outside: string | null = null;
+    const through = (slots: Slot[], at: Side): Lookup => {
+      for (const slot of slots) {
+        if ("outside" in slot) {
+          outside ??= slot.outside;
+          continue;
+        }
+        const hit = rbLookup(b.keys[slot.i] as string, name, at, depth + 1, seen);
+        if (hit && "ids" in hit && outside) return { ids: hit.ids, ev: pastOutside(outside, name, throughBase(b.evs[slot.i] as Ev, hit.ev)) };
+        if (hit) return stepped(b.evs[slot.i] as Ev, hit);
       }
       return null;
     };
