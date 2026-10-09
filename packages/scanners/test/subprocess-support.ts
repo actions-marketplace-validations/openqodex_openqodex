@@ -11,6 +11,9 @@ import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { createToolResolver, runScanners } from "@openqodex/scanners";
 
+// With TMPDIR moved (a test run's own scratch folder), the default home under
+// it is empty: point OPENQODEX_E2E_HOME at a home this branch's built CLI
+// filled with `doctor --install --all-scanners`.
 process.env.OPENQODEX_HOME = process.env.OPENQODEX_E2E_HOME ?? join(tmpdir(), "openqodex-e2e-home");
 // One throwaway user home for every file that imports this one.
 process.env.OQ_SUBPROCESS_USER_HOME ??= mkdtempSync(join(tmpdir(), "oq-adapter-user-"));

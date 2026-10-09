@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BuiltinScanner, ResolveTool, ToolResolution, ToolStatus } from "@openqodex/core";
+import { IN_PROCESS } from "../adapters/index.js";
 import { InstallError } from "./fetch.js";
 import {
   ensureWritable,
@@ -137,6 +138,8 @@ function installDetached(tool: string, recipe: Recipe, home: string, deadline: n
   });
 }
 
+const NO_RECIPE = "no install recipe; this build cannot run it";
+
 type ResolverOptions = { allowInstall: boolean; installBudgetMs: number | null; onProgress?: (line: string) => void };
 
 async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promise<ToolResolution> {
@@ -144,7 +147,7 @@ async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promi
   const deadline = opts.installBudgetMs === null ? null : Date.now() + opts.installBudgetMs;
   const table = loadToolchain();
   const recipe = table.tools[scanner];
-  if (!recipe) return { ok: false, status: "failed", reason: "runs inside openqodex, no tool to resolve" };
+  if (!recipe) return IN_PROCESS.has(scanner) ? { ok: false, status: "failed", reason: "runs inside openqodex, no tool to resolve" } : { ok: false, status: "not_installed", reason: NO_RECIPE };
   const home = openqodexHome();
   // The probe is shared and may finish in the background; this caller waits
   // for it only as long as its budget allows.
@@ -191,7 +194,11 @@ export function createToolResolver(opts: ResolverOptions): ResolveTool {
 async function statusOf(scanner: BuiltinScanner): Promise<ToolStatus> {
   const table = loadToolchain();
   const recipe = table.tools[scanner];
-  if (!recipe) return { scanner, state: "ready", version: "built in", detail: "runs inside openqodex" };
+  // "built in" only for a scanner that runs inside OpenQodex; any other
+  // scanner without a recipe is one this build cannot run.
+  if (!recipe) {
+    return IN_PROCESS.has(scanner) ? { scanner, state: "ready", version: "built in", detail: "runs inside openqodex" } : { scanner, state: "unsupported", version: "none", detail: NO_RECIPE };
+  }
   const home = openqodexHome();
   const version = recipe.version;
   const runtime = await missingRuntime(recipe);
