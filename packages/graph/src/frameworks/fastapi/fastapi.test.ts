@@ -182,10 +182,101 @@ describe("the FastAPI plugin on routes a stranger wrote to fool it", () => {
     "",
   ].join("\n");
   const BROKEN = ["from fastapi import FastAPI", "", "app = FastAPI()", "", "", '@app.get("/fine")', "def fine():", "    return 1", "", "", '@app.get("/broken"', "def broken(:", "    pass", ""].join("\n");
+  // Names FastAPI uses, shadowed by a parameter, a local assignment, a
+  // nested class, or rebound at module level; and one imported inside a
+  // factory function, which is FastAPI's own.
+  const SHADOW = `from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+
+
+def helper():
+    return 1
+
+
+def build(FastAPI):
+    app = FastAPI()
+
+    @app.get("/param-shadow")
+    def param_shadow():
+        return 1
+
+    return app
+
+
+def local():
+    FastAPI = dict
+    app = FastAPI()
+
+    @app.get("/local-shadow")
+    def local_shadow():
+        return 2
+
+    return app
+
+
+def factory():
+    from fastapi import FastAPI as Real
+
+    app = Real()
+
+    @app.get("/scoped-import")
+    def scoped_import():
+        return 3
+
+    return app
+
+
+real = FastAPI()
+
+
+def register(real):
+    @real.get("/param-receiver")
+    def param_receiver():
+        return 4
+
+
+@real.get("/kept", dependencies=[Depends(helper)])
+def kept():
+    return 5
+
+
+def deps_shadow(Depends):
+    @real.get("/deps-shadow", dependencies=[Depends(helper)])
+    def deps_shadow_route():
+        return 6
+
+
+def models():
+    class BaseModel:
+        pass
+
+    class Local(BaseModel):
+        pass
+
+    return Local
+
+
+def shadowed_client(TestClient):
+    client = TestClient(real)
+    client.get("/kept")
+`;
+  const REBOUND = `from fastapi import FastAPI
+
+app = FastAPI()
+
+
+@app.get("/rebound")
+def rebound():
+    return 1
+
+
+FastAPI = object
+`;
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-fool-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN });
+    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND });
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null });
   });
@@ -215,6 +306,25 @@ describe("the FastAPI plugin on routes a stranger wrote to fool it", () => {
     expect(fastapiRegs(graph).some((r) => r.handler.written === "reassigned")).toBe(false);
     const gap = graph.frameworks?.unknowns.find((u) => u.plugin === "fastapi" && u.name === "reassigned");
     expect(gap?.cause).toBe("dynamic");
+  });
+
+  it("takes no application from FastAPI or a receiver shadowed by a parameter, a local assignment or a module-level rebinding, and keeps FastAPI imported inside a factory", () => {
+    const written = fastapiRegs(graph).map((r) => r.written);
+    for (const shadowed of ["/param-shadow", "/local-shadow", "/param-receiver", "/rebound"]) expect(written).not.toContain(shadowed);
+    expect(written).toContain("/kept");
+    expect(written).toContain("/scoped-import");
+    expect((graph.frameworks?.apps ?? []).filter((a) => a.plugin === "fastapi" && a.site.file === "app/rebound.py")).toEqual([]);
+  });
+
+  it("takes no dependency from Depends, no model from BaseModel and no test client from TestClient when a parameter or a nested class shadows the name", () => {
+    const deps = (graph.frameworks?.edges ?? []).filter((e) => e.plugin === "fastapi" && e.kind === "applies_middleware");
+    const from = (written: string) => fastapiRegs(graph).find((r) => r.written === written)?.id;
+    expect(deps.some((e) => e.from === from("/kept"))).toBe(true);
+    expect(deps.some((e) => e.from === from("/deps-shadow"))).toBe(false);
+    const models = (graph.frameworks?.roles ?? []).filter((r) => r.plugin === "fastapi" && r.role === "model").map((r) => graph.nodes.get(r.target)?.name);
+    expect(models).not.toContain("Local");
+    const requests = (graph.frameworks?.edges ?? []).filter((e) => e.plugin === "fastapi" && e.kind === "tests" && e.evidence.site.file === "app/shadow.py");
+    expect(requests).toEqual([]);
   });
 
   it("reads no decorator inside a broken region of a file, keeps the routes before it, and says the file has a syntax error", () => {

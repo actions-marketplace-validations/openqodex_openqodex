@@ -12,7 +12,7 @@ import type { FastApiFact } from "./facts.js";
 import { isFastApiFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 1;
+export const VERSION = 2;
 const SUPPORTED = "FastAPI 0.100 and later";
 
 const app = "fastapi-app";

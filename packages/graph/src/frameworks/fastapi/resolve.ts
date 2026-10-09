@@ -226,9 +226,13 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   // `from fastapi import FastAPI` is "fastapi.FastAPI"; `fastapi` after
   // `import fastapi` is "fastapi". Only names of the watched packages, and
   // only when the module resolves outside the repository.
+  // A name two imports bind to different things, or one import binds to a
+  // module the plugin does not watch: it stands for nothing the plugin knows.
+  const CONFLICT = "";
   const namesMemo = new Map<string, Map<string, string>>();
   const outside = (file: string, spec: string): boolean => {
     const top = spec.split(".")[0] as string;
+    if (!WATCHED_TOPS.has(top)) return false;
     const m = index.module(file, spec);
     if (m.kind === "external") return true;
     // Starlette, Pydantic and pytest come with FastAPI and are often not
@@ -242,27 +246,75 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     namesMemo.set(file, n);
     const lf = index.languageFacts(file);
     if (!lf) return n;
+    const set = (local: string, q: string, spec: string) => {
+      const v = outside(file, spec) ? q : CONFLICT;
+      const prev = (n as Map<string, string>).get(local);
+      (n as Map<string, string>).set(local, prev === undefined || prev === v ? v : CONFLICT);
+    };
     for (const imp of lf.imports) {
       if (imp.scoped || imp.star) continue;
-      const top = imp.spec.split(".")[0] as string;
-      if (!WATCHED_TOPS.has(top) || !outside(file, imp.spec)) continue;
-      if (imp.namespace) n.set(imp.namespace, imp.alias ? imp.spec : top);
-      for (const x of imp.names) n.set(x.local, `${imp.spec}.${x.imported}`);
+      if (imp.namespace) set(imp.namespace, imp.alias ? imp.spec : (imp.spec.split(".")[0] as string), imp.spec);
+      for (const x of imp.names) set(x.local, `${imp.spec}.${x.imported}`, imp.spec);
     }
     return n;
   };
-  const qualified = (file: string, path: readonly string[]): string | null => {
-    const head = names(file).get(path[0] as string);
-    return head === undefined ? null : [head, ...path.slice(1)].join(".");
+
+  // ---------- scopes: which scope binds a name at a use ----------
+  type Frame = { line: number; parent: number; cls: boolean; at: number; names: Set<string>; imports: Map<string, { q: string | null; spec: string }>; more: boolean };
+  type Frames = { byLine: Map<number, Frame>; byAt: Map<number, Frame> };
+  const framesMemo = new Map<string, Frames>();
+  const framesOf = (file: string): Frames => {
+    let fr = framesMemo.get(file);
+    if (fr) return fr;
+    fr = { byLine: new Map(), byAt: new Map() };
+    framesMemo.set(file, fr);
+    for (const x of index.factsOf(file)) {
+      if (x.kind !== "scopes") continue;
+      for (const f of x.frames) {
+        const frame: Frame = { line: f.line, parent: f.parent, cls: f.cls, at: f.at, names: new Set(f.names), imports: new Map(f.imports.map((i) => [i.local, { q: i.q, spec: i.spec }])), more: f.more };
+        fr.byLine.set(f.line, frame);
+        if (f.cls) fr.byAt.set(f.at, frame);
+      }
+    }
+    return fr;
   };
-  const isApi = (file: string, e: Expr, set: ReadonlySet<string>): boolean => e.t === "ref" && set.has(qualified(file, e.path) ?? "");
+  // The innermost scope that binds `name` at a use in scope `scope`, as
+  // Python looks it up: the use's own scope, then the functions around it
+  // (a class body is seen only from its own body), then the module. Null
+  // when no scope binds it: a name the module imports, or a builtin.
+  const binder = (file: string, scope: number, name: string): Frame | null => {
+    const { byLine } = framesOf(file);
+    let f = byLine.get(scope) ?? byLine.get(0);
+    for (let first = true, steps = 0; f && steps < 64; first = false, steps++) {
+      if ((!f.cls || first) && (f.more || f.names.has(name) || f.imports.has(name))) return f;
+      if (f.line === 0) return null;
+      f = byLine.get(f.parent) ?? byLine.get(0);
+    }
+    return null;
+  };
+  // The qualified name a dotted name stands for at a use: "fastapi.FastAPI"
+  // for `FastAPI` after `from fastapi import FastAPI`, through the module's
+  // imports or an import inside the function around the use; null when a
+  // parameter, an assignment, a nested def or class or a module-level
+  // rebinding shadows the name there.
+  const qualified = (file: string, path: readonly string[], scope: number): string | null => {
+    const head = path[0] as string;
+    const b = binder(file, scope, head);
+    if (b) {
+      const imp = b.line !== 0 && !b.more && !b.names.has(head) ? b.imports.get(head) : undefined;
+      return imp && imp.q !== null && outside(file, imp.spec) ? [imp.q, ...path.slice(1)].join(".") : null;
+    }
+    const q = names(file).get(head);
+    return q === undefined || q === CONFLICT ? null : [q, ...path.slice(1)].join(".");
+  };
+  const isApi = (file: string, e: Expr, set: ReadonlySet<string>, scope: number): boolean => e.t === "ref" && set.has(qualified(file, e.path, scope) ?? "");
 
   // ---------- values ----------
   const routerKey = (file: string, line: number) => `fw:${PLUGIN}:router:${file}:${line}`;
   const classify = (file: string, v: { name: string; value: Expr; scope: number; line: number; column: number }): Val | null => {
     const e = v.value;
     if (e.t !== "call" || e.fn.t !== "ref") return null;
-    const q = qualified(file, e.fn.path);
+    const q = qualified(file, e.fn.path, v.scope);
     if (q === null) return null;
     if (APP_NAMES.has(q)) return { kind: "app", id: appId(PLUGIN, file, v.line), file, name: v.name, line: v.line, column: v.column, scope: v.scope, call: e };
     if (ROUTER_NAMES.has(q)) return { kind: "router", id: routerKey(file, v.line), file, name: v.name, line: v.line, column: v.column, scope: v.scope, call: e };
@@ -270,35 +322,38 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     return null;
   };
 
-  // The value a name holds at a line of a file: an assignment in the same
-  // function first, then one at module level, then what an import brings
+  // The value a name holds at a use in a file: an assignment in the scope
+  // that binds the name, or, when no scope binds it, what an import brings
   // (a module-level value of another file shows as a miss there, read
-  // through that file's own facts). At most MAX_INCLUDE_DEPTH steps, so an
-  // alias chain cannot loop.
+  // through that file's own facts). A name a scope binds with no
+  // assignment the plugin read (a parameter, a loop target, a def) holds
+  // nothing it knows. At most MAX_INCLUDE_DEPTH steps, so an alias chain
+  // cannot loop.
   const valueIn = (file: string, path: readonly string[], scope: number, line: number, depth = 0): Val | null => {
     if (depth > MAX_INCLUDE_DEPTH || path.length === 0) return null;
     const name = path[0] as string;
-    if (path.length === 1) {
-      let local: Fact<"value"> | null = null;
-      let top: Fact<"value"> | null = null;
-      for (const d of factsIn(file).values.get(name) ?? []) {
-        if (scope !== 0 && d.scope === scope && d.line <= line && (!local || d.line > local.line)) local = d;
-        if (d.scope === 0) {
-          // The latest assignment before the line, else the first after it.
-          const better = !top || (d.line <= line ? top.line > line || d.line > top.line : top.line > line && d.line < top.line);
-          if (better) top = d;
-        }
-      }
-      const decl = local ?? top;
-      if (decl) {
-        const direct = classify(file, decl);
-        if (direct) return direct;
-        // `app = other` passes a known value on.
-        if (decl.value.t === "ref" && !(decl.value.path.length === 1 && decl.value.path[0] === name)) return valueIn(file, decl.value.path, decl.scope, decl.line, depth + 1);
-        return null;
+    const b = binder(file, scope, name);
+    if (!b) return fromImport(file, path, depth);
+    if (path.length > 1 || b.cls) return null;
+    let decl: Fact<"value"> | null = null;
+    for (const d of factsIn(file).values.get(name) ?? []) {
+      if (d.scope !== b.line) continue;
+      if (b.line === scope && b.line !== 0) {
+        // In the use's own function: the latest assignment before the use.
+        if (d.line <= line && (!decl || d.line > decl.line)) decl = d;
+      } else {
+        // At module level, or from an enclosing function: the latest
+        // assignment before the line, else the first after it.
+        const better = !decl || (d.line <= line ? decl.line > line || d.line > decl.line : decl.line > line && d.line < decl.line);
+        if (better) decl = d;
       }
     }
-    return fromImport(file, path, depth);
+    if (!decl) return null;
+    const direct = classify(file, decl);
+    if (direct) return direct;
+    // `app = other` passes a known value on.
+    if (decl.value.t === "ref" && !(decl.value.path.length === 1 && decl.value.path[0] === name)) return valueIn(file, decl.value.path, decl.scope, decl.line, depth + 1);
+    return null;
   };
 
   const fromImport = (file: string, path: readonly string[], depth: number): Val | null => {
@@ -340,10 +395,14 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
 
   type Bound = { status: HandlerStatus; targets: string[]; tier: Tier; via: FrameworkEvidence["via"]; note: string | null; why: { cause: Cause; note: string; name: string | null } | null };
   const none = (status: HandlerStatus, cause: Cause, note: string, name: string | null): Bound => ({ status, targets: [], tier: "certain", via: null, note: null, why: { cause, note, name } });
-  // What a name passed as an endpoint or a dependency is bound to.
-  const bindRef = (file: string, e: Expr, role: "handler" | "dependency"): Bound => {
+  // What a name passed as an endpoint or a dependency is bound to, at a
+  // use in scope `scope`. A name a function around the use binds is a
+  // local the plugin does not follow; only module-level names are looked up.
+  const bindRef = (file: string, e: Expr, role: "handler" | "dependency", scope: number): Bound => {
     if (e.t === "call") return none("unresolved", "unsupported-rule", `the ${role} is the value ${show(e)} returns, which is not followed`, show(e));
     if (e.t !== "ref") return none("dynamic", "dynamic", `the ${role} is computed (${show(e)})`, null);
+    const b = binder(file, scope, e.path[0] as string);
+    if (b && b.line !== 0) return none("dynamic", "dynamic", `the ${role} ${show(e)} is a name of the function around it, which the plugin does not follow`, show(e));
     const found = lookup(file, e.path);
     switch (found.kind) {
       case "symbol":
@@ -378,6 +437,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     deps: Expr | undefined; // the `dependencies=` list
     params: ParamDep[];
     paramsOmitted: number;
+    scope: number; // the scope the decorator or call is in
   };
   type IncludeEvent = { file: string; site: Site; router: Expr | undefined; prefix: Expr | undefined; deps: Expr | undefined; scope: number };
   const routesOf = new Map<string, RouteEvent[]>();
@@ -442,7 +502,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       const ws = r.method === "websocket";
       const methods = ws ? ["GET"] : r.method === "api_route" ? methodsOf(file, kwOf(r, "methods"), ["GET"]) : METHODS.has(r.method) ? [r.method.toUpperCase()] : null;
       const name = literalName(kwOf(r, "name")) ?? (ws ? "websocket" : null);
-      addRoute(base, { file, site, methods, name, handler: { kind: "def", fn: r.fn, def: r.def }, deps: kwOf(r, "dependencies"), params: r.params, paramsOmitted: r.omitted }, r.args[0] ?? kwOf(r, "path"));
+      addRoute(base, { file, site, methods, name, handler: { kind: "def", fn: r.fn, def: r.def }, deps: kwOf(r, "dependencies"), params: r.params, paramsOmitted: r.omitted, scope: r.scope }, r.args[0] ?? kwOf(r, "path"));
     }
     for (const c of f.calls) {
       const site: Site = { file, line: c.line, column: c.column };
@@ -465,7 +525,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         if (!endpoint) continue;
         const methods = ws ? ["GET"] : methodsOf(file, kwOf(c, "methods"), ["GET"]);
         const name = literalName(kwOf(c, "name")) ?? (ws ? "websocket" : null);
-        addRoute(base, { file, site, methods, name, handler: { kind: "ref", expr: endpoint }, deps: kwOf(c, "dependencies"), params: [], paramsOmitted: 0 }, c.args[0] ?? kwOf(c, "path"));
+        addRoute(base, { file, site, methods, name, handler: { kind: "ref", expr: endpoint }, deps: kwOf(c, "dependencies"), params: [], paramsOmitted: 0, scope: c.scope }, c.args[0] ?? kwOf(c, "path"));
       }
     }
   }
@@ -474,15 +534,17 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   for (const list of includesOf.values()) list.sort(bySite);
 
   // ---------- dependencies ----------
-  // One dependency in a chain: the call that declares it and where.
-  type Dep = { call: Expr; file: string; type: Expr | null };
-  const depsOfList = (file: string, list: Expr | undefined): { deps: Dep[]; omitted: number } => {
+  // One dependency in a chain: the call that declares it, where, and the
+  // scope it is evaluated in (a parameter's default and annotation are
+  // evaluated in the scope around the def, not in the function).
+  type Dep = { call: Expr; file: string; type: Expr | null; scope: number };
+  const depsOfList = (file: string, list: Expr | undefined, scope: number): { deps: Dep[]; omitted: number } => {
     if (!list) return { deps: [], omitted: 0 };
     if (list.t !== "list") {
       siteGap({ file, line: list.line, column: list.column }, "dynamic", ["applies_middleware"], show(list), `the dependencies ${show(list)} are computed at run time`);
       return { deps: [], omitted: 0 };
     }
-    return { deps: list.items.map((call) => ({ call, file, type: null })), omitted: list.omitted };
+    return { deps: list.items.map((call) => ({ call, file, type: null, scope })), omitted: list.omitted };
   };
   // What one dependency call is bound to, read once per call however many
   // registrations share it: null when the call is not FastAPI's Depends
@@ -492,13 +554,13 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   const bindDep = (d: Dep): DepBinding => {
     if (depMemo.has(d.call)) return depMemo.get(d.call) ?? null;
     let out: DepBinding = null;
-    if (d.call.t === "call" && isApi(d.file, d.call.fn, DEPENDS_NAMES)) {
+    if (d.call.t === "call" && isApi(d.file, d.call.fn, DEPENDS_NAMES, d.scope)) {
       out = { targets: [] };
       const site: Site = { file: d.file, line: d.call.line, column: d.call.column };
       const target = d.call.args[0] ?? kwOf(d.call, "dependency") ?? d.type;
       if (!target) siteGap(site, "unsupported-rule", ["applies_middleware"], null, `${show(d.call)} names no dependency and its parameter has no annotation the plugin can read`);
       else {
-        const b = bindRef(d.file, target, "dependency");
+        const b = bindRef(d.file, target, "dependency", d.scope);
         if (b.why && b.status !== "external") siteGap(site, b.why.cause, ["applies_middleware"], b.why.name, b.why.note);
         const ev: FrameworkEvidence = { kind: "route-call", tier: b.tier, site, via: b.via, premises: [], rule: rule("fastapi-dependency"), note: b.note ? `${DEP_NOTE}; ${b.note}` : DEP_NOTE };
         out.targets = b.targets.map((id) => ({ id, ev }));
@@ -547,7 +609,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     // The router's own prefix and dependencies, or the application's dependencies.
     const own = val.kind === "router" ? prefixOf(val.file, kwOf(val.call, "prefix"), { file: val.file, line: val.line, column: val.column }, "router") : "";
     const base = prefix === null || own === null ? null : prefix + own;
-    const ownDeps = depsOfList(val.file, kwOf(val.call, "dependencies"));
+    const ownDeps = depsOfList(val.file, kwOf(val.call, "dependencies"), val.scope);
     const deps = [...inherited, ...ownDeps.deps];
     const omitted = inheritedOmitted + ownDeps.omitted;
 
@@ -570,7 +632,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         bound = sym ? { status: "bound", targets: [sym.id], tier: "certain", via: null, note: null, why: null } : none("unresolved", "unsupported-rule", `the decorated function ${e.handler.fn} has no definition of its own in the graph`, e.handler.fn);
       } else {
         handlerWritten = show(e.handler.expr);
-        bound = bindRef(e.file, e.handler.expr, "handler");
+        bound = bindRef(e.file, e.handler.expr, "handler", e.scope);
       }
       const reg: Registration = {
         kind: "registration",
@@ -593,8 +655,8 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         const ev: FrameworkEvidence = { kind: e.handler.kind === "def" ? "route-decorator" : "route-call", tier: bound.tier, site: e.site, via: bound.via, premises: [], rule: rule("fastapi-route"), note: bound.note };
         if (emit({ from: id, to: t, kind: "handles", plugin: PLUGIN, app, evidence: ev })) addRole(t, "route_handler", "fastapi", app, ev);
       }
-      const decorator = depsOfList(e.file, e.deps);
-      applyDeps(reg, [...deps, ...decorator.deps, ...e.params.map((p) => ({ call: p.call, file: e.file, type: p.type }))], omitted + decorator.omitted + e.paramsOmitted, app);
+      const decorator = depsOfList(e.file, e.deps, e.scope);
+      applyDeps(reg, [...deps, ...decorator.deps, ...e.params.map((p) => ({ call: p.call, file: e.file, type: p.type, scope: e.scope }))], omitted + decorator.omitted + e.paramsOmitted, app);
     }
 
     for (const e of includesOf.get(val.id) ?? []) {
@@ -615,7 +677,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       }
       const inc = prefixOf(e.file, e.prefix, e.site, "include");
       emit({ from: val.id, to: target.id, kind: "mounts", plugin: PLUGIN, app, evidence: { kind: "mount", tier: "certain", site: e.site, via: null, premises: [], rule: rule("fastapi-include"), note: null } });
-      const incDeps = depsOfList(e.file, e.deps);
+      const incDeps = depsOfList(e.file, e.deps, e.scope);
       compose(target, app, base === null || inc === null ? null : base + inc, [...deps, ...incDeps.deps], omitted + incDeps.omitted, [...via, e.site], [...stack, target.id], depth + 1);
     }
   };
@@ -716,13 +778,18 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     if (modelMemo.has(k)) return modelMemo.get(k) ?? null;
     modelMemo.set(k, null); // a base cycle reads as no model
     let found: ModelProof | null = null;
+    // The bases are read in the scope around the class.
+    const scope = framesOf(file).byAt.get(def.line)?.parent ?? 0;
     for (const base of def.bases) {
       const path = base.qualifier ? [...base.qualifier.split("."), base.name] : [base.name];
-      if (MODEL_NAMES.has(qualified(file, path) ?? "")) {
+      if (MODEL_NAMES.has(qualified(file, path, scope) ?? "")) {
         found = { tier: "certain", via: null, note: null };
         break;
       }
-      if (steps <= 1) continue;
+      // A base a function around the class binds is a local class the
+      // module-level lookup would not find; it is not followed.
+      const b = binder(file, scope, path[0] as string);
+      if (steps <= 1 || (b && b.line !== 0)) continue;
       const l = lookup(file, path);
       if (l.kind !== "symbol") continue;
       for (const id of l.ids) {
