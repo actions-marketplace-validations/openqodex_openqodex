@@ -1,7 +1,7 @@
 // Real binaries on tiny planted inputs, one case per builtin scanner: each
 // guards that scanner's invocation, output parser, changed-line filter and tool
 // resolution together. Run by the end-to-end config, not the unit config.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
@@ -57,10 +57,14 @@ def query():
   { scanner: "golangci", rule: "gosec", files: { "go.mod": "module example.com/tiny\n\ngo 1.22\n", "main.go": "package main\nimport \"crypto/md5\"\nfunc main() { _ = md5.New() }\n" }, anchor: "main.go", runtime: /^needs Go/ },
 ];
 
-// Every line of every planted file counts as changed, as for a new file.
-async function scan(spec: Case) {
+function plant(spec: Case): string {
   const repo = tempDir(`oq-adapter-${spec.scanner}-`);
   for (const [name, body] of Object.entries(spec.files)) { const path = join(repo, name); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, body); }
+  return repo;
+}
+
+// Every line of every planted file counts as changed, as for a new file.
+async function scan(spec: Case, repo = plant(spec)) {
   const paths = Object.keys(spec.files);
   const coverage = new Map(paths.map((p) => [p, new Set(readFileSync(join(repo, p), "utf8").split("\n").map((_, i) => i + 1))]));
   return runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: createToolResolver({ allowInstall: true, installBudgetMs: null }), only: [spec.scanner] });
@@ -160,6 +164,27 @@ describe("builtin scanner subprocesses", () => {
       for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
       proxy.close();
     }
+  }, 300_000);
+
+  // Semgrep writes each rule pack to its temp folder as semgrep-*.rules and
+  // never removes them, about 2.7 MB a scan (#76). The developer's temp
+  // folder must gain nothing from a scan, and the finding must still come.
+  it("semgrep leaves nothing in the developer's temp folder", async () => {
+    if (process.env.OPENQODEX_E2E_OFFLINE === "1") return;
+    const spec = cases.find((c) => c.scanner === "semgrep")!;
+    const repo = plant(spec);
+    const developerTmp = tempDir("oq-adapter-developer-tmp-");
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = developerTmp;
+    try {
+      const result = await scan(spec, repo);
+      expect(result.scan.scanners[0]!.status).toBe("ran");
+      expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "semgrep", ruleId: spec.rule, filePath: spec.anchor }));
+    } finally {
+      if (saved === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = saved;
+    }
+    expect(readdirSync(developerTmp)).toEqual([]);
   }, 300_000);
 
   it("gitleaks finds a secret and never puts its value in the scan result", async () => {
