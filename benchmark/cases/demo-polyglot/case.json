@@ -1,6 +1,6 @@
 {
   "id": "demo-polyglot",
-  "guards": "the demo repository's planted bugs across Python, Docker, shell, a workflow and a lockfile are all reported, by scanners and by reading",
+  "guards": "the demo repository's planted bugs across Python, Docker, shell, a workflow, a lockfile, a Postgres migration, Terraform and Kubernetes are all reported, by scanners and by reading",
   "language": "python",
   "framework": "flask",
   "base": "../../../examples/demo-repo/baseline",
@@ -317,9 +317,96 @@
       "severity": "major",
       "found_by": [
         "actionlint",
-        "semgrep"
+        "semgrep",
+        "zizmor"
       ],
       "truth": "The pull request title is put straight into a shell command, so a title with shell syntax runs commands in CI. The fix is to pass it through an environment variable and quote it."
+    },
+    {
+      "id": "migration-index-lock",
+      "file": "db/migrations/002_index_item_names.sql",
+      "lines": [
+        2,
+        2
+      ],
+      "anchor": {
+        "line": 2,
+        "text": "CREATE INDEX items_name_idx ON items (name);"
+      },
+      "mentions": [
+        "concurrently",
+        "lock",
+        "block"
+      ],
+      "kind": [
+        "performance",
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "squawk",
+        "reasoning"
+      ],
+      "truth": "CREATE INDEX without CONCURRENTLY holds a lock that blocks every insert and update on items until the index is built, so the shop stops taking writes for as long as the build takes on a large table. The fix is CREATE INDEX CONCURRENTLY, outside a transaction."
+    },
+    {
+      "id": "terraform-ssh-open",
+      "file": "infra/main.tf",
+      "lines": [
+        27,
+        28
+      ],
+      "anchor": {
+        "line": 28,
+        "text": "cidr_blocks = [\"0.0.0.0/0\"]"
+      },
+      "mentions": [
+        "0.0.0.0/0",
+        "ssh",
+        "port 22",
+        "internet",
+        "anywhere",
+        "any address",
+        "public"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "trivy",
+        "checkov",
+        "reasoning"
+      ],
+      "truth": "The security group now accepts SSH on port 22 from every address on the internet, not only the office range, so anyone can try to log in to the API hosts. The fix is to keep the office range and restore the VPN, or to reach the hosts through a bastion or a session manager."
+    },
+    {
+      "id": "kubernetes-privileged",
+      "file": "deploy/deployment.yaml",
+      "lines": [
+        41,
+        43
+      ],
+      "anchor": {
+        "line": 42,
+        "text": "privileged: true"
+      },
+      "mentions": [
+        "privileged",
+        "privilege escalation",
+        "allowPrivilegeEscalation",
+        "NET_RAW",
+        "root on the node"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "checkov",
+        "reasoning"
+      ],
+      "truth": "privileged: true gives the API container every capability and the node's devices, so a flaw in the app becomes root on the node; allowPrivilegeEscalation: true lets its processes gain more privileges than they started with. A raw-socket health check needs only the NET_RAW capability, so the fix is to drop privileged, keep allowPrivilegeEscalation false and add NET_RAW alone."
     },
     {
       "id": "pagination-off-by-one",

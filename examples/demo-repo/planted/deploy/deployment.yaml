@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-api
+  namespace: shop
+  labels:
+    app: shop-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shop-api
+  template:
+    metadata:
+      labels:
+        app: shop-api
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: shop-api
+      containers:
+        - name: api
+          image: ghcr.io/example/shop-api:1.4.2
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+          securityContext:
+            # The health check pings the database host with raw sockets.
+            privileged: true
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /items
+              port: 5000
+          livenessProbe:
+            httpGet:
+              path: /items
+              port: 5000

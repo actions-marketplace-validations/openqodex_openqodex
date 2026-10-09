@@ -13,7 +13,12 @@
     "actionlint": "1.7.12",
     "bandit": "1.9.4",
     "osv-scanner": "2.6.0",
-    "semgrep": "1.176.0 with p/default, p/security-audit and p/secrets"
+    "semgrep": "1.176.0 with p/default, p/security-audit and p/secrets",
+    "new_scanners_date": "2026-10-08",
+    "zizmor": "1.30.1",
+    "squawk": "2.66.0",
+    "trivy": "0.75.0",
+    "checkov": "3.3.22"
   },
   "bugs": [
     {
@@ -112,7 +117,36 @@
       "lines": [15, 15],
       "detectors": [
         { "scanner": "actionlint", "rule_id": "expression" },
-        { "scanner": "semgrep", "rule_id": "yaml.github-actions.security.run-shell-injection.run-shell-injection" }
+        { "scanner": "semgrep", "rule_id": "yaml.github-actions.security.run-shell-injection.run-shell-injection" },
+        { "scanner": "zizmor", "rule_id": "template-injection" }
+      ],
+      "note": "zizmor reports the same expression on the same line; the report keeps actionlint's finding and names zizmor beside it."
+    },
+    {
+      "id": "migration-index-lock",
+      "class": "index built without CONCURRENTLY on a live table",
+      "file": "db/migrations/002_index_item_names.sql",
+      "lines": [2, 2],
+      "detectors": [{ "scanner": "squawk", "rule_id": "require-concurrent-index-creation" }]
+    },
+    {
+      "id": "terraform-ssh-open",
+      "class": "SSH open to every address",
+      "file": "infra/main.tf",
+      "lines": [28, 28],
+      "detectors": [
+        { "scanner": "trivy", "rule_id": "AWS-0107" },
+        { "scanner": "checkov", "rule_id": "CKV_AWS_24" }
+      ]
+    },
+    {
+      "id": "kubernetes-privileged",
+      "class": "privileged container that may escalate",
+      "file": "deploy/deployment.yaml",
+      "lines": [42, 43],
+      "detectors": [
+        { "scanner": "checkov", "rule_id": "CKV_K8S_16" },
+        { "scanner": "checkov", "rule_id": "CKV_K8S_20" }
       ]
     },
     {
