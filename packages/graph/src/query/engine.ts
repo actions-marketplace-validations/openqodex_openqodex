@@ -25,7 +25,7 @@ import type { Answer, Candidate, Extra, Job, Listing, Request, Session } from ".
 import { frameworkLayer, routes, tests } from "./frameworks.js";
 import { edgeId, readEdgeId } from "./ids.js";
 import { cursorFor, keepJob, keepList, keptJob, keptList, limitOf, pageOf, readCursor } from "./page.js";
-import { Overrides, implementers, importCycles, impact, outline, packages, path, references, relationsOf } from "./relations.js";
+import { Overrides, implementers, importCycles, impact, methodsNamed, outline, packages, path, references, relationsOf } from "./relations.js";
 import { budgetOf, prepareTraversal, sortWithin, spent, Walk } from "./traverse.js";
 import type { Budget } from "./traverse.js";
 
@@ -81,6 +81,7 @@ const unknownsNamed = (g: Graph, name: string): UnknownSite[] => unknownsBy(g).b
 export function prepareIndexes(g: Graph): void {
   unknownsBy(g);
   relationsOf(g);
+  methodsNamed(g, "", "");
   prepareTraversal(g);
 }
 

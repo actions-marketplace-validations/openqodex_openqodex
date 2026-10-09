@@ -22,6 +22,10 @@
 //  9. Work that a slice of the MCP server stops starts again from its first
 //     element instead of where it stopped (outline of a large folder), so
 //     slices never finish and pile up duplicates until the deadline.
+// 10. Work runs between two budget checks in proportion to the input, with
+//     no check inside: deriving overrides for thousands of subclasses of
+//     one file, or expanding one point with thousands of edges in a path
+//     search, runs past the budget and cannot be cancelled.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -239,5 +243,63 @@ describe("work that resumes where a slice stopped it", () => {
     expect(sliced.truncated.omitted).toBe(whole.truncated.omitted);
     // A slice that started over would run to the ten-second deadline.
     expect(ms).toBeLessThan(3000);
+  });
+});
+
+describe("work with a budget check inside each element (10)", () => {
+  let t: Session;
+  // As many subclasses of Base in one file as stay under the 512 KB file cap.
+  const SUBCLASSES = 6000;
+  const CALLEES = 3000;
+  const idOf = (name: string): string => {
+    const a = query(t, { apiVersion: 1, kind: "symbol", target: { name } });
+    return (a.target as { id: string }).id;
+  };
+  beforeAll(async () => {
+    const classes = ["export class Base {", "  run(): number {", "    return 0;", "  }", "}"];
+    for (let i = 0; i < SUBCLASSES; i++) classes.push(`export class S${i} extends Base {`, "  run(): number {", `    return ${i};`, "  }", "}");
+    const fns: string[] = [];
+    for (let i = 0; i < CALLEES; i++) fns.push(`function f${i}(): number {\n  return ${i};\n}`);
+    const calls = Array.from({ length: CALLEES }, (_, i) => `f${i}()`).join(" + ");
+    const root = makeRepo({
+      "src/shapes.ts": `${classes.join("\n")}\n`,
+      "src/fan.ts": `${fns.join("\n")}\nexport function fan(): number {\n  return ${calls};\n}\n`,
+      "src/far.ts": "export function far(): number {\n  return 0;\n}\n",
+    });
+    dirs.push(root);
+    // A long build budget: a busy machine must not leave the wide files out.
+    const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+    expect(graph.status.notRead).toEqual([]);
+    t = { graph, generation: "wide-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+  }, 180_000);
+
+  it("derives the overrides of 6,000 subclasses of one file inside a small time budget, and in full when it has time", () => {
+    const req: Request = { apiVersion: 1, kind: "implementers", target: { id: idOf("Base.run") }, depth: 1, limit: 500, budget: { ms: 100 } };
+    const started = performance.now();
+    const a = query(t, req);
+    const ms = performance.now() - started;
+    // Stopped or whole, the answer comes back near its budget: a derivation
+    // that scans the file once per subclass takes seconds here.
+    expect(ms).toBeLessThan(800);
+    if (a.truncated.by === "budget") expect(a.unknown.floor).toBe(true);
+    const full = query(t, { ...req, budget: { ms: 60_000 } });
+    expect(full.truncated.by).toBe("limit");
+    expect(full.counts.likely).toBe(SUBCLASSES);
+    // The walk reads each subclass's edge and checks it past the depth; the
+    // derivation checks each subclass again, so a cancellation is seen there.
+    const b = checksBudget(Number.MAX_SAFE_INTEGER);
+    query(t, req, { budget: b });
+    expect(b.checks).toBeGreaterThan(3 * SUBCLASSES);
+  });
+});
+    expect(early.truncated.by).toBe("budget");
+    expect(early.truncated.frontierTotal ?? 0).toBeGreaterThan(0);
+    expect(early.truncated.frontierTotal ?? 0).toBeLessThan(20);
+    const b = checksBudget(Number.MAX_SAFE_INTEGER);
+    query(t, req, { budget: b });
+    expect(b.checks).toBeGreaterThan(2 * CALLEES);
+    const rest = query(t, { ...req, cursor: early.truncated.cursor as string });
+    expect(rest.truncated.by).toBe(whole.truncated.by);
+    expect(rest.unknown).toEqual(whole.unknown);
   });
 });

@@ -64,16 +64,42 @@ function ownerClass(g: Graph, m: GraphNode): GraphNode | null {
   return (g.defsByFile.get(m.file) ?? []).find((d) => (d.kind === "class" || d.kind === "type" || d.kind === "module") && qualified(d) === owner) ?? null;
 }
 
+// The methods of the graph by file and qualified name, built once per graph
+// when a session opens it (open.ts), so no question pays for it.
+const methodIndex = new WeakMap<Graph, Map<string, GraphNode[]>>();
+export function methodsNamed(g: Graph, file: string, qualifiedName: string): GraphNode[] {
+  let ix = methodIndex.get(g);
+  if (!ix) {
+    ix = new Map();
+    for (const list of g.defsByFile.values()) {
+      for (const d of list) {
+        if (d.kind !== "method") continue;
+        const key = `${d.file}\0${qualified(d)}`;
+        (ix.get(key) ?? ix.set(key, []).get(key))?.push(d);
+      }
+    }
+    methodIndex.set(g, ix);
+  }
+  return ix.get(`${file}\0${qualifiedName}`) ?? [];
+}
+
 // Overrides of a method found from the inheritance the graph resolved: a
 // method of the same name on a class that inherits the owner, directly or
 // through others. The inheritance is proved; the override rests on the
 // name and on a lookup order the graph does not resolve, so it is likely
-// at most and names the inheritance it rests on. Run it until it returns true.
+// at most and names the inheritance it rests on. Each step (the walk, each
+// inheritance edge read, each subclass looked at, the sort) checks the
+// budget and goes on where it stopped. Run it until it returns true.
 export class Overrides {
   items: Override[] = [];
   private readonly owner: GraphNode | null;
   private readonly walk: Walk | null;
-  private done = false;
+  private phase: "walk" | "chains" | "derive" | "sort" | "done" = "walk";
+  // The inheritance chain of each subclass back to the owner, strongest site per hop.
+  private readonly up = new Map<string, Item>();
+  private read = 0;
+  private subclasses: Iterator<[string, Item]> | null = null;
+  private readonly out: Override[] = [];
   constructor(
     private readonly g: Graph,
     private readonly m: GraphNode,
@@ -95,53 +121,69 @@ export class Overrides {
   }
 
   run(budget: Budget): boolean {
-    if (this.done) return true;
     if (!this.walk || !this.owner) {
-      this.done = true;
+      this.phase = "done";
       return true;
     }
-    if (!this.walk.run(budget)) return false;
     const g = this.g;
     const owner = this.owner;
-    // The inheritance chain of each subclass back to the owner, strongest site per hop.
-    const up = new Map<string, Item>();
-    for (const i of this.walk.items) {
-      const have = up.get(i.from);
-      if (!have || i.depth < have.depth || (i.depth === have.depth && RANK[i.site.tier] < RANK[have.site.tier])) up.set(i.from, i);
+    if (this.phase === "walk") {
+      if (!this.walk.run(budget)) return false;
+      this.phase = "chains";
     }
-    const out: Override[] = [];
-    for (const [sub, link] of up) {
-      const cls = g.nodes.get(sub);
-      if (!cls) continue;
-      const prefix = `${qualified(cls)}.${this.m.name}`;
-      const own = (g.defsByFile.get(cls.file) ?? []).filter((d) => d.kind === "method" && qualified(d) === prefix);
-      if (own.length === 0) continue;
-      const premises: string[] = [];
-      let tier: Tier = "likely";
-      let at: Item | undefined = link;
-      for (let guard = 0; at && guard < 64; guard++) {
-        premises.push(at.edge);
-        tier = weakest(tier, at.site.tier);
-        at = at.to === owner.id ? undefined : up.get(at.to);
+    if (this.phase === "chains") {
+      const items = this.walk.items;
+      while (this.read < items.length) {
+        if (spent(budget)) return false;
+        const i = items[this.read++] as Item;
+        const have = this.up.get(i.from);
+        if (!have || i.depth < have.depth || (i.depth === have.depth && RANK[i.site.tier] < RANK[have.site.tier])) this.up.set(i.from, i);
       }
-      if (!this.tiers.has(tier)) continue;
-      for (const d of own) {
-        const site: GraphSite = {
-          file: d.file,
-          line: d.startLine,
-          column: 0,
-          tier,
-          evidence: "override-by-name",
-          via: { file: link.site.file, line: link.site.line, spec: null },
-          note: `a method of the same name on a class that inherits ${qualified(owner)} (${link.site.file}:${link.site.line}); method lookup order is not resolved`,
-          rule: "query-override-by-name",
-        };
-        const e = { from: d.id, to: this.m.id, kind: "overrides" };
-        out.push({ ...toItem(g, e, site, link.depth), edge: edgeId(e, site), premises });
-      }
+      this.subclasses = this.up.entries();
+      this.phase = "derive";
     }
-    this.items = out.sort(byItem) as Override[];
-    this.done = true;
+    if (this.phase === "derive") {
+      const subclasses = this.subclasses as Iterator<[string, Item]>;
+      for (;;) {
+        if (spent(budget)) return false;
+        const r = subclasses.next();
+        if (r.done) break;
+        const [sub, link] = r.value;
+        const cls = g.nodes.get(sub);
+        if (!cls) continue;
+        const own = methodsNamed(g, cls.file, `${qualified(cls)}.${this.m.name}`);
+        if (own.length === 0) continue;
+        const premises: string[] = [];
+        let tier: Tier = "likely";
+        let at: Item | undefined = link;
+        for (let guard = 0; at && guard < 64; guard++) {
+          premises.push(at.edge);
+          tier = weakest(tier, at.site.tier);
+          at = at.to === owner.id ? undefined : this.up.get(at.to);
+        }
+        if (!this.tiers.has(tier)) continue;
+        for (const d of own) {
+          const site: GraphSite = {
+            file: d.file,
+            line: d.startLine,
+            column: 0,
+            tier,
+            evidence: "override-by-name",
+            via: { file: link.site.file, line: link.site.line, spec: null },
+            note: `a method of the same name on a class that inherits ${qualified(owner)} (${link.site.file}:${link.site.line}); method lookup order is not resolved`,
+            rule: "query-override-by-name",
+          };
+          const e = { from: d.id, to: this.m.id, kind: "overrides" };
+          this.out.push({ ...toItem(g, e, site, link.depth), edge: edgeId(e, site), premises });
+        }
+      }
+      this.phase = "sort";
+    }
+    if (this.phase === "sort") {
+      if (!sortWithin(this.out, byItem, budget)) return false;
+      this.items = this.out;
+      this.phase = "done";
+    }
     return true;
   }
 }
