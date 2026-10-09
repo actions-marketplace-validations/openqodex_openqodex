@@ -146,3 +146,22 @@ openqodex graph explain <edge id>
 ## Settings
 
 The `graph` keys of `.openqodex/config.yaml` are in `config`: `graph.enabled`, `graph.budget_ms`, `graph.max_files` (new parses per build), `graph.max_file_bytes`, `graph.max_cache_mb` and `graph.max_heap_mb`. `--no-graph` turns the graph off for one review.
+
+## Framework entries: Django and Rails
+
+The graph reads two frameworks' own conventions and adds what they declare to the brief: Django and Rails. A framework is read only when a manifest of the project declares it (`django` in a Python manifest such as `requirements.txt` or `pyproject.toml`, `rails` in the `Gemfile`) and the project has the framework's own marker: a settings module that assigns `INSTALLED_APPS` or `ROOT_URLCONF` for Django, `config/application.rb`, a `routes.draw` block in `config/routes.rb` or `bin/rails` for Rails. The dependency alone never makes an application, and a name that only looks like the framework's (`path` from `os`, a `render` of your own, a class named `PostsController` outside `app/controllers`) makes nothing. Settings, routes and config files are parsed as text and never imported or run.
+
+For a change, the brief adds "Framework entries this change reaches", in tables:
+
+- the routes whose handler is the touched code, or reaches it through calls (up to three hops), with the route's methods, its full path with every `include()`, `namespace` or `scope` prefix composed, its name, where it is declared and the handler as written;
+- routes the change declares, and routes whose handler is gone: a route stays registered when its view or action is deleted, and the brief says it has no handler now;
+- the templates and views the touched code renders, and the code that renders a changed template;
+- a touched model's migrations, and what a changed migration changes;
+- the framework role of the touched code (model, command, job, mailer, signal receiver, template tag);
+- the tests that reference, call or may request the touched code: a test that calls it, a test request whose literal path matches the route's pattern, a test that names the route, or a spec that names the class. These are static links, never coverage.
+
+Each table shows twelve rows; the rest, uncut, are in the review packet's `frameworks.json`, which the table's last line names. Every value quoted from the repository in these tables (a route path or name, a template name, a handler as written) is on one line, cut to 120 characters, inside a code span or escaped, so text in your repository cannot start a line of the brief.
+
+Levels follow the rest of the graph. A view bound through an import is certain; a Rails action found by its controller's path, a template found by its name under a templates or views folder, and a table name made by Rails or Django's naming rule are likely, with the note saying so; the HTTP methods of a class view, a template that several folders hold and a test request that several routes match are possible.
+
+What the plugins cannot see is said as a gap: a computed route path, include, template name or request path (`dynamic`; a route under a computed prefix keeps its known part, shown as `{computed}accounts/login/`), a view that is not defined (`miss`), a URL entry whose function is not Django's (`unsupported-rule`), and every cap (`fan-out-capped` or `budget`). A plugin reads no file over 1 MiB, keeps at most 10,000 route registrations and 20,000 entities per application, and matches test requests against routes by hand under a step budget; no regular expression from your repository is ever built or run.
