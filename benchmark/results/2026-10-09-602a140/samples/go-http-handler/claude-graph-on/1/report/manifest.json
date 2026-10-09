@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "change_id": "abd88064b93d1ec44544f21ce6575838aa02bdce1e481cc2c7418c03f58c7e93",
+  "config_hash": "bb5a14e29e83019aee75407355284dc4e41382c99ceb8724b852c108e08210d3",
+  "created_at": "2026-10-09T06:00:36.872Z",
+  "lenses": [
+    {
+      "name": "sql-string-concatenation",
+      "confidenceFloor": 0.75
+    },
+    {
+      "name": "ssrf-server-side-fetch",
+      "confidenceFloor": 0.75
+    }
+  ],
+  "instructions_hash": null,
+  "runtime_version": "0.10.0"
+}

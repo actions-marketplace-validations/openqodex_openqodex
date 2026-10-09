@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves files from the uploads directory by name. Also changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The download handler joins the name query parameter onto UPLOAD_DIR without any check. A value like ../../etc/passwd or an absolute path such as /etc/passwd escapes the uploads directory.",
+      "consequence": "Any caller of /download can read any file the server process can read. This exposes secrets, config files and source code.",
+      "fix": "Use werkzeug safe_join or flask send_from_directory, which reject paths outside the base directory. Return 404 when the resolved path leaves UPLOAD_DIR.",
+      "suggested_change": "    path = safe_join(UPLOAD_DIR, name)\n    if path is None or not os.path.isfile(path):\n        abort(404)\n    return send_file(path)",
+      "source": "lens:path-traversal-in-fs-access"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Debug server exposed on all interfaces",
+      "problem": "The change turns on debug mode and binds the server to 0.0.0.0. Debug mode turns on the interactive debugger, which runs code typed in the browser.",
+      "consequence": "Anyone on the network who triggers an error can run arbitrary code on the host. Together with the new download endpoint, they can also read the debugger PIN inputs.",
+      "fix": "Restore host 127.0.0.1 and drop debug=True. Read both settings from environment variables if a developer needs them.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000)",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 14,
+      "line_end": 20,
+      "title": "New download endpoint has no test",
+      "problem": "The repository has no test for the new download handler. No test covers the missing file case or a traversal attempt.",
+      "consequence": "A regression in the path check could ship without anyone noticing.",
+      "fix": "Add tests that request a valid file, a missing file and a ../ path. Assert 200, 404 and 404 in that order.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The finding raised for c1 on this same line already covers the all-interfaces binding.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c3",
+      "reason": "The finding raised for c1 on this same line already covers debug mode.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c4",
+      "reason": "The finding raised for c1 on this same line already covers the all-interfaces binding.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

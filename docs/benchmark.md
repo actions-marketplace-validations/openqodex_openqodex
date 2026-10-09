@@ -140,6 +140,32 @@ What it showed:
 - The reviewer also asked for tests about once per review (32 and 31 findings); these are counted apart, as the scoring rules above say.
 - The wording pass (`judge.json`, judged by `claude-sonnet-5`, which never blocks) read the 203 findings that the earlier rules matched to a planted bug. Graph off and on: the problem sentence was plain in 86% and 90% and correct in 97% and 98%; the consequence plain in 86% and 85%, correct in 97% and 92%; the fix plain in 91% and 95%, correct in 97% and 98%. The judge's answer for 8 findings did not parse.
 
+## Code graph phase 4a: Django and Rails framework entries
+
+`benchmark/results/2026-10-09-602a140`: build `602a140` of the phase 4a branch (openqodex 0.10.0), Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 15 reviews, all complete, none failed. The first run is scored against this run's specs (`score-cases-602a140.json` in its folder, named for this run so it sits beside other phases' scores of the same run), so both columns use the same rules and words. Its Rails numbers do not compare, since that case's code changed after it ran.
+
+| Measure (graph on) | First run (`752b77f`, 3 repeats) | Phase 4a (`602a140`, 1 repeat) |
+|---|---|---|
+| Planted bugs found | 100/111 (90%) | 34/38 (89%) |
+| critical | 33/36 | 13/13 |
+| major | 57/57 | 19/19 |
+| minor | 10/18 | 2/6 |
+| Findings that are planted bugs | 100/100 (100%) | 34/34 (100%) |
+| False findings | 0 | 0 |
+| Clean changes with no finding | 6/6 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 5/5 |
+| Graph gaps disclosed in the brief | 3/6 | 1/2 |
+| Time per review, mean | 25 s | 28 s |
+| Reviewer turns per review, mean | 3.9 | 4.1 |
+| Cost per review, mean | $0.11 | $0.11 |
+
+What it showed:
+
+- The new case, `django-renamed-view`, renames a view while `orders/urls.py`, outside the diff, still registers the old name. The brief listed the route `ANY orders/<int:pk>/`, named `orders:detail`, declared at `orders/urls.py:8`, with "no handler now: the handler is missing", and the review found the bug. With the graph off, on the same build, three reviews found it too (`benchmark/results/2026-10-09-602a140-django-graph-off`, 3 of 3): in a repository this small the reviewer opens `urls.py` itself. This phase put the broken route in the brief; it moved no line of bugs found.
+- On the 14 cases both runs hold, the review found 33 of 37 plants: every critical and major one. The four misses are minor: three Dockerfile issues in the demo repository that the scanners raised and the reviewer dropped, and the list items without keys in the Next.js case, as in the earlier runs.
+- No finding was false. Three findings matched side issues the cases list as real but not planted.
+- The graph gap line is unchanged: the `js-dynamic-dispatch-gap` brief still does not name the computed call `table[action](id)`. Phase 2 changes that, and this branch does not hold phase 2.
+
 ## Claims cite a run
 
 A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a saved benchmark run: the results folder, the score file it quotes (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no saved run backs is not written.

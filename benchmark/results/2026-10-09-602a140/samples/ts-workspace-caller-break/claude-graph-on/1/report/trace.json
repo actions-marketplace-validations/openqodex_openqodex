@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "Read",
+    "path": "packages/cli/src/branch.ts",
+    "inside": true,
+    "range": [
+      1,
+      12
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "packages/cli/src/status.ts",
+    "inside": true,
+    "range": [
+      1,
+      11
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "packages/cli/src/main.ts",
+    "inside": true,
+    "range": [
+      1,
+      12
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Grep",
+    "path": "packages",
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

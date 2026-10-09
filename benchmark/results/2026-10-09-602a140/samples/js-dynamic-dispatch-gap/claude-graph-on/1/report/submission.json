@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "eab11e18f842",
+  "summary": "onSave becomes async and writes the whole note store to data/notes.json after each save.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Async onSave breaks the synchronous dispatch caller",
+      "problem": "onSave now returns a Promise, but dispatch in src/router.js:7 returns it unawaited. The server in src/main.js:9 then passes that Promise to res.end.",
+      "consequence": "Node's res.end throws a TypeError for a Promise chunk, so every POST /save request crashes the server. A writeFile rejection also goes unhandled, which crashes the process too.",
+      "fix": "Make dispatch and the request handler await the result and catch errors. Then send the resolved string with res.end.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "New snapshot write has no covering test",
+      "problem": "The change adds a file write and an async return to onSave. The repository has no test that covers onSave.",
+      "consequence": "Regressions in the save path, like the broken caller, reach users without a failing test.",
+      "fix": "Add a test that calls dispatch with save and checks the response text and the snapshot file contents.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}
