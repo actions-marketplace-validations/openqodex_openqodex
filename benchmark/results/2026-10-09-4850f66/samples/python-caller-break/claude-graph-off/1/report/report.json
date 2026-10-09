@@ -1,0 +1,351 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "9f4d6ef41c2c02a1aafdc4b281a76c383f93a1ee9ce8a1f69c2fe58b88beadc2",
+  "base": {
+    "ref": "HEAD",
+    "sha": "92ca44897ef48ba612e4ce6256ebd5e6758b8e10"
+  },
+  "generated_at": "2026-10-09T06:22:31.845Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "tax_for now returns None instead of 0 for unknown regions. The existing callers in the shop package are not updated to handle None.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "None return breaks order_total and tax_line callers",
+      "description": "tax_for now returns None for an unknown region. order_total in shop/checkout.py adds that result to an int, and tax_line in shop/receipt.py divides it by 100. Checkout and receipt printing raise TypeError for every order from an unknown region. Before this change, those orders went through with zero tax. Update order_total and tax_line to handle a None result. Otherwise, keep returning 0 for unknown regions.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "tax_for now returns None for an unknown region. order_total in shop/checkout.py adds that result to an int, and tax_line in shop/receipt.py divides it by 100.",
+      "consequence": "Checkout and receipt printing raise TypeError for every order from an unknown region. Before this change, those orders went through with zero tax.",
+      "fix": "Update order_total and tax_line to handle a None result. Otherwise, keep returning 0 for unknown regions."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 7,
+      "line_end": 8,
+      "title": "No test covers the unknown region branch",
+      "description": "The repository has no test for tax_for or its callers. Nothing exercises the new branch that returns None. A test would have caught the TypeError in the callers before this push. Add tests for tax_for, order_total and tax_line with an unknown region.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The repository has no test for tax_for or its callers. Nothing exercises the new branch that returns None.",
+      "consequence": "A test would have caught the TypeError in the callers before this push.",
+      "fix": "Add tests for tax_for, order_total and tax_line with an unknown region."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3255,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 23,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 11,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 73,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 6,
+    "deletions": 3
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 91151,
+      "started_at": "2026-10-09T06:22:21.680Z",
+      "ended_at": "2026-10-09T06:22:31.845Z",
+      "duration_ms": 10165,
+      "rounds": 1,
+      "usage": {
+        "turns": 5,
+        "input_tokens": 26579,
+        "output_tokens": 887,
+        "cost_usd": 0.05778080000000001
+      }
+    },
+    "snapshot": {
+      "change_id": "9f4d6ef41c2c02a1aafdc4b281a76c383f93a1ee9ce8a1f69c2fe58b88beadc2",
+      "tree": "bf64f31fbcf183e8c4b47fd9d37909989a214134",
+      "before": "890bff0b87594ea1fa8e0f317afe1b4831c9c0bba1503645788e05330dfa4087",
+      "after": "890bff0b87594ea1fa8e0f317afe1b4831c9c0bba1503645788e05330dfa4087"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 1,
+      "covered": 1,
+      "unread": [],
+      "files_read": [
+        "pkgs/shop/src/shop/checkout.py",
+        "pkgs/shop/src/shop/receipt.py"
+      ],
+      "files_not_read": [
+        "pkgs/billing/src/billing/tax.py"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

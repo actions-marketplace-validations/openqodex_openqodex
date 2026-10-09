@@ -1,0 +1,32 @@
+name: Visual tests
+
+# Dependabot pull requests get no secrets on pull_request, so the visual
+# tests run on pull_request_target for them.
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  percy:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - name: Check out the pull request
+        run: |
+          git fetch origin "pull/$PR_NUMBER/head:pr"
+          git checkout pr
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx percy exec -- npm run test:visual
+        env:
+          PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }}

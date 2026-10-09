@@ -38,6 +38,7 @@ import type {
 } from "@openqodex/core";
 import { describeFailure, execTool, isOffline, runInChunks } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
+import { RUSTSEC_ID } from "../same-problem.js";
 import type { Adapter } from "./index.js";
 import { suchAs } from "./words.js";
 import { readRepoFile } from "./read.js";
@@ -256,7 +257,7 @@ export function parseOsvScannerJson(
         const id = typeof vuln.id === "string" ? vuln.id : "";
         if (!id) continue;
         // osv-scanner groups advisories that alias one another (two GHSA
-        // ids for one CVE): one finding per group, under its first id.
+        // ids for one CVE): one finding per group, under its leader.
         const leader = leaderOf.get(id);
         if (leader !== undefined && leader !== id) continue;
         const severity = severityForVuln(vuln, maxSeverityByVulnId.get(id));
@@ -386,14 +387,18 @@ function groupSeverityById(groups: unknown): Map<string, StaticFindingSeverity> 
   return map;
 }
 
-// For each advisory id in a group, the group's first id.
+// For each advisory id in a group, the group's RustSec id when it holds one,
+// otherwise its first id. cargo-deny names a Rust advisory by its RustSec id,
+// so the two scanners' findings of one advisory share a name and merge
+// (same-problem.ts) whatever order osv.dev lists the group's ids in.
 function groupLeaders(groups: unknown): Map<string, string> {
   const map = new Map<string, string>();
   if (!Array.isArray(groups)) return map;
   for (const g of groups as OsvGroup[]) {
     if (!g || typeof g !== "object" || !Array.isArray(g.ids)) continue;
     const ids = (g.ids as unknown[]).filter((x): x is string => typeof x === "string");
-    for (const id of ids) map.set(id, ids[0]!);
+    const leader = ids.find((id) => RUSTSEC_ID.test(id)) ?? ids[0]!;
+    for (const id of ids) map.set(id, leader);
   }
   return map;
 }

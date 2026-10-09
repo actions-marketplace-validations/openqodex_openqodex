@@ -22,7 +22,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - `claude-code-review`: code review in Claude Code, from install to report.
 - `cli`: every command, flag and exit code.
 - `config`: every key of `.openqodex/config.yaml`.
-- `scanners`: the thirteen built-in scanners.
+- `scanners`: the twenty-two built-in scanners.
 - `graph`: the code graph: what it answers, what it cannot see, its folder and its commands.
 - `custom-scanners`: add any scanner by its GitHub link.
 - `agents`: what `init` writes for each coding agent.

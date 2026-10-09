@@ -13,6 +13,8 @@ OpenQodex starts every program with an argument list, never through a shell. Sca
 
 A repository can hold config files that make a scanner run code or rewrite files. OpenQodex does not load such files for oxlint, golangci-lint, brakeman and rubocop. It uses its own settings for them. ruff and gitleaks read the repository's own settings for rules only. ruff runs with fixes switched off.
 
+A built-in scanner is handed only changed files that are regular files inside the repository, reached through no symbolic link. A change can add a file that links anywhere on your machine under a name a scanner checks, such as `report.sql` or a workflow; that file is not handed to any built-in scanner, and the scanner's line in the report names it with the reason.
+
 A change can also tell a scanner to skip its own lines: with a suppression comment such as `# nosec`, or with an edit to a settings or ignore file the scanner reads. The scanner still obeys either one. OpenQodex shows each one as a candidate: the reviewer keeps or drops it in a review, and a scan counts it as a minor finding. `scanners` lists the comments.
 
 ## The trust step
@@ -41,9 +43,11 @@ The script's check that a program does not lie inside the repository compares pa
 
 OpenQodex and the built-in scanners use the network for these things only:
 
-- Scanner downloads on first use. GitHub release files are checked against sha256 sums pinned in the package. semgrep and bandit come from PyPI through uv, with a Python 3.11 that uv downloads, and brakeman and rubocop come from RubyGems. Each of these installs from a lock file in the package that names every package of its dependency tree at one version with its sha256, and each file is checked against that sha256 before it is installed. semgrep and bandit get exactly the packages of their lock, each from its wheel, so no build script runs. RubyGems takes the checked files, or a gem Ruby itself ships when that one meets the requirement. Which scanners download is worked out on your machine from your repository's files (see `scanners`); nothing is sent to work it out.
+- Scanner downloads on first use. GitHub release files are checked against sha256 sums pinned in the package. semgrep, bandit, SQLFluff and Checkov come from PyPI through uv, with a Python 3.11 that uv downloads, and brakeman and rubocop come from RubyGems. Each of these installs from a lock file in the package that names every package of its dependency tree at one version with its sha256, and each file is checked against that sha256 before it is installed. semgrep, bandit, SQLFluff and Checkov get exactly the packages of their lock, each from its wheel, so no build script runs. RubyGems takes the checked files, or a gem Ruby itself ships when that one meets the requirement. Which scanners download is worked out on your machine from your repository's files (see `scanners`); nothing is sent to work it out.
 - Semgrep rule packs. semgrep fetches `p/default`, `p/security-audit` and `p/secrets` from the Semgrep registry on each run. Its metrics are off. The rules are never bundled in the package.
 - The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code. Its other lookups are switched off: no transitive resolution through deps.dev, no file hashes of vendored C and C++ code, no reachability analysis.
+- Kubernetes schemas. When the change holds a Kubernetes manifest, kubeconform downloads the JSON schema of each kind it meets from raw.githubusercontent.com, at one commit pinned in the package, so the requests name the kinds you use. It never sends a manifest. Each schema is cached and fetched once.
+- The RustSec advisory database. When the change holds a `Cargo.lock`, cargo-deny fetches the database from github.com with git into `~/.openqodex/cache/cargo-deny/`. Nothing about your code or your crates is sent. Cargo itself runs offline.
 - Custom scanners. `openqodex trust` reads the release from the GitHub API and downloads the asset. After approval, a custom scanner does whatever its own command does.
 - The problem report, only when you choose it. When OpenQodex fails, a scanner breaks, or you run `openqodex report`, it prints the GitHub issue it would create and two choices. Nothing is sent unless you press 1 or run `openqodex report --send-last`. Then, when the GitHub CLI `gh` is installed and signed in, `gh` creates the issue in `openqodex/openqodex` with your GitHub account. Otherwise OpenQodex opens GitHub's new-issue page in your browser, or prints its link, with the title and body filled in, and you submit it there. The issue holds the OpenQodex version, the command and its arguments with paths and secrets taken out, the part of OpenQodex that failed, a scrubbed error line, the scanner statuses and your platform (OS, CPU type, Node major version). It never holds code, file names, paths, repository names, config or secrets.
 - The daily version check, for an install made with `init`. See "Updates" below.
@@ -51,7 +55,7 @@ OpenQodex and the built-in scanners use the network for these things only:
 
 golangci-lint runs with the Go module proxy off, so it downloads no modules.
 
-`--offline` skips osv-scanner and semgrep, which the report lists as disabled. It also turns scanner downloads off and the version check. A review of a branch or a pull request with `--offline` fetches nothing and calls no `gh`.
+`--offline` skips osv-scanner, semgrep, kubeconform and cargo-deny, which the report lists as disabled. It also turns scanner downloads off and the version check. A review of a branch or a pull request with `--offline` fetches nothing and calls no `gh`.
 
 ## Updates
 
@@ -135,7 +139,7 @@ A secret is redacted only when a scanner matched it. When gitleaks did not run, 
 In your home folder, under `~/.openqodex/` (`OPENQODEX_HOME` moves it). The records below (`receipts/`, `runs/`, `last-review/`) are read only from a folder that lies, by identity, under `~/.openqodex/` with no link on the way, through a handle opened without following a link: a record folder or file that is a link counts as no record.
 
 - `tools/<scanner>/<version>/`: the scanners.
-- `tools/uv-python/`: the Python 3.11 for semgrep and bandit.
+- `tools/uv-python/`: the Python 3.11 for semgrep, bandit, SQLFluff and Checkov.
 - `cache/`: the download caches for uv and npm.
 - `runtime/<version>/` and `bin/openqodex`: the copy of the package and the launcher that the hooks call, written by `init`. Updates add copies beside it; a copy is never changed after it is written. `init`, `openqodex update` and the background check right after it switches remove copies older than 7 days, except the one `init` installed, the current one and the previous one.
 - `runtime/current`: the version the launcher runs, and on a second line the version a rollback goes back to.

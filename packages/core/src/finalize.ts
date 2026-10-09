@@ -389,7 +389,7 @@ const EM_DASH = String.fromCharCode(0x2014);
 // oxlint-disable-next-line no-control-regex
 const CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
 
-const BUILTIN_SCANNERS = ["semgrep", "gitleaks", "sqllint", "osv-scanner", "actionlint", "hadolint", "shellcheck", "ruff", "brakeman", "rubocop", "bandit", "oxlint", "golangci"];
+const BUILTIN_SCANNERS = ["semgrep", "gitleaks", "sqllint", "osv-scanner", "actionlint", "hadolint", "shellcheck", "ruff", "brakeman", "rubocop", "bandit", "oxlint", "golangci", "zizmor", "trivy", "squawk", "kube-linter", "tflint", "kubeconform", "cargo-deny", "checkov", "sqlfluff"];
 
 export function sentences(text: string): string[] {
   return text

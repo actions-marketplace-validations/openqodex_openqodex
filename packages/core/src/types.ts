@@ -16,7 +16,16 @@ export type BuiltinScanner =
   | "rubocop"
   | "bandit"
   | "oxlint"
-  | "golangci";
+  | "golangci"
+  | "zizmor"
+  | "trivy"
+  | "squawk"
+  | "kube-linter"
+  | "tflint"
+  | "kubeconform"
+  | "cargo-deny"
+  | "checkov"
+  | "sqlfluff";
 
 // A custom scanner from .openqodex.yaml is "custom:<name>".
 export type ScannerSource = BuiltinScanner | `custom:${string}`;
@@ -48,6 +57,9 @@ export type Candidate = StaticFinding & {
   id: string;
   token: string;
   reviewSeverity: Severity;
+  // The tokens of other scanners' findings that named the same problem on
+  // the same lines and were merged into this one; absent when none were.
+  alsoReportedBy?: string[];
 };
 
 export type ScannerStatus =
@@ -94,6 +106,10 @@ export type AdapterResult = {
   // Set when the adapter chose not to run (for example dependency lookups
   // while offline). The runner records status "disabled" with this reason.
   skipped?: string | null;
+  // What the run left out that is not a failure, such as a folder held back
+  // from a scanner that would download from it. The scanner still ran; the
+  // runner keeps this as its reason.
+  note?: string | null;
   // Rules this run checked, as "<source>:<ruleId>" tokens, with the files it
   // checked them on. A review pattern (lens) one of them covers stands down
   // for those files.

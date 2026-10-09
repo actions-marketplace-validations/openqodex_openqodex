@@ -45,9 +45,11 @@
 //  15. A string, heredoc, template, raw string or block comment left open
 //      at the end of the file hides every marker after its opener.
 // Added after the second code review:
-//  16. 1 MB of generated input takes a second or more: thousands of distinct
-//      heredoc words left open, a heredoc word made of 100,000 quote pairs,
-//      many unclosed openers of each kind, one very long line, deep nesting.
+//  16. Generated input takes time that grows faster than its size:
+//      thousands of distinct heredoc words left open, a heredoc word made of
+//      100,000 quote pairs, many unclosed openers of each kind, one very
+//      long line, deep nesting. Checked by the ratio of two sizes, which a
+//      slow runner does not change, and a bound only a gross slowdown passes.
 //  17. A construct read wrongly hides a later real comment: an f-string
 //      field whose format spec is never closed; in Ruby, `x /y` read as a
 //      regular expression; in JavaScript, `} / 2` read as one.
@@ -59,6 +61,23 @@
 //      it, so the body runs on and an apostrophe in it swallows a later
 //      directive: `<<"E\"OF"` ends at `E\"OF`, `<<E"O"F` at `E"O"F`, and
 //      an end line may carry trailing blanks.
+// Added with the infrastructure scanners (trivy 0.75.0, checkov 3.3.22 and
+// tflint 0.64.0 were run on the same lines):
+//  20. tflint: `tflint-ignore:` in an HCL string, a heredoc body or a
+//      template's string is reported; or a `#`, `//` or `/* */` comment that
+//      holds it is missed, also after a string that holds a quote, a `#`, a
+//      `//` or a `${ }` with nested strings and braces, and inside a `${ }`.
+//  21. An HCL heredoc is read other than the way HCL reads it: its closing
+//      word indented (both `<<` and `<<-`), a `<<WORD` not followed by the
+//      line end, `$${` taken for a template.
+//  22. trivy and checkov read their markers on the raw line, a string
+//      included; one is missed there, or in the forms they take (`tfsec:`,
+//      `trivy:exp:...:ignore:`, `bridgecrew:skip=`).
+//  23. checkov's Kubernetes annotation key and CloudFormation Metadata key
+//      are missed as a YAML or JSON key (block, flow, JSON, an alias), or
+//      counted in a YAML comment or a quoted value; a marker of one family
+//      is read in another's units.
+//  24. The HCL reader takes more than linear time on hostile input.
 
 import { describe, expect, it } from "vitest";
 import type { BuiltinScanner } from "@openqodex/core";
@@ -517,6 +536,10 @@ describe("linear time on hostile input (11)", () => {
     ["golangci", "blanks before #nosec", `/*\n${" ".repeat(N)}x\n*/\n`],
     ["rubocop", "openers left open", `${'=begin\n"#{%q(<<~A\n'.repeat(N / 10)}`],
     ["rubocop", "blanks in a directive", `#${" ".repeat(N)}rubocop${" ".repeat(N)}:x\n`],
+    ["tflint", "openers left open (24)", `${'"${/*<<E\n'.repeat(N / 10)}`],
+    ["tflint", "deep templates (24)", `x = ${'"${'.repeat(N)}\n`],
+    ["trivy", "a long word and many short ones (24)", `${"#".repeat(N)}trivy:${"a".repeat(N)}\n${" trivy:".repeat(N / 7)}\n`],
+    ["checkov", "many near markers (24)", `${"checkov:skip".repeat(N / 12)}\n${"checkov.io/ski".repeat(N / 14)}\n`],
   ];
   for (const [scanner, what, text] of cases) {
     it(`${scanner}: ${what}`, () => {
@@ -525,55 +548,342 @@ describe("linear time on hostile input (11)", () => {
   }
 });
 
-describe("linear time on 1 MB of generated input, per reader family (16)", () => {
+// A heredoc's end is looked up by a hash of each line's text. Two words
+// with one 32-bit hash (EPBVIVKP and ELXSADHD share 0x63c4d43c): a body line
+// that only shares the hash must not end the heredoc, or a comment-shaped
+// line of its body would count as a marker.
+describe("a heredoc ends only on a line that is its word", () => {
+  it("passes over a body line whose text shares the word's hash", () => {
+    const text = src("x = <<~EPBVIVKP", "  ELXSADHD", "  # rubocop:disable all", "  EPBVIVKP", "y = 1 # rubocop:disable Lint/Foo");
+    expect(findMarkers(text, ["rubocop"]).map((m) => m.line)).toEqual([5]);
+  });
+
+  // However many lines share the word's hash before its real end, the
+  // heredoc ends there, as the scanner ends it. Read as left open, its body
+  // would be read as code: the quote in "it's" would open a string that runs
+  // past the end and hides the real comment after it.
+  it("ends at the real end after any number of lines that share its hash, and hides no marker after it", () => {
+    const text = src("cat <<EPBVIVKP", ...Array(200).fill("ELXSADHD"), "it's", "EPBVIVKP", "echo $1 # shellcheck disable=SC2086", "echo 'x'");
+    expect(findMarkers(text, ["shellcheck"]).map((m) => m.line)).toEqual([204]);
+  });
+
+  // Lines that all share one hash cost each lookup no rescan: a file of
+  // them with a heredoc on every other line (172,000 lines that share the
+  // word's hash at 3.94 MB) grows linearly. CPU time of the fastest of three
+  // runs after one untimed run, at 1 MB, 2 MB and 3.94 MB.
+  it("stays linear on a file of lines that all share the word's hash", () => {
+    const MB = 1024 * 1024;
+    const timed = (size: number) => {
+      const text = Buffer.from("cat <<EPBVIVKP\nELXSADHD\n".repeat(Math.ceil(size / 24)), "utf8").toString("utf8");
+      findMarkers(text, ["shellcheck"]);
+      const runs: number[] = [];
+      for (let r = 0; r < 3; r++) {
+        const before = process.cpuUsage();
+        findMarkers(text, ["shellcheck"]);
+        const used = process.cpuUsage(before);
+        runs.push((used.user + used.system) / 1000);
+      }
+      return Math.min(...runs);
+    };
+    const small = timed(MB);
+    const middle = timed(2 * MB);
+    const large = timed(4 * MB - 64 * 1024);
+    const shown = `${small.toFixed(0)}, ${middle.toFixed(0)} and ${large.toFixed(0)} ms for 1, 2 and 3.94 MB`;
+    expect(middle / Math.max(small, 20), shown).toBeLessThan(8);
+    expect(large / Math.max(small, 20), shown).toBeLessThan(8);
+    expect(small).toBeLessThan(4000);
+  }, 180_000);
+});
+
+describe("linear time on generated input, per reader family (16)", () => {
   const MB = 1024 * 1024;
-  // `unit` repeated to about 1 MB; `(k) => string` gives each repeat its own text.
-  const fill = (unit: string | ((k: number) => string)) => {
+  // Two sizes about four times apart. The larger stays under 4 MB: past
+  // MAX_KEY_BYTES the YAML key reader reads raw lines instead, and its
+  // parser would go unmeasured.
+  const SMALL = MB;
+  const LARGE = 4 * MB - 64 * 1024;
+  // `unit` repeated to about `size`; `(k) => string` gives each repeat its own text.
+  const filler = (size: number) => (unit: string | ((k: number) => string)) => {
     const parts: string[] = [];
-    let size = 0;
-    for (let k = 0; size < MB; k++) {
+    let length = 0;
+    for (let k = 0; length < size; k++) {
       const part = typeof unit === "string" ? unit : unit(k);
       parts.push(part);
-      size += part.length;
+      length += part.length;
     }
     return parts.join("");
   };
-  const fast = (scanner: BuiltinScanner, text: string) => {
-    const started = performance.now();
+  type Fill = ReturnType<typeof filler>;
+  // The CPU time of the fastest of three runs, after one run that is not
+  // counted. CPU time of this process: other test files running beside it
+  // on a busy runner do not count. The untimed run takes the garbage
+  // collection the input's own making leaves, and compiles the reader for
+  // input this large. The text is copied flat first, as a file read from
+  // disk is.
+  const timed = (scanner: BuiltinScanner, made: string) => {
+    const text = Buffer.from(made, "utf8").toString("utf8");
     findMarkers(text, [scanner]);
-    return performance.now() - started;
+    const runs: number[] = [];
+    for (let r = 0; r < 3; r++) {
+      const before = process.cpuUsage();
+      findMarkers(text, [scanner]);
+      const used = process.cpuUsage(before);
+      runs.push((used.user + used.system) / 1000);
+    }
+    return Math.min(...runs);
   };
-  const cases: [BuiltinScanner, string, string][] = [
-    ["semgrep", "one very long line", fill("x nose ")],
-    ["bandit", "many unclosed openers of each kind", fill((k) => [`a = '''${k}\n`, `b = """${k}\n`, `c = f'''{${k}\n`, `d = f"{e:${k}\n`, `g = '${k}\n`][k % 5] as string)],
-    ["bandit", "one very long line", `x = ${fill("'a' + f\"{b}\" + ")}1  # nosec\n`],
-    ["bandit", "deep nesting", `x = f"${fill("{a:")}"\n`],
-    ["shellcheck", "many unclosed openers of each kind", fill((k) => [`echo '${k}\n`, `echo "${k}\n`, `echo $'${k}\n`, `x=$(echo ${k}\n`, `y=\`echo ${k}\n`][k % 5] as string)],
-    ["shellcheck", "many distinct heredoc words", fill((k) => `cat <<E${k}\n`)],
-    ["shellcheck", "one very long line", `cat <<${fill('""')}\nEOF\n`],
-    ["shellcheck", "one very long line of heredocs", `cat ${fill('<<"a" ')}\n`],
-    ["shellcheck", "deep nesting", `x="${fill("$(\"")}"\n`],
-    ["shellcheck", "a $( ) left open in every heredoc body (18)", fill("cat <<E\n$(echo\nE\n")],
-    ["shellcheck", "backticks left open in every heredoc body (18)", fill("cat <<E\n`echo\nE\n")],
-    ["hadolint", "many distinct heredoc words", `FROM a\n${fill((k) => `RUN <<E${k}\n`)}`],
-    ["hadolint", "one very long line", `FROM a\nRUN ${fill("<<a ")}\n`],
-    ["hadolint", "deep nesting", `FROM a\n${fill("RUN a \\\n")}`],
-    ["rubocop", "many unclosed openers of each kind", fill((k) => [`a = "${k}\n`, `b = '${k}\n`, `c = %q(${k}\n`, `=begin ${k}\n`, `d = "#{${k}\n`][k % 5] as string)],
-    ["rubocop", "many distinct heredoc words", fill((k) => `x = <<~E${k}\n`)],
-    ["rubocop", "one very long line", `x = ${fill('"a" + ')}1 # rubocop:disable Lint/Foo\n`],
-    ["rubocop", "deep nesting", `x = ${fill('"#{')}\n`],
-    ["oxlint", "many unclosed openers of each kind", fill((k) => [`a = \`${k}\n`, `/* ${k}\n`, `b = "${k}\n`, `c = /${k}\n`, `d = \`\${${k}\n`][k % 5] as string)],
-    ["oxlint", "one very long line", `x = ${fill("a / b / ")}1; // eslint-disable-line\n`],
-    ["oxlint", "deep nesting", `x = ${fill("`${")}\n`],
-    ["golangci", "many unclosed openers of each kind", fill((k) => [`a := \`${k}\n`, `/* ${k}\n`, `b := "${k}\n`][k % 3] as string)],
-    ["golangci", "one very long line", `x := ${fill('"a" + ')}1 //nolint\n`],
-    ["golangci", "deep nesting and package lines in comments", fill("/*\npackage x\n*/\n")],
+  const cases: [BuiltinScanner, string, (fill: Fill) => string][] = [
+    ["semgrep", "one very long line", (fill) => fill("x nose ")],
+    ["bandit", "many unclosed openers of each kind", (fill) => fill((k) => [`a = '''${k}\n`, `b = """${k}\n`, `c = f'''{${k}\n`, `d = f"{e:${k}\n`, `g = '${k}\n`][k % 5] as string)],
+    ["bandit", "one very long line", (fill) => `x = ${fill("'a' + f\"{b}\" + ")}1  # nosec\n`],
+    ["bandit", "deep nesting", (fill) => `x = f"${fill("{a:")}"\n`],
+    ["shellcheck", "many unclosed openers of each kind", (fill) => fill((k) => [`echo '${k}\n`, `echo "${k}\n`, `echo $'${k}\n`, `x=$(echo ${k}\n`, `y=\`echo ${k}\n`][k % 5] as string)],
+    ["shellcheck", "many distinct heredoc words", (fill) => fill((k) => `cat <<E${k}\n`)],
+    ["shellcheck", "one very long line", (fill) => `cat <<${fill('""')}\nEOF\n`],
+    ["shellcheck", "one very long line of heredocs", (fill) => `cat ${fill('<<"a" ')}\n`],
+    ["shellcheck", "deep nesting", (fill) => `x="${fill("$(\"")}"\n`],
+    ["shellcheck", "a $( ) left open in every heredoc body (18)", (fill) => fill("cat <<E\n$(echo\nE\n")],
+    ["shellcheck", "backticks left open in every heredoc body (18)", (fill) => fill("cat <<E\n`echo\nE\n")],
+    ["kube-linter", "one very long flow map of near-miss keys", (fill) => `a: {${fill(", ignore-check.kube-linter.io/x y")}}\n`],
+    ["kube-linter", "many lines of dashes before a near-miss key", (fill) => fill("- - - - kube-linter.io/ignore-all x\n")],
+    ["hadolint", "many distinct heredoc words", (fill) => `FROM a\n${fill((k) => `RUN <<E${k}\n`)}`],
+    ["hadolint", "one very long line", (fill) => `FROM a\nRUN ${fill("<<a ")}\n`],
+    ["hadolint", "deep nesting", (fill) => `FROM a\n${fill("RUN a \\\n")}`],
+    ["rubocop", "many unclosed openers of each kind", (fill) => fill((k) => [`a = "${k}\n`, `b = '${k}\n`, `c = %q(${k}\n`, `=begin ${k}\n`, `d = "#{${k}\n`][k % 5] as string)],
+    ["rubocop", "many distinct heredoc words", (fill) => fill((k) => `x = <<~E${k}\n`)],
+    ["rubocop", "one very long line", (fill) => `x = ${fill('"a" + ')}1 # rubocop:disable Lint/Foo\n`],
+    ["rubocop", "deep nesting", (fill) => `x = ${fill('"#{')}\n`],
+    ["oxlint", "many unclosed openers of each kind", (fill) => fill((k) => [`a = \`${k}\n`, `/* ${k}\n`, `b = "${k}\n`, `c = /${k}\n`, `d = \`\${${k}\n`][k % 5] as string)],
+    ["oxlint", "one very long line", (fill) => `x = ${fill("a / b / ")}1; // eslint-disable-line\n`],
+    ["oxlint", "deep nesting", (fill) => `x = ${fill("`${")}\n`],
+    ["golangci", "many unclosed openers of each kind", (fill) => fill((k) => [`a := \`${k}\n`, `/* ${k}\n`, `b := "${k}\n`][k % 3] as string)],
+    ["golangci", "one very long line", (fill) => `x := ${fill('"a" + ')}1 //nolint\n`],
+    ["golangci", "deep nesting and package lines in comments", (fill) => fill("/*\npackage x\n*/\n")],
+    ["tflint", "many unclosed openers of each kind (24)", (fill) => fill((k) => [`a = "${k}\n`, `/* ${k}\n`, `b = "\${${k}\n`, `c = <<E${k}\n`, `d = "%{${k}\n`][k % 5] as string)],
+    ["tflint", "many distinct heredoc words (24)", (fill) => fill((k) => `x = <<E${k}\n`)],
+    ["tflint", "one very long line (24)", (fill) => `x = ${fill('"a" + ')}1 # tflint-ignore: all\n`],
+    ["tflint", "deep nesting (24)", (fill) => `x = ${fill('"${')}\n`],
   ];
-  for (const [scanner, what, text] of cases) {
+  for (const [scanner, what, make] of cases) {
     it(`${scanner}: ${what}`, () => {
-      expect(fast(scanner, text)).toBeLessThan(1000);
-    });
+      const small = timed(scanner, make(filler(SMALL)));
+      const large = timed(scanner, make(filler(LARGE)));
+      // About four times the input: a linear reader takes about four times
+      // as long on any machine, one that rescans sixteen; the bound is the
+      // middle of the two. Measured here, every family took 2.8 to 4.2 times
+      // as long, and a linear one 5.2 times while other tests loaded the
+      // machine. A floor of 20 ms keeps the timer's noise on a fast reader
+      // from deciding.
+      expect(large / Math.max(small, 20), `${small.toFixed(0)} ms for 1 MB, ${large.toFixed(0)} ms for ${(LARGE / MB).toFixed(2)} MB of CPU time`).toBeLessThan(8);
+      // A gross slowdown fails on any runner: the slowest seen took 1.8 s
+      // of wall time for 1 MB of the YAML key reader.
+      expect(small).toBeLessThan(4000);
+    }, 180_000);
   }
+});
+
+describe("tflint, tflint-ignore in HCL comments (20, 21)", () => {
+  it("finds it in #, // and /* */ comments and in a template's comment, never in a string or a heredoc body", () => {
+    const text = src(
+      "# tflint-ignore: terraform_unused_declarations",
+      'variable "a" { # tflint-ignore: all',
+      '  description = "tflint-ignore: all"',
+      "}",
+      "/* tflint-ignore: terraform_unused_declarations */",
+      "// tflint-ignore: all",
+      "locals {",
+      "  doc = <<EOT",
+      "# tflint-ignore: all",
+      "  EOT",
+      '  x = "a \\" # tflint-ignore: all"',
+      '  y = "${lookup(m, "k # x", "}")}" # tflint-ignore: all',
+      '  z = "${ # tflint-ignore: all',
+      '  }"',
+      "}",
+      "# tflint-ignore-file: terraform_unused_declarations",
+      "# tflint-ignore:all",
+    );
+    const found = findMarkers(text, ["tflint"]);
+    expect(found.map((m) => [m.line, m.name])).toEqual([
+      [1, "tflint-ignore:"],
+      [2, "tflint-ignore:"],
+      [5, "tflint-ignore:"],
+      [6, "tflint-ignore:"],
+      [12, "tflint-ignore:"],
+      [13, "tflint-ignore:"],
+      [16, "tflint-ignore-file:"],
+    ]);
+  });
+
+  it("reads heredocs as HCL does: an indented closing word for both forms, a <<WORD with text after it opens none, $${ is text", () => {
+    const text = src(
+      "locals {",
+      "  a = <<-EOT",
+      "    # tflint-ignore: all",
+      "    ${var.x} # tflint-ignore: all",
+      "    EOT",
+      "  b = 1 # tflint-ignore: all",
+      "  c = <<EOT ",
+      "# tflint-ignore: all",
+      '  d = "$${ # tflint-ignore: all }"',
+      '  e = "%%{ # tflint-ignore: all }"',
+      "}",
+    );
+    expect(lines("tflint", text)).toEqual([6, 8]);
+  });
+
+  it("finds the file form as the start of a .tf.json string, as tflint reads the root \"//\" key", () => {
+    const text = src('{', '  "//": "tflint-ignore-file: terraform_unused_declarations",', '  "variable": {"a": {}}', "}");
+    expect(findMarkers(text, ["tflint"]).map((m) => [m.line, m.name])).toEqual([[2, 'tflint-ignore-file: in a JSON "//" value']]);
+  });
+});
+
+describe("trivy and checkov read their markers on the raw line (22)", () => {
+  it("trivy: trivy:ignore and tfsec:ignore as a word of the line after #, / or *, a string included", () => {
+    const text = src(
+      "#trivy:ignore:AWS-0107",
+      'resource "x" "y" { # tfsec:ignore:aws-ec2-no-public-ingress-sgr',
+      '  description = "see trivy:ignore:* here"',
+      "  //trivy:exp:2030-01-01:ignore:AWS-0107",
+      '  name = "trivy:ignore:x"',
+      '  note = "trivy: ignore:x"',
+      "  x = 1 /* trivy:ignore:AWS-0107 */",
+      "}",
+    );
+    expect(findMarkers(text, ["trivy"]).map((m) => [m.line, m.name])).toEqual([
+      [1, "trivy:ignore"],
+      [2, "tfsec:ignore"],
+      [3, "trivy:ignore"],
+      [4, "trivy:ignore"],
+      [7, "trivy:ignore"],
+    ]);
+  });
+
+  it("checkov: checkov:skip=, bridgecrew:skip= and cortex:skip= anywhere on the line, a string included", () => {
+    const text = src(
+      'resource "aws_security_group" "c" {',
+      "  # checkov:skip=CKV_AWS_24:reason",
+      '  description = "x checkov:skip=CKV_AWS_24:in a string"',
+      "  # bridgecrew:skip=CKV_AWS_23",
+      "  # cortex:skip=CKV_AWS_23",
+      "  # checkov:skip CKV_AWS_24",
+      "}",
+    );
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([
+      [2, "checkov:skip="],
+      [3, "checkov:skip="],
+      [4, "bridgecrew:skip="],
+      [5, "cortex:skip="],
+      // Terraform is not YAML: the Metadata key is looked for on its raw
+      // lines, wider than checkov.
+      [6, "Metadata checkov key"],
+    ]);
+  });
+});
+
+describe("checkov's YAML keys, a family of their own in one entry (23)", () => {
+  it("a Kubernetes skip annotation counts as a YAML key, never in a comment or a quoted value; the skip comment counts on the line", () => {
+    const text = src(
+      "apiVersion: v1",
+      "kind: Pod",
+      "metadata:",
+      "  annotations:",
+      "    checkov.io/skip1: CKV_K8S_16=reason",
+      '    "bridgecrew.io/skip2": CKV_K8S_20',
+      '    note: "checkov.io/skip3: CKV_K8S_16"',
+      "  # checkov.io/skip4: CKV_K8S_16",
+      "  # checkov:skip=CKV_K8S_16",
+    );
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([
+      [5, "checkov.io/skip annotation"],
+      [6, "bridgecrew.io/skip annotation"],
+      [9, "checkov:skip="],
+    ]);
+  });
+
+  it("a CloudFormation Metadata checkov or bridgecrew key counts as a YAML key, in block or flow form, never in a value", () => {
+    const text = src(
+      "Resources:",
+      "  SgA:",
+      "    Type: AWS::EC2::SecurityGroup",
+      "    Metadata:",
+      "      checkov:",
+      "        skip:",
+      "          - id: CKV_AWS_24",
+      "      bridgecrew: {skip: [{id: CKV_AWS_23}]}",
+      "    Properties:",
+      '      GroupDescription: "checkov: not a key"',
+      "      Tags: checkov",
+    );
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([
+      [5, "Metadata checkov key"],
+      [8, "Metadata bridgecrew key"],
+    ]);
+  });
+
+  it("the annotation key in flow style, in JSON and through an alias, as checkov's YAML loader reads them", () => {
+    const flow = src("apiVersion: v1", "kind: Pod", 'metadata: {name: a, annotations: {"checkov.io/skip1": "CKV_K8S_16=x"}}');
+    expect(findMarkers(flow, ["checkov"]).map((m) => [m.line, m.name])).toEqual([[3, "checkov.io/skip annotation"]]);
+    const json = src("{", '  "apiVersion": "v1", "kind": "Pod",', '  "metadata": {"annotations": {"cortex.io/skip1": "CKV_K8S_16"}}', "}");
+    expect(findMarkers(json, ["checkov"]).map((m) => [m.line, m.name])).toEqual([[3, "cortex.io/skip annotation"]]);
+    const alias = src("x-common: &skips", "  checkov.io/skip1: CKV_K8S_16", "---", "apiVersion: v1", "kind: Pod", "metadata:", "  annotations: *skips");
+    expect(findMarkers(alias, ["checkov"]).map((m) => m.line)).toEqual([2]);
+    const anchored = src("apiVersion: v1", "kind: Pod", "x-common: &skips", "  checkov.io/skip1: CKV_K8S_16", "metadata:", "  annotations: *skips");
+    expect(findMarkers(anchored, ["checkov"]).map((m) => m.line)).toEqual([4, 6]);
+  });
+
+  it("the CloudFormation Metadata key in a JSON template", () => {
+    const text = src('{"Resources": {"A": {', '  "Type": "AWS::S3::Bucket",', '  "Metadata": {"checkov": {"skip": [{"id": "CKV_AWS_18"}]}}', "}}}");
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([[3, "Metadata checkov key"]]);
+  });
+});
+
+describe("trivy's marker in each file form it reads (22)", () => {
+  it("counts it in a YAML comment, a YAML value and a JSON string, as on any line", () => {
+    const yaml = src("Resources:", "  # trivy:ignore:AWS-0107", "  Sg:", "    Type: AWS::EC2::SecurityGroup", '    Properties: {GroupDescription: "x tfsec:ignore:aws-ec2-x"}');
+    expect(findMarkers(yaml, ["trivy"]).map((m) => [m.line, m.name])).toEqual([
+      [2, "trivy:ignore"],
+      [5, "tfsec:ignore"],
+    ]);
+    const json = src('{"Resources": {"Sg": {"Type": "AWS::EC2::SecurityGroup",', '  "Properties": {"GroupDescription": "see trivy:ignore:*"}}}}');
+    expect(findMarkers(json, ["trivy"]).map((m) => m.line)).toEqual([2]);
+  });
+});
+
+// kube-linter 0.8.3 skips an object whose metadata.annotations hold the key
+// ignore-check.kube-linter.io/<check> or kube-linter.io/ignore-all
+// (pkg/ignore/ignore.go); checked with the binary: the annotation silences
+// privileged-container, the same text in a YAML comment does not.
+describe("kube-linter, its ignore annotations as YAML keys", () => {
+  it("finds the annotation keys at a key position, quoted or in a flow map, never in a comment, a quoted value, a plain value or a block scalar (1, 2, 5)", () => {
+    const text = src(
+      "apiVersion: apps/v1",
+      "kind: Deployment",
+      "metadata:",
+      "  name: web",
+      "  annotations:",
+      '    ignore-check.kube-linter.io/privileged-container: "needs the host"',
+      '    kube-linter.io/ignore-all: "true"',
+      '    "ignore-check.kube-linter.io/run-as-non-root": x',
+      '    note: "ignore-check.kube-linter.io/latest-tag: x"',
+      "    # ignore-check.kube-linter.io/latest-tag: x",
+      "    other: ignore-check.kube-linter.io/latest-tag",
+      '  labels: {app: web, kube-linter.io/ignore-all: "true"}',
+      "data:",
+      "  script: |",
+      "    ignore-check.kube-linter.io/host-network: x",
+      "list:",
+      "  - kube-linter.io/ignore-all",
+      "  - ignore-check.kube-linter.io/host-pid: x",
+    );
+    expect(findMarkers(text, ["kube-linter"]).map((m) => [m.line, m.name])).toEqual([
+      [6, "ignore-check.kube-linter.io annotation"],
+      [7, "kube-linter.io/ignore-all annotation"],
+      [8, "ignore-check.kube-linter.io annotation"],
+      [12, "kube-linter.io/ignore-all annotation"],
+      [18, "ignore-check.kube-linter.io annotation"],
+    ]);
+  });
 });
 
 describe("lines and names", () => {
@@ -587,7 +897,7 @@ describe("lines and names", () => {
 
   it("a scanner with no inline marker reports none (7)", () => {
     const text = src("# nosec # noqa nosemgrep gitleaks:allow", "-- nosemgrep");
-    for (const scanner of ["actionlint", "brakeman", "osv-scanner", "sqllint"] as const) {
+    for (const scanner of ["actionlint", "brakeman", "osv-scanner", "sqllint", "kubeconform", "cargo-deny"] as const) {
       expect(findMarkers(text, [scanner]), scanner).toEqual([]);
     }
   });
@@ -604,4 +914,259 @@ describe("lines and names", () => {
     ]);
     for (const m of found) expect(m.name).not.toContain(key);
   });
+});
+
+// zizmor, squawk and SQLFluff. Each case was run through the scanner at its
+// pinned version: zizmor 1.30.1, squawk 2.66.0, sqlfluff 4.3.0.
+// Failure list, written before the code:
+//  Z1. A zizmor marker zizmor obeys is missed: it reads `# zizmor:
+//      ignore[...]` from the first `#` of each line of a finding's span, so
+//      for its line-read audits (unredacted-secrets, obfuscation and others)
+//      the marker counts inside a `run: |` body and a quoted value too.
+//  Z2. A form zizmor rejects is raised: no blank after the `#` or the colon.
+//  S1. A squawk marker inside a string is raised: '...' with '' for a
+//      quote, E'...' with backslash escapes, a $$ or $tag$ body, a "quoted
+//      identifier". squawk's lexer reads each of them as one token.
+//  S2. A real comment is missed after a string that holds a comment opener
+//      or a backslash: in a plain string a backslash is a character, so
+//      'a\' ends there and what follows is code.
+//  S3. Block comments nest in Postgres: a `--` inside `/* /* */ */` is part
+//      of the comment, and a comment after the outer close is real.
+//  S4. `$1` (a parameter) or `a$b$` (an identifier) is taken for a dollar
+//      quote and swallows a later comment.
+//  S5. A marker squawk reads is missed: `--squawk-ignore` with no blank, a
+//      `/* */` comment, `squawk-ignore-file`, a trailing `-- note`, and
+//      `squawk-disable-assume-in-transaction`, which changes what squawk
+//      reports for the whole file; or one it rejects is raised: text before
+//      the marker, upper case.
+//  S6. An opener left open at the end of the file (a string, a dollar quote,
+//      a quoted identifier, a block comment) hides every marker after it.
+//  S7. Many unclosed openers, many distinct dollar tags or deep block
+//      comments take more than linear time.
+//  F1. A SQLFluff marker is missed. SQLFluff reads `noqa` at the start of a
+//      comment or after its last `--`, in `--`, `/* */` and, in dialects such
+//      as ansi and mysql, `#` comments; which strings and comments exist
+//      depends on the repo's dialect, so the marker counts anywhere on the
+//      line.
+//  F2. A form SQLFluff rejects is raised: text between the opener and
+//      `noqa`, upper case.
+describe("zizmor, # zizmor: ignore[...] anywhere on the line", () => {
+  it("finds it in a comment, a block scalar body and a quoted value, as zizmor obeys it there (Z1)", () => {
+    const text = src(
+      "on: push",
+      "jobs:",
+      "  a:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo ${{ github.event.issue.title }} # zizmor: ignore[template-injection]",
+      "      - run: |",
+      "          echo ${{ fromJSON(secrets.CREDS).password }} # zizmor: ignore[unredacted-secrets]",
+      "      - run: 'echo ${{ fromJSON(secrets.CREDS).password }} # zizmor: ignore[unredacted-secrets] done'",
+      "      - run: echo hi # why # zizmor: ignore[template-injection]",
+    );
+    expect(findMarkers(text, ["zizmor"]).map((m) => [m.line, m.name])).toEqual([
+      [6, "# zizmor: ignore[...]"],
+      [8, "# zizmor: ignore[...]"],
+      [9, "# zizmor: ignore[...]"],
+      [10, "# zizmor: ignore[...]"],
+    ]);
+  });
+
+  it("raises nothing for the forms zizmor rejects (Z2)", () => {
+    const text = src(
+      "      - run: echo a # zizmor:ignore[template-injection]",
+      "      - run: echo b #zizmor: ignore[template-injection]",
+      "      - run: echo c #  zizmor: ignore[template-injection]",
+      "      - run: echo d # zizmor: ignore template-injection",
+    );
+    expect(findMarkers(text, ["zizmor"])).toEqual([]);
+  });
+});
+
+describe("squawk, -- squawk-ignore at the start of a SQL comment", () => {
+  const IGNORE = "squawk-ignore require-concurrent-index-creation";
+  const at = (text: string) => findMarkers(text, ["squawk"]).map((m) => [m.line, m.name]);
+
+  it("finds the forms squawk obeys and none it rejects (S5)", () => {
+    const text = src(
+      `-- ${IGNORE}`,
+      `CREATE INDEX idx ON t (c); -- ${IGNORE}`,
+      `--${IGNORE}`,
+      `/* ${IGNORE} */`,
+      `-- ${IGNORE} -- why`,
+      "-- squawk-ignore-file require-concurrent-index-creation",
+      "-- squawk-disable-assume-in-transaction",
+      "/*",
+      `  ${IGNORE}`,
+      "*/",
+      `-- note ${IGNORE}`,
+      `-- SQUAWK-IGNORE require-concurrent-index-creation`,
+    );
+    expect(at(text)).toEqual([
+      [1, "-- squawk-ignore"],
+      [2, "-- squawk-ignore"],
+      [3, "-- squawk-ignore"],
+      [4, "-- squawk-ignore"],
+      [5, "-- squawk-ignore"],
+      [6, "-- squawk-ignore-file"],
+      [7, "-- squawk-disable-assume-in-transaction"],
+      [9, "-- squawk-ignore"],
+    ]);
+  });
+
+  it("never in a string, an escape string, a dollar quote or a quoted identifier (S1)", () => {
+    const text = src(
+      `SELECT '-- ${IGNORE}';`,
+      `SELECT 'it''s -- ${IGNORE}';`,
+      `SELECT E'it\\'s -- ${IGNORE}';`,
+      "SELECT $$",
+      `-- ${IGNORE}`,
+      "$$;",
+      "SELECT $fn$ x $f$",
+      `-- ${IGNORE}`,
+      "$fn$;",
+      'SELECT "a',
+      `-- ${IGNORE}`,
+      '";',
+      `SELECT x FROM t; -- ${IGNORE}`,
+    );
+    expect(at(text)).toEqual([[13, "-- squawk-ignore"]]);
+  });
+
+  it("reads a comment after a plain string that ends in a backslash or holds a comment opener (S2)", () => {
+    const text = src(`SELECT 'a\\' -- ${IGNORE}`, `SELECT '/*', '--' -- ${IGNORE}`, `SELECT e'a\\\\' -- ${IGNORE}`);
+    expect(at(text).map(([line]) => line)).toEqual([1, 2, 3]);
+  });
+
+  it("reads nested block comments as one comment (S3)", () => {
+    const text = src("/* a /* b */", `-- ${IGNORE}`, `*/ SELECT 1; -- ${IGNORE}`, `/* a /* b */ c */ -- ${IGNORE}`);
+    expect(at(text).map(([line]) => line)).toEqual([3, 4]);
+  });
+
+  it("never takes a parameter or an identifier with $ for a dollar quote (S4)", () => {
+    const text = src(`SELECT $1 -- ${IGNORE}`, `SELECT a$b$ -- ${IGNORE}`, `SELECT a$$ -- ${IGNORE}`);
+    expect(at(text).map(([line]) => line)).toEqual([1, 2, 3]);
+  });
+
+  it("reads an opener left open at the end of the file as code (S6)", () => {
+    for (const opener of ["'", "E'", "$$", "$x$", '"', "/*"]) {
+      expect(at(src(`SELECT ${opener}`, `-- ${IGNORE}`)), opener).toEqual([[2, "-- squawk-ignore"]]);
+    }
+  });
+
+  it("counts lines in a file with CRLF line ends", () => {
+    expect(at(`SELECT 1;\r\n-- ${IGNORE}\r\n`)).toEqual([[2, "-- squawk-ignore"]]);
+  });
+});
+
+describe("SQLFluff, noqa anywhere on the line", () => {
+  const at = (text: string) => findMarkers(text, ["sqlfluff"]).map((m) => m.line);
+
+  it("finds the forms SQLFluff obeys in every dialect (F1)", () => {
+    const q = "SELECT id FROM users WHERE x = NULL;";
+    const text = src(
+      `${q} -- noqa`,
+      `${q} -- noqa: CV05`,
+      `${q} --noqa`,
+      `${q} /* noqa */`,
+      `${q} -- why -- noqa: CV05`,
+      "-- noqa: disable=CV05",
+      "/* noqa: enable=all */",
+      `${q} # noqa`,
+      "/*",
+      "noqa: disable=all */",
+    );
+    expect(at(text)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 10]);
+  });
+
+  it("raises nothing for the forms SQLFluff rejects (F2)", () => {
+    expect(at(src("SELECT 1; -- this noqa", "SELECT 1; -- NOQA", "SELECT 1; -- no qa"))).toEqual([]);
+  });
+
+  // F3. An inline setting is missed, or one SQLFluff ignores is raised. A
+  // line that starts with `-- sqlfluff:` or `--sqlfluff:`, then a key and a
+  // value parted by a colon, sets SQLFluff's settings for the file
+  // (core/config/fluffconfig.py, process_raw_file_for_config and
+  // process_inline_config). Lines are split as Python's splitlines splits
+  // them. Each form below was run through SQLFluff 4.3.0 on a `= NULL`
+  // comparison: the first group hid or downgraded CV05, the second did not.
+  it("finds an inline setting exactly where SQLFluff obeys one (F3)", () => {
+    const obeyed = [
+      "-- sqlfluff:ignore:linting",
+      "--sqlfluff:exclude_rules:CV05",
+      "-- sqlfluff: exclude_rules : CV05",
+      "-- sqlfluff:warnings:CV05",
+      "SELECT 1;\r-- sqlfluff:exclude_rules:CV05",
+      "SELECT 1; -- sqlfluff:exclude_rules:CV05",
+      "SELECT 1;\v-- sqlfluff:exclude_rules:CV05",
+    ];
+    const ignored = [
+      "-- SQLFLUFF:exclude_rules:CV05",
+      "-- sqlfluff :exclude_rules:CV05",
+      "--  sqlfluff:exclude_rules:CV05",
+      "--\tsqlfluff:exclude_rules:CV05",
+      "SELECT 1; -- sqlfluff:exclude_rules:CV05",
+      "/* sqlfluff:exclude_rules:CV05 */",
+      "  -- sqlfluff:exclude_rules:CV05",
+      "-- sqlfluff:ignore",
+    ];
+    for (const line of obeyed) expect(findMarkers(src(line), ["sqlfluff"]).map((m) => m.name), line).toEqual(["-- sqlfluff:"]);
+    for (const line of ignored) expect(findMarkers(src(line), ["sqlfluff"]), line).toEqual([]);
+  });
+});
+
+// A UTF-8 byte order mark at the start of a file is read by the scanners as
+// no text at all (SQLFluff, Python's tools, the YAML and HCL parsers), so a
+// marker on the first line counts as if it were not there. One marker per
+// reader family, on the first line after a mark.
+describe("a byte order mark hides no marker on the first line", () => {
+  const BOM = "﻿";
+  const cases: [BuiltinScanner, string][] = [
+    ["sqlfluff", "-- sqlfluff:ignore:linting\nSELECT 1;\n"],
+    ["semgrep", "x = 1  # nosemgrep\n"],
+    ["ruff", "# ruff: noqa\nimport os\n"],
+    ["shellcheck", "# shellcheck disable=SC2086\necho $1\n"],
+    ["hadolint", "# hadolint ignore=DL3007\nFROM python:latest\n"],
+    ["golangci", "//nolint:all\npackage main\n"],
+    ["rubocop", "# rubocop:disable all\nx = 1\n"],
+    ["oxlint", "// oxlint-disable\nvar x = 1;\n"],
+    ["squawk", "-- squawk-ignore-file\nCREATE INDEX i ON t (c);\n"],
+    ["tflint", "# tflint-ignore: terraform_unused_declarations\nvariable \"x\" {}\n"],
+    ["kube-linter", "metadata:\n  annotations:\n    kube-linter.io/ignore-all: \"x\"\n"],
+  ];
+  for (const [scanner, text] of cases) {
+    it(`${scanner} on a file that starts with a byte order mark`, () => {
+      const plain = findMarkers(text, [scanner]).map((m) => [m.line, m.name]);
+      expect(plain.length, "the marker is found without the mark").toBeGreaterThan(0);
+      expect(findMarkers(`${BOM}${text}`, [scanner]).map((m) => [m.line, m.name])).toEqual(plain);
+    });
+  }
+});
+
+describe("linear time on hostile SQL (S7)", () => {
+  const MB = 1024 * 1024;
+  const fill = (unit: (k: number) => string) => {
+    const parts: string[] = [];
+    let size = 0;
+    for (let k = 0; size < MB; k++) {
+      const part = unit(k);
+      parts.push(part);
+      size += part.length;
+    }
+    return parts.join("");
+  };
+  const cases: [string, string][] = [
+    ["many unclosed openers of each kind", fill((k) => [`a = '${k}\n`, `b = E'${k}\n`, `c = "${k}\n`, `/* ${k}\n`, `d = $$${k}\n`][k % 5] as string)],
+    ["many distinct dollar tags left open", fill((k) => `SELECT $t${k}$ x\n`)],
+    ["many dollar tags, each closed by a later one", fill((k) => `$a${k}$ $a${k + 1}$\n`)],
+    ["deep nesting of block comments", fill(() => "/* ")],
+    ["one very long line", `SELECT ${fill(() => "'a' || $$b$$ || ")}1; -- squawk-ignore x\n`],
+  ];
+  for (const [what, text] of cases) {
+    it(`squawk: ${what}`, () => {
+      const started = performance.now();
+      findMarkers(text, ["squawk"]);
+      expect(performance.now() - started).toBeLessThan(1000);
+    });
+  }
 });

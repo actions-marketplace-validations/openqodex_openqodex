@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "09f3ac8900f8",
+  "summary": "Adds an admin endpoint that deletes one user by id and an endpoint that purges a list of users.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "src/admin.js",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "User delete route lacks admin check",
+      "problem": "The DELETE /users/:id route omits the requireAdmin middleware that its sibling routes use. Any caller can reach db.removeUser with an arbitrary id.",
+      "consequence": "Any client that reaches the server can delete any user account. The attacker can enumerate ids to wipe the user table.",
+      "fix": "Add requireAdmin to the route, as the GET and purge routes do.",
+      "suggested_change": "admin.delete(\"/users/:id\", requireAdmin, async (req, res) => {",
+      "source": "lens:id-enumeration-sequential",
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/admin.js",
+      "line_number": 22,
+      "line_end": 25,
+      "title": "Purge deletes run as floating promises",
+      "problem": "The forEach callback returns promises that the purge handler never awaits or catches. The handler reports ids.length as removed before any delete finishes.",
+      "consequence": "db.removeUser throws for an unknown id, so one bad id causes an unhandled rejection that crashes the Node process. The removed count is also wrong when deletes fail.",
+      "fix": "Await the deletes with Promise.allSettled and report the number that succeeded.",
+      "suggested_change": "const results = await Promise.allSettled(ids.map((id) => db.removeUser(id)));\n  res.json({ removed: results.filter((r) => r.status === \"fulfilled\").length });",
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/admin.js",
+      "line_number": 16,
+      "line_end": 26,
+      "title": "New delete endpoints have no tests",
+      "problem": "The change adds two delete endpoints with new auth and error paths. The repository contains no test that exercises them.",
+      "consequence": "Regressions in access control or purge error handling will go unnoticed.",
+      "fix": "Add tests for the unauthorized delete, the purge with an unknown id, and the purge count.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

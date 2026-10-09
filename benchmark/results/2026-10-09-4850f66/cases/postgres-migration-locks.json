@@ -1,0 +1,80 @@
+{
+  "id": "postgres-migration-locks",
+  "guards": "a Postgres migration that adds a NOT NULL column with no default to a live table and builds an index without CONCURRENTLY is reported; squawk finds both, sqllint and semgrep neither",
+  "language": "sql",
+  "framework": "postgres",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "not-null-column-without-default",
+      "file": "db/migrations/0002_order_status.sql",
+      "lines": [
+        3,
+        3
+      ],
+      "anchor": {
+        "line": 3,
+        "text": "ADD COLUMN status text NOT NULL"
+      },
+      "mentions": [
+        "default",
+        "not null",
+        "existing rows",
+        "required"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "squawk",
+        "reasoning"
+      ],
+      "truth": "orders already holds rows, and a NOT NULL column with no default leaves them null, so the migration fails on any database with orders in it. The fix is to add the column with a default, such as DEFAULT 'placed', or to add it nullable, backfill it, then set NOT NULL."
+    },
+    {
+      "id": "index-without-concurrently",
+      "file": "db/migrations/0002_order_status.sql",
+      "lines": [
+        5,
+        5
+      ],
+      "anchor": {
+        "line": 5,
+        "text": "CREATE INDEX orders_customer_status_idx"
+      },
+      "mentions": [
+        "concurrently",
+        "lock",
+        "block"
+      ],
+      "kind": [
+        "performance",
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "squawk",
+        "reasoning"
+      ],
+      "truth": "CREATE INDEX without CONCURRENTLY holds a lock that blocks every insert and update on orders until the index is built, so checkout stalls for as long as the build takes on a large table. The fix is CREATE INDEX CONCURRENTLY, outside a transaction."
+    }
+  ],
+  "extras": [
+    {
+      "file": "db/migrations/0002_order_status.sql",
+      "lines": [
+        3,
+        5
+      ],
+      "mentions": [
+        "lock_timeout",
+        "statement_timeout",
+        "timeout",
+        "IF NOT EXISTS",
+        "rerun"
+      ],
+      "why": "the migration sets no lock or statement timeout and its statements are not rerunnable; real, not planted, and squawk reports them low"
+    }
+  ]
+}

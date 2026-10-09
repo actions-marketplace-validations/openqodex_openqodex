@@ -1,0 +1,348 @@
+{
+  "version": 2,
+  "change_id": "9799b104d689",
+  "summary": "Adds a /search endpoint and a Stripe config, and changes pagination in server.py. It also loosens security settings in the Dockerfile, Kubernetes deployment, Terraform, CI workflow and deploy script, and downgrades lodash.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/search.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Search query built from request input",
+      "problem": "search_items puts the q request parameter straight into the SQL text with an f-string. A quote in q ends the string literal and appends attacker SQL.",
+      "consequence": "Any caller of /search can read or change any data in the items database.",
+      "fix": "Pass q to cur.execute as a bound parameter.",
+      "suggested_change": "    cur.execute(\"SELECT id, name, price FROM items WHERE name = ?\", (q,))",
+      "source": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c5"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "app/server.py",
+      "line_number": 23,
+      "line_end": 23,
+      "title": "Pagination skips the first page",
+      "problem": "list_items now computes offset as page times PAGE_SIZE. Page 1 therefore starts at row 20 instead of row 0.",
+      "consequence": "Clients never see the first 20 items. The last page of results also comes back empty.",
+      "fix": "Restore the offset to page minus one times PAGE_SIZE.",
+      "suggested_change": "    offset = (page - 1) * PAGE_SIZE",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": "app/config.py",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Stripe API key committed to source",
+      "problem": "config.py hardcodes a Stripe API key in the repository.",
+      "consequence": "Anyone with repository access can make payment API calls with the shop's account.",
+      "fix": "Revoke the key in Stripe. Read the replacement key from an environment variable or a secret store.",
+      "suggested_change": "STRIPE_KEY = os.environ[\"STRIPE_KEY\"]",
+      "source": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "candidate": "c2"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "deploy/deployment.yaml",
+      "line_number": 42,
+      "line_end": 43,
+      "title": "API container runs privileged",
+      "problem": "The api container now sets privileged and allowPrivilegeEscalation to true. The readiness and liveness probes use httpGet, so the raw socket justification in the comment does not hold.",
+      "consequence": "Anyone who compromises the API process gains root-equivalent access to the node. That person can escape the container.",
+      "fix": "Remove privileged and set allowPrivilegeEscalation back to false.",
+      "suggested_change": "            allowPrivilegeEscalation: false",
+      "source": "kube-linter:privileged-container",
+      "candidate": "c11"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "infra/main.tf",
+      "line_number": 28,
+      "line_end": 28,
+      "title": "SSH open to the whole internet",
+      "problem": "The api security group now allows port 22 from 0.0.0.0/0 instead of the office range.",
+      "consequence": "Any host on the internet can reach SSH on the API servers. Brute force and exploit attempts become possible.",
+      "fix": "Restore the office CIDR or use a bastion or SSM Session Manager while the VPN is down.",
+      "suggested_change": "    cidr_blocks = [\"203.0.113.0/24\"]",
+      "source": "trivy:AWS-0107",
+      "candidate": "c9"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "package-lock.json",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "lodash downgraded to a vulnerable release",
+      "problem": "The change downgrades lodash from 4.18.1 to 4.17.15. Version 4.17.15 has known prototype pollution, command injection and ReDoS flaws.",
+      "consequence": "The front-end helpers inherit those flaws wherever they pass untrusted data to lodash.",
+      "fix": "Keep lodash at 4.18.1 in package.json and package-lock.json.",
+      "suggested_change": "        \"lodash\": \"4.18.1\"",
+      "source": "osv-scanner:GHSA-p6mc-m468-83gw",
+      "candidate": "c7"
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": ".github/workflows/ci.yml",
+      "line_number": 17,
+      "line_end": 17,
+      "title": "Pull request title expanded inside a shell command",
+      "problem": "The workflow pastes the pull request title into the run script before bash parses it. A title containing a quote, backtick or $( ) runs as shell code.",
+      "consequence": "A pull request author can run commands on the runner. Ordinary titles with backticks also break the CI step.",
+      "fix": "Pass the title through an env variable and quote it in the script.",
+      "suggested_change": "        env:\n          PR_TITLE: ${{ github.event.pull_request.title }}\n        run: echo \"Testing $PR_TITLE\"",
+      "source": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "performance",
+      "confidence": 0.8,
+      "file_path": "db/migrations/002_index_item_names.sql",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Index build blocks writes to items",
+      "problem": "The migration creates the index without CONCURRENTLY on the production Postgres items table. Postgres blocks all writes to items until the build finishes.",
+      "consequence": "Inserts and updates to items stall for the whole build on a large table.",
+      "fix": "Create the index concurrently and outside a transaction.",
+      "suggested_change": "CREATE INDEX CONCURRENTLY IF NOT EXISTS items_name_idx ON items (name);",
+      "source": "squawk:require-concurrent-index-creation",
+      "candidate": "c17"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.85,
+      "file_path": "Dockerfile",
+      "line_number": 1,
+      "line_end": 1,
+      "title": "Base image changed from pinned to latest",
+      "problem": "The Dockerfile replaces the pinned python:3.12.7-slim-bookworm with python:latest.",
+      "consequence": "Builds pick up new Python major versions and OS changes without warning. The image also grows much larger.",
+      "fix": "Restore the pinned slim base image.",
+      "suggested_change": "FROM python:3.12.7-slim-bookworm",
+      "source": "hadolint:DL3007",
+      "candidate": "c20"
+    },
+    {
+      "severity": "nitpick",
+      "category": "performance",
+      "confidence": 0.8,
+      "file_path": "Dockerfile",
+      "line_number": 7,
+      "line_end": 7,
+      "title": "pip cache kept in the image",
+      "problem": "The change drops --no-cache-dir from pip install. pip leaves its download cache in the image layer.",
+      "consequence": "The image grows by the size of every downloaded wheel.",
+      "fix": "Add --no-cache-dir back to the pip install command.",
+      "suggested_change": "RUN pip install --no-cache-dir -r requirements.txt",
+      "source": "hadolint:DL3042",
+      "candidate": "c23"
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 7,
+      "line_end": 7,
+      "title": "Unquoted deploy directory in rm -rf",
+      "problem": "The script now passes $DEPLOY_DIR to rm -rf without quotes. A DEPLOY_DIR containing spaces splits into several paths.",
+      "consequence": "rm -rf deletes unrelated directories when DEPLOY_DIR contains a space.",
+      "fix": "Quote the variable as before.",
+      "suggested_change": "rm -rf \"${DEPLOY_DIR:?}/\"",
+      "source": "shellcheck:SC2086",
+      "candidate": "c34"
+    },
+    {
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Deploy loop parses ls output",
+      "problem": "The loop now splits unquoted ls output into words. File names with spaces break into pieces, and the log loses the directory prefix.",
+      "consequence": "The deploy log shows wrong or partial file names.",
+      "fix": "Iterate over the quoted glob as before.",
+      "suggested_change": "for file in \"$DEPLOY_DIR\"/*; do",
+      "source": "shellcheck:SC2045",
+      "candidate": "c12"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/search.py",
+      "line_number": 9,
+      "line_end": 17,
+      "title": "Changed endpoints have no covering test",
+      "problem": "The repository has no tests for the new search endpoint or the changed pagination offset.",
+      "consequence": "Regressions like the skipped first page reach production unnoticed.",
+      "fix": "Add tests for /search with quoted input and for /items page 1 results.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "This repeats the search injection already raised under c5.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c4",
+      "reason": "This repeats the search injection already raised under c5. The app uses Flask, not Django.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c13",
+      "reason": "This repeats the search injection already raised under c5.",
+      "file_path": "app/search.py",
+      "line_number": 10
+    },
+    {
+      "candidate": "c14",
+      "reason": "This repeats the search injection already raised under c5.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c28",
+      "reason": "This repeats the search injection already raised under c5.",
+      "file_path": "app/search.py",
+      "line_number": 14
+    },
+    {
+      "candidate": "c10",
+      "reason": "The c11 finding covers privilege escalation together with privileged mode on the next line.",
+      "file_path": "deploy/deployment.yaml",
+      "line_number": 43
+    },
+    {
+      "candidate": "c15",
+      "reason": "This repeats the privileged container finding raised under c11.",
+      "file_path": "deploy/deployment.yaml",
+      "line_number": 42
+    },
+    {
+      "candidate": "c16",
+      "reason": "The c11 finding already covers allowPrivilegeEscalation.",
+      "file_path": "deploy/deployment.yaml",
+      "line_number": 43
+    },
+    {
+      "candidate": "c25",
+      "reason": "The c11 finding already covers allowPrivilegeEscalation.",
+      "file_path": "deploy/deployment.yaml",
+      "line_number": 43
+    },
+    {
+      "candidate": "c26",
+      "reason": "This repeats the privileged container finding raised under c11.",
+      "file_path": "deploy/deployment.yaml",
+      "line_number": 42
+    },
+    {
+      "candidate": "c24",
+      "reason": "This repeats the open SSH ingress finding raised under c9.",
+      "file_path": "infra/main.tf",
+      "line_number": 28
+    },
+    {
+      "candidate": "c6",
+      "reason": "The c7 finding covers the lodash downgrade, which causes all these advisories.",
+      "file_path": "package-lock.json",
+      "line_number": 11
+    },
+    {
+      "candidate": "c18",
+      "reason": "The c7 finding covers the lodash downgrade, which causes all these advisories.",
+      "file_path": "package-lock.json",
+      "line_number": 11
+    },
+    {
+      "candidate": "c19",
+      "reason": "The c7 finding covers the lodash downgrade, which causes all these advisories.",
+      "file_path": "package-lock.json",
+      "line_number": 11
+    },
+    {
+      "candidate": "c29",
+      "reason": "The c17 fix already adds IF NOT EXISTS to this statement.",
+      "file_path": "db/migrations/002_index_item_names.sql",
+      "line_number": 2
+    },
+    {
+      "candidate": "c30",
+      "reason": "A concurrent build, already raised under c17, avoids the long write lock.",
+      "file_path": "db/migrations/002_index_item_names.sql",
+      "line_number": 2
+    },
+    {
+      "candidate": "c31",
+      "reason": "A statement timeout on a single small index build is a style preference covered by the c17 fix.",
+      "file_path": "db/migrations/002_index_item_names.sql",
+      "line_number": 2
+    },
+    {
+      "candidate": "c8",
+      "reason": "ADD of a local file behaves exactly like COPY here.",
+      "file_path": "Dockerfile",
+      "line_number": 6
+    },
+    {
+      "candidate": "c21",
+      "reason": "Pinning the apt package version has little value while the base image itself is unpinned under c20.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c22",
+      "reason": "The full python image already ships curl. Apt therefore has nothing new to install and needs no confirmation.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c32",
+      "reason": "Recommended packages are a size nitpick with no behavioural impact on this image.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c33",
+      "reason": "Leftover apt lists only add image size and do not change behaviour.",
+      "file_path": "Dockerfile",
+      "line_number": 3
+    },
+    {
+      "candidate": "c27",
+      "reason": "The :- default on line 5 means DEPLOY_DIR can never expand to an empty string.",
+      "file_path": "scripts/deploy.sh",
+      "line_number": 5
+    },
+    {
+      "candidate": "c35",
+      "reason": "The c12 finding on the same loop line already covers this word splitting.",
+      "file_path": "scripts/deploy.sh",
+      "line_number": 11
+    }
+  ]
+}

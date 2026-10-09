@@ -1,0 +1,134 @@
+{
+  "id": "terraform-open-ingress",
+  "guards": "a Terraform change that opens SSH to every address and makes a database reachable from the internet is reported; the infrastructure scanners (trivy config, Checkov) find both",
+  "language": "hcl",
+  "framework": "terraform",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "ssh-open-to-internet",
+      "file": "infra/bastion.tf",
+      "lines": [
+        9,
+        12
+      ],
+      "anchor": {
+        "line": 12,
+        "text": "cidr_blocks = [\"0.0.0.0/0\"]"
+      },
+      "mentions": [
+        "0.0.0.0",
+        "ssh",
+        "internet",
+        "anywhere",
+        "any address",
+        "any ip",
+        "unrestricted",
+        "public"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "trivy",
+        "checkov",
+        "reasoning"
+      ],
+      "truth": "The bastion's security group lets SSH (port 22) in from 0.0.0.0/0, so every address on the internet can reach the jump host's SSH server and try to log in. The fix is to allow SSH only from the company's VPN or office ranges, or to drop the open port and reach the hosts through AWS Systems Manager Session Manager."
+    },
+    {
+      "id": "database-publicly-accessible",
+      "file": "infra/database.tf",
+      "lines": [
+        17,
+        17
+      ],
+      "anchor": {
+        "line": 17,
+        "text": "publicly_accessible     = true"
+      },
+      "mentions": [
+        "publicly_accessible",
+        "publicly",
+        "public",
+        "internet"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "trivy",
+        "checkov",
+        "reasoning"
+      ],
+      "truth": "The orders database is created with publicly_accessible = true, so AWS gives it a public address and it can be reached from outside the VPC as soon as a route or a security group rule allows it. The orders database is only used from inside the VPC; the fix is publicly_accessible = false."
+    }
+  ],
+  "extras": [
+    {
+      "file": "infra/database.tf",
+      "lines": [
+        6,
+        22
+      ],
+      "mentions": [
+        "iam",
+        "monitoring",
+        "performance insights",
+        "multi-az",
+        "logs",
+        "logging",
+        "log export",
+        "query",
+        "minor version",
+        "copy tags",
+        "snapshot"
+      ],
+      "why": "the database has no IAM authentication, no enhanced monitoring or Performance Insights, no log export or query logging and one availability zone; real hardening gaps the scanners name, not planted"
+    },
+    {
+      "file": "infra/bastion.tf",
+      "lines": [
+        2,
+        22
+      ],
+      "mentions": [
+        "attached",
+        "not attached",
+        "unused",
+        "no instance"
+      ],
+      "why": "no instance uses the bastion security group yet, only the app hosts' rule names it; Checkov reports it as not attached, real but not planted"
+    },
+    {
+      "file": "infra/variables.tf",
+      "lines": [
+        12,
+        16
+      ],
+      "mentions": [
+        "secrets manager",
+        "manage_master_user_password",
+        "state"
+      ],
+      "why": "the master password passes through a Terraform variable and lands in the state file; managing it with manage_master_user_password is better, real but not planted"
+    },
+    {
+      "file": "infra/bastion.tf",
+      "lines": [
+        24,
+        32
+      ],
+      "mentions": [
+        "inline",
+        "in-line",
+        "standalone",
+        "conflict",
+        "overwrite"
+      ],
+      "why": "app_from_bastion adds a standalone rule to the app security group, which keeps inline ingress and egress blocks in main.tf; with both styles on one group, an apply can overwrite the other's rules and drop the SSH rule (a known AWS provider limitation, its doc page not re-read here). Real, reported in the 2026-10-09 run, not planted"
+    }
+  ]
+}

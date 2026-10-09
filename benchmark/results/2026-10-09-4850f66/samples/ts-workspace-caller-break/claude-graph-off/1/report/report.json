@@ -1,0 +1,353 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "708d34803616c923cd9d24b87ddfecbe9b1bab242ea6d3ebbd39449296a0d34a",
+  "base": {
+    "ref": "HEAD",
+    "sha": "694f36594a52bffead4c297851546c721dc21367"
+  },
+  "generated_at": "2026-10-09T06:24:53.473Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "safeGit now returns an object with code, stdout and stderr instead of a stdout string. A failing git command no longer throws, and the GitResult type is exported.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 10,
+      "line_end": 18,
+      "title": "safeGit return type changed but callers were not updated",
+      "description": "safeGit now returns a GitResult object and never throws. The callers in packages/cli/src/branch.ts and packages/cli/src/status.ts still treat the result as a string and rely on a throw. In branch.ts, currentBranch calls trim on an object, so the CLI always reports \"not a git repository\". In status.ts, changedFiles throws a TypeError on split, and tsc rejects the cli package. Update currentBranch to return null when code is nonzero and to trim stdout otherwise. Update changedFiles to check code and split stdout.",
+      "suggested_change": null,
+      "source": "lens:return-shape-contract-break",
+      "candidate": null,
+      "notes": [],
+      "problem": "safeGit now returns a GitResult object and never throws. The callers in packages/cli/src/branch.ts and packages/cli/src/status.ts still treat the result as a string and rely on a throw.",
+      "consequence": "In branch.ts, currentBranch calls trim on an object, so the CLI always reports \"not a git repository\". In status.ts, changedFiles throws a TypeError on split, and tsc rejects the cli package.",
+      "fix": "Update currentBranch to return null when code is nonzero and to trim stdout otherwise. Update changedFiles to check code and split stdout."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "packages/core/src/safe-git.ts",
+      "line_number": 11,
+      "line_end": 17,
+      "title": "New error path in safeGit has no covering test",
+      "description": "This change adds a catch branch that maps a git failure to a nonzero code. No test in the repository exercises safeGit. A test would have caught the broken callers. Future changes to the code mapping can also regress unnoticed. Add tests for a successful git command and a failing one. Each test should assert code, stdout and stderr.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "This change adds a catch branch that maps a git failure to a nonzero code. No test in the repository exercises safeGit.",
+      "consequence": "A test would have caught the broken callers. Future changes to the code mapping can also regress unnoticed.",
+      "fix": "Add tests for a successful git command and a failing one. Each test should assert code, stdout and stderr."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3816,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 27,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 10,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 2,
+    "additions": 13,
+    "deletions": 5
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 11057,
+      "started_at": "2026-10-09T06:24:30.094Z",
+      "ended_at": "2026-10-09T06:24:53.474Z",
+      "duration_ms": 23380,
+      "rounds": 2,
+      "usage": {
+        "turns": 7,
+        "input_tokens": 50039,
+        "output_tokens": 2545,
+        "cost_usd": 0.13279180000000002
+      }
+    },
+    "snapshot": {
+      "change_id": "708d34803616c923cd9d24b87ddfecbe9b1bab242ea6d3ebbd39449296a0d34a",
+      "tree": "0003a4605f48089d0f0d4e8b24b75073f8319648",
+      "before": "4786fb30fa368b3cd41c27ec9ab06ed44d6f944b628f8a5994978caee03b9f7e",
+      "after": "4786fb30fa368b3cd41c27ec9ab06ed44d6f944b628f8a5994978caee03b9f7e"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 2,
+      "covered": 2,
+      "unread": [],
+      "files_read": [
+        "packages/cli/package.json",
+        "packages/cli/src/branch.ts",
+        "packages/cli/src/main.ts"
+      ],
+      "files_not_read": [
+        "packages/core/src/index.ts",
+        "packages/core/src/safe-git.ts"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

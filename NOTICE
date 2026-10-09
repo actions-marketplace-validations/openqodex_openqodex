@@ -50,3 +50,14 @@ from the npm packages below. Each keeps its own licence:
   - tree-sitter-python: https://github.com/tree-sitter/tree-sitter-python
   - tree-sitter-go: https://github.com/tree-sitter/tree-sitter-go
   - tree-sitter-ruby: https://github.com/tree-sitter/tree-sitter-ruby
+
+Bundled libraries
+
+The CLI file bundles the code of these npm packages. Each keeps its own licence:
+
+- smol-toml 1.9.0, BSD-3-Clause, Copyright (c) Squirrel Chat et al.:
+  https://github.com/squirrelchat/smol-toml
+- yaml, ISC, Copyright Eemeli Aro: https://github.com/eemeli/yaml
+- zod, MIT, Copyright (c) 2025 Colin McDonnell: https://github.com/colinhacks/zod
+- picocolors, ISC, Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn
+  Denysov, Anton Verinov: https://github.com/alexeyraspopov/picocolors

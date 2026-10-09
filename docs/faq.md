@@ -6,7 +6,7 @@ No. The review runs on the model your coding agent already uses. OpenQodex itsel
 
 ## Does OpenQodex send my code anywhere?
 
-Not through the built-in scanners. Their network use is listed in `security`: scanner downloads, Semgrep rule packs, and dependency names and versions sent to osv.dev. Your agent's model sees what your agent reads, as it always does. A custom scanner you approved does whatever its own command does.
+Not through the built-in scanners. Their network use is listed in `security`: scanner downloads, Semgrep rule packs, dependency names and versions sent to osv.dev, Kubernetes schemas and the RustSec advisory database. Your agent's model sees what your agent reads, as it always does. A custom scanner you approved does whatever its own command does.
 
 ## Will it block my push?
 

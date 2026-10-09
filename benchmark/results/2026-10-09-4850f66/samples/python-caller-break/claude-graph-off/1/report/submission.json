@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "9f4d6ef41c2c",
+  "summary": "tax_for now returns None instead of 0 for unknown regions. The existing callers in the shop package are not updated to handle None.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "None return breaks order_total and tax_line callers",
+      "problem": "tax_for now returns None for an unknown region. order_total in shop/checkout.py adds that result to an int, and tax_line in shop/receipt.py divides it by 100.",
+      "consequence": "Checkout and receipt printing raise TypeError for every order from an unknown region. Before this change, those orders went through with zero tax.",
+      "fix": "Update order_total and tax_line to handle a None result. Otherwise, keep returning 0 for unknown regions.",
+      "suggested_change": null,
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "pkgs/billing/src/billing/tax.py",
+      "line_number": 7,
+      "line_end": 8,
+      "title": "No test covers the unknown region branch",
+      "problem": "The repository has no test for tax_for or its callers. Nothing exercises the new branch that returns None.",
+      "consequence": "A test would have caught the TypeError in the callers before this push.",
+      "fix": "Add tests for tax_for, order_total and tax_line with an unknown region.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

@@ -1,0 +1,348 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "9b6d003659a3eb0fb8e37782669dcf121fbb6ac779bacf7652fa058bfe7f9588",
+  "base": {
+    "ref": "HEAD",
+    "sha": "283914c0c774adb98a195d1b6230b3d11602864e"
+  },
+  "generated_at": "2026-10-09T06:25:09.712Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a workflow that runs Percy visual tests for Dependabot pull requests on pull_request_target, so the job can use PERCY_TOKEN.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": ".github/workflows/visual-tests.yml",
+      "line_number": 20,
+      "line_end": 32,
+      "title": "Untrusted pull request code runs with a repository secret",
+      "description": "The job runs on pull_request_target, then checks out the pull request head and runs npm ci and npm run test:visual. Those steps run code from the pull request while PERCY_TOKEN is in the environment. Code in the pull request's package.json scripts or test files can read PERCY_TOKEN and send it out. It also runs with base repository context. Run the visual tests on pull_request and give Dependabot the token through Dependabot secrets. Otherwise, never execute pull request code in a job that holds secrets.",
+      "suggested_change": null,
+      "source": "zizmor:dangerous-triggers",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The job runs on pull_request_target, then checks out the pull request head and runs npm ci and npm run test:visual. Those steps run code from the pull request while PERCY_TOKEN is in the environment.",
+      "consequence": "Code in the pull request's package.json scripts or test files can read PERCY_TOKEN and send it out. It also runs with base repository context.",
+      "fix": "Run the visual tests on pull_request and give Dependabot the token through Dependabot secrets. Otherwise, never execute pull request code in a job that holds secrets."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": ".github/workflows/visual-tests.yml",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Dependabot gate checks the triggering actor instead of the pull request author",
+      "description": "The job condition checks github.actor, which names whoever triggered the latest event. It does not name the pull request author. An attacker's pull request can pass the gate when Dependabot triggers a synchronize event on the attacker's branch. The attacker's code then runs with PERCY_TOKEN. Check github.event.pull_request.user.login instead. Also require that the head repository equals the base repository.",
+      "suggested_change": "    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository",
+      "source": "zizmor:bot-conditions",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "The job condition checks github.actor, which names whoever triggered the latest event. It does not name the pull request author.",
+      "consequence": "An attacker's pull request can pass the gate when Dependabot triggers a synchronize event on the attacker's branch. The attacker's code then runs with PERCY_TOKEN.",
+      "fix": "Check github.event.pull_request.user.login instead. Also require that the head repository equals the base repository."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 2894,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 18,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "ran",
+      "version": "1.7.7",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 13,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "ran",
+      "version": "1.30.1",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 51,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 32,
+    "deletions": 0
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 12463,
+      "started_at": "2026-10-09T06:24:57.089Z",
+      "ended_at": "2026-10-09T06:25:09.712Z",
+      "duration_ms": 12623,
+      "rounds": 1,
+      "usage": {
+        "turns": 1,
+        "input_tokens": 8943,
+        "output_tokens": 1237,
+        "cost_usd": 0.057993600000000006
+      }
+    },
+    "snapshot": {
+      "change_id": "9b6d003659a3eb0fb8e37782669dcf121fbb6ac779bacf7652fa058bfe7f9588",
+      "tree": "94c143328207977aeb875fcc30508081a2f44cc0",
+      "before": "0d86d75e04b3d07acc0397a61192df5e9da75d652dce9fbac520448f01d45c07",
+      "after": "0d86d75e04b3d07acc0397a61192df5e9da75d652dce9fbac520448f01d45c07"
+    },
+    "candidates": {
+      "total": 2,
+      "disposed": 2
+    },
+    "coverage": {
+      "hunks": 1,
+      "covered": 1,
+      "unread": [],
+      "files_read": [],
+      "files_not_read": [
+        ".github/workflows/visual-tests.yml"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

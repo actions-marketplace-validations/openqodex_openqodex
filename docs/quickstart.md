@@ -108,7 +108,7 @@ npx openqodex review
 
 Scanners download on first use into `~/.openqodex/tools/`. A review downloads only the scanners its changed files call for. A scanner still installing after 45 seconds keeps going in the background. The report lists it as installing. It joins the next run.
 
-One measured first run: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight scanners the demo needs. They take about 700 MB of disk.
+One measured first run, on 2026-10-02, when the demo needed eight scanners: an Apple Silicon Mac, an empty tool folder, a line of 2 MB per second. The first `demo` printed its report in under a minute. That report held the scanners that had finished installing and listed the rest as installing. The next `scan` included all eight. The sixteen scanners the demo needs now take about 1 GB of disk on an Apple Silicon Mac, measured on 2026-10-08.
 
 To download what this repository needs now, run this inside it:
 

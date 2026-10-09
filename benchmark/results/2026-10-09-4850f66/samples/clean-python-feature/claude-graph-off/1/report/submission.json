@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "1957ed62c932",
+  "summary": "Adds to_display, which formats integer cents as a dollar string with thousands separators. Adds balance_line, which uses to_display to render a statement line, and adds tests for both.",
+  "findings": [],
+  "dropped": [
+    {
+      "candidate": "c1",
+      "reason": "This assert is in a pytest test function, where assert is the intended way to check results. Tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 21
+    },
+    {
+      "candidate": "c2",
+      "reason": "This assert is in a pytest test function, where assert is the intended way to check results. Tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 22
+    },
+    {
+      "candidate": "c3",
+      "reason": "This assert is in a pytest test function, where assert is the intended way to check results. Tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 23
+    },
+    {
+      "candidate": "c4",
+      "reason": "This assert is in a pytest test function, where assert is the intended way to check results. Tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c5",
+      "reason": "This assert is in a pytest test function, where assert is the intended way to check results. Tests never run under optimised byte code.",
+      "file_path": "tests/test_money.py",
+      "line_number": 28
+    }
+  ]
+}

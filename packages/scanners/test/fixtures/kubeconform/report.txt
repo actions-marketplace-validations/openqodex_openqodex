@@ -1,0 +1,8 @@
+kubeconform 0.8.0, run from the repository root as the adapter runs it:
+  kubeconform -output json -strict -ignore-missing-schemas -kubernetes-version 1.37.1
+    -schema-location https://raw.githubusercontent.com/yannh/kubernetes-json-schema/8df8a883b68a24a104b4a9e43c1288090ae60b3b/...
+    -cache <folder> -- k8s/app.yaml k8s/broken.yaml
+with app.yaml and broken.yaml under k8s/. Unedited. Exit code 1.
+The Certificate in app.yaml has no schema at that source and is skipped; the ConfigMap is valid.
+
+unreachable.json: the same run on k8s/app.yaml with -schema-location pointed at https://127.0.0.1:9/ (nothing listens) and an empty cache. Unedited. Exit code 1.

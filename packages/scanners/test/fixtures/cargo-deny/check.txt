@@ -1,0 +1,7 @@
+cargo-deny 0.20.2 with Cargo 1.99.0, as the adapter runs it, from a folder outside the project:
+  cargo-deny --format json --color never --manifest-path <project>/Cargo.toml --config <owned deny.toml> fetch db
+  cargo metadata --format-version 1 --frozen --manifest-path <project>/Cargo.toml > metadata.json
+  cargo-deny --format json --color never --frozen --manifest-path <project>/Cargo.toml --metadata-path metadata.json --workspace --config <owned deny.toml> check --hide-inclusion-graph advisories sources
+check.jsonl is the stderr of the last command, unedited (exit code 1). The project is Cargo.toml.txt with an empty src/main.rs, and Cargo.lock.txt is its lockfile: both named .txt so no dependency scanner, Dependabot included, takes them for a real project.
+
+metadata-missing.txt: the stderr of the cargo metadata step on a project whose Cargo.lock names itoa 0.1.1, which is not in the Cargo cache. Unedited (exit code 101).

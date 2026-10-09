@@ -1,0 +1,162 @@
+{
+  "version": 2,
+  "change_id": "f40cc0629aaa",
+  "summary": "Adds a bastion security group with SSH access to the app hosts and a Postgres RDS instance for orders, plus a sensitive db_password variable.",
+  "findings": [
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "infra/bastion.tf",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Bastion SSH open to the whole internet",
+      "problem": "The bastion security group accepts SSH on port 22 from 0.0.0.0/0. Any host on the internet can reach the jump host.",
+      "consequence": "Attackers can brute force or exploit SSH on the bastion, which leads straight to the app hosts.",
+      "fix": "Limit the ingress to the on-call engineers' office or VPN CIDR ranges through a variable. Alternatively use SSM Session Manager and drop the ingress.",
+      "suggested_change": "    cidr_blocks = var.bastion_allowed_cidrs",
+      "source": "trivy:AWS-0107",
+      "candidate": "c1"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "infra/bastion.tf",
+      "line_number": 24,
+      "line_end": 32,
+      "title": "Standalone rule on a security group with inline rules",
+      "problem": "The app_from_bastion rule attaches to aws_security_group.app, which already defines inline ingress and egress blocks in main.tf. Terraform does not support mixing the two styles on one group.",
+      "consequence": "Each apply of the app group removes the SSH rule and the next apply adds it again. Engineers lose bastion access unpredictably and plans never settle.",
+      "fix": "Move the SSH rule into an inline ingress block on aws_security_group.app. Alternatively convert all app group rules to standalone rule resources.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "infra/database.tf",
+      "line_number": 17,
+      "line_end": 17,
+      "title": "Orders database marked publicly accessible",
+      "problem": "The orders RDS instance sets publicly_accessible to true. AWS then gives the database endpoint a public IP address.",
+      "consequence": "The orders data becomes reachable from the internet once the VPC has an internet gateway. The VPC has none, so AWS also rejects the create.",
+      "fix": "Set publicly_accessible to false so the database stays on the private subnets.",
+      "suggested_change": "  publicly_accessible     = false",
+      "source": "trivy:AWS-0180",
+      "candidate": "c2"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.8,
+      "file_path": "infra/database.tf",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Database security group does not allow Postgres traffic",
+      "problem": "The orders database reuses the app security group, which only allows inbound TCP 443 from the VPC. No rule allows inbound port 5432.",
+      "consequence": "The app hosts cannot connect to the orders database. Every query from the shop API will time out.",
+      "fix": "Create a dedicated database security group. Allow TCP 5432 inbound from the app security group only.",
+      "suggested_change": "  vpc_security_group_ids  = [aws_security_group.orders_db.id]",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "info",
+      "category": "maintainability",
+      "confidence": 0.7,
+      "file_path": "infra/database.tf",
+      "line_number": 6,
+      "line_end": 22,
+      "title": "New infrastructure has no covering test",
+      "problem": "The change adds a bastion group and an orders database without any plan check or Terraform test.",
+      "consequence": "Mistakes like the missing Postgres port or the rule conflict reach apply without an automated check.",
+      "fix": "Add a terraform test or a plan assertion that checks the database ports and its public access setting.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "Log export is a hardening choice and not a defect in this change. Nothing in the repo requires it.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    },
+    {
+      "candidate": "c4",
+      "reason": "This duplicates the public access finding already raised for the same line.",
+      "file_path": "infra/database.tf",
+      "line_number": 17
+    },
+    {
+      "candidate": "c5",
+      "reason": "The database uses password authentication through a sensitive variable on purpose. IAM authentication is optional hardening.",
+      "file_path": "infra/database.tf",
+      "line_number": 14
+    },
+    {
+      "candidate": "c6",
+      "reason": "This duplicates the open SSH finding already raised for the same ingress block.",
+      "file_path": "infra/bastion.tf",
+      "line_number": 12
+    },
+    {
+      "candidate": "c7",
+      "reason": "Performance Insights is an optional monitoring feature. Leaving it off does not make the code wrong.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    },
+    {
+      "candidate": "c8",
+      "reason": "Multi-AZ is a cost and availability choice for each environment. A single-AZ instance is valid here.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    },
+    {
+      "candidate": "c9",
+      "reason": "Log export is a hardening choice and duplicates the logging candidate on the same resource.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    },
+    {
+      "candidate": "c10",
+      "reason": "The AWS provider already defaults auto_minor_version_upgrade to true. The instance therefore gets minor upgrades.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    },
+    {
+      "candidate": "c11",
+      "reason": "Enhanced monitoring is optional observability. Its absence is not a defect.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    },
+    {
+      "candidate": "c12",
+      "reason": "The resources define no tags, so copying tags to snapshots would copy nothing.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    },
+    {
+      "candidate": "c13",
+      "reason": "The bastion group is meant for a jump host, as its comment says. The app_from_bastion rule already references it.",
+      "file_path": "infra/bastion.tf",
+      "line_number": 1
+    },
+    {
+      "candidate": "c14",
+      "reason": "Query logging needs a custom parameter group and is an optional audit choice. Its absence is not a bug.",
+      "file_path": "infra/database.tf",
+      "line_number": 8
+    },
+    {
+      "candidate": "c15",
+      "reason": "This duplicates the Performance Insights candidate, which is optional monitoring.",
+      "file_path": "infra/database.tf",
+      "line_number": 6
+    }
+  ]
+}

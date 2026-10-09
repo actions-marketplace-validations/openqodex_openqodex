@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (1 major, 2 minor)
+Change 24db58b1ace8 against HEAD, 2 files, +16 -2
+Summary: Adds a status column and a customer and status index to orders. New orders now start as placed, and a new query lists a customer's open orders.
+1. Major bug: Required column added to a populated table without a default (db/migrations/0002_order_status.sql:3)
+2. Minor performance: Index build blocks writes to orders (db/migrations/0002_order_status.sql:5)
+3. Minor maintainability: New open orders query has no covering test (src/orders.js:13-19)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md
