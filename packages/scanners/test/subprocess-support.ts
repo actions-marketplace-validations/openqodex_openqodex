@@ -21,6 +21,11 @@ process.env.HOME = process.env.OQ_SUBPROCESS_USER_HOME;
 // needs the network, and OPENQODEX_E2E_OFFLINE=1 skips it.
 export type Case = { scanner: BuiltinScanner; rule: string; files: Record<string, string>; anchor: string; runtime?: RegExp; network?: true };
 
+// The checks never install a scanner: the end-to-end setup installs every
+// one first with the built CLI's `doctor --install`. An install from here
+// would start this test runner again as its install worker (issue #69).
+export const installedOnly = () => createToolResolver({ allowInstall: false, installBudgetMs: null });
+
 // Every line of every planted file counts as changed, as for a new file.
 export async function scan(spec: Case) {
   const repo = mkdtempSync(join(tmpdir(), `oq-adapter-${spec.scanner}-`));
@@ -31,12 +36,13 @@ export async function scan(spec: Case) {
   }
   const paths = Object.keys(spec.files);
   const coverage = new Map(paths.map((p) => [p, new Set(readFileSync(join(repo, p), "utf8").split("\n").map((_, i) => i + 1))]));
-  return runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: createToolResolver({ allowInstall: true, installBudgetMs: null }), only: [spec.scanner] });
+  return runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: installedOnly(), only: [spec.scanner] });
 }
 
-// Installs the scanner before a proxy is up, so its download is not counted.
+// Finds the installed scanner before a proxy is up, so only the scan's own
+// connections are counted.
 export async function resolveFirst(scanner: BuiltinScanner): Promise<void> {
-  await createToolResolver({ allowInstall: true, installBudgetMs: null })(scanner);
+  await installedOnly()(scanner);
 }
 
 // Runs `fn` with the proxy variables pointing at a local proxy that tunnels
