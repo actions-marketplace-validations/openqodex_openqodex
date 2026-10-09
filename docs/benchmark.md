@@ -287,6 +287,19 @@ What it showed:
 - The false finding is a minor one in `express-admin-routes`: the purge reply reports the requested count as removed. It follows from the planted unawaited `forEach` two lines above it; the specs do not list it, so it counts false.
 - Time, turns and cost per review match the first run's.
 
+### The review fixes
+
+The code review of the merged branch changed what four briefs show: three framework tables no longer say a route whose handler is an inline function or a method of an untyped value has "no handler now" (`express-admin-routes`, `go-http-handler`, `suppression-comments`), and the `django-renamed-view` brief adds the gap at the route that names the missing view. Only those four cases ran again, on build `4a7d198`, in `benchmark/results/2026-10-09-4a7d198`, the same way (graph on, one repeat, `claude-opus-5-5`).
+
+| Measure (graph on, the four cases) | Wave 1 `5227579` | Review fixes `4a7d198` |
+|---|---|---|
+| Planted bugs found | 8/8 | 8/8 |
+| False findings | 1 | 0 |
+| Time per review, mean | 22 s | 22 s |
+| Cost per review, mean | $0.10 | $0.10 |
+
+No planted bug moved. The false finding of `5227579` (the purge reply's count in `express-admin-routes`) was not raised again; one repeat cannot say whether the brief caused that.
+
 ## Claims cite a run
 
 A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a saved benchmark run: the results folder, the score file it quotes (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no saved run backs is not written.
