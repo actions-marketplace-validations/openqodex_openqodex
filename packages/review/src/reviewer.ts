@@ -11,7 +11,7 @@
 //          of every response.
 // Nothing a reviewer says about itself is proof: what was read, what was
 // shown and what was used come from the brain's own records.
-import type { Category, Config, Coverage, Severity } from "@openqodex/core";
+import type { Category, Config, Coverage, ModelCompletionRecord, Severity } from "@openqodex/core";
 import type { ReviewerDriver, Turn } from "./agents/driver.js";
 import type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
 
@@ -209,7 +209,9 @@ export type Disposition = {
 // check. `coverage` and `evidence` are null when the review stopped before
 // a reviewer could start (a merge base that could not be proved, nothing
 // to review). `evidence`: what the model completion record is built from.
-// `scannerVersions`: each scanner that ran and its version.
+// `scannerVersions`: each scanner that ran and its version. `completion`:
+// the model completion record built from `evidence` (model-record.ts), null
+// when `evidence` is.
 export type ReviewResult = {
   status: ReviewStatus;
   reason?: string;
@@ -221,5 +223,6 @@ export type ReviewResult = {
   trace: ToolLogEntry[];
   usage: { calls: CallRecord[]; totals: UsageTotals };
   evidence: ModelReviewEvidence | null;
+  completion: ModelCompletionRecord | null;
   render: { markdown(): string; sarif(): string; json(): string };
 };

@@ -21,3 +21,4 @@ export type { AgentReviewer, AuthorizeRequest, Budget, Disposition, Message, Mod
 export { usageTotals } from "./usage.js";
 export type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
 export { agentRoundCall, meterSession } from "./agent-usage.js";
+export { modelRecord, modelReport, reviewRender } from "./model-record.js";
