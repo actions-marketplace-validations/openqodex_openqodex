@@ -145,6 +145,18 @@ function run(index: PluginIndex<NextFact>): Analysis {
 
   // ---------- handlers ----------
   const symbolsOf = (file: string): readonly GraphNode[] => index.symbols(file);
+  // Each file's definitions by name and line, built once, so a file of
+  // thousands of server actions is not scanned once per action.
+  const placed = new Map<string, Map<string, GraphNode>>();
+  const symbolAt = (file: string, name: string, line: number): GraphNode | null => {
+    let m = placed.get(file);
+    if (!m) {
+      m = new Map();
+      for (const n of symbolsOf(file)) if (!m.has(`${n.name}\0${n.startLine}`)) m.set(`${n.name}\0${n.startLine}`, n);
+      placed.set(file, m);
+    }
+    return m.get(`${name}\0${line}`) ?? null;
+  };
   // A definition at the top of a file (no owner): its id is
   // `<file>#<name>@<line>:<column>`. Each file's are indexed by name once.
   const tops = new Map<string, Map<string, GraphNode>>();
@@ -294,7 +306,7 @@ function run(index: PluginIndex<NextFact>): Analysis {
       }
     }
     for (const a of of(file, "action")) {
-      const s = symbolsOf(file).find((n) => n.name === a.name && n.startLine === a.line) ?? topSymbol(file, a.name);
+      const s = symbolAt(file, a.name, a.line) ?? topSymbol(file, a.name);
       if (s) register(router, file, ["POST"], null, { status: "bound", target: s, why: null, cause: "miss" }, at(file, s), "server-action");
     }
     if (directives.includes("use client")) {
@@ -323,7 +335,7 @@ function run(index: PluginIndex<NextFact>): Analysis {
     const matcher = of(file, "matcher")[0];
     const site = at(file, fn);
     addRole(fn.id, "middleware", "nextjs", null, { kind: "role-path", tier: "certain", site, via: null, premises: [], rule: rule("nextjs-middleware"), note: null });
-    const parsed = matcher?.values?.map((m) => parseMatcher(m)) ?? null;
+    const parsed = matcher?.values?.map((m) => readMatcher(m)) ?? null;
     if (matcher && matcher.values === null) {
       addUnknown({ plugin: PLUGIN, site: { file, line: matcher.line, column: matcher.column }, scope: { project }, affects: ["applies_middleware"], cause: "dynamic", name: "matcher", note: "the middleware's matcher is computed, so the routes it runs for are not known", count: null, exact: false });
       continue;
@@ -331,19 +343,26 @@ function run(index: PluginIndex<NextFact>): Analysis {
     // A cut list: a route no entry read selects may be selected by one past the cut.
     const cutList = matcher?.more ?? 0;
     if (cutList > 0) addUnknown({ plugin: PLUGIN, site: { file, line: matcher?.line ?? 1, column: matcher?.column ?? 1 }, scope: { project }, affects: ["applies_middleware"], cause: "fan-out-capped", name: "matcher", note: `the matcher list has ${cutList} entries past the ${matcher?.values?.length ?? 0} the plugin reads, so a route only those entries select is linked as possible`, count: cutList, exact: true });
+    const tooLong = parsed?.filter((m) => m === "cap").length ?? 0;
+    if (tooLong > 0) addUnknown({ plugin: PLUGIN, site: { file, line: matcher?.line ?? 1, column: matcher?.column ?? 1 }, scope: { project }, affects: ["applies_middleware"], cause: "fan-out-capped", name: "matcher", note: `${tooLong} matcher entries have more than ${MAX_PATTERN_SEGMENTS} segments, which the plugin does not compare, so a route they may select is linked as possible`, count: tooLong, exact: true });
     for (const reg of registrations) {
       if (reg.app === null || !own.has(reg.app) || reg.pattern === null) continue;
-      // Once the matching budget is gone nothing more is matched; one unknown says so below.
-      if (refused.matchWork > 0) break;
       let tier: "certain" | "possible" | null = null;
       let why: string | null = null;
       if (!parsed) tier = "certain"; // no matcher: every request
       else {
+        // Once the matching budget is gone nothing more is matched; one unknown says so below.
+        if (refused.matchWork > 0) break;
         const route = routeSegments(reg.pattern);
         for (const m of parsed) {
           if (m === null) {
             tier ??= "possible";
             why ??= "the middleware's matcher is a pattern the plugin does not read, so it may run for this route";
+            continue;
+          }
+          if (m === "cap") {
+            tier ??= "possible";
+            why ??= `the middleware's matcher has an entry of more than ${MAX_PATTERN_SEGMENTS} segments, which the plugin does not compare, so it may run for this route`;
             continue;
           }
           if (!route) {
@@ -400,8 +419,17 @@ const isName = (s: string): boolean => {
   return true;
 };
 
-// A matcher parsed into segments, or null for a form this plugin does not
+// A matcher parsed into segments, "cap" when it has more than
+// MAX_PATTERN_SEGMENTS segments, or null for a form this plugin does not
 // read (a regular expression group, a modifier inside a segment).
+function readMatcher(matcher: string): MSeg[] | "cap" | null {
+  if (matcher.split("/").filter((s) => s !== "").length > MAX_PATTERN_SEGMENTS) return "cap";
+  return parseMatcher(matcher);
+}
+
+// A matcher parsed into segments, or null for a form this plugin does not
+// read (a regular expression group, a modifier inside a segment) or one
+// longer than MAX_PATTERN_SEGMENTS segments.
 export function parseMatcher(matcher: string): MSeg[] | null {
   const parts = matcher.split("/").filter((s) => s !== "");
   if (parts.length > MAX_PATTERN_SEGMENTS) return null;
