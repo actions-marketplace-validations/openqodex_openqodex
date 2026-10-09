@@ -7,7 +7,7 @@ import { basename, dirname } from "node:path";
 import type { AgentId } from "./detect.js";
 import { readText, sha256 } from "./files.js";
 import type { Guard } from "./guarded-fs.js";
-import { planJsonInstall, planJsonRemoval, planTomlInstall, planTomlRemoval } from "./mcp.js";
+import { ownsServer, planJsonInstall, planJsonRemoval, planTomlInstall, planTomlRemoval } from "./mcp.js";
 import { canonical, type InstallRecord } from "./record.js";
 import type { Scope, Target } from "./targets.js";
 import { isShippedSkill, SECTION_END, SECTION_START } from "./targets.js";
@@ -28,7 +28,9 @@ export type Action = {
 };
 
 // `guard`: the one way this run writes, renames and deletes (guarded-fs.ts).
-export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null; guard: Guard };
+// `mcp`: whether this run registers the code graph's MCP server (absent: no);
+// the Claude Code server rule follows it.
+export type Ctx = { record: InstallRecord; scope: Scope; repoRoot: string | null; guard: Guard; mcp?: boolean };
 
 type Settings = {
   hooks?: { PreToolUse?: unknown[]; [k: string]: unknown };
@@ -267,17 +269,22 @@ export function planInstall(t: Target, ctx: Ctx): Action {
       const data = before === null ? {} : parseSettings(before);
       if (typeof data === "string") return { ...base, verb: "refuse", failed: true, note: `${t.label}: the file ${data}; left untouched` };
       const have = (data.permissions?.allow ?? []) as unknown[];
+      // The rules this run grants: the server rule only while the server
+      // named openqodex is OpenQodex's own, decided again when the action
+      // runs, after the registration before it was written.
+      const wantedNow = (): string[] => [...t.rules, ...(t.server && ownsServer(t.server.mcp, ctx) ? [t.server.rule] : [])];
+      const wanted = wantedNow();
       // Rules an earlier version granted and this one does not: removed while
       // still there as recorded. A rule the record does not name is never touched.
       const recorded = ourRules(ctx, t.path);
-      const stale = recorded.filter((r) => !t.rules.includes(r));
+      const stale = recorded.filter((r) => !wanted.includes(r));
       const staleThere = stale.filter((r) => have.includes(r));
-      const missing = t.rules.filter((r) => !have.includes(r));
-      const forgetStale = (): void => {
-        record.allowRules = record.allowRules.filter((r) => r.path !== t.path || !stale.includes(r.rule));
+      const missing = wanted.filter((r) => !have.includes(r));
+      const forgetStale = (gone: string[]): void => {
+        record.allowRules = record.allowRules.filter((r) => r.path !== t.path || !gone.includes(r.rule));
       };
       if (missing.length === 0 && staleThere.length === 0) {
-        forgetStale();
+        forgetStale(stale);
         return { ...base, verb: "skip", note: t.rules.length > 0 ? `${t.label} already present` : `${t.label}: none in project scope` };
       }
       const parts = [
@@ -295,12 +302,14 @@ export function planInstall(t: Target, ctx: Ctx): Action {
           const text = unchangedSincePlan(t.path, before);
           const now = text === null ? {} : parseSettings(text);
           if (typeof now === "string") throw new Error(`the file ${now}`);
-          removeAllow(now, staleThere.filter((r) => ((now.permissions?.allow ?? []) as unknown[]).includes(r)));
+          const wantedAtWrite = wantedNow();
+          const goneNow = recorded.filter((r) => !wantedAtWrite.includes(r));
+          removeAllow(now, goneNow.filter((r) => ((now.permissions?.allow ?? []) as unknown[]).includes(r)));
           const allow = (now.permissions?.allow ?? []) as unknown[];
-          const add = t.rules.filter((r) => !allow.includes(r));
+          const add = wantedAtWrite.filter((r) => !allow.includes(r));
           if (add.length > 0) now.permissions = { ...now.permissions, allow: [...allow, ...add] };
           writeSettings(ctx.guard, t.path, json(now), t.inRepo ? 0o644 : 0o600);
-          forgetStale();
+          forgetStale(goneNow);
           for (const rule of add) record.allowRules.push({ path: t.path, rule });
         },
       };

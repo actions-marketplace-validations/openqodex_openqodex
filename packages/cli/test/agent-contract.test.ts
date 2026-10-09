@@ -44,7 +44,7 @@ function rendered(): Record<string, string> {
       else if (t.kind === "hook-json") out[`${agent}-hook.json`] = `${JSON.stringify(t.group, null, 2)}\n`;
       else if (t.kind === "mcp-json") out[`${agent}-mcp.json`] = `${JSON.stringify(t.entry, null, 2)}\n`;
       else if (t.kind === "mcp-toml") out[`${agent}-mcp.toml`] = `${t.block}\n`;
-      else out[`${agent}-allow-rules.json`] = `${JSON.stringify(t.rules, null, 2)}\n`;
+      else out[`${agent}-allow-rules.json`] = `${JSON.stringify([...t.rules, ...(t.server ? [t.server.rule] : [])], null, 2)}\n`;
     }
   }
   return out;

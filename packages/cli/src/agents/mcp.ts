@@ -46,6 +46,28 @@ function forget(record: InstallRecord, path: string): void {
 
 // ---- JSON files: Claude Code, Cursor, Cline ----
 
+// True when, once this run's registration is written, the server named
+// openqodex in this file is OpenQodex's own: the run registers it
+// (ctx.mcp), the file parses, and the entry there is absent (init writes
+// it), equal to the one init writes, or the one an earlier init recorded
+// (init rewrites it). The cases planJsonInstall writes or skips, never the
+// ones it keeps or refuses. The Claude Code server rule rests on it.
+export function ownsServer(t: JsonTarget, ctx: Ctx): boolean {
+  if (ctx.mcp !== true) return false;
+  let text: string | null;
+  try {
+    text = readText(t.path);
+  } catch {
+    return false;
+  }
+  const parsed = parseMcpFile(text);
+  if (typeof parsed === "string") return false;
+  const there = serverKey(parsed);
+  if (there === undefined || there === canonical(t.entry)) return true;
+  const rec = recordOf(ctx.record, t.path);
+  return rec?.kind === "json" && canonical(rec.entry) === there;
+}
+
 type McpFile = { data: Record<string, unknown>; servers: Record<string, unknown> | undefined };
 
 // The file as an object whose mcpServers, when present, is an object; the
