@@ -15,7 +15,7 @@ import { buildGraph, frameworkLayer } from "../../index.js";
 import type { FrameworkLayer, Graph, Registration } from "../../index.js";
 import { parserFor } from "../../parser.js";
 import { MAX_SOURCE_BYTES, readFacts } from "./facts.js";
-import { matches, MAX_MIDDLEWARE_CHAIN, MAX_MOUNTS, MAX_REGISTRATIONS } from "./resolve.js";
+import { matches, MAX_APPS, MAX_MIDDLEWARE_CHAIN, MAX_MOUNTS, MAX_REGISTRATIONS, MAX_ROLES } from "./resolve.js";
 
 const git = (root: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
 function commitAll(root: string): void {
@@ -393,7 +393,9 @@ describe("the FastAPI plugin on a hostile repository", () => {
 });
 
 // A repository of tens of thousands of classes: a chain where each class
-// subclasses the one before, starting from Pydantic's BaseModel.
+// subclasses the one before, starting from Pydantic's BaseModel; more
+// direct models than the build keeps roles for; and more applications than
+// the build keeps.
 describe("the FastAPI plugin on a repository of many model classes", () => {
   const CHAIN = 30_000;
   let root: string;
@@ -402,8 +404,17 @@ describe("the FastAPI plugin on a repository of many model classes", () => {
   beforeAll(async () => {
     const chain = ["from pydantic import BaseModel", "", "", "class C0(BaseModel):", "    pass"];
     for (let i = 1; i < CHAIN; i++) chain.push("", "", `class C${i}(C${i - 1}):`, "    pass");
+    const files: Record<string, string> = { "pyproject.toml": '[project]\nname = "models"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "models/__init__.py": "", "models/chain.py": `${chain.join("\n")}\n`, "apps/__init__.py": "" };
+    for (const part of ["a", "b", "c"]) {
+      const direct = ["from pydantic import BaseModel", ""];
+      for (let i = 0; i < 7000; i++) direct.push(`class D${part}${i}(BaseModel):`, "    pass", "");
+      files[`models/direct_${part}.py`] = direct.join("\n");
+      const many = ["from fastapi import FastAPI", ""];
+      for (let i = 0; i < 700; i++) many.push(`a${i} = FastAPI()`);
+      files[`apps/many_${part}.py`] = many.join("\n");
+    }
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-models-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "models"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "models/__init__.py": "", "models/chain.py": `${chain.join("\n")}\n` });
+    writeTree(root, files);
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 4 * 1024 * 1024, budgetMs: 120_000 });
   }, 180_000);
@@ -416,7 +427,17 @@ describe("the FastAPI plugin on a repository of many model classes", () => {
   });
 
   it("marks only the classes at most eight bases from BaseModel, whatever order the classes are read in", () => {
-    const models = (graph.frameworks?.roles ?? []).filter((r) => r.plugin === "fastapi" && r.role === "model").map((r) => graph.nodes.get(r.target)?.name);
-    expect(models.sort()).toEqual(["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7"]);
+    const models = (graph.frameworks?.roles ?? []).filter((r) => r.plugin === "fastapi" && r.role === "model").map((r) => graph.nodes.get(r.target)?.name ?? "");
+    expect(models.filter((n) => n.startsWith("C")).sort()).toEqual(["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7"]);
+  });
+
+  it("keeps at most MAX_ROLES roles and MAX_APPS applications in one build, so its lists never overflow the stage, and says so once each", () => {
+    const roles = (graph.frameworks?.roles ?? []).filter((r) => r.plugin === "fastapi");
+    const apps = (graph.frameworks?.apps ?? []).filter((a) => a.plugin === "fastapi");
+    expect(roles.length).toBe(MAX_ROLES);
+    expect(apps.length).toBe(MAX_APPS);
+    const capped = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "fastapi" && u.cause === "fan-out-capped");
+    expect(capped.filter((u) => u.note.includes(`${MAX_ROLES} roles`)).map((u) => u.count)).toEqual([21_008 - MAX_ROLES]);
+    expect(capped.filter((u) => u.note.includes(`${MAX_APPS} applications`)).map((u) => u.count)).toEqual([2100 - MAX_APPS]);
   });
 });
