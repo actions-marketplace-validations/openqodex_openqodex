@@ -5,8 +5,9 @@
 // file: the React reader once took forty seconds on 20,000 nested blocks.
 // The readers keep their ancestors on stacks instead; this test holds them
 // to that.
-import { describe, expect, it } from "vitest";
-import { parserFor } from "../../parser.js";
+import { describe, it } from "vitest";
+import type { Node } from "web-tree-sitter";
+import { expectLinear, readerCpuMs } from "../../test-timing.js";
 import type { Lang } from "../../types.js";
 import { express } from "../express/index.js";
 import { fastapi } from "../fastapi/index.js";
@@ -16,11 +17,12 @@ import type { FrameworkFactBase, FrameworkPlugin } from "../plugin.js";
 import { react } from "./index.js";
 
 const N = 20_000;
-const SOURCES: Record<"typescript" | "tsx" | "python" | "go", string> = {
-  typescript: `export function f() {}\n${"{ f(); ".repeat(N)}${"}".repeat(N)}\n`,
-  tsx: `export function App() {\n  return ${"<div>".repeat(N / 4)}x${"</div>".repeat(N / 4)};\n}\n${"(() => ".repeat(N / 4)}0${")".repeat(N / 4)};\n`,
-  python: `def f(x):\n    return x\n\ny = ${"f(".repeat(N / 4)}0${")".repeat(N / 4)}\nz = ${"[".repeat(N / 4)}${"]".repeat(N / 4)}\n`,
-  go: `package main\n\nfunc f() {}\n\nfunc g() {\n${"{ f(); ".repeat(N)}${"}".repeat(N)}\n}\n`,
+// Each language's source at nesting depth `n`; the test reads N and a quarter of it.
+const SOURCES: Record<"typescript" | "tsx" | "python" | "go", (n: number) => string> = {
+  typescript: (n) => `export function f() {}\n${"{ f(); ".repeat(n)}${"}".repeat(n)}\n`,
+  tsx: (n) => `export function App() {\n  return ${"<div>".repeat(n / 4)}x${"</div>".repeat(n / 4)};\n}\n${"(() => ".repeat(n / 4)}0${")".repeat(n / 4)};\n`,
+  python: (n) => `def f(x):\n    return x\n\ny = ${"f(".repeat(n / 4)}0${")".repeat(n / 4)}\nz = ${"[".repeat(n / 4)}${"]".repeat(n / 4)}\n`,
+  go: (n) => `package main\n\nfunc f() {}\n\nfunc g() {\n${"{ f(); ".repeat(n)}${"}".repeat(n)}\n}\n`,
 };
 
 const plugins = [express, react, nextjs, fastapi, goHttp] as FrameworkPlugin<FrameworkFactBase>[];
@@ -29,17 +31,9 @@ describe("the fact readers on deeply nested code", () => {
   for (const plugin of plugins) {
     for (const lang of Object.keys(SOURCES) as (keyof typeof SOURCES)[]) {
       if (!plugin.languages.includes(lang as Lang)) continue;
-      it(`the ${plugin.id} reader reads ${lang} nested thousands of levels deep in under a second, so nesting cannot make it quadratic`, async () => {
-        const parser = await parserFor(lang as Lang);
-        const tree = parser.parse(SOURCES[lang]);
-        if (!tree) throw new Error(`no tree for ${lang}`);
-        try {
-          const t0 = performance.now();
-          plugin.facts(tree.rootNode, lang as Lang);
-          expect(performance.now() - t0).toBeLessThan(1000);
-        } finally {
-          tree.delete();
-        }
+      it(`the ${plugin.id} reader reads ${lang} nested thousands of levels deep in time that grows with the depth, so nesting cannot make it quadratic`, async () => {
+        const read = (root: Node) => plugin.facts(root, lang as Lang);
+        expectLinear(`the ${plugin.id} reader on ${lang} nested ${N / 4} and ${N} deep`, await readerCpuMs(lang as Lang, [SOURCES[lang](N / 4)], read), await readerCpuMs(lang as Lang, [SOURCES[lang](N)], read));
       });
     }
   }

@@ -17,14 +17,16 @@ import { afterAll, describe, expect, it } from "vitest";
 import { buildGraph } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { EXPORT_LOOKUP_STEPS } from "../src/resolve.js";
+import { expectLinear, stageCpuMs } from "../src/test-timing.js";
 import { makeRepo, symbol } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
+const buildOf = (root: string) => () => buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+
 async function graphOf(files: Record<string, string>): Promise<Graph> {
-  const root = makeRepo(files);
-  return buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+  return buildOf(makeRepo(files))();
 }
 
 function tiers(graph: Graph, id: string): string[] {
@@ -49,16 +51,21 @@ function diamond(layers: number, width: number, extra = ""): Record<string, stri
 }
 
 describe("looking up an exported name", () => {
-  it("binds through seven layers of 20 barrels in under a second (1)", async () => {
-    const g = await graphOf(diamond(7, 20));
-    expect(g.status.stages.resolve ?? 0).toBeLessThan(1000);
+  it("binds through seven layers of 20 barrels in time that grows with the re-exports, not the paths (1)", async () => {
+    const root = makeRepo(diamond(7, 20));
+    const g = await buildOf(root)();
     expect(tiers(g, symbol(g, "x.ts", "f"))).toEqual(["use.ts:3 certain"]);
+    // Ten barrels a layer are a quarter of the re-exports and 1/128 of the paths.
+    const narrow = makeRepo(diamond(7, 10));
+    expectLinear("the resolve stage on seven layers of 10 and of 20 barrels", await stageCpuMs(buildOf(narrow), "resolve"), await stageCpuMs(buildOf(root), "resolve"));
   }, 120_000);
 
   it("stops a web of export * cycles at its step budget and records the cut (2)", async () => {
     // Every barrel also re-exports the top barrel: every path meets a cycle.
-    const g = await graphOf(diamond(5, 20, 'export * from "./l5b0";\n'));
-    expect(g.status.stages.resolve ?? 0).toBeLessThan(1000);
+    const root = makeRepo(diamond(5, 20, 'export * from "./l5b0";\n'));
+    const g = await buildOf(root)();
+    const narrow = makeRepo(diamond(5, 10, 'export * from "./l5b0";\n'));
+    expectLinear("the resolve stage on webs of five layers of 10 and of 20 barrels", await stageCpuMs(buildOf(narrow), "resolve"), await stageCpuMs(buildOf(root), "resolve"));
     const cut = g.status.cuts.find((c) => c.by === "export-walk");
     expect(cut?.note).toContain(EXPORT_LOOKUP_STEPS.toLocaleString("en-US"));
     expect(cut).toMatchObject({ exact: false, omitted: null });

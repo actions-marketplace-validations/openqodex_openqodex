@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildGraph } from "../../index.js";
 import type { Graph } from "../../index.js";
+import { expectLinear, pluginCpuMs } from "../../test-timing.js";
 import { MAX_ROLES } from "./resolve.js";
 
 function repo(files: Record<string, string>): string {
@@ -56,15 +57,24 @@ describe("the React plugin on a hook named through a shadowing parameter", () =>
 
 describe("the React plugin on tens of thousands of components", () => {
   let root: string;
+  let quarter: string;
   let graph: Graph;
-  beforeAll(async () => {
+  // 12 files of `each` components.
+  const components = (each: number): Record<string, string> => {
     const files: Record<string, string> = { "package.json": PKG };
+    for (let f = 0; f < 12; f++) files[`src/c${f}.tsx`] = Array.from({ length: each }, (_, i) => `export function C${f}x${i}() {\n  return <i />;\n}`).join("\n");
+    return files;
+  };
+  const build = (repoRoot: string) => () => buildGraph({ repoRoot, store: null, budgetMs: 120_000 });
+  beforeAll(async () => {
     // 12 files of 1,900 components each: more components than roles the build keeps.
-    for (let f = 0; f < 12; f++) files[`src/c${f}.tsx`] = Array.from({ length: 1900 }, (_, i) => `export function C${f}x${i}() {\n  return <i />;\n}`).join("\n");
-    root = repo(files);
-    graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+    root = repo(components(1900));
+    quarter = repo(components(475));
+    graph = await build(root)();
   }, 600_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  afterAll(() => {
+    for (const dir of [root, quarter]) if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  });
 
   it("keeps at most the build's roles and says how many were left out, so the stage never fails on its output", () => {
     const run = graph.frameworks?.plugins.find((p) => p.id === "react");
@@ -75,7 +85,7 @@ describe("the React plugin on tens of thousands of components", () => {
     expect(cut?.count).toBe(12 * 1900 - MAX_ROLES);
   });
 
-  it("finds each component's definition in constant time, so thousands of components in one file stay linear", () => {
-    expect(graph.frameworks?.plugins.find((p) => p.id === "react")?.ms ?? Infinity).toBeLessThan(1000);
-  });
+  it("finds each component's definition in constant time, so thousands of components in one file stay linear", async () => {
+    expectLinear("the React plugin on files of 475 and of 1,900 components", await pluginCpuMs(build(quarter), "react"), await pluginCpuMs(build(root), "react"));
+  }, 300_000);
 });

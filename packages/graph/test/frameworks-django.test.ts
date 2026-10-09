@@ -7,7 +7,7 @@ import { PACKET_DIR, writePacket } from "../src/review/packet.js";
 import { buildGraph, detectImpact, frameworkLayer, openStore, renderImpactBlock } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { django } from "../src/frameworks/django/index.js";
-import { parserFor } from "../src/parser.js";
+import { expectLinear, readerCpuMs, stageCpuMs } from "../src/test-timing.js";
 import { commitAll, git, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
@@ -187,53 +187,58 @@ function fill(head: string, unit: (i: number) => string, tail: string, bytes: nu
 describe("the Django plugin on hostile input", () => {
   // Backtracking patterns, long routes, includes that multiply, and test
   // requests built to make a regex engine backtrack: a urls module and a
-  // test module just under 1 MiB each.
-  const urls = fill(
-    "from django.urls import include, path, re_path\n\nfrom mysite import views\n\nurlpatterns = [\n",
-    (i) => (i % 3 === 0 ? `    re_path(r"^(a+)+$", views.v, name="n${i}"),\n` : i % 3 === 1 ? `    path("${"<path:p>".repeat(8)}x${i}/", views.v),\n` : `    path("m${i}/", include("mysite.more")),\n`),
-    "]\n",
-    MiB - 1024,
-  );
-  const more = `from django.urls import include, path\n\nfrom mysite import views\n\nurlpatterns = [\n${Array.from({ length: 400 }, (_, i) => `    path("k${i}/", include("mysite.leaf")),\n`).join("")}]\n`;
-  const leaf = `from django.urls import path\n\nfrom mysite import views\n\nurlpatterns = [\n${Array.from({ length: 400 }, (_, i) => `    path("l${i}/<int:x>/", views.v),\n`).join("")}]\n`;
-  const tests = fill(
-    "from django.test import TestCase\n\n\nclass T(TestCase):\n    def test_x(self):\n",
-    () => `        self.client.get("/${"a".repeat(400)}!")\n`,
-    "",
-    MiB - 1024,
-  );
-  const files: Record<string, string> = {
-    "requirements.txt": "Django==5.0\n",
-    "mysite/__init__.py": "",
-    "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n',
-    "mysite/urls.py": urls,
-    "mysite/more.py": more,
-    "mysite/leaf.py": leaf,
-    "mysite/views.py": "def v(request, **kw):\n    return None\n",
-    "mysite/tests.py": tests,
+  // test module just under 1 MiB each. At `q` = 1/4 the same at a quarter of
+  // each size and count, which the timing checks compare it with.
+  const hostile = (q: number) => {
+    const urls = fill(
+      "from django.urls import include, path, re_path\n\nfrom mysite import views\n\nurlpatterns = [\n",
+      (i) => (i % 3 === 0 ? `    re_path(r"^(a+)+$", views.v, name="n${i}"),\n` : i % 3 === 1 ? `    path("${"<path:p>".repeat(8)}x${i}/", views.v),\n` : `    path("m${i}/", include("mysite.more")),\n`),
+      "]\n",
+      (MiB - 1024) * q,
+    );
+    const more = `from django.urls import include, path\n\nfrom mysite import views\n\nurlpatterns = [\n${Array.from({ length: 400 * q }, (_, i) => `    path("k${i}/", include("mysite.leaf")),\n`).join("")}]\n`;
+    const leaf = `from django.urls import path\n\nfrom mysite import views\n\nurlpatterns = [\n${Array.from({ length: 400 * q }, (_, i) => `    path("l${i}/<int:x>/", views.v),\n`).join("")}]\n`;
+    const tests = fill(
+      "from django.test import TestCase\n\n\nclass T(TestCase):\n    def test_x(self):\n",
+      () => `        self.client.get("/${"a".repeat(400)}!")\n`,
+      "",
+      (MiB - 1024) * q,
+    );
+    const files: Record<string, string> = {
+      "requirements.txt": "Django==5.0\n",
+      "mysite/__init__.py": "",
+      "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n',
+      "mysite/urls.py": urls,
+      "mysite/more.py": more,
+      "mysite/leaf.py": leaf,
+      "mysite/views.py": "def v(request, **kw):\n    return None\n",
+      "mysite/tests.py": tests,
+    };
+    return { urls, tests, files };
   };
-
-  it("reads the facts of a 1 MiB hostile urls module and test module in under a second each", async () => {
-    const parser = await parserFor("python");
-    for (const source of [urls, tests]) {
-      const tree = parser.parse(source);
-      if (!tree) throw new Error("no tree");
-      const started = performance.now();
-      django.facts(tree.rootNode, "python");
-      const ms = performance.now() - started;
-      tree.delete();
-      expect(ms).toBeLessThan(1000);
-    }
-    parser.delete();
-  }, 60_000);
-
-  it("resolves hostile routes, multiplying includes and backtracking requests in under a second, with every cap named as a gap", async () => {
-    const root = makeRepo(files);
+  const { urls, tests, files } = hostile(1);
+  const quarter = hostile(1 / 4);
+  const build = (root: string) => () => buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+  const committed = (of: Record<string, string>) => {
+    const root = makeRepo(of);
     commitAll(root);
-    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+    return root;
+  };
+  // The frameworks stage's CPU time on the quarter and on the whole, measured once for the two tests that read it.
+  let growth: Promise<[number, number]> | undefined;
+  const frameworksGrowth = () => (growth ??= (async (): Promise<[number, number]> => [await stageCpuMs(build(committed(quarter.files)), "frameworks"), await stageCpuMs(build(committed(files)), "frameworks")])());
+
+  it("reads the facts of a 1 MiB hostile urls module and test module in time that grows with each", async () => {
+    const read = (root: Parameters<typeof django.facts>[0]) => django.facts(root, "python");
+    expectLinear("the Django fact reader on urls modules of 256 KiB and of 1 MiB", await readerCpuMs("python", [quarter.urls], read), await readerCpuMs("python", [urls], read));
+    expectLinear("the Django fact reader on test modules of 256 KiB and of 1 MiB", await readerCpuMs("python", [quarter.tests], read), await readerCpuMs("python", [tests], read));
+  }, 120_000);
+
+  it("resolves hostile routes, multiplying includes and backtracking requests in time that grows with them, with every cap named as a gap", async () => {
+    const graph = await build(committed(files))();
     const data = graph.frameworks;
     expect(data?.plugins.find((p) => p.id === "django")?.status).toBe("ok");
-    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+    expectLinear("the frameworks stage on the hostile Django input", ...(await frameworksGrowth()));
     // The includes multiply past the cap: the cap stops the walk and says so.
     const capped = data?.unknowns.filter((u) => u.plugin === "django" && (u.cause === "fan-out-capped" || u.cause === "budget")) ?? [];
     expect(capped.length).toBeGreaterThan(0);
@@ -291,40 +296,44 @@ describe("the Django plugin on hostile input", () => {
     expect(held.routes.map((r) => r.pattern).sort()).toEqual(Array.from({ length: 50 }, (_, i) => `n${i}/`).sort());
   }, 120_000);
 
-  it("resolves fields built by a field class among 25,000 classes, and string relations to absent models among 4,000 paths, in under a second", async () => {
-    const models = `from django.db import models\n\n${Array.from({ length: 25_000 }, (_, i) => `class C${i}: pass\n`).join("")}\nclass MoneyField(models.DecimalField): pass\n\n\nclass Price(models.Model):\n${Array.from({ length: 1_900 }, (_, i) => `    p${i} = MoneyField()\n`).join("")}`;
-    const related = `from django.db import models\n\n\nclass Link(models.Model):\n${Array.from({ length: 1_900 }, (_, i) => `    l${i} = models.ForeignKey("Missing${i}", on_delete=models.CASCADE)\n`).join("")}`;
-    const files: Record<string, string> = { "requirements.txt": "Django==5.0\n", "mysite/__init__.py": "", "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n', "mysite/urls.py": "urlpatterns = []\n", "shop/models.py": models };
-    for (let i = 0; i < 8; i++) files[`links${i}/models.py`] = related;
-    for (let i = 0; i < 4_000; i++) files[`shop/templates/t${i}.html`] = "";
-    const root = makeRepo(files);
-    commitAll(root);
-    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+  it("resolves fields built by a field class among 25,000 classes, and string relations to absent models among 4,000 paths, in time that grows with them", async () => {
+    // At `q` = 1/4 a quarter of each count, for the timing check.
+    const shop = (q: number) => {
+      const models = `from django.db import models\n\n${Array.from({ length: 25_000 * q }, (_, i) => `class C${i}: pass\n`).join("")}\nclass MoneyField(models.DecimalField): pass\n\n\nclass Price(models.Model):\n${Array.from({ length: 1_900 * q }, (_, i) => `    p${i} = MoneyField()\n`).join("")}`;
+      const related = `from django.db import models\n\n\nclass Link(models.Model):\n${Array.from({ length: 1_900 * q }, (_, i) => `    l${i} = models.ForeignKey("Missing${i}", on_delete=models.CASCADE)\n`).join("")}`;
+      const files: Record<string, string> = { "requirements.txt": "Django==5.0\n", "mysite/__init__.py": "", "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n', "mysite/urls.py": "urlpatterns = []\n", "shop/models.py": models };
+      for (let i = 0; i < 8; i++) files[`links${i}/models.py`] = related;
+      for (let i = 0; i < 4_000 * q; i++) files[`shop/templates/t${i}.html`] = "";
+      return committed(files);
+    };
+    const root = shop(1);
+    const graph = await build(root)();
     expect(graph.frameworks?.plugins.find((p) => p.id === "django")?.status).toBe("ok");
     expect(graph.frameworks?.edges.filter((e) => e.kind === "declares_field").length).toBe(17_100);
     expect(graph.frameworks?.unknowns.filter((u) => u.cause === "miss" && u.note.startsWith("no model named Missing")).length).toBe(15_200);
-    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+    expectLinear("the frameworks stage on a quarter of the classes, fields and paths and on all of them", await stageCpuMs(build(shop(1 / 4)), "frameworks"), await stageCpuMs(build(root), "frameworks"));
   }, 120_000);
 
   it("draws the whole resolve from one work budget and says once per project when it runs out", async () => {
-    const root = makeRepo(files);
-    commitAll(root);
-    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+    const graph = await build(committed(files))();
     const spent = graph.frameworks?.unknowns.filter((u) => u.plugin === "django" && u.cause === "budget" && u.site === null && "project" in u.scope) ?? [];
     expect(spent.length).toBe(1);
     expect(spent[0]?.note).toContain("work budget");
-    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+    expectLinear("the frameworks stage on the hostile Django input", ...(await frameworksGrowth()));
   }, 120_000);
 
-  it("resolves a models module of 25,000 classes and one field, and settings reads nested deep, in under a second", async () => {
-    const models = `from django.db import models\n\n\nclass First(models.Model):\n    f = models.IntegerField()\n${Array.from({ length: 25_000 }, (_, i) => `class M${i}(models.Model): pass\n`).join("")}`;
-    const deep = `from django.conf import settings\n\n\ndef f():\n    return ${"(".repeat(200)}settings.KEY${")".repeat(200)}\n`;
-    const reads = `from django.conf import settings\n\n\ndef g():\n${Array.from({ length: 5_000 }, (_, i) => `    x${i} = settings.KEY_${i % 50}\n`).join("")}`;
-    const root = makeRepo({ "requirements.txt": "Django==5.0\n", "mysite/__init__.py": "", "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\nKEY = 1\n', "mysite/urls.py": "urlpatterns = []\n", "mysite/models.py": models, "mysite/deep.py": deep, "mysite/reads.py": reads });
-    commitAll(root);
-    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+  it("resolves a models module of 25,000 classes and one field, and settings reads nested deep, in time that grows with them", async () => {
+    // At `q` = 1/4 a quarter of each count and of the depth, for the timing check.
+    const project = (q: number) => {
+      const models = `from django.db import models\n\n\nclass First(models.Model):\n    f = models.IntegerField()\n${Array.from({ length: 25_000 * q }, (_, i) => `class M${i}(models.Model): pass\n`).join("")}`;
+      const deep = `from django.conf import settings\n\n\ndef f():\n    return ${"(".repeat(200 * q)}settings.KEY${")".repeat(200 * q)}\n`;
+      const reads = `from django.conf import settings\n\n\ndef g():\n${Array.from({ length: 5_000 * q }, (_, i) => `    x${i} = settings.KEY_${i % 50}\n`).join("")}`;
+      return committed({ "requirements.txt": "Django==5.0\n", "mysite/__init__.py": "", "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\nKEY = 1\n', "mysite/urls.py": "urlpatterns = []\n", "mysite/models.py": models, "mysite/deep.py": deep, "mysite/reads.py": reads });
+    };
+    const root = project(1);
+    const graph = await build(root)();
     expect(graph.frameworks?.plugins.find((p) => p.id === "django")?.status).toBe("ok");
     expect(graph.frameworks?.roles.filter((r) => r.role === "model").length).toBe(25_001);
-    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+    expectLinear("the frameworks stage on 6,250 and on 25,000 models", await stageCpuMs(build(project(1 / 4)), "frameworks"), await stageCpuMs(build(root), "frameworks"));
   }, 120_000);
 });

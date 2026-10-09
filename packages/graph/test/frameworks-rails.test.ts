@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { buildGraph, detectImpact, frameworkLayer, openStore, renderImpactBlock } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { rails } from "../src/frameworks/rails/index.js";
-import { parserFor } from "../src/parser.js";
+import { expectLinear, readerCpuMs, stageCpuMs } from "../src/test-timing.js";
 import { commitAll, git, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
@@ -344,55 +344,58 @@ describe("the Rails plugin on hostile input", () => {
   // Resources that multiply past the registration cap, route blocks nested
   // past the depth cap, patterns with many slots, optional groups and globs,
   // and test requests built to make a pattern matcher backtrack: a routes
-  // file and a spec file just under 1 MiB each.
+  // file and a spec file just under 1 MiB each. At `q` = 1/4 the same at a
+  // quarter of the size, which the timing checks compare it with.
   const deep = `resources :n do ${"resources :m do ".repeat(10)}${"end ".repeat(10)}end`;
-  const routes = fill(
-    "Rails.application.routes.draw do\n",
-    (i) =>
-      i % 4 === 0
-        ? `  resources :r${i}\n`
-        : i % 4 === 1
-          ? `  get "/a${"/:p".repeat(40)}/x${i}", to: "x#y"\n`
-          : i % 4 === 2
-            ? `  get "/a${"(/:o)".repeat(6)}/*g/*h/x${i}", to: "x#y"\n`
-            : `  ${deep}\n`,
-    "end\n",
-    MiB - 1024,
-  );
-  const spec = fill(
-    'RSpec.describe "Hostile", type: :request do\n  it "requests" do\n',
-    (i) => (i % 2 === 0 ? `    get "/${"a/".repeat(254)}!"\n` : `    get "/a/${"(".repeat(100)}${"a".repeat(300)}"\n    get r${i}_path\n`),
-    "  end\nend\n",
-    MiB - 1024,
-  );
-  const files: Record<string, string> = {
-    Gemfile: 'source "https://rubygems.org"\n\ngem "rails"\ngem "rspec-rails"\n',
-    "config/routes.rb": routes,
-    "app/controllers/x_controller.rb": "class XController < ActionController::Base\n  def y\n  end\nend\n",
-    "spec/requests/hostile_spec.rb": spec,
+  const hostile = (q: number) => {
+    const routes = fill(
+      "Rails.application.routes.draw do\n",
+      (i) =>
+        i % 4 === 0
+          ? `  resources :r${i}\n`
+          : i % 4 === 1
+            ? `  get "/a${"/:p".repeat(40)}/x${i}", to: "x#y"\n`
+            : i % 4 === 2
+              ? `  get "/a${"(/:o)".repeat(6)}/*g/*h/x${i}", to: "x#y"\n`
+              : `  ${deep}\n`,
+      "end\n",
+      (MiB - 1024) * q,
+    );
+    const spec = fill(
+      'RSpec.describe "Hostile", type: :request do\n  it "requests" do\n',
+      (i) => (i % 2 === 0 ? `    get "/${"a/".repeat(254)}!"\n` : `    get "/a/${"(".repeat(100)}${"a".repeat(300)}"\n    get r${i}_path\n`),
+      "  end\nend\n",
+      (MiB - 1024) * q,
+    );
+    const files: Record<string, string> = {
+      Gemfile: 'source "https://rubygems.org"\n\ngem "rails"\ngem "rspec-rails"\n',
+      "config/routes.rb": routes,
+      "app/controllers/x_controller.rb": "class XController < ActionController::Base\n  def y\n  end\nend\n",
+      "spec/requests/hostile_spec.rb": spec,
+    };
+    return { routes, spec, files };
+  };
+  const { routes, spec, files } = hostile(1);
+  const quarter = hostile(1 / 4);
+  const build = (root: string) => () => buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+  const committed = (of: Record<string, string>) => {
+    const root = makeRepo(of);
+    commitAll(root);
+    return root;
   };
 
-  it("reads the facts of a 1 MiB hostile routes file and spec file in under a second each", async () => {
-    const parser = await parserFor("ruby");
-    for (const source of [routes, spec]) {
-      const tree = parser.parse(source);
-      if (!tree) throw new Error("no tree");
-      const started = performance.now();
-      rails.facts(tree.rootNode, "ruby");
-      const ms = performance.now() - started;
-      tree.delete();
-      expect(ms).toBeLessThan(1000);
-    }
-    parser.delete();
-  }, 60_000);
+  it("reads the facts of a 1 MiB hostile routes file and spec file in time that grows with each", async () => {
+    const read = (root: Parameters<typeof rails.facts>[0]) => rails.facts(root, "ruby");
+    expectLinear("the Rails fact reader on routes files of 256 KiB and of 1 MiB", await readerCpuMs("ruby", [quarter.routes], read), await readerCpuMs("ruby", [routes], read));
+    expectLinear("the Rails fact reader on spec files of 256 KiB and of 1 MiB", await readerCpuMs("ruby", [quarter.spec], read), await readerCpuMs("ruby", [spec], read));
+  }, 120_000);
 
-  it("resolves hostile resources, deep nesting, slot-heavy patterns and backtracking requests in under a second, with every cap named as a gap", async () => {
-    const root = makeRepo(files);
-    commitAll(root);
-    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+  it("resolves hostile resources, deep nesting, slot-heavy patterns and backtracking requests in time that grows with them, with every cap named as a gap", async () => {
+    const root = committed(files);
+    const graph = await build(root)();
     const data = graph.frameworks;
     expect(data?.plugins.find((p) => p.id === "rails")?.status).toBe("ok");
-    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+    expectLinear("the frameworks stage on the hostile Rails input", await stageCpuMs(build(committed(quarter.files)), "frameworks"), await stageCpuMs(build(root), "frameworks"));
     const capped = data?.unknowns.filter((u) => u.plugin === "rails" && (u.cause === "fan-out-capped" || u.cause === "budget")) ?? [];
     expect(capped.length).toBeGreaterThan(0);
     expect(registrations(graph).length).toBeLessThanOrEqual(10_000);

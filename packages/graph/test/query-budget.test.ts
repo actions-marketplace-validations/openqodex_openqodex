@@ -33,6 +33,7 @@ import { buildGraph, laterEdits, pinWorkTree } from "../src/index.js";
 import { query, querySliced } from "../src/query/engine.js";
 import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { checksBudget } from "../src/query/traverse.js";
+import { cpuMs, expectLinear } from "../src/test-timing.js";
 import { commitAll, makeRepo } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
@@ -40,19 +41,21 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 // A hub with 300 callers, each called by two more, and a project of two packages.
-function hubRepo(): Record<string, string> {
+function hubRepo(callers = 300): Record<string, string> {
   const files: Record<string, string> = { "src/hub.ts": "export function hub(): number {\n  return 1;\n}\n" };
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < callers; i++) {
     files[`src/c${i}.ts`] = `import { hub } from "./hub";\nexport function c${i}(): number {\n  return hub();\n}\nexport function d${i}(): number {\n  return c${i}() + c${i}();\n}\n`;
   }
   return files;
 }
 
 let s: Session;
+// The same with 75 callers, for the timing check of (9).
+let quarter: Session;
 beforeAll(async () => {
-  const root = makeRepo(hubRepo());
-  const graph = await buildGraph({ repoRoot: root, store: null });
-  s = { graph, generation: "budget-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+  const session = async (callers: number): Promise<Session> => ({ graph: await buildGraph({ repoRoot: makeRepo(hubRepo(callers)), store: null }), generation: "budget-build", treeSha: null, builtAt: null, laterEditsKnown: false });
+  s = await session(300);
+  quarter = await session(75);
 }, 120_000);
 
 const ask = (req: Omit<Request, "apiVersion">, checks?: number): Answer => query(s, { apiVersion: 1, ...req } as Request, checks === undefined ? {} : { budget: checksBudget(checks) });
@@ -227,9 +230,7 @@ describe("edits since the held build", () => {
 describe("work that resumes where a slice stopped it", () => {
   it("outlines a folder of 301 files in slices of 100 checks, each symbol once, well inside its budget (9)", async () => {
     const req: Request = { apiVersion: 1, kind: "outline", target: { file: "src" }, limit: 500, budget: { ms: 10_000 } };
-    const started = performance.now();
     const sliced = await querySliced(s, req, {}, 100);
-    const ms = performance.now() - started;
     const whole = ask({ kind: "outline", target: { file: "src" }, limit: 500 });
     expect(whole.truncated.by).toBe("limit");
     expect(sliced.truncated.by).toBe("limit");
@@ -237,46 +238,52 @@ describe("work that resumes where a slice stopped it", () => {
     expect(new Set(ids(sliced)).size).toBe(ids(sliced).length);
     expect(ids(sliced)).toEqual(ids(whole));
     expect(sliced.truncated.omitted).toBe(whole.truncated.omitted);
-    // A slice that started over would run to the ten-second deadline.
-    expect(ms).toBeLessThan(3000);
+    // A slice that started over would redo every slice before it, so its
+    // time would grow with the square of the folder, up to the deadline.
+    expectLinear("a sliced outline of folders of 76 and of 301 files", await cpuMs(() => querySliced(quarter, req, {}, 100)), await cpuMs(() => querySliced(s, req, {}, 100)));
   });
 });
 
 describe("work with a budget check inside each element (10)", () => {
   let t: Session;
+  // The same files at a quarter of each count, for the timing check.
+  let tq: Session;
   // As many subclasses of Base in one file as stay under the 512 KB file cap.
   const SUBCLASSES = 6000;
   const CALLEES = 3000;
-  const idOf = (name: string): string => {
-    const a = query(t, { apiVersion: 1, kind: "symbol", target: { name } });
+  const idOf = (name: string, in_: Session = t): string => {
+    const a = query(in_, { apiVersion: 1, kind: "symbol", target: { name } });
     return (a.target as { id: string }).id;
   };
   beforeAll(async () => {
-    const classes = ["export class Base {", "  run(): number {", "    return 0;", "  }", "}"];
-    for (let i = 0; i < SUBCLASSES; i++) classes.push(`export class S${i} extends Base {`, "  run(): number {", `    return ${i};`, "  }", "}");
-    const fns: string[] = [];
-    for (let i = 0; i < CALLEES; i++) fns.push(`function f${i}(): number {\n  return ${i};\n}`);
-    const calls = Array.from({ length: CALLEES }, (_, i) => `f${i}()`).join(" + ");
-    const root = makeRepo({
-      "src/shapes.ts": `${classes.join("\n")}\n`,
-      "src/fan.ts": `${fns.join("\n")}\nexport function fan(): number {\n  return ${calls};\n}\n`,
-      "src/far.ts": "export function far(): number {\n  return 0;\n}\n",
-    });
-    // A long build budget: a busy machine must not leave the wide files out.
-    const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
-    expect(graph.status.notRead).toEqual([]);
-    t = { graph, generation: "wide-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+    const wide = async (subclasses: number, callees: number): Promise<Session> => {
+      const classes = ["export class Base {", "  run(): number {", "    return 0;", "  }", "}"];
+      for (let i = 0; i < subclasses; i++) classes.push(`export class S${i} extends Base {`, "  run(): number {", `    return ${i};`, "  }", "}");
+      const fns: string[] = [];
+      for (let i = 0; i < callees; i++) fns.push(`function f${i}(): number {\n  return ${i};\n}`);
+      const calls = Array.from({ length: callees }, (_, i) => `f${i}()`).join(" + ");
+      const root = makeRepo({
+        "src/shapes.ts": `${classes.join("\n")}\n`,
+        "src/fan.ts": `${fns.join("\n")}\nexport function fan(): number {\n  return ${calls};\n}\n`,
+        "src/far.ts": "export function far(): number {\n  return 0;\n}\n",
+      });
+      // A long build budget: a busy machine must not leave the wide files out.
+      const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+      expect(graph.status.notRead).toEqual([]);
+      return { graph, generation: "wide-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+    };
+    t = await wide(SUBCLASSES, CALLEES);
+    tq = await wide(SUBCLASSES / 4, CALLEES / 4);
   }, 180_000);
 
-  it("lists the overrides of 6,000 subclasses of one file inside a small time budget, and in full when it has time", () => {
+  it("lists the overrides of 6,000 subclasses of one file inside a small time budget, and in full when it has time", async () => {
     const req: Request = { apiVersion: 1, kind: "implementers", target: { id: idOf("Base.run") }, depth: 1, limit: 500, budget: { ms: 100 } };
-    const started = performance.now();
     const a = query(t, req);
-    const ms = performance.now() - started;
-    // Stopped or whole, the answer comes back near its budget: a listing
-    // that scans the file once per subclass takes seconds here.
-    expect(ms).toBeLessThan(800);
     if (a.truncated.by === "budget") expect(a.unknown.floor).toBe(true);
+    // A listing that scans the file once per subclass grows with the square
+    // of the subclasses: the whole listing of 1,500 and of 6,000.
+    const all = (in_: Session) => () => query(in_, { ...req, target: { id: idOf("Base.run", in_) }, budget: { ms: 60_000 } });
+    expectLinear("listing the overrides of 1,500 and of 6,000 subclasses", await cpuMs(all(tq)), await cpuMs(all(t)));
     const full = query(t, { ...req, budget: { ms: 60_000 } });
     expect(full.truncated.by).toBe("limit");
     // Each override is bound in the same file as its base: certain.

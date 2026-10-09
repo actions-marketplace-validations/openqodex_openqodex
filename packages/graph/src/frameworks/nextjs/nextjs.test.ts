@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildGraph, frameworkLayer } from "../../index.js";
 import type { FrameworkLayer, Graph, Registration } from "../../index.js";
+import { cpuMs, expectLinear } from "../../test-timing.js";
 import { intersects, parseMatcher, routeSegments } from "./resolve.js";
 
 const corpus = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "corpus", "frameworks");
@@ -97,12 +98,13 @@ describe("the Next.js plugin reads matchers segment by segment", () => {
     expect(parseMatcher("/((?!api|_next/static).*)")).toBeNull();
   });
 
-  it("matches a matcher of sixty wildcards against a deep route in linear time", () => {
+  it("matches a matcher of sixty wildcards against a deep route in time linear in the route's depth", async () => {
     const m = parseMatcher(`/${Array.from({ length: 60 }, (_, i) => `:p${i}*`).join("/")}/end`) ?? [];
-    const r = routeSegments(`/${Array.from({ length: 60 }, (_, i) => `[...r${i}]`).join("/")}/x`) ?? [];
-    const t0 = performance.now();
-    expect(intersects(m, r)).toBe(false);
-    expect(performance.now() - t0).toBeLessThan(50);
+    const route = (depth: number) => routeSegments(`/${Array.from({ length: depth }, (_, i) => `[...r${i}]`).join("/")}/x`) ?? [];
+    expect(intersects(m, route(60))).toBe(false);
+    const quarter = route(15);
+    const full = route(60);
+    expectLinear("a matcher of sixty wildcards against routes 15 and 60 deep", await cpuMs(() => intersects(m, quarter)), await cpuMs(() => intersects(m, full)));
   });
 });
 

@@ -3,14 +3,13 @@
 // before the code: each concatenation's constant scans every fact of the
 // file again, so a file under the size cap that repeats `P + "/" + S`
 // thousands of times after thousands of other assignments costs the square
-// of its facts before any cap applies. The check: a file twice as large
-// takes about twice as long to read, never about four times.
-import { performance } from "node:perf_hooks";
+// of its facts before any cap applies. The check: a file four times as large
+// takes about four times the CPU time to read, never about sixteen.
 import { describe, expect, it } from "vitest";
 import { readFacts as expressFacts } from "../src/frameworks/express/facts.js";
 import { readFacts as fastapiFacts } from "../src/frameworks/fastapi/facts.js";
 import { readFacts as goFacts } from "../src/frameworks/go-http/facts.js";
-import { parserFor } from "../src/parser.js";
+import { expectLinear, readerCpuMs } from "../src/test-timing.js";
 import type { Lang } from "../src/types.js";
 
 // `n` other module-level assignments, the two constants, then n / 2
@@ -36,28 +35,13 @@ const sources: Record<string, { lang: Lang; read: (root: never) => unknown; sour
   },
 };
 
-// The fastest of three reads, after one to warm up.
-async function fastest(lang: Lang, source: string, read: (root: never) => unknown): Promise<number> {
-  expect(source.length).toBeLessThan(256 * 1024);
-  const tree = (await parserFor(lang)).parse(source);
-  if (!tree) throw new Error("no tree");
-  read(tree.rootNode as never);
-  let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < 3; i++) {
-    const t0 = performance.now();
-    read(tree.rootNode as never);
-    best = Math.min(best, performance.now() - t0);
-  }
-  tree.delete();
-  return best;
-}
-
 describe("the constants a fact reader looks up", () => {
   for (const [plugin, s] of Object.entries(sources)) {
-    it(`${plugin}: reads a file twice as large in about twice the time, never the square`, async () => {
-      const small = await fastest(s.lang, s.source(s.n), s.read);
-      const large = await fastest(s.lang, s.source(s.n * 2), s.read);
-      expect(large / small, `${Math.round(small)} ms, then ${Math.round(large)} ms`).toBeLessThan(2.8);
+    it(`${plugin}: reads a file four times as large in about four times the CPU time, never the square`, async () => {
+      const large = s.source(s.n * 2);
+      expect(large.length).toBeLessThan(256 * 1024);
+      const read = s.read as (root: unknown) => unknown;
+      expectLinear(`the ${plugin} fact reader`, await readerCpuMs(s.lang, [s.source(s.n / 2)], read), await readerCpuMs(s.lang, [large], read));
     }, 120_000);
   }
 });

@@ -18,6 +18,7 @@ import { extract } from "../src/extract.js";
 import { parserFor } from "../src/parser.js";
 import { createWorld } from "../src/resolve.js";
 import { RepoReader } from "../src/safe-fs.js";
+import { cpuMs, expectLinear } from "../src/test-timing.js";
 import { makeRepo } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
@@ -29,12 +30,12 @@ function repo(files: Record<string, string>): string {
   return root;
 }
 
-// Ten layers of ten interfaces; each interface of a layer extends all ten of the layer below.
-function lattice(): string {
+// Ten layers of `width` interfaces; each interface of a layer extends every one of the layer below.
+function lattice(width: number): string {
   const lines: string[] = [];
   for (let layer = 0; layer < 10; layer++) {
-    for (let i = 0; i < 10; i++) {
-      const ext = layer === 0 ? "" : ` extends ${Array.from({ length: 10 }, (_, j) => `L${layer - 1}_${j}`).join(", ")}`;
+    for (let i = 0; i < width; i++) {
+      const ext = layer === 0 ? "" : ` extends ${Array.from({ length: width }, (_, j) => `L${layer - 1}_${j}`).join(", ")}`;
       const member = layer === 0 && i === 0 ? " base(): number;" : "";
       lines.push(`export interface L${layer}_${i}${ext} {${member} }`);
     }
@@ -53,13 +54,16 @@ function bigTable(n: number): string {
 
 describe("the limits of dispatch and function values", () => {
   it("looks a member up through a lattice of interfaces in linear time, absent or present (1)", async () => {
-    const root = repo({
-      "src/layers.ts": lattice(),
-      "src/use.ts": 'import type { L9_0 } from "./layers";\nexport function use(x: L9_0) {\n  return x.absent() + x.base();\n}\n',
-    });
-    const started = performance.now();
-    const g = await buildGraph({ repoRoot: root, store: null, budgetMs: 60_000 });
-    expect(performance.now() - started).toBeLessThan(5_000);
+    const latticeRepo = (width: number) =>
+      repo({
+        "src/layers.ts": lattice(width),
+        "src/use.ts": 'import type { L9_0 } from "./layers";\nexport function use(x: L9_0) {\n  return x.absent() + x.base();\n}\n',
+      });
+    const root = latticeRepo(10);
+    const build = (at: string) => () => buildGraph({ repoRoot: at, store: null, budgetMs: 60_000 });
+    const g = await build(root)();
+    // Five interfaces a layer are a quarter of the extends and 1/512 of the paths.
+    expectLinear("a build of lattices five and ten interfaces wide", await cpuMs(build(latticeRepo(5))), await cpuMs(build(root)));
     const base = [...g.nodes.values()].find((n) => n.id.includes("#L0_0.base@"));
     expect(base).toBeDefined();
     expect((g.in.get(base?.id ?? "") ?? []).flatMap((e) => e.sites.map((s) => `${s.file}:${s.line} ${s.tier}`))).toEqual(["src/use.ts:3 certain"]);
@@ -68,9 +72,9 @@ describe("the limits of dispatch and function values", () => {
   it("keeps at most 32 entries of a large table per call, says how many it left out, and stays fast (2)", async () => {
     const n = 4_000;
     const root = repo({ "src/table.ts": bigTable(n) });
-    const started = performance.now();
-    const g = await buildGraph({ repoRoot: root, store: null, budgetMs: 60_000 });
-    expect(performance.now() - started).toBeLessThan(10_000);
+    const build = (at: string) => () => buildGraph({ repoRoot: at, store: null, budgetMs: 60_000 });
+    const g = await build(root)();
+    expectLinear("a build of tables of 1,000 and of 4,000 functions", await cpuMs(build(repo({ "src/table.ts": bigTable(n / 4) }))), await cpuMs(build(root)));
     const sites = g.edges.filter((e) => e.kind === "may_invoke").reduce((k, e) => k + e.sites.length, 0);
     expect(sites).toBe(n * 32);
     const gaps = g.unknowns.filter((u) => u.cause === "dynamic" && u.file === "src/table.ts");

@@ -24,6 +24,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, openStore, renderImpactBlock } from "../src/index.js";
 import { at, callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { cpuMs, expectLinear } from "../src/test-timing.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -103,18 +104,20 @@ describe("budget", () => {
     expect(block).toMatch(/\nThe graph is partial: the 0\.001 s budget ran out/);
   });
 
-  it("reads 20,000 nested blocks in well under a second, leaving calls past the depth bound unresolved (10)", async () => {
+  it("reads 20,000 nested blocks in time that grows with the depth, leaving calls past the depth bound unresolved (10)", async () => {
     const n = 20_000;
-    const root = repo({ "deep.ts": `export function f() {}\n${"{ f(); ".repeat(n)}${"}".repeat(n)}\n` });
-    const started = performance.now();
+    const nested = (depth: number) => repo({ "deep.ts": `export function f() {}\n${"{ f(); ".repeat(depth)}${"}".repeat(depth)}\n` });
+    const root = nested(n);
     const g = await buildGraph({ repoRoot: root, store: null, budgetMs: 60_000 });
-    const ms = performance.now() - started;
     const bound = g.edges.reduce((k, e) => k + e.sites.length, 0);
     expect(bound).toBeGreaterThan(0);
     expect(bound).toBeLessThan(n);
     expect(bound + g.status.unresolvedSites).toBe(n);
-    expect(ms).toBeLessThan(1000);
-  });
+    const quarter = nested(n / 4);
+    const small = await cpuMs(() => buildGraph({ repoRoot: quarter, store: null, budgetMs: 60_000 }));
+    const large = await cpuMs(() => buildGraph({ repoRoot: root, store: null, budgetMs: 60_000 }));
+    expectLinear("a build of 5,000 and of 20,000 nested blocks", small, large);
+  }, 120_000);
 
   it("caps the number of parses and parses the changed files first", async () => {
     const files: Record<string, string> = {};

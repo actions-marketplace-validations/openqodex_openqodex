@@ -3,8 +3,8 @@
 // the repository (a branch, a pull request), so a crafted file must not hang
 // the graph. Ways they could fail, one test each:
 // 1. A pattern whose repetitions overlap backtracks on a long hostile line,
-//    so one reader takes seconds or never ends: every reader must finish a
-//    1 MiB hostile input in well under a second.
+//    so one reader takes seconds or never ends: every reader must read a
+//    1 MiB hostile input in about four times the CPU time of 256 KiB.
 // 2. A manifest or a lockfile over its byte cap is read anyway.
 // 3. A linear reader stops reading what it must (the positive controls).
 // 4. Stripping a trailing comma or a comment from a tsconfig changes the
@@ -35,6 +35,7 @@ import {
 } from "../src/discovery/manifests.js";
 import { query } from "../src/query/engine.js";
 import { RepoReader } from "../src/safe-fs.js";
+import { cpuMs, expectLinear } from "../src/test-timing.js";
 import { makeRepo } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
@@ -42,54 +43,54 @@ afterAll(removeTempDirs);
 
 const MiB = 1024 * 1024;
 
-// Runs `read` on each input and returns the slowest time in milliseconds.
-function slowest(inputs: string[], read: (text: string) => unknown): number {
-  let worst = 0;
-  for (const text of inputs) {
-    expect(text.length).toBeGreaterThanOrEqual(MiB - 64);
-    const t0 = performance.now();
-    read(text);
-    worst = Math.max(worst, performance.now() - t0);
+// `head`, then `unit` repeated, then `tail`: `size` characters or a few more.
+const shape = (head: string, unit: string, tail = "") => (size: number) => head + unit.repeat(Math.ceil((size - head.length - tail.length) / unit.length)) + tail;
+const pad = (head: string, unit: string, tail = "") => shape(head, unit, tail)(MiB);
+
+// Runs `read` on each shape at 256 KiB and at 1 MiB: its CPU time grows
+// about four times, never sixteen.
+async function linear(shapes: ((size: number) => string)[], read: (text: string) => unknown): Promise<void> {
+  for (const [i, make] of shapes.entries()) {
+    const small = make(MiB / 4);
+    const large = make(MiB);
+    expect(large.length).toBeGreaterThanOrEqual(MiB - 64);
+    expectLinear(`input ${i + 1} at 256 KiB and at 1 MiB`, await cpuMs(() => read(small)), await cpuMs(() => read(large)));
   }
-  return worst;
 }
 
-const pad = (head: string, unit: string, tail = "") => head + unit.repeat(Math.ceil((MiB - head.length - tail.length) / unit.length)) + tail;
-
 describe("each reader of a repository file is linear (1)", () => {
-  const LIMIT = 500;
-  it("pnpm-workspace.yaml", () => {
-    expect(slowest([pad("packages:\n  - a", " ", "x"), pad("packages: ", " ", "x"), pad("packages:\n", "  - a #\n")], pnpmPackages)).toBeLessThan(LIMIT);
+  it("pnpm-workspace.yaml", async () => {
+    await linear([shape("packages:\n  - a", " ", "x"), shape("packages: ", " ", "x"), shape("packages:\n", "  - a #\n")], pnpmPackages);
   });
-  it("pnpm-lock.yaml", () => {
-    expect(slowest([pad("importers:\n  a", ": ", "x"), pad("importers:\n  .:\n    dependencies:\n      a", ":", " x"), pad("importers:\n", "\n")], pnpmLinks)).toBeLessThan(LIMIT);
+  it("pnpm-lock.yaml", async () => {
+    await linear([shape("importers:\n  a", ": ", "x"), shape("importers:\n  .:\n    dependencies:\n      a", ":", " x"), shape("importers:\n", "\n")], pnpmLinks);
   });
-  it("yarn.lock", () => {
-    expect(slowest([pad("a@1:\n  resolved ", ":", "x"), pad("", "a@1, ", ":\n"), pad("", "\n")], yarnLock)).toBeLessThan(LIMIT);
+  it("yarn.lock", async () => {
+    await linear([shape("a@1:\n  resolved ", ":", "x"), shape("", "a@1, ", ":\n"), shape("", "\n")], yarnLock);
   });
-  it("pyproject.toml", () => {
-    expect(slowest([pad("[project]\n", "\n", "x"), pad("[project]\ndependencies = [", '"a", '), pad("[", "a.", "]"), pad("[tool.poetry.dependencies]\n", " ", "x")], pyprojectDeps)).toBeLessThan(LIMIT);
+  it("pyproject.toml", async () => {
+    await linear([shape("[project]\n", "\n", "x"), shape("[project]\ndependencies = [", '"a", '), shape("[", "a.", "]"), shape("[tool.poetry.dependencies]\n", " ", "x")], pyprojectDeps);
   });
-  it("setup.cfg", () => {
-    expect(slowest([pad("[options]\ninstall_requires =\n", " a", "!"), pad("[options]\ninstall_requires =", " ", "x")], setupCfgRequires)).toBeLessThan(LIMIT);
+  it("setup.cfg", async () => {
+    await linear([shape("[options]\ninstall_requires =\n", " a", "!"), shape("[options]\ninstall_requires =", " ", "x")], setupCfgRequires);
   });
-  it("requirements.txt", () => {
-    expect(slowest([pad("a", " ", "#"), pad("", "a ", "x"), pad("a[", "x")], requirementsDeps)).toBeLessThan(LIMIT);
+  it("requirements.txt", async () => {
+    await linear([shape("a", " ", "#"), shape("", "a ", "x"), shape("a[", "x")], requirementsDeps);
   });
-  it("go.mod", () => {
-    expect(slowest([pad("require ", "a.", " "), pad("", "\n", "x"), pad("module ", " ", "x")], (t) => [goModRequires(t), goModule(t)])).toBeLessThan(LIMIT);
+  it("go.mod", async () => {
+    await linear([shape("require ", "a.", " "), shape("", "\n", "x"), shape("module ", " ", "x")], (t) => [goModRequires(t), goModule(t)]);
   });
-  it("Gemfile", () => {
-    expect(slowest([pad("", "\n", "x"), pad("gem ", " ", "x"), pad("gem(", "\n")], gemfileGems)).toBeLessThan(LIMIT);
+  it("Gemfile", async () => {
+    await linear([shape("", "\n", "x"), shape("gem ", " ", "x"), shape("gem(", "\n")], gemfileGems);
   });
-  it("tsconfig.json and jsconfig.json", () => {
-    expect(slowest([pad("{", ", "), pad("{", " ", ","), pad('{"a": "', "/*,]", '"}'), pad("{", "/* x */,")], (t) => {
+  it("tsconfig.json and jsconfig.json", async () => {
+    await linear([shape("{", ", "), shape("{", " ", ","), shape('{"a": "', "/*,]", '"}'), shape("{", "/* x */,")], (t) => {
       try {
         parseJsonc(t);
       } catch {
         // a broken file is not read; it must still end quickly
       }
-    })).toBeLessThan(LIMIT);
+    });
   });
 });
 
@@ -145,18 +146,18 @@ describe("tsconfig text (4)", () => {
 });
 
 describe("globs (5)", () => {
-  it("matches as before and in linear time on a hostile pattern", () => {
+  it("matches as before and in linear time on a hostile pattern", async () => {
     expect(globMatch("packages/core", "packages/*")).toBe(true);
     expect(globMatch("packages/core/x", "packages/*")).toBe(false);
     expect(globMatch("a/b/c/d.ts", "a/**")).toBe(true);
     expect(globMatch("a/b.ts", "a/?.ts")).toBe(true);
     expect(globMatch("a/(b).ts", "a/(b).ts")).toBe(true);
-    const path = "a".repeat(4096);
+    const path = (length: number) => "a".repeat(length);
     const glob = `${"*a".repeat(200)}b`;
-    const t0 = performance.now();
-    expect(globMatch(path, glob)).toBe(false);
-    expect(globMatch(path, `${"**a".repeat(200)}b`)).toBe(false);
-    expect(performance.now() - t0).toBeLessThan(500);
+    expect(globMatch(path(4096), glob)).toBe(false);
+    expect(globMatch(path(4096), `${"**a".repeat(200)}b`)).toBe(false);
+    const both = (length: number) => () => globMatch(path(length), glob) || globMatch(path(length), `${"**a".repeat(200)}b`);
+    expectLinear("two hostile globs against paths of 1,024 and of 4,096 characters", await cpuMs(both(1024)), await cpuMs(both(4096)));
   });
 });
 
@@ -164,13 +165,13 @@ describe("the extractor's body hash (6)", () => {
   // The comment openers sit in a string, so the parser reads the file at
   // once and only the hash would be slow (an unclosed comment in code is the
   // parser's case: caps.test.ts, case 6).
-  it("hashes a definition holding many comment openers quickly", async () => {
-    const body = "/* x ".repeat(100_000);
-    const root = makeRepo({ "a.ts": `export function f() {\n  return \`${body}\`;\n}\n`, "b.py": `def f():\n    return 1 ${"# x ".repeat(100_000)}\n` });
-    const t0 = performance.now();
-    const g = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB });
+  it("hashes a definition holding many comment openers in time that grows with them", async () => {
+    const openers = (n: number) => makeRepo({ "a.ts": `export function f() {\n  return \`${"/* x ".repeat(n)}\`;\n}\n`, "b.py": `def f():\n    return 1 ${"# x ".repeat(n)}\n` });
+    const root = openers(100_000);
+    const build = (at: string) => () => buildGraph({ repoRoot: at, store: null, maxFileBytes: 2 * MiB });
+    const g = await build(root)();
     expect(g.status.filesParsed).toBe(2);
-    expect(performance.now() - t0).toBeLessThan(2000);
+    expectLinear("a build of 25,000 and of 100,000 comment openers", await cpuMs(build(openers(25_000))), await cpuMs(build(root)));
   });
 });
 
@@ -178,10 +179,9 @@ describe("edge ids (7)", () => {
   it("refuses a hostile edge id quickly", async () => {
     const root = makeRepo({ "a.ts": "export function f() {\n  return 1;\n}\n" });
     const graph = await buildGraph({ repoRoot: root, store: null });
-    const id = `calls:${"->@:1".repeat(200_000)}`;
-    const t0 = performance.now();
-    const a = query({ graph, generation: null, treeSha: null, builtAt: null, laterEditsKnown: false }, { apiVersion: 1, kind: "explain", target: { id } });
-    expect(a.error).not.toBeNull();
-    expect(performance.now() - t0).toBeLessThan(500);
+    const session = { graph, generation: null, treeSha: null, builtAt: null, laterEditsKnown: false };
+    const explain = (separators: number) => () => query(session, { apiVersion: 1, kind: "explain", target: { id: `calls:${"->@:1".repeat(separators)}` } });
+    expect(explain(200_000)().error).not.toBeNull();
+    expectLinear("explaining edge ids of 50,000 and of 200,000 separators", await cpuMs(explain(50_000)), await cpuMs(explain(200_000)));
   });
 });

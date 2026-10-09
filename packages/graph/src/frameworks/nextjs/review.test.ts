@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildGraph } from "../../index.js";
 import type { FrameworkEdge, Graph, Registration } from "../../index.js";
+import { expectLinear, pluginCpuMs } from "../../test-timing.js";
 import { MAX_MATCH_WORK, MAX_PATTERN_SEGMENTS, MAX_REGISTRATIONS } from "./resolve.js";
 
 // Every repository a test here makes, removed once all of them have run.
@@ -133,19 +134,23 @@ describe("the Next.js plugin when the matching budget runs out", () => {
 
 describe("the Next.js plugin on files of thousands of server actions", () => {
   it("finds each server action's definition in constant time, so a file of thousands of functions stays linear", async () => {
-    const files: Record<string, string> = { "package.json": pkg("actions"), "app/page.tsx": page("Home") };
-    // Each file: 9,000 plain functions, then 1,900 inline server actions below them.
-    for (let f = 0; f < 10; f++) {
-      const plain = Array.from({ length: 9000 }, (_, i) => `function b${i}(){}`);
-      const actions = Array.from({ length: 1900 }, (_, i) => `async function a${i}(){"use server"}`);
-      files[`app/actions${f}.ts`] = `${[...plain, ...actions].join("\n")}\n`;
-    }
-    const root = repo(files);
-    const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
-    const run = graph.frameworks?.plugins.find((p) => p.id === "nextjs");
+    // Ten files, each of `plain` plain functions, then `inline` inline server actions below them.
+    const actionFiles = (plain: number, inline: number): Record<string, string> => {
+      const files: Record<string, string> = { "package.json": pkg("actions"), "app/page.tsx": page("Home") };
+      for (let f = 0; f < 10; f++) {
+        const plainLines = Array.from({ length: plain }, (_, i) => `function b${i}(){}`);
+        const actions = Array.from({ length: inline }, (_, i) => `async function a${i}(){"use server"}`);
+        files[`app/actions${f}.ts`] = `${[...plainLines, ...actions].join("\n")}\n`;
+      }
+      return files;
+    };
+    const root = repo(actionFiles(9000, 1900));
+    const quarter = repo(actionFiles(2250, 475));
+    const build = (repoRoot: string) => () => buildGraph({ repoRoot, store: null, budgetMs: 120_000 });
+    const graph = await build(root)();
     const actions = (graph.frameworks?.entities ?? []).filter((e): e is Registration => e.kind === "registration" && e.plugin === "nextjs" && e.site.file.startsWith("app/actions"));
     // The actions fill the build's MAX_REGISTRATIONS routes, the page among them.
     expect(actions.length).toBe(MAX_REGISTRATIONS - 1);
-    expect(run?.ms ?? Infinity).toBeLessThan(500);
+    expectLinear("the Next.js plugin on files of 2,725 and of 10,900 functions", await pluginCpuMs(build(quarter), "nextjs"), await pluginCpuMs(build(root), "nextjs"));
   }, 600_000);
 });

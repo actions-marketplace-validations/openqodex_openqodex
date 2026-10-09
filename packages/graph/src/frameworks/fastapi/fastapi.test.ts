@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildGraph, frameworkLayer } from "../../index.js";
 import type { FrameworkLayer, Graph, Registration } from "../../index.js";
-import { parserFor } from "../../parser.js";
+import { cpuMs, expectLinear, pluginCpuMs, readerCpuMs } from "../../test-timing.js";
 import { MAX_SOURCE_BYTES, readFacts } from "./facts.js";
 import { matches, MAX_APPS, MAX_MIDDLEWARE_CHAIN, MAX_MOUNTS, MAX_REGISTRATIONS, MAX_ROLES } from "./resolve.js";
 
@@ -623,12 +623,13 @@ FastAPI = object
 // hundreds of path parameters, hundreds of small applications that together
 // pass every build cap, and a file over the byte cap.
 describe("the FastAPI plugin on a hostile repository", () => {
-  const files: Record<string, string> = {};
-  const HOSTILE_PATTERN = `/${Array.from({ length: 300 }, (_, i) => (i % 2 === 0 ? `{p${i}:path}` : `{q${i}}`)).join("/")}`;
-  const LONG_PATH = `/${"a/".repeat(3000)}b`;
+  const params = (n: number) => `/${Array.from({ length: n }, (_, i) => (i % 2 === 0 ? `{p${i}:path}` : `{q${i}}`)).join("/")}`;
+  const longPath = (n: number) => `/${"a/".repeat(n)}b`;
+  const HOSTILE_PATTERN = params(300);
+  const LONG_PATH = longPath(3000);
   let root: string;
+  let quarter: string;
   let graph: Graph;
-  let factsMs = 0;
 
   const HEAD = "from fastapi import APIRouter, Depends, FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom hostile.h import h\n\n";
 
@@ -684,21 +685,36 @@ describe("the FastAPI plugin on a hostile repository", () => {
     return source + filler.repeat(Math.max(0, Math.ceil((bytes - source.length) / filler.length)));
   }
 
-  beforeAll(async () => {
+  // The hostile repository at scale 4; at scale 1 the same shapes at a
+  // quarter of the count, which the timing test compares it with. The
+  // diamond keeps its depth (its routes double at every level, so the caps
+  // stop it at either scale) and the file over the byte cap stays over it.
+  function hostile(scale: 1 | 4): Record<string, string> {
+    const q = scale / 4;
+    const files: Record<string, string> = {};
     files["pyproject.toml"] = '[project]\nname = "hostile"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115", "pytest>=8"]\n';
     files["hostile/__init__.py"] = "";
     files["hostile/h.py"] = "def h():\n    return 1\n";
-    files["hostile/chain_a.py"] = chain(990);
-    files["hostile/chain_b.py"] = chain(990).replaceAll("capp", "capp2");
+    files["hostile/chain_a.py"] = chain(990 * q);
+    files["hostile/chain_b.py"] = chain(990 * q).replaceAll("capp", "capp2");
     files["hostile/diamond.py"] = diamond(30);
-    files["hostile/wide.py"] = wide(0, 1900, true);
-    files["hostile/wide_more.py"] = wide(1900, 1900, false);
+    files["hostile/wide.py"] = wide(0, 1900 * q, true);
+    files["hostile/wide_more.py"] = wide(1900 * q, 1900 * q, false);
     files["hostile/test_wild.py"] = wildcard();
     files["split/__init__.py"] = "";
-    for (let k = 0; k < 300; k++) files[`split/routes_${String(k).padStart(3, "0")}.py`] = smallRoutes(k);
-    for (let k = 0; k < 300; k++) files[`split/includes_${String(k).padStart(3, "0")}.py`] = smallIncludes();
+    for (let k = 0; k < 300 * q; k++) files[`split/routes_${String(k).padStart(3, "0")}.py`] = smallRoutes(k);
+    for (let k = 0; k < 300 * q; k++) files[`split/includes_${String(k).padStart(3, "0")}.py`] = smallIncludes();
     // Over the byte cap: the plugin must not read it, and must say so.
     files["hostile/huge.py"] = pad(wide(5000, 100, false), MAX_SOURCE_BYTES + 64 * 1024);
+    return files;
+  }
+  const files = hostile(4);
+  const build = (repoRoot: string) => () => buildGraph({ repoRoot, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 120_000 });
+  // The sources the reader is timed on: the file over the byte cap is the same
+  // at both scales and the plugin never reads it, so it is left out.
+  const sources = (of: Record<string, string>) => Object.entries(of).filter(([path, content]) => path.endsWith(".py") && Buffer.byteLength(content) <= MAX_SOURCE_BYTES).map(([, content]) => content);
+
+  beforeAll(async () => {
     const total = Object.values(files).reduce((n, s) => n + Buffer.byteLength(s), 0);
     expect(total).toBeGreaterThan(1024 * 1024);
     for (const [path, content] of Object.entries(files)) if (path !== "hostile/huge.py") expect(Buffer.byteLength(content)).toBeLessThan(MAX_SOURCE_BYTES);
@@ -706,20 +722,14 @@ describe("the FastAPI plugin on a hostile repository", () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-hostile-"));
     writeTree(root, files);
     commitAll(root);
-
-    const parser = await parserFor("python");
-    for (const [path, content] of Object.entries(files)) {
-      if (!path.endsWith(".py")) continue;
-      const tree = parser.parse(content);
-      if (!tree) throw new Error(`no tree for ${path}`);
-      const t0 = performance.now();
-      readFacts(tree.rootNode);
-      factsMs += performance.now() - t0;
-      tree.delete();
-    }
-    graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 120_000 });
+    quarter = mkdtempSync(join(tmpdir(), "oq-fastapi-hostile-"));
+    writeTree(quarter, hostile(1));
+    commitAll(quarter);
+    graph = await build(root)();
   }, 180_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  afterAll(() => {
+    for (const dir of [root, quarter]) if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  });
 
   const mine = () => ({
     regs: (graph.frameworks?.entities ?? []).filter((e): e is Registration => e.kind === "registration" && e.plugin === "fastapi"),
@@ -727,12 +737,12 @@ describe("the FastAPI plugin on a hostile repository", () => {
     unknowns: (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "fastapi"),
   });
 
-  it("a crafted repository cannot hang or exhaust the build: facts of more than 1 MiB in under a second, resolve in under a second", () => {
-    expect(factsMs).toBeLessThan(1000);
+  it("a crafted repository cannot hang or exhaust the build: reading the facts of more than 1 MiB and resolving them take time that grows with the repository and no faster", async () => {
+    expectLinear("the FastAPI fact reader on the hostile files", await readerCpuMs("python", sources(hostile(1)), readFacts), await readerCpuMs("python", sources(files), readFacts));
     const run = graph.frameworks?.plugins.find((p) => p.id === "fastapi");
     expect(run?.status, run?.reason ?? "").toBe("ok");
-    expect(run?.ms ?? Infinity).toBeLessThan(1000);
-  });
+    expectLinear("the FastAPI plugin on the hostile repository", await pluginCpuMs(build(quarter), "fastapi"), await pluginCpuMs(build(root), "fastapi"));
+  }, 300_000);
 
   it("does not read a file over the byte cap, and says so with an unknown", () => {
     const gap = mine().unknowns.find((u) => u.cause === "file-not-parsed" && u.site?.file === "hostile/huge.py");
@@ -765,12 +775,14 @@ describe("the FastAPI plugin on a hostile repository", () => {
     expect(mine().unknowns.some((u) => u.cause === "fan-out-capped" && u.note.includes("levels deep"))).toBe(true);
   });
 
-  it("matches a request path against a pattern of hundreds of path parameters in linear time, with no regular expression", () => {
-    const t0 = performance.now();
+  it("matches a request path against a pattern of hundreds of path parameters in linear time, with no regular expression", async () => {
     expect(matches(HOSTILE_PATTERN, LONG_PATH)).toBe(false);
     expect(matches(`/${"{a:path}/".repeat(60)}x`, `/${"a/".repeat(60)}x`)).toBe(true);
     expect(matches(`/${"{a}".repeat(200)}`, `/${"a".repeat(250)}`)).toBe(false);
-    expect(performance.now() - t0).toBeLessThan(50);
+    // The same three matches with every length a quarter, and in full.
+    const all = (q: number) => () =>
+      matches(params(300 * q), longPath(3000 * q)) || matches(`/${"{a:path}/".repeat(60 * q)}x`, `/${"a/".repeat(60 * q)}x`) || matches(`/${"{a}".repeat(200 * q)}`, `/${"a".repeat(248 * q)}`);
+    expectLinear("matching with every length a quarter and in full", await cpuMs(all(0.25)), await cpuMs(all(1)));
   });
 });
 
@@ -779,34 +791,47 @@ describe("the FastAPI plugin on a hostile repository", () => {
 // direct models than the build keeps roles for; and more applications than
 // the build keeps.
 describe("the FastAPI plugin on a repository of many model classes", () => {
-  const CHAIN = 30_000;
   let root: string;
+  let quarter: string;
   let graph: Graph;
 
-  beforeAll(async () => {
+  // Scale 4: a chain of 30,000 classes, 21,000 direct models and 2,100
+  // applications; scale 1 a quarter of each, for the timing test.
+  function models(scale: 1 | 4): Record<string, string> {
+    const q = scale / 4;
     const chain = ["from pydantic import BaseModel", "", "", "class C0(BaseModel):", "    pass"];
-    for (let i = 1; i < CHAIN; i++) chain.push("", "", `class C${i}(C${i - 1}):`, "    pass");
+    for (let i = 1; i < 30_000 * q; i++) chain.push("", "", `class C${i}(C${i - 1}):`, "    pass");
     const files: Record<string, string> = { "pyproject.toml": '[project]\nname = "models"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "models/__init__.py": "", "models/chain.py": `${chain.join("\n")}\n`, "apps/__init__.py": "" };
     for (const part of ["a", "b", "c"]) {
       const direct = ["from pydantic import BaseModel", ""];
-      for (let i = 0; i < 7000; i++) direct.push(`class D${part}${i}(BaseModel):`, "    pass", "");
+      for (let i = 0; i < 7000 * q; i++) direct.push(`class D${part}${i}(BaseModel):`, "    pass", "");
       files[`models/direct_${part}.py`] = direct.join("\n");
       const many = ["from fastapi import FastAPI", ""];
-      for (let i = 0; i < 700; i++) many.push(`a${i} = FastAPI()`);
+      for (let i = 0; i < 700 * q; i++) many.push(`a${i} = FastAPI()`);
       files[`apps/many_${part}.py`] = many.join("\n");
     }
-    root = mkdtempSync(join(tmpdir(), "oq-fastapi-models-"));
-    writeTree(root, files);
-    commitAll(root);
-    graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 4 * 1024 * 1024, budgetMs: 120_000 });
-  }, 180_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
+    return files;
+  }
+  const build = (repoRoot: string) => () => buildGraph({ repoRoot, store: null, maxFileBytes: 4 * 1024 * 1024, budgetMs: 120_000 });
 
-  it("finds the models among thirty thousand classes in under a second, reading each file's classes once rather than once per base", () => {
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "oq-fastapi-models-"));
+    writeTree(root, models(4));
+    commitAll(root);
+    quarter = mkdtempSync(join(tmpdir(), "oq-fastapi-models-"));
+    writeTree(quarter, models(1));
+    commitAll(quarter);
+    graph = await build(root)();
+  }, 180_000);
+  afterAll(() => {
+    for (const dir of [root, quarter]) if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  });
+
+  it("finds the models among thirty thousand classes in time that grows with the classes and no faster, reading each file's classes once rather than once per base", async () => {
     const run = graph.frameworks?.plugins.find((p) => p.id === "fastapi");
     expect(run?.status, run?.reason ?? "").toBe("ok");
-    expect(run?.ms ?? Infinity).toBeLessThan(1000);
-  });
+    expectLinear("the FastAPI plugin on 7,500 and on 30,000 chained classes", await pluginCpuMs(build(quarter), "fastapi"), await pluginCpuMs(build(root), "fastapi"));
+  }, 300_000);
 
   it("marks only the classes at most eight bases from BaseModel, whatever order the classes are read in", () => {
     const models = (graph.frameworks?.roles ?? []).filter((r) => r.plugin === "fastapi" && r.role === "model").map((r) => graph.nodes.get(r.target)?.name ?? "");

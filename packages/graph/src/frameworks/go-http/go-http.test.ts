@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { buildGraph, frameworkLayer } from "../../index.js";
 import type { FrameworkLayer, Graph, Registration } from "../../index.js";
 import { parserFor } from "../../parser.js";
+import { cpuMs, expectLinear, pluginCpuMs, readerCpuMs } from "../../test-timing.js";
 import type { GoHttpFact } from "./facts.js";
 import { MAX_SOURCE_BYTES, readFacts, wants } from "./facts.js";
 import { matches, MAX_APPS, MAX_EDGES, MAX_MATCH_WORK, MAX_MIDDLEWARE_CHAIN, MAX_MOUNTS, MAX_REGISTRATIONS, MAX_ROLES, MAX_TEST_REQUESTS, MAX_UNKNOWNS } from "./resolve.js";
@@ -228,28 +229,34 @@ const LONG_PATH = `/${"a/".repeat(2000)}b`;
 const WILD = `/${Array.from({ length: 300 }, (_, i) => `{a${i}}`).join("/")}`;
 
 describe("the net/http plugin on a crafted repository", () => {
-  const files: Record<string, string> = {};
   let root: string;
+  let quarter: string;
   let graph: Graph;
-  let factsMs = 0;
 
-  beforeAll(async () => {
+  // The crafted repository at scale 4; at scale 1 the same shapes at a
+  // quarter of the count, which the timing tests compare it with. The
+  // wrappers, the wildcards and the file over the byte cap stay as they are.
+  function crafted(scale: 1 | 4): Record<string, string> {
+    const q = scale / 4;
+    const files: Record<string, string> = {};
     files["go.mod"] = "module example.com/hostile\n\ngo 1.22\n";
     files["h.go"] = `${GO_HEAD}func h(w http.ResponseWriter, r *http.Request) {}\n\nfunc wrap(next http.Handler) http.Handler { return next }\n\nfunc main() {}\n`;
     // Three thousand muxes, each mounting the next; the last mounts the first again.
-    const N = 3000;
+    const N = 3000 * q;
+    const per = N / 4;
     for (let k = 0; k < 4; k++) {
       const lines = [GO_HEAD];
-      for (let i = k * 750; i < (k + 1) * 750; i++) lines.push(`var c${i} = http.NewServeMux()`);
+      for (let i = k * per; i < (k + 1) * per; i++) lines.push(`var c${i} = http.NewServeMux()`);
       lines.push("", "func init() {");
-      for (let i = k * 750; i < (k + 1) * 750; i++) lines.push(i === N - 1 ? `\tc${i}.Handle("/loop/", c0)\n\tc${i}.HandleFunc("/end", h)` : `\tc${i}.Handle("/c/", c${i + 1})`);
+      for (let i = k * per; i < (k + 1) * per; i++) lines.push(i === N - 1 ? `\tc${i}.Handle("/loop/", c0)\n\tc${i}.HandleFunc("/end", h)` : `\tc${i}.Handle("/c/", c${i + 1})`);
       lines.push("}");
       files[`chain${k}.go`] = lines.join("\n");
     }
     // Twelve thousand registrations on one mux, over eight files.
+    const big = 1500 * q;
     for (let k = 0; k < 8; k++) {
       const lines = [GO_HEAD, k === 0 ? "var Big = http.NewServeMux()\n" : "", `func init() {`];
-      for (let i = 0; i < 1500; i++) lines.push(`\tBig.HandleFunc("/b${k * 1500 + i}/{id}", h)`);
+      for (let i = 0; i < big; i++) lines.push(`\tBig.HandleFunc("/b${k * big + i}/{id}", h)`);
       lines.push("}");
       files[`zbig${k}.go`] = lines.join("\n");
     }
@@ -259,29 +266,30 @@ describe("the net/http plugin on a crafted repository", () => {
     // Thousands of test requests against thousands of routes, one of them a path of 2000 segments.
     for (let k = 0; k < 3; k++) {
       const lines = ['package main\n\nimport (\n\t"net/http/httptest"\n\t"testing"\n)\n', `func TestR${k}(t *testing.T) {`, `\thttptest.NewRequest("GET", ${JSON.stringify(LONG_PATH)}, nil)`];
-      for (let i = 0; i < 1000; i++) lines.push(`\thttptest.NewRequest("GET", "/b${i}/7", nil)`);
+      for (let i = 0; i < 1000 * q; i++) lines.push(`\thttptest.NewRequest("GET", "/b${i}/7", nil)`);
       lines.push("}");
       files[`zreq${k}_test.go`] = lines.join("\n");
     }
     // Over the byte cap: not read, and said so.
     files["huge.go"] = pad(`${GO_HEAD}var H = http.NewServeMux()\n\nfunc init() {\n\tH.HandleFunc("/huge", h)\n}\n`, MAX_SOURCE_BYTES + 64 * 1024);
+    return files;
+  }
+  const files = crafted(4);
+  const build = (repoRoot: string) => () => buildGraph({ repoRoot, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 120_000 });
+  // The sources the reader is timed on: the file over the byte cap is the same
+  // at both scales and the plugin never reads it, so it is left out.
+  const sources = (of: Record<string, string>) => Object.entries(of).filter(([path, content]) => path.endsWith(".go") && Buffer.byteLength(content) <= MAX_SOURCE_BYTES).map(([, content]) => content);
+
+  beforeAll(async () => {
     const total = Object.values(files).reduce((n, s) => n + Buffer.byteLength(s), 0);
     expect(total).toBeGreaterThan(1024 * 1024);
     root = writeRepo("oq-go-hostile-", files);
-
-    const parser = await parserFor("go");
-    for (const [path, content] of Object.entries(files)) {
-      if (!path.endsWith(".go")) continue;
-      const tree = parser.parse(content);
-      if (!tree) throw new Error(`no tree for ${path}`);
-      const t0 = performance.now();
-      readFacts(tree.rootNode);
-      factsMs += performance.now() - t0;
-      tree.delete();
-    }
-    graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 120_000 });
+    quarter = writeRepo("oq-go-hostile-", crafted(1));
+    graph = await build(root)();
   }, 120_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  afterAll(() => {
+    for (const dir of [root, quarter]) if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  });
 
   const mine = () => ({
     unknowns: graph.frameworks?.unknowns.filter((u) => u.plugin === "go-http") ?? [],
@@ -289,16 +297,15 @@ describe("the net/http plugin on a crafted repository", () => {
     edges: graph.frameworks?.edges.filter((e) => e.plugin === "go-http") ?? [],
   });
 
-  it("a crafted repository cannot hang or exhaust the build: the facts of more than 1 MiB of route files read in under a second", () => {
-    expect(factsMs).toBeLessThan(1000);
-  });
+  it("a crafted repository cannot hang or exhaust the build: reading the facts of more than 1 MiB of route files takes time that grows with them and no faster", async () => {
+    expectLinear("the net/http fact reader on the crafted files", await readerCpuMs("go", sources(crafted(1)), readFacts), await readerCpuMs("go", sources(files), readFacts));
+  }, 300_000);
 
-  it("a crafted repository cannot hang or exhaust the build: the plugin resolves it in under a second", () => {
+  it("a crafted repository cannot hang or exhaust the build: the plugin resolves it in time that grows with it and no faster", async () => {
     const run = graph.frameworks?.plugins.find((p) => p.id === "go-http");
-    console.log(`go-http on the crafted repository: facts ${Math.round(factsMs)} ms, resolve ${run?.ms} ms`);
     expect(run?.status).toBe("ok");
-    expect(run?.ms ?? Infinity).toBeLessThan(1000);
-  });
+    expectLinear("the net/http plugin on the crafted repository", await pluginCpuMs(build(quarter), "go-http"), await pluginCpuMs(build(root), "go-http"));
+  }, 300_000);
 
   it("stops at the build's registration and mount caps, with one unknown each", () => {
     const { unknowns, registrations, edges } = mine();
@@ -332,12 +339,15 @@ describe("the net/http plugin on a crafted repository", () => {
     expect(mine().registrations.some((r) => r.site.file === "huge.go")).toBe(false);
   });
 
-  it("matches a request against a pattern of hundreds of wildcards within 50 ms, with no regular expression", () => {
-    const t0 = performance.now();
+  it("matches a request against a pattern of hundreds of wildcards in linear time, with no regular expression", async () => {
     expect(matches(WILD, LONG_PATH)).toBe(false);
     expect(matches(WILD, `/${"x/".repeat(299)}x`)).toBe(false);
     expect(matches("/{rest...}", LONG_PATH)).toBe(false);
-    expect(performance.now() - t0).toBeLessThan(50);
+    // The same three matches with every length a quarter, and in full.
+    const wild = (n: number) => `/${Array.from({ length: n }, (_, i) => `{a${i}}`).join("/")}`;
+    const long = (n: number) => `/${"a/".repeat(n)}b`;
+    const all = (q: number) => () => matches(wild(300 * q), long(2000 * q)) || matches(wild(300 * q), `/${"x/".repeat(300 * q - 1)}x`) || matches("/{rest...}", long(2000 * q));
+    expectLinear("matching with every length a quarter and in full", await cpuMs(all(0.25)), await cpuMs(all(1)));
   });
 });
 
@@ -345,16 +355,20 @@ describe("the net/http plugin on a crafted repository", () => {
 // own: no single mux or file comes near a cap, and the build caps still stop it.
 describe("the net/http plugin on work split over hundreds of small muxes", () => {
   let root: string;
+  let quarter: string;
   let graph: Graph;
 
-  beforeAll(async () => {
+  // Scale 4: 400 muxes and 2,400 test requests; scale 1 a quarter of each,
+  // for the timing test.
+  function spread(scale: 1 | 4): Record<string, string> {
+    const q = scale / 4;
     const files: Record<string, string> = {};
     files["go.mod"] = "module example.com/spread\n\ngo 1.22\n";
     const leaves = [GO_HEAD, "func h(w http.ResponseWriter, r *http.Request) {}\n", "func main() {}\n"];
     for (let j = 0; j < 20; j++) leaves.push(`var l${j} = http.NewServeMux()\n\nfunc init() { l${j}.HandleFunc("/leaf", h) }\n`);
     files["leaves.go"] = leaves.join("\n");
     // 400 muxes of 30 routes and 6 mounts each: 12000 routes and 2400 mounts in all.
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 400 * q; i++) {
       const lines = [GO_HEAD, `var m${i} = http.NewServeMux()\n`, "func init() {"];
       for (let r = 0; r < 30; r++) lines.push(`\tm${i}.HandleFunc("/r${r}/{id}", h)`);
       for (let s = 0; s < 6; s++) lines.push(`\tm${i}.Handle("/s${s}/", l${(i + s) % 20})`);
@@ -368,20 +382,27 @@ describe("the net/http plugin on work split over hundreds of small muxes", () =>
     files["areqs/main.go"] = `${GO_HEAD}func ping(w http.ResponseWriter, r *http.Request) {}\n\nfunc main() {\n\tmux := http.NewServeMux()\n\tmux.HandleFunc("GET /ping", ping)\n\thttp.ListenAndServe(":8080", mux)\n}\n`;
     for (let k = 0; k < 30; k++) {
       const lines = ['package main\n\nimport (\n\t"net/http/httptest"\n\t"testing"\n)\n', `func TestPing${k}(t *testing.T) {`];
-      for (let i = 0; i < 80; i++) lines.push(`\thttptest.NewRequest("GET", "/ping", nil)`);
+      for (let i = 0; i < 80 * q; i++) lines.push(`\thttptest.NewRequest("GET", "/ping", nil)`);
       lines.push("}");
       files[`areqs/r${String(k).padStart(2, "0")}_test.go`] = lines.join("\n");
     }
-    root = writeRepo("oq-go-spread-", files);
-    graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
-  }, 120_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
+    return files;
+  }
+  const build = (repoRoot: string) => () => buildGraph({ repoRoot, store: null, budgetMs: 120_000 });
 
-  it("a crafted repository cannot hang or exhaust the build: work split over hundreds of muxes still stops at each build cap, with one unknown each, in under a second", () => {
+  beforeAll(async () => {
+    root = writeRepo("oq-go-spread-", spread(4));
+    quarter = writeRepo("oq-go-spread-", spread(1));
+    graph = await build(root)();
+  }, 120_000);
+  afterAll(() => {
+    for (const dir of [root, quarter]) if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  });
+
+  it("a crafted repository cannot hang or exhaust the build: work split over hundreds of muxes still stops at each build cap, with one unknown each, in time that grows with the work and no faster", async () => {
     const run = graph.frameworks?.plugins.find((p) => p.id === "go-http");
-    console.log(`go-http on work split over hundreds of muxes: resolve ${run?.ms} ms`);
     expect(run?.status).toBe("ok");
-    expect(run?.ms ?? Infinity).toBeLessThan(1000);
+    expectLinear("the net/http plugin on 100 and on 400 small muxes", await pluginCpuMs(build(quarter), "go-http"), await pluginCpuMs(build(root), "go-http"));
     const regs =graph.frameworks?.entities.filter((e) => e.kind === "registration" && e.plugin === "go-http") ?? [];
     expect(regs.length).toBe(MAX_REGISTRATIONS);
     const mounts = graph.frameworks?.edges.filter((e) => e.plugin === "go-http" && e.kind === "mounts") ?? [];
@@ -392,7 +413,7 @@ describe("the net/http plugin on work split over hundreds of small muxes", () =>
     expect(capped.filter((u) => u.note.includes(`registrations after ${MAX_REGISTRATIONS} `)).length).toBe(1);
     expect(capped.filter((u) => u.note.includes(`mounted muxes after ${MAX_MOUNTS} `)).length).toBe(1);
     expect(capped.filter((u) => u.note.includes(`test requests after ${MAX_TEST_REQUESTS} `)).length).toBe(1);
-  });
+  }, 300_000);
 });
 
 // ---------- small repositories, one rule each ----------
@@ -549,42 +570,51 @@ const goUnknowns = (g: Graph) => (g.frameworks?.unknowns ?? []).filter((u) => u.
 // a file's or a package's symbols once per item is quadratic here.
 describe("the net/http plugin on a package of many symbols", () => {
   let graph: Graph;
+  let root: string;
+  let quarter: string;
 
-  beforeAll(async () => {
+  // Scale 4: 3,000 handler types and routes, 48,000 plain functions and
+  // 3,600 tests; scale 1 a quarter of each, for the timing check.
+  function many(scale: 1 | 4): Record<string, string> {
+    const q = scale / 4;
     const files: Record<string, string> = { "go.mod": "module example.com/many\n\ngo 1.22\n" };
     for (let k = 0; k < 4; k++) {
       const lines = [GO_HEAD];
-      for (let n = k * 750; n < (k + 1) * 750; n++) lines.push(`type T${n} struct{}\n\nfunc (T${n}) ServeHTTP(http.ResponseWriter, *http.Request) {}\n`);
+      for (let n = k * 750 * q; n < (k + 1) * 750 * q; n++) lines.push(`type T${n} struct{}\n\nfunc (T${n}) ServeHTTP(http.ResponseWriter, *http.Request) {}\n`);
       files[`types${k}.go`] = lines.join("\n");
     }
     for (let k = 0; k < 2; k++) {
       const lines = [GO_HEAD, k === 0 ? "var Mux = http.NewServeMux()\n" : "", "func init() {"];
-      for (let n = k * 1500; n < (k + 1) * 1500; n++) lines.push(`\tMux.Handle("/t${n}", T${n}{})`);
+      for (let n = k * 1500 * q; n < (k + 1) * 1500 * q; n++) lines.push(`\tMux.Handle("/t${n}", T${n}{})`);
       lines.push("}");
       files[`routes${k}.go`] = lines.join("\n");
     }
     for (let k = 0; k < 4; k++) {
       const lines = ['package main\n\nimport "testing"\n'];
-      for (let n = 0; n < 12000; n++) lines.push(`func a${k}x${n}() {}`);
-      for (let n = 0; n < 900; n++) lines.push(`func TestM${k}x${n}(t *testing.T) {}`);
+      for (let n = 0; n < 12000 * q; n++) lines.push(`func a${k}x${n}() {}`);
+      for (let n = 0; n < 900 * q; n++) lines.push(`func TestM${k}x${n}(t *testing.T) {}`);
       files[`many${k}_test.go`] = lines.join("\n");
     }
-    const root = writeRepo("oq-go-many-", files);
-    try {
-      graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  }, 180_000);
+    return files;
+  }
+  const build = (repoRoot: string) => () => buildGraph({ repoRoot, store: null, budgetMs: 120_000 });
 
-  it("a crafted repository cannot hang or exhaust the build: no lookup scans a file's or a package's symbols once per handler type or test function", () => {
+  beforeAll(async () => {
+    root = writeRepo("oq-go-many-", many(4));
+    quarter = writeRepo("oq-go-many-", many(1));
+    graph = await build(root)();
+  }, 180_000);
+  afterAll(() => {
+    for (const dir of [root, quarter]) if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  });
+
+  it("a crafted repository cannot hang or exhaust the build: no lookup scans a file's or a package's symbols once per handler type or test function", async () => {
     const run = graph.frameworks?.plugins.find((p) => p.id === "go-http");
-    console.log(`go-http on a package of many symbols: resolve ${run?.ms} ms`);
     expect(run?.status).toBe("ok");
     expect(goRegs(graph).filter((r) => r.handler.status === "bound").length).toBe(3000);
     expect((graph.frameworks?.roles ?? []).filter((r) => r.plugin === "go-http" && r.role === "test").length).toBe(3600);
-    expect(run?.ms ?? Infinity).toBeLessThan(1000);
-  });
+    expectLinear("the net/http plugin on a quarter of the symbols and on all of them", await pluginCpuMs(build(quarter), "go-http"), await pluginCpuMs(build(root), "go-http"));
+  }, 300_000);
 });
 
 // Every list the plugin returns grown past its cap by files a stranger
