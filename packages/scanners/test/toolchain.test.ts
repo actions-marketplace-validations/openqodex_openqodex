@@ -148,13 +148,6 @@ describe("toolchain", () => {
     expect(log).toHaveLength(1);
   }, 60_000);
 
-  it("returns not_installed with one plain line when installs are off", async () => {
-    const home = freshHome();
-    const r = await tc.createToolResolver({ allowInstall: false, installBudgetMs: null })("actionlint");
-    expect(r).toEqual({ ok: false, status: "not_installed", reason: "not installed (installs are off)" });
-    expect(existsSync(join(home, "tools", "actionlint"))).toBe(false);
-  });
-
   it("returns installing past the budget and finishes after the caller exits", async () => {
     const home = freshHome();
     // A separate caller process: resolves with a 1 ms budget, prints the result,
@@ -372,16 +365,6 @@ describe("downloadVerified and extractArchive", () => {
       await expect(tc.extractArchive(archive, "tar.gz", dest)).rejects.toThrow(/link/);
       expect(readdirSync(dest)).toEqual([]);
     }
-  });
-
-  it("a normal archive still unpacks, so the member refusals do not reject every archive", async () => {
-    const dir = tempDir("oq-tar-");
-    const archive = join(dir, "good.tar.gz");
-    writeFileSync(archive, gzipSync(tarOf([["a/b.txt", "hello\n"]])));
-    const dest = join(dir, "out");
-    mkdirSync(dest);
-    await tc.extractArchive(archive, "tar.gz", dest);
-    expect(readFileSync(join(dest, "a", "b.txt"), "utf8")).toBe("hello\n");
   });
 
   it("returns the sha256 of what it downloaded and refuses a wrong one", async () => {

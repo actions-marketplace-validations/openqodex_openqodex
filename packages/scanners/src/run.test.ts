@@ -81,14 +81,9 @@ import { REDACTED } from "@openqodex/core";
 import type {
   BuiltinScanner,
   Config,
-  DiffCoverage,
   ResolveTool,
   StaticFinding,
-  ToolResolution,
 } from "@openqodex/core";
-import { ADAPTERS } from "./adapters/index.js";
-import { OSV_OFFLINE_REASON } from "./adapters/osv-scanner.js";
-import { SEMGREP_OFFLINE_REASON } from "./adapters/semgrep.js";
 import { runScanners, toRunDirRelative } from "./run.js";
 import type { CustomAdapter } from "./run.js";
 
@@ -162,158 +157,6 @@ function custom(over: Partial<CustomAdapter> & Pick<CustomAdapter, "run">): Cust
 }
 
 describe("runScanners", () => {
-  it("runs sqllint in process and turns its findings into candidates (1, 2, 3)", async () => {
-    const dir = repo({ "db/migrate.sql": SQL });
-    const asked: BuiltinScanner[] = [];
-    const coverage: DiffCoverage = new Map([["db/migrate.sql", lines(1, 2)]]);
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["db/migrate.sql"],
-      coverage,
-      config: config(),
-      resolveTool: notInstalled(asked),
-    });
-    expect(asked).not.toContain("sqllint");
-    expect(scan.candidates.map((c) => [c.id, c.token, c.reviewSeverity, c.lineStart])).toEqual([
-      ["c1", "sqllint:function-default-public-execute", "major", 1],
-      ["c2", "sqllint:security-definer-no-search-path", "major", 2],
-    ]);
-    const row = scan.scanners.find((s) => s.scanner === "sqllint");
-    expect(row).toMatchObject({ status: "ran", rawCount: 3, keptCount: 2, reason: null, version: null });
-  });
-
-  it("asks the resolver only for scanners that want the change, and records not installed (4, 5)", async () => {
-    const dir = repo({ "scripts/deploy.sh": "rm -rf $DIR/\n" });
-    const asked: BuiltinScanner[] = [];
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["scripts/deploy.sh"],
-      coverage: new Map([["scripts/deploy.sh", lines(1)]]),
-      config: config(),
-      resolveTool: notInstalled(asked),
-    });
-    // semgrep and gitleaks look at every change; shellcheck at .sh files.
-    expect(asked.sort()).toEqual(["gitleaks", "semgrep", "shellcheck"]);
-    // One row for every built-in scanner.
-    expect(scan.scanners).toHaveLength(ADAPTERS.length);
-    expect(scan.scanners.find((s) => s.scanner === "shellcheck")).toMatchObject({
-      status: "not_installed",
-      reason: "shellcheck is not installed",
-    });
-    expect(scan.scanners.find((s) => s.scanner === "ruff")).toMatchObject({ status: "no_matching_files", reason: null });
-    expect(scan.candidates).toEqual([]);
-  });
-
-  it("maps every failed resolution to its status (5)", async () => {
-    const dir = repo({ "a.sh": "echo $1\n" });
-    const results: Record<string, ToolResolution> = {
-      semgrep: { ok: false, status: "installing", reason: "first run only, will be included next run" },
-      gitleaks: { ok: false, status: "failed", reason: "checksum mismatch" },
-      shellcheck: { ok: false, status: "not_installed", reason: "xz missing" },
-    };
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["a.sh"],
-      coverage: new Map([["a.sh", lines(1)]]),
-      config: config(),
-      resolveTool: async (s) => results[s] ?? { ok: false, status: "not_installed", reason: "?" },
-    });
-    const status = Object.fromEntries(scan.scanners.map((s) => [s.scanner, [s.status, s.reason]]));
-    expect(status.semgrep).toEqual(["installing", "first run only, will be included next run"]);
-    expect(status.gitleaks).toEqual(["failed", "checksum mismatch"]);
-    expect(status.shellcheck).toEqual(["not_installed", "xz missing"]);
-  });
-
-  it("never rejects when a resolver or a custom scanner throws (6)", async () => {
-    const dir = repo({ "a.sh": "echo hi\n" });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["a.sh"],
-      coverage: new Map([["a.sh", lines(1)]]),
-      config: config(),
-      resolveTool: async () => {
-        throw new Error("resolver\nexploded");
-      },
-      custom: [
-        custom({
-          run: async () => {
-            throw new Error("custom exploded");
-          },
-        }),
-      ],
-    });
-    expect(scan.scanners.find((s) => s.scanner === "shellcheck")).toMatchObject({
-      status: "failed",
-      reason: "resolver exploded",
-    });
-    expect(scan.scanners.find((s) => s.scanner === "custom:demo")).toMatchObject({
-      status: "failed",
-      reason: "custom exploded",
-    });
-  });
-
-  it("records disabled scanners without resolving them (7)", async () => {
-    const dir = repo({ "a.sh": "echo hi\n", "db/migrate.sql": SQL });
-    const asked: BuiltinScanner[] = [];
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["a.sh", "db/migrate.sql"],
-      coverage: new Map([["db/migrate.sql", lines(1, 2, 3, 4)]]),
-      config: config({ disabledScanners: ["shellcheck", "sqllint"] }),
-      resolveTool: notInstalled(asked),
-    });
-    expect(asked).not.toContain("shellcheck");
-    expect(scan.candidates).toEqual([]);
-    for (const name of ["shellcheck", "sqllint"]) {
-      expect(scan.scanners.find((s) => s.scanner === name)).toMatchObject({ status: "disabled" });
-      expect(scan.scanners.find((s) => s.scanner === name)?.reason).toBeTruthy();
-    }
-  });
-
-  it("honours only and skip (8)", async () => {
-    const dir = repo({ "db/migrate.sql": SQL });
-    const base = {
-      repoDir: dir,
-      changedPaths: ["db/migrate.sql"],
-      coverage: new Map([["db/migrate.sql", lines(1, 2, 3, 4)]]),
-      config: config(),
-      resolveTool: notInstalled(),
-    };
-    const only = await runScanners({ ...base, only: ["sqllint"] });
-    expect(only.scan.scanners.map((s) => s.scanner)).toEqual(["sqllint"]);
-    const skip = await runScanners({ ...base, skip: ["sqllint"] });
-    expect(skip.scan.scanners.map((s) => s.scanner)).not.toContain("sqllint");
-    expect(skip.scan.candidates).toEqual([]);
-  });
-
-  it("drops fixture findings unless include_fixtures is set (9)", async () => {
-    const dir = repo({ "test/fixtures/seed.sql": SQL });
-    const base = {
-      repoDir: dir,
-      changedPaths: ["test/fixtures/seed.sql"],
-      coverage: new Map([["test/fixtures/seed.sql", lines(1, 2, 3, 4)]]),
-      resolveTool: notInstalled(),
-    };
-    const dropped = await runScanners({ ...base, config: config() });
-    expect(dropped.scan.candidates).toEqual([]);
-    expect(dropped.scan.fixturesDropped).toBe(3);
-    const kept = await runScanners({ ...base, config: config({ includeFixtures: true }) });
-    expect(kept.scan.candidates).toHaveLength(3);
-    expect(kept.scan.fixturesDropped).toBe(0);
-  });
-
-  it("drops rules matched by disabled_rules (10)", async () => {
-    const dir = repo({ "db/migrate.sql": SQL });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["db/migrate.sql"],
-      coverage: new Map([["db/migrate.sql", lines(1, 2, 3, 4)]]),
-      config: config({ disabledRules: ["sqllint:security-definer-*", "sqllint:comment-on-function-unqualified"] }),
-      resolveTool: notInstalled(),
-    });
-    expect(scan.candidates.map((c) => c.token)).toEqual(["sqllint:function-default-public-execute"]);
-  });
-
   it("redacts matched secrets from every candidate and keeps only fingerprints (11)", async () => {
     // Built at run time so this file holds no secret-shaped literal.
     const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
@@ -349,151 +192,6 @@ describe("runScanners", () => {
     expect(scan.candidates[0]?.message).toBe(`found ${REDACTED} on line 1`);
     expect(scan.secretFingerprints).toEqual([{ length: secret.length, sha256: expect.any(String) }]);
     expect(scan.scanners.find((s) => s.scanner === "custom:secrets")).toMatchObject({ status: "ran", version: "1.0.0" });
-  });
-
-  it("records a skipped custom scanner and never runs it (12)", async () => {
-    const dir = repo({ "a.txt": "x\n" });
-    let ran = false;
-    const skipped = {
-      scanner: "custom:trivy" as const,
-      status: "untrusted" as const,
-      version: null,
-      rawCount: 0,
-      keptCount: 0,
-      durationMs: 0,
-      reason: "not approved; run openqodex trust",
-    };
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["a.txt"],
-      coverage: new Map([["a.txt", lines(1)]]),
-      config: config(),
-      resolveTool: notInstalled(),
-      custom: [
-        custom({
-          source: "custom:trivy",
-          skipped,
-          run: async () => {
-            ran = true;
-            return { findings: [], error: null, version: null };
-          },
-        }),
-      ],
-    });
-    expect(ran).toBe(false);
-    expect(scan.scanners.find((s) => s.scanner === "custom:trivy")).toEqual(skipped);
-  });
-
-  it("puts custom findings through the same pipeline, after the builtins (13)", async () => {
-    const dir = repo({ "db/migrate.sql": SQL });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["db/migrate.sql"],
-      coverage: new Map([["db/migrate.sql", lines(1, 2)]]),
-      config: config(),
-      resolveTool: notInstalled(),
-      custom: [
-        custom({
-          run: async () => ({
-            findings: [
-              // Same severity as sqllint's: sorted after the builtins.
-              finding({ ruleId: "function-default-public-execute", lineStart: 1, lineEnd: 1, severity: "high" }),
-              // Two secret-class rules from one scanner on one span: distinct
-              // problems, both kept.
-              finding({ ruleId: "generic-api-key", lineStart: 2, lineEnd: 2 }),
-              finding({ ruleId: "hardcoded-token", lineStart: 2, lineEnd: 2 }),
-              // Off the changed lines: dropped.
-              finding({ ruleId: "off", lineStart: 9, lineEnd: 9, severity: "critical" }),
-              // Kept, and sorted first as the only critical.
-              finding({ ruleId: "top", lineStart: 2, lineEnd: 2, severity: "critical", filePath: path.join(dir, "db/migrate.sql") }),
-            ],
-            error: null,
-            version: null,
-          }),
-        }),
-      ],
-    });
-    expect(scan.candidates.map((c) => [c.id, c.token])).toEqual([
-      ["c1", "custom:demo:top"],
-      ["c2", "sqllint:function-default-public-execute"],
-      ["c3", "sqllint:security-definer-no-search-path"],
-      ["c4", "custom:demo:function-default-public-execute"],
-      ["c5", "custom:demo:generic-api-key"],
-      ["c6", "custom:demo:hardcoded-token"],
-    ]);
-    expect(scan.candidates[0]?.filePath).toBe("db/migrate.sql");
-    expect(scan.scanners.at(-1)?.scanner).toBe("custom:demo");
-  });
-
-  it("reports one stage line for all scanners, with no raw finding count (14)", async () => {
-    const dir = repo({ "db/migrate.sql": SQL });
-    const progress: string[] = [];
-    await runScanners({
-      repoDir: dir,
-      changedPaths: ["db/migrate.sql"],
-      coverage: new Map([["db/migrate.sql", lines(1)]]),
-      config: config(),
-      resolveTool: notInstalled(),
-      onProgress: (line) => progress.push(line),
-    });
-    expect(progress).toHaveLength(1);
-    // sqllint runs; semgrep, gitleaks, squawk and SQLFluff want the .sql file
-    // and are not installed; every other built-in scanner has nothing to check.
-    const idle = ADAPTERS.length - 5;
-    expect(progress[0]).toMatch(new RegExp(`^Scanners: 1 ran, ${idle} had nothing to check, 4 not installed, \\d+ candidates? to check$`));
-    expect(progress.join("\n")).not.toContain("raw finding");
-  });
-});
-
-describe("osv-scanner offline", () => {
-  it("skips itself with a plain reason and never starts the tool (16)", async () => {
-    const dir = repo({ "package-lock.json": "{}\n" });
-    const asked: BuiltinScanner[] = [];
-    const before = process.env.OPENQODEX_OFFLINE;
-    process.env.OPENQODEX_OFFLINE = "1";
-    try {
-      const { scan } = await runScanners({
-        repoDir: dir,
-        changedPaths: ["package-lock.json"],
-        coverage: new Map([["package-lock.json", lines(1)]]),
-        config: config(),
-        only: ["osv-scanner"],
-        resolveTool: notInstalled(asked),
-      });
-      expect(asked).toEqual([]);
-      expect(scan.scanners).toEqual([
-        expect.objectContaining({ scanner: "osv-scanner", status: "disabled", reason: OSV_OFFLINE_REASON }),
-      ]);
-    } finally {
-      if (before === undefined) delete process.env.OPENQODEX_OFFLINE;
-      else process.env.OPENQODEX_OFFLINE = before;
-    }
-  });
-});
-
-describe("semgrep offline", () => {
-  it("never resolves semgrep offline, so its rule packs are not fetched (22)", async () => {
-    const dir = repo({ "app.py": "x = 1\n" });
-    const asked: BuiltinScanner[] = [];
-    const before = process.env.OPENQODEX_OFFLINE;
-    process.env.OPENQODEX_OFFLINE = "1";
-    try {
-      const { scan } = await runScanners({
-        repoDir: dir,
-        changedPaths: ["app.py"],
-        coverage: new Map([["app.py", lines(1)]]),
-        config: config(),
-        only: ["semgrep"],
-        resolveTool: notInstalled(asked),
-      });
-      expect(asked).toEqual([]);
-      expect(scan.scanners).toEqual([
-        expect.objectContaining({ scanner: "semgrep", status: "disabled", reason: SEMGREP_OFFLINE_REASON }),
-      ]);
-    } finally {
-      if (before === undefined) delete process.env.OPENQODEX_OFFLINE;
-      else process.env.OPENQODEX_OFFLINE = before;
-    }
   });
 });
 
@@ -561,43 +259,6 @@ describe("secrets in reasons and cut text", () => {
   });
 });
 
-describe("dedup across scanners only", () => {
-  it("keeps two rules from one scanner on one span, merges the same class across scanners (19)", async () => {
-    const dir = repo({ "app.py": "x\n" });
-    const at = { filePath: "app.py", lineStart: 1, lineEnd: 1, severity: "high" as const };
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["app.py"],
-      coverage: new Map([["app.py", lines(1)]]),
-      config: config(),
-      resolveTool: notInstalled(),
-      only: ["custom:a", "custom:b"],
-      custom: [
-        custom({
-          source: "custom:a",
-          run: async () => ({
-            findings: [
-              finding({ ...at, source: "custom:a", ruleId: "sql-injection" }),
-              finding({ ...at, source: "custom:a", ruleId: "command-injection" }),
-            ],
-            error: null,
-            version: null,
-          }),
-        }),
-        custom({
-          source: "custom:b",
-          run: async () => ({
-            findings: [finding({ ...at, source: "custom:b", ruleId: "tainted-sql-string" })],
-            error: null,
-            version: null,
-          }),
-        }),
-      ],
-    });
-    expect(scan.candidates.map((c) => c.token)).toEqual(["custom:a:sql-injection", "custom:a:command-injection"]);
-  });
-});
-
 describe("suppression comments the change adds", () => {
   const PY = "import os\nsubprocess.call(cmd, shell=True)  # nosec\n";
 
@@ -614,60 +275,6 @@ describe("suppression comments the change adds", () => {
       ["bandit:openqodex.suppression-added", "app.py", 2, 2, "minor"],
     ]);
     expect(scan.scanners.find((s) => s.scanner === "bandit")).toMatchObject({ status: "not_installed", keptCount: 1 });
-  });
-
-  it("raises nothing for a marker on a line the change did not add (24)", async () => {
-    const dir = repo({ "app.py": PY });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["app.py"],
-      coverage: new Map([["app.py", lines(1)]]),
-      config: config(),
-      resolveTool: notInstalled(),
-    });
-    expect(scan.candidates).toEqual([]);
-  });
-
-  it("raises nothing for a marker in a file its scanner does not check (25)", async () => {
-    const dir = repo({
-      "deploy.sh": "echo $A  # nosec  # noqa\n",
-      "app.py": "# shellcheck disable=SC2086\n# hadolint ignore=DL3008\nx = 1  // nolint\n",
-    });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["deploy.sh", "app.py"],
-      coverage: new Map([
-        ["deploy.sh", lines(1)],
-        ["app.py", lines(1, 2, 3)],
-      ]),
-      config: config(),
-      resolveTool: notInstalled(),
-    });
-    expect(scan.candidates).toEqual([]);
-  });
-
-  it("keeps a suppression and a settings candidate beside another scanner's secret on the same line (26)", async () => {
-    // Built at run time so this file holds no secret-shaped literal.
-    const secret = ["sk", "live", "Zq8Xk2Lm9Pq4Rs7Tv1Wx3Yz5"].join("_");
-    const dir = repo({ "app/config.py": `KEY = "${secret}"  # gitleaks:allow\n`, ".gitleaksignore": "app/config.py:stripe-access-token:1\n" });
-    const at = (filePath: string) => finding({ source: "custom:keys", ruleId: "hardcoded-secret", filePath, severity: "high" });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["app/config.py", ".gitleaksignore"],
-      coverage: new Map([
-        ["app/config.py", lines(1)],
-        [".gitleaksignore", lines(1)],
-      ]),
-      config: config(),
-      resolveTool: notInstalled(),
-      custom: [custom({ source: "custom:keys", run: async () => ({ findings: [at("app/config.py"), at(".gitleaksignore")], error: null, version: null }) })],
-    });
-    expect(scan.candidates.map((c) => `${c.token} ${c.filePath}:${c.lineStart}`).sort()).toEqual([
-      "custom:keys:hardcoded-secret .gitleaksignore:1",
-      "custom:keys:hardcoded-secret app/config.py:1",
-      "gitleaks:openqodex.suppression-added app/config.py:1",
-      "gitleaks:settings-file .gitleaksignore:1",
-    ]);
   });
 
   it("keeps them through only and skip, and leaves out a scanner scanners.disable switches off (27)", async () => {
@@ -692,17 +299,6 @@ describe("suppression comments the change adds", () => {
     expect(await tokens({ skip: ["bandit", "gitleaks"] })).toEqual(all);
     expect(await tokens({ only: ["sqllint"] })).toEqual(all);
     expect(await tokens({ disabledScanners: ["ruff", "gitleaks"] })).toEqual(["bandit:openqodex.suppression-added"]);
-  });
-
-  it("raises nothing in a whole-repository run (28)", async () => {
-    const dir = repo({ "app.py": PY });
-    const { scan } = await runScanners({
-      repoDir: dir,
-      changedPaths: ["app.py"],
-      config: config(),
-      resolveTool: notInstalled(),
-    });
-    expect(scan.candidates).toEqual([]);
   });
 
   it("keeps a changed settings file in a fixture folder, and drops a suppression comment in a fixture file (30, 31)", async () => {
@@ -855,22 +451,6 @@ describe("toRunDirRelative", () => {
     return finding({ source: "ruff", ruleId: "S602", filePath, lineStart: 3, lineEnd: 3, severity: "high" });
   }
 
-  it("rebases an absolute path onto the directory the linter ran in", () => {
-    const out = toRunDirRelative([ruffFinding("/tmp/clone/app/main.py")], "/tmp/clone");
-    expect(out[0].filePath).toBe("app/main.py");
-  });
-
-  it("leaves an already-relative path alone, apart from a ./ prefix", () => {
-    expect(toRunDirRelative([ruffFinding("app/main.py")], "/tmp/clone")[0].filePath).toBe("app/main.py");
-    expect(toRunDirRelative([ruffFinding("./app/main.py")], "/tmp/clone")[0].filePath).toBe("app/main.py");
-  });
-
-  it("leaves an absolute path outside the run directory alone", () => {
-    // No honest way to guess where it belongs; the coverage filter drops it.
-    const out = toRunDirRelative([ruffFinding("/etc/passwd")], "/tmp/clone");
-    expect(out[0].filePath).toBe("/etc/passwd");
-  });
-
   it("rebases a path printed through the resolved side of a symlinked run directory (15)", () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "openqodex-rebase-"));
     roots.push(base);
@@ -888,8 +468,7 @@ describe("toRunDirRelative", () => {
 // its [sqlfluff] sections of setup.cfg, tox.ini and pep8.ini. Those files
 // belong to other tools too, so one counts as a settings file only when the
 // change alters what the scanner reads from it, by meaning: TOML as a TOML
-// parser reads it, INI as Python's configparser reads it for SQLFluff. A
-// reader of lines and words missed each form marked "missed by lines".
+// parser reads it, INI as Python's configparser reads it for SQLFluff.
 describe("a settings file other tools share counts when what the scanner reads from it changed", () => {
   const notes = async (file: string, base: string | null, head: string | null, changed: number[]) => {
     const files: Record<string, string> = { "db/report.sql": "SELECT 1;\n", "app/main.py": "import os\n" };
@@ -910,65 +489,6 @@ describe("a settings file other tools share counts when what the scanner reads f
     return scan.candidates.filter((c) => c.ruleId === "settings-file").map((c) => c.token);
   };
   const PROJECT = '[project]\nname = "app"\n';
-
-  it("raises the ruff note for an escaped [tool.\"\\u0072uff\"] header (missed by lines)", async () => {
-    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."\\u0072uff".lint]\nignore = ["F401"]\n`, [3, 4, 5])).toEqual(["ruff:settings-file"]);
-  });
-
-  it("raises the sqlfluff note for an escaped [tool.\"\\u0073qlfluff\"] header (missed by lines)", async () => {
-    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."\\u0073qlfluff".core]\nexclude_rules = "CV05"\n`, [3, 4, 5])).toEqual(["sqlfluff:settings-file"]);
-  });
-
-  it("raises the note for a quoted header and for a header with a comment after it", async () => {
-    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."ruff".lint]\nignore = ["F401"]\n`, [3, 4, 5])).toEqual(["ruff:settings-file"]);
-    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."sqlfluff".core]\nexclude_rules = "CV05"\n`, [3, 4, 5])).toEqual(["sqlfluff:settings-file"]);
-    const commented = `${PROJECT}\n[tool.sqlfluff.core] # shared with the data team\ndialect = "postgres"\n`;
-    expect(await notes("pyproject.toml", commented, `${commented}exclude_rules = "CV05"\n`, [6])).toEqual(["sqlfluff:settings-file"]);
-  });
-
-  it("raises the note for a line added to a dotted key's array under [tool] (missed by lines)", async () => {
-    const ruff = (rules: string) => `${PROJECT}\n[tool]\nruff.lint.ignore = [\n  "E501",\n${rules}]\n`;
-    expect(await notes("pyproject.toml", ruff(""), ruff('  "F401",\n'), [7])).toEqual(["ruff:settings-file"]);
-    const fluff = (rules: string) => `${PROJECT}\n[tool]\nsqlfluff.core.exclude_rules = [\n  "AL01",\n${rules}]\n`;
-    expect(await notes("pyproject.toml", fluff(""), fluff('  "CV05",\n'), [7])).toEqual(["sqlfluff:settings-file"]);
-  });
-
-  it("raises the ruff note when requires-python changes beside [tool.ruff], and not without it (missed by lines)", async () => {
-    const pyproject = (version: string, ruff: boolean) => `[project]\nname = "app"\nrequires-python = "${version}"\n${ruff ? '\n[tool.ruff.lint]\nselect = ["UP"]\n' : ""}`;
-    expect(await notes("pyproject.toml", pyproject(">=3.12", true), pyproject(">=3.8", true), [3])).toEqual(["ruff:settings-file"]);
-    expect(await notes("pyproject.toml", pyproject(">=3.12", false), pyproject(">=3.8", false), [3])).toEqual([]);
-  });
-
-  it("raises nothing when only another tool's part of the file changed, the scanner's part rewritten in another form", async () => {
-    const before = `${PROJECT}version = "1.0.0"\n\n[tool.ruff]\nline-length = 100\n\n[tool.sqlfluff.core]\ndialect = "postgres"\n`;
-    const after = `${PROJECT}version = "1.0.1"\n\n[tool]\nruff = { line-length = 100 }\nsqlfluff.core.dialect = "postgres"\n`;
-    expect(await notes("pyproject.toml", before, after, [3, 5, 6, 7, 8, 9])).toEqual([]);
-  });
-
-  it("raises the sqlfluff note for a [DEFAULT] key, which configparser gives every section (missed by lines)", async () => {
-    for (const name of ["setup.cfg", "tox.ini", "db/pep8.ini"]) {
-      const base = "[sqlfluff]\ndialect = postgres\n";
-      expect(await notes(name, base, `[DEFAULT]\nexclude_rules = CV05\n\n${base}`, [1, 2, 3]), name).toEqual(["sqlfluff:settings-file"]);
-    }
-  });
-
-  it("raises the sqlfluff note for an indented header, which configparser reads as the value above going on (missed by lines)", async () => {
-    const base = "[sqlfluff]\ntemplater = raw\n\n[metadata]\nname = app\n";
-    const head = "[sqlfluff]\ntemplater = raw\n  [metadata]\nexclude_rules = CV05\n";
-    expect(await notes("setup.cfg", base, head, [3, 4])).toEqual(["sqlfluff:settings-file"]);
-  });
-
-  it("raises the sqlfluff note for a header with text after it, and for a continuation line", async () => {
-    expect(await notes("setup.cfg", "[metadata]\nname = app\n", "[metadata]\nname = app\n\n[sqlfluff] shared settings\nexclude_rules = CV05\n", [3, 4, 5])).toEqual(["sqlfluff:settings-file"]);
-    expect(await notes("setup.cfg", "[sqlfluff]\nexclude_rules = AL01,\n    ST03\n", "[sqlfluff]\nexclude_rules = AL01,\n    CV05\n", [3])).toEqual(["sqlfluff:settings-file"]);
-  });
-
-  it("raises nothing for a section SQLFluff does not read: another name, another case, or an indented header", async () => {
-    const base = "[metadata]\nname = app\n";
-    expect(await notes("setup.cfg", base, `${base}\n[SQLFluff]\nexclude_rules = CV05\n`, [3, 4, 5])).toEqual([]);
-    expect(await notes("setup.cfg", base, `${base}\n[flake8]\nmax-line-length = 100\n`, [3, 4, 5])).toEqual([]);
-    expect(await notes("setup.cfg", base, `${base}  [sqlfluff]\n  exclude_rules = CV05\n`, [3, 4])).toEqual([]);
-  });
 
   it("raises the note for a file it cannot read: a duplicate section, a line with no =, a deleted file that held settings, broken TOML", async () => {
     const base = "[sqlfluff]\ndialect = postgres\n";

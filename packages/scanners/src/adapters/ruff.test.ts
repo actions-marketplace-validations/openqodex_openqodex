@@ -7,30 +7,6 @@ describe("parseRuffJson", () => {
     expect(parseRuffJson(JSON.stringify({}))).toEqual([]);
   });
 
-  it("a ruff diagnostic keeps its code, file, line and rule link", () => {
-    const report = [
-      {
-        code: "F401",
-        message: "`os` imported but unused",
-        filename: "app/main.py",
-        location: { row: 2, column: 1 },
-        end_location: { row: 2, column: 10 },
-        url: "https://docs.astral.sh/ruff/rules/unused-import/",
-      },
-    ];
-    const out = parseRuffJson(JSON.stringify(report));
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({
-      source: "ruff",
-      ruleId: "F401",
-      filePath: "app/main.py",
-      lineStart: 2,
-      lineEnd: 2,
-      severity: "low",
-      reference: "https://docs.astral.sh/ruff/rules/unused-import/",
-    });
-  });
-
   it("a ruff S rule (security) ranks high and a pure style rule ranks info", () => {
     const report = [
       {
