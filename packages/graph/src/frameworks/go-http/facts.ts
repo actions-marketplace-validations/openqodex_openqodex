@@ -425,11 +425,12 @@ const FORMS: Record<Form, (s: string) => string | null> = { pattern: keptShape(p
 const PATH_FORM: Partial<Record<Form, "route" | "request">> = { pattern: "route", path: "route", target: "request" };
 
 function keepRead(facts: GoHttpFact[]): GoHttpFact[] {
-  // A package constant of this file, as resolve reads one.
-  const constant = (name: string): string | null => {
-    for (const f of facts) if (f.kind === "const" && f.name === name) return f.value;
-    return null;
-  };
+  // A package constant of this file, as resolve reads one (the first
+  // declaration of the name), from one index made once, so a lookup per
+  // concatenation never scans the facts again.
+  const constants = new Map<string, string>();
+  for (const f of facts) if (f.kind === "const" && !constants.has(f.name)) constants.set(f.name, f.value);
+  const constant = (name: string): string | null => constants.get(name) ?? null;
   const used = new Map<string, Set<Form>>();
   const use = (ref: string[], form: Form) => {
     if (ref.length === 1) (used.get(ref[0] as string) ?? used.set(ref[0] as string, new Set()).get(ref[0] as string))?.add(form);

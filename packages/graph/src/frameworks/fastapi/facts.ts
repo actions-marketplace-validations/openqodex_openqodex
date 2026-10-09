@@ -396,16 +396,16 @@ function keepRead(facts: FastApiFact[]): FastApiFact[] {
     }
     return at !== undefined || scope === 0;
   };
-  // A module constant as resolve reads one: every module-level assignment gives the same string.
-  const constant = (name: string): string | null => {
-    let v: string | null = null;
-    for (const f of facts) {
-      if (f.kind !== "value" || f.name !== name || f.scope !== 0) continue;
-      if (f.value.t !== "str" || (v !== null && v !== f.value.v)) return null;
-      v = f.value.v;
-    }
-    return v;
-  };
+  // A module constant as resolve reads one: every module-level assignment
+  // gives the same string. One index of the file, made once, so a lookup
+  // per concatenation never scans the facts again.
+  const constants = new Map<string, string | null>();
+  for (const f of facts) {
+    if (f.kind !== "value" || f.scope !== 0) continue;
+    const had = constants.get(f.name);
+    constants.set(f.name, f.value.t !== "str" || had === null || (had !== undefined && had !== f.value.v) ? null : f.value.v);
+  }
+  const constant = (name: string): string | null => constants.get(name) ?? null;
   // The names a test client is bound to in this file (`client = TestClient(app)`,
   // `with TestClient(app) as client:`): only a request on one of them, or on
   // a client made in place, keeps a target that is relative to its base URL.
