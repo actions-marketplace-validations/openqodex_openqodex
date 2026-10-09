@@ -25,8 +25,9 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 // call a local holds found by the call's end. 16: each base a class writes
 // as an expression the facts cannot name (`extends mixin(Base)`, a Python
 // base made by a call or a subscript, a Ruby superclass or mixin that is
-// not a constant), as the class's dynamic bases.
-export const EXTRACTOR_VERSION = 16;
+// not a constant), as the class's dynamic bases. 17: the framework
+// plugins' facts beside the language facts (FileFacts.frameworks).
+export const EXTRACTOR_VERSION = 17;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none

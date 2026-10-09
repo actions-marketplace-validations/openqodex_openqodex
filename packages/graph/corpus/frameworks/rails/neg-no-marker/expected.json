@@ -1,0 +1,15 @@
+{
+  "guards": "detects no Rails application from rails in a Gemfile without an application marker",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 0,
+    "none": [
+      "registration",
+      "handles",
+      "renders",
+      "tests",
+      "role",
+      "maps_to"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "guards": "links a Rails action to a view file the change adds, with no Ruby change",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "renders",
+        "from": "app/controllers/pages_controller.rb#PagesController.about",
+        "to": "template:app/views/pages/about.html.erb",
+        "tier": "likely"
+      }
+    ],
+    "brief": [
+      "| `app/views/pages/about.html.erb` | `PagesController.about` | `app/controllers/pages_controller.rb:2` |"
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "guards": "turns Django REST framework router registrations into list and detail routes under their include prefix",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "notes/api.py:15",
+        "pattern": "api/notes/",
+        "name": "note-list",
+        "handler": "notes/api.py#NoteViewSet",
+        "status": "bound"
+      },
+      {
+        "site": "notes/api.py:15",
+        "pattern": "api/notes/<pk>/",
+        "name": "note-detail",
+        "handler": "notes/api.py#NoteViewSet",
+        "status": "bound"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "handles",
+        "from": "registration:notes/api.py:15",
+        "to": "notes/api.py#NoteViewSet.list",
+        "tier": "possible"
+      }
+    ],
+    "noRegistrationsIn": [
+      "notes/admin.py"
+    ],
+    "unknowns": [
+      {
+        "file": "notes/api.py",
+        "line": 16,
+        "cause": "dynamic"
+      }
+    ]
+  }
+}

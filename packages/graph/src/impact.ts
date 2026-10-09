@@ -18,6 +18,7 @@
 // lists from the graph, never from this summary.
 import { dirname } from "node:path";
 import type { Change, ImpactCut, ImpactEdge, ImpactPath, ImpactSummary, ImpactSymbol, ImpactUnknown } from "@openqodex/core";
+import { frameworkImpact } from "./frameworks/impact.js";
 import type { DispatchSite, Graph, GraphEdge, GraphNode, HotSymbol, Miss, UnknownSite } from "./types.js";
 
 export const HUB_CALLERS = 40; // a symbol with more direct callers is a hub
@@ -449,12 +450,16 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
     return { ...e, consumers: e.consumers.slice(0, SUMMARY_CONSUMERS) };
   });
 
+  // What the framework plugins say about the touched code (frameworks/impact.ts).
+  const frameworks = frameworkImpact(graph, change, touched, removed);
+
   return {
     version: 2,
     status: s.status,
     reasons: s.reasons,
     // A move is no change of its own: the lines added at the new place make its new definition a touched symbol.
-    risk: riskFor(touched.length + removed.length - moved + exports.length, callerIds.size, possibleIds.size, removedStillCalled, brokenConsumers),
+    // A route the change left without its handler is broken like a removed symbol still called.
+    risk: riskFor(touched.length + removed.length - moved + exports.length, callerIds.size, possibleIds.size, removedStillCalled || (frameworks?.routes.some((r) => r.status === "missing") ?? false), brokenConsumers),
     build: {
       durationMs: s.durationMs,
       cacheHits: s.cacheHits,
@@ -493,6 +498,7 @@ export function detectImpact(graph: Graph, change: Pick<Change, "files" | "cover
       omittedSites: totalSites > INLINE_SITES || possibleSites > INLINE_POSSIBLE ? Math.max(0, totalSites - INLINE_SITES) + Math.max(0, possibleSites - INLINE_POSSIBLE) : null,
     },
     packet: null,
+    ...(frameworks ? { frameworks } : {}),
   };
 }
 

@@ -20,6 +20,7 @@
 // (frameworks/render.ts).
 import { display, escapeMarkdown } from "@openqodex/core";
 import type { ImpactEdge, ImpactSite, ImpactSummary, ImpactSymbol } from "@openqodex/core";
+import { renderFrameworkLines } from "./frameworks/render.js";
 import { INLINE_POSSIBLE, INLINE_SITES } from "./impact.js";
 import { TIER_RANK, weakest } from "./model/records.js";
 
@@ -139,6 +140,7 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
   if (impact.touched.length === 0 && impact.removed.length === 0 && impact.exports.length === 0) {
     out.push("", "The change touches no function, method, class or type in a TypeScript, JavaScript, Python, Go or Ruby file, so there is no caller to trace.");
     pushImporters(out, impact, at);
+    out.push(...renderFrameworkLines(impact.frameworks, packet));
     return out.join("\n");
   }
 
@@ -285,6 +287,7 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
     if (seen.size > MAX_CALLEES) out.push(`- and ${seen.size - MAX_CALLEES} more`);
   }
   pushImporters(out, impact, at);
+  out.push(...renderFrameworkLines(impact.frameworks, packet));
 
   // 9. What the graph could not see near the change.
   const floors = impact.unknown.seeds.filter((s) => s.floor);

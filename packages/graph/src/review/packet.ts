@@ -23,6 +23,8 @@ import type { ImpactSummary } from "@openqodex/core";
 import { showBlob } from "../capture/git.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION, POSSIBLE_KINDS } from "../model/records.js";
 import { callersOfRemoved, isTestPath, toImpactUnknown } from "../impact.js";
+import { frameworkPacket } from "../frameworks/impact.js";
+import { PLUGINS } from "../frameworks/registry.js";
 import { code, path as escapedPath, symbolKey } from "../render.js";
 import type { Graph, GraphEdge } from "../types.js";
 
@@ -207,6 +209,8 @@ export async function writePacket(args: {
     notRead: graph.status.notRead,
     cuts: impact.cuts,
   });
+  const fw = frameworkPacket(graph, impact);
+  if (fw) write("frameworks.json", "every route, template, migration and test link of the change that the brief's framework tables cut", fw);
   write("status.json", "how the graph was built: counts, mode, generation, what it left out", { apiVersion: API_VERSION, ...graph.status });
   write("capabilities.json", "what this installation's graph can see", {
     apiVersion: API_VERSION,
@@ -218,7 +222,8 @@ export async function writePacket(args: {
       likely: ["autoload", "workspace-package by the dist to src or src/index convention", "ts-paths when the tsconfig's globs do not list the file", "method-set: a Go type or a Python class that defines every member of an interface or a Protocol by name"],
       possible: [...POSSIBLE_KINDS],
     },
-    notYet: ["field reads and writes, and decorators", "routes, handlers and tests (phase 4)"],
+    frameworks: PLUGINS.map((p) => ({ id: p.id, version: p.version, supportedVersions: p.supportedVersions, rules: p.capabilities().rules.map((r) => r.id) })),
+    notYet: ["field reads and writes, and decorators", `routes, handlers and tests of frameworks other than ${PLUGINS.map((p) => p.id).join(", ")} (phase 4)`],
   });
 
   // The base version of each removed or moved symbol, as the base had it.

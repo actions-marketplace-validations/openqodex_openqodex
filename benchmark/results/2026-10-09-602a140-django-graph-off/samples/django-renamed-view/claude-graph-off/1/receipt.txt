@@ -1,0 +1,6 @@
+Passed with warnings: 1 finding (1 critical)
+Change c09a6fefdf49 against HEAD, 1 file, +2 -2
+Summary: Renames the order detail view to show_order and limits its query to the fields the detail template renders.
+1. Critical bug: Renamed view still referenced by old name in URL config (orders/views.py:14)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

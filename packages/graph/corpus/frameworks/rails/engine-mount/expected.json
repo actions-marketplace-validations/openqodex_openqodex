@@ -1,0 +1,88 @@
+{
+  "guards": "keeps a mounted Rails engine an application of its own: its routes, its controllers and the host's mount stay apart",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 2,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/blog",
+        "name": "blog",
+        "methods": [
+          "*"
+        ],
+        "status": "bound"
+      },
+      {
+        "site": "config/routes.rb:3",
+        "pattern": "/sidekiq",
+        "status": "external"
+      },
+      {
+        "site": "config/routes.rb:4",
+        "pattern": "/posts",
+        "handler": "app/controllers/posts_controller.rb#PostsController.index"
+      },
+      {
+        "site": "engines/blog/config/routes.rb:2",
+        "pattern": "/posts",
+        "name": "posts",
+        "handler": "engines/blog/app/controllers/blog/posts_controller.rb#Blog::PostsController.index",
+        "mounted": true
+      },
+      {
+        "site": "engines/blog/config/routes.rb:2",
+        "pattern": "/posts/:id",
+        "name": "post",
+        "handler": "engines/blog/app/controllers/blog/posts_controller.rb#Blog::PostsController.show"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "mounts",
+        "from": "registration:config/routes.rb:2",
+        "to": "engines/blog/config/routes.rb",
+        "tier": "certain"
+      },
+      {
+        "kind": "tests",
+        "from": "spec/requests/blog_spec.rb",
+        "to": "registration:engines/blog/config/routes.rb:2",
+        "tier": "likely",
+        "category": "route-request"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "from": "registration:config/routes.rb:4",
+        "to": "engines/blog/app/controllers/blog/posts_controller.rb#Blog::PostsController.index"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:engines/blog/config/routes.rb:2",
+        "to": "app/controllers/posts_controller.rb#PostsController.index"
+      }
+    ],
+    "roles": [
+      {
+        "target": "config/routes.rb",
+        "role": "route_table"
+      },
+      {
+        "target": "engines/blog/config/routes.rb",
+        "role": "route_table"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "config/routes.rb",
+        "line": 3,
+        "cause": "external"
+      }
+    ],
+    "brief": [
+      "| `GET /posts/:id` | `post` | `engines/blog/config/routes.rb:2` | `blog/posts#show` | handles `Blog::PostsController.show` (likely"
+    ]
+  }
+}

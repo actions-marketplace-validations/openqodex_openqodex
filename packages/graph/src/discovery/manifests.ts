@@ -258,6 +258,29 @@ export function requirementsDeps(text: string): string[] {
   return out;
 }
 
+// The files a requirements file includes, as pip reads them: `-r file`,
+// `-c file`, `--requirement file` and `--constraint file`, with a space or
+// `=` (long flags) or nothing (short flags) before the path. The path is as
+// written; the caller resolves it against the including file's folder.
+export function requirementsIncludes(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of lines(text)) {
+    const line = beforeComment(raw).trim();
+    for (const flag of ["--requirement", "--constraint", "-r", "-c"]) {
+      if (!line.startsWith(flag)) continue;
+      let rest = line.slice(flag.length);
+      if (flag.startsWith("--")) {
+        if (rest.startsWith("=")) rest = rest.slice(1);
+        else if (!rest.startsWith(" ") && !rest.startsWith("\t")) break;
+      }
+      const spec = rest.trim();
+      if (spec !== "") out.push(spec);
+      break;
+    }
+  }
+  return out;
+}
+
 const BARE_KEY = /[A-Za-z0-9_-]+/y;
 
 // A TOML table header, part by part, or null. One pass along the line.

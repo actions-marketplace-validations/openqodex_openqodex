@@ -33,6 +33,8 @@ import { getChange } from "@openqodex/core";
 import type { ImpactSite, ImpactSummary } from "@openqodex/core";
 import { buildGraph, detectImpact, validateEvidence } from "../src/index.js";
 import type { EdgeKind, EvidenceKind, Graph, Tier } from "../src/index.js";
+import { scoreFrameworks } from "./frameworks.js";
+import type { FrameworkExpected } from "./frameworks.js";
 
 // The edge kinds a caller list walks, and the uses that are not calls.
 export type CallerKind = "calls" | "inherits" | "implements" | "dispatches_to" | "may_invoke";
@@ -66,6 +68,7 @@ export type Expected = {
   external?: { min: number; sites?: string[] };
   notBroken?: string[]; // consumer sites never listed as broken
   allRead?: boolean; // every eligible file was read
+  frameworks?: FrameworkExpected; // what a framework plugin must and must not produce (corpus/frameworks.ts)
 };
 
 export type Ratio = { hit: number; of: number };
@@ -391,6 +394,20 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
   // ---------- candidate burden (reported, never a gate) ----------
   const burden = sites.filter((s) => s.site.tier === "possible" && !(expected.callers ?? []).some((c) => c.tier === "possible" && c.site === siteOf(s.site) && matches(c.to, s.to))).length;
 
+  // ---------- frameworks ----------
+  // Expected registrations, edges, roles and brief lines count as recall at
+  // their tier's place; validity, gaps and controls add to their own.
+  const fw = scoreFrameworks(expected.frameworks, graph, impact, matches);
+  recall.certain.of += fw.recall.of;
+  recall.certain.hit += fw.recall.hit;
+  validity.of += fw.validity.of;
+  validity.hit += fw.validity.hit;
+  gaps.of += fw.gaps.of;
+  gaps.hit += fw.gaps.hit;
+  controls.of += fw.controls.of;
+  controls.hit += fw.controls.hit;
+  failures.push(...fw.failures);
+
   const all = [precision, ...Object.values(recall), validity, gaps, cuts, controls];
   return {
     case: name,
@@ -493,8 +510,13 @@ export function totalsOf(cases: CaseScore[]): CorpusTotals {
 }
 
 export async function scoreCorpus(root: string): Promise<CorpusScore> {
+  return scoreCases(root, findCases(root));
+}
+
+// The cases in `dirs`, named relative to `root`.
+export async function scoreCases(root: string, dirs: readonly string[]): Promise<CorpusScore> {
   const cases: CaseScore[] = [];
-  for (const dir of findCases(root)) cases.push(await scoreCase(dir, relative(root, dir)));
+  for (const dir of dirs) cases.push(await scoreCase(dir, relative(root, dir)));
   const failing = cases.filter((c) => !c.pass).map((c) => c.case);
   return { cases, totals: totalsOf(cases), gate: { pass: failing.length === 0, failing } };
 }

@@ -2,6 +2,8 @@
 // ImpactSummary in @openqodex/core; these are the pieces it is built from.
 import type { ImpactEdgeKind, ImpactExportChange, ImpactKind, ImpactSite, ImpactSymbol } from "@openqodex/core";
 import type { ProjectModel } from "./discovery/projects.js";
+import type { FrameworkFileFacts } from "./frameworks/plugin.js";
+import type { FrameworkData } from "./frameworks/stage.js";
 import type { Cause, Cut, Shape, Tier } from "./model/records.js";
 
 export type Lang = "typescript" | "tsx" | "javascript" | "python" | "go" | "ruby";
@@ -183,6 +185,9 @@ export type FileFacts = {
   exportsLocal: { local: string; exported: string; line?: number }[]; // `export { a as b }` without a source
   defaultExport: string | null; // the local name `export default` names
   goPackage: string | null;
+  // Each framework plugin's context-free facts of the file, by plugin id
+  // (frameworks/plugin.ts); absent when no plugin found anything.
+  frameworks?: FrameworkFileFacts;
 };
 
 // ---------- the graph ----------
@@ -300,6 +305,9 @@ export type Graph = {
   projectOf(file: string): string;
   exportChanges: ImpactExportChange[]; // set when the build compared a base; every consumer, never cut
   status: GraphStatus;
+  // What the framework plugins found (frameworks/stage.ts); absent when the
+  // framework stage did not run. Read through frameworks/layer.ts.
+  frameworks?: FrameworkData;
 };
 
 export type HotSymbol = { symbol: GraphNode; callers: number; sites: number; files: number };

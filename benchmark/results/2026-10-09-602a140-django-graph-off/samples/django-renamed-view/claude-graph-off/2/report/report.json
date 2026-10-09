@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "c09a6fefdf498b6ef051a601f28477db596ff9475c8c2a0b5e6203d9f2007c24",
+  "base": {
+    "ref": "HEAD",
+    "sha": "efca65e579562392700d3be27eb39c06cf11f9d6"
+  },
+  "generated_at": "2026-10-09T06:05:52.925Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Renames the order detail view from order_detail to show_order. It also limits the loaded order fields to number and total_cents.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "orders/views.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Renamed view breaks URL configuration",
+      "description": "This change renames order_detail to show_order. The file orders/urls.py line 8 still references views.order_detail. Django raises AttributeError when it loads the orders URLconf. Every page in the site then fails, not just order detail. Keep the original function name. Otherwise update orders/urls.py line 8 to reference views.show_order.",
+      "suggested_change": "def order_detail(request, pk):",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "This change renames order_detail to show_order. The file orders/urls.py line 8 still references views.order_detail.",
+      "consequence": "Django raises AttributeError when it loads the orders URLconf. Every page in the site then fails, not just order detail.",
+      "fix": "Keep the original function name. Otherwise update orders/urls.py line 8 to reference views.show_order."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 6273,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 48,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 15,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 76,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 1,
+    "additions": 2,
+    "deletions": 2
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 6631,
+      "started_at": "2026-10-09T06:05:39.817Z",
+      "ended_at": "2026-10-09T06:05:52.925Z",
+      "duration_ms": 13107,
+      "rounds": 1,
+      "usage": {
+        "turns": 5,
+        "input_tokens": 25717,
+        "output_tokens": 853,
+        "cost_usd": 0.0553918
+      }
+    },
+    "snapshot": {
+      "change_id": "c09a6fefdf498b6ef051a601f28477db596ff9475c8c2a0b5e6203d9f2007c24",
+      "tree": "eca06cd04965915b2f101cae9a92db82dc517ed2",
+      "before": "f48a159bf5ff380b1690b4884f0459a3191ba5436bbc2aa3193731877ae7f870",
+      "after": "f48a159bf5ff380b1690b4884f0459a3191ba5436bbc2aa3193731877ae7f870"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 1,
+      "covered": 1,
+      "unread": [],
+      "files_read": [
+        "orders/urls.py",
+        "orders/views.py"
+      ],
+      "files_not_read": []
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

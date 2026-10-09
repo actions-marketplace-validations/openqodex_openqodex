@@ -3,6 +3,8 @@
 // JSON lines (index/*.jsonl). Reading an index back gives the same Graph
 // the build made: retained equals fresh (test/session.test.ts checks).
 import type { ProjectModel } from "../discovery/projects.js";
+import { FRAMEWORK_DATA_VERSION } from "../frameworks/stage.js";
+import type { FrameworkData } from "../frameworks/stage.js";
 import { projectFolder } from "../resolve.js";
 import type { DispatchSite, Graph, GraphEdge, GraphNode, GraphSite, GraphStatus, InvocationSummary, Miss, UnknownSite } from "../types.js";
 import type { OpenGeneration } from "./types.js";
@@ -62,8 +64,9 @@ const parseLines = <T>(text: string | null): T[] | null => {
 // index/strings.json and rows are arrays that name strings by their
 // number. Measured on vscode: the plain JSON lines were 552 MB, past the
 // folder's 512 MB bound on their own. 3: the uses that are not calls
-// (references), the dispatch sites and the invocation summaries.
-export const INDEX_FORMAT = 3;
+// (references), the dispatch sites and the invocation summaries. 4: the
+// framework layer's data (index/frameworks.json).
+export const INDEX_FORMAT = 4;
 
 type Row = (number | number[])[];
 
@@ -124,6 +127,7 @@ export function writeIndex(g: Graph): Record<string, string> {
     "index/dispatch.jsonl": lines(dispatch),
     "index/summaries.jsonl": lines(summaries),
     "index/status.json": JSON.stringify(g.status),
+    "index/frameworks.json": JSON.stringify(g.frameworks ?? null),
   };
 }
 
@@ -184,7 +188,13 @@ export function readIndex(gen: OpenGeneration): (Omit<Graph, "repoRoot"> & { rep
     }));
     const summaries = new Map<string, InvocationSummary>(summaryRows.map((r) => [d.s(r[0] as number), { params: (r[1] as number[]).map(d.s), invokes: r[2] as number[], returns: (r[3] as number[]).map(d.s), returnsOther: r[4] === 1 }]));
     const extra = { references: referenceRows.map(d.edge), dispatch, summaries };
-    return assemble(nodes, edgeRows.map(d.edge), importerRows.map(d.edge), misses, unknowns, status, deserializeModel(projects.model), projects.goModules, extra);
+    const graph = assemble(nodes, edgeRows.map(d.edge), importerRows.map(d.edge), misses, unknowns, status, deserializeModel(projects.model), projects.goModules, extra);
+    const frameworks = JSON.parse(gen.read("index/frameworks.json") ?? "null") as FrameworkData | null;
+    if (frameworks !== null) {
+      if (typeof frameworks !== "object" || frameworks.version !== FRAMEWORK_DATA_VERSION || !Array.isArray(frameworks.edges) || !Array.isArray(frameworks.entities)) return null;
+      graph.frameworks = frameworks;
+    }
+    return graph;
   } catch {
     return null;
   }

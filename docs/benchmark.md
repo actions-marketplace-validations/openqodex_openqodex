@@ -38,6 +38,7 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `clean-ts-refactor` | TypeScript | none (clean) |
 | `demo-polyglot` | Python, Flask, Docker, shell, a workflow, npm | the demo repository's twelve: a secret (critical; gitleaks, semgrep), SQL injection (critical; bandit, semgrep), four Dockerfile issues (minor; hadolint), the container left running as root (major; reasoning), a vulnerable lodash (major; osv-scanner), two shell bugs (shellcheck), workflow script injection (major; actionlint, semgrep), a pagination off-by-one (major; reasoning) |
 | `django-model-view` | Python, Django | a Decimal times a float (major), a field with no migration (major), an order readable by any user (critical), CSRF turned off on a POST (major); reasoning, semgrep for CSRF |
+| `django-renamed-view` | Python, Django | a view renamed while the app's `urls.py`, outside the diff, still registers its old name, so loading the URLs fails (critical; reasoning, graph) |
 | `express-admin-routes` | JavaScript, Express | a delete route without the admin check (critical), `forEach` with an async callback that is not awaited (major); reasoning |
 | `flask-path-traversal` | Python, Flask | a download path built from a parameter (critical), the debug server on every interface (major); semgrep, bandit, reasoning |
 | `go-http-handler` | Go | SQL built with `Sprintf` (critical; semgrep, golangci-lint), a mutex left locked on an early return (major), a deferred close before the error check (major) |
@@ -50,7 +51,7 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `ts-removed-export` | TypeScript | a renamed export still imported by a file outside the change (major; reasoning, graph); nothing in the diff shows it |
 | `ts-workspace-caller-break` | TypeScript, pnpm workspace | `safeGit` changed from returning a string to returning an object, with callers in another package (major; reasoning, graph) |
 
-Thirty-eight planted bugs in all: 11 critical, 21 major, 6 minor.
+Thirty-nine planted bugs in all: 12 critical, 21 major, 6 minor.
 
 Each case is a folder under `benchmark/cases/<case>/`: `case.json` (the spec), `base/` (the base commit), `change/` (the files the change writes) and an optional `delete.txt`. `demo-polyglot` reads `examples/demo-repo` instead, and its secret is generated when the case is built, the same value every time, never committed. The repositories are built in a temporary folder; none is committed. `node benchmark/build.mjs <case>` builds one so you can read it.
 
@@ -62,7 +63,7 @@ From a clone, with Node 22, Claude Code installed and logged in:
 pnpm install
 node benchmark/build-cli.mjs           # pnpm build, and a record of the commit and tree it built from
 node benchmark/run.mjs --dry-run       # print the plan, run nothing
-node benchmark/run.mjs                 # 15 cases, graph off and on, 3 repeats: 90 reviews
+node benchmark/run.mjs                 # 16 cases, graph off and on, 3 repeats: 96 reviews
 node benchmark/score.mjs benchmark/results/<date>-<commit>
 ```
 
@@ -201,6 +202,32 @@ What it showed:
 - The two false findings are real issues the specs do not list: the Go search handler never checks `rows.Err()` after its loop, and the Next.js search page lets a late response overwrite newer results.
 - Time, turns and cost per review doubled against `588a38c` with the same briefs and the same Claude Code version. The reviewer asked for more correction rounds (1.71 per review against 1.36). The cause is on the reviewer's side, not in the build: the input did not change. Which part (the account the run used, or the model's own variation between runs) was not tested.
 - The graph-off configuration was not run: phase 3 does not change it.
+
+## Code graph phase 4a: Django and Rails framework entries
+
+`benchmark/results/2026-10-09-602a140`: build `602a140` of the phase 4a branch (openqodex 0.10.0), Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 15 reviews, all complete, none failed. The first run is scored against this run's specs (`score-cases-602a140.json` in its folder, named for this run so it sits beside other phases' scores of the same run), so both columns use the same rules and words. Its Rails numbers do not compare, since that case's code changed after it ran.
+
+| Measure (graph on) | First run (`752b77f`, 3 repeats) | Phase 4a (`602a140`, 1 repeat) |
+|---|---|---|
+| Planted bugs found | 100/111 (90%) | 34/38 (89%) |
+| critical | 33/36 | 13/13 |
+| major | 57/57 | 19/19 |
+| minor | 10/18 | 2/6 |
+| Findings that are planted bugs | 100/100 (100%) | 34/34 (100%) |
+| False findings | 0 | 0 |
+| Clean changes with no finding | 6/6 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 5/5 |
+| Graph gaps disclosed in the brief | 3/6 | 1/2 |
+| Time per review, mean | 25 s | 28 s |
+| Reviewer turns per review, mean | 3.9 | 4.1 |
+| Cost per review, mean | $0.11 | $0.11 |
+
+What it showed:
+
+- The new case, `django-renamed-view`, renames a view while `orders/urls.py`, outside the diff, still registers the old name. The brief listed the route `ANY orders/<int:pk>/`, named `orders:detail`, declared at `orders/urls.py:8`, with "no handler now: the handler is missing", and the review found the bug. With the graph off, on the same build, three reviews found it too (`benchmark/results/2026-10-09-602a140-django-graph-off`, 3 of 3): in a repository this small the reviewer opens `urls.py` itself. This phase put the broken route in the brief; it moved no line of bugs found.
+- On the 14 cases both runs hold, the review found 33 of 37 plants: every critical and major one. The four misses are minor: three Dockerfile issues in the demo repository that the scanners raised and the reviewer dropped, and the list items without keys in the Next.js case, as in the earlier runs.
+- No finding was false. Three findings matched side issues the cases list as real but not planted.
+- The graph gap line is unchanged: the `js-dynamic-dispatch-gap` brief still does not name the computed call `table[action](id)`. Phase 2 changes that, and this branch does not hold phase 2.
 
 ## Claims cite a run
 

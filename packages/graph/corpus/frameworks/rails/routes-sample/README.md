@@ -1,0 +1,3 @@
+# Rails: routes to the action a change touches
+
+Guards against the review losing which Rails route serves a changed controller action. `config/routes.rb` declares `resources :posts`, which Rails expands into seven routes; the change edits `PostsController#show`. The brief must list `GET /posts/:id`, named `post`, as handled by `posts#show`, found by the controller path convention (likely, never certain), the view the action renders by the implicit view rule, the `before_action` that runs before it, and the request spec whose literal path matches the route, as a static link that is never called coverage.

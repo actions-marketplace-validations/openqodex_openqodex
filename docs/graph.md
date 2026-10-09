@@ -40,9 +40,11 @@ A step through inheritance is part of the proof: a method found on a base class 
 | `tsconfig.json`, `jsconfig.json` | calls, inheritance and imports | the same |
 | `pnpm-workspace.yaml` | calls, inheritance and imports | the same |
 | `go.mod` | calls and imports | the same |
-| `pyproject.toml`, `setup.cfg`, `requirements*.txt` | nothing: imports of what it declares read as misses | the build stays complete |
+| `pyproject.toml`, `setup.cfg`, `requirements*.txt`, `requirements*.in`, the `.txt` and `.in` files of a `requirements/` folder, and the files any of them includes with `-r` or `-c` | nothing: imports of what it declares read as misses | the build stays complete |
 | `Gemfile` | nothing: requires of the gems it names read as misses | the build stays complete |
 | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock` | nothing: a binding through it is only less sure | the build stays complete |
+
+  An include is read relative to the file that includes it, only inside the repository, and at most 64 includes in all; one outside the repository, missing, or past that bound is said as a gap of the including file.
 
   A kept index is matched by every file the graph read or looked for while it worked out the projects, whatever its name (a tsconfig may extend `./configs/base`, with no extension), with its content, and by whether each file it looked for was there. It is never reused once one of them changes, appears or goes.
 
@@ -249,3 +251,22 @@ Example, `graph_callers` with `{ "symbol": "formatDate" }`, shortened:
   "truncated": { "by": null, "omitted": 0, "omittedExact": true, "cursor": null },
   "graph": { "generation": "0mv03sdlq0000-1lg4-cd232ef6", "status": "ok", "mode": "fresh", "freshness": { "laterEditsKnown": false }, ... } }
 ```
+
+## Framework entries: Django and Rails
+
+The graph reads two frameworks' own conventions and adds what they declare to the brief: Django and Rails. A framework is read only when a manifest of the project declares it (`django` in a Python manifest such as `requirements.txt` or `pyproject.toml`, `rails` in the `Gemfile`) and the project has the framework's own marker: a settings module that assigns `INSTALLED_APPS` or `ROOT_URLCONF` for Django, `config/application.rb`, a `routes.draw` block in `config/routes.rb` or `bin/rails` for Rails. The dependency alone never makes an application, and a name that only looks like the framework's (`path` from `os`, a `render` of your own, a class named `PostsController` outside `app/controllers`) makes nothing. Settings, routes and config files are parsed as text and never imported or run.
+
+For a change, the brief adds "Framework entries this change reaches", in tables:
+
+- the routes whose handler is the touched code, or reaches it through calls (up to three hops), with the route's methods, its full path with every `include()`, `namespace` or `scope` prefix composed, its name, where it is declared and the handler as written;
+- routes the change declares, and routes whose handler is gone: a route stays registered when its view or action is deleted, and the brief says it has no handler now;
+- the templates and views the touched code renders, and the code that renders a changed template;
+- a touched model's migrations, and what a changed migration changes;
+- the framework role of the touched code (model, command, job, mailer, signal receiver, template tag);
+- the tests that reference, call or may request the touched code: a test that calls it, a test request whose literal path matches the route's pattern, a test that names the route, or a spec that names the class. These are static links, never coverage.
+
+Each table shows twelve rows; the rest, uncut, are in the review packet's `frameworks.json`, which the table's last line names. Every value quoted from the repository in these tables (a route path or name, a template name, a handler as written) is on one line, cut to 120 characters, inside a code span or escaped, so text in your repository cannot start a line of the brief.
+
+Levels follow the rest of the graph. A view bound through an import is certain; a Rails action found by its controller's path, a template found by its name under a templates or views folder, and a table name made by Rails or Django's naming rule are likely, with the note saying so; the HTTP methods of a class view, a template that several folders hold and a test request that several routes match are possible.
+
+What the plugins cannot see is said as a gap: a computed route path, include, template name, request path, signal or settings key (`dynamic`; a route under a computed prefix keeps its known part, shown as `{computed}accounts/login/`), a URL list a loop, a `del` or a `remove` changes (`dynamic`), a block inside a model's class body (`unsupported-rule`), a view that is not defined (`miss`), a URL entry whose function is not Django's (`unsupported-rule`), and every cap (`fan-out-capped` or `budget`). A plugin reads no file over 1 MiB, keeps at most 10,000 route registrations and 20,000 entities per application, and matches test requests against routes by hand; the Django plugin's whole resolve draws on one work budget of two million steps, and the Rails plugin's route expansion and test matching on another; a plugin that runs out stops that work and says so as a `budget` gap. No regular expression from your repository is ever built or run. The facts the Django and Rails plugins cache under `.openqodex/graph/` keep a string from your code only where the plugin reads its value: a route path or pattern and the route options that build it (a prefix, a name, a namespace, a module, a `controller#action`, the actions and HTTP methods it answers), a module that `include()` or `ROOT_URLCONF` names, a template name, a model, association, table, column or field name, and the name (never the value) of a config key or an ENV entry. A route path and a test request keep their path alone (no scheme, host, user, query string or fragment), a Rails route target is kept only when it is `controller#action`, and any other literal, such as a setting's value, a route's `constraints:` or `format:`, or a template tag's name, is not kept. Every string kept is cut to 512 characters, a key-shaped token in it (one that starts like a known key, such as `sk_live_` or `ghp_`, or an opaque run of sixteen or more letters and digits) is replaced by `[redacted]`, and a string whose percent-encoded form hides one is not kept at all. The packet and the brief also remove every secret the scanners found.

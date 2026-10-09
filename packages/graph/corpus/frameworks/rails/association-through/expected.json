@@ -1,0 +1,51 @@
+{
+  "guards": "follows a Rails through association to the class of its source association, never to a class named after the association",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "edges": [
+      {
+        "kind": "uses_type",
+        "from": "app/models/story.rb#Story",
+        "to": "app/models/user.rb#User",
+        "tier": "likely"
+      },
+      {
+        "kind": "uses_type",
+        "from": "app/models/story.rb#Story",
+        "to": "app/models/tag.rb#Tag",
+        "tier": "likely"
+      },
+      {
+        "kind": "uses_type",
+        "from": "app/models/story.rb#Story",
+        "to": "app/models/vote.rb#Vote",
+        "tier": "likely"
+      },
+      {
+        "kind": "uses_type",
+        "from": "app/models/user.rb#User",
+        "to": "app/models/story.rb#Story",
+        "tier": "likely"
+      },
+      {
+        "kind": "uses_type",
+        "from": "app/models/mod_mail.rb#ModMail",
+        "to": "app/models/comment.rb#Comment",
+        "tier": "likely"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "app/models/user.rb",
+        "line": 4,
+        "cause": "unsupported-rule"
+      },
+      {
+        "file": "app/models/mod_mail.rb",
+        "line": 4,
+        "cause": "external"
+      }
+    ]
+  }
+}

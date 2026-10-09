@@ -1,0 +1,38 @@
+{
+  "guards": "links reads of Django settings keys through django.conf and never a same-named project module",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "reads_config",
+        "from": "billing/charge.py#timeout",
+        "to": "config_key:PAYMENT_TIMEOUT",
+        "tier": "certain"
+      },
+      {
+        "kind": "reads_config",
+        "from": "billing/charge.py#currency",
+        "to": "config_key:CURRENCY",
+        "tier": "certain"
+      },
+      {
+        "kind": "reads_config",
+        "from": "billing/charge.py#retries",
+        "to": "config_key:RETRIES",
+        "tier": "certain"
+      },
+      {
+        "kind": "defines_config",
+        "from": "mysite/settings.py",
+        "to": "config_key:PAYMENT_TIMEOUT",
+        "tier": "certain"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "reads_config",
+        "from": "billing/charge.py#fee"
+      }
+    ]
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "guards": "links Django views to templates by literal name, with ambiguity, missing and computed names as gaps",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "renders",
+        "from": "pages/views.py#page",
+        "to": "template:pages/templates/pages/page.html",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "pages/views.py#text",
+        "to": "template:pages/templates/pages/page.html",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "pages/views.py#Landing",
+        "to": "template:pages/templates/pages/landing.html",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "pages/views.py#shared",
+        "to": "template:pages/templates/shared.html",
+        "tier": "possible"
+      },
+      {
+        "kind": "renders",
+        "from": "pages/views.py#shared",
+        "to": "template:other/templates/shared.html",
+        "tier": "possible"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "pages/views.py",
+        "line": 12,
+        "cause": "ambiguous"
+      },
+      {
+        "file": "pages/views.py",
+        "line": 16,
+        "cause": "miss"
+      },
+      {
+        "file": "pages/views.py",
+        "line": 20,
+        "cause": "dynamic"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "renders",
+        "from": "pages/views.py#not_django"
+      }
+    ],
+    "brief": [
+      "| `pages/templates/pages/page.html` | `page` | `pages/views.py:8` |"
+    ]
+  }
+}

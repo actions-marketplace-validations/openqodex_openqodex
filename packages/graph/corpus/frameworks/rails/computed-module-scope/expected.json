@@ -1,0 +1,27 @@
+{
+  "guards": "leaves the handler of a route under a computed module scope computed, never the root controller",
+  "frameworks": {
+    "plugin": "rails",
+    "registrations": [
+      {
+        "site": "config/routes.rb:4",
+        "pattern": "/x",
+        "status": "dynamic",
+        "handler": null
+      },
+      {
+        "site": "config/routes.rb:6",
+        "pattern": "/y",
+        "status": "bound",
+        "handler": "app/controllers/posts_controller.rb#PostsController.index"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "config/routes.rb",
+        "line": 4,
+        "cause": "dynamic"
+      }
+    ]
+  }
+}

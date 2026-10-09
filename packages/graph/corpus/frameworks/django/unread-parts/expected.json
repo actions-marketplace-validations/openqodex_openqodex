@@ -1,0 +1,48 @@
+{
+  "guards": "follows a URL list joined in from the same module and says what it cannot read in a URL list, a nested module and a migration, never dropping it silently",
+  "frameworks": {
+    "plugin": "django",
+    "registrations": [
+      {
+        "site": "mysite/urls.py:8",
+        "pattern": "base/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:10",
+        "pattern": "own/",
+        "status": "bound"
+      },
+      {
+        "site": "mysite/urls.py:12",
+        "pattern": "tail/",
+        "status": "bound"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/urls.py",
+        "line": 11,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 12,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/urls.py",
+        "line": 13,
+        "cause": "dynamic"
+      },
+      {
+        "file": "mysite/deep.py",
+        "cause": "fan-out-capped"
+      },
+      {
+        "file": "mysite/migrations/0001_initial.py",
+        "cause": "dynamic"
+      }
+    ]
+  }
+}

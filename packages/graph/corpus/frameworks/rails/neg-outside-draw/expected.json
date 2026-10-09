@@ -1,0 +1,37 @@
+{
+  "guards": "never reads a get, resources or create_table call outside a Rails draw block or migration as a route or a schema change",
+  "frameworks": {
+    "plugin": "rails",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/posts",
+        "handler": "app/controllers/posts_controller.rb#PostsController.index"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "handles",
+        "from": "registration:lib/client.rb:6"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:lib/top.rb:1"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "lib/schema_helper.rb"
+      },
+      {
+        "kind": "tests",
+        "from": "lib/client.rb#ApiClient.posts"
+      }
+    ],
+    "none": [
+      "mounts",
+      "changes_schema",
+      "tests"
+    ]
+  }
+}

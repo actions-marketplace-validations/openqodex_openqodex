@@ -1,0 +1,176 @@
+{
+  "guards": "lists the URL, templates, models, migrations, settings keys and tests a Django view change reaches, through include() with its prefix",
+  "callers": [
+    {
+      "to": "blog/views.py#helper",
+      "site": "blog/views.py:17",
+      "tier": "certain"
+    },
+    {
+      "to": "blog/views.py#helper",
+      "site": "blog/tests.py:15",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "django",
+    "apps": 1,
+    "registrations": [
+      {
+        "site": "blog/urls.py:7",
+        "pattern": "blog/",
+        "name": "blog:post-list",
+        "methods": [
+          "*"
+        ],
+        "handler": "blog/views.py#post_list",
+        "status": "bound",
+        "mounted": true
+      },
+      {
+        "site": "blog/urls.py:8",
+        "pattern": "blog/<int:pk>/",
+        "name": "blog:post-detail",
+        "handler": "blog/views.py#post_detail",
+        "status": "bound"
+      },
+      {
+        "site": "blog/urls.py:9",
+        "pattern": "blog/about/",
+        "name": "blog:about",
+        "handler": "blog/views.py#About",
+        "status": "bound"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "mounts",
+        "from": "mysite/urls.py",
+        "to": "blog/urls.py",
+        "tier": "certain"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:blog/urls.py:8",
+        "to": "blog/views.py#post_detail",
+        "tier": "certain"
+      },
+      {
+        "kind": "handles",
+        "from": "registration:blog/urls.py:9",
+        "to": "blog/views.py#About.get",
+        "tier": "possible"
+      },
+      {
+        "kind": "renders",
+        "from": "blog/views.py#post_list",
+        "to": "template:blog/templates/blog/post_list.html",
+        "tier": "likely"
+      },
+      {
+        "kind": "renders",
+        "from": "blog/views.py#post_detail",
+        "to": "template:blog/post_detail.html",
+        "tier": "likely"
+      },
+      {
+        "kind": "declares_field",
+        "from": "blog/models.py#Post",
+        "to": "model_field:Post.title",
+        "tier": "certain"
+      },
+      {
+        "kind": "uses_type",
+        "from": "blog/models.py#Post",
+        "to": "blog/models.py#Author",
+        "tier": "certain"
+      },
+      {
+        "kind": "maps_to",
+        "from": "blog/models.py#Post",
+        "to": "table:blog_post",
+        "tier": "likely"
+      },
+      {
+        "kind": "changes_schema",
+        "from": "blog/migrations/0001_initial.py",
+        "to": "blog/models.py#Post",
+        "tier": "likely"
+      },
+      {
+        "kind": "reads_config",
+        "from": "blog/views.py#post_detail",
+        "to": "config_key:FEATURE_FLAG",
+        "tier": "certain"
+      },
+      {
+        "kind": "defines_config",
+        "from": "mysite/settings.py",
+        "to": "config_key:FEATURE_FLAG",
+        "tier": "certain"
+      },
+      {
+        "kind": "tests",
+        "from": "blog/tests.py#PostTests.test_detail",
+        "to": "registration:blog/urls.py:8",
+        "tier": "likely",
+        "category": "route-request"
+      },
+      {
+        "kind": "tests",
+        "from": "blog/tests.py#PostTests.test_list",
+        "to": "registration:blog/urls.py:7",
+        "tier": "likely",
+        "category": "route-name"
+      },
+      {
+        "kind": "tests",
+        "from": "blog/tests.py#PostTests.test_helper",
+        "to": "blog/views.py#helper",
+        "tier": "certain",
+        "category": "direct-call"
+      }
+    ],
+    "roles": [
+      {
+        "target": "blog/views.py#post_detail",
+        "role": "route_handler",
+        "detail": "view"
+      },
+      {
+        "target": "blog/models.py#Post",
+        "role": "model"
+      },
+      {
+        "target": "blog/migrations/0001_initial.py",
+        "role": "migration"
+      },
+      {
+        "target": "blog/tests.py",
+        "role": "test"
+      },
+      {
+        "target": "mysite/urls.py",
+        "role": "route_table"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "blog/views.py",
+        "line": 24,
+        "cause": "miss"
+      }
+    ],
+    "brief": [
+      "Framework entries this change reaches.",
+      "| `ANY blog/<int:pk>/` | `blog:post-detail` | `blog/urls.py:8` | `views.post_detail` | reaches `helper` in 1 hop (certain) |",
+      "| `PostTests.test_detail` | `blog/tests.py:9` | requests through route `ANY blog/<int:pk>/` | `helper` | likely: ",
+      "| `PostTests.test_helper` | `blog/tests.py:15` | calls | `helper` | certain |",
+      "(static links, not coverage)"
+    ],
+    "notBrief": [
+      "covers",
+      "coverage:"
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "guards": "makes no route or render link from a Django name that is rebound at module level or shadowed in the calling function",
+  "frameworks": {
+    "plugin": "django",
+    "notRegistrations": [
+      "mysite/urls.py:8"
+    ],
+    "notEdges": [
+      {
+        "kind": "renders",
+        "from": "mysite/views.py#shadowed"
+      },
+      {
+        "kind": "renders",
+        "from": "mysite/views.py#rebound"
+      }
+    ],
+    "edges": [
+      {
+        "kind": "renders",
+        "from": "mysite/views.py#real",
+        "to": "template:mysite/templates/mysite/page.html",
+        "tier": "likely"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "mysite/urls.py",
+        "line": 8,
+        "cause": "unsupported-rule"
+      }
+    ]
+  }
+}

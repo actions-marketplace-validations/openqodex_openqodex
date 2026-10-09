@@ -1,0 +1,3 @@
+# Rails: a scope's controller and action apply to every route inside it
+
+Guards against routes that lose the controller or action their enclosing block names. Inside `scope controller: "api/deprecated", action: "index"`, Rails sends `get "api_key"`, `put "api_key/reset"`, `post "gems"` and the nested `put "migrate"` to `Api::DeprecatedController#index`; an `action:` on the route itself wins (`get "own", action: "own"`). A scope's `defaults:` name the controller and action the same way, `controller :pages` names the controller for `get "about"`, and an explicit `to:` wins over the block (`help#faq`). None of these routes is missing an action.
