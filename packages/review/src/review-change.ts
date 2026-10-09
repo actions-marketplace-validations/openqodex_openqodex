@@ -162,6 +162,12 @@ export type ReviewDeps = {
   // secrets, and the hash of the file they came from (null for none).
   instructions: (secrets: string[]) => { text: string; hash: string | null };
   onEvent: (event: ReviewEvent) => void;
+  // Receives the run's result before the run cleans up (the graph's lease,
+  // the snapshot), so the host writes and prints everything from it first:
+  // a cleanup that fails afterwards (a folder in the snapshot that cannot be
+  // written) then throws out of runReviewCore without losing the review.
+  // What it throws stops the run there, the cleanup still done.
+  onResult?: (result: ReviewCoreResult) => void | Promise<void>;
   // Called once, as soon as the deadline is fixed, with a synchronous stop:
   // it ends a running boundary check and the reviewer's process group and
   // removes the snapshot. A host's signal handler calls it before it exits.
@@ -348,19 +354,24 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     if (snapshot !== null) deps.snapshots.removeNow(repoRoot, snapshot as Snapshot);
   });
   const scanHost: ScanHost = { resolveTool: deps.resolveTool, onProgress: say, onScan: (scan) => deps.onEvent({ type: "scan", scan }) };
+  // The result goes to the host before the cleanup below.
+  const finish = async (result: ReviewCoreResult): Promise<ReviewCoreResult> => {
+    await deps.onResult?.(result);
+    return result;
+  };
   const graphHost: GraphHost = { store: deps.graphStore, onProgress: say, warn };
   try {
     const prep = await prepare(inputs, deps, scanHost, (s) => (snapshot = s));
     if (prep === null) {
       if (inputs.all) warn("Nothing to review: the repository has no files");
-      return { ended: "nothing" };
+      return await finish({ ended: "nothing" });
     }
     const { p } = prep;
     const scan = p.scan as ScanResult;
     const change = p.change;
     deps.onEvent({ type: "prepared", change, scan, secrets: p.secrets });
     // No reviewer can start: the scanner candidates stay unchecked, never a review.
-    if ("unavailable" in chosen) return { ended: "unavailable", reasons: chosen.unavailable, change, scan, secrets: p.secrets };
+    if ("unavailable" in chosen) return await finish({ ended: "unavailable", reasons: chosen.unavailable, change, scan, secrets: p.secrets });
 
     // The one redaction every output of this run goes through (redact.ts:
     // each matched secret and each line of a multi-line one).
@@ -413,7 +424,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // The driver's per-run proof of its boundary (Codex's sandbox probe),
     // on the redacted snapshot, before its hash is taken.
     const unsafe = (await chosen.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: chosen.bin, register: (cleanup) => (checking = cleanup) })) ?? null;
-    if (unsafe !== null) return { ended: "unavailable", reasons: [`${chosen.driver.name}: ${unsafe}`], change, scan, secrets: p.secrets };
+    if (unsafe !== null) return await finish({ ended: "unavailable", reasons: [`${chosen.driver.name}: ${unsafe}`], change, scan, secrets: p.secrets });
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
     // A secret in a path would reach the reviewer through any listing: the
@@ -493,7 +504,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           secrets: p.secrets,
         })
       : buildDisplay({ change, secrets: p.secrets });
-    return { ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null };
+    return await finish({ ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null });
   } finally {
     over = true;
     graphLease?.release();
