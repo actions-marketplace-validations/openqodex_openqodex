@@ -311,7 +311,11 @@ export function path(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job | 
 // or by one symbol as if its first line changed. Items: each caller path
 // with its hops, each callee, each importer of a changed file, each changed
 // public name. The walk is bounded by its own limits (200 symbols, 20
-// callers a hop), so it runs whole once its point is found.
+// callers a hop), so it runs whole once its point is found. Each changed
+// public name comes from the graph with every place that used it, never
+// from the summary, which keeps the first 200 for the brief; the cuts the
+// walk made in what it lists are said as the floor's reasons.
+const LISTED_CUTS = new Set(["hub", "second-hop", "walk-limit", "export-walk"]);
 export function impact(s: Session, req: Request, extra: Extra): Job | Answer {
   const g = s.graph;
   const bySymbol = req.target !== undefined && (req.target.id !== undefined || req.target.name !== undefined || req.target.file !== undefined);
@@ -335,8 +339,9 @@ export function impact(s: Session, req: Request, extra: Extra): Job | Answer {
       ...sum.callers.map((p) => ({ type: "caller", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
       ...sum.callees.map((p) => ({ type: "callee", seed: p.seed, hops: p.edges.map((e, i) => hop(e, i + 1)) })),
       ...sum.importers.map((e) => ({ type: "importer", hops: [hop(e, 1)] })),
-      ...sum.exports.map((e) => ({ type: "export", ...e })),
+      ...g.exportChanges.map((e) => ({ type: "export", ...e })),
     ];
+    const cutNotes = [...new Set(sum.cuts.filter((c) => LISTED_CUTS.has(c.by)).map((c) => c.note))];
     const lastSites = sum.callers.map((c) => c.edges[c.edges.length - 1]?.sites[0]).filter((x): x is GraphSite => x !== undefined);
     return listing(
       {
@@ -344,8 +349,8 @@ export function impact(s: Session, req: Request, extra: Extra): Job | Answer {
         target: target ?? sum.symbols.filter((x) => sum.touched.includes(x.id) || sum.removed.includes(x.id)).map((x) => ({ id: x.id, name: x.name, kind: x.kind, file: x.file, line: x.startLine, project: g.projectOf(x.file), score: 1 })),
         counts: counts(lastSites.map((site) => ({ site }))),
         unknown: {
-          floor: sum.unknown.floor,
-          reasons: [...new Set([...sum.unknown.seeds.flatMap((x) => x.reasons), ...(sum.status === "partial" ? sum.reasons : [])])],
+          floor: sum.unknown.floor || cutNotes.length > 0,
+          reasons: [...new Set([...sum.unknown.seeds.flatMap((x) => x.reasons), ...cutNotes, ...(sum.status === "partial" ? sum.reasons : [])])],
           causes: sum.unknown.causes,
           examples: sum.unknown.near.slice(0, 5),
         },

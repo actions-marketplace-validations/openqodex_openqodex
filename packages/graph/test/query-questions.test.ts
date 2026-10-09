@@ -34,6 +34,9 @@
 // 15. A class whose base is written as an expression (a call, a mixin) is
 //     not tied to the base, and `implementers` of the base says nothing of
 //     what it could not read: a short list with no floor.
+// 16. `impact` gives the summary's list of places that used a changed
+//     public name, which keeps the first 200, as if it were whole: no
+//     floor, no cut, and no page holds the rest.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -49,7 +52,7 @@ import { OPERATIONS, query } from "../src/query/engine.js";
 import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { findCases, matches } from "../corpus/score.js";
 import type { Expected } from "../corpus/score.js";
-import { makeRepo } from "./helpers.js";
+import { commitAll, makeRepo, writeFiles } from "./helpers.js";
 
 const corpusRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "corpus");
 const dirs: string[] = [];
@@ -461,5 +464,26 @@ describe("implementers at the edge of what the graph reads", () => {
     expect(a.unknown.reasons.join(" ")).toMatch(/base written as an expression/);
     // The same boundary holds for the overrides derived from the inheritance.
     expect(q({ kind: "implementers", target: { name: "Base.run" } }).unknown.reasons.join(" ")).toMatch(/base written as an expression/);
+  });
+});
+
+describe("impact of a public name used in more places than the summary keeps", () => {
+  it("lists every place that used the removed alias, past the summary's 200 (16)", async () => {
+    const uses = Array.from({ length: 200 }, (_, i) => `export const v${i} = total([${i}]);`).join("\n");
+    const repo = makeRepo({
+      "src/pricing.ts": "function computeTotal(items: number[]): number {\n  return items.length;\n}\n\nexport { computeTotal as total };\nexport { computeTotal };\n",
+      "src/cart.ts": `import { total } from "./pricing";\n${uses}\n`,
+    });
+    dirs.push(repo);
+    commitAll(repo);
+    writeFiles(repo, { "src/pricing.ts": "function computeTotal(items: number[]): number {\n  return items.length;\n}\n\nexport { computeTotal };\n" });
+    const change = await getChange({ repoRoot: repo, scope: { uncommitted: true }, exclude: [] });
+    const graph = await buildGraph({ repoRoot: repo, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const t: Session = { graph, generation: "consumers-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+    const a = query(t, { apiVersion: 1, kind: "impact", limit: 500 }, { change });
+    expect(a.error).toBeNull();
+    const e = a.items.find((x) => (x as { type: string }).type === "export") as { name: string; consumers: unknown[] } | undefined;
+    expect(e?.name).toBe("total");
+    expect(e?.consumers).toHaveLength(201);
   });
 });
