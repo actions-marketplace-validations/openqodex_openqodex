@@ -13,6 +13,8 @@ OpenQodex starts every program with an argument list, never through a shell. Sca
 
 A repository can hold config files that make a scanner run code or rewrite files. OpenQodex does not load such files for oxlint, golangci-lint, brakeman and rubocop. It uses its own settings for them. ruff and gitleaks read the repository's own settings for rules only. ruff runs with fixes switched off.
 
+A built-in scanner is handed only changed files that are regular files inside the repository, reached through no symbolic link. A change can add a file that links anywhere on your machine under a name a scanner checks, such as `report.sql` or a workflow; that file is not handed to any built-in scanner, and the scanner's line in the report names it with the reason.
+
 A change can also tell a scanner to skip its own lines: with a suppression comment such as `# nosec`, or with an edit to a settings or ignore file the scanner reads. The scanner still obeys either one. OpenQodex shows each one as a candidate: the reviewer keeps or drops it in a review, and a scan counts it as a minor finding. `scanners` lists the comments.
 
 ## The trust step

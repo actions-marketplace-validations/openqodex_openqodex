@@ -45,7 +45,7 @@ import { repoFacts, type RepoFacts } from "./detect.js";
 import { DISABLED_REASON, selectScanners, type ScannerChoice } from "./select.js";
 import type { SettingsFile } from "./adapters/index.js";
 import type { SettingsReader } from "./shared-settings.js";
-import { readRepoFile, repoFileOrReason } from "./adapters/read.js";
+import { readRepoFile, repoFileOrReason, scannerInputs } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
 import { SEMGREP_MAX_TARGET_BYTES } from "./adapters/semgrep.js";
@@ -103,11 +103,23 @@ export async function runScanners(args: {
   // Read once for the whole run: every scanner and the suppression check ask
   // the same questions about the same files.
   const facts = repoFacts(args.repoDir);
+  // The changed files a built-in scanner may be handed: no link, nothing
+  // outside the repository (adapters/read.ts, isScannerInput). The settings
+  // and suppression checks below still read every changed path, through
+  // their own checks.
+  // A refused file a scanner would have checked is named in its reason.
+  const { inputs, refused } = scannerInputs(args.repoDir, args.changedPaths);
   const choices = new Map(
-    selectScanners({ repoDir: args.repoDir, paths: args.changedPaths, config: args.config, facts }).map((c) => [c.scanner, c]),
+    selectScanners({ repoDir: args.repoDir, paths: inputs, config: args.config, facts }).map((c) => [c.scanner, c]),
   );
   const builtins = ADAPTERS.filter((a) => selected(a.source)).map((adapter) =>
-    guard(adapter.source, () => runBuiltin(adapter, choices.get(adapter.source)!, facts, args)),
+    guard(adapter.source, async () => {
+      const outcome = await runBuiltin(adapter, choices.get(adapter.source)!, facts, { ...args, changedPaths: inputs });
+      const held = refused.size === 0 || outcome.summary.status === "disabled" ? [] : adapter.files([...refused.keys()], facts);
+      if (held.length === 0) return outcome;
+      const named = held.map((p) => `${p}: ${refused.get(p)}`).join("; ");
+      return { ...outcome, summary: { ...outcome.summary, reason: outcome.summary.reason ? `${named}; ${outcome.summary.reason}` : named } };
+    }),
   );
   const customs = (args.custom ?? [])
     .filter((c) => selected(c.source))
