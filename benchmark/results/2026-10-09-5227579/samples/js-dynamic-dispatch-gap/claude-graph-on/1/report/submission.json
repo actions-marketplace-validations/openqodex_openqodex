@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "change_id": "eab11e18f842",
+  "summary": "onSave is now async. It writes a snapshot of the store to data/notes.json after each save.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Async onSave breaks the synchronous dispatch caller",
+      "problem": "onSave now returns a Promise, and dispatch in src/router.js:7 returns that Promise unchanged. The request handler in src/main.js:9 passes the Promise straight to res.end, which accepts only a string or a Buffer.",
+      "consequence": "Node throws ERR_INVALID_ARG_TYPE inside the request handler on every POST /save request. That uncaught exception crashes the server process.",
+      "fix": "Make dispatch async and have the request handler await it. Alternatively, keep onSave synchronous and run the snapshot write as a separate, handled task.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.8,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Snapshot write rejection is never handled",
+      "problem": "No caller awaits the Promise from onSave or attaches a catch handler to it. writeFile rejects when the data directory is missing or cannot be written.",
+      "consequence": "A failed snapshot write becomes an unhandled rejection, and Node exits the server process on unhandled rejections by default.",
+      "fix": "Await dispatch in the request handler and catch errors there. The catch block should answer with an error status.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "New snapshot write has no covering test",
+      "problem": "The change adds a file write and an async return to onSave. No test in the repository exercises onSave.",
+      "consequence": "Regressions in the save path, like the broken caller above, reach production unnoticed.",
+      "fix": "Add a test that calls dispatch with the save action and checks both the response and the snapshot file.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

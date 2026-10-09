@@ -255,6 +255,38 @@ What it showed:
 - The reviewer found the new `express-route-param` bug by reading the route file, which the brief lists as a file that imports the changed handler; the brief does not yet say which route the handler serves.
 - The three misses are minor: two Dockerfile issues in the demo repository the reviewer dropped as harmless (as in the first run), and the list items without keys in the Next.js case, a candidate the reviewer dropped.
 
+## Code graph wave 1: phases 2, 3, 4a and 4b merged
+
+`benchmark/results/2026-10-09-5227579`: build `5227579` of the `graph-wave-1` branch (openqodex 0.10.0 with phases 2, 3, 4a and 4b merged), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5` pinned by `--model`, graph on, one repeat: 17 reviews, all complete, none failed. The first run's graph-on reviews are scored against this run's specs in `baseline-752b77f-score-cases.json` in this run's folder; its Rails numbers do not compare, since that case's code changed after it ran. Each phase column is that phase's own run as its section above gives it, scored with its own specs and cases.
+
+| Measure (graph on) | First run `752b77f`, 3 repeats, 14 cases | Phase 2 `ac9cdae`, 15 cases | Phase 3 `95efb19`, 14 cases | Phase 4a `602a140`, 15 cases | Phase 4b `881318b`, 15 cases | Wave 1 `5227579`, 17 cases |
+|---|---|---|---|---|---|---|
+| Planted bugs found | 100/111 (90%) | 33/38 (87%) | 34/37 (92%) | 34/38 (89%) | 35/38 (92%) | 37/40 (93%) |
+| critical | 33/36 | 12/12 | 12/12 | 13/13 | 12/12 | 13/13 |
+| major | 57/57 | 20/20 | 19/19 | 19/19 | 20/20 | 20/21 |
+| minor | 10/18 | 1/6 | 3/6 | 2/6 | 3/6 | 4/6 |
+| Findings that are planted bugs | 100/100 (100%) | 33/33 (100%) | 34/36 (94%) | 34/34 (100%) | 35/35 (100%) | 37/39 (95%) |
+| False findings | 0 | 0 | 2 | 0 | 0 | 1 |
+| Clean changes with no finding | 6/6 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 7/7 | 5/5 | 5/5 | 5/5 | 7/7 |
+| Graph gaps disclosed in the brief | 3/6 | 3/3 | 1/2 | 1/2 | 1/2 | 3/3 |
+| Briefs with a framework table | none | 0/15 | 0/14 | 3/15 | 0/15 | 8/17 |
+| `django-renamed-view` found | not in the run | not in the run | not in the run | 1/1 | not in the run | 1/1 |
+| `express-route-param` found | not in the run | not in the run | not in the run | not in the run | 1/1 | 1/1 |
+| Time per review, mean | 25 s | 34 s | 52 s | 28 s | 27 s | 26 s |
+| Reviewer turns per review, mean | 3.9 | not given | 5.9 | 4.1 | 4.2 | 4.3 |
+| Cost per review, mean | $0.11 | $0.11 | $0.37 | $0.11 | $0.12 | $0.11 |
+
+What it showed:
+
+- The framework line moved. Eight of the 17 briefs carry a table of framework entries, against three in phase 4a's run and none in phase 4b's, whose plugins reached the brief only once 4a's lines were merged: the Django and Rails cases, both Express cases, the Go and Next.js cases, and `suppression-comments`.
+- In `express-route-param` the brief now lists the route `GET /users/:id` declared at `src/routes/users.js:7`, handled by `getUser` (certain), so the brief itself shows that the route names the parameter `id`. Phase 4b's brief listed no route. The reviewer found the bug in both runs, and read `src/routes/users.js` in both, so this run does not show that the table changed the outcome.
+- In `django-renamed-view` the brief lists the route `ANY orders/<int:pk>/`, named `orders:detail`, as having no handler now, as in phase 4a's run, and the review found the bug, as in that run.
+- Phase 2's lines hold after the merge: every graph gap the specs check is disclosed (3 of 3) and every broken caller is listed (7 of 7).
+- The three misses: two Dockerfile issues in the demo repository (every run misses some of these), and the Decimal times float in `django-model-view`, which the reviewer reported one line off the planted lines (a near miss by the scoring rules, not a hit).
+- The false finding is a minor one in `express-admin-routes`: the purge reply reports the requested count as removed. It follows from the planted unawaited `forEach` two lines above it; the specs do not list it, so it counts false.
+- Time, turns and cost per review match the first run's.
+
 ## Claims cite a run
 
 A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a saved benchmark run: the results folder, the score file it quotes (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no saved run backs is not written.

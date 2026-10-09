@@ -1,0 +1,160 @@
+{
+  "candidates": [
+    {
+      "source": "oxlint",
+      "ruleId": "react-hooks/exhaustive-deps",
+      "filePath": "app/search/page.tsx",
+      "lineStart": 15,
+      "lineEnd": 15,
+      "severity": "medium",
+      "message": "react-hooks/exhaustive-deps: React Hook useEffect contains a call to setState. Without a list of dependencies, this can lead to an infinite chain of updates.",
+      "reference": "https://oxc.rs/docs/guide/usage/linter/rules/react/exhaustive-deps.html",
+      "id": "c1",
+      "token": "oxlint:react-hooks/exhaustive-deps",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "oxlint",
+      "ruleId": "react/jsx-key",
+      "filePath": "app/search/page.tsx",
+      "lineStart": 23,
+      "lineEnd": 23,
+      "severity": "medium",
+      "message": "react/jsx-key: Missing \"key\" prop for element in iterator.",
+      "reference": "https://oxc.rs/docs/guide/usage/linter/rules/react/jsx-key.html",
+      "id": "c2",
+      "token": "oxlint:react/jsx-key",
+      "reviewSeverity": "minor"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 4361,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 91,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 62,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [],
+  "projects": [
+    {
+      "root": "",
+      "frameworks": [
+        "nextjs",
+        "react"
+      ]
+    }
+  ]
+}

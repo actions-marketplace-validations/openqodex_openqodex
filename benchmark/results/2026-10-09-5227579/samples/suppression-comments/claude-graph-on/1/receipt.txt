@@ -1,0 +1,8 @@
+Passed with warnings: 3 findings (2 critical, 1 minor)
+Change 0d314adcfe16 against HEAD, 3 files, +18 -0
+Summary: Adds a thumbnail helper that runs ImageMagick convert through a shell, and a /calc endpoint that evaluates an expression from the query string.
+1. Critical security: Request query evaluated as JavaScript (web/server.js:12)
+2. Critical security: Upload name interpolated into a shell command (tools/thumbs.py:9)
+3. Minor maintainability: New behaviour has no covering test (tools/thumbs.py:6-9)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

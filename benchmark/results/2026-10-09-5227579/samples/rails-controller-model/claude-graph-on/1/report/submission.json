@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "change_id": "4dd55d237fe9",
+  "summary": "Adds an email search filter to the users index, a self-service profile update, an unguarded user delete, and a welcome email callback on save.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "SQL injection in email search",
+      "problem": "The index action interpolates params[:q] directly into the where SQL fragment. A quote in q breaks out of the LIKE literal.",
+      "consequence": "Any authenticated user can run arbitrary SQL against the users table. That user can read api_token values or change rows.",
+      "fix": "Pass q as a bound parameter and escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Destroy action exempted from admin check",
+      "problem": "The change adds destroy to the require_admin except list. The destroy action then deletes any user by id without an ownership check.",
+      "consequence": "Any authenticated user can delete every other account, including admins.",
+      "fix": "Keep destroy behind require_admin by removing it from the except list.",
+      "suggested_change": "  before_action :require_admin, except: [:index, :show, :profile]",
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c2"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Mass assignment of all user attributes in profile",
+      "problem": "The profile action permits every user param without a whitelist, so it accepts every column. A user can set admin and api_token on their own record.",
+      "consequence": "Any authenticated user can grant themselves admin rights. That user then gains access to all admin actions.",
+      "fix": "Permit only the fields a user may edit, such as email.",
+      "suggested_change": "    @current_user.update!(params.require(:user).permit(:email))",
+      "source": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "problem": "The User model runs send_welcome_email after every save, including updates. Each profile update and token change sends another welcome email.",
+      "consequence": "Existing users receive repeated welcome emails on every update. Users and mail deliverability suffer.",
+      "fix": "Run the callback only after the record is created.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 15,
+      "line_end": 23,
+      "title": "New controller actions have no tests",
+      "problem": "The repository has no test files covering the new profile and destroy actions or the search filter. The welcome email callback is also untested.",
+      "consequence": "Authorization and injection regressions in these actions can ship unnoticed.",
+      "fix": "Add request tests for search, profile, and destroy, including non-admin access.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

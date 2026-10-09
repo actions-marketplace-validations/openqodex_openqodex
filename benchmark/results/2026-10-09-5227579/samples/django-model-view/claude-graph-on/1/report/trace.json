@@ -1,0 +1,19 @@
+[
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "orders/migrations/0001_initial.py",
+    "inside": true,
+    "range": [
+      1,
+      33
+    ],
+    "ok": true
+  }
+]
