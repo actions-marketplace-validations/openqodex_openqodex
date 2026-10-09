@@ -474,7 +474,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
           }
           if (to.t === "const") return { kind: "rack", target: to.v };
           if (to.t === "call" && to.v === "redirect") return { kind: "redirect" };
-          return { kind: "dynamic", note: "the route target is computed" };
+          return { kind: "dynamic", note: "the route target is computed, or a string that is not controller#action" };
         }
         if (isDyn(o.controller) || isDyn(o.action)) return { kind: "dynamic", note: "the route's controller or action is computed" };
         // The route's own options win, then its `defaults:`, then the

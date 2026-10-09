@@ -12,7 +12,8 @@ import { RULES, detectDjango, resolveDjango } from "./resolve.js";
 // 5: 1-based columns, as the language facts.
 // 6: every class attribute built by a named call is a field candidate.
 // 7: a literal is kept only where resolve reads its value.
-const VERSION = 7;
+// 8: a kept literal is bounded, with key-shaped text redacted.
+const VERSION = 8;
 const SUPPORTED = "Django 3.2 to 5.1, Django REST framework routers 3.x";
 
 // Corpus case names are relative to packages/graph/corpus/frameworks/django/.

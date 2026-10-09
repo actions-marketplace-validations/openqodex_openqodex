@@ -59,7 +59,57 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+// A key-shaped token where the plugins do read the value (a route path
+// segment, a Rails `to:`, a test request path), and the same token behind
+// a query with no "=", a fragment and percent-encoding.
+const T = `sk_live_${randomBytes(16).toString("hex")}`;
+const ENCODED = [...T].map((c) => `%${c.charCodeAt(0).toString(16)}`).join("");
+const read: Record<string, string> = {
+  "py/requirements.txt": "Django==5.0\n",
+  "py/manage.py": 'import os\n\nos.environ.setdefault("DJANGO_SETTINGS_MODULE", "mysite.settings")\n',
+  "py/mysite/__init__.py": "",
+  "py/mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n',
+  "py/mysite/urls.py": `from django.urls import path\n\nfrom mysite import views\n\nurlpatterns = [\n    path("hooks/${T}/", views.hook, name="hook"),\n    path("enc/${ENCODED}/", views.hook),\n]\n`,
+  "py/mysite/views.py": "def hook(request):\n    return None\n",
+  "py/mysite/tests.py": `from django.test import TestCase\n\n\nclass HookTests(TestCase):\n    def test_hook(self):\n        self.client.post("/hooks/${T}/")\n        self.client.get("/x/?${T}")\n        self.client.get("/x/#${T}")\n        self.client.get("/enc/${ENCODED}/")\n`,
+  "rb/Gemfile": 'source "https://rubygems.org"\ngem "rails", "~> 7.1"\n',
+  "rb/config/application.rb": "module Shop\n  class Application < Rails::Application\n  end\nend\n",
+  "rb/config/routes.rb": `Rails.application.routes.draw do\n  post "/hooks/${T}", to: "hooks#create"\n  get "/pay", to: "${T}"\n  get "/pay2", to: "hooks#${T}"\n  get "/enc/${ENCODED}", to: "hooks#create"\nend\n`,
+  "rb/app/controllers/hooks_controller.rb": "class HooksController < ApplicationController\n  def create\n    head :ok\n  end\nend\n",
+  "rb/spec/requests/hooks_spec.rb": `require "rails_helper"\n\nRSpec.describe HooksController, type: :request do\n  it "takes a hook" do\n    post "/hooks/${T}"\n    get "/x?${T}"\n    get "/x#${T}"\n    get "/enc/${ENCODED}"\n  end\nend\n`,
+};
+
 describe("the Django and Rails plugins on a repository with a key written in many places", () => {
+  it("copy a key inside a route path, a Rails to: or a test request into no facts file, no packet and no brief, and still resolve the route", async () => {
+    const home = makeHome();
+    const root = makeRepo(read);
+    commitAll(root);
+    writeFiles(root, {
+      "py/mysite/views.py": "def hook(request):\n    return 1\n",
+      "rb/app/controllers/hooks_controller.rb": (read["rb/app/controllers/hooks_controller.rb"] as string).replace("head :ok", "head :no_content"),
+    });
+    const opened = await openStore(root, { home });
+    if (!opened.ok) throw new Error(opened.reason);
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const graph = await buildGraph({ repoRoot: root, store: opened.store, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const impact = detectImpact(graph, change);
+    const packet = await writePacket({ root, repoRoot: root, graph, impact, baseSha: change.baseSha, secrets: [] });
+    impact.packet = packet.dir;
+    const brief = renderImpactBlock(impact);
+
+    const holding = (dir: string) => walk(dir).filter((f) => { const t = readFileSync(f, "utf8"); return t.includes(T) || t.includes(ENCODED); }).map((f) => f.slice(root.length + 1));
+    expect(holding(join(root, ".openqodex"))).toEqual([]);
+    expect(brief.includes(T) || brief.includes(ENCODED)).toBe(false);
+
+    // The routes still resolve: each is registered and bound to its handler.
+    const at = (site: string) => (graph.frameworks?.entities ?? []).find((e): e is Registration => e.kind === "registration" && `${e.site.file}:${e.site.line}` === site);
+    expect(at("py/mysite/urls.py:6")?.handler.status).toBe("bound");
+    expect(at("py/mysite/urls.py:6")?.pattern).toBe("hooks/[redacted]/");
+    expect(at("rb/config/routes.rb:2")?.handler.status).toBe("bound");
+    expect(at("rb/config/routes.rb:2")?.pattern).toBe("/hooks/[redacted]");
+    expect(brief).toContain("hooks/[redacted]/");
+  }, 120_000);
+
   it("copy the key into no facts file, no packet and no brief, and still build the routes", async () => {
     const home = makeHome();
     const root = makeRepo(files);

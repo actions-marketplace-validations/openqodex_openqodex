@@ -16,13 +16,14 @@
 //   requests (`get "/posts"`, `visit "/x"`) and route helper names
 //   (`posts_path`, `post_url`).
 // Literal values only: a computed value is recorded as computed, never
-// guessed. Values of config keys and ENV entries are never recorded. A
-// route keeps only the options the resolve step reads, and a string only
-// in the form it reads it (no query string, no URL user); a test request
-// keeps its path alone.
+// guessed. Values of config keys and ENV entries are never recorded. Every
+// string kept is bounded, with key-shaped text redacted (shared/kept.ts). A
+// route keeps only the options the resolve step reads, a path with no
+// scheme, host, query string or fragment, and a target only when it is
+// controller#action; a test request keeps its path alone.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
-import { requestTarget, routeText } from "../shared/kept.js";
+import { keptText, pathText } from "../shared/kept.js";
 
 // A literal argument or option value as written.
 export type Lit =
@@ -63,12 +64,38 @@ export type RouteFact = FrameworkFactBase & {
 const ROUTE_OPTIONS = new Set(["action", "as", "at", "concerns", "controller", "defaults", "except", "module", "on", "only", "param", "path", "shallow", "shallow_path", "shallow_prefix", "to", "via"]);
 const DEFAULT_KEYS = new Set(["controller", "action"]);
 
-// A route argument or option as the resolve step reads it: a string as a
-// route path, with no query string or URL user; a hash (`defaults:`) with
-// only the keys it reads; anything else as it is.
-function routeLit(x: Lit): Lit {
-  if (x.t === "str") return { t: "str", v: routeText(x.v) };
-  if (x.t === "hash") return { t: "hash", v: Object.fromEntries(Object.entries(x.v).filter(([k]) => DEFAULT_KEYS.has(k)).map(([k, v]) => [k, routeLit(v)])) };
+// Route options and arguments the resolve step reads as a path.
+const PATH_OPTIONS = new Set(["path", "at", "shallow_path"]);
+
+// A route path as the resolve step reads it (shared/kept.ts `pathText`);
+// computed when it hides an encoded key.
+function pathLit(x: Lit): Lit {
+  if (x.t !== "str") return x;
+  const v = pathText(x.v);
+  return v === null ? { t: "dyn" } : { t: "str", v };
+}
+
+// A route target the resolve step reads: a string only when it is
+// controller#action (`admin/posts#index`), anything else as it is. A string
+// of another shape is not kept: it reads as computed.
+function targetLit(x: Lit): Lit {
+  if (x.t !== "str") return x;
+  const hash = x.v.indexOf("#");
+  if (hash <= 0 || hash === x.v.length - 1 || hash !== x.v.lastIndexOf("#")) return { t: "dyn" };
+  for (let i = 0; i < x.v.length; i++) {
+    const c = x.v.charCodeAt(i);
+    const ok = (c >= 48 && c <= 57) || ((c | 32) >= 97 && (c | 32) <= 122) || c === 95 || c === 35 || (i < hash && (c === 47 || c === 58));
+    if (!ok) return { t: "dyn" };
+  }
+  return x;
+}
+
+// An option as the resolve step reads it: a path, a target, a `defaults:`
+// hash with only the keys it reads, or a name or list as litOf kept it.
+function optionLit(key: string, x: Lit): Lit {
+  if (PATH_OPTIONS.has(key)) return pathLit(x);
+  if (key === "to") return targetLit(x);
+  if (x.t === "hash") return { t: "hash", v: Object.fromEntries(Object.entries(x.v).filter(([k]) => DEFAULT_KEYS.has(k))) };
   return x;
 }
 
@@ -239,6 +266,10 @@ function stringValue(n: Node): string | null {
   return out;
 }
 
+// A string or symbol as a fact keeps it: bounded, key-shaped text redacted,
+// null when it hides an encoded key (shared/kept.ts).
+const kept = (v: string | null): string | null => (v === null ? null : keptText(v));
+
 export function litOf(n: Node | null | undefined, depth = 0): Lit {
   if (!n) return { t: "dyn" };
   switch (n.type) {
@@ -255,13 +286,15 @@ export function litOf(n: Node | null | undefined, depth = 0): Lit {
       return { t: "hash", v };
     }
     case "string": {
-      const v = stringValue(n);
+      const v = kept(stringValue(n));
       return v === null ? { t: "dyn" } : { t: "str", v };
     }
-    case "simple_symbol":
-      return { t: "sym", v: n.text.slice(1) };
+    case "simple_symbol": {
+      const v = kept(n.text.slice(1));
+      return v === null ? { t: "dyn" } : { t: "sym", v };
+    }
     case "delimited_symbol": {
-      const v = stringValue(n);
+      const v = kept(stringValue(n));
       return v === null ? { t: "dyn" } : { t: "sym", v };
     }
     case "hash_key_symbol":
@@ -283,7 +316,7 @@ export function litOf(n: Node | null | undefined, depth = 0): Lit {
         const x = litOf(c);
         if (x.t === "str" || x.t === "sym") v.push(x.v);
         else if (c.type === "bare_string" || c.type === "bare_symbol") {
-          const s = stringValue(c);
+          const s = kept(stringValue(c));
           if (s === null) return { t: "dyn" };
           v.push(s);
         } else return { t: "dyn" };
@@ -444,9 +477,11 @@ export function railsFacts(root: Node): RailsFact[] {
           draw,
           parent,
           call: m.text,
-          args: args.map((a) => routeLit(litOf(a))),
-          opts: Object.fromEntries([...opts].filter(([k]) => ROUTE_OPTIONS.has(k)).map(([k, v]) => [k, routeLit(litOf(v))])),
-          pair: pair ? [routeLit(litOf(pair[0])), routeLit(litOf(pair[1]))] : null,
+          // `root "pages#home"` names a target; every other string argument is a path or a name.
+          args: args.map((a) => (m.text === "root" ? targetLit(litOf(a)) : pathLit(litOf(a)))),
+          opts: Object.fromEntries([...opts].filter(([k]) => ROUTE_OPTIONS.has(k)).map(([k, v]) => [k, optionLit(k, litOf(v))])),
+          // `"/x" => "c#a"`, or `Engine => "/at"` for a mount.
+          pair: pair ? [pathLit(litOf(pair[0])), m.text === "mount" ? pathLit(litOf(pair[1])) : targetLit(litOf(pair[1]))] : null,
           block: block !== null,
         };
         const index = routeFacts.length;
@@ -608,8 +643,7 @@ export function railsFacts(root: Node): RailsFact[] {
         const first = argsOf(n).args[0];
         if (first) {
           const helper = (first.type === "identifier" || (first.type === "call" && !first.childForFieldName("receiver"))) && helperName(first.type === "identifier" ? first.text : (first.childForFieldName("method")?.text ?? "")) !== null;
-          const path = litOf(first);
-          if (!helper) out.push({ kind: "request", line: line(n), column: col(n), verb: name === "visit" ? "GET" : name.toUpperCase(), path: path.t === "str" ? { t: "str", v: requestTarget(path.v) } : path });
+          if (!helper) out.push({ kind: "request", line: line(n), column: col(n), verb: name === "visit" ? "GET" : name.toUpperCase(), path: pathLit(litOf(first)) });
         }
       }
       if (name === "describe" || name === "context") {

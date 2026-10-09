@@ -12,7 +12,8 @@ import { underscore } from "./inflect.js";
 export const PLUGIN = "rails";
 // 2: 1-based columns, as the language facts.
 // 3: a route keeps only the options it reads, and no query string or URL user.
-export const VERSION = 3;
+// 4: a kept literal is bounded, with key-shaped text redacted; a target only as controller#action.
+export const VERSION = 4;
 
 export type App = {
   id: string;

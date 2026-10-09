@@ -6,7 +6,7 @@
 // Django's own API.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkEdgeKind } from "../plugin.js";
-import { dottedText, requestTarget, routeText } from "../shared/kept.js";
+import { dottedText, keptText, pathText } from "../shared/kept.js";
 import { DYNAMIC, dotted, isLit, lineOf, pyArgs, pyString, pyStrings } from "../shared/literals.js";
 import type { Lit } from "../shared/literals.js";
 
@@ -78,6 +78,11 @@ const last = (r: Ref | null): string | null => (r && r.length > 0 ? (r[r.length 
 // A literal resolve reads as a dotted name (a module path, a model or a
 // field): kept when it is one, computed otherwise.
 const moduleLit = (v: Lit): Lit => (typeof v === "string" ? (dottedText(v) ?? DYNAMIC) : v);
+// A literal resolve reads by value (a route, a route or namespace name, a
+// template, a table): bounded, with key-shaped text redacted, or computed
+// when it hides an encoded key (shared/kept.ts).
+const keep = (v: Lit): Lit => (typeof v === "string" ? (keptText(v) ?? DYNAMIC) : v);
+const keepPath = (v: Lit): Lit => (typeof v === "string" ? (pathText(v) ?? DYNAMIC) : v);
 const calleeOf = (call: Node): Ref | null => dotted(call.childForFieldName("function"));
 
 // The names the file's own imports bind, to what they import: `show` to
@@ -213,7 +218,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (fn && tailOf(fn) === "include") {
         const { positional, keyword } = pyArgs(node);
         const arg = positional[0] ?? keyword.get("arg");
-        const ns = keyword.has("namespace") ? pyString(keyword.get("namespace")) : null;
+        const ns = keyword.has("namespace") ? keep(pyString(keyword.get("namespace"))) : null;
         if (arg?.type === "list") {
           const parent = entryIndex();
           for (const item of arg.namedChildren) {
@@ -251,7 +256,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       return;
     }
     const at = lineOf(call);
-    const fact = { kind: "url", ...at, list, parent, seq, fn, route: pyString(routeNode), view: { t: "other" }, name: keyword.has("name") ? pyString(keyword.get("name")) : null, ns: null } as DjangoFact & { kind: "url" };
+    const fact = { kind: "url", ...at, list, parent, seq, fn, route: keep(pyString(routeNode)), view: { t: "other" }, name: keyword.has("name") ? keep(pyString(keyword.get("name"))) : null, ns: null } as DjangoFact & { kind: "url" };
     out.push(fact);
     const index = out.length - 1;
     const v = view(positional[1] ?? keyword.get("view"), () => index, list, seq);
@@ -296,7 +301,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (!name || !right) continue;
       const at = lineOf(asg);
       const augmented = asg.type === "augmented_assignment";
-      if (name === "app_name") out.push({ kind: "app_name", ...at, value: pyString(right) });
+      if (name === "app_name") out.push({ kind: "app_name", ...at, value: keep(pyString(right)) });
       // urlpatterns = [...]; urlpatterns += [...]; urlpatterns = a + [...]; urlpatterns += router.urls
       const parts = right.type === "binary_operator" ? [right.childForFieldName("left"), right.childForFieldName("right")] : [right];
       let sawList = false;
@@ -403,7 +408,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (stmt.type === "class_definition" && stmt.childForFieldName("name")?.text === "Meta") {
         for (const m of stmt.childForFieldName("body")?.namedChildren ?? []) {
           const a = assignmentOf(m);
-          if (a?.childForFieldName("left")?.text === "db_table") out.push({ kind: "db_table", ...lineOf(a), owner: name, table: pyString(a.childForFieldName("right")) });
+          if (a?.childForFieldName("left")?.text === "db_table") out.push({ kind: "db_table", ...lineOf(a), owner: name, table: keep(pyString(a.childForFieldName("right"))) });
         }
         continue;
       }
@@ -414,7 +419,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (left?.type !== "identifier" || !right) continue;
       const at = lineOf(asg);
       if (left.text === "template_name") {
-        out.push({ kind: "template_attr", ...at, owner: name, template: pyString(right) });
+        out.push({ kind: "template_attr", ...at, owner: name, template: keep(pyString(right)) });
         continue;
       }
       if (migration && left.text === "operations" && right.type !== "list") out.push({ kind: "unread", ...at, list: null, seq: 0, cond: false, what: "the migration's operations are built by code the graph does not run", cause: "dynamic" });
@@ -487,7 +492,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const at = lineOf(d);
       if (ref.length === 2 && (tail === "simple_tag" || tail === "filter" || tail === "inclusion_tag" || tail === "tag")) {
         const args = call ? pyArgs(call) : { positional: [] as Node[], keyword: new Map<string, Node>() };
-        const template = tail === "inclusion_tag" ? (args.keyword.has("filename") ? pyString(args.keyword.get("filename")) : args.positional[0] ? pyString(args.positional[0]) : null) : null;
+        const template = tail === "inclusion_tag" ? keep(args.keyword.has("filename") ? pyString(args.keyword.get("filename")) : args.positional[0] ? pyString(args.positional[0]) : null) : null;
         out.push({ kind: "tag", ...at, lib: ref[0] as string, decorator: tail, fn: fnName, template });
       }
       if (tail === "receiver" && call) {
@@ -536,7 +541,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
         const items = pyStrings(node);
         template = items && items.length > 0 ? (items[0] as string) : DYNAMIC;
       } else if (node) template = pyString(node);
-      out.push({ kind: "render", ...at, fn, template });
+      out.push({ kind: "render", ...at, fn, template: keep(template) });
       continue;
     }
     if (tail === "connect" && fn.length >= 2) {
@@ -547,21 +552,20 @@ export function djangoFacts(root: Node): DjangoFact[] {
     if (tail === "register" && fn.length === 2) {
       const { positional, keyword } = pyArgs(call);
       const prefix = positional[0] ?? keyword.get("prefix");
-      const p = prefix ? pyString(prefix) : DYNAMIC;
-      out.push({ kind: "register", ...at, router: fn[0] as string, prefix: typeof p === "string" ? routeText(p) : p, view: dotted(positional[1] ?? keyword.get("viewset")), basename: keyword.has("basename") ? pyString(keyword.get("basename")) : keyword.has("base_name") ? pyString(keyword.get("base_name")) : null });
+      out.push({ kind: "register", ...at, router: fn[0] as string, prefix: prefix ? keepPath(pyString(prefix)) : DYNAMIC, view: dotted(positional[1] ?? keyword.get("viewset")), basename: keep(keyword.has("basename") ? pyString(keyword.get("basename")) : keyword.has("base_name") ? pyString(keyword.get("base_name")) : null) });
       continue;
     }
     if (tail === "reverse" || tail === "reverse_lazy" || tail === "resolve_url") {
       const { positional, keyword } = pyArgs(call);
       const node = positional[0] ?? keyword.get("viewname") ?? keyword.get("to");
-      if (node) out.push({ kind: "reverse", ...at, fn, name: pyString(node) });
+      if (node) out.push({ kind: "reverse", ...at, fn, name: keep(pyString(node)) });
       continue;
     }
     if (tail === "getattr" && fn.length === 1) {
       const { positional } = pyArgs(call);
       const base = dotted(positional[0]);
       const key = pyString(positional[1]);
-      if (base && last(base) === "settings" && typeof key === "string" && SETTING.test(key)) out.push({ kind: "setting_read", ...at, base, key });
+      if (base && last(base) === "settings" && typeof key === "string" && SETTING.test(key) && keptText(key) === key) out.push({ kind: "setting_read", ...at, base, key });
       else if (base && last(base) === "settings" && typeof key !== "string") out.push({ kind: "unread", ...at, list: null, seq: 0, cond: false, what: "a settings read whose key is computed", cause: "dynamic", affects: ["reads_config"] });
       continue;
     }
@@ -575,8 +579,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       // A path from reverse() is linked by the route's name; any other
       // value that is not a literal is computed.
       const fromReverse = node.type === "call" && REVERSE_NAMES.has(tailOf(calleeOf(node)) ?? "");
-      const lit = fromReverse ? null : pyString(node);
-      const path = typeof lit === "string" ? requestTarget(lit) : lit;
+      const path = fromReverse ? null : keepPath(pyString(node));
       out.push({ kind: "client", ...at, recv, method: tail, path });
     }
   }
