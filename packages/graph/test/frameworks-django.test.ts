@@ -236,4 +236,16 @@ describe("the Django plugin on hostile input", () => {
     const registrations = data?.entities.filter((e) => e.kind === "registration").length ?? 0;
     expect(registrations).toBeLessThanOrEqual(10_000);
   }, 120_000);
+
+  it("resolves a models module of 25,000 classes and one field, and settings reads nested deep, in under a second", async () => {
+    const models = `from django.db import models\n\n\nclass First(models.Model):\n    f = models.IntegerField()\n${Array.from({ length: 25_000 }, (_, i) => `class M${i}(models.Model): pass\n`).join("")}`;
+    const deep = `from django.conf import settings\n\n\ndef f():\n    return ${"(".repeat(200)}settings.KEY${")".repeat(200)}\n`;
+    const reads = `from django.conf import settings\n\n\ndef g():\n${Array.from({ length: 5_000 }, (_, i) => `    x${i} = settings.KEY_${i % 50}\n`).join("")}`;
+    const root = makeRepo({ "requirements.txt": "Django==5.0\n", "mysite/__init__.py": "", "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\nKEY = 1\n', "mysite/urls.py": "urlpatterns = []\n", "mysite/models.py": models, "mysite/deep.py": deep, "mysite/reads.py": reads });
+    commitAll(root);
+    const graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB, budgetMs: 120_000 });
+    expect(graph.frameworks?.plugins.find((p) => p.id === "django")?.status).toBe("ok");
+    expect(graph.frameworks?.roles.filter((r) => r.role === "model").length).toBe(25_001);
+    expect(graph.status.stages.frameworks ?? Number.POSITIVE_INFINITY).toBeLessThan(1000);
+  }, 120_000);
 });

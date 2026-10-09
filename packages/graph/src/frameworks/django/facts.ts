@@ -246,7 +246,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
   if (text.includes("@") && DECORATOR_WORDS.test(text)) kinds.push("decorated_definition");
   if (CALL_WORDS.test(text)) kinds.push("call");
   const settingsRead = /settings\.[A-Z]/.test(text);
-  if (settingsRead) kinds.push("attribute");
+  if (settingsRead) kinds.push("attribute", "assignment", "augmented_assignment");
   const found = new Map<string, Node[]>(kinds.map((k) => [k, []]));
   if (kinds.length > 0) for (const n of root.descendantsOfType(kinds)) found.get(n.type)?.push(n);
   const nodes = (kind: string): Node[] => found.get(kind) ?? [];
@@ -436,14 +436,20 @@ export function djangoFacts(root: Node): DjangoFact[] {
 
   // ---------- settings reads ----------
   if (settingsRead) {
+    // Assignment targets, from the same walk: asking a node for its parent
+    // descends from the root again, so a lookup per node is quadratic.
+    const targets = new Set<number>();
+    for (const a of [...nodes("assignment"), ...nodes("augmented_assignment")]) {
+      const left = a.childForFieldName("left");
+      if (left) targets.add(left.id);
+    }
     for (const attr of nodes("attribute")) {
       const key = attr.childForFieldName("attribute")?.text;
       if (!key || !SETTING.test(key)) continue;
       const base = dotted(attr.childForFieldName("object"));
       if (!base || last(base) !== "settings") continue;
       // Not the target of an assignment (settings are never written by code here).
-      const parent = attr.parent;
-      if (parent && (parent.type === "assignment" || parent.type === "augmented_assignment") && parent.childForFieldName("left")?.id === attr.id) continue;
+      if (targets.has(attr.id)) continue;
       out.push({ kind: "setting_read", ...lineOf(attr), base, key });
     }
   }

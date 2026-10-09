@@ -218,6 +218,20 @@ function symbolsOf(index: Index, file: string): FileSymbols {
   return fs;
 }
 
+// The symbol a definition of the language facts names: by its name and line, from a map built once per file.
+const atCache = new WeakMap<Index, Map<string, Map<string, GraphNode>>>();
+function symbolAt(index: Index, file: string, name: string, line: number): GraphNode | null {
+  let byFile = atCache.get(index);
+  if (!byFile) atCache.set(index, (byFile = new Map()));
+  let m = byFile.get(file);
+  if (!m) {
+    m = new Map();
+    for (const s of index.symbols(file)) if (!m.has(`${s.name}\0${s.startLine}`)) m.set(`${s.name}\0${s.startLine}`, s);
+    byFile.set(file, m);
+  }
+  return m.get(`${name}\0${line}`) ?? null;
+}
+
 function methodsOf(index: Index, cls: GraphNode): GraphNode[] {
   return symbolsOf(index, cls.file).methods.get(cls.name) ?? [];
 }
@@ -293,6 +307,36 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       byKind.set(file, kinds);
     }
     return (kinds.get(kind) ?? []) as Of<K>[];
+  };
+
+  // Facts of a kind grouped by the class that owns them, once per file.
+  const ownerCache = new Map<string, Map<string, (Of<"field"> | Of<"db_table">)[]>>();
+  function byOwner(file: string, kind: "field"): Map<string, Of<"field">[]>;
+  function byOwner(file: string, kind: "db_table"): Map<string, Of<"db_table">[]>;
+  function byOwner(file: string, kind: "field" | "db_table"): Map<string, (Of<"field"> | Of<"db_table">)[]> {
+    const k = `${kind}\0${file}`;
+    let m = ownerCache.get(k);
+    if (!m) {
+      m = new Map();
+      for (const f of factsOf(file, kind)) (m.get(f.owner) ?? m.set(f.owner, []).get(f.owner))?.push(f);
+      ownerCache.set(k, m);
+    }
+    return m;
+  }
+  // URL entries of a file by the list and the entry they sit in, once per file.
+  const entryCache = new Map<string, Map<string, { f: Of<"url">; i: number }[]>>();
+  const entriesOf = (file: string, list: string, parent: number): { f: Of<"url">; i: number }[] => {
+    let m = entryCache.get(file);
+    if (!m) {
+      m = new Map();
+      index.factsOf(file).forEach((f, i) => {
+        if (f.kind !== "url") return;
+        const k = `${f.list}\0${f.parent}`;
+        (m?.get(k) ?? m?.set(k, []).get(k))?.push({ f, i });
+      });
+      entryCache.set(file, m);
+    }
+    return m.get(`${list}\0${parent}`) ?? [];
   };
 
   // Registrations with the tokens of their composed path, for test requests.
@@ -447,8 +491,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       if (decl) out.gap({ site: siteOf(file, decl), scope, affects: ["handles", "mounts"], cause: "dynamic", name: "urlpatterns", note: "urlpatterns is built by code the graph does not run; its routes may be missing" });
       for (const r of factsOf(file, "urlrouter")) routerRegistrations(app, file, r.router[0] as string, prefix, via, namespaces);
     }
-    all.forEach((f, i) => {
-      if (f.kind !== "url" || f.list !== list || f.parent !== parent) return;
+    entriesOf(file, list, parent).forEach(({ f, i }) => {
       const site = siteOf(file, f);
       const steps = (walkSteps.get(app ?? "-") ?? 0) + 1;
       walkSteps.set(app ?? "-", steps);
@@ -622,8 +665,8 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     if (!facts) continue;
     for (const d of facts.defs) {
       if (d.kind !== "class" || d.bases.length === 0) continue;
-      const node = index.symbols(file).find((s) => s.kind === "class" && s.name === d.name && s.startLine === d.line);
-      if (!node) continue;
+      const node = symbolAt(index, file, d.name, d.line);
+      if (!node || node.kind !== "class") continue;
       candidates.push({ node, file, bases: d.bases.map((b) => [...(b.qualifier ? b.qualifier.split(".") : []), b.name]) });
     }
   }
@@ -677,7 +720,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const site: Site = { file: m.file, line: m.node.startLine, column: 0 };
     const app = appOf(m.file);
     out.role(m.node.id, "model", null, app, ev("role-base", m.tier, site, RULES.models, m.note ?? "the base class is a model by the resolver's convention"));
-    const table = factsOf(m.file, "db_table").find((t) => t.owner === m.node.name);
+    const table = byOwner(m.file, "db_table").get(m.node.name)?.[0];
     if (table && typeof table.table === "string") {
       const id = out.entity({ kind: "table", id: entityId(PLUGIN, app, "table", table.table), plugin: PLUGIN, app, name: table.table, site: siteOf(m.file, table), file: null, detail: null });
       out.edge({ from: m.node.id, to: id, kind: "maps_to", plugin: PLUGIN, app, evidence: ev("declaration", "certain", siteOf(m.file, table), RULES.models, null) });
@@ -686,7 +729,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       const id = out.entity({ kind: "table", id: entityId(PLUGIN, app, "table", name), plugin: PLUGIN, app, name, site: null, file: null, detail: "default" });
       out.edge({ from: m.node.id, to: id, kind: "maps_to", plugin: PLUGIN, app, evidence: ev("declaration", "likely", site, RULES.models, "the default table name: the app label taken from the folder name, then the model name in lower case") });
     } else out.gap({ site: siteOf(m.file, table), scope: { file: m.file }, affects: ["maps_to"], cause: "dynamic", name: "db_table", note: "the table name is computed" });
-    for (const f of factsOf(m.file, "field").filter((x) => x.owner === m.node.name)) {
+    for (const f of byOwner(m.file, "field").get(m.node.name) ?? []) {
       const fsite = siteOf(m.file, f);
       const id = out.entity({ kind: "model_field", id: entityId(PLUGIN, app, "model_field", `${m.node.id}.${f.name}`), plugin: PLUGIN, app, name: `${m.node.name}.${f.name}`, site: fsite, file: null, detail: show(f.ctor) });
       out.edge({ from: m.node.id, to: id, kind: "declares_field", plugin: PLUGIN, app, evidence: ev("declaration", "certain", fsite, RULES.models, null) });
@@ -883,7 +926,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     out.role(file, "test", "file", app, ev("role-path", "certain", site, RULES.tests, null));
     const facts = index.languageFacts(file);
     for (const d of facts?.defs ?? []) {
-      const node = index.symbols(file).find((s) => s.name === d.name && s.startLine === d.line);
+      const node = symbolAt(index, file, d.name, d.line);
       if (!node) continue;
       if (d.kind === "class" && (d.bases.some((b) => TEST_BASES.has(canonical(index, file, [...(b.qualifier ? b.qualifier.split(".") : []), b.name]) ?? "")) || d.name.startsWith("Test"))) out.role(node.id, "test", "class", app, ev("role-path", "certain", { file, line: d.line, column: d.column }, RULES.tests, null));
       else if ((d.kind === "function" || d.kind === "method") && d.name.startsWith("test")) out.role(node.id, "test", d.kind, app, ev("role-path", "certain", { file, line: d.line, column: d.column }, RULES.tests, null));
@@ -911,6 +954,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       const hits: Registration[] = [];
       let unmatchable = 0;
       for (const r of reachable) {
+        if (--budget.steps < 0) break;
         if (!r.methods.includes("*") && !r.methods.includes(method)) continue;
         const toks = patterns.get(r.id);
         if (!toks) {
