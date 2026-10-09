@@ -200,8 +200,32 @@ function withoutComments(text: string, hashComments: boolean): string {
 // are not.
 type ValueNode = { name: Node; recv: Receiver } | null;
 
-// At most this many type uses are read from one annotation.
-const MAX_TYPE_NAMES = 16;
+// An annotation is read with a stack, never by recursion (a union of many
+// members nests as deep as it has members), and at most this many of its
+// nodes are read; one larger is cut, and the cut is a gap of its file.
+const MAX_TYPE_NODES = 4096;
+let typeCuts = 0;
+
+// The nodes of an annotation, depth first, no more than MAX_TYPE_NODES.
+// `take` returns true for a node read whole (a type name): its children
+// are not visited.
+function typeNodes(node: Node | null, take: (n: Node) => boolean): void {
+  if (!node) return;
+  const stack: Node[] = [node];
+  let read = 0;
+  while (stack.length > 0) {
+    if (++read > MAX_TYPE_NODES) {
+      typeCuts++;
+      return;
+    }
+    const n = stack.pop() as Node;
+    if (take(n)) continue;
+    for (let i = n.namedChildCount - 1; i >= 0; i--) {
+      const c = n.namedChild(i);
+      if (c) stack.push(c);
+    }
+  }
+}
 
 class Ctx {
   defs: DefFact[] = [];
@@ -243,6 +267,7 @@ class Ctx {
     root.fnDecl = root;
     this.top = root;
     readingScope = root;
+    typeCuts = 0;
   }
 
   push(frame: Frame): Leave {
@@ -650,6 +675,7 @@ class Ctx {
       calls: this.calls,
       values,
       types: this.types,
+      ...(typeCuts > 0 ? { typeCuts } : {}),
       tables,
       imports: this.imports,
       exportsLocal: this.exportsLocal,
@@ -728,21 +754,23 @@ function jsTypeParams(node: Node): Map<string, TypeRef | null> | null {
   return out.size > 0 ? out : null;
 }
 
-// Every named type in an annotation (`Map<string, Repo[]>` names Repo),
-// at most MAX_TYPE_NAMES; type parameters and predefined types are not.
-function jsTypeNames(node: Node | null, out: TypeRef[] = [], depth = 0): TypeRef[] {
-  if (!node || out.length >= MAX_TYPE_NAMES || depth > 12) return out;
-  if (node.type === "type_identifier") {
-    if (typeParam(node.text) === undefined) out.push(typeRef({ name: node.text, qualifier: null, ...pos(node) }));
-    return out;
-  }
-  if (node.type === "nested_type_identifier") {
-    const name = node.childForFieldName("name");
-    const module = node.childForFieldName("module");
-    if (name && module) out.push(typeRef({ name: name.text, qualifier: module.text, ...pos(node) }));
-    return out;
-  }
-  for (const c of node.namedChildren) jsTypeNames(c, out, depth + 1);
+// Every named type in an annotation (`Map<string, Repo[]>` names Repo);
+// type parameters and predefined types are not.
+function jsTypeNames(node: Node | null): TypeRef[] {
+  const out: TypeRef[] = [];
+  typeNodes(node, (n) => {
+    if (n.type === "type_identifier") {
+      if (typeParam(n.text) === undefined) out.push(typeRef({ name: n.text, qualifier: null, ...pos(n) }));
+      return true;
+    }
+    if (n.type === "nested_type_identifier") {
+      const name = n.childForFieldName("name");
+      const module = n.childForFieldName("module");
+      if (name && module) out.push(typeRef({ name: name.text, qualifier: module.text, ...pos(n) }));
+      return true;
+    }
+    return false;
+  });
   return out;
 }
 
@@ -1500,15 +1528,15 @@ const PY_TYPES = new Set([
 ]);
 
 // Every named type in a Python annotation (`Optional[Repo]` names Optional
-// and Repo), at most MAX_TYPE_NAMES.
-function pyTypeNames(node: Node | null, out: TypeRef[] = [], depth = 0): TypeRef[] {
-  if (!node || out.length >= MAX_TYPE_NAMES || depth > 12) return out;
-  if (node.type === "identifier" || node.type === "attribute" || node.type === "string") {
-    const r = pyTypeRef(node);
+// and Repo).
+function pyTypeNames(node: Node | null): TypeRef[] {
+  const out: TypeRef[] = [];
+  typeNodes(node, (n) => {
+    if (n.type !== "identifier" && n.type !== "attribute" && n.type !== "string") return false;
+    const r = pyTypeRef(n);
     if (r) out.push(r);
-    return out;
-  }
-  for (const c of node.namedChildren) pyTypeNames(c, out, depth + 1);
+    return true;
+  });
   return out;
 }
 
@@ -1845,14 +1873,14 @@ const GO_TYPES = new Set([
 ]);
 
 // Every named type in a Go type (`map[string]*Repo` names Repo).
-function goTypeNames(node: Node | null, out: TypeRef[] = [], depth = 0): TypeRef[] {
-  if (!node || out.length >= MAX_TYPE_NAMES || depth > 12) return out;
-  if (node.type === "type_identifier" || node.type === "qualified_type") {
-    const r = goTypeRef(node);
+function goTypeNames(node: Node | null): TypeRef[] {
+  const out: TypeRef[] = [];
+  typeNodes(node, (n) => {
+    if (n.type !== "type_identifier" && n.type !== "qualified_type") return false;
+    const r = goTypeRef(n);
     if (r) out.push(r);
-    return out;
-  }
-  for (const c of node.namedChildren) goTypeNames(c, out, depth + 1);
+    return true;
+  });
   return out;
 }
 

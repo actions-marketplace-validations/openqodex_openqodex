@@ -172,6 +172,7 @@ export type FileFacts = {
   calls: CallFact[];
   values: ValueRef[];
   types: TypeUse[];
+  typeCuts?: number; // annotations too large to read whole: their types past the cut are not type uses
   tables: TableFact[];
   imports: ImportFact[];
   exportsLocal: { local: string; exported: string; line?: number }[]; // `export { a as b }` without a source

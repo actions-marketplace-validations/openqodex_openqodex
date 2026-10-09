@@ -198,6 +198,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
     isList(v.calls, isCall) &&
     isList(v.values, isValue) &&
     isList(v.types, isTypeUse) &&
+    (v.typeCuts === undefined || (isInt(v.typeCuts) && (v.typeCuts as number) > 0)) &&
     isList(v.tables, isTable, 20_000) &&
     isList(v.imports, isImport, 20_000) &&
     isList(v.exportsLocal, (e) => isObj(e) && isStr(e.local) && isStr(e.exported) && (e.line === undefined || isInt(e.line)), 20_000) &&

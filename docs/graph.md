@@ -59,7 +59,7 @@ A call no rule can bind is kept as an unknown with its cause, never dropped:
 - ambiguous: several definitions could be meant and nothing picks one.
 - budget: the time budget ran out before the file's calls were resolved.
 - export-chain-too-deep: the name is re-exported or aliased through more than 8 modules, and the graph stops following it there.
-- unsupported-rule: the evidence leads somewhere no rule binds through, such as a `file:` dependency into a folder of the repository that is no workspace package, or a call through a TypeScript interface, which any object of its shape may answer without declaring `implements`.
+- unsupported-rule: the evidence leads somewhere no rule binds through, such as a `file:` dependency into a folder of the repository that is no workspace package, or a call through a TypeScript interface, which any object of its shape may answer without declaring `implements`, or a type annotation too large to read whole (over 4,096 parts), whose types past the cut are not recorded as type uses.
 - fan-out-capped: a call through an interface or a base type may run more than 32 implementations or overrides; the ones past the first 32 in path order are not listed.
 - metadata-unreadable: a manifest, lockfile or tsconfig the graph could not read, parse or follow; the note names the file and what failed.
 

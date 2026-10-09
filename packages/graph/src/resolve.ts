@@ -1989,6 +1989,9 @@ export function createWorld(input: ResolveInput): World {
         for (const to of v.ids) if (to !== from) addEdge(from, to, "uses_value", siteOf(path, ref.line, ref.column, v.ev, "value-ref"));
       });
       // Uses as a type: a class, interface or type named in an annotation, a cast or a type test.
+      if (f.typeCuts) {
+        unknowns.push({ file: path, line: 0, column: 0, name: "", cause: "unsupported-rule", shape: "other", caller: path, scope: "file", note: `${f.typeCuts} type ${f.typeCuts === 1 ? "annotation is" : "annotations are"} too large to read whole (over 4,096 parts); the types past the cut are not recorded as type uses` });
+      }
       for (const t of f.types) {
         const k = typeKey(path, family, t.ref, 0, true);
         if (k === null || k === "ext") continue;

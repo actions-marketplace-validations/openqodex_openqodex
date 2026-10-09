@@ -20,7 +20,8 @@
 //     `...`, is taken for abstract and left out of the implementations a
 //     call may run, though it runs and raises.
 // 12. An annotation naming more than sixteen types records only sixteen
-//     type uses, so changing the seventeenth hides the function that names it.
+//     type uses, so changing the seventeenth hides the function that names
+//     it; and an annotation too large to read whole drops names unsaid.
 import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
@@ -130,14 +131,17 @@ describe("lookup orders and value rules", () => {
     expect(into(g, idOf(g, "m.py", "Dots.find"))).toEqual(["m.py:17 dispatches_to possible"]);
   });
 
-  it.skip("records a type use for every type an annotation names, past sixteen (12)", async () => {
+  it("records a type use for every type an annotation names, past sixteen, and a gap for one too large to read (12)", async () => {
     const names = Array.from({ length: 17 }, (_, i) => `T${String(i + 1).padStart(2, "0")}`);
+    const many = Array.from({ length: 3000 }, (_, i) => `U${i}`);
     const g = await graphOf({
       "src/types.ts": names.map((t) => `export interface ${t} {\n  k: string;\n}\n`).join(""),
       "src/use.ts": `import type { ${names.join(", ")} } from "./types";\nexport function f(x: ${names.join(" | ")}): string {\n  return x.k;\n}\n`,
+      "src/huge.ts": `export function h(x: ${many.join(" | ")}): number {\n  return 1;\n}\n`,
     });
     const f = idOf(g, "src/use.ts", "f");
     const used = (g.refsOut.get(f) ?? []).filter((e) => e.kind === "uses_type").map((e) => g.nodes.get(e.to)?.name);
     expect(used.sort()).toEqual(names);
+    expect(g.unknowns.filter((u) => u.file === "src/huge.ts").map((u) => u.cause)).toEqual(["unsupported-rule"]);
   });
 });
