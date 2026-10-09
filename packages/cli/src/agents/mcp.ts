@@ -8,6 +8,7 @@ import { readText } from "./files.js";
 import type { Action, Ctx } from "./plan.js";
 import { canonical, type InstallRecord, type McpRecord } from "./record.js";
 import type { Target } from "./targets.js";
+import { readTomlKeys } from "./toml-keys.js";
 
 export const MCP_SERVER = "openqodex";
 export const TOML_START = "# openqodex:start";
@@ -227,29 +228,23 @@ function blockBounds(text: string): { start: number; end: number } | null {
 }
 
 // Why the text outside our block rules out adding it, or null. A second
-// definition of the server makes Codex refuse the whole file, so any form of
-// one counts, however spelled, and a doubtful case is left alone: a table
-// header for mcp_servers.openqodex or under it (bare or quoted keys, any
-// spacing), a dotted key mcp_servers.openqodex, or a [mcp_servers] table or
-// an mcp_servers value holding an openqodex key. An mcp_servers inline table
-// rules it out too: TOML lets no table header add to one. Whole-line
-// comments are left out first, so a mention there does not count.
-const SERVERS = String.raw`(?:mcp_servers|"mcp_servers"|'mcp_servers')`;
-const KEY = String.raw`(?:${MCP_SERVER}|"${MCP_SERVER}"|'${MCP_SERVER}')`;
+// definition of the server makes Codex refuse the whole file, so the file's
+// key paths are read as TOML reads them (toml-keys.ts), quoted and escaped
+// keys decoded and strings stepped over: a path equal to or under
+// mcp_servers.openqodex is a definition, whether a table, an array of
+// tables, a dotted key or an inline table. mcp_servers set to anything but
+// a table rules it out too: no [mcp_servers.openqodex] table can add to an
+// inline table, and on a value or an array of tables it means something
+// else. A file the reader cannot read is left alone.
 export function tomlConflict(text: string): string | null {
-  const lines = text
-    .split("\n")
-    .filter((l) => !/^\s*#/.test(l))
-    .join("\n");
-  const header = new RegExp(String.raw`^\s*\[\[?\s*${SERVERS}\s*\.\s*${KEY}\s*[\].]`, "m");
-  const dotted = new RegExp(String.raw`^\s*${SERVERS}\s*\.\s*${KEY}\s*[.=]`, "m");
-  const table = new RegExp(String.raw`^\s*\[\s*${SERVERS}\s*\]`, "m");
-  const value = new RegExp(String.raw`^\s*${SERVERS}\s*=`, "m");
-  const key = new RegExp(String.raw`(?:^|[\s{,])${KEY}\s*[=.]`, "m");
-  if (header.test(lines) || dotted.test(lines) || ((table.test(lines) || value.test(lines)) && key.test(lines))) {
-    return `the file already defines a server named ${MCP_SERVER}, and a second one would make Codex refuse the whole file`;
+  const read = readTomlKeys(text);
+  if (!read.ok) return `the file could not be read as TOML (${read.reason})`;
+  for (const { path, kind } of read.keys) {
+    if (path[0] !== "mcp_servers") continue;
+    if (path[1] === MCP_SERVER) return `the file already defines a server named ${MCP_SERVER}, and a second one would make Codex refuse the whole file`;
+    if (path.length === 1 && kind === "inline-table") return "the file sets mcp_servers as an inline table, which a [mcp_servers.openqodex] table cannot add to";
+    if (path.length === 1 && kind !== "table") return "the file sets mcp_servers to something other than a table";
   }
-  if (value.test(lines)) return "the file sets mcp_servers as an inline table, which a [mcp_servers.openqodex] table cannot add to";
   return null;
 }
 

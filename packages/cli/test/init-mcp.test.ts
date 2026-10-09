@@ -39,6 +39,11 @@
 //     tools of a server named openqodex that is not OpenQodex's: one init
 //     found and kept, one in a file init could not read, or any after
 //     --no-mcp; or the rule init added stays after --no-mcp.
+// 14. Codex's config.toml defines the server in a spelling a pattern does
+//     not see (quoted, escaped, spaced or as an array of tables), and init
+//     appends a second one, which makes Codex refuse the whole file; or text
+//     inside a string is taken for a definition; or a file that is not TOML
+//     gets a block appended.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
@@ -303,6 +308,54 @@ describe("6. a server named openqodex that init did not write", () => {
       expect(read(file), text).toBe(text);
     }
   }, 180_000);
+
+  it("14. in Codex's config.toml, a quoted, escaped, spaced or array-of-tables key: no block is appended and the file stays as it was", () => {
+    const spellings = [
+      '[mcp_servers."openqodex"]\ncommand = "mine"\n',
+      "[mcp_servers.'openqodex']\ncommand = \"mine\"\n",
+      '[mcp_servers."open\\u0071odex"]\ncommand = "mine"\n',
+      '[mcp_servers."open\\U00000071odex"]\ncommand = "mine"\n',
+      'mcp_servers."openqodex".command = "mine"\n',
+      '"mcp_servers" . openqodex . command = "mine"\n',
+      '[[mcp_servers.openqodex]]\ncommand = "mine"\n',
+    ];
+    for (const text of spellings) {
+      const s = sandbox();
+      const file = join(s.home, ".codex", "config.toml");
+      write(file, text);
+      const r = cli(s, ["init", "--yes", "--agent", "codex", ...QUIET]);
+      expect(r.status, `${text}\n${r.stderr}`).toBe(0);
+      expect(r.stdout, text).toMatch(/keep .*config\.toml.*already defines a server named openqodex/);
+      expect(read(file), text).toBe(text);
+    }
+  }, 180_000);
+
+  it("14. text that only looks like the server inside a string is not a definition: the block is appended and the file still parses", () => {
+    const texts = [
+      'motto = "see # [mcp_servers.openqodex]"\n',
+      'notes = """\n[mcp_servers.openqodex]\ncommand = "x"\n"""\n',
+    ];
+    for (const text of texts) {
+      const s = sandbox();
+      const file = join(s.home, ".codex", "config.toml");
+      write(file, text);
+      const r = cli(s, ["init", "--yes", "--agent", "codex", ...QUIET]);
+      expect(r.status, `${text}\n${r.stderr}`).toBe(0);
+      expect(read(file), text).toBe(`${text}${tomlBlock(launcher(s), ["mcp"])}`);
+      expect((parseToml(file).mcp_servers as Record<string, unknown>).openqodex, text).toEqual({ command: launcher(s), args: ["mcp"] });
+    }
+  });
+
+  it("14. a config.toml that is not TOML is left untouched, and the plan says it could not be read as TOML", () => {
+    const s = sandbox();
+    const file = join(s.home, ".codex", "config.toml");
+    const text = 'model = "o3\n[mcp_servers.db]\n';
+    write(file, text);
+    const r = cli(s, ["init", "--yes", "--agent", "codex", ...QUIET]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/keep .*config\.toml.*could not be read as TOML/);
+    expect(read(file)).toBe(text);
+  });
 });
 
 describe("8. --no-mcp and --mcp", () => {
