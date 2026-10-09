@@ -548,6 +548,17 @@ describe("linear time on hostile input (11)", () => {
   }
 });
 
+// A heredoc's end is looked up by a hash of each line's text. Two words
+// with one 32-bit hash (EPBVIVKP and ELXSADHD share 0x63c4d43c): a body line
+// that only shares the hash must not end the heredoc, or a comment-shaped
+// line of its body would count as a marker.
+describe("a heredoc ends only on a line that is its word", () => {
+  it("passes over a body line whose text shares the word's hash", () => {
+    const text = src("x = <<~EPBVIVKP", "  ELXSADHD", "  # rubocop:disable all", "  EPBVIVKP", "y = 1 # rubocop:disable Lint/Foo");
+    expect(findMarkers(text, ["rubocop"]).map((m) => m.line)).toEqual([5]);
+  });
+});
+
 describe("linear time on generated input, per reader family (16)", () => {
   const MB = 1024 * 1024;
   // Two sizes about four times apart. The larger stays under 4 MB: past
@@ -567,14 +578,21 @@ describe("linear time on generated input, per reader family (16)", () => {
     return parts.join("");
   };
   type Fill = ReturnType<typeof filler>;
-  // The faster of two runs, so a pause for garbage collection in one does
-  // not count.
-  const timed = (scanner: BuiltinScanner, text: string) => {
+  // The CPU time of the fastest of three runs, after one run that is not
+  // counted. CPU time of this process: other test files running beside it
+  // on a busy runner do not count. The untimed run takes the garbage
+  // collection the input's own making leaves, and compiles the reader for
+  // input this large. The text is copied flat first, as a file read from
+  // disk is.
+  const timed = (scanner: BuiltinScanner, made: string) => {
+    const text = Buffer.from(made, "utf8").toString("utf8");
+    findMarkers(text, [scanner]);
     const runs: number[] = [];
-    for (let r = 0; r < 2; r++) {
-      const started = performance.now();
+    for (let r = 0; r < 3; r++) {
+      const before = process.cpuUsage();
       findMarkers(text, [scanner]);
-      runs.push(performance.now() - started);
+      const used = process.cpuUsage(before);
+      runs.push((used.user + used.system) / 1000);
     }
     return Math.min(...runs);
   };
@@ -612,19 +630,17 @@ describe("linear time on generated input, per reader family (16)", () => {
   ];
   for (const [scanner, what, make] of cases) {
     it(`${scanner}: ${what}`, () => {
-      // Warm: the first call compiles the reader.
-      findMarkers(make(filler(64 * 1024)), [scanner]);
       const small = timed(scanner, make(filler(SMALL)));
       const large = timed(scanner, make(filler(LARGE)));
       // About four times the input: a linear reader takes about four times
-      // as long on any machine, one that rescans sixteen. The bound sits
-      // between them: a reader whose map of 480,000 distinct heredoc words
-      // costs a little more per word as it grows (measured 4.6 to 5.0) must
-      // pass. A floor of 20 ms keeps the timer's noise on a fast reader from
-      // deciding.
-      expect(large / Math.max(small, 20), `${small.toFixed(0)} ms for 1 MB, ${large.toFixed(0)} ms for ${(LARGE / MB).toFixed(2)} MB`).toBeLessThan(8);
+      // as long on any machine, one that rescans sixteen; the bound is the
+      // middle of the two. Measured here, every family took 2.8 to 4.2 times
+      // as long, and a linear one 5.2 times while other tests loaded the
+      // machine. A floor of 20 ms keeps the timer's noise on a fast reader
+      // from deciding.
+      expect(large / Math.max(small, 20), `${small.toFixed(0)} ms for 1 MB, ${large.toFixed(0)} ms for ${(LARGE / MB).toFixed(2)} MB of CPU time`).toBeLessThan(8);
       // A gross slowdown fails on any runner: the slowest seen took 1.8 s
-      // for 1 MB of the YAML key reader.
+      // of wall time for 1 MB of the YAML key reader.
       expect(small).toBeLessThan(4000);
     }, 180_000);
   }

@@ -57,6 +57,17 @@ export function comments(text: string, family: Family): Comment[] {
 
 const MAX_DEPTH = 64;
 
+// The most lines a heredoc end lookup passes over whose key only shares its
+// hash with the word.
+const MAX_COLLISIONS = 64;
+
+// A 32-bit FNV-1a hash of s[from, to), by UTF-16 code unit.
+function keyHash(s: string, from: number, to: number): number {
+  let h = 0x811c9dc5;
+  for (let i = from; i < to; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return h;
+}
+
 // The longest heredoc end word looked up. A longer word is never found, so
 // its heredoc is read as code.
 const MAX_WORD = 1024;
@@ -68,10 +79,13 @@ class Reader {
   private readonly unclosed = new Map<string, number>();
   // The offset of every line start, built once.
   private starts: number[] | null = null;
-  // For each heredoc end rule (indent, trailing blanks): each line's text
-  // read by that rule (lines up to MAX_WORD long) to the starts of the
-  // lines that read so.
-  private readonly lines = new Map<string, Map<string, number[]>>();
+  // For each heredoc end rule (indent, trailing blanks): each line's key,
+  // its text read by that rule (lines up to MAX_WORD long), by a 32-bit hash
+  // of the key, to the start of the line, or to the starts in order when
+  // several lines share the hash. Numbers, not the lines' text, key the map:
+  // a map of hundreds of thousands of distinct strings costs more per line
+  // as it grows, and a file of distinct heredoc words made one.
+  private readonly lines = new Map<string, Map<number, number | number[]>>();
   constructor(readonly s: string) {}
 
   private lineStarts(): number[] {
@@ -102,10 +116,29 @@ class Reader {
     return next < starts.length ? (starts[next] as number) - 1 : this.s.length;
   }
 
+  // The key of the line that starts at `start` by a heredoc end rule: the
+  // line without its `\r`, its indent (tabs, or tabs and blanks) and, with
+  // `trailing`, its trailing blanks, as [from, to).
+  private keyOf(start: number, indent: Heredoc["indent"], trailing: boolean): [number, number] {
+    const s = this.s;
+    let end = s.indexOf("\n", start);
+    if (end < 0) end = s.length;
+    if (end > start && s.charCodeAt(end - 1) === 13) end--;
+    let from = start;
+    if (indent === "tabs") while (from < end && s.charCodeAt(from) === 9) from++;
+    else if (indent === "blanks") while (from < end && (s.charCodeAt(from) === 9 || s.charCodeAt(from) === 32)) from++;
+    let to = end;
+    if (trailing) while (to > from && (s.charCodeAt(to - 1) === 9 || s.charCodeAt(to - 1) === 32)) to--;
+    return [from, to];
+  }
+
   // The offset past the first line at or after `from` that reads `word` once
   // `h.indent` is removed (and, with `h.trailing`, trailing blanks), or -1
-  // with none. The lines are indexed once per rule, so each heredoc costs
-  // one lookup.
+  // with none. The lines are indexed once per rule, by the hash of their
+  // key, so each heredoc costs one lookup; a line whose key only shares the
+  // hash is passed over. Past MAX_COLLISIONS of those the heredoc counts as
+  // having no end, so its body is read as code: that can add a candidate,
+  // never hide one.
   closer(h: Heredoc, from: number): number {
     const word = h.word;
     if (word.length > MAX_WORD) return -1;
@@ -113,25 +146,28 @@ class Reader {
     let index = this.lines.get(rule);
     if (index === undefined) {
       index = new Map();
-      const starts = this.lineStarts();
-      for (const start of starts) {
-        const end = this.s.indexOf("\n", start);
-        let line = this.s.slice(start, end < 0 ? this.s.length : end);
-        if (line.endsWith("\r")) line = line.slice(0, -1);
-        let key = line.replace(INDENT[h.indent], "");
-        if (h.trailing) key = key.replace(/[ \t]+$/, "");
-        if (key.length > MAX_WORD) continue;
+      for (const start of this.lineStarts()) {
+        const [a, b] = this.keyOf(start, h.indent, h.trailing);
+        if (b - a > MAX_WORD) continue;
+        const key = keyHash(this.s, a, b);
         const at = index.get(key);
-        if (at) at.push(start);
-        else index.set(key, [start]);
+        if (at === undefined) index.set(key, start);
+        else if (typeof at === "number") index.set(key, [at, start]);
+        else at.push(start);
       }
       this.lines.set(rule, index);
     }
-    const at = index.get(word);
-    if (at === undefined) return -1;
-    const k = this.firstAtOrAfter(at, from);
-    if (k >= at.length) return -1;
-    return this.eol(at[k] as number) + 1;
+    const found = index.get(keyHash(word, 0, word.length));
+    if (found === undefined) return -1;
+    const at = typeof found === "number" ? [found] : found;
+    let passed = 0;
+    for (let k = this.firstAtOrAfter(at, from); k < at.length; k++) {
+      const start = at[k] as number;
+      const [a, b] = this.keyOf(start, h.indent, h.trailing);
+      if (b - a === word.length && this.s.startsWith(word, a)) return this.eol(start) + 1;
+      if (++passed > MAX_COLLISIONS) return -1;
+    }
+    return -1;
   }
 
   // Runs `find` (a search for a closer from `from`, returning the offset past
@@ -273,8 +309,6 @@ function skipField(r: Reader, i: number, depth: number): number {
 // blanks may follow it (shellcheck accepts them). `expands`: a shell heredoc
 // whose word is not quoted runs the $( ) and backticks in its body.
 type Heredoc = { word: string; indent: "none" | "tabs" | "blanks"; trailing: boolean; expands: boolean };
-
-const INDENT = { none: /^/, tabs: /^\t*/, blanks: /^[\t ]*/ } as const;
 
 // The offset after the bodies of the heredocs opened on the line that ended
 // just before `i`, read in order: each runs to a line that is exactly its
