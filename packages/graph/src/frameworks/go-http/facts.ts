@@ -39,15 +39,21 @@ function pos(node: Node): Pos {
 // An expression as the plugin reads it. `str` is a string literal; `dyn` a
 // concatenation, with its pieces when each is a literal or a name; `ref` a
 // name or a chain of names (`h`, `handlers.GetItem`), with `local` set when
-// its first name is declared inside a function where it is used; `call` a
+// its first name is declared inside a function where it is used, and `decl`
+// naming that declaration (see `Decl` below); `call` a
 // call or a conversion; `lit` a composite literal (`T{}`, `&pkg.T{X: y}`)
 // with its keyed fields; `fn` a function literal; `nil`; `other` anything
 // else, or what lay past a read limit.
 export type Part = { s: string } | { ref: string[]; local: boolean };
+// A local declaration's key: the line and column of the name it declares
+// ("12:2"). A use carries the key of the one declaration it names at that
+// point, so a declaration in a block that has closed is never the one a
+// later use reads.
+export type Decl = string;
 export type Expr =
   | ({ t: "str"; v: string } & Pos)
   | ({ t: "dyn"; parts: Part[] | null } & Pos)
-  | ({ t: "ref"; path: string[]; local: boolean } & Pos)
+  | ({ t: "ref"; path: string[]; local: boolean; decl: Decl | null } & Pos)
   | ({ t: "call"; fn: Expr; args: Expr[] } & Pos)
   | ({ t: "lit"; type: string[] | null; addr: boolean; fields: { key: string; value: Expr }[] } & Pos)
   | ({ t: "fn" } & Pos)
@@ -59,13 +65,15 @@ export type GoHttpFact =
   // the enclosing functions, innermost first; empty at package level.
   | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; scopes: number[] })
   // A name bound to a value: `mux := http.NewServeMux()`, `var h = T{}`,
-  // `mux = other`. Empty `scopes`: declared at package level.
-  | (FrameworkFactBase & { kind: "value"; name: string; value: Expr; scopes: number[] })
+  // `mux = other`. Empty `scopes`: declared at package level. `decl` is the
+  // local declaration the name is (its own key for `:=` and `var`, the one
+  // an assignment names), null at package level or for a package variable.
+  | (FrameworkFactBase & { kind: "value"; name: string; value: Expr; scopes: number[]; decl: Decl | null })
   // A parameter or receiver with a named type: `m *http.ServeMux`,
   // `s *server`, `next http.Handler`; `func` when the type is a function
   // type. `index` is the position among the parameters, -1 for a receiver.
-  // `scope` is the line of the function that declares it.
-  | (FrameworkFactBase & { kind: "param"; name: string; type: string[]; pointer: boolean; func: boolean; index: number; scope: number })
+  // `scope` is the line of the function that declares it; `decl` its key.
+  | (FrameworkFactBase & { kind: "param"; name: string; type: string[]; pointer: boolean; func: boolean; index: number; scope: number; decl: Decl })
   // A package-level string constant: `const prefix = "/api"`.
   | (FrameworkFactBase & { kind: "const"; name: string; value: string })
   // A composite literal of a type named Server: `http.Server{Handler: h}`.
@@ -97,7 +105,9 @@ export function wants(_source: string): boolean {
 // ---------- reading expressions ----------
 
 type Budget = { left: number };
-type IsLocal = (name: string) => boolean;
+// The local declaration a name has where it is read, or null when none
+// inside a function declares it (a package-level name or an import).
+type DeclHere = (name: string) => Decl | null;
 
 // Go's one-character escapes and the byte each stands for.
 const ESCAPES: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, "\\": 92, "'": 39, '"': 34 };
@@ -203,7 +213,7 @@ function paramType(node: Node | null): { path: string[]; pointer: boolean; func:
 
 // The pieces of a `+` chain, left to right, with an explicit stack; null
 // when a piece is neither a string literal nor a name, or past MAX_PARTS.
-function stringParts(node: Node, b: Budget, isLocal: IsLocal): Part[] | null {
+function stringParts(node: Node, b: Budget, declHere: DeclHere): Part[] | null {
   const out: Part[] = [];
   const stack: Node[] = [node];
   while (stack.length > 0) {
@@ -227,19 +237,21 @@ function stringParts(node: Node, b: Budget, isLocal: IsLocal): Part[] | null {
     }
     const path = n.type === "identifier" ? [n.text] : n.type === "selector_expression" ? namePath(n) : null;
     if (!path) return null;
-    out.push({ ref: path, local: isLocal(path[0] as string) });
+    out.push({ ref: path, local: declHere(path[0] as string) !== null });
   }
   return out;
 }
 
-function read(node: Node | null, b: Budget, depth: number, isLocal: IsLocal): Expr {
+const ref = (path: string[], decl: Decl | null, p: Pos): Expr => ({ t: "ref", path, local: decl !== null, decl, ...p });
+
+function read(node: Node | null, b: Budget, depth: number, declHere: DeclHere): Expr {
   if (!node) return { t: "other", line: 0, column: 0 };
   const p = pos(node);
   if (b.left <= 0 || depth > MAX_EXPR_DEPTH) return { t: "other", ...p };
   b.left--;
   switch (node.type) {
     case "parenthesized_expression":
-      return read(node.firstNamedChild, b, depth + 1, isLocal);
+      return read(node.firstNamedChild, b, depth + 1, declHere);
     case "interpreted_string_literal":
     case "raw_string_literal": {
       const v = stringValue(node);
@@ -247,29 +259,29 @@ function read(node: Node | null, b: Budget, depth: number, isLocal: IsLocal): Ex
     }
     case "binary_expression":
       if (node.childForFieldName("operator")?.text !== "+") return { t: "other", ...p };
-      return { t: "dyn", parts: stringParts(node, b, isLocal), ...p };
+      return { t: "dyn", parts: stringParts(node, b, declHere), ...p };
     case "identifier":
-      return { t: "ref", path: [node.text], local: isLocal(node.text), ...p };
+      return ref([node.text], declHere(node.text), p);
     case "nil":
       return { t: "nil", ...p };
     case "selector_expression": {
       const path = namePath(node);
-      return path ? { t: "ref", path, local: isLocal(path[0] as string), ...p } : { t: "other", ...p };
+      return path ? ref(path, declHere(path[0] as string), p) : { t: "other", ...p };
     }
     case "call_expression": {
-      const fn = read(node.childForFieldName("function"), b, depth + 1, isLocal);
+      const fn = read(node.childForFieldName("function"), b, depth + 1, declHere);
       const list = node.childForFieldName("arguments");
       const args: Expr[] = [];
       for (let i = 0; list && i < list.namedChildCount && args.length < MAX_ARGS; i++) {
         const a = list.namedChild(i);
-        if (a && a.type !== "comment") args.push(read(a, b, depth + 1, isLocal));
+        if (a && a.type !== "comment") args.push(read(a, b, depth + 1, declHere));
       }
       return { t: "call", fn, args, ...p };
     }
     case "unary_expression": {
       const operand = node.childForFieldName("operand");
       if (node.childForFieldName("operator")?.text !== "&" || operand?.type !== "composite_literal") return { t: "other", ...p };
-      const lit = read(operand, b, depth + 1, isLocal);
+      const lit = read(operand, b, depth + 1, declHere);
       return lit.t === "lit" ? { ...lit, addr: true, ...p } : lit;
     }
     case "composite_literal": {
@@ -282,7 +294,7 @@ function read(node: Node | null, b: Budget, depth: number, isLocal: IsLocal): Ex
         const valueNode = el.childForFieldName("value") ?? el.namedChild(1);
         const key = keyNode?.type === "literal_element" ? keyNode.firstNamedChild : keyNode;
         const value = valueNode?.type === "literal_element" ? valueNode.firstNamedChild : valueNode;
-        if (key?.type === "identifier" || key?.type === "field_identifier") fields.push({ key: key.text, value: read(value, b, depth + 1, isLocal) });
+        if (key?.type === "identifier" || key?.type === "field_identifier") fields.push({ key: key.text, value: read(value, b, depth + 1, declHere) });
       }
       return { t: "lit", type: typePath(node.childForFieldName("type")), addr: false, fields, ...p };
     }
@@ -338,7 +350,7 @@ const namedChildren = (list: Node | null): Node[] => {
 function keepOutside(f: GoHttpFact): boolean {
   switch (f.kind) {
     case "value":
-      return f.scopes.length === 0;
+      return f.decl === null;
     case "param": {
       const last = f.type[f.type.length - 1];
       return f.func || last === "Handler" || last === "HandlerFunc";
@@ -358,21 +370,28 @@ export function readFacts(root: Node): GoHttpFact[] {
   // The depths of the ERROR nodes the walk is inside: nothing is read there.
   const broken: number[] = [];
   const scopes: Scope[] = [];
-  // How many open scopes declare each name: a name in it is local where it is used.
-  const visible = new Map<string, number>();
+  // The declarations of each name in the open scopes, innermost last: the
+  // last one is the declaration a use of the name reads.
+  const visible = new Map<string, Decl[]>();
   // Names a declaration binds once the walk leaves it: `http := http.X()` reads the outer http on its right side.
-  const pending: { depth: number; target: Scope; names: string[] }[] = [];
-  const isLocal: IsLocal = (name) => (visible.get(name) ?? 0) > 0;
+  const pending: { depth: number; target: Scope; names: { name: string; decl: Decl }[] }[] = [];
+  const declHere: DeclHere = (name) => {
+    const list = visible.get(name);
+    return list && list.length > 0 ? (list[list.length - 1] as Decl) : null;
+  };
   const top = (): Scope | undefined => scopes[scopes.length - 1];
   const fns = (): number[] => top()?.fns ?? NO_SCOPES;
-  const declare = (s: Scope, name: string) => {
+  const keyOf = (n: Node): Decl => `${n.startPosition.row + 1}:${n.startPosition.column + 1}`;
+  const declare = (s: Scope, name: string, decl: Decl) => {
     if (name === "_") return;
     s.names.push(name);
-    visible.set(name, (visible.get(name) ?? 0) + 1);
+    const list = visible.get(name);
+    if (list) list.push(decl);
+    else visible.set(name, [decl]);
   };
-  const declareLater = (depth: number, names: string[]) => {
+  const declareLater = (depth: number, names: Node[]) => {
     const s = top();
-    if (s && names.length > 0) pending.push({ depth, target: s, names });
+    if (s && names.length > 0) pending.push({ depth, target: s, names: names.map((n) => ({ name: n.text, decl: keyOf(n) })) });
   };
   const close = (depth: number) => {
     while (broken.length > 0 && (broken[broken.length - 1] as number) >= depth) broken.pop();
@@ -380,17 +399,17 @@ export function readFacts(root: Node): GoHttpFact[] {
       scopes.pop();
       s.closed = true;
       for (const n of s.names) {
-        const c = (visible.get(n) ?? 1) - 1;
-        if (c <= 0) visible.delete(n);
-        else visible.set(n, c);
+        const list = visible.get(n);
+        list?.pop();
+        if (list && list.length === 0) visible.delete(n);
       }
     }
     for (let p = pending[pending.length - 1]; p && p.depth >= depth; p = pending[pending.length - 1]) {
       pending.pop();
-      if (!p.target.closed) for (const n of p.names) declare(p.target, n);
+      if (!p.target.closed) for (const n of p.names) declare(p.target, n.name, n.decl);
     }
   };
-  const expr = (node: Node | null): Expr => read(node, { left: MAX_EXPR_NODES }, 0, isLocal);
+  const expr = (node: Node | null): Expr => read(node, { left: MAX_EXPR_NODES }, 0, declHere);
 
   const fn = (node: Node, depth: number) => {
     const line = node.startPosition.row + 1;
@@ -414,8 +433,8 @@ export function readFacts(root: Node): GoHttpFact[] {
         const type = paramType(p.childForFieldName("type"));
         const names = p.childrenForFieldName("name");
         for (const n of names) {
-          declare(s, n.text);
-          if (record && type && role !== "results") out.push({ kind: "param", ...pos(n), name: n.text, type: type.path, pointer: type.pointer, func: type.func, index: role === "params" ? index : -1, scope: line });
+          declare(s, n.text, keyOf(n));
+          if (record && type && role !== "results") out.push({ kind: "param", ...pos(n), name: n.text, type: type.path, pointer: type.pointer, func: type.func, index: role === "params" ? index : -1, scope: line, decl: keyOf(n) });
           if (role === "params") index++;
         }
         if (role === "params") {
@@ -456,12 +475,12 @@ export function readFacts(root: Node): GoHttpFact[] {
         const right = namedChildren(node.childForFieldName("right"));
         if (left.length === right.length) {
           left.forEach((l, i) => {
-            if (l.type === "identifier" && l.text !== "_") out.push({ kind: "value", ...pos(node), name: l.text, value: expr(right[i] ?? null), scopes: fns() });
+            if (l.type === "identifier" && l.text !== "_") out.push({ kind: "value", ...pos(node), name: l.text, value: expr(right[i] ?? null), scopes: fns(), decl: keyOf(l) });
           });
         }
         declareLater(
           depth,
-          left.filter((l) => l.type === "identifier").map((l) => l.text),
+          left.filter((l) => l.type === "identifier"),
         );
         return;
       }
@@ -476,17 +495,14 @@ export function readFacts(root: Node): GoHttpFact[] {
           if (node.type === "const_spec") {
             const s = inside ? null : stringValue(v);
             if (s !== null) out.push({ kind: "const", ...pos(node), name: n.text, value: s });
-          } else out.push({ kind: "value", ...pos(node), name: n.text, value: expr(v), scopes: fns() });
+          } else out.push({ kind: "value", ...pos(node), name: n.text, value: expr(v), scopes: fns(), decl: inside ? keyOf(n) : null });
         });
-        if (inside) declareLater(
-          depth,
-          names.map((n) => n.text),
-        );
+        if (inside) declareLater(depth, names);
         return;
       }
       case "type_spec": {
         const name = node.childForFieldName("name");
-        if (name && scopes.length > 0) declareLater(depth, [name.text]);
+        if (name && scopes.length > 0) declareLater(depth, [name]);
         return;
       }
       case "assignment_statement": {
@@ -495,17 +511,14 @@ export function readFacts(root: Node): GoHttpFact[] {
         const right = namedChildren(node.childForFieldName("right"));
         if (left.length !== right.length) return;
         left.forEach((l, i) => {
-          if (l.type === "identifier" && l.text !== "_") out.push({ kind: "value", ...pos(node), name: l.text, value: expr(right[i] ?? null), scopes: fns() });
+          if (l.type === "identifier" && l.text !== "_") out.push({ kind: "value", ...pos(node), name: l.text, value: expr(right[i] ?? null), scopes: fns(), decl: declHere(l.text) });
         });
         return;
       }
       case "range_clause": {
         let declares = false;
         for (let i = 0; i < node.childCount && !declares; i++) declares = node.child(i)?.type === ":=";
-        if (declares) declareLater(
-          depth,
-          identifiers(node.childForFieldName("left")).map((n) => n.text),
-        );
+        if (declares) declareLater(depth, identifiers(node.childForFieldName("left")));
         return;
       }
       case "call_expression": {
@@ -514,12 +527,12 @@ export function readFacts(root: Node): GoHttpFact[] {
         const prop = callee.childForFieldName("field")?.text;
         if (!prop || !WATCHED.has(prop) || node.hasError) return;
         const b: Budget = { left: MAX_EXPR_NODES };
-        const recv = read(callee.childForFieldName("operand"), b, 0, isLocal);
+        const recv = read(callee.childForFieldName("operand"), b, 0, declHere);
         const args: Expr[] = [];
         const list = node.childForFieldName("arguments");
         for (let i = 0; list && i < list.namedChildCount && args.length < MAX_ARGS; i++) {
           const a = list.namedChild(i);
-          if (a && a.type !== "comment") args.push(read(a, b, 0, isLocal));
+          if (a && a.type !== "comment") args.push(read(a, b, 0, declHere));
         }
         out.push({ kind: "call", ...pos(node), recv, prop, args, scopes: fns() });
         return;
@@ -612,7 +625,7 @@ export function isExpr(v: unknown, depth = 0): v is Expr {
     case "dyn":
       return e.parts === null || (Array.isArray(e.parts) && e.parts.every((p) => typeof p === "object" && p !== null && (typeof (p as { s?: unknown }).s === "string" || (strings((p as { ref?: unknown }).ref) && typeof (p as { local?: unknown }).local === "boolean"))));
     case "ref":
-      return strings(e.path) && e.path.length > 0 && typeof e.local === "boolean";
+      return strings(e.path) && e.path.length > 0 && typeof e.local === "boolean" && (e.decl === null || typeof e.decl === "string") && e.local === (e.decl !== null);
     case "call":
       return isExpr(e.fn, depth + 1) && Array.isArray(e.args) && e.args.every((a) => isExpr(a, depth + 1));
     case "lit":
@@ -634,9 +647,9 @@ export function isGoHttpFact(v: unknown): v is GoHttpFact {
     case "call":
       return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && ints(f.scopes);
     case "value":
-      return typeof f.name === "string" && isExpr(f.value) && ints(f.scopes);
+      return typeof f.name === "string" && isExpr(f.value) && ints(f.scopes) && (f.decl === null || typeof f.decl === "string");
     case "param":
-      return typeof f.name === "string" && strings(f.type) && typeof f.pointer === "boolean" && typeof f.func === "boolean" && Number.isInteger(f.index) && Number.isInteger(f.scope);
+      return typeof f.name === "string" && strings(f.type) && typeof f.pointer === "boolean" && typeof f.func === "boolean" && Number.isInteger(f.index) && Number.isInteger(f.scope) && typeof f.decl === "string";
     case "const":
       return typeof f.name === "string" && typeof f.value === "string";
     case "server":

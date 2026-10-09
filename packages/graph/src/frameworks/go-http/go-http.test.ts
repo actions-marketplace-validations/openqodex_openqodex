@@ -394,3 +394,28 @@ describe("the net/http plugin on work split over hundreds of small muxes", () =>
     expect(capped.filter((u) => u.note.includes(`test requests after ${MAX_TEST_REQUESTS} `)).length).toBe(1);
   });
 });
+
+// ---------- small repositories, one rule each ----------
+
+// The graph of a committed repository of these files; the folder is removed after.
+async function graphOf(files: Record<string, string>): Promise<Graph> {
+  const root = writeRepo("oq-go-small-", { "go.mod": "module example.com/small\n\ngo 1.22\n", ...files });
+  try {
+    return await buildGraph({ repoRoot: root, store: null });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+const goRegs = (g: Graph): Registration[] => (g.frameworks?.entities ?? []).filter((e): e is Registration => e.kind === "registration" && e.plugin === "go-http");
+
+describe("the net/http plugin on small repositories", () => {
+  it("never moves a registration to a mux declared in a block that has closed", async () => {
+    const g = await graphOf({
+      "main.go": `${GO_HEAD}func h(w http.ResponseWriter, r *http.Request) {}\n\nfunc main() {\n\tmux := http.NewServeMux()\n\tif true {\n\t\tmux := http.NewServeMux()\n\t\tmux.HandleFunc("/inner", h)\n\t}\n\tmux.HandleFunc("/outer", h)\n\thttp.ListenAndServe(":8080", mux)\n}\n`,
+    });
+    const apps = Object.fromEntries(goRegs(g).map((r) => [r.pattern, r.app]));
+    expect(apps).toEqual({ "/inner": "fw:go-http:app:main.go:10", "/outer": "fw:go-http:app:main.go:8" });
+    const served = (g.frameworks?.apps ?? []).filter((a) => a.plugin === "go-http" && a.data?.served).map((a) => a.id);
+    expect(served).toEqual(["fw:go-http:app:main.go:8"]);
+  });
+});

@@ -12,7 +12,8 @@ import type { GoHttpFact } from "./facts.js";
 import { isGoHttpFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 1;
+// 2: a local name carries the declaration it reads (block identity).
+export const VERSION = 2;
 const SUPPORTED = "Go 1.22 and later net/http";
 
 const app = "go-http-app";

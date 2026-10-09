@@ -62,7 +62,7 @@ type Mux = { kind: "mux"; id: string; file: string; name: string; line: number; 
 // A registration's receiver that is a parameter typed as a mux: the caller decides which.
 type ParamMux = { kind: "param"; file: string; name: string; type: string; line: number };
 
-type Event = { file: string; site: Site; prop: "Handle" | "HandleFunc"; pattern: Expr; handler: Expr; scopes: number[] };
+type Event = { file: string; site: Site; prop: "Handle" | "HandleFunc"; pattern: Expr; handler: Expr };
 
 type Why = { cause: Cause; note: string; name: string | null; at: { line: number; column: number } };
 type Wrapper = { targets: string[]; tier: Tier; via: Via; note: string | null };
@@ -83,8 +83,8 @@ type Decl = { kind: "value"; file: string; fact: Fact<"value"> } | { kind: "para
 type Identity = { http: Set<string>; httptest: Set<string>; testing: Set<string> };
 
 type FileIndex = {
-  values: Map<string, Fact<"value">[]>;
-  params: Map<string, Fact<"param">[]>;
+  byDecl: Map<string, Fact<"value">[]>; // the values bound to each local declaration
+  paramByDecl: Map<string, Fact<"param">>;
   paramsOf: Map<number, Fact<"param">[]>; // by the line of the function that declares them
   consts: Map<string, string>;
   serveHttp: Map<string, Fact<"serve-http">>; // by receiver type and line
@@ -179,11 +179,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   const fileIndex = (file: string): FileIndex => {
     let fi = fileIndexes.get(file);
     if (fi) return fi;
-    fi = { values: new Map(), params: new Map(), paramsOf: new Map(), consts: new Map(), serveHttp: new Map() };
+    fi = { byDecl: new Map(), paramByDecl: new Map(), paramsOf: new Map(), consts: new Map(), serveHttp: new Map() };
     for (const f of index.factsOf(file)) {
-      if (f.kind === "value") (fi.values.get(f.name) ?? fi.values.set(f.name, []).get(f.name))?.push(f);
-      else if (f.kind === "param") {
-        (fi.params.get(f.name) ?? fi.params.set(f.name, []).get(f.name))?.push(f);
+      if (f.kind === "value") {
+        if (f.decl !== null) (fi.byDecl.get(f.decl) ?? fi.byDecl.set(f.decl, []).get(f.decl))?.push(f);
+      } else if (f.kind === "param") {
+        fi.paramByDecl.set(f.decl, f);
         (fi.paramsOf.get(f.scope) ?? fi.paramsOf.set(f.scope, []).get(f.scope))?.push(f);
       } else if (f.kind === "const") fi.consts.set(f.name, f.value);
       else if (f.kind === "serve-http") fi.serveHttp.set(`${f.recv}\0${f.line}`, f);
@@ -191,11 +192,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     fileIndexes.set(file, fi);
     return fi;
   };
-  // Package-level values by folder, package and name.
+  // Package-level values by folder, package and name: declared at package
+  // level, or assigned to a package variable inside a function.
   const topValues = new Map<string, Decl[]>();
   for (const file of files) {
     for (const v of of(file, "value")) {
-      if (v.scopes.length > 0) continue;
+      if (v.decl !== null) continue;
       const k = `${dirOf(file)}\0${pkgName(file)}\0${v.name}`;
       (topValues.get(k) ?? topValues.set(k, []).get(k))?.push({ kind: "value", file, fact: v });
     }
@@ -234,32 +236,29 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     e.t === "ref" && !e.local && e.path.length === (member === null ? 1 : 2) && identity(file)[set].has(e.path[0] as string) && (member === null || e.path[1] === member);
 
   // ---------- names and values ----------
-  // The declaration a name refers to at a line: one in the enclosing
-  // functions (innermost first, the latest before the line), else a
-  // package-level value of the file's package. `strict` skips a value
-  // declared on the line itself (`x := x` reads the outer x).
-  const declOf = (file: string, name: string, local: boolean, scopes: readonly number[], line: number, strict: boolean): Decl | null => {
-    if (!local) return topValue(dirOf(file), pkgName(file), name);
+  // What a name holds at a line. A local name reads the one declaration the
+  // walk saw it name (`decl`, from facts.ts): the latest value bound to that
+  // declaration before the line, else the parameter it is. A name no
+  // function declares reads a package-level value of the file's package.
+  // `strict` skips a value bound on the line itself (`mux = wrap(mux)`
+  // reads the mux before the assignment).
+  const declOf = (file: string, name: string, decl: string | null, line: number, strict: boolean): Decl | null => {
+    if (decl === null) return topValue(dirOf(file), pkgName(file), name);
     const fi = fileIndex(file);
-    const vals = fi.values.get(name) ?? [];
-    const params = fi.params.get(name) ?? [];
-    for (const s of scopes) {
-      let best: Fact<"value"> | null = null;
-      for (const v of vals) if ((v.scopes[0] ?? 0) === s && (strict ? v.line < line : v.line <= line) && (!best || v.line > best.line)) best = v;
-      if (best) return { kind: "value", file, fact: best };
-      const p = params.find((x) => x.scope === s);
-      if (p) return { kind: "param", file, fact: p };
-    }
-    return null;
+    let best: Fact<"value"> | null = null;
+    for (const v of fi.byDecl.get(decl) ?? []) if ((strict ? v.line < line : v.line <= line) && (!best || v.line > best.line)) best = v;
+    if (best) return { kind: "value", file, fact: best };
+    const p = fi.paramByDecl.get(decl);
+    return p ? { kind: "param", file, fact: p } : null;
   };
   // The declaration a name chain's head names, and what is left of the chain:
   // a local or a package-level value of this package, or a value of another
   // package named `pkg.Name`.
-  const declPath = (file: string, path: readonly string[], local: boolean, scopes: readonly number[], line: number, strict: boolean): { decl: Decl; rest: string[] } | null => {
+  const declPath = (file: string, path: readonly string[], decl: string | null, line: number, strict: boolean): { decl: Decl; rest: string[] } | null => {
     const head = path[0] as string;
-    const d = declOf(file, head, local, scopes, line, strict);
+    const d = declOf(file, head, decl, line, strict);
     if (d) return { decl: d, rest: path.slice(1) };
-    if (local || path.length < 2) return null;
+    if (decl !== null || path.length < 2) return null;
     const m = lookup(file, [head]);
     if (m.kind !== "module") return null;
     const v = topValue(m.file, pkgOfDir(m.file), path[1] as string);
@@ -298,12 +297,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     }
     const v = d.fact;
     if (makesMux(d.file, v.value)) return muxAt(d.file, v);
-    return v.value.t === "ref" ? muxOfRef(d.file, v.value, v.scopes, v.line, true, create, steps + 1) : null;
+    return v.value.t === "ref" ? muxOfRef(d.file, v.value, v.line, true, create, steps + 1) : null;
   };
-  const muxOfRef = (file: string, e: Expr, scopes: readonly number[], line: number, strict: boolean, create: Site | null, steps: number): Mux | ParamMux | null => {
+  const muxOfRef = (file: string, e: Expr, line: number, strict: boolean, create: Site | null, steps: number): Mux | ParamMux | null => {
     if (e.t !== "ref" || steps > MAX_VALUE_STEPS) return null;
     if (isPkg(file, e, "http", "DefaultServeMux")) return defaultMux(index.projectOf(file), create);
-    const found = declPath(file, e.path, e.local, scopes, line, strict);
+    const found = declPath(file, e.path, e.decl, line, strict);
     return found && found.rest.length === 0 ? muxOfDecl(found.decl, create, steps) : null;
   };
 
@@ -320,8 +319,8 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       const handler = f.args[1];
       if (!pattern || !handler || f.args.length !== 2) continue;
       const site: Site = { file, line: f.line, column: f.column };
-      const event: Event = { file, site, prop: f.prop, pattern, handler, scopes: f.scopes };
-      const target = isPkg(file, f.recv, "http", null) ? defaultMux(index.projectOf(file), site) : muxOfRef(file, f.recv, f.scopes, f.line, false, site, 0);
+      const event: Event = { file, site, prop: f.prop, pattern, handler };
+      const target = isPkg(file, f.recv, "http", null) ? defaultMux(index.projectOf(file), site) : muxOfRef(file, f.recv, f.line, false, site, 0);
       if (!target) continue;
       if (target.kind === "param") {
         paramEvents.push({ param: target, event });
@@ -333,11 +332,11 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   for (const list of events.values()) list.sort((a, b) => (a.file === b.file ? a.site.line - b.site.line || a.site.column - b.site.column : a.file < b.file ? -1 : 1));
 
   // A server serves a mux, the default one when given nil.
-  const serve = (file: string, e: Expr, scopes: readonly number[], site: Site) => {
+  const serve = (file: string, e: Expr, site: Site) => {
     let cur = e;
     // `ListenAndServe(addr, logging(mux))` still serves mux.
     for (let i = 0; i < MAX_MOUNT_DEPTH && cur.t === "call"; i++) cur = cur.args.find((a) => a.t === "ref" || a.t === "call") ?? cur.args[0] ?? cur;
-    const m = cur.t === "nil" ? defaultMux(index.projectOf(file), null) : muxOfRef(file, cur, scopes, site.line, false, null, 0);
+    const m = cur.t === "nil" ? defaultMux(index.projectOf(file), null) : muxOfRef(file, cur, site.line, false, null, 0);
     if (m && m.kind === "mux" && !m.served.some((s) => siteKey(s) === siteKey(site))) m.served.push(site);
   };
   for (const file of files) {
@@ -345,11 +344,11 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       const at = SERVE_ARG[f.prop];
       if (at === undefined || !isPkg(file, f.recv, "http", null)) continue;
       const arg = f.args[at];
-      if (arg) serve(file, arg, f.scopes, { file, line: f.line, column: f.column });
+      if (arg) serve(file, arg, { file, line: f.line, column: f.column });
     }
     for (const f of of(file, "server")) {
       if (!identity(file).http.has(f.type[0] as string)) continue;
-      serve(file, f.handler ?? { t: "nil", line: f.line, column: f.column }, f.scopes, { file, line: f.line, column: f.column });
+      serve(file, f.handler ?? { t: "nil", line: f.line, column: f.column }, { file, line: f.line, column: f.column });
     }
   }
 
@@ -430,12 +429,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   };
 
   // A name used as a handler or a function value.
-  const bindRef = (file: string, e: Extract<Expr, { t: "ref" }>, scopes: readonly number[], line: number, isFunc: boolean, steps: number): Res | { follow: Decl } => {
+  const bindRef = (file: string, e: Extract<Expr, { t: "ref" }>, line: number, isFunc: boolean, steps: number): Res | { follow: Decl } => {
     const what = isFunc ? "handler function" : "handler";
     if (isPkg(file, { ...e, path: e.path.slice(0, 1) }, "http", null)) return fail("external", "external", `${show(e)} is a handler of the standard library`, show(e), e);
     const symbol = e.local ? null : lookup(file, e.path);
     if (symbol?.kind === "symbol") return fromLookup(symbol, e, what);
-    const found = declPath(file, e.path, e.local, scopes, line, false);
+    const found = declPath(file, e.path, e.decl, line, false);
     if (found && found.rest.length === 0 && found.decl.kind === "value" && steps < MAX_VALUE_STEPS) return { follow: found.decl };
     if (found && found.rest.length === 1) return methodValue(found.decl, found.rest[0] as string, e, what);
     if (found || e.local) return fail("dynamic", "dynamic", `the ${what} ${show(e)} is a value the code computes, not a definition`, show(e), e);
@@ -459,12 +458,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     return found;
   };
   const callees = new Map<string, Res>();
-  const wrapperOf = (file: string, call: Extract<Expr, { t: "call" }>, scopes: readonly number[], line: number): { res: Res; arg: number; func: boolean } | null => {
+  const wrapperOf = (file: string, call: Extract<Expr, { t: "call" }>, line: number): { res: Res; arg: number; func: boolean } | null => {
     const fn = call.fn;
     if (fn.t !== "ref") return null;
     let res: Res;
     if (fn.local) {
-      const found = declPath(file, fn.path, true, scopes, line, false);
+      const found = declPath(file, fn.path, fn.decl, line, false);
       if (!found || found.rest.length !== 1) return null;
       res = methodValue(found.decl, found.rest[0] as string, fn, "middleware");
     } else {
@@ -478,7 +477,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     return p ? { res, ...p } : null;
   };
 
-  const bind = (file: string, e: Expr, scopes: readonly number[], line: number, isFunc: boolean, steps: number): Bound => {
+  const bind = (file: string, e: Expr, line: number, isFunc: boolean, steps: number): Bound => {
     const wrappers: Wrapper[] = [];
     let wrapCut = false;
     let strip: string | null | undefined;
@@ -507,7 +506,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
         }
         return done(fail("external", "external", `the handler is ${show(call)}, which the standard library builds`, show(call), call));
       }
-      const w = wrapperOf(file, call, scopes, line);
+      const w = wrapperOf(file, call, line);
       if (!w) {
         return done(
           wrappers.length > 0
@@ -531,14 +530,14 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
         return fnValue ? done(fail("dynamic", "dynamic", `the handler ${show(cur)} is not a function`, show(cur), cur)) : done(servesType(file, cur));
       case "ref": {
         if (!fnValue) {
-          const m = muxOfRef(file, cur, scopes, line, false, null, 0);
+          const m = muxOfRef(file, cur, line, false, null, 0);
           if (m?.kind === "mux") return done({ status: "bound", targets: [], tier: "certain", via: null, note: null, why: null }, { mux: m, strip });
           if (m?.kind === "param") return done(fail("dynamic", "dynamic", `the handler is the parameter ${m.name} (${m.type}), a mux the caller passes`, m.name, cur));
         }
-        const r = bindRef(file, cur, scopes, line, fnValue, steps);
+        const r = bindRef(file, cur, line, fnValue, steps);
         if ("follow" in r) {
           const d = r.follow as Extract<Decl, { kind: "value" }>;
-          const inner = bind(d.file, d.fact.value, d.fact.scopes, d.fact.line, fnValue, steps + 1);
+          const inner = bind(d.file, d.fact.value, d.fact.line, fnValue, steps + 1);
           return { ...inner, wrappers: [...wrappers, ...inner.wrappers], wrapCut: wrapCut || inner.wrapCut };
         }
         return done(r);
@@ -551,7 +550,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   const boundOf = (e: Event): Bound => {
     let b = bound.get(e);
     if (!b) {
-      b = bind(e.file, e.handler, e.scopes, e.site.line, e.prop === "HandleFunc", 0);
+      b = bind(e.file, e.handler, e.site.line, e.prop === "HandleFunc", 0);
       bound.set(e, b);
     }
     return b;
