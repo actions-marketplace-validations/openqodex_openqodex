@@ -62,6 +62,7 @@ import type {
 } from "@openqodex/core";
 import { PacketCollision, PacketLeak, renderImpactBlock, writePacket } from "@openqodex/graph";
 import type { GraphStore, Lease } from "@openqodex/graph";
+import { meterSession } from "./agent-usage.js";
 import { REVIEWER_NAMES, hostAgent } from "./agents/driver.js";
 import type { ReviewerDriver, ReviewerSession } from "./agents/driver.js";
 import { converse, deliverRanges, redactSnapshot } from "./conversation.js";
@@ -70,6 +71,8 @@ import { buildGraphRun, buildHotSpots, nothingToReviewLine, ruleCoverage, scanCh
 import type { GraphHost, PipelineResult, ScanHost } from "./pipeline.js";
 import { redactStored } from "./redact.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
+import { usageTotals } from "./usage.js";
+import type { CallRecord, UsageTotals } from "./usage.js";
 
 // A frozen copy of the state under review: `tree` is the folder the
 // scanners and the reviewer read; `folder` holds it and whatever the maker
@@ -162,6 +165,12 @@ export type ReviewDeps = {
   // secrets, and the hash of the file they came from (null for none).
   instructions: (secrets: string[]) => { text: string; hash: string | null };
   onEvent: (event: ReviewEvent) => void;
+  // Receives the run's result before the run cleans up (the graph's lease,
+  // the snapshot), so the host writes and prints everything from it first:
+  // a cleanup that fails afterwards (a folder in the snapshot that cannot be
+  // written) then throws out of runReviewCore without losing the review.
+  // What it throws stops the run there, the cleanup still done.
+  onResult?: (result: ReviewCoreResult) => void | Promise<void>;
   // Called once, as soon as the deadline is fixed, with a synchronous stop:
   // it ends a running boundary check and the reviewer's process group and
   // removes the snapshot. A host's signal handler calls it before it exits.
@@ -181,6 +190,7 @@ export type ReviewCoreResult =
   | { ended: "unavailable"; reasons: string[]; change: Change; scan: ScanResult; secrets: string[] }
   // The reviewer ran. `report` carries the completion record and says
   // incomplete when the record does; `display` is the code report.html shows.
+  // `usage`: one record per round, from the driver's running totals.
   | {
       ended: "reviewed";
       report: Report;
@@ -192,6 +202,7 @@ export type ReviewCoreResult =
       secrets: string[];
       whole: boolean;
       target: RunTarget | null;
+      usage: { calls: CallRecord[]; totals: UsageTotals };
     };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -348,19 +359,24 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     if (snapshot !== null) deps.snapshots.removeNow(repoRoot, snapshot as Snapshot);
   });
   const scanHost: ScanHost = { resolveTool: deps.resolveTool, onProgress: say, onScan: (scan) => deps.onEvent({ type: "scan", scan }) };
+  // The result goes to the host before the cleanup below.
+  const finish = async (result: ReviewCoreResult): Promise<ReviewCoreResult> => {
+    await deps.onResult?.(result);
+    return result;
+  };
   const graphHost: GraphHost = { store: deps.graphStore, onProgress: say, warn };
   try {
     const prep = await prepare(inputs, deps, scanHost, (s) => (snapshot = s));
     if (prep === null) {
       if (inputs.all) warn("Nothing to review: the repository has no files");
-      return { ended: "nothing" };
+      return await finish({ ended: "nothing" });
     }
     const { p } = prep;
     const scan = p.scan as ScanResult;
     const change = p.change;
     deps.onEvent({ type: "prepared", change, scan, secrets: p.secrets });
     // No reviewer can start: the scanner candidates stay unchecked, never a review.
-    if ("unavailable" in chosen) return { ended: "unavailable", reasons: chosen.unavailable, change, scan, secrets: p.secrets };
+    if ("unavailable" in chosen) return await finish({ ended: "unavailable", reasons: chosen.unavailable, change, scan, secrets: p.secrets });
 
     // The one redaction every output of this run goes through (redact.ts:
     // each matched secret and each line of a multi-line one).
@@ -413,13 +429,15 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // The driver's per-run proof of its boundary (Codex's sandbox probe),
     // on the redacted snapshot, before its hash is taken.
     const unsafe = (await chosen.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: chosen.bin, register: (cleanup) => (checking = cleanup) })) ?? null;
-    if (unsafe !== null) return { ended: "unavailable", reasons: [`${chosen.driver.name}: ${unsafe}`], change, scan, secrets: p.secrets };
+    if (unsafe !== null) return await finish({ ended: "unavailable", reasons: [`${chosen.driver.name}: ${unsafe}`], change, scan, secrets: p.secrets });
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
     // A secret in a path would reach the reviewer through any listing: the
     // reviewer is not started and the review is incomplete.
     const refused = redaction.named > 0 ? "a file name in the change holds a secret the scanners found, so the reviewer was not started; rename the file" : null;
-    if (refused === null) session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: inputs.web });
+    // Each round's usage is recorded as the turns come back; the turns reach the conversation unchanged.
+    const metered = refused === null ? meterSession(chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: inputs.web }), { driver: chosen.driver.name, now: deps.now }) : null;
+    if (metered !== null) session = metered.session;
     if (session !== null) deps.onEvent({ type: "started", driver: chosen.driver.name, version: chosen.version, pid: session.pid });
     const pid = session?.pid ?? null;
     if (session !== null) say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
@@ -493,7 +511,8 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           secrets: p.secrets,
         })
       : buildDisplay({ change, secrets: p.secrets });
-    return { ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null };
+    const calls = metered?.calls() ?? [];
+    return await finish({ ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null, usage: { calls, totals: usageTotals(calls) } });
   } finally {
     over = true;
     graphLease?.release();
