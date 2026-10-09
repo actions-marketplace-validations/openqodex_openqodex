@@ -9,6 +9,11 @@
 //   3. The config names a plugin other than the bundled terraform ruleset,
 //      has no plugin folder of its own (so `.tflint.d` in the repository or
 //      the home could stand in for the ruleset), or calls modules.
+// Added after the security check of the first version:
+//   4. A value TFLint evaluated reaches the report: the duplicate map keys
+//      rule prints an evaluated key, and a key can be file() of any file the
+//      user can read; an evaluation error's detail names a path and whether
+//      it exists. The real-binary guard is in adapters-iac.subprocess.test.ts.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseTflintJson, tflintConfig } from "./tflint.js";
@@ -33,9 +38,16 @@ describe("parseTflintJson", () => {
     expect(errors).toEqual([]);
   });
 
-  it("names each file TFLint could not read (2)", () => {
-    const json = JSON.stringify({ issues: [], errors: [{ summary: "Invalid block definition", message: "Either a quoted string block label or an opening brace is expected.", severity: "error", range: { filename: "infra/broken.tf" } }] });
-    expect(parseTflintJson(json).errors).toEqual(["infra/broken.tf: Either a quoted string block label or an opening brace is expected."]);
+  it("names each file TFLint could not read, by TFLint's fixed summary and never its detail (2, 4)", () => {
+    const json = JSON.stringify({
+      issues: [],
+      errors: [
+        { summary: "Invalid block definition", message: "Either a quoted string block label or an opening brace is expected.", severity: "error", range: { filename: "infra/broken.tf" } },
+        { summary: "Invalid function argument", message: 'Invalid value for "path" parameter: no file exists at "/home/dev/.aws/credentials".', severity: "error", range: { filename: "infra/keys.tf" } },
+        { message: "Failed to load configurations" },
+      ],
+    });
+    expect(parseTflintJson(json).errors).toEqual(["infra/broken.tf: Invalid block definition", "infra/keys.tf: Invalid function argument", "TFLint error"]);
   });
 });
 
@@ -48,5 +60,9 @@ describe("tflintConfig", () => {
     expect(config).toContain('plugin "terraform" {');
     expect(config).toContain('preset  = "recommended"');
     expect(config).not.toMatch(/source|version/);
+  });
+
+  it("switches off the one recommended rule whose message prints an evaluated value (4)", () => {
+    expect(tflintConfig("/tmp/run/plugins")).toMatch(/rule "terraform_map_duplicate_keys" \{\n {2}enabled = false\n\}/);
   });
 });
