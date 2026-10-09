@@ -14,8 +14,12 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { OpenQodexError, quoteAlternate, readRepoFile, safeGit } from "@openqodex/core";
-import { checkoutsDir } from "@openqodex/review";
+import { checkoutsDir, lfsPaths } from "@openqodex/review";
 import type { SnapshotMaker } from "@openqodex/review";
+
+// How many changed files a checkout stores in Git LFS: the review core's
+// count, which the server's snapshots use too.
+export { lfsPaths };
 
 const execFileAsync = promisify(execFile);
 
@@ -154,18 +158,6 @@ export async function sweepCheckouts(repoRoot: string): Promise<void> {
     removed = true;
   }
   if (removed && existsSync(repoRoot)) await gitOut(repoRoot, ["worktree", "prune"]);
-}
-
-// How many of `paths` the checkout stores in Git LFS: their content was not
-// fetched, so the files hold pointers.
-export async function lfsPaths(tree: string, paths: string[]): Promise<number> {
-  if (paths.length === 0) return 0;
-  const r = await safeGit(tree, ["check-attr", "-z", "--stdin", "filter"], `${paths.join("\0")}\0`);
-  if (r.code !== 0) return 0;
-  const parts = r.stdout.toString("utf8").split("\0");
-  let n = 0;
-  for (let i = 0; i + 2 < parts.length; i += 3) if (parts[i + 2] === "lfs") n++;
-  return n;
 }
 
 // The repo's settings files as they are in its work tree, never the ones the

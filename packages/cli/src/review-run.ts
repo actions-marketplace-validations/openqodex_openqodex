@@ -253,6 +253,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       return EXIT_TOOL_FAILED;
     }
 
+    // The command passes no model reviewer, so the core never ends this way here.
+    if (result.ended === "model-reviewed") throw new OpenQodexError("the review core ended with a model reviewer, which the command never gives it");
     const { report, completion, change } = result;
     const shown = (folder as RunFolder | null)!.shown;
     // Every file, record and line printed from here on is drawn from `out`.

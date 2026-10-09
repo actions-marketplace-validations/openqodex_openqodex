@@ -1,8 +1,9 @@
 // Reading the frozen snapshot a review runs on: its files, one hash over
-// them, line counts and text. Nothing here writes.
+// them, line counts, text and the files Git LFS holds. Nothing here writes.
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { safeGit } from "@openqodex/core";
 
 // Snapshot files bigger than this are neither redacted nor hashed by content.
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -82,4 +83,16 @@ export function snapshotText(dir: string): (path: string) => string | null {
       return null;
     }
   };
+}
+
+// How many of `paths` the checkout stores in Git LFS: their content was not
+// fetched, so the files hold pointers.
+export async function lfsPaths(tree: string, paths: string[]): Promise<number> {
+  if (paths.length === 0) return 0;
+  const r = await safeGit(tree, ["check-attr", "-z", "--stdin", "filter"], `${paths.join("\0")}\0`);
+  if (r.code !== 0) return 0;
+  const parts = r.stdout.toString("utf8").split("\0");
+  let n = 0;
+  for (let i = 0; i + 2 < parts.length; i += 3) if (parts[i + 2] === "lfs") n++;
+  return n;
 }
