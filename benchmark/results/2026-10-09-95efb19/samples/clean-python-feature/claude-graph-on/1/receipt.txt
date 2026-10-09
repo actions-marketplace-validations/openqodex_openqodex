@@ -1,0 +1,6 @@
+Passed: no findings
+Change 1957ed62c932 against HEAD, 3 files, +26 -2
+Summary: Adds a to_display function that formats cents as a dollar string, and a balance_line report helper that uses it. Adds tests for both.
+No findings on the changed lines.
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

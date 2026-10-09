@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (1 critical, 1 minor)
+Change 9f4d6ef41c2c against HEAD, 1 file, +6 -3
+Summary: Changes tax_for to return None for unknown regions instead of zero tax. Both callers in the shop package do arithmetic on the result.
+1. Critical bug: None return crashes both callers for unknown regions (pkgs/billing/src/billing/tax.py:8)
+2. Minor maintainability: New unknown-region branch has no covering test (pkgs/billing/src/billing/tax.py:7-8)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

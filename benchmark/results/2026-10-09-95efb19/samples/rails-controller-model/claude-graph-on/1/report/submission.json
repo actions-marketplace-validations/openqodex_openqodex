@@ -1,0 +1,83 @@
+{
+  "version": 2,
+  "change_id": "4dd55d237fe9",
+  "summary": "Adds email search to the users index, a self-service profile update, a destroy action, and a welcome email callback on User.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "SQL injection in email search",
+      "problem": "The index action interpolates the q request parameter straight into the SQL string. Any authenticated caller controls the WHERE clause.",
+      "consequence": "A caller can read every column of every user, including api_token, or alter the query freely.",
+      "fix": "Pass the value as a bound parameter and escape the LIKE wildcards.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Destroy skips the admin check",
+      "problem": "The before_action exempts destroy from require_admin. The destroy action then finds any user by id with no scoping to the caller.",
+      "consequence": "Any authenticated user can delete any other user account, including admins.",
+      "fix": "Remove destroy from the except list so only admins reach it, or scope the lookup to the current user.",
+      "suggested_change": "  before_action :require_admin, except: [:index, :show, :profile]",
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c2"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Profile update permits every attribute",
+      "problem": "The profile action permits every key in the user params and writes them all to the record. The caller can therefore set any column, including the admin flag and api_token.",
+      "consequence": "Any authenticated user can promote themselves to admin or overwrite their token, which breaks the authorization model.",
+      "fix": "Permit an explicit list of profile fields instead of permitting everything.",
+      "suggested_change": "    @current_user.update!(params.require(:user).permit(:email))",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "problem": "The callback uses after_save, so the mailer runs on every update as well as on create. The new profile action updates the user, so each profile edit sends another welcome email.",
+      "consequence": "Users receive a welcome email every time they or an admin edit their record.",
+      "fix": "Use after_create so the welcome email goes out once.",
+      "suggested_change": "  after_create :send_welcome_email",
+      "source": null,
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 15,
+      "line_end": 23,
+      "title": "New actions have no tests",
+      "problem": "The change adds search, profile and destroy behaviour and a mailer callback. No test file in the repository exercises any of them.",
+      "consequence": "Regressions in authorization, search or the callback will reach production unnoticed.",
+      "fix": "Add controller tests for index search, profile and destroy, and a model test for the welcome email callback.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

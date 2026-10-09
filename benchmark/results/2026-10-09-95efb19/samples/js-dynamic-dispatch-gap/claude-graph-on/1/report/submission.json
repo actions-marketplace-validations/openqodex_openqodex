@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "eab11e18f842",
+  "summary": "Makes onSave async and writes a JSON snapshot of the in-memory store to data/notes.json after each save.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.92,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 8,
+      "title": "Async onSave returns a Promise to res.end",
+      "problem": "onSave now returns a Promise, but dispatch in src/router.js:7 returns it unchanged and src/main.js:9 passes it to res.end. res.end rejects a Promise chunk with ERR_INVALID_ARG_TYPE, and nobody awaits or catches the Promise.",
+      "consequence": "Every POST /save/<id> request throws inside the request handler, which crashes the server process. A failed writeFile also becomes an unhandled rejection because no caller observes the Promise.",
+      "fix": "Make the request handler in src/main.js async and await dispatch before calling res.end, with a try/catch around it. Alternatively keep onSave synchronous and use writeFileSync.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "info",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Snapshot write has no covering test",
+      "problem": "onSave gains a new file-write side effect and becomes async, but the repository has no test files. No test exercises the snapshot write or the new return shape.",
+      "consequence": "The caller break in src/main.js and future snapshot regressions go unnoticed. Someone finds them only by running the server by hand.",
+      "fix": "Add a test that calls onSave, awaits it, and asserts the snapshot file contains the saved id. Add a test that calls dispatch through the HTTP handler and checks the response body is a string.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}
