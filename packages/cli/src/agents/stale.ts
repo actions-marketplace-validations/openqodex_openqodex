@@ -50,6 +50,8 @@ export function staleOwned(home: string, oqHome: string): Stale {
   const launcher = launcherPath(oqHome);
   const runner = launcherRunner(launcher);
   const clineCli = existsSync(clineCliData(home));
+  // A --no-mcp recorded for this machine holds for the refresh too.
+  const mcpOn = !record.mcpOff.some((c) => c.repo === null);
   // A user-scope Cursor rule lives in a repository: the record names it.
   const cursorRepos = record.files.filter((f) => f.usesLauncher && f.path.endsWith(`${sep}${CURSOR_RULE}`)).map((f) => dirname(dirname(dirname(f.path))));
   // Each target with the guard init would write it through: the home's own
@@ -79,7 +81,7 @@ export function staleOwned(home: string, oqHome: string): Stale {
     const key = `${t.kind} ${t.path}`;
     if (seen.has(key) || !recorded(record, t)) continue;
     seen.add(key);
-    const ctx: Ctx = { record: copy, scope: "user", repoRoot: repo, guard };
+    const ctx: Ctx = { record: copy, scope: "user", repoRoot: repo, guard, mcp: mcpOn };
     try {
       const action = planInstall(t, ctx);
       if ((action.verb === "update" || action.verb === "replace") && !stale.includes(t.path)) {

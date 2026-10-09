@@ -35,6 +35,15 @@
 //     server's tools, or grant anything else for them.
 // 12. Claude Code rewrites ~/.claude.json while it runs: init refuses for a
 //     change it does not touch, or overwrites a change Claude Code made.
+// 13. The mcp__openqodex rule lets Claude Code run, without asking, the
+//     tools of a server named openqodex that is not OpenQodex's: one init
+//     found and kept, one in a file init could not read, or any after
+//     --no-mcp; or the rule init added stays after --no-mcp.
+// 14. Codex's config.toml defines the server in a spelling a pattern does
+//     not see (quoted, escaped, spaced or as an array of tables), and init
+//     appends a second one, which makes Codex refuse the whole file; or text
+//     inside a string is taken for a definition; or a file that is not TOML
+//     gets a block appended.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
@@ -299,6 +308,54 @@ describe("6. a server named openqodex that init did not write", () => {
       expect(read(file), text).toBe(text);
     }
   }, 180_000);
+
+  it("14. in Codex's config.toml, a quoted, escaped, spaced or array-of-tables key: no block is appended and the file stays as it was", () => {
+    const spellings = [
+      '[mcp_servers."openqodex"]\ncommand = "mine"\n',
+      "[mcp_servers.'openqodex']\ncommand = \"mine\"\n",
+      '[mcp_servers."open\\u0071odex"]\ncommand = "mine"\n',
+      '[mcp_servers."open\\U00000071odex"]\ncommand = "mine"\n',
+      'mcp_servers."openqodex".command = "mine"\n',
+      '"mcp_servers" . openqodex . command = "mine"\n',
+      '[[mcp_servers.openqodex]]\ncommand = "mine"\n',
+    ];
+    for (const text of spellings) {
+      const s = sandbox();
+      const file = join(s.home, ".codex", "config.toml");
+      write(file, text);
+      const r = cli(s, ["init", "--yes", "--agent", "codex", ...QUIET]);
+      expect(r.status, `${text}\n${r.stderr}`).toBe(0);
+      expect(r.stdout, text).toMatch(/keep .*config\.toml.*already defines a server named openqodex/);
+      expect(read(file), text).toBe(text);
+    }
+  }, 180_000);
+
+  it("14. text that only looks like the server inside a string is not a definition: the block is appended and the file still parses", () => {
+    const texts = [
+      'motto = "see # [mcp_servers.openqodex]"\n',
+      'notes = """\n[mcp_servers.openqodex]\ncommand = "x"\n"""\n',
+    ];
+    for (const text of texts) {
+      const s = sandbox();
+      const file = join(s.home, ".codex", "config.toml");
+      write(file, text);
+      const r = cli(s, ["init", "--yes", "--agent", "codex", ...QUIET]);
+      expect(r.status, `${text}\n${r.stderr}`).toBe(0);
+      expect(read(file), text).toBe(`${text}${tomlBlock(launcher(s), ["mcp"])}`);
+      expect((parseToml(file).mcp_servers as Record<string, unknown>).openqodex, text).toEqual({ command: launcher(s), args: ["mcp"] });
+    }
+  });
+
+  it("14. a config.toml that is not TOML is left untouched, and the plan says it could not be read as TOML", () => {
+    const s = sandbox();
+    const file = join(s.home, ".codex", "config.toml");
+    const text = 'model = "o3\n[mcp_servers.db]\n';
+    write(file, text);
+    const r = cli(s, ["init", "--yes", "--agent", "codex", ...QUIET]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/keep .*config\.toml.*could not be read as TOML/);
+    expect(read(file)).toBe(text);
+  });
 });
 
 describe("8. --no-mcp and --mcp", () => {
@@ -356,6 +413,46 @@ describe("11. the Claude Code permission rules for the graph", () => {
     expect(cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]).status).toBe(0);
     const allow = (JSON.parse(read(join(s.home, ".claude", "settings.json"))) as { permissions: { allow: string[] } }).permissions.allow;
     expect(allow.filter((r) => / graph\b|^mcp__/.test(r))).toEqual([`Bash(${launcher(s).includes(" ") ? `'${launcher(s)}'` : launcher(s)} graph *)`, "mcp__openqodex"]);
+  });
+});
+
+describe("13. the mcp__openqodex rule only for OpenQodex's own server", () => {
+  const rules = (s: Sandbox): string[] => (JSON.parse(read(join(s.home, ".claude", "settings.json"))) as { permissions: { allow: string[] } }).permissions.allow;
+  const graphRule = (s: Sandbox): string => `Bash(${launcher(s).includes(" ") ? `'${launcher(s)}'` : launcher(s)} graph *)`;
+
+  it("13. a foreign openqodex entry in ~/.claude.json gets no mcp__openqodex rule; the graph rule is still written", () => {
+    const s = sandbox();
+    write(join(s.home, ".claude.json"), jsonFile({ openqodex: { command: "someone-else" } }));
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(rules(s)).not.toContain("mcp__openqodex");
+    expect(rules(s)).toContain(graphRule(s));
+  });
+
+  it("13. --no-mcp writes no rule, and a later --no-mcp after a normal init removes the rule init added", () => {
+    const off = sandbox();
+    expect(cli(off, ["init", "--yes", "--no-mcp", "--agent", "claude-code", ...QUIET]).status).toBe(0);
+    expect(rules(off)).not.toContain("mcp__openqodex");
+    expect(rules(off)).toContain(graphRule(off));
+
+    const s = sandbox();
+    expect(cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]).status).toBe(0);
+    expect(rules(s)).toContain("mcp__openqodex");
+    const r = cli(s, ["init", "--yes", "--no-mcp", "--agent", "claude-code", ...QUIET]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(rules(s)).not.toContain("mcp__openqodex");
+    expect(rules(s)).toContain(graphRule(s));
+    const record = JSON.parse(read(join(s.oqHome, "install.json"))) as { allowRules: { rule: string }[] };
+    expect(record.allowRules.map((a) => a.rule)).not.toContain("mcp__openqodex");
+  }, 120_000);
+
+  it("13. a ~/.claude.json that does not parse gets no rule", () => {
+    const s = sandbox();
+    write(join(s.home, ".claude.json"), "{ not json,\n");
+    const r = cli(s, ["init", "--yes", "--agent", "claude-code", ...QUIET]);
+    expect(r.status).toBe(2);
+    expect(rules(s)).not.toContain("mcp__openqodex");
+    expect(rules(s)).toContain(graphRule(s));
   });
 });
 
