@@ -36,21 +36,25 @@
 //     (finished, incomplete, skipped, unavailable) and which reviewer was found;
 //     or a review that ran but could not write report.html is called skipped,
 //     with "nothing to review".
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { appendFileSync, chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gitDirs, gitPath, inWorkTree, repoRootOf } from "../src/agents/git.js";
 import { reviewAfterInit } from "../src/commands/init-review.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { agentFreePath, cli, inTerminal, sandbox, snapshot } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
 // A repo config that switches off the two scanners a text file calls for, so
-// a subprocess init starts no download and its review waits on none.
+// an init or a review starts no download and waits on none. The toolchain
+// finds the built CLI and installs for real, so a test that wants no network
+// carries this config.
 const NO_DOWNLOADS = { ".openqodex/config.yaml": "scanners:\n  disable: [semgrep, gitleaks]\n" };
 
 function git(cwd: string, ...args: string[]): void {
@@ -59,9 +63,13 @@ function git(cwd: string, ...args: string[]): void {
 }
 
 function repo(change: boolean): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-init-review-"));
+  const dir = tempDir("oq-init-review-");
   git(dir, "init", "-q", "-b", "main");
   writeFileSync(join(dir, "README.md"), "hello\n");
+  for (const [path, text] of Object.entries(NO_DOWNLOADS)) {
+    mkdirSync(join(dir, dirname(path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  }
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "Base");
   if (change) writeFileSync(join(dir, "notes.txt"), "one line\n");
@@ -98,7 +106,7 @@ let err: string;
 beforeEach(() => {
   out = "";
   err = "";
-  vi.stubEnv("OPENQODEX_HOME", mkdtempSync(join(tmpdir(), "oq-init-review-home-")));
+  vi.stubEnv("OPENQODEX_HOME", tempDir("oq-init-review-home-"));
   vi.stubEnv(DEPTH_ENV, "");
   vi.spyOn(process.stdout, "write").mockImplementation((s) => ((out += String(s)), true));
   vi.spyOn(process.stderr, "write").mockImplementation((s) => ((err += String(s)), true));
@@ -211,7 +219,7 @@ describe("the review init ends with", () => {
 // answers detection as Claude Code does, then answers every message with an
 // empty, valid submission for the change id the brief names.
 function standIn(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-init-review-bin-"));
+  const dir = tempDir("oq-init-review-bin-");
   writeFileSync(
     join(dir, "claude"),
     [
@@ -403,7 +411,7 @@ describe("7. what init wrote is not part of the first review", () => {
 
 describe("which files init writes count as work tree files", () => {
   it("9. a work tree nested inside its bare repository still counts its own files, and the git folders stay out", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-nested-bare-")));
+    const root = realpathSync(tempDir("oq-nested-bare-"));
     const seed = join(root, "seed");
     git(root, "init", "-q", "-b", "main", seed);
     writeFileSync(join(seed, "README.md"), "hello\n");

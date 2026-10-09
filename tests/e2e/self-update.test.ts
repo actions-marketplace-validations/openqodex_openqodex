@@ -1,13 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { extractArchive } from "../../packages/scanners/src/toolchain/fetch.js";
 import { fetchAttestations, fetchTarball } from "../../packages/cli/src/update/fetch.js";
 import { verifyRelease } from "../../packages/cli/src/update/verify.js";
 import { verifiedRelease } from "../../scripts/self-update-check-lib.mjs";
 import { bin, git, receipt, root, skipNetwork } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // The whole update chain against the real npm registry, in a temp HOME.
 //
@@ -52,7 +54,7 @@ function laptop(b: Box, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 }
 
 function box(): Box {
-  const top = realpathSync(mkdtempSync(join(tmpdir(), "oq-update-")));
+  const top = realpathSync(tempDir("oq-update-"));
   const b = { home: join(top, "home"), oqHome: join(top, "home/.openqodex"), repo: join(top, "repo") };
   mkdirSync(b.home, { recursive: true });
   mkdirSync(b.repo, { recursive: true });
@@ -171,7 +173,7 @@ describe.skipIf(offline)("the self-update against the real registry", () => {
     const fresh = box();
     const legacy = "0.7.1";
     const meta = (await (await fetch("https://registry.npmjs.org/openqodex")).json()) as { versions: Record<string, unknown> };
-    const unpacked = realpathSync(mkdtempSync(join(tmpdir(), "oq-legacy-")));
+    const unpacked = realpathSync(tempDir("oq-legacy-"));
     await verifiedRelease(legacy, meta, unpacked, { fetchAttestations, fetchTarball, verifyRelease, extractArchive });
     cpSync(join(unpacked, "package"), join(fresh.oqHome, "runtime", legacy), { recursive: true });
     // This build active, the real 0.7.1 as the version before it.

@@ -2,22 +2,22 @@
 // into, one scan of a tiny planted repo, and a proxy that logs every host a
 // scanner opens a connection to. Run by the end-to-end config, not the unit
 // config: tests/e2e/adapters.test.ts imports every *.subprocess.test.ts here.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { createToolResolver, runScanners } from "@openqodex/scanners";
+import { cacheFolder, tempDir } from "../../../tests/temp-dirs.mjs";
 
-// With TMPDIR moved (a test run's own scratch folder), the default home under
-// it is empty: point OPENQODEX_E2E_HOME at a home this branch's built CLI
-// filled with `doctor --install --all-scanners`.
-process.env.OPENQODEX_HOME = process.env.OPENQODEX_E2E_HOME ?? join(tmpdir(), "openqodex-e2e-home");
-// One throwaway user home for every file that imports this one.
-process.env.OQ_SUBPROCESS_USER_HOME ??= mkdtempSync(join(tmpdir(), "oq-adapter-user-"));
-process.env.HOME = process.env.OQ_SUBPROCESS_USER_HOME;
+// The scanner home the end-to-end setup filled with this build's
+// `doctor --install --all-scanners`, kept between runs outside the run's own
+// temp folder; OPENQODEX_E2E_HOME names another one so filled. Each file
+// that imports this one removes the temp folders it made, the user home
+// below included, with afterAll(removeTempDirs) (tests/temp-dirs.mjs).
+process.env.OPENQODEX_HOME = process.env.OPENQODEX_E2E_HOME ?? cacheFolder("openqodex-e2e-home");
+process.env.HOME = tempDir("oq-adapter-user-");
 
 // runtime: the language runtime a scanner needs that this machine may lack,
 // and the reason the product must give when it is missing. network: the case
@@ -26,18 +26,24 @@ process.env.HOME = process.env.OQ_SUBPROCESS_USER_HOME;
 export type Case = { scanner: BuiltinScanner; rule: string; files: Record<string, string>; anchor: string; runtime?: RegExp; network?: true; also?: BuiltinScanner[] };
 
 // The checks never install a scanner: the end-to-end setup installs every
-// one first with the built CLI's `doctor --install`. An install from here
-// would start this test runner again as its install worker (issue #69).
+// one first with the built CLI's `doctor --install`, so a check measures a
+// scan, never a download, and a missing scanner fails its case with the
+// reason.
 export const installedOnly = () => createToolResolver({ allowInstall: false, installBudgetMs: null });
 
-// Every line of every planted file counts as changed, as for a new file.
-export async function scan(spec: Case) {
-  const repo = mkdtempSync(join(tmpdir(), `oq-adapter-${spec.scanner}-`));
+// The planted files in a new temp folder.
+export function plant(spec: Case): string {
+  const repo = tempDir(`oq-adapter-${spec.scanner}-`);
   for (const [name, body] of Object.entries(spec.files)) {
     const path = join(repo, name);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
   }
+  return repo;
+}
+
+// Every line of every planted file counts as changed, as for a new file.
+export async function scan(spec: Case, repo = plant(spec)) {
   const paths = Object.keys(spec.files);
   const coverage = new Map(paths.map((p) => [p, new Set(readFileSync(join(repo, p), "utf8").split("\n").map((_, i) => i + 1))]));
   return runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: installedOnly(), only: [spec.scanner, ...(spec.also ?? [])] });

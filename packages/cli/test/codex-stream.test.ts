@@ -39,14 +39,16 @@
 //     the probe, so a program committed in the snapshot runs in place of a
 //     system one (a `cat` that prints the inside file and skips the rest).
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { CODEX_TESTED, PROBE_REFUSED, codexArgs, codexDriver, codexEnv, codexVersion, detectCodex, olderThanTested, probeSandbox, probeVerdict } from "../src/reviewers/codex.js";
 import { DEPTH_ENV, findOnPath } from "../src/reviewers/driver.js";
 import { openqodexHomeDir } from "../src/launcher.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RECORDED = readFileSync(join(here, "fixtures/codex-stream.jsonl"), "utf8");
@@ -57,7 +59,7 @@ const COMPLETED = lines[lines.length - 1]!;
 // of its own, prints `body` (a JavaScript expression of the text, evaluated
 // in the stand-in), then exits with `code`, or stays alive when `code` is null.
 function standIn(body: string, code: number | null = 0): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-codex-stand-in-"));
+  const dir = tempDir("oq-codex-stand-in-");
   const bin = join(dir, "codex");
   writeFileSync(
     bin,
@@ -92,7 +94,7 @@ const alive = (pid: number) => {
 };
 const pidsOf = (bin: string) => (existsSync(`${bin}.pids`) ? readFileSync(`${bin}.pids`, "utf8").trim().split(" ").map(Number) : []);
 const promptsOf = (bin: string) => readFileSync(`${bin}.prompts`, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string);
-const snap = () => realpathSync(mkdtempSync(join(tmpdir(), "oq-codex-snap-")));
+const snap = () => realpathSync(tempDir("oq-codex-snap-"));
 const settle = () => new Promise((done) => setTimeout(done, 200));
 
 async function runOnce(bin: string, deadlineMs = 30_000) {

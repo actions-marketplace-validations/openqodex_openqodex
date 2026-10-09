@@ -22,8 +22,7 @@
 import { execFileSync } from "node:child_process";
 import { symlinkSync } from "node:fs";
 import { OpenQodexError } from "../src/types.js";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
@@ -41,6 +40,9 @@ import {
   writeScan,
 } from "../src/report-files.js";
 import type { Latest, RunManifest, ScanResult } from "../src/types.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -48,7 +50,7 @@ afterAll(() => {
 });
 
 function repo(): string {
-  const d = mkdtempSync(join(tmpdir(), "oq-report-test-"));
+  const d = tempDir("oq-report-test-");
   dirs.push(d);
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: d });
   return d;

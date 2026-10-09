@@ -28,6 +28,9 @@ import { join } from "node:path";
 import { buildGraph, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const home = makeHome();
 const repos: string[] = [home];

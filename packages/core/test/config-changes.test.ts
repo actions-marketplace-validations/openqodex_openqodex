@@ -20,14 +20,16 @@
 // 25. A file an earlier init wrote with every default as a live value keeps
 //     an old default after the default changed, without a word; or a file
 //     the team wrote by hand is warned about its own choice.
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { CONFIG_CHANGES, CONFIG_KEYS, DEFAULT_CONFIG, DEFAULT_CONFIG_YAML, configHash, loadConfig, parseConfig, type ConfigChange } from "../src/config.js";
 import { applyMigration, planMigration } from "../src/config-migrate.js";
 import { OpenQodexError } from "../src/types.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // Every key a release has shipped. Frozen: a key leaves CONFIG_KEYS only
 // with a CONFIG_CHANGES entry, and a new key is added here.
@@ -51,7 +53,7 @@ const SHIPPED_KEYS = [
 ];
 
 function repo(): string {
-  return realpathSync(mkdtempSync(join(tmpdir(), "oq-config-changes-")));
+  return realpathSync(tempDir("oq-config-changes-"));
 }
 
 function refused(run: () => unknown): string {

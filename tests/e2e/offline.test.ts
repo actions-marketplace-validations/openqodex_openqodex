@@ -1,7 +1,10 @@
 import { mkdirSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
 import { demo, listing, report, run, toolsHome } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 describe("scan --offline", () => {
   let status: number | null; let found: Report; let before: Record<string, string>; let after: Record<string, string>;

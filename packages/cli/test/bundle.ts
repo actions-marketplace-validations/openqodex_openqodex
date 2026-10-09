@@ -1,11 +1,11 @@
 // Bundles child-entry.ts with esbuild (the bundler tsup uses for the CLI) into
 // one temp .mjs file a child `node` process can import. The code is this
 // repo's own, unchanged; only the packaging differs from the CLI bundle.
-import { mkdtempSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tempDir } from "../../../tests/temp-dirs.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const version = (JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as { version: string }).version;
@@ -14,7 +14,7 @@ export async function bundleChildEntry(): Promise<string> {
   const require = createRequire(import.meta.url);
   const tsup = dirname(require.resolve("tsup/package.json"));
   const esbuild = createRequire(join(tsup, "package.json"))("esbuild") as { build: (options: Record<string, unknown>) => Promise<unknown> };
-  const outfile = join(mkdtempSync(join(tmpdir(), "oq-child-")), "child.mjs");
+  const outfile = join(tempDir("oq-child-"), "child.mjs");
   await esbuild.build({
     entryPoints: [join(here, "child-entry.ts")],
     bundle: true,

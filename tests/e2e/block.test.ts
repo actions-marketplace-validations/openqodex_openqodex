@@ -1,6 +1,9 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { demo, report, run, writeConfig } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // Scanner severities top out at high, shown as major, so major is the
 // threshold a scan can meet. The critical case is the finalized review's.

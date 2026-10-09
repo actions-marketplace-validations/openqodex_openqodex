@@ -6,15 +6,17 @@
 // than a path. The callers must be listed as likely, with the reason: the
 // package's entry is its built dist file, and no tsconfig paths, project
 // reference or source condition maps it to source.
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { git, root, run } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 describe("callers across workspace packages", () => {
   it("lists the callers in packages/cli/src of a changed function of packages/core, as likely with the reason", () => {
-    const dir = join(mkdtempSync(join(tmpdir(), "oq-graph-self-")), "repo");
+    const dir = join(tempDir("oq-graph-self-"), "repo");
     git(root, "clone", "-q", "--no-hardlinks", root, dir);
     const file = join(dir, "packages/core/src/safe-git.ts");
     const text = readFileSync(file, "utf8");

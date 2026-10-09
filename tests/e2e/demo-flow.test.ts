@@ -2,14 +2,16 @@
 // init, the push hook before a review, scan, review --agent, the agent's
 // findings, review --finalize, the push hook after it. Each step runs once in
 // beforeAll; each case below checks one thing that can break.
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
 import "./global-setup.js";
 import { changedFiles, demo, generatedSecret, git, inventory, readBrief, readJson, receipt, report, reportDir, root, run, skipNetwork, snapshot, submission, writeConfig } from "./support.js";
 import type { Brief, Result, Snapshot } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 type Bug = { id: string; file: string; lines: [number, number]; detectors: { scanner: string; rule_id: string }[] | null };
 const expected = readJson<{ bugs: Bug[] }>(join(root, "examples/demo-repo/expected.json"));
@@ -23,7 +25,7 @@ let scanReport: Report; let brief: Brief; let finalReport: Report;
 const snaps: Record<"start" | "init" | "scan" | "agent" | "finalize", Snapshot> = {} as never;
 
 beforeAll(() => {
-  dir = demo("flow"); home = mkdtempSync(join(tmpdir(), "oq-flow-home-"));
+  dir = demo("flow"); home = tempDir("oq-flow-home-");
   secret = generatedSecret(dir);
   planted = git(dir, "ls-files", "--modified", "--others", "--exclude-standard").trim().split("\n");
   snaps.start = snapshot(dir);

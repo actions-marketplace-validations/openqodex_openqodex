@@ -15,12 +15,14 @@
 //    failure, or returns findings under another source.
 // 6. Editing the entry's run line keeps it running without a new approval.
 // 7. Revoking keeps it running.
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig } from "@openqodex/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { approve, customAdapters, resolveCustomArtifact, revoke, trustState } from "../src/custom/index.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const yaml = (run: string) => `
 scanners:
@@ -44,8 +46,8 @@ let repo: string;
 const savedHome = process.env.OPENQODEX_HOME;
 
 beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), "oq-home-"));
-  repo = mkdtempSync(join(tmpdir(), "oq-repo-"));
+  home = tempDir("oq-home-");
+  repo = tempDir("oq-repo-");
   process.env.OPENQODEX_HOME = home;
   mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
   writeFileSync(

@@ -13,6 +13,9 @@ import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact } from "../src/index.js";
 import { EXPORT_WALK_STEPS } from "../src/resolve.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

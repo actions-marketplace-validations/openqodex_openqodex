@@ -4,13 +4,15 @@
 // is a scored failure, a resume refuses changed settings, the bundle must be
 // the one built from the tree the run names, and the Codex model comes from
 // Codex's own output.
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { git } from "../lib/cases.mjs";
 import { attemptDir, codexModelFrom, failureOf, provenanceProblems, resumeProblems, sampleRecord, treeState } from "../lib/runner.mjs";
 import { loadRun } from "../score.mjs";
+import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const job = { case: "c", config: "claude-graph-on", reviewer: "claude", graph: true, repeat: 2 };
 
@@ -37,7 +39,7 @@ describe("attempts", () => {
   });
 
   it("loads every attempt of a saved run as a sample, a failed one included", () => {
-    const out = mkdtempSync(join(tmpdir(), "oq-bench-load-"));
+    const out = tempDir("oq-bench-load-");
     const spec = { id: "c", guards: "g", language: "python", framework: "none", clean: false, bugs: [{ id: "b", file: "a.py", lines: [1, 1], anchor: { line: 1, text: "x" }, mentions: ["x"], kind: ["bug"], severity: "major", found_by: ["reasoning"], truth: "t" }] };
     mkdirSync(join(out, "cases"), { recursive: true });
     writeFileSync(join(out, "cases", "c.json"), JSON.stringify(spec));
@@ -81,7 +83,7 @@ describe("resuming a run", () => {
 
 describe("the build's provenance", () => {
   const repo = () => {
-    const dir = join(mkdtempSync(join(tmpdir(), "oq-bench-prov-")), "repo");
+    const dir = join(tempDir("oq-bench-prov-"), "repo");
     mkdirSync(dir);
     writeFileSync(join(dir, "a.txt"), "one\n");
     git(dir, "init", "-q");

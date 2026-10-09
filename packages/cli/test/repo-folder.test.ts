@@ -19,11 +19,14 @@
 //     repo's own .gitignore ignores.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { planRepoFiles } from "../src/agents/repo-folder.js";
 import { Guard } from "../src/agents/guarded-fs.js";
 import { emptyRecord } from "../src/agents/record.js";
 import { cli, sandbox, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const CONFIG = ".openqodex/config.yaml";
 const INSTRUCTIONS = ".openqodex/custom-instructions.md";

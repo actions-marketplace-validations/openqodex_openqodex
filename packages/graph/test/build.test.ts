@@ -24,6 +24,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, openStore, renderImpactBlock } from "../src/index.js";
 import { at, callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const home = makeHome();
 const repos: string[] = [home];

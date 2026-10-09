@@ -571,9 +571,10 @@ export function lastInstallError(home: string, tool: string): { status: "not_ins
   }
 }
 
-// The body of `openqodex __install <tool>`. Returns the exit code: 0 installed,
-// 1 failed with the reason saved for the run that started it.
-export async function runInstallWorker(tool: string): Promise<number> {
+// One install in this process, for `openqodex __install <tool>` (index.ts
+// checks the entry first). Returns the exit code: 0 installed, 1 failed with
+// the reason saved for the run that started it.
+export async function runInstall(tool: string): Promise<number> {
   const home = openqodexHome();
   rmSync(errorPath(home, tool), { force: true });
   try {

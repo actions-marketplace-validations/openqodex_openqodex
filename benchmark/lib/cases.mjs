@@ -231,12 +231,17 @@ export function caseHash(id, root = casesRoot) {
 // are added with intent-to-add on a copy of the index, so the repository's
 // own index is not touched).
 export function changedLines(dir) {
-  const index = join(mkdtempSync(join(tmpdir(), "oq-bench-index-")), "index");
-  const env = { ...gitEnv(), GIT_INDEX_FILE: index };
+  const temp = mkdtempSync(join(tmpdir(), "oq-bench-index-"));
+  const env = { ...gitEnv(), GIT_INDEX_FILE: join(temp, "index") };
   const run = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  run("read-tree", "HEAD");
-  run("add", "-A", "-N");
-  const diff = run("diff", "-U0", "--no-color", "--no-renames", "HEAD");
+  let diff;
+  try {
+    run("read-tree", "HEAD");
+    run("add", "-A", "-N");
+    diff = run("diff", "-U0", "--no-color", "--no-renames", "HEAD");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
   const out = new Map();
   let file = null;
   for (const line of diff.split("\n")) {

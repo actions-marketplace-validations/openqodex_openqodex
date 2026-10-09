@@ -23,7 +23,7 @@
 //    it is read from the header Codex prints, or recorded as unknown.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
@@ -113,11 +113,16 @@ function gitOut(dir, args, env) {
 export function treeState(dir) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_") && v !== undefined) env[k] = v;
-  const index = join(mkdtempSync(join(tmpdir(), "oq-bench-tree-")), "index");
-  const withIndex = { ...env, GIT_INDEX_FILE: index };
-  gitOut(dir, ["read-tree", "HEAD"], withIndex);
-  gitOut(dir, ["add", "-A"], withIndex);
-  const tree = gitOut(dir, ["write-tree"], withIndex);
+  const temp = mkdtempSync(join(tmpdir(), "oq-bench-tree-"));
+  const withIndex = { ...env, GIT_INDEX_FILE: join(temp, "index") };
+  let tree;
+  try {
+    gitOut(dir, ["read-tree", "HEAD"], withIndex);
+    gitOut(dir, ["add", "-A"], withIndex);
+    tree = gitOut(dir, ["write-tree"], withIndex);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
   const commit = gitOut(dir, ["rev-parse", "HEAD"], env);
   const commitTree = gitOut(dir, ["rev-parse", "HEAD^{tree}"], env);
   return { commit, tree, commitTree, dirty: tree !== commitTree };
