@@ -140,6 +140,34 @@ What it showed:
 - The reviewer also asked for tests about once per review (32 and 31 findings); these are counted apart, as the scoring rules above say.
 - The wording pass (`judge.json`, judged by `claude-sonnet-5`, which never blocks) read the 203 findings that the earlier rules matched to a planted bug. Graph off and on: the problem sentence was plain in 86% and 90% and correct in 97% and 98%; the consequence plain in 86% and 85%, correct in 97% and 92%; the fix plain in 91% and 95%, correct in 97% and 98%. The judge's answer for 8 findings did not parse.
 
+## The phase 2 run
+
+`benchmark/results/2026-10-09-ac9cdae`: build `ac9cdae` (openqodex 0.10.0 with phase 2 of the code graph: calls through interfaces and base classes, functions used as values, type and value uses), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, on the same Mac with Node 22. 15 cases, graph on only, 1 repeat. The run is marked dirty because 18 untracked scratch files sat under `.tmp/` in the build's tree; the product code is the commit's. The fixes from the phase's code review came after this build. They change how sure some edges are, not what the five graph cases' briefs say: scored again on the final build with the same brief checks, those briefs still name every gap and every caller.
+
+The `django-model-view` review failed: the Mac went to sleep a second after it started, and the run stopped it after 1,521 s with no report. That one review ran again on the same build, in `benchmark/results/2026-10-09-ac9cdae-django-retry`, and completed. The phase 2 column takes `django-model-view` from that folder and every other case from the run. Each folder is scored with its own specs (`score.json`). The first run is scored with `cases-v2/`, as in its own table. `score.mjs --against` scores the earlier run with that run's own specs, which predate the words each plant needs, so this comparison calls the scorer's functions directly.
+
+| Measure (graph on) | First run, `752b77f`, 3 repeats | Phase 2, `ac9cdae`, 1 repeat |
+|---|---|---|
+| Planted bugs found | 99/111 (89%) | 33/38 (87%) |
+| critical | 32/33 | 12/12 |
+| major | 57/60 | 20/20 |
+| minor | 10/18 | 1/6 |
+| Findings that are planted bugs | 99/103 (96%) | 33/33 (100%) |
+| False findings | 4 | 0 |
+| Clean changes with no finding | 6/6 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 7/7 |
+| Graph gaps disclosed in the brief | 3/6 | 3/3 |
+| Time per review, mean | 25 s | 34 s |
+| Cost per review, mean | $0.11 | $0.11 |
+
+What it showed:
+
+- The line this phase moved is the graph gaps. In `js-dynamic-dispatch-gap` the brief now names the computed call `table[action](id)` and lists the table's entries as its possible targets: 2 of 2 checks, where each review of the first run passed 1 of 2.
+- The new case, `ts-interface-dispatch-break`, plants a bug that only a call through an interface reaches. Its brief listed both callers that reach it through the `Cache` interface as possible callers and called the list a floor (3 of 3 checks), and the review found the bug. Graph off was not run, so this run does not show whether the graph made the difference.
+- On the 14 cases both runs hold, the review found 32 of 37 plants: every critical and major one. The five misses are minor: three Dockerfile issues and a shell loop in the demo repository that the scanners raised and the reviewer dropped, as in the first run, and the list items without keys in the Next.js case.
+- No finding was false. Three findings matched side issues the cases list as real but not planted: the Next.js search form the change drops (listed since the first run, where it counted false 5 times), the Next.js search failure that is never caught, and the race between two redemptions in the Django case.
+- The mean time rests on one demo review of 98 s, 82 s of it the reviewer's; the first run's three demo reviews with the graph on took 47 s, 83 s and 50 s. The median review took 28 s.
+
 ## Claims cite a run
 
 A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a saved benchmark run: the results folder, the score file it quotes (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no saved run backs is not written.

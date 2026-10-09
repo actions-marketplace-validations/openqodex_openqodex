@@ -1,0 +1,12 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/main.ts",
+    "inside": true,
+    "range": [
+      1,
+      9
+    ],
+    "ok": true
+  }
+]
