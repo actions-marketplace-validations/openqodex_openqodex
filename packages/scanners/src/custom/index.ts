@@ -164,7 +164,7 @@ type TrustLock = { home: string; token: string };
 // One attempt: the lock when it was free, null while a live process holds it.
 function tryLock(): TrustLock | null {
   const home = openqodexHome();
-  const dir = toolDir(home, LOCK_NAME);
+  const dir = toolDir(toolsDir(home), LOCK_NAME);
   mkdirSync(dir, { recursive: true });
   const lock = join(dir, ".lock");
   const token = randomBytes(8).toString("hex");
@@ -183,7 +183,7 @@ function tryLock(): TrustLock | null {
   // The holder is stale only when the same holder is seen before and after a
   // liveness check that failed; a lock released or passed on meanwhile is retried.
   const holder = readLock(lock);
-  if (holder === null || isLocked(home, LOCK_NAME)) return null;
+  if (holder === null || isLocked(toolsDir(home), LOCK_NAME)) return null;
   if (readLock(lock)?.token === holder.token) {
     throw new OpenQodexError(`${lock} was left by an openqodex process that is no longer running: delete it and run the command again`);
   }
@@ -191,7 +191,7 @@ function tryLock(): TrustLock | null {
 }
 
 const busy = () =>
-  new OpenQodexError(`${join(toolDir(openqodexHome(), LOCK_NAME), ".lock")}: another openqodex process kept approvals locked for ${LOCK_WAIT_MS / 1000} seconds; run the command again when it has finished`);
+  new OpenQodexError(`${join(toolDir(toolsDir(openqodexHome()), LOCK_NAME), ".lock")}: another openqodex process kept approvals locked for ${LOCK_WAIT_MS / 1000} seconds; run the command again when it has finished`);
 
 function lockSync(): TrustLock {
   const giveUp = Date.now() + LOCK_WAIT_MS;
@@ -213,7 +213,7 @@ async function lockAsync(): Promise<TrustLock> {
   }
 }
 
-const unlock = ({ home, token }: TrustLock) => releaseLock(home, LOCK_NAME, token);
+const unlock = ({ home, token }: TrustLock) => releaseLock(toolsDir(home), LOCK_NAME, token);
 
 // Read, edit and write trust.json. The caller holds the lock.
 function editTrust(edit: (records: TrustRecord[]) => TrustRecord[]): void {
