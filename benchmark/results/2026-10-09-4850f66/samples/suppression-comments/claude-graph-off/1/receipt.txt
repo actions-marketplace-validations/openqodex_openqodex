@@ -1,0 +1,7 @@
+Passed with warnings: 2 findings (2 critical)
+Change 0d314adcfe16 against HEAD, 3 files, +18 -0
+Summary: Adds a /calc endpoint that evaluates an arithmetic expression from the query string. Also adds a helper that shells out to ImageMagick convert to thumbnail uploaded images, plus a docs URL constant.
+1. Critical security: Request query evaluated as JavaScript (web/server.js:12)
+2. Critical security: Shell command built from upload name (tools/thumbs.py:9)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

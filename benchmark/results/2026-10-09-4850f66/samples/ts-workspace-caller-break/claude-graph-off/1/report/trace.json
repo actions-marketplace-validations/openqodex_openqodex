@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "Grep",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "packages/cli/src/main.ts",
+    "inside": true,
+    "range": [
+      1,
+      12
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "packages/cli/package.json",
+    "inside": true,
+    "range": [
+      1,
+      15
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "packages/cli/src/branch.ts",
+    "inside": true,
+    "range": [
+      1,
+      12
+    ],
+    "ok": true
+  }
+]

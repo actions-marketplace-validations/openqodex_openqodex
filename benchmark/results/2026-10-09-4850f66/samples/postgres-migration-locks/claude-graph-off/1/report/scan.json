@@ -1,0 +1,290 @@
+{
+  "candidates": [
+    {
+      "source": "squawk",
+      "ruleId": "adding-required-field",
+      "filePath": "db/migrations/0002_order_status.sql",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "medium",
+      "message": "Adding a new column that is `NOT NULL` and has no default value to an existing table effectively makes it required. Make the field nullable or add a non-VOLATILE DEFAULT",
+      "reference": "https://squawkhq.com/docs/adding-required-field",
+      "id": "c1",
+      "token": "squawk:adding-required-field",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "squawk",
+      "ruleId": "require-concurrent-index-creation",
+      "filePath": "db/migrations/0002_order_status.sql",
+      "lineStart": 5,
+      "lineEnd": 5,
+      "severity": "medium",
+      "message": "During normal index creation, table updates are blocked, but reads are still allowed. Use `concurrently` to avoid blocking writes.",
+      "reference": "https://squawkhq.com/docs/require-concurrent-index-creation",
+      "id": "c2",
+      "token": "squawk:require-concurrent-index-creation",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "squawk",
+      "ruleId": "require-lock-timeout",
+      "filePath": "db/migrations/0002_order_status.sql",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "message": "Missing `set lock_timeout` before potentially slow ACCESS EXCLUSIVE lock operations Configure a `lock_timeout` before this statement. Statement requires: ACCESS EXCLUSIVE lock; blocking: reads, writes, schema changes.",
+      "reference": "https://squawkhq.com/docs/require-lock-timeout",
+      "id": "c3",
+      "token": "squawk:require-lock-timeout",
+      "reviewSeverity": "nitpick"
+    },
+    {
+      "source": "squawk",
+      "ruleId": "require-statement-timeout",
+      "filePath": "db/migrations/0002_order_status.sql",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "message": "Missing `set statement_timeout` before potentially slow operations Configure a `statement_timeout` before this statement",
+      "reference": "https://squawkhq.com/docs/require-statement-timeout",
+      "id": "c4",
+      "token": "squawk:require-statement-timeout",
+      "reviewSeverity": "nitpick"
+    },
+    {
+      "source": "squawk",
+      "ruleId": "prefer-robust-stmts",
+      "filePath": "db/migrations/0002_order_status.sql",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "message": "Missing `IF NOT EXISTS`, the migration can't be rerun if it fails part way through.",
+      "reference": "https://squawkhq.com/docs/prefer-robust-stmts",
+      "id": "c5",
+      "token": "squawk:prefer-robust-stmts",
+      "reviewSeverity": "nitpick"
+    },
+    {
+      "source": "squawk",
+      "ruleId": "prefer-robust-stmts",
+      "filePath": "db/migrations/0002_order_status.sql",
+      "lineStart": 5,
+      "lineEnd": 5,
+      "severity": "low",
+      "message": "Missing `IF NOT EXISTS`, the migration can't be rerun if it fails part way through. Use an explicit name for a concurrently created index",
+      "reference": "https://squawkhq.com/docs/prefer-robust-stmts",
+      "id": "c6",
+      "token": "squawk:prefer-robust-stmts",
+      "reviewSeverity": "nitpick"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 2969,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 21,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "ran",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 4,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "ran",
+      "version": "2.66.0",
+      "rawCount": 6,
+      "keptCount": 6,
+      "durationMs": 16,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "ran",
+      "version": "4.3.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 230,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 10,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [],
+  "projects": [
+    {
+      "root": "",
+      "frameworks": []
+    }
+  ]
+}

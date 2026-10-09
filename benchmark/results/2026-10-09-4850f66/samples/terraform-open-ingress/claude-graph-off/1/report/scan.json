@@ -1,0 +1,408 @@
+{
+  "candidates": [
+    {
+      "source": "trivy",
+      "ruleId": "AWS-0107",
+      "filePath": "infra/bastion.tf",
+      "lineStart": 12,
+      "lineEnd": 12,
+      "severity": "high",
+      "message": "Security groups should not allow unrestricted ingress to SSH or RDP from any IP address: Security group rule allows unrestricted ingress from any IP address.",
+      "reference": "https://avd.aquasec.com/misconfig/aws-0107",
+      "id": "c1",
+      "token": "trivy:AWS-0107",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "trivy",
+      "ruleId": "AWS-0180",
+      "filePath": "infra/database.tf",
+      "lineStart": 17,
+      "lineEnd": 17,
+      "severity": "high",
+      "message": "RDS Publicly Accessible: Instance has Public Access enabled",
+      "reference": "https://avd.aquasec.com/misconfig/aws-0180",
+      "id": "c2",
+      "token": "trivy:AWS-0180",
+      "reviewSeverity": "major",
+      "alsoReportedBy": [
+        "checkov:CKV_AWS_17"
+      ]
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "terraform.aws.security.aws-db-instance-no-logging.aws-db-instance-no-logging",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 22,
+      "severity": "medium",
+      "message": "Database instance has no logging. Missing logs can cause missing important event information.",
+      "reference": "https://owasp.org/Top10/A04_2021-Insecure_Design",
+      "id": "c3",
+      "token": "semgrep:terraform.aws.security.aws-db-instance-no-logging.aws-db-instance-no-logging",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "terraform.lang.security.rds-public-access.rds-public-access",
+      "filePath": "infra/database.tf",
+      "lineStart": 17,
+      "lineEnd": 17,
+      "severity": "medium",
+      "message": "RDS instance accessible from the Internet detected.",
+      "reference": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance#publicly_accessible",
+      "id": "c4",
+      "token": "semgrep:terraform.lang.security.rds-public-access.rds-public-access",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "trivy",
+      "ruleId": "AWS-0176",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "medium",
+      "message": "RDS IAM Database Authentication Disabled: Instance does not have IAM Authentication enabled",
+      "reference": "https://avd.aquasec.com/misconfig/aws-0176",
+      "id": "c5",
+      "token": "trivy:AWS-0176",
+      "reviewSeverity": "minor",
+      "alsoReportedBy": [
+        "checkov:CKV_AWS_161"
+      ]
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_AWS_24",
+      "filePath": "infra/bastion.tf",
+      "lineStart": 9,
+      "lineEnd": 12,
+      "severity": "medium",
+      "message": "Ensure no security groups allow ingress from 0.0.0.0:0 to port 22",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/SecurityGroupUnrestrictedIngress22.py",
+      "id": "c6",
+      "token": "checkov:CKV_AWS_24",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_AWS_353",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "medium",
+      "message": "Ensure that RDS instances have performance insights enabled",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/RDSInstancePerformanceInsights.py",
+      "id": "c7",
+      "token": "checkov:CKV_AWS_353",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_AWS_157",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "medium",
+      "message": "Ensure that RDS instances have Multi-AZ enabled",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/RDSMultiAZEnabled.py",
+      "id": "c8",
+      "token": "checkov:CKV_AWS_157",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_AWS_129",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "medium",
+      "message": "Ensure that respective logs of Amazon Relational Database Service (Amazon RDS) are enabled",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/DBInstanceLogging.py",
+      "id": "c9",
+      "token": "checkov:CKV_AWS_129",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_AWS_226",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "medium",
+      "message": "Ensure DB instance gets all minor upgrades automatically",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/DBInstanceMinorUpgrade.py",
+      "id": "c10",
+      "token": "checkov:CKV_AWS_226",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV_AWS_118",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "medium",
+      "message": "Ensure that enhanced monitoring is enabled for Amazon RDS instances",
+      "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/RDSEnhancedMonitorEnabled.py",
+      "id": "c11",
+      "token": "checkov:CKV_AWS_118",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV2_AWS_60",
+      "filePath": "infra/database.tf",
+      "lineStart": 8,
+      "lineEnd": 8,
+      "severity": "medium",
+      "message": "Ensure RDS instance with copy tags to snapshots is enabled",
+      "reference": "https://www.checkov.io/5.Policy%20Index/terraform.html",
+      "id": "c12",
+      "token": "checkov:CKV2_AWS_60",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV2_AWS_5",
+      "filePath": "infra/bastion.tf",
+      "lineStart": 2,
+      "lineEnd": 2,
+      "severity": "medium",
+      "message": "Ensure that Security Groups are attached to another resource",
+      "reference": "https://www.checkov.io/5.Policy%20Index/terraform.html",
+      "id": "c13",
+      "token": "checkov:CKV2_AWS_5",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "checkov",
+      "ruleId": "CKV2_AWS_30",
+      "filePath": "infra/database.tf",
+      "lineStart": 8,
+      "lineEnd": 8,
+      "severity": "medium",
+      "message": "Ensure Postgres RDS as aws_db_instance has Query Logging enabled",
+      "reference": "https://www.checkov.io/5.Policy%20Index/terraform.html",
+      "id": "c14",
+      "token": "checkov:CKV2_AWS_30",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "trivy",
+      "ruleId": "AWS-0133",
+      "filePath": "infra/database.tf",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "low",
+      "message": "Enable Performance Insights to detect potential problems: Instance does not have performance insights enabled.",
+      "reference": "https://avd.aquasec.com/misconfig/aws-0133",
+      "id": "c15",
+      "token": "trivy:AWS-0133",
+      "reviewSeverity": "nitpick"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 3664,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 43,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "ran",
+      "version": "0.75.0",
+      "rawCount": 5,
+      "keptCount": 4,
+      "durationMs": 441,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "ran",
+      "version": "3.3.22",
+      "rawCount": 13,
+      "keptCount": 9,
+      "durationMs": 1434,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "ran",
+      "version": "0.64.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 226,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [],
+  "projects": []
+}

@@ -1,0 +1,98 @@
+{
+  "version": 2,
+  "started_at": "2026-10-09T06:16:46.029Z",
+  "build": {
+    "commit": "4850f6670d378a85e787e100759cd6f7cf2389f3",
+    "short": "4850f66",
+    "tree": "80fa23ebf1d866425db10a3a13f1d3888b0e2649",
+    "commitTree": "80fa23ebf1d866425db10a3a13f1d3888b0e2649",
+    "dirty": false,
+    "bundleHash": "e0712012cbf588768a3c3511f5562405402e7039b65e51058c97f5f7fb31a162",
+    "builtAt": "2026-10-09T06:16:16.578Z",
+    "builtWithNode": "v22.23.3",
+    "cli": "packages/cli/dist/bin.js",
+    "cliVersion": "0.10.0"
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "27.2.0",
+    "arch": "arm64",
+    "cpu": "Apple M5 Pro",
+    "cpus": 15,
+    "memoryGb": 48,
+    "node": "v22.23.3"
+  },
+  "reviewer": {
+    "name": "claude",
+    "version": "2.1.295",
+    "model": "claude-opus-5-5",
+    "modelFrom": "the model Claude Code names in its answer"
+  },
+  "reviewers": {
+    "claude": {
+      "name": "claude",
+      "version": "2.1.295",
+      "model": "claude-opus-5-5",
+      "modelFrom": "the model Claude Code names in its answer"
+    }
+  },
+  "review": {
+    "web": "on",
+    "timeoutSeconds": 900,
+    "reportDir": true,
+    "flags": "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]"
+  },
+  "cases": [
+    "clean-python-feature",
+    "clean-ts-refactor",
+    "demo-polyglot",
+    "django-model-view",
+    "express-admin-routes",
+    "flask-path-traversal",
+    "go-http-handler",
+    "js-dynamic-dispatch-gap",
+    "kubernetes-host-access",
+    "nextjs-react-hooks",
+    "postgres-migration-locks",
+    "python-caller-break",
+    "rails-controller-model",
+    "suppression-comments",
+    "terraform-open-ingress",
+    "ts-removed-export",
+    "ts-workspace-caller-break",
+    "workflow-untrusted-checkout"
+  ],
+  "caseHashes": {
+    "clean-python-feature": "9ec4022ca47b63f6fe7c99e8a31c09b6f314bcff4cfed21137e434af39c3ba77",
+    "clean-ts-refactor": "932afbb62f53b81bc8cf72395239b56104a26b91a8077ad0cb31317333ad6b4f",
+    "demo-polyglot": "54efb49b30d226d8ab8c6933b377c88989bf1fd3d23e3e902d2f272e31c6b72e",
+    "django-model-view": "1c282ee07c951ee13f4ad73f54914f4b6c786ab23fd84b47eca2b4a2af94bfa7",
+    "express-admin-routes": "e9cc8bd156ea089aa220ae0db6fe7ade9b7e91cd6348b103c93b09c500b27648",
+    "flask-path-traversal": "0ca5ead7572071cd6f9fe29f8319ad6b9ab645d050d1588e47d4db6032ddbf2d",
+    "go-http-handler": "d94de84adbb648632d5240823f5b6b23718fe153f35fc811dd1866829e77c94f",
+    "js-dynamic-dispatch-gap": "2b036d38fcc05b3075f9e0d1fee81d7f1e6b2f94644595944b5887a2da07d846",
+    "kubernetes-host-access": "aeb552b4a47c5404bb0bfdb3f9f0fd5a467f3a245ac1a9c228120a152c504c0d",
+    "nextjs-react-hooks": "ef6f5582bcadc964abddc04ad23c17d473026eb2d252c5b527233f9ee41201f3",
+    "postgres-migration-locks": "ade7ae57b031e86c7429730b144f755a7b0d4c028b0c3db61f08d8a48eb58ed7",
+    "python-caller-break": "3273585332e7011149bbc052eb504e2c1ffd410f6c655de8486d2693eab77803",
+    "rails-controller-model": "44f3814200ae3d85f0667b916d6b655857f3e6bd11144ef5b1023329765baa96",
+    "suppression-comments": "f224edf0e5290bcd8068d7fe01bede212f7a5fbe458bbd15925fcaf5afec0541",
+    "terraform-open-ingress": "8a8f088c0044baef37ccd3882939fb411faaa937c8117ec54c711f4ee27ed3b0",
+    "ts-removed-export": "4998a203a5d3beb5770b5444f48f14aa52159ab717d8f99b114ad8d7604b2a99",
+    "ts-workspace-caller-break": "d99bea743cdd55e588d65bc9edc343eb62fb2c1d2cc9de8713fab22d062fa84b",
+    "workflow-untrusted-checkout": "6bad2b2a579579429e7a86c6db9f7a4dcc757fa68448ecef85e38e9fe35666e1"
+  },
+  "configs": [
+    "claude-graph-off"
+  ],
+  "repeat": 1,
+  "concurrency": 1,
+  "planned": 18,
+  "ended": {
+    "at": "2026-10-09T06:25:10.104Z",
+    "how": "finished",
+    "why": null,
+    "reviewsWithAnAttempt": 18,
+    "planned": 18
+  }
+}

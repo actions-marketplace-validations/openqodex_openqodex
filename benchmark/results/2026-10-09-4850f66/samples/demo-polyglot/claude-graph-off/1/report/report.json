@@ -1,0 +1,1021 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "9799b104d689702fac6918e5056a39a3b610b9daebbde58d30cc7303f2a9c2ba",
+  "base": {
+    "ref": "HEAD",
+    "sha": "72b6023c7a5d2d4681c0ec69f395748164e3c219"
+  },
+  "generated_at": "2026-10-09T06:18:32.273Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a /search endpoint and a Stripe config, and changes pagination in server.py. It also loosens security settings in the Dockerfile, Kubernetes deployment, Terraform, CI workflow and deploy script, and downgrades lodash.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/search.py",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "Search query built from request input",
+      "description": "search_items puts the q request parameter straight into the SQL text with an f-string. A quote in q ends the string literal and appends attacker SQL. Any caller of /search can read or change any data in the items database. Pass q to cur.execute as a bound parameter.",
+      "suggested_change": "    cur.execute(\"SELECT id, name, price FROM items WHERE name = ?\", (q,))",
+      "source": "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c5",
+      "notes": [],
+      "problem": "search_items puts the q request parameter straight into the SQL text with an f-string. A quote in q ends the string literal and appends attacker SQL.",
+      "consequence": "Any caller of /search can read or change any data in the items database.",
+      "fix": "Pass q to cur.execute as a bound parameter."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "app/server.py",
+      "line_number": 23,
+      "line_end": 23,
+      "title": "Pagination skips the first page",
+      "description": "list_items now computes offset as page times PAGE_SIZE. Page 1 therefore starts at row 20 instead of row 0. Clients never see the first 20 items. The last page of results also comes back empty. Restore the offset to page minus one times PAGE_SIZE.",
+      "suggested_change": "    offset = (page - 1) * PAGE_SIZE",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "list_items now computes offset as page times PAGE_SIZE. Page 1 therefore starts at row 20 instead of row 0.",
+      "consequence": "Clients never see the first 20 items. The last page of results also comes back empty.",
+      "fix": "Restore the offset to page minus one times PAGE_SIZE."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": "app/config.py",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Stripe API key committed to source",
+      "description": "config.py hardcodes a Stripe API key in the repository. Anyone with repository access can make payment API calls with the shop's account. Revoke the key in Stripe. Read the replacement key from an environment variable or a secret store.",
+      "suggested_change": "STRIPE_KEY = os.environ[\"STRIPE_KEY\"]",
+      "source": "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "config.py hardcodes a Stripe API key in the repository.",
+      "consequence": "Anyone with repository access can make payment API calls with the shop's account.",
+      "fix": "Revoke the key in Stripe. Read the replacement key from an environment variable or a secret store."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "deploy/deployment.yaml",
+      "line_number": 42,
+      "line_end": 43,
+      "title": "API container runs privileged",
+      "description": "The api container now sets privileged and allowPrivilegeEscalation to true. The readiness and liveness probes use httpGet, so the raw socket justification in the comment does not hold. Anyone who compromises the API process gains root-equivalent access to the node. That person can escape the container. Remove privileged and set allowPrivilegeEscalation back to false.",
+      "suggested_change": "            allowPrivilegeEscalation: false",
+      "source": "kube-linter:privileged-container",
+      "candidate": "c11",
+      "notes": [],
+      "problem": "The api container now sets privileged and allowPrivilegeEscalation to true. The readiness and liveness probes use httpGet, so the raw socket justification in the comment does not hold.",
+      "consequence": "Anyone who compromises the API process gains root-equivalent access to the node. That person can escape the container.",
+      "fix": "Remove privileged and set allowPrivilegeEscalation back to false."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "infra/main.tf",
+      "line_number": 28,
+      "line_end": 28,
+      "title": "SSH open to the whole internet",
+      "description": "The api security group now allows port 22 from 0.0.0.0/0 instead of the office range. Any host on the internet can reach SSH on the API servers. Brute force and exploit attempts become possible. Restore the office CIDR or use a bastion or SSM Session Manager while the VPN is down.",
+      "suggested_change": "    cidr_blocks = [\"203.0.113.0/24\"]",
+      "source": "trivy:AWS-0107",
+      "candidate": "c9",
+      "notes": [],
+      "problem": "The api security group now allows port 22 from 0.0.0.0/0 instead of the office range.",
+      "consequence": "Any host on the internet can reach SSH on the API servers. Brute force and exploit attempts become possible.",
+      "fix": "Restore the office CIDR or use a bastion or SSM Session Manager while the VPN is down."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.9,
+      "file_path": "package-lock.json",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "lodash downgraded to a vulnerable release",
+      "description": "The change downgrades lodash from 4.18.1 to 4.17.15. Version 4.17.15 has known prototype pollution, command injection and ReDoS flaws. The front-end helpers inherit those flaws wherever they pass untrusted data to lodash. Keep lodash at 4.18.1 in package.json and package-lock.json.",
+      "suggested_change": "        \"lodash\": \"4.18.1\"",
+      "source": "osv-scanner:GHSA-p6mc-m468-83gw",
+      "candidate": "c7",
+      "notes": [],
+      "problem": "The change downgrades lodash from 4.18.1 to 4.17.15. Version 4.17.15 has known prototype pollution, command injection and ReDoS flaws.",
+      "consequence": "The front-end helpers inherit those flaws wherever they pass untrusted data to lodash.",
+      "fix": "Keep lodash at 4.18.1 in package.json and package-lock.json."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.8,
+      "file_path": ".github/workflows/ci.yml",
+      "line_number": 17,
+      "line_end": 17,
+      "title": "Pull request title expanded inside a shell command",
+      "description": "The workflow pastes the pull request title into the run script before bash parses it. A title containing a quote, backtick or $( ) runs as shell code. A pull request author can run commands on the runner. Ordinary titles with backticks also break the CI step. Pass the title through an env variable and quote it in the script.",
+      "suggested_change": "        env:\n          PR_TITLE: ${{ github.event.pull_request.title }}\n        run: echo \"Testing $PR_TITLE\"",
+      "source": "semgrep:yaml.github-actions.security.run-shell-injection.run-shell-injection",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The workflow pastes the pull request title into the run script before bash parses it. A title containing a quote, backtick or $( ) runs as shell code.",
+      "consequence": "A pull request author can run commands on the runner. Ordinary titles with backticks also break the CI step.",
+      "fix": "Pass the title through an env variable and quote it in the script."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "performance",
+      "confidence": 0.8,
+      "file_path": "db/migrations/002_index_item_names.sql",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Index build blocks writes to items",
+      "description": "The migration creates the index without CONCURRENTLY on the production Postgres items table. Postgres blocks all writes to items until the build finishes. Inserts and updates to items stall for the whole build on a large table. Create the index concurrently and outside a transaction.",
+      "suggested_change": "CREATE INDEX CONCURRENTLY IF NOT EXISTS items_name_idx ON items (name);",
+      "source": "squawk:require-concurrent-index-creation",
+      "candidate": "c17",
+      "notes": [],
+      "problem": "The migration creates the index without CONCURRENTLY on the production Postgres items table. Postgres blocks all writes to items until the build finishes.",
+      "consequence": "Inserts and updates to items stall for the whole build on a large table.",
+      "fix": "Create the index concurrently and outside a transaction."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.85,
+      "file_path": "Dockerfile",
+      "line_number": 1,
+      "line_end": 1,
+      "title": "Base image changed from pinned to latest",
+      "description": "The Dockerfile replaces the pinned python:3.12.7-slim-bookworm with python:latest. Builds pick up new Python major versions and OS changes without warning. The image also grows much larger. Restore the pinned slim base image.",
+      "suggested_change": "FROM python:3.12.7-slim-bookworm",
+      "source": "hadolint:DL3007",
+      "candidate": "c20",
+      "notes": [],
+      "problem": "The Dockerfile replaces the pinned python:3.12.7-slim-bookworm with python:latest.",
+      "consequence": "Builds pick up new Python major versions and OS changes without warning. The image also grows much larger.",
+      "fix": "Restore the pinned slim base image."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 7,
+      "line_end": 7,
+      "title": "Unquoted deploy directory in rm -rf",
+      "description": "The script now passes $DEPLOY_DIR to rm -rf without quotes. A DEPLOY_DIR containing spaces splits into several paths. rm -rf deletes unrelated directories when DEPLOY_DIR contains a space. Quote the variable as before.",
+      "suggested_change": "rm -rf \"${DEPLOY_DIR:?}/\"",
+      "source": "shellcheck:SC2086",
+      "candidate": "c34",
+      "notes": [],
+      "problem": "The script now passes $DEPLOY_DIR to rm -rf without quotes. A DEPLOY_DIR containing spaces splits into several paths.",
+      "consequence": "rm -rf deletes unrelated directories when DEPLOY_DIR contains a space.",
+      "fix": "Quote the variable as before."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "bug",
+      "confidence": 0.75,
+      "file_path": "scripts/deploy.sh",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Deploy loop parses ls output",
+      "description": "The loop now splits unquoted ls output into words. File names with spaces break into pieces, and the log loses the directory prefix. The deploy log shows wrong or partial file names. Iterate over the quoted glob as before.",
+      "suggested_change": "for file in \"$DEPLOY_DIR\"/*; do",
+      "source": "shellcheck:SC2045",
+      "candidate": "c12",
+      "notes": [],
+      "problem": "The loop now splits unquoted ls output into words. File names with spaces break into pieces, and the log loses the directory prefix.",
+      "consequence": "The deploy log shows wrong or partial file names.",
+      "fix": "Iterate over the quoted glob as before."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/search.py",
+      "line_number": 9,
+      "line_end": 17,
+      "title": "Changed endpoints have no covering test",
+      "description": "The repository has no tests for the new search endpoint or the changed pagination offset. Regressions like the skipped first page reach production unnoticed. Add tests for /search with quoted input and for /items page 1 results.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The repository has no tests for the new search endpoint or the changed pagination offset.",
+      "consequence": "Regressions like the skipped first page reach production unnoticed.",
+      "fix": "Add tests for /search with quoted input and for /items page 1 results."
+    }
+  ],
+  "below_threshold": 1,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "high",
+        "message": "Avoiding SQL string concatenation: untrusted input concatenated with raw SQL query can result in SQL Injection. In order to execute raw query safely, prepared statement should be used. SQLAlchemy provides TextualSQL to easily used prepared statement with named parameters. For complex SQL composition, use SQL Expression Language or Schema Definition Language. In most cases, SQLAlchemy ORM will be a better option.",
+        "reference": "https://docs.sqlalchemy.org/en/14/core/tutorial.html#using-textual-sql",
+        "id": "c3",
+        "token": "semgrep:python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+        "reviewSeverity": "major"
+      },
+      "reason": "This repeats the search injection already raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.django.security.injection.tainted-sql-string.tainted-sql-string",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "high",
+        "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using the Django object-relational mappers (ORM) instead of raw SQL queries.",
+        "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
+        "id": "c4",
+        "token": "semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string",
+        "reviewSeverity": "major"
+      },
+      "reason": "This repeats the search injection already raised under c5. The app uses Flask, not Django.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "osv-scanner",
+        "ruleId": "GHSA-35jh-r3h4-6jhm",
+        "filePath": "package-lock.json",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "high",
+        "message": "lodash@4.17.15: GHSA-35jh-r3h4-6jhm (CVE-2021-23337, CVE-2026-4800, GHSA-r5fr-rjxr-66jc). Command Injection in lodash",
+        "reference": "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm",
+        "id": "c6",
+        "token": "osv-scanner:GHSA-35jh-r3h4-6jhm",
+        "reviewSeverity": "major"
+      },
+      "reason": "The c7 finding covers the lodash downgrade, which causes all these advisories.",
+      "cited": {
+        "file_path": "package-lock.json",
+        "line_number": 11
+      }
+    },
+    {
+      "candidate": {
+        "source": "hadolint",
+        "ruleId": "DL3020",
+        "filePath": "Dockerfile",
+        "lineStart": 6,
+        "lineEnd": 6,
+        "severity": "high",
+        "message": "Use COPY instead of ADD for files and folders",
+        "reference": "https://github.com/hadolint/hadolint/wiki/DL3020",
+        "id": "c8",
+        "token": "hadolint:DL3020",
+        "reviewSeverity": "major"
+      },
+      "reason": "ADD of a local file behaves exactly like COPY here.",
+      "cited": {
+        "file_path": "Dockerfile",
+        "line_number": 6
+      }
+    },
+    {
+      "candidate": {
+        "source": "kube-linter",
+        "ruleId": "privilege-escalation-container",
+        "filePath": "deploy/deployment.yaml",
+        "lineStart": 43,
+        "lineEnd": 43,
+        "severity": "high",
+        "message": "container \"api\" has AllowPrivilegeEscalation set to true. Ensure containers do not allow privilege escalation by setting allowPrivilegeEscalation=false, privileged=false and removing CAP_SYS_ADMIN capability. See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/ for more details.",
+        "reference": "https://docs.kubelinter.io/#/generated/checks?id=privilege-escalation-container",
+        "id": "c10",
+        "token": "kube-linter:privilege-escalation-container",
+        "reviewSeverity": "major"
+      },
+      "reason": "The c11 finding covers privilege escalation together with privileged mode on the next line.",
+      "cited": {
+        "file_path": "deploy/deployment.yaml",
+        "line_number": 43
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
+        "filePath": "app/search.py",
+        "lineStart": 10,
+        "lineEnd": 14,
+        "severity": "medium",
+        "message": "User-controlled data from a request is passed to 'execute()'. This could lead to a SQL injection and therefore protected information could be leaked. Instead, use django's QuerySets, which are built with query parameterization and therefore not vulnerable to sql injection. For example, you could use `Entry.objects.filter(date=2006)`.",
+        "reference": "https://docs.djangoproject.com/en/3.0/topics/security/#sql-injection-protection",
+        "id": "c13",
+        "token": "semgrep:python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This repeats the search injection already raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 10
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "medium",
+        "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
+        "reference": "https://stackoverflow.com/questions/775296/mysql-parameterized-queries",
+        "id": "c14",
+        "token": "semgrep:python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This repeats the search injection already raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "yaml.kubernetes.security.privileged-container.privileged-container",
+        "filePath": "deploy/deployment.yaml",
+        "lineStart": 42,
+        "lineEnd": 42,
+        "severity": "medium",
+        "message": "Container or pod is running in privileged mode. This grants the container the equivalent of root capabilities on the host machine. This can lead to container escapes, privilege escalation, and other security concerns. Remove the 'privileged' key to disable this capability.",
+        "reference": "https://kubernetes.io/docs/concepts/policy/pod-security-policy/#privileged",
+        "id": "c15",
+        "token": "semgrep:yaml.kubernetes.security.privileged-container.privileged-container",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This repeats the privileged container finding raised under c11.",
+      "cited": {
+        "file_path": "deploy/deployment.yaml",
+        "line_number": 42
+      }
+    },
+    {
+      "candidate": {
+        "source": "semgrep",
+        "ruleId": "yaml.kubernetes.security.allow-privilege-escalation-true.allow-privilege-escalation-true",
+        "filePath": "deploy/deployment.yaml",
+        "lineStart": 43,
+        "lineEnd": 43,
+        "severity": "medium",
+        "message": "In Kubernetes, each pod runs in its own isolated environment with its own set of security policies. However, certain container images may contain `setuid` or `setgid` binaries that could allow an attacker to perform privilege escalation and gain access to sensitive resources. To mitigate this risk, it's recommended to add a `securityContext` to the container in the pod, with the parameter `allowPrivilegeEscalation` set to `false`. This will prevent the container from running any privileged pr...",
+        "reference": "https://kubernetes.io/docs/concepts/policy/pod-security-policy/#privilege-escalation",
+        "id": "c16",
+        "token": "semgrep:yaml.kubernetes.security.allow-privilege-escalation-true.allow-privilege-escalation-true",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The c11 finding already covers allowPrivilegeEscalation.",
+      "cited": {
+        "file_path": "deploy/deployment.yaml",
+        "line_number": 43
+      }
+    },
+    {
+      "candidate": {
+        "source": "osv-scanner",
+        "ruleId": "GHSA-29mw-wpgm-hmr9",
+        "filePath": "package-lock.json",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "medium",
+        "message": "lodash@4.17.15: GHSA-29mw-wpgm-hmr9 (CVE-2020-28500). Regular Expression Denial of Service (ReDoS) in lodash",
+        "reference": "https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9",
+        "id": "c18",
+        "token": "osv-scanner:GHSA-29mw-wpgm-hmr9",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The c7 finding covers the lodash downgrade, which causes all these advisories.",
+      "cited": {
+        "file_path": "package-lock.json",
+        "line_number": 11
+      }
+    },
+    {
+      "candidate": {
+        "source": "osv-scanner",
+        "ruleId": "GHSA-f23m-r3pf-42rh",
+        "filePath": "package-lock.json",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "medium",
+        "message": "lodash@4.17.15: GHSA-f23m-r3pf-42rh (CVE-2025-13465, CVE-2026-2950, GHSA-xxjr-mmjv-4gpg). lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+        "reference": "https://osv.dev/vulnerability/GHSA-f23m-r3pf-42rh",
+        "id": "c19",
+        "token": "osv-scanner:GHSA-f23m-r3pf-42rh",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The c7 finding covers the lodash downgrade, which causes all these advisories.",
+      "cited": {
+        "file_path": "package-lock.json",
+        "line_number": 11
+      }
+    },
+    {
+      "candidate": {
+        "source": "hadolint",
+        "ruleId": "DL3008",
+        "filePath": "Dockerfile",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "medium",
+        "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`",
+        "reference": "https://github.com/hadolint/hadolint/wiki/DL3008",
+        "id": "c21",
+        "token": "hadolint:DL3008",
+        "reviewSeverity": "minor"
+      },
+      "reason": "Pinning the apt package version has little value while the base image itself is unpinned under c20.",
+      "cited": {
+        "file_path": "Dockerfile",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "hadolint",
+        "ruleId": "DL3014",
+        "filePath": "Dockerfile",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "medium",
+        "message": "Use the `-y` switch to avoid manual input `apt-get -y install <package>`",
+        "reference": "https://github.com/hadolint/hadolint/wiki/DL3014",
+        "id": "c22",
+        "token": "hadolint:DL3014",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The full python image already ships curl. Apt therefore has nothing new to install and needs no confirmation.",
+      "cited": {
+        "file_path": "Dockerfile",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_AWS_24",
+        "filePath": "infra/main.tf",
+        "lineStart": 24,
+        "lineEnd": 28,
+        "severity": "medium",
+        "message": "Ensure no security groups allow ingress from 0.0.0.0:0 to port 22",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/terraform/checks/resource/aws/SecurityGroupUnrestrictedIngress22.py",
+        "id": "c24",
+        "token": "checkov:CKV_AWS_24",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This repeats the open SSH ingress finding raised under c9.",
+      "cited": {
+        "file_path": "infra/main.tf",
+        "line_number": 28
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_K8S_20",
+        "filePath": "deploy/deployment.yaml",
+        "lineStart": 43,
+        "lineEnd": 43,
+        "severity": "medium",
+        "message": "Containers should not run with allowPrivilegeEscalation",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/kubernetes/checks/resource/k8s/AllowPrivilegeEscalation.py",
+        "id": "c25",
+        "token": "checkov:CKV_K8S_20",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The c11 finding already covers allowPrivilegeEscalation.",
+      "cited": {
+        "file_path": "deploy/deployment.yaml",
+        "line_number": 43
+      }
+    },
+    {
+      "candidate": {
+        "source": "checkov",
+        "ruleId": "CKV_K8S_16",
+        "filePath": "deploy/deployment.yaml",
+        "lineStart": 42,
+        "lineEnd": 42,
+        "severity": "medium",
+        "message": "Container should not be privileged",
+        "reference": "https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/kubernetes/checks/resource/k8s/PrivilegedContainers.py",
+        "id": "c26",
+        "token": "checkov:CKV_K8S_16",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This repeats the privileged container finding raised under c11.",
+      "cited": {
+        "file_path": "deploy/deployment.yaml",
+        "line_number": 42
+      }
+    },
+    {
+      "candidate": {
+        "source": "shellcheck",
+        "ruleId": "SC2115",
+        "filePath": "scripts/deploy.sh",
+        "lineStart": 7,
+        "lineEnd": 7,
+        "severity": "medium",
+        "message": "Use \"${var:?}\" to ensure this never expands to / .",
+        "reference": "https://www.shellcheck.net/wiki/SC2115",
+        "id": "c27",
+        "token": "shellcheck:SC2115",
+        "reviewSeverity": "minor"
+      },
+      "reason": "The :- default on line 5 means DEPLOY_DIR can never expand to an empty string.",
+      "cited": {
+        "file_path": "scripts/deploy.sh",
+        "line_number": 5
+      }
+    },
+    {
+      "candidate": {
+        "source": "bandit",
+        "ruleId": "B608",
+        "filePath": "app/search.py",
+        "lineStart": 14,
+        "lineEnd": 14,
+        "severity": "medium",
+        "message": "B608: Possible SQL injection vector through string-based query construction.",
+        "reference": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+        "id": "c28",
+        "token": "bandit:B608",
+        "reviewSeverity": "minor"
+      },
+      "reason": "This repeats the search injection already raised under c5.",
+      "cited": {
+        "file_path": "app/search.py",
+        "line_number": 14
+      }
+    },
+    {
+      "candidate": {
+        "source": "squawk",
+        "ruleId": "prefer-robust-stmts",
+        "filePath": "db/migrations/002_index_item_names.sql",
+        "lineStart": 2,
+        "lineEnd": 2,
+        "severity": "low",
+        "message": "Missing `IF NOT EXISTS`, the migration can't be rerun if it fails part way through. Use an explicit name for a concurrently created index",
+        "reference": "https://squawkhq.com/docs/prefer-robust-stmts",
+        "id": "c29",
+        "token": "squawk:prefer-robust-stmts",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "The c17 fix already adds IF NOT EXISTS to this statement.",
+      "cited": {
+        "file_path": "db/migrations/002_index_item_names.sql",
+        "line_number": 2
+      }
+    },
+    {
+      "candidate": {
+        "source": "squawk",
+        "ruleId": "require-lock-timeout",
+        "filePath": "db/migrations/002_index_item_names.sql",
+        "lineStart": 2,
+        "lineEnd": 2,
+        "severity": "low",
+        "message": "Missing `set lock_timeout` before potentially slow SHARE lock operations Configure a `lock_timeout` before this statement. Statement requires: SHARE lock; blocking: writes, schema changes.",
+        "reference": "https://squawkhq.com/docs/require-lock-timeout",
+        "id": "c30",
+        "token": "squawk:require-lock-timeout",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "A concurrent build, already raised under c17, avoids the long write lock.",
+      "cited": {
+        "file_path": "db/migrations/002_index_item_names.sql",
+        "line_number": 2
+      }
+    },
+    {
+      "candidate": {
+        "source": "squawk",
+        "ruleId": "require-statement-timeout",
+        "filePath": "db/migrations/002_index_item_names.sql",
+        "lineStart": 2,
+        "lineEnd": 2,
+        "severity": "low",
+        "message": "Missing `set statement_timeout` before potentially slow operations Configure a `statement_timeout` before this statement",
+        "reference": "https://squawkhq.com/docs/require-statement-timeout",
+        "id": "c31",
+        "token": "squawk:require-statement-timeout",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "A statement timeout on a single small index build is a style preference covered by the c17 fix.",
+      "cited": {
+        "file_path": "db/migrations/002_index_item_names.sql",
+        "line_number": 2
+      }
+    },
+    {
+      "candidate": {
+        "source": "hadolint",
+        "ruleId": "DL3015",
+        "filePath": "Dockerfile",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "low",
+        "message": "Avoid additional packages by specifying `--no-install-recommends`",
+        "reference": "https://github.com/hadolint/hadolint/wiki/DL3015",
+        "id": "c32",
+        "token": "hadolint:DL3015",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Recommended packages are a size nitpick with no behavioural impact on this image.",
+      "cited": {
+        "file_path": "Dockerfile",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "hadolint",
+        "ruleId": "DL3009",
+        "filePath": "Dockerfile",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "low",
+        "message": "Delete the apt lists (/var/lib/apt/lists) after installing something",
+        "reference": "https://github.com/hadolint/hadolint/wiki/DL3009",
+        "id": "c33",
+        "token": "hadolint:DL3009",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Leftover apt lists only add image size and do not change behaviour.",
+      "cited": {
+        "file_path": "Dockerfile",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "shellcheck",
+        "ruleId": "SC2086",
+        "filePath": "scripts/deploy.sh",
+        "lineStart": 11,
+        "lineEnd": 11,
+        "severity": "low",
+        "message": "Double quote to prevent globbing and word splitting.",
+        "reference": "https://www.shellcheck.net/wiki/SC2086",
+        "id": "c35",
+        "token": "shellcheck:SC2086",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "The c12 finding on the same loop line already covers this word splitting.",
+      "cited": {
+        "file_path": "scripts/deploy.sh",
+        "line_number": 11
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 10,
+      "keptCount": 9,
+      "durationMs": 4267,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 1,
+      "keptCount": 0,
+      "durationMs": 51,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "ran",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 15,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "ran",
+      "version": "2.66.0",
+      "rawCount": 4,
+      "keptCount": 4,
+      "durationMs": 28,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "ran",
+      "version": "4.3.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 329,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "ran",
+      "version": "2.6.0",
+      "rawCount": 4,
+      "keptCount": 4,
+      "durationMs": 688,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "ran",
+      "version": "1.7.7",
+      "rawCount": 1,
+      "keptCount": 0,
+      "durationMs": 21,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "ran",
+      "version": "1.30.1",
+      "rawCount": 1,
+      "keptCount": 0,
+      "durationMs": 71,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "ran",
+      "version": "2.15.1",
+      "rawCount": 7,
+      "keptCount": 7,
+      "durationMs": 99,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "ran",
+      "version": "0.75.0",
+      "rawCount": 3,
+      "keptCount": 1,
+      "durationMs": 565,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "ran",
+      "version": "3.3.22",
+      "rawCount": 3,
+      "keptCount": 3,
+      "durationMs": 1740,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "ran",
+      "version": "0.64.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 161,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "ran",
+      "version": "0.8.3",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 119,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "ran",
+      "version": "0.8.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 602,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "ran",
+      "version": "0.10.0",
+      "rawCount": 4,
+      "keptCount": 4,
+      "durationMs": 71,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "ran",
+      "version": "0.8.4",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 12,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "ran",
+      "version": "1.9.4",
+      "rawCount": 1,
+      "keptCount": 1,
+      "durationMs": 116,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 11,
+    "additions": 45,
+    "deletions": 16
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 42403,
+      "started_at": "2026-10-09T06:17:15.614Z",
+      "ended_at": "2026-10-09T06:18:32.280Z",
+      "duration_ms": 76666,
+      "rounds": 1,
+      "usage": {
+        "turns": 8,
+        "input_tokens": 69464,
+        "output_tokens": 8715,
+        "cost_usd": 0.2969318
+      }
+    },
+    "snapshot": {
+      "change_id": "9799b104d689702fac6918e5056a39a3b610b9daebbde58d30cc7303f2a9c2ba",
+      "tree": "3f5339b8ec6c89d58b52bf667c34a01267d2a304",
+      "before": "0ad47deba972cd42527284ee009f9ea15a8b00b9d210e9699e7185275fa709fb",
+      "after": "0ad47deba972cd42527284ee009f9ea15a8b00b9d210e9699e7185275fa709fb"
+    },
+    "candidates": {
+      "total": 35,
+      "disposed": 35
+    },
+    "coverage": {
+      "hunks": 18,
+      "covered": 18,
+      "unread": [],
+      "files_read": [
+        ".github/workflows/ci.yml",
+        "app/config.py",
+        "app/server.py",
+        "db/migrations/001_create_items.sql",
+        "deploy/deployment.yaml"
+      ],
+      "files_not_read": [
+        "Dockerfile",
+        "app/search.py",
+        "db/migrations/002_index_item_names.sql",
+        "infra/main.tf",
+        "package-lock.json",
+        "package.json",
+        "scripts/deploy.sh"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "case": "kubernetes-host-access",
+  "config": "claude-graph-off",
+  "reviewer": "claude",
+  "graph": "off",
+  "repeat": 1,
+  "attempt": 1,
+  "started_at": "2026-10-09T06:20:32.623Z",
+  "exit": 0,
+  "signal": null,
+  "wallMs": 28592,
+  "status": "complete",
+  "failure": null,
+  "stopped": null,
+  "verdict": "passed",
+  "reviewerUsed": {
+    "started": true,
+    "driver": "claude",
+    "version": "2.1.295"
+  },
+  "findings": 2,
+  "usage": {
+    "turns": 3,
+    "input_tokens": 31411,
+    "output_tokens": 2592,
+    "cost_usd": 0.112511
+  },
+  "reviewerMs": 23856,
+  "rounds": 2,
+  "graphStatus": "off",
+  "graphMs": 0,
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "kept": 2,
+      "ms": 4039
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "kept": 0,
+      "ms": 25
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "trivy",
+      "status": "ran",
+      "version": "0.75.0",
+      "kept": 0,
+      "ms": 574
+    },
+    {
+      "scanner": "checkov",
+      "status": "ran",
+      "version": "3.3.22",
+      "kept": 0,
+      "ms": 1816
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "ran",
+      "version": "0.8.3",
+      "kept": 3,
+      "ms": 92
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "ran",
+      "version": "0.8.0",
+      "kept": 0,
+      "ms": 51
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "kept": 0,
+      "ms": 0
+    }
+  ]
+}

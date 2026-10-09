@@ -1,0 +1,5 @@
+Reviewing the change against HEAD: 3 files, +60 -0
+Scanners: 5 ran, 17 had nothing to check, 15 candidates to check
+Reviewer: claude 2.1.295 started (process 6767); this takes one to three minutes
+Reviewer still working: 15 s
+Reviewer still working: 30 s

@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "change_id": "24db58b1ace8",
+  "summary": "Adds a status column and a customer and status index to orders. New orders now start as placed, and a new query lists a customer's open orders.",
+  "findings": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "db/migrations/0002_order_status.sql",
+      "line_number": 3,
+      "line_end": 3,
+      "title": "Required column added to a populated table without a default",
+      "problem": "The migration adds status as NOT NULL with no default to the existing orders table. Postgres rejects this ALTER whenever orders already holds rows.",
+      "consequence": "The migration fails on any database with existing orders, so the deploy breaks. The new code in src/orders.js then queries a status column that does not exist.",
+      "fix": "Add the column with a default, or add it nullable, backfill existing orders, then set NOT NULL. Choose the backfill value on purpose, because existing orders count as open if they get placed.",
+      "suggested_change": "ALTER TABLE orders ADD COLUMN status text NOT NULL DEFAULT 'placed';",
+      "source": "squawk:adding-required-field",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "performance",
+      "confidence": 0.7,
+      "file_path": "db/migrations/0002_order_status.sql",
+      "line_number": 5,
+      "line_end": 5,
+      "title": "Index build blocks writes to orders",
+      "problem": "The migration builds orders_customer_status_idx without CONCURRENTLY. Postgres blocks every write to orders until the build finishes.",
+      "consequence": "On a large orders table, createOrder calls stall or time out while the index builds.",
+      "fix": "Build the index with CREATE INDEX CONCURRENTLY, outside a transaction.",
+      "suggested_change": "CREATE INDEX CONCURRENTLY orders_customer_status_idx ON orders (customer_id, status);",
+      "source": "squawk:require-concurrent-index-creation",
+      "candidate": "c2"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/orders.js",
+      "line_number": 13,
+      "line_end": 19,
+      "title": "New open orders query has no covering test",
+      "problem": "The change adds listOpenOrders and makes createOrder set a status. The repository has no test that covers either one.",
+      "consequence": "A wrong status filter or a missing status on insert can ship without anyone noticing.",
+      "fix": "Add tests that create orders with each status and check which ones listOpenOrders returns.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "Adding a column without a default only changes metadata, so the migration holds the lock briefly. A lock timeout here is optional hardening, not a defect.",
+      "file_path": "db/migrations/0002_order_status.sql",
+      "line_number": 3
+    },
+    {
+      "candidate": "c4",
+      "reason": "This ALTER does not rewrite the table, so the statement does not run long. A statement timeout adds little here.",
+      "file_path": "db/migrations/0002_order_status.sql",
+      "line_number": 3
+    },
+    {
+      "candidate": "c5",
+      "reason": "The migration is a one-time versioned file, matching 0001_create_orders.sql, which also omits IF NOT EXISTS. Rerun guards are optional style here.",
+      "file_path": "db/migrations/0001_create_orders.sql",
+      "line_number": 7
+    },
+    {
+      "candidate": "c6",
+      "reason": "The index already has an explicit name, and the repo's versioned migrations do not use IF NOT EXISTS. The concurrency concern is raised separately.",
+      "file_path": "db/migrations/0002_order_status.sql",
+      "line_number": 5
+    }
+  ]
+}

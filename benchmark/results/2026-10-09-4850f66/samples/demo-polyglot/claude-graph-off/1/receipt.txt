@@ -1,0 +1,17 @@
+Passed with warnings: 12 findings (4 critical, 2 major, 6 minor)
+Change 9799b104d689 against HEAD, 11 files, +45 -16
+Summary: Adds a /search endpoint and a Stripe config, and changes pagination in server.py. It also loosens security settings in the Dockerfile, Kubernetes deployment, Terraform, CI workflow and deploy script, and downgrades lodash.
+1. Critical security: Search query built from request input (app/search.py:14)
+2. Critical security: Stripe API key committed to source (app/config.py:2)
+3. Critical security: API container runs privileged (deploy/deployment.yaml:42-43)
+4. Critical security: SSH open to the whole internet (infra/main.tf:28)
+5. Major bug: Pagination skips the first page (app/server.py:23)
+6. Major security: lodash downgraded to a vulnerable release (package-lock.json:11)
+7. Minor security: Pull request title expanded inside a shell command (.github/workflows/ci.yml:17)
+8. Minor performance: Index build blocks writes to items (db/migrations/002_index_item_names.sql:2)
+9. Minor maintainability: Base image changed from pinned to latest (Dockerfile:1)
+10. Minor bug: Unquoted deploy directory in rm -rf (scripts/deploy.sh:7)
+11. Minor bug: Deploy loop parses ls output (scripts/deploy.sh:11)
+12. Minor maintainability: Changed endpoints have no covering test (app/search.py:9-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md
