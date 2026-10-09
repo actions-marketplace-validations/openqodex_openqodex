@@ -442,4 +442,21 @@ describe("the net/http plugin on small repositories", () => {
     const from = (g.frameworks?.edges ?? []).filter((e) => e.plugin === "go-http" && e.kind === "tests" && e.category === "route-request").map((e) => g.nodes.get(e.from)?.name);
     expect(from).toEqual(["TestReal"]);
   });
+
+  it("says when the matcher could not read a request or a route, instead of reporting no match", async () => {
+    const long = `/${Array.from({ length: 70 }, (_, i) => `s${i}`).join("/")}`;
+    const g = await graphOf({
+      "main.go": `${GO_HEAD}func h(w http.ResponseWriter, r *http.Request) {}\n\nfunc main() {\n\tmux := http.NewServeMux()\n\tmux.HandleFunc(${JSON.stringify(long)}, h)\n\tmux.HandleFunc("GET items", h)\n\thttp.ListenAndServe(":8080", mux)\n}\n`,
+      "main_test.go": `package main\n\nimport (\n\t"net/http/httptest"\n\t"testing"\n)\n\nfunc TestLong(t *testing.T) {\n\thttptest.NewRequest("GET", ${JSON.stringify(long)}, nil)\n}\n\nfunc TestShort(t *testing.T) {\n\thttptest.NewRequest("GET", "/x", nil)\n}\n`,
+    });
+    const at = (line: number) =>
+      goUnknowns(g)
+        .filter((u) => u.site?.file === "main_test.go" && u.site.line === line && u.affects.includes("tests"))
+        .map((u) => u.cause)
+        .sort();
+    expect(at(9)).toEqual(["fan-out-capped"]);
+    expect(at(13)).toEqual(["fan-out-capped", "unsupported-rule"]);
+  });
 });
+
+const goUnknowns = (g: Graph) => (g.frameworks?.unknowns ?? []).filter((u) => u.plugin === "go-http");

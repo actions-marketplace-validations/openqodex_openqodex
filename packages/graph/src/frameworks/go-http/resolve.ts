@@ -740,12 +740,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   const testFile = (file: string) => file.endsWith("_test.go");
   const byProject = new Map<string, Registration[]>();
   for (const r of registrations) {
-    if (r.app === null || r.pattern === null) continue;
+    if (r.app === null) continue;
     const p = appById.get(r.app)?.project ?? index.projectOf(r.site.file);
     (byProject.get(p) ?? byProject.set(p, []).get(p))?.push(r);
   }
   const meter = { steps: 0 };
-  const split = new Map<Registration, { host: string; segs: string[] | null }>();
+  const split = new Map<Registration, ReturnType<typeof splitPattern>>();
   const splitOf = (reg: Registration) => {
     let s = split.get(reg);
     if (!s) {
@@ -776,19 +776,38 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       }
       const req = requestTarget(target);
       const verb = method === "" ? "GET" : method.toUpperCase();
+      const unread = (cause: Cause, note: string) => gap({ plugin: PLUGIN, site, scope: { file }, affects: ["tests"], cause, name: show(tArg), note, count: null, exact: false });
       const hits: Registration[] = [];
       const xs = segments(req.path);
-      for (const reg of xs ? (byProject.get(index.projectOf(file)) ?? []) : []) {
+      if (!xs) {
+        unread("fan-out-capped", `the request path ${req.path.slice(0, 80)} has more than ${MAX_PATTERN_SEGMENTS} segments, so it is not matched against any route`);
+        continue;
+      }
+      // What the matcher could not read, said once per request: a route
+      // past the segment cap, a pattern with no path, a computed prefix.
+      const missed = { cap: 0, unreadable: 0, computed: 0 };
+      for (const reg of byProject.get(index.projectOf(file)) ?? []) {
         if (meter.steps >= MAX_MATCH_WORK) break;
         meter.steps++;
         if (!reg.methods.includes("*") && !reg.methods.includes(verb) && !(verb === "HEAD" && reg.methods.includes("GET"))) continue;
+        if (reg.pattern === null) {
+          missed.computed++;
+          continue;
+        }
         const p = splitOf(reg);
-        if (p.segs && (p.host === "" || p.host === req.host) && matchSegments(p.segs, xs as string[], meter)) hits.push(reg);
+        if (!p.segs) {
+          missed[p.why === "cap" ? "cap" : "unreadable"]++;
+          continue;
+        }
+        if ((p.host === "" || p.host === req.host) && matchSegments(p.segs, xs, meter)) hits.push(reg);
       }
       if (meter.steps >= MAX_MATCH_WORK) {
         stop("match", "budget", site, ["tests"], `the plugin stopped matching test requests to routes after ${MAX_MATCH_WORK} pattern steps in this build`);
         break requests;
       }
+      if (missed.cap > 0) unread("fan-out-capped", `${missed.cap} routes of this project have more than ${MAX_PATTERN_SEGMENTS} path segments; whether the request reaches them is not known`);
+      if (missed.unreadable > 0) unread("unsupported-rule", `${missed.unreadable} routes of this project have a pattern with no path the matcher reads; whether the request reaches them is not known`);
+      if (missed.computed > 0) unread("dynamic", `${missed.computed} routes of this project sit under a computed prefix; whether the request reaches them is not known`);
       const appsHit = new Set(hits.map((r) => r.app));
       const from = index.enclosing(file, f.line)?.id ?? file;
       for (const reg of hits) {
@@ -916,10 +935,14 @@ function segments(path: string): string[] | null {
   return parts.length > MAX_PATTERN_SEGMENTS ? null : parts;
 }
 
-// A composed pattern's host and path segments; no segments past the cap.
-function splitPattern(pattern: string): { host: string; segs: string[] | null } {
+// A composed pattern's host and path segments. No segments when the matcher
+// cannot read it: past the segment cap ("cap"), or with no path at all
+// ("unreadable").
+function splitPattern(pattern: string): { host: string; segs: string[] | null; why: "cap" | "unreadable" | null } {
   const slash = pattern.indexOf("/");
-  return slash < 0 ? { host: "", segs: null } : { host: pattern.slice(0, slash), segs: segments(pattern.slice(slash)) };
+  if (slash < 0) return { host: "", segs: null, why: "unreadable" };
+  const segs = segments(pattern.slice(slash));
+  return { host: pattern.slice(0, slash), segs, why: segs ? null : "cap" };
 }
 
 // Whether a request matches a composed Go pattern (`[HOST]/[PATH]`), by Go's
