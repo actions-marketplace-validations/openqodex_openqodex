@@ -264,6 +264,49 @@ describe("checkov", () => {
   }, 300_000);
 });
 
+// The module gate reads each Terraform file of a folder for its module
+// sources before trivy or Checkov may read the folder. Each case writes a
+// module call to a folder outside the repository in a form the gate must
+// account for, as HCL reads it, or else withhold the folder: a source in a
+// heredoc, with an escape or a template, a block on one line, comments
+// between the parts of an attribute, a block left open, a heredoc that holds
+// text shaped like a block, a `.tf.json` with the key twice, a shape it does
+// not expect or no parse at all, a file over the size cap and a folder past
+// the file count. The folder must be withheld, so neither scanner reads the
+// module outside.
+describe("the module gate withholds a folder it cannot read for certain", () => {
+  const outside = mkdtempSync(join(tmpdir(), "oq-iac-gate-outside-"));
+  writeFileSync(join(outside, "main.tf"), SG);
+  const escape = `${"../".repeat(64)}${outside.slice(1)}`;
+  const hclEscaped = escape.replaceAll(".", "\\u002e");
+  const call = (source: string) => `module "outside" {\n  source = ${source}\n}\n`;
+  const many: Record<string, string> = {};
+  for (let k = 0; k < 501; k++) many[`infra/v${k}.tf`] = `variable "v${k}" {\n  type = string\n}\n`;
+  const constructs: [string, Record<string, string>][] = [
+    ["a source in a heredoc", { "infra/main.tf": call(`<<EOT\n${escape}\nEOT`) }],
+    ["a source with escapes", { "infra/main.tf": call(`"${hclEscaped}"`) }],
+    ["a source with a template", { "infra/main.tf": call(`"\${"../"}${escape.slice(3)}"`) }],
+    ["a block on one line", { "infra/main.tf": `module "outside" { source = "${escape}" }\n` }],
+    ["comments between the parts of the source", { "infra/main.tf": `module "outside" {\n  # where it lives\n  /* a */ source /* b */ = /* c */ "${escape}" // d\n}\n` }],
+    ["a block left open", { "infra/main.tf": `module "outside" {\n  source = "${escape}"\n` }],
+    ["a heredoc holding a block's text before the call", { "infra/main.tf": `locals {\n  doc = <<-EOT\n    module "x" {\n    }\n  EOT\n}\n\n${call(`"${escape}"`)}` }],
+    ["a .tf.json with the module key twice", { "infra/main.tf.json": `{"module": {"outside": {"source": ${JSON.stringify(escape)}}}, "module": {"local": {"source": "./local"}}}` }],
+    ["a .tf.json with a shape it does not expect", { "infra/main.tf.json": `{"module": {"outside": [{"source": ${JSON.stringify(escape)}}, 7]}}` }],
+    ["a .tf.json that does not parse", { "infra/main.tf.json": `{"module": {"outside": {"source": ${JSON.stringify(escape)}}},}` }],
+    ["a file over the size cap", { "infra/main.tf": `${call(`"${escape}"`)}${"# pad\n".repeat(800_000)}` }],
+    ["a folder past the file count", { ...many, "infra/main.tf": call(`"${escape}"`) }],
+  ];
+  for (const scanner of ["trivy", "checkov"] as const) {
+    for (const [what, files] of constructs) {
+      it(`${scanner}: ${what}`, async () => {
+        const { status } = await scanLines(scanner, files);
+        expect([status.status, status.rawCount], status.reason ?? "").toEqual(["disabled", 0]);
+        expect(status.reason).toContain("not run on infra/");
+      }, 300_000);
+    }
+  }
+});
+
 // trivy and Checkov check many of the same settings. Where both report one
 // missing setting on the same lines of a file, the report keeps one
 // scanner's finding and names the other's beside it (same-problem.ts); each

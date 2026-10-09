@@ -59,67 +59,399 @@ export const folderOf = (p: string): string => {
 const MAX_TF_BYTES = 4 * 1024 * 1024;
 const MAX_TF_FILES = 500;
 
-// The source of every module a Terraform file calls, in file order: the text
-// of a source written as one string with no template sequence, or null for
-// any other expression. Only top-level `module` blocks (or the `module` key of
-// a `.tf.json` file) call a module.
-export function moduleSources(text: string, file: string): (string | null)[] {
-  if (file.endsWith(".json")) return jsonModuleSources(text);
-  const out: (string | null)[] = [];
-  for (const node of hclStructure(text)) {
-    if (node.kind !== "block" || node.name !== "module") continue;
-    for (const child of node.children) {
-      if (child.kind === "attr" && child.name === "source") out.push(stringLiteral(text.slice(child.valueFrom, child.valueTo).trim()));
-    }
-  }
-  return out;
+// The source of every module a Terraform file calls, in file order, or null
+// when the file cannot be read whole and for certain. This is the gate that
+// decides whether trivy or Checkov may read a folder, and both read it with a
+// full HCL parser, so anything this reader does not account for fails closed:
+// a construct it does not model, a source that is not one plain string, a
+// block left open, a `.tf.json` that does not parse, holds a key twice or has
+// a `module` of another shape. What it accepts it reads as HCL does: string
+// escapes, heredocs, blocks on one line, comments anywhere a blank may go.
+// Only top-level `module` blocks (or the `module` key of a `.tf.json` file)
+// call a module.
+export function moduleSources(text: string, file: string): string[] | null {
+  return file.endsWith(".json") ? jsonModuleSources(text) : hclModuleSources(text);
 }
 
-// The text of a quoted HCL string with nothing to evaluate in it, or null.
-function stringLiteral(value: string): string | null {
-  if (value.length < 2 || value[0] !== '"' || value[value.length - 1] !== '"') return null;
+// The deepest nesting read; a deeper file is not read for certain.
+const MAX_GATE_DEPTH = 256;
+
+// The value of a quoted HCL string at `at` (its opening quote) with nothing
+// to evaluate in it, and the offset past its closing quote; null for a
+// template, a line end, an escape HCL does not have, or no closing quote.
+function hclStringLiteral(text: string, at: number): { value: string; end: number } | null {
   let out = "";
-  for (let i = 1; i < value.length - 1; i++) {
-    const c = value[i] as string;
-    if (c === '"') return null;
+  let i = at + 1;
+  while (i < text.length) {
+    const c = text[i] as string;
+    if (c === '"') return { value: out, end: i + 1 };
+    if (c === "\n" || c === "\r") return null;
     if (c === "\\") {
-      out += value[i + 1] ?? "";
-      i++;
-    } else if ((c === "$" || c === "%") && value[i + 1] === "{") {
-      return null;
-    } else {
-      out += c;
-    }
-  }
-  return out;
-}
-
-function jsonModuleSources(text: string): (string | null)[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return [null];
-  }
-  if (!parsed || typeof parsed !== "object" || !("module" in parsed)) return [];
-  const out: (string | null)[] = [];
-  const body = (b: unknown): void => {
-    if (Array.isArray(b)) {
-      for (const each of b) body(each);
-    } else if (b && typeof b === "object" && "source" in b) {
-      const source = (b as { source: unknown }).source;
-      out.push(typeof source === "string" ? source : null);
-    } else {
-      out.push(null);
-    }
-  };
-  const modules = (parsed as { module: unknown }).module;
-  for (const named of Array.isArray(modules) ? modules : [modules]) {
-    if (!named || typeof named !== "object") {
-      out.push(null);
+      const e = text[i + 1];
+      if (e === "n") out += "\n";
+      else if (e === "r") out += "\r";
+      else if (e === "t") out += "\t";
+      else if (e === '"') out += '"';
+      else if (e === "\\") out += "\\";
+      else if (e === "u" || e === "U") {
+        const digits = e === "u" ? 4 : 8;
+        const hex = text.slice(i + 2, i + 2 + digits);
+        if (!new RegExp(`^[0-9A-Fa-f]{${digits}}$`).test(hex)) return null;
+        const code = Number.parseInt(hex, 16);
+        if (code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return null;
+        out += String.fromCodePoint(code);
+        i += 2 + digits;
+        continue;
+      } else return null;
+      i += 2;
       continue;
     }
-    for (const b of Object.values(named)) body(b);
+    if ((c === "$" || c === "%") && text[i + 1] === "{") return null;
+    if ((c === "$" || c === "%") && text[i + 1] === c && text[i + 2] === "{") {
+      out += `${c}{`;
+      i += 3;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return null;
+}
+
+const HEREDOC_START = /^<<-?([A-Za-z_][A-Za-z0-9_-]*)\r?\n/;
+
+// The offset past an HCL expression that starts at `i`: up to the line end
+// outside brackets (not consumed), or, with `brace`, up to a `}` that closes
+// the block it is in (not consumed). Strings, templates in them, heredocs
+// and comments are skipped as HCL lexes them; a heredoc ends at the first
+// line whose text is its word, a superset of the lines HCL ends one on. Null
+// when the expression does not end cleanly. One pass, no recursion.
+function skipExpression(text: string, start: number, brace: boolean): number | null {
+  // "S": inside a quoted string; "T": inside a template sequence in one.
+  const stack: string[] = [];
+  let i = start;
+  while (i < text.length) {
+    const c = text[i] as string;
+    const top = stack[stack.length - 1];
+    if (top === "S") {
+      if (c === '"') stack.pop();
+      else if (c === "\n") return null;
+      else if (c === "\\") i++;
+      else if ((c === "$" || c === "%") && text[i + 1] === c && text[i + 2] === "{") i += 2;
+      else if ((c === "$" || c === "%") && text[i + 1] === "{") {
+        stack.push("T");
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === "\n") {
+      if (stack.length === 0) return brace ? null : i;
+      i++;
+    } else if (c === "#" || (c === "/" && text[i + 1] === "/")) {
+      const end = text.indexOf("\n", i);
+      i = end < 0 ? text.length : end;
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      if (end < 0) return null;
+      i = end + 2;
+    } else if (c === '"') {
+      stack.push("S");
+      i++;
+    } else if (c === "<" && text[i + 1] === "<") {
+      const h = HEREDOC_START.exec(text.slice(i, i + 1100));
+      if (!h) return null;
+      const word = h[1] as string;
+      let line = i + h[0].length;
+      let closed = -1;
+      while (line < text.length) {
+        const eol = text.indexOf("\n", line);
+        const end = eol < 0 ? text.length : eol;
+        if (text.slice(line, end).trim() === word) {
+          closed = end;
+          break;
+        }
+        line = end + 1;
+      }
+      if (closed < 0) return null;
+      i = closed;
+    } else if (c === "(" || c === "[" || c === "{") {
+      if (stack.length >= MAX_GATE_DEPTH * 16) return null;
+      stack.push(c);
+      i++;
+    } else if (c === ")" || c === "]" || c === "}") {
+      if (stack.length === 0) return brace && c === "}" ? i : null;
+      const open = stack.pop();
+      if (c === "}" && open === "T") {
+        // Back inside the string the template sequence is in.
+      } else if ((c === ")" && open !== "(") || (c === "]" && open !== "[") || (c === "}" && open !== "{")) return null;
+      i++;
+    } else {
+      i++;
+    }
+  }
+  return stack.length === 0 && !brace ? i : null;
+}
+
+function hclModuleSources(text: string): string[] | null {
+  const n = text.length;
+  let i = 0;
+  const sources: string[] = [];
+  // Blanks and comments on the line, never its end. False for a block
+  // comment left open, or one that holds a line end (a statement must end
+  // on its own line).
+  const inline = (): boolean => {
+    for (;;) {
+      const c = text[i];
+      if (c === " " || c === "\t" || c === "\r") i++;
+      else if (c === "/" && text[i + 1] === "*") {
+        const end = text.indexOf("*/", i + 2);
+        if (end < 0 || text.slice(i, end).includes("\n")) return false;
+        i = end + 2;
+      } else return true;
+    }
+  };
+  // The rest of a statement's line: blanks, then a line comment, then the
+  // line end or the end of the file.
+  const lineEnd = (): boolean => {
+    if (!inline()) return false;
+    if (text[i] === "#" || (text[i] === "/" && text[i + 1] === "/")) {
+      const end = text.indexOf("\n", i);
+      i = end < 0 ? n : end;
+    }
+    if (i >= n) return true;
+    if (text[i] !== "\n") return false;
+    i++;
+    return true;
+  };
+  // Blanks, line ends and comments between statements.
+  const between = (): boolean => {
+    for (;;) {
+      const c = text[i];
+      if (c === " " || c === "\t" || c === "\r" || c === "\n") i++;
+      else if (c === "#" || (c === "/" && text[i + 1] === "/")) {
+        const end = text.indexOf("\n", i);
+        i = end < 0 ? n : end;
+      } else if (c === "/" && text[i + 1] === "*") {
+        const end = text.indexOf("*/", i + 2);
+        if (end < 0) return false;
+        i = end + 2;
+      } else return true;
+    }
+  };
+  const ident = (): string | null => {
+    if (!isIdentStart(text[i])) return null;
+    const start = i;
+    while (isIdentPart(text[i])) i++;
+    return text.slice(start, i);
+  };
+  // One attribute's value after its `=`. For a module's source, the plain
+  // string it must be; otherwise skipped. False when it does not end where a
+  // statement must.
+  const attribute = (name: string, isModule: boolean, found: string[], brace: boolean): boolean => {
+    if (!inline()) return false;
+    if (isModule && name === "source") {
+      if (text[i] !== '"') return false;
+      const literal = hclStringLiteral(text, i);
+      if (literal === null) return false;
+      i = literal.end;
+      found.push(literal.value);
+      return true;
+    }
+    const end = skipExpression(text, i, brace);
+    if (end === null) return false;
+    i = end;
+    return true;
+  };
+  // A body: statements up to its closing brace (`closing`), or to the end of
+  // the file. `isModule`: a top-level module block's body, whose source is
+  // collected into `found`.
+  const body = (closing: boolean, depth: number, isModule: boolean, found: string[]): boolean => {
+    if (depth > MAX_GATE_DEPTH) return false;
+    for (;;) {
+      if (!between()) return false;
+      if (i >= n) return !closing;
+      if (text[i] === "}") {
+        if (!closing) return false;
+        i++;
+        return true;
+      }
+      const name = ident();
+      if (name === null) return false;
+      if (!inline()) return false;
+      if (text[i] === "=" && text[i + 1] !== "=") {
+        i++;
+        if (!attribute(name, isModule, found, false) || !lineEnd()) return false;
+        continue;
+      }
+      // A block: labels (quoted or names) on its line, then its brace.
+      for (;;) {
+        if (!inline()) return false;
+        if (text[i] === '"') {
+          const label = hclStringLiteral(text, i);
+          if (label === null) return false;
+          i = label.end;
+        } else if (isIdentStart(text[i])) {
+          ident();
+        } else break;
+      }
+      if (text[i] !== "{") return false;
+      i++;
+      const callsModule = depth === 0 && name === "module";
+      const own: string[] = [];
+      if (!inline()) return false;
+      if (text[i] === "}") {
+        i++;
+      } else if (text[i] === "\n" || text[i] === "#" || (text[i] === "/" && text[i + 1] === "/") || i >= n) {
+        if (!lineEnd() || !body(true, depth + 1, callsModule, own)) return false;
+      } else {
+        // A block on one line holds one attribute.
+        const inner = ident();
+        if (inner === null || !inline() || text[i] !== "=" || text[i + 1] === "=") return false;
+        i++;
+        if (!attribute(inner, callsModule, own, true) || !inline() || text[i] !== "}") return false;
+        i++;
+      }
+      if (callsModule) {
+        if (own.length !== 1) return false;
+        sources.push(own[0] as string);
+      }
+      if (!lineEnd()) return false;
+    }
+  };
+  return body(false, 0, false, []) ? sources : null;
+}
+
+// A JSON literal or number, matched where the reader is (sticky), so a file
+// of many values is read in one pass.
+const JSON_SCALAR = /true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+
+// A JSON value, or undefined for text that is not JSON, holds an object key
+// twice (JSON.parse keeps the last, HCL's JSON reader both), or nests deeper
+// than the gate reads.
+function strictJson(text: string): unknown {
+  let i = 0;
+  const blanks = () => {
+    while (i < text.length && (text[i] === " " || text[i] === "\t" || text[i] === "\n" || text[i] === "\r")) i++;
+  };
+  const fail = Symbol("fail");
+  // A JSON string: no raw control character, only JSON's escapes.
+  const string = (): string | typeof fail => {
+    if (text[i] !== '"') return fail;
+    let j = i + 1;
+    for (;;) {
+      if (j >= text.length) return fail;
+      const c = text.charCodeAt(j);
+      if (c === 0x22) break;
+      if (c < 0x20) return fail;
+      if (c === 0x5c) {
+        const e = text[j + 1];
+        if (e === "u") {
+          if (!/^[0-9A-Fa-f]{4}$/.test(text.slice(j + 2, j + 6))) return fail;
+          j += 6;
+          continue;
+        }
+        if (e === undefined || !'"\\/bfnrt'.includes(e)) return fail;
+        j += 2;
+        continue;
+      }
+      j++;
+    }
+    const raw = text.slice(i, j + 1);
+    i = j + 1;
+    return JSON.parse(raw) as string;
+  };
+  const value = (depth: number): unknown => {
+    if (depth > MAX_GATE_DEPTH) return fail;
+    blanks();
+    const c = text[i];
+    if (c === "{") {
+      i++;
+      const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      const seen = new Set<string>();
+      blanks();
+      if (text[i] === "}") {
+        i++;
+        return out;
+      }
+      for (;;) {
+        blanks();
+        const key = string();
+        if (key === fail || seen.has(key)) return fail;
+        seen.add(key);
+        blanks();
+        if (text[i] !== ":") return fail;
+        i++;
+        const v = value(depth + 1);
+        if (v === fail) return fail;
+        out[key] = v;
+        blanks();
+        if (text[i] === ",") {
+          i++;
+          continue;
+        }
+        if (text[i] !== "}") return fail;
+        i++;
+        return out;
+      }
+    }
+    if (c === "[") {
+      i++;
+      const out: unknown[] = [];
+      blanks();
+      if (text[i] === "]") {
+        i++;
+        return out;
+      }
+      for (;;) {
+        const v = value(depth + 1);
+        if (v === fail) return fail;
+        out.push(v);
+        blanks();
+        if (text[i] === ",") {
+          i++;
+          continue;
+        }
+        if (text[i] !== "]") return fail;
+        i++;
+        return out;
+      }
+    }
+    if (c === '"') return string();
+    JSON_SCALAR.lastIndex = i;
+    const m = JSON_SCALAR.exec(text);
+    if (!m) return fail;
+    i += m[0].length;
+    return JSON.parse(m[0]) as unknown;
+  };
+  const v = value(0);
+  blanks();
+  return v === fail || i !== text.length ? undefined : v;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+
+// The `module` key of a `.tf.json` file: an object (or a list of them) of
+// module names, each to an object (or a list of them) with a `source`
+// string. A `//` key at the name level is a comment, as Terraform reads it.
+// A source holding a template sequence is not read for certain.
+function jsonModuleSources(text: string): string[] | null {
+  const parsed = strictJson(text);
+  if (!isObject(parsed)) return null;
+  if (!("module" in parsed)) return [];
+  const out: string[] = [];
+  const modules = parsed.module;
+  for (const named of Array.isArray(modules) ? modules : [modules]) {
+    if (!isObject(named)) return null;
+    for (const [name, bodies] of Object.entries(named)) {
+      if (name === "//") continue;
+      for (const body of Array.isArray(bodies) ? bodies : [bodies]) {
+        if (!isObject(body)) return null;
+        const source = body.source;
+        if (typeof source !== "string" || source.includes("${") || source.includes("%{")) return null;
+        out.push(source);
+      }
+    }
   }
   return out;
 }
@@ -135,27 +467,25 @@ export type ModuleVerdict = { trivy: boolean; checkov: boolean };
 // staging copy holds the same folders at the same paths, and only folders
 // whose own sources passed here, so a module a staged module calls in turn
 // is either one of them or not there at all.
-export function moduleVerdict(folder: string, sources: (string | null)[]): ModuleVerdict {
+export function moduleVerdict(folder: string, sources: readonly string[]): ModuleVerdict {
   const local = (s: string): boolean => s.startsWith("./") || s.startsWith("../");
   const inside = (s: string): boolean => {
     const resolved = path.posix.normalize(path.posix.join(folder === "" ? "." : folder, s));
     return resolved !== ".." && !resolved.startsWith("../");
   };
-  const trivy = sources.every((s) => s !== null && local(s) && inside(s));
-  const checkov = sources.every((s) => {
-    if (s === null || s.startsWith("/") || s.startsWith("~")) return false;
-    return !local(s) || inside(s);
-  });
+  const trivy = sources.every((s) => local(s) && inside(s));
+  const checkov = sources.every((s) => !s.startsWith("/") && !s.startsWith("~") && (!local(s) || inside(s)));
   return { trivy, checkov };
 }
 
 // The verdict for one folder of the repository, from its Terraform files read
-// as text. A folder that cannot be listed or read in full gets neither.
+// as text. A folder that cannot be listed, or holds a file that cannot be
+// read whole and for certain (moduleSources), gets neither.
 export async function folderVerdict(repoDir: string, folder: string): Promise<ModuleVerdict> {
   const none = { trivy: false, checkov: false };
   const names = await terraformFilesIn(repoDir, folder);
   if (names === null) return none;
-  const sources: (string | null)[] = [];
+  const sources: string[] = [];
   for (const name of names) {
     if (!isTerraformPath(name)) continue;
     const rel = folder === "" ? name : `${folder}/${name}`;
@@ -165,7 +495,9 @@ export async function folderVerdict(repoDir: string, folder: string): Promise<Mo
     } catch {
       return none;
     }
-    sources.push(...moduleSources(text, name));
+    const found = moduleSources(text, name);
+    if (found === null) return none;
+    sources.push(...found);
   }
   return moduleVerdict(folder, sources);
 }

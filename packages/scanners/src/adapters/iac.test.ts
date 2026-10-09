@@ -179,39 +179,116 @@ describe("trivy causes that are whole blocks are anchored to their first line (4
 });
 
 describe("which Terraform folders each scanner may read (6)", () => {
-  it("reads module sources from top-level module blocks only, as literals or as expressions", () => {
+  it("reads module sources from top-level module blocks only, as HCL reads them", () => {
     const text = tf(
       'module "net" {',
+      "  # the network",
       '  source = "./modules/net"',
       "}",
       'module "vpc" {',
       '  source  = "terraform-aws-modules/vpc/aws"',
       '  version = "5.0.0"',
       "}",
-      'module "dyn" {',
-      '  source = "${var.base}/x"',
-      "}",
-      'module "expr" {',
-      "  source = local.where",
+      'module "one" { source = "./one" }',
+      'module "esc" {',
+      '  source = "\\u002e/mod\\u0073"',
       "}",
       "terraform {",
       "  required_providers {",
       '    aws = { source = "hashicorp/aws" }',
       "  }",
       "}",
+      "locals {",
+      "  doc = <<-EOT",
+      '    module "x" {',
+      "    }",
+      "  EOT",
+      "}",
       "# module \"c\" { source = \"git::https://x\" }",
       'resource "x" "y" { source = "z" }',
     );
-    expect(moduleSources(text, "main.tf")).toEqual(["./modules/net", "terraform-aws-modules/vpc/aws", null, null]);
-    expect(moduleSources('{"module": {"a": {"source": "../a"}, "b": [{"source": "git::https://x"}]}}', "m.tf.json")).toEqual(["../a", "git::https://x"]);
-    expect(moduleSources('{"module": [{"a": {"source": 1}}]}', "m.tf.json")).toEqual([null]);
+    expect(moduleSources(text, "main.tf")).toEqual(["./modules/net", "terraform-aws-modules/vpc/aws", "./one", "./mods"]);
+    expect(moduleSources('{"module": {"a": {"source": "../a"}, "//": "note", "b": [{"source": "git::https://x"}]}}', "m.tf.json")).toEqual(["../a", "git::https://x"]);
+  });
+
+  // A folder withheld for a construct the gate does not model loses its
+  // scan; the common ones of real configurations are read whole.
+  it("reads a configuration with the constructs real ones use whole", () => {
+    const text = tf(
+      "/* Shop network */",
+      'variable "enabled" {',
+      "  type    = bool",
+      "  default = true // on by default",
+      "}",
+      "",
+      "locals {",
+      "  tags = merge(var.tags, {",
+      '    "team" = "shop" # owner',
+      "  })",
+      '  name = "${var.prefix}-%{ if var.enabled }on%{ else }off%{ endif }"',
+      '  rules = { for k, v in var.rules : k => v if v.port != 22 }',
+      '  first = [for r in var.list : upper(r)][0]',
+      "  policy = jsonencode({",
+      '    Version = "2012-10-17"',
+      '    Statement = [{ Effect = "Allow", Action = ["s3:GetObject"], Resource = "*" }]',
+      "  })",
+      "  doc = <<EOT",
+      'line with "quotes" and { braces',
+      "EOT",
+      "}",
+      "",
+      'resource "aws_security_group" "web" {',
+      '  count = var.enabled ? 1 : 0',
+      '  name  = "web"',
+      '  dynamic "ingress" {',
+      "    for_each = local.rules",
+      "    content {",
+      "      from_port   = ingress.value.port",
+      "      to_port     = ingress.value.port",
+      '      protocol    = "tcp"',
+      "      cidr_blocks = ingress.value.cidrs",
+      "    }",
+      "  }",
+      "  lifecycle {",
+      "    create_before_destroy = true",
+      "  }",
+      "}",
+      "",
+      'module "east" {',
+      '  source    = "./modules/region"',
+      "  providers = { aws = aws.east }",
+      "  depends_on = [aws_security_group.web]",
+      '  user_data = templatefile("${path.module}/init.tpl", { name = local.name })',
+      "}",
+      "",
+      'output "id" {',
+      "  value = aws_security_group.web[*].id",
+      "}",
+    );
+    expect(moduleSources(text, "main.tf")).toEqual(["./modules/region"]);
+  });
+
+  // Anything the gate cannot account for withholds the folder (null).
+  it("reads no file it cannot account for whole: an expression, a template, a heredoc source, an open block, a duplicate key", () => {
+    for (const source of ['"${var.base}/x"', "local.where", "<<EOT\n./x\nEOT", '"./a" "./b"', '"\\q"']) {
+      expect(moduleSources(tf('module "m" {', `  source = ${source}`, "}"), "main.tf"), source).toBeNull();
+    }
+    expect(moduleSources(tf('module "m" {', '  source = "./a"', '  source = "./b"', "}"), "main.tf")).toBeNull();
+    expect(moduleSources(tf('module "m" {', '  version = "1"', "}"), "main.tf")).toBeNull();
+    expect(moduleSources(tf('module "m" {', '  source = "./a"'), "main.tf")).toBeNull();
+    expect(moduleSources(tf('module "m" { source = "./a"', "}"), "main.tf")).toBeNull();
+    expect(moduleSources(tf("\uFEFFlocals {", "}"), "main.tf")).toBeNull();
+    expect(moduleSources('{"module": [{"a": {"source": 1}}]}', "m.tf.json")).toBeNull();
+    expect(moduleSources('{"module": {"a": {"source": "./a"}}, "module": {"b": {"source": "./b"}}}', "m.tf.json")).toBeNull();
+    expect(moduleSources('{"module": {"a": {"source": "${x}"}}}', "m.tf.json")).toBeNull();
+    expect(moduleSources('{"module": "x"}', "m.tf.json")).toBeNull();
+    expect(moduleSources('{"module": {}},', "m.tf.json")).toBeNull();
   });
 
   it("lets trivy read local modules that stay in the repository only, and checkov anything that stays in it", () => {
     expect(moduleVerdict("infra", ["./modules/net", "../shared"])).toEqual({ trivy: true, checkov: true });
     expect(moduleVerdict("infra", ["terraform-aws-modules/vpc/aws"])).toEqual({ trivy: false, checkov: true });
     expect(moduleVerdict("infra", ["git::https://example.com/x.git"])).toEqual({ trivy: false, checkov: true });
-    expect(moduleVerdict("infra", [null])).toEqual({ trivy: false, checkov: false });
     expect(moduleVerdict("infra", ["../../outside"])).toEqual({ trivy: false, checkov: false });
     expect(moduleVerdict("", ["../x"])).toEqual({ trivy: false, checkov: false });
     expect(moduleVerdict("infra", ["./a/../../../x"])).toEqual({ trivy: false, checkov: false });
