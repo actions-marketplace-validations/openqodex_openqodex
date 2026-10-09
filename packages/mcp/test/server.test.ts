@@ -17,6 +17,9 @@
 //  7. The lease stays after the agent disconnects, or the server keeps
 //     running.
 //  8. A server started outside a repository crashes instead of saying why.
+//  9. A first question that compares the work tree with its base leaves no
+//     held build, so a later question answers from a tree edited since,
+//     without `graph_refresh`.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -219,4 +222,22 @@ describe("the held build", () => {
     expect(answer.error?.message).toMatch(/not inside a git repository/);
     expect((await client.listTools()).tools.length).toBeGreaterThan(0);
   });
+});
+
+describe("the builds a server starts", () => {
+  const edited = "export function core(): number {\n  return 2;\n}\n";
+
+  it("holds the build of a first question that compares, so a later edit needs graph_refresh (9)", async () => {
+    const root = repo(files);
+    write(root, { "src/core.ts": edited });
+    const { client } = await connect(root);
+    const first = await ask(client, "graph_changes", {});
+    expect(first.answer.error).toBeNull();
+    const held = leases(root).filter((l) => l.purpose === "mcp").map((l) => l.id);
+    expect(held).toHaveLength(1);
+    write(root, { "src/late.ts": 'import { core } from "./core";\nexport function late(): number {\n  return core();\n}\n' });
+    const later = await ask(client, "graph_callers", { symbol: "core" });
+    expect(later.answer.graph.generation).toBe(held[0]);
+    expect(later.answer.counts.certain).toBe(12);
+  }, 180_000);
 });

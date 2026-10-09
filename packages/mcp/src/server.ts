@@ -12,10 +12,12 @@
 // build published meanwhile by a review or a command never removes it.
 // Every later question is answered from that held build, and says when
 // files changed since (`laterEditsKnown`); `graph_refresh` moves to a new
-// build. The lease goes when the agent disconnects, and a crash leaves one
-// the collector drops by its process check. A question's walk runs in
-// slices with a turn of the event loop between them, so its cancellation
-// stops it.
+// build. A question that compares the work tree with its base (`changes`,
+// `impact` of the diff) holds the session's build first, then builds its
+// own comparison. The lease goes when the agent disconnects, and a crash
+// leaves one the collector drops by its process check. A question's walk
+// runs in slices with a turn of the event loop between them, so its
+// cancellation stops it.
 //
 // The SDK is pinned to one version in package.json and driven by its own
 // client in the tests.
@@ -167,6 +169,10 @@ export class GraphServer {
     for (const p of pathsOf(args)) if (!inside(p)) return refusal(tool.op, `${p.slice(0, 200)} is not a path inside the repository; give it relative to ${ready.root}`);
     if (args.generation !== undefined && (typeof args.generation !== "string" || !BUILD_ID_PATTERN.test(args.generation))) return refusal(tool.op, "generation is not a build id");
 
+    // The session's build first, whatever the question: a first question
+    // that compares still leaves the build later questions are answered from.
+    const pinned = await this.pin(ready, progress, tool.op === "refresh");
+
     // Questions that compare the work tree with its base build their own
     // comparison, held only while it answers; the held build stays.
     const compares = tool.op === "changes" || (tool.op === "impact" && args.symbol === undefined && args.id === undefined);
@@ -180,7 +186,6 @@ export class GraphServer {
       }
     }
 
-    const pinned = await this.pin(ready, progress, tool.op === "refresh");
     const s = pinned.session;
     if (tool.op !== "refresh" && pinned.reference && !s.laterEditsKnown && Date.now() - this.checkedAt >= EDIT_CHECK_MS) {
       this.checkedAt = Date.now();
