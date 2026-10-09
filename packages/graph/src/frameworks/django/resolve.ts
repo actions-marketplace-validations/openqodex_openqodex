@@ -48,6 +48,8 @@ const RENDER_FUNCTIONS = new Set([
   "django.template.response.TemplateResponse",
   "django.template.response.SimpleTemplateResponse",
 ]);
+const DJANGO_SIGNAL_MODULES = ["django.db.models.signals.", "django.core.signals.", "django.test.signals.", "django.contrib.auth.signals.", "django.db.backends.signals.", "django.contrib.sessions.signals."];
+const DJANGO_SIGNAL_CLASSES = new Set(["django.dispatch.Signal", "django.dispatch.dispatcher.Signal"]);
 const MODEL_BASES = new Set(["django.db.models.Model", "django.db.models.base.Model"]);
 const RELATED_FIELDS = new Set(["ForeignKey", "OneToOneField", "ManyToManyField"]);
 const TEST_BASES = new Set(["django.test.TestCase", "django.test.SimpleTestCase", "django.test.TransactionTestCase", "django.test.LiveServerTestCase", "rest_framework.test.APITestCase", "rest_framework.test.APISimpleTestCase", "rest_framework.test.APITransactionTestCase", "unittest.TestCase"]);
@@ -934,20 +936,23 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   }
 
   // ---------- signals ----------
+  // A signal Django sends: a name of one of its signal modules, or a value
+  // the repository builds with Django's Signal class.
+  const djangoSignalDef = (file: string, def: Of<"signal_def">) => DJANGO_SIGNAL_CLASSES.has(canonical(index, file, def.ctor, { line: def.line }) ?? "");
   const signalEntity = (file: string, ref: Ref, app: string | null, site: Site): { id: string; tier: Tier; note: string | null } | null => {
     const name = canonical(index, file, ref);
-    if (name?.startsWith("django.")) return { id: out.entity({ kind: "signal", id: entityId(PLUGIN, app, "signal", name), plugin: PLUGIN, app, name, site: null, file: null, detail: "django" }), tier: "certain", note: null };
+    if (name !== null && DJANGO_SIGNAL_MODULES.some((m) => name.startsWith(m))) return { id: out.entity({ kind: "signal", id: entityId(PLUGIN, app, "signal", name), plugin: PLUGIN, app, name, site: null, file: null, detail: "django" }), tier: "certain", note: null };
     const lk = index.lookup(file, ref);
     // An in-repo signal is a module-level `Signal()` value: the lookup lands on its module.
     if (lk.kind === "miss" && !lk.target.includes("::")) {
-      const def = factsOf(lk.target, "signal_def").find((s) => s.name === lk.name);
+      const def = factsOf(lk.target, "signal_def").find((s) => s.name === lk.name && djangoSignalDef(lk.target, s));
       if (def) return { id: out.entity({ kind: "signal", id: entityId(PLUGIN, app, "signal", `${lk.target}:${def.name}`), plugin: PLUGIN, app, name: def.name, site: siteOf(lk.target, def), file: lk.target, detail: null }), tier: "certain", note: null };
     }
     if (ref.length === 1) {
-      const def = factsOf(file, "signal_def").find((s) => s.name === ref[0]);
+      const def = factsOf(file, "signal_def").find((s) => s.name === ref[0] && djangoSignalDef(file, s));
       if (def) return { id: out.entity({ kind: "signal", id: entityId(PLUGIN, app, "signal", `${file}:${def.name}`), plugin: PLUGIN, app, name: def.name, site: siteOf(file, def), file, detail: null }), tier: "certain", note: null };
     }
-    out.gap({ site, scope: { file }, affects: ["schedules"], cause: "miss", name: show(ref), note: `the signal ${show(ref)} is neither Django's nor a Signal() of the repository` });
+    out.gap({ site, scope: { file }, affects: ["schedules"], cause: "unsupported-rule", name: show(ref), note: `the signal ${show(ref)} is neither one Django sends nor built by Django's Signal class` });
     return null;
   };
   for (const file of index.factFiles()) {
@@ -972,7 +977,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       if (!c.handler) continue;
       const name = canonical(index, file, c.signal, { line: c.line, callee: [...c.signal, "connect"] });
       const inRepo = !name && (factsOf(file, "signal_def").some((s) => s.name === c.signal[0] && c.signal.length === 1) || index.lookup(file, c.signal).kind === "miss");
-      if (!name?.startsWith("django.") && !inRepo) continue;
+      if (!(name !== null && DJANGO_SIGNAL_MODULES.some((m) => name.startsWith(m))) && !inRepo) continue;
       const sig = signalEntity(file, c.signal, app, site);
       if (!sig) continue;
       const lk = index.lookup(file, c.handler);
