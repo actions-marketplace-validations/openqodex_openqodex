@@ -10,7 +10,8 @@ import type { ClassFact, RailsFact, VisibilityFact } from "./facts.js";
 import { underscore } from "./inflect.js";
 
 export const PLUGIN = "rails";
-export const VERSION = 1;
+// 2: 1-based columns, as the language facts.
+export const VERSION = 2;
 
 export type App = {
   id: string;

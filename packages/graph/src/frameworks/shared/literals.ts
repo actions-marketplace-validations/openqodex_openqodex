@@ -95,5 +95,6 @@ export function pyStrings(node: Node | null | undefined): string[] | null {
 }
 
 export function lineOf(node: Node): { line: number; column: number } {
-  return { line: node.startPosition.row + 1, column: node.startPosition.column };
+  // 1-based line and column, as the language facts give them.
+  return { line: node.startPosition.row + 1, column: node.startPosition.column + 1 };
 }

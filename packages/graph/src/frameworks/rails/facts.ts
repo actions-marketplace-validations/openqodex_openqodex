@@ -205,7 +205,8 @@ export function wantsRails(source: string): boolean {
 }
 
 const line = (n: Node) => n.startPosition.row + 1;
-const col = (n: Node) => n.startPosition.column;
+// 1-based, as the language facts give columns.
+const col = (n: Node) => n.startPosition.column + 1;
 
 // A string node's text when it holds no interpolation.
 function stringValue(n: Node): string | null {

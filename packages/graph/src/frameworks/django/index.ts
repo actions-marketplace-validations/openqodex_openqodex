@@ -9,7 +9,8 @@ import { RULES, detectDjango, resolveDjango } from "./resolve.js";
 // 2: URL list statements in order, replacement and branches (facts changed).
 // 3: a router's trailing_slash option.
 // 4: what the facts could not read is a fact of its own (kind "unread").
-const VERSION = 4;
+// 5: 1-based columns, as the language facts.
+const VERSION = 5;
 const SUPPORTED = "Django 3.2 to 5.1, Django REST framework routers 3.x";
 
 // Corpus case names are relative to packages/graph/corpus/frameworks/django/.

@@ -56,7 +56,7 @@ export const PLUGIN_API_VERSION = 2;
 // ---------- the facts a plugin reads from one file ----------
 
 // Every fact a plugin emits has a kind of its own choosing and the position
-// it was read at (1-based line, 0-based column, as the language facts).
+// it was read at (1-based line and 1-based column, as the language facts).
 // Everything else on a fact is the plugin's own plain JSON.
 export type FrameworkFactBase = { kind: string; line: number; column: number };
 
