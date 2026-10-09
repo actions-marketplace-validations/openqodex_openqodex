@@ -62,8 +62,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { redactSecrets, renderReceipt } from "@openqodex/core";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
-import { DEPTH_ENV } from "../src/reviewers/driver.js";
-import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
+import { DEPTH_ENV } from "@openqodex/review";
+import type { ReviewerDriver, ReviewerSession, Turn } from "@openqodex/review";
 import { runReview } from "../src/review-run.js";
 import { redactStored, reportFolderWriter, reviewOutputs, systemAlias } from "../src/pipeline.js";
 import { readHomeLastReview, readHomeReceipt, readHomeRun } from "../src/receipts.js";

@@ -14,7 +14,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { OpenQodexError, quoteAlternate, readRepoFile, safeGit } from "@openqodex/core";
-import { openqodexHomeDir } from "./launcher.js";
+import { checkoutsDir } from "@openqodex/review";
 
 const execFileAsync = promisify(execFile);
 
@@ -33,10 +33,6 @@ async function gitOut(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Pro
   } catch {
     return null;
   }
-}
-
-export function checkoutsDir(): string {
-  return join(openqodexHomeDir(), "checkouts");
 }
 
 // The same folder, however it is spelled (/var and /private/var on macOS).

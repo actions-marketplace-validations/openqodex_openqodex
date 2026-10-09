@@ -41,6 +41,9 @@ importers:
       '@openqodex/graph':
         specifier: workspace:*
         version: link:../graph
+      '@openqodex/review':
+        specifier: workspace:*
+        version: link:../review
       '@openqodex/scanners':
         specifier: workspace:*
         version: link:../scanners
@@ -90,6 +93,18 @@ importers:
       web-tree-sitter:
         specifier: ^0.26.9
         version: 0.26.13
+
+  packages/review:
+    dependencies:
+      '@openqodex/core':
+        specifier: workspace:*
+        version: link:../core
+      '@openqodex/graph':
+        specifier: workspace:*
+        version: link:../graph
+      '@openqodex/scanners':
+        specifier: workspace:*
+        version: link:../scanners
 
   packages/scanners:
     dependencies:

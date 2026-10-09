@@ -50,6 +50,8 @@ import {
 import type { Change, ChangeScope, Config, Hunk, ImpactSummary, Latest, Report, ReviewerRecord, RunManifest, RunTarget, ScanResult, SelectedLens, Severity, TraceEntry, WholeRepo } from "@openqodex/core";
 import { PacketCollision, PacketLeak, renderImpactBlock, writePacket } from "@openqodex/graph";
 import type { Lease } from "@openqodex/graph";
+import { DEPTH_ENV, REVIEWER_NAMES, classify, claudeDriver, codexDriver, cursorDriver, hostAgent } from "@openqodex/review";
+import type { ReviewerDriver, ReviewerSession, Turn } from "@openqodex/review";
 import { announceRepoFiles } from "./agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, lfsPaths, placeSettings, removeTargetCheckout } from "./checkout.js";
 import type { Checkout } from "./checkout.js";
@@ -61,13 +63,7 @@ import type { PipelineResult } from "./pipeline.js";
 import { keepRunStateOutOfRepo } from "./feedback.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
 import { writeHomeLastReview, writeHomeReceipt } from "./receipts.js";
-import { claudeDriver } from "./reviewers/claude.js";
-import { codexDriver } from "./reviewers/codex.js";
-import { cursorDriver } from "./reviewers/cursor.js";
 import { readReviewerSettings } from "./reviewers/settings.js";
-import { DEPTH_ENV, REVIEWER_NAMES, hostAgent } from "./reviewers/driver.js";
-import type { ReviewerDriver, ReviewerSession, Turn } from "./reviewers/driver.js";
-import { classify } from "./reviewers/trace.js";
 import { dropTempRef, resolveTarget } from "./target.js";
 
 export const DEFAULT_TIMEOUT_SECONDS = 600;
