@@ -385,7 +385,11 @@ describe("15. the bounds on the work one call may ask for", () => {
     expect(none.ms).toBeLessThan(15_000);
     expect(none.r.text).toBe(`0 matches in ${WALK_FILES} or more files; the file walk stopped after ${WALK_FILES} files`);
     expect(none.r.reason).toBe(`the file walk stopped after ${WALK_FILES} files; narrow the pattern or the glob`);
-  });
+    // The cap trips only past WALK_FILES (10,000) files, so the fixture keeps
+    // its 20,000 files. Writing them is most of this test's time: 87 to 271 s
+    // on a loaded Mac against the 30 s default. Each tool call keeps its own
+    // limit above; only the room to write the fixture is raised here.
+  }, 600_000);
 
   it("a glob means what core's glob matcher says it means", () => {
     const paths = ["src/a.ts", "src/x/b.ts", "a.ts", "src/.hidden", "docs/a.md"];
