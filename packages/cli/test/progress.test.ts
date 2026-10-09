@@ -5,16 +5,18 @@
 //  1. Progress lines land on stdout and break --format json.
 //  2. The scanner stage prints one line per scanner with raw finding counts
 //     instead of one compact stage line.
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { runReview } from "../src/review-run.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -48,7 +50,7 @@ let err = "";
 beforeEach(() => {
   out = "";
   err = "";
-  vi.stubEnv("OPENQODEX_HOME", mkdtempSync(join(tmpdir(), "oq-progress-home-")));
+  vi.stubEnv("OPENQODEX_HOME", tempDir("oq-progress-home-"));
   vi.stubEnv(DEPTH_ENV, "");
   vi.spyOn(process.stdout, "write").mockImplementation((s) => ((out += String(s)), true));
   vi.spyOn(process.stderr, "write").mockImplementation((s) => ((err += String(s)), true));
@@ -60,7 +62,7 @@ afterEach(() => {
 
 describe("progress", () => {
   it("1, 2. one scanner stage line on stderr, no raw counts, and stdout holds the JSON report only", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-progress-"));
+    const dir = tempDir("oq-progress-");
     git(dir, "init", "-q", "-b", "main");
     writeFileSync(join(dir, "README.md"), "hello\n");
     git(dir, "add", "-A");

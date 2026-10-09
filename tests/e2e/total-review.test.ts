@@ -23,10 +23,13 @@
 //     the planted secret or a script, or states another verdict.
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Candidate, Report } from "@openqodex/core";
 import "./global-setup.js";
 import { baseline, codexMissing, demo, generatedSecret, readJson, reportDir, reviewerMissing, root, run, noReviewerEnv, toolsHome } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 type Bug = { id: string; file: string; lines: [number, number] };
 const expected = readJson<{ bugs: Bug[] }>(join(root, "examples/demo-repo/expected.json"));

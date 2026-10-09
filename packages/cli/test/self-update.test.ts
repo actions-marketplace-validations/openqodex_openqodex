@@ -45,10 +45,13 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readState } from "../src/update/state.js";
 import { bundleChildEntry } from "./bundle.js";
 import { BIN, cli, env, git, sandbox, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 const NEWER = "0.99.0";
@@ -166,10 +169,14 @@ describe("what the command prints and returns", () => {
   });
 
   it("the notice goes to stderr, once, and stdout stays one JSON document (failures 5 and 6)", async () => {
-    await activateCopy(s, NEWER, version);
-    writeFileSync(join(s.repo, "app.py"), "print('hello')\n");
-    const first = launch(s, ["scan", "--format", "json", "--no-install"], { OPENQODEX_AUTO_UPDATE: "0" });
-    const second = launch(s, ["scan", "--format", "json", "--no-install"], { OPENQODEX_AUTO_UPDATE: "0" });
+    // A home of its own: the test above starts a background update check in
+    // its home on purpose, which takes that home's lock, and an activation
+    // with no wait beside it reports busy (#57).
+    const own = installed();
+    await activateCopy(own, NEWER, version);
+    writeFileSync(join(own.repo, "app.py"), "print('hello')\n");
+    const first = launch(own, ["scan", "--format", "json", "--no-install"], { OPENQODEX_AUTO_UPDATE: "0" });
+    const second = launch(own, ["scan", "--format", "json", "--no-install"], { OPENQODEX_AUTO_UPDATE: "0" });
     expect(() => JSON.parse(first.stdout)).not.toThrow();
     expect(first.stdout).not.toMatch(NOTICE);
     expect(first.stderr).toContain(`openqodex updated to ${NEWER} (was ${version}). Roll back: openqodex update --rollback`);

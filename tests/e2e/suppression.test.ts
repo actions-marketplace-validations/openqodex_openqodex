@@ -1,10 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { git, report, reportDir, run, skipNetwork, writeConfig } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // Suppression comments a change adds, through the real scanners: each
 // scanner obeys its comment and reports nothing on that line, and the scan
@@ -12,7 +14,7 @@ import { git, report, reportDir, run, skipNetwork, writeConfig } from "./support
 
 // A repo with one commit holding `base`, then `change` written over it, uncommitted.
 function repo(base: Record<string, string>, change: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-suppress-"));
+  const dir = tempDir("oq-suppress-");
   const write = (files: Record<string, string>) => {
     for (const [path, text] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, path)), { recursive: true });

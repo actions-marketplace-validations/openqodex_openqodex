@@ -2,10 +2,10 @@
 // contain a space, and runs of the built CLI as a real subprocess.
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tempDir } from "../../../tests/temp-dirs.mjs";
 
 export const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
 
@@ -21,7 +21,7 @@ export function git(cwd: string, ...args: string[]): string {
 // A temp home and a temp repo with one commit holding `files`. The default
 // repo tracks no file, so `init` starts no scanner install from a test.
 export function sandbox(files: Record<string, string> = {}, rootName = "oq test "): Sandbox {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), rootName)));
+  const root = realpathSync(tempDir(rootName));
   const home = join(root, "home dir");
   const repo = join(root, "the repo");
   mkdirSync(home, { recursive: true });
@@ -54,7 +54,7 @@ export const AGENT_ENV = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CODE
 let agentFree: string | null = null;
 export function agentFreePath(): string {
   if (agentFree !== null) return agentFree;
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "oq-agent-free-bin-")));
+  const dir = realpathSync(tempDir("oq-agent-free-bin-"));
   for (const name of ["git", "node"]) {
     for (const folder of (process.env.PATH ?? "").split(delimiter)) {
       if (folder !== "" && existsSync(join(folder, name))) {

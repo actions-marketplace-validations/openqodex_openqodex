@@ -26,13 +26,15 @@
 //     package's, so it never prints after the update to that release.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { NOTICES, noticesBetween } from "../src/notices.js";
 import { cli, env, sandbox, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const version = (JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")) as { version: string }).version;
 
@@ -134,7 +136,7 @@ describe("the notice of a change not yet released", () => {
       const stamped = readFileSync(source, "utf8");
       expect(stamped).not.toMatch(/version: "next"/);
       // The module as the release builds it, from a fresh path so no cache answers.
-      const copy = join(realpathSync(mkdtempSync(join(tmpdir(), "oq-notices-"))), "notices.ts");
+      const copy = join(realpathSync(tempDir("oq-notices-")), "notices.ts");
       writeFileSync(copy, stamped);
       const { NOTICES: after, noticesBetween: between } = (await import(/* @vite-ignore */ pathToFileURL(copy).href)) as typeof import("../src/notices.js");
       for (const text of was) expect(after.find((n) => n.text === text)?.version, text).toBe(version);

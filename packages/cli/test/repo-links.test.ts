@@ -25,11 +25,13 @@
 // pre-push and review --finalize, a linked run folder, a linked
 // last-report.json, and a linked .openqodex when report saves its issue.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { BIN, cli, env, sandbox, tree, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const BOUNDED = 20_000;
 
@@ -39,7 +41,7 @@ function bounded(s: Sandbox, args: string[], input = "") {
 }
 
 function outside(files: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-links-outside-"));
+  const dir = tempDir("oq-links-outside-");
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
   return dir;
 }
@@ -143,7 +145,7 @@ describe("the push gates with links in the repo state", () => {
     // The same line with the built CLI in place of the published one, run
     // outside any repository, where hook pre-push fails with exit 2.
     const local = line!.replace(/^npx -y openqodex@\S+/, `${JSON.stringify(process.execPath)} ${JSON.stringify(BIN)}`);
-    const away = mkdtempSync(join(tmpdir(), "oq-links-norepo-"));
+    const away = tempDir("oq-links-norepo-");
     const failed = spawnSync("sh", ["-c", local], { cwd: away, env: env(s), input: "", encoding: "utf8", timeout: BOUNDED });
     expect(failed.stderr).toContain("run it inside a git repository");
     expect(failed.status).toBe(0);

@@ -28,8 +28,11 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BIN, cli, env, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 const NEWER = "0.99.0";

@@ -52,7 +52,6 @@
 //      or blanks around its dots ([tool."poetry".dependencies]) is not.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "@openqodex/core";
@@ -61,6 +60,9 @@ import { MAX_MANIFEST_BYTES, repoFacts } from "../src/detect.js";
 import { choiceLine, repoInventory, selectScanners } from "../src/select.js";
 import { oxlintGroups } from "../src/adapters/oxlint.js";
 import { ruffGroups } from "../src/adapters/ruff.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const roots: string[] = [];
 afterAll(() => {
@@ -68,7 +70,7 @@ afterAll(() => {
 });
 
 function repo(files: Record<string, string | Buffer>, git = true): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openqodex-select-"));
+  const dir = tempDir("openqodex-select-");
   roots.push(dir);
   if (git) execFileSync("git", ["init", "-q"], { cwd: dir });
   for (const [rel, content] of Object.entries(files)) {

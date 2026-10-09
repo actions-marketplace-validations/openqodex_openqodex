@@ -3,8 +3,14 @@
 // text on the anchor line, and a line in its range that a finding may cite.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { buildCase, changedLines, git, listCases, readCase, specProblems } from "../lib/cases.mjs";
+import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
+
+// Each case is built into a temp folder this file removes at the end.
+const build = (id) => buildCase(id, join(tempDir(`oq-bench-${id}-`), "repo"));
 
 const ids = listCases();
 
@@ -17,7 +23,7 @@ describe("the benchmark corpus", () => {
 
   for (const id of ids) {
     it(`${id}: builds, and every planted bug is on the line its spec names`, () => {
-      const { dir, spec } = buildCase(id);
+      const { dir, spec } = build(id);
       const changed = changedLines(dir);
       expect(changed.size, "the change touches no file").toBeGreaterThan(0);
       for (const bug of spec.bugs) {
@@ -44,7 +50,7 @@ describe("the benchmark corpus", () => {
       return git(dir, "write-tree").trim();
     };
     for (const id of ids.filter((x) => (readCase(x).generated ?? []).length > 0)) {
-      expect(tree(buildCase(id).dir), id).toBe(tree(buildCase(id).dir));
+      expect(tree(build(id).dir), id).toBe(tree(build(id).dir));
     }
   });
 
@@ -52,7 +58,7 @@ describe("the benchmark corpus", () => {
     for (const id of ids) {
       const spec = readCase(id);
       for (const g of spec.generated ?? []) {
-        const { dir } = buildCase(id);
+        const { dir } = build(id);
         expect(readFileSync(join(dir, g.file), "utf8")).toMatch(/sk_live_[A-Za-z0-9]{24}/);
         const committed = git(dir, "ls-tree", "-r", "--name-only", "HEAD").trim().split("\n");
         for (const path of committed) expect(git(dir, "show", `HEAD:${path}`), `${id}: the base commit holds a key in ${path}`).not.toMatch(/sk_live_/);
