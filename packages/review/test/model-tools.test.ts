@@ -16,9 +16,17 @@
 //     refused.
 //  7. A secret the scanners found reaches a reply: through read_file,
 //     search_code, list_files or read_diff_for_file (the diff comes from git,
-//     unredacted).
-//  8. search_code runs a program, or a pattern that backtracks without end
-//     hangs the review instead of being stopped and refused.
+//     unredacted), or through the log of a call's arguments.
+//  7b. search_code is an oracle on a secret: a pattern aimed at it (its
+//     prefix, the redaction marker, the rest of its line) gets an answer, a
+//     line or a count, that differs from a miss. The folder below is not
+//     redacted beforehand, so the tools' own redacted views are what is
+//     tested.
+//  8. search_code runs a program, or hands the reviewer's pattern to an
+//     engine that backtracks, so a pattern can hang the review; or a
+//     construct only a backtracking engine runs is accepted silently.
+//  8b. The matcher answers differently from JavaScript's own engine for the
+//     syntax it takes.
 //  9. search_code or list_files with a glob rooted outside the snapshot runs.
 // 10. list_files lists `.git` or a link.
 // 11. read_diff_for_file serves a file outside the change, or the diff of a
@@ -35,6 +43,7 @@ import { getTreeChange } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
 import { buildGraph } from "@openqodex/graph";
 import { TOOL_DEFINITIONS, TOOL_REPLY_BYTES, runTool } from "../src/tools/index.js";
+import { compilePattern, matchesLine } from "../src/tools/pattern.js";
 import type { ToolBox } from "../src/tools/index.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
@@ -148,11 +157,10 @@ describe("read_file", () => {
     expect(second).toMatchObject({ ok: true, range: [2, 2] });
   });
 
-  it("7. never hands out a secret the scanners found", async () => {
+  it("7. never hands out a secret the scanners found: the line comes back redacted", async () => {
     const r = await runTool(box, "read_file", { path: "src/config.ts" });
     expect(r.ok).toBe(true);
-    expect(r.text).not.toContain(SECRET);
-    expect(r.text).toContain("[redacted]");
+    expect(r.text).toBe('src/config.ts lines 1 to 1 of 1\n1\texport const key = "[redacted]";');
   });
 });
 
@@ -164,17 +172,52 @@ describe("search_code", () => {
     expect(r.text).not.toContain(".git");
   });
 
-  it("7. never hands out a secret the scanners found", async () => {
-    const r = await runTool(box, "search_code", { pattern: "sk_live" });
-    expect(r.text).not.toContain(SECRET);
+  it("7b. a pattern aimed at a secret gets exactly the answer a miss gets", async () => {
+    const miss = await runTool(box, "search_code", { pattern: "zz_no_such_text_zz" });
+    expect(miss).toMatchObject({ ok: true, reason: null });
+    expect(miss.text).toBe("0 matches in 5 files");
+    for (const pattern of ["sk_live", SECRET.slice(0, 12), "sk_live_51[A-Z]", "\\[redacted\\]", "export const key", SECRET]) {
+      const r = await runTool(box, "search_code", { pattern });
+      expect({ text: r.text, ok: r.ok, reason: r.reason }, pattern).toEqual({ text: miss.text, ok: miss.ok, reason: miss.reason });
+    }
   });
 
-  it("8. stops a pattern that backtracks without end and refuses it", async () => {
+  it("7. the log keeps a search's arguments redacted", async () => {
+    const r = await runTool(box, "search_code", { pattern: SECRET });
+    expect(r.detail).not.toContain(SECRET);
+    expect(r.detail).toContain("[redacted]");
+  });
+
+  it("8. refuses, with the reason, a pattern only a backtracking engine can run", async () => {
+    for (const pattern of ["(x+)\\1", "(?<n>x)\\k<n>", "a(?=b)", "(?<!a)b", "a(?!b)"]) {
+      const r = await runTool(box, "search_code", { pattern });
+      expect(r, pattern).toMatchObject({ ok: false, inside: true });
+      expect(r.reason, pattern).toMatch(/backreference or a lookaround/);
+    }
+  });
+
+  it("8. runs a pattern that backtracks without end elsewhere in time bounded by the line", async () => {
     const started = Date.now();
     const r = await runTool(box, "search_code", { pattern: "^(x+x+)+y$", glob: "src/wide.txt" });
-    expect(Date.now() - started).toBeLessThan(15_000);
-    expect(r).toMatchObject({ ok: false, inside: true });
-    expect(r.reason).toMatch(/stopped/);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(r).toMatchObject({ ok: true, reason: null });
+    expect(r.text).toBe("0 matches in 1 file");
+  });
+
+  it("8b. matches where JavaScript's own engine matches, for the syntax it takes", () => {
+    const patterns = ["add\\(", "^\\s*return", "a|b|xyz", "(ab)+c", "[a-c]{2,3}d", "\\bend\\b", "\\Bnd", "x?y*z+", "colou?r", "[^0-9 ]+$", "\\d{3}-\\d{2}", "\\w+@\\w+\\.com", "(?:foo|bar)baz", "a.c", "\\x41\\u0042", "[\\d-]+", "\\$\\{x\\}", "^$", "a{2}", "a{1,}b", "(a|)+b", "(a*)*c", "[.]", "a\\.b", "{x}", "a{,2}", "[]", "[^]"];
+    const lines = ["return add(1, 2);", "  return x", "xyz", "ababc", "abcd bbd", "the end.", "bend", "yyyz", "color colour", "abc", "123-45", "me@host.com", "foobaz barbaz", "abc a-c", "AB", "1-2-3", "${x}", "", "aa", "aaab", "b", "aaac", "x.y", "a.b", "{x}", "a{,2}", "anything"];
+    for (const p of patterns) {
+      const compiled = compilePattern(p);
+      expect("program" in compiled, p).toBe(true);
+      const program = (compiled as { program: Parameters<typeof matchesLine>[0] }).program;
+      const re = new RegExp(p);
+      for (const line of lines) expect(matchesLine(program, line), `${p} on ${JSON.stringify(line)}`).toBe(re.test(line));
+    }
+  });
+
+  it("refuses a pattern whose matcher would be too large", () => {
+    expect(compilePattern("(a{1000}){1000}")).toEqual({ refused: expect.stringMatching(/too large/) });
   });
 
   it("9. refuses a glob rooted outside the snapshot", async () => {

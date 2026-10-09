@@ -9,18 +9,25 @@
 // agents' own `classify` (outside the snapshot is refused and marked
 // outside), a link is never followed, the snapshot's `.git` entry is never
 // read. Every reply is bounded to 32 KB, cut only at a whole line and saying
-// so, and every reply has the run's secrets redacted. No tool starts a
-// program.
+// so. No tool starts a program.
+//
+// Secrets: a tool reads content only through the redacted views below
+// (`redactedLines`, `redactedDiff`), on top of the snapshot the brain already
+// redacted (redactSnapshot), so no raw secret is ever served, searched or
+// counted. search_code skips every line that holds a redaction, so a pattern
+// aimed at a secret (its prefix, the redaction marker) gets the answer a miss
+// gets. Each reply is redacted once more at the end, and the log keeps each
+// call's arguments redacted the same way.
 import { lstatSync, openSync, closeSync, fstatSync, readFileSync, constants } from "node:fs";
 import { isAbsolute, join, posix } from "node:path";
-import { matchesGlob, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
+import { REDACTED, matchesGlob, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
 import { API_VERSION, query } from "@openqodex/graph";
 import type { Candidate, Graph, Item } from "@openqodex/graph";
 import { classify } from "../agents/trace.js";
 import type { ToolDefinition } from "../reviewer.js";
 import { MAX_FILE_BYTES, snapshotFiles } from "../snapshot.js";
-import { searchFiles } from "./search.js";
+import { compilePattern, matchesLine } from "./pattern.js";
 
 // The most bytes one tool reply carries.
 export const TOOL_REPLY_BYTES = 32 * 1024;
@@ -30,6 +37,9 @@ const MAX_DETAIL_CHARS = 2000;
 const MAX_PATTERN_CHARS = 1000;
 const MAX_MATCHES = 500;
 const MAX_MATCH_CHARS = 300;
+// The most matcher steps one search may take (characters searched times the
+// matcher's size); a search that would pass it stops there and says so.
+const SEARCH_WORK = 200_000_000;
 const MAX_CALLERS = 100;
 
 export const TOOL_NAMES = ["read_file", "search_code", "list_files", "read_diff_for_file", "find_callers"] as const;
@@ -53,7 +63,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "search_code",
-    description: `Search the text files of the code under review for a JavaScript regular expression, line by line. Each match comes back as path:line: text, up to ${BOUND}.`,
+    description: `Search the text files of the code under review, line by line, for a regular expression in JavaScript syntax, case sensitive. Backreferences and lookarounds are not supported. A line that holds a redacted secret is never a result. Each match comes back as path:line: text, up to ${BOUND}.`,
     parameters: {
       type: "object",
       properties: {
@@ -201,6 +211,27 @@ function fileText(full: string): string | null {
   }
 }
 
+// The only way a tool reads a file: its lines with every secret the
+// scanners found redacted, line breaks kept so each line keeps its number
+// (the redaction the snapshot itself went through). Null when the file is
+// not text a tool may read.
+function redactedLines(box: ToolBox, rel: string): string[] | null {
+  const content = fileText(join(box.snapshotDir, rel));
+  if (content === null) return null;
+  if (content === "") return [];
+  const lines = redactSecretsKeepingLines(content, box.secrets).split("\n");
+  if (content.endsWith("\n")) lines.pop();
+  return lines;
+}
+
+// The only way a tool reads a diff: the change's diff of one file with every
+// secret the scanners found redacted, as the brief's diff is. Null when the
+// change holds no diff for it.
+function redactedDiff(box: ToolBox, rel: string): string | null {
+  const diff = box.change.diffs?.find((d) => d.path === rel);
+  return diff === undefined ? null : redactSecrets(diff.text, box.secrets);
+}
+
 const bytes = (s: string) => Buffer.byteLength(s, "utf8");
 
 // Rows after a header, as many whole rows as fit in the bound.
@@ -224,12 +255,9 @@ function readFile(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"
   const placed = placePath(box, "read_file", raw as string, "path", true);
   if ("refused" in placed) return placed.refused;
   const { rel } = placed;
-  const content = fileText(join(box.snapshotDir, rel));
-  if (content === null) return refusal(`${rel} is not a text file of ${MAX_FILE_BYTES / 1024 / 1024} MB or less`, true, rel);
-  // Redacted with its line breaks kept, so every line keeps its number.
-  const all = redactSecretsKeepingLines(content, box.secrets).split("\n");
-  if (content.endsWith("\n")) all.pop();
-  const total = content === "" ? 0 : all.length;
+  const all = redactedLines(box, rel);
+  if (all === null) return refusal(`${rel} is not a text file of ${MAX_FILE_BYTES / 1024 / 1024} MB or less`, true, rel);
+  const total = all.length;
   const first = (start as number | null) ?? 1;
   if (total === 0) return { text: `${rel} is empty`, ok: true, path: rel, inside: true, range: null, reason: null };
   if (first > total) return refusal(`${rel} has ${total} lines`, true, rel);
@@ -269,27 +297,48 @@ async function searchCode(box: ToolBox, args: Args): Promise<Omit<ToolOutcome, "
   if ((pattern as string).length > MAX_PATTERN_CHARS) return badArgs(`pattern is over ${MAX_PATTERN_CHARS} characters`);
   const listed = filesFor(box, "search_code", glob as string | null);
   if ("refused" in listed) return listed.refused;
-  try {
-    new RegExp(pattern as string);
-  } catch (error) {
-    return refusal(`the pattern is not a valid regular expression: ${(error as Error).message}`, true, ".");
+  const compiled = compilePattern(pattern as string);
+  if ("refused" in compiled) return refusal(compiled.refused, true, ".");
+  const { program } = compiled;
+  const found: string[] = [];
+  let limited = false;
+  let work = 0;
+  let searched = 0;
+  outer: for (const [k, rel] of listed.files.entries()) {
+    // A long search lets the rest of the process run between files.
+    if (k > 0 && k % 100 === 0) await new Promise<void>((done) => setImmediate(done));
+    const lines = redactedLines(box, rel);
+    if (lines === null) {
+      searched++;
+      continue;
+    }
+    // The work counts every line, a skipped one too, so where a search
+    // stops never depends on where a secret was.
+    const cost = lines.reduce((n, l) => n + (l.length + 1) * program.length, 0);
+    if (work + cost > SEARCH_WORK) break;
+    work += cost;
+    searched++;
+    for (const [i, line] of lines.entries()) {
+      if (line.includes(REDACTED) || !matchesLine(program, line)) continue;
+      found.push(`${rel}:${i + 1}: ${line.slice(0, MAX_MATCH_CHARS)}`);
+      if (found.length >= MAX_MATCHES) {
+        limited = true;
+        break outer;
+      }
+    }
   }
-  const found = await searchFiles({ root: box.snapshotDir, files: listed.files, pattern: pattern as string, maxMatches: MAX_MATCHES, maxFileBytes: MAX_FILE_BYTES, maxText: MAX_MATCH_CHARS });
-  if ("stopped" in found) return refusal(`the search ran longer than 5 s and was stopped; narrow the pattern or the glob`, true, ".");
-  if ("error" in found) return refusal(`the search failed: ${found.error}`, true, ".");
-  const rows = found.matches.map((m) => `${m.path}:${m.line}: ${redactSecrets(m.text, box.secrets)}`);
-  const header = `${found.matches.length}${found.limited ? " or more" : ""} ${found.matches.length === 1 ? "match" : "matches"} in ${listed.files.length} ${listed.files.length === 1 ? "file" : "files"}`;
-  const { text, shown } = fill(header, rows);
-  const cut = shown < rows.length;
-  const limited = found.limited ? `stopped at ${MAX_MATCHES} matches` : null;
-  return {
-    text,
-    ok: true,
-    path: ".",
-    inside: true,
-    range: null,
-    reason: cut ? `cut at ${BOUND}: ${shown} of ${rows.length} matches sent; narrow the pattern or the glob` : limited,
-  };
+  const stopped = !limited && searched < listed.files.length;
+  const header = `${found.length}${limited ? " or more" : ""} ${found.length === 1 ? "match" : "matches"} in ${listed.files.length} ${listed.files.length === 1 ? "file" : "files"}${stopped ? `; the search stopped at its work bound after ${searched} of them` : ""}`;
+  const { text, shown } = fill(header, found);
+  const reason =
+    shown < found.length
+      ? `cut at ${BOUND}: ${shown} of ${found.length} matches sent; narrow the pattern or the glob`
+      : limited
+        ? `stopped at ${MAX_MATCHES} matches`
+        : stopped
+          ? `stopped at the search's work bound after ${searched} of ${listed.files.length} files; narrow the pattern or the glob`
+          : null;
+  return { text, ok: true, path: ".", inside: true, range: null, reason };
 }
 
 function listFiles(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"> {
@@ -309,12 +358,12 @@ function readDiff(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"
   const placed = placePath(box, "read_diff_for_file", raw as string, "path", false);
   if ("refused" in placed) return placed.refused;
   const { rel } = placed;
-  const diff = box.change.diffs?.find((d) => d.path === rel);
-  if (diff === undefined) {
+  const diff = redactedDiff(box, rel);
+  if (diff === null) {
     const changed = box.change.files.some((f) => f.path === rel);
     return refusal(changed ? `the diff of ${rel} is not available: the change is too large for every file's diff` : `${rel} is not a changed file; the brief lists the changed files`, true, rel);
   }
-  const rows = redactSecrets(diff.text, box.secrets).replace(/\n$/, "").split("\n");
+  const rows = diff.replace(/\n$/, "").split("\n");
   const head = (shown: number) => `${rel}: the diff against the base, ${shown === rows.length ? `${rows.length} lines` : `the first ${shown} of ${rows.length} lines`}`;
   const { shown } = fill(head(0), rows);
   return {
@@ -365,9 +414,10 @@ function findCallers(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "deta
 // still hold a secret is replaced by a refusal.
 export async function runTool(box: ToolBox, name: string, raw: unknown): Promise<ToolOutcome> {
   const tool = typeof name === "string" ? name.slice(0, 100) : "(no name)";
+  // The arguments as the log keeps them: redacted like every reply, then cut.
   let detail = "";
   try {
-    detail = (typeof raw === "string" ? raw : (JSON.stringify(raw ?? null) ?? "")).slice(0, MAX_DETAIL_CHARS);
+    detail = redactSecrets(typeof raw === "string" ? raw : (JSON.stringify(raw ?? null) ?? ""), box.secrets).slice(0, MAX_DETAIL_CHARS);
   } catch {
     detail = "(arguments that could not be written as JSON)";
   }
@@ -384,8 +434,11 @@ export async function runTool(box: ToolBox, name: string, raw: unknown): Promise
     else out = findCallers(box, args);
   }
   const text = redactSecrets(out.text, box.secrets);
+  // A path as the reviewer asked for it (an attempt outside) is redacted too.
+  const path = out.path === null ? null : redactSecrets(out.path, box.secrets);
+  const reason = out.reason === null ? null : redactSecrets(out.reason, box.secrets);
   if (secretTexts(box.secrets).some((s) => text.includes(s))) {
-    return { tool, ...refusal("a secret the scanners found is in the reply", out.inside, out.path), detail };
+    return { tool, ...refusal("a secret the scanners found is in the reply", out.inside, path), detail };
   }
-  return { tool, ...out, text, detail };
+  return { tool, ...out, text, path, reason, detail };
 }
