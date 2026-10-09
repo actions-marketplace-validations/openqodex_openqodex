@@ -21,9 +21,12 @@
 // review-run.ts). What it makes on disk it makes through the host's parts:
 // the snapshot through the snapshot maker, scanner installs through the tool
 // resolver, the graph's kept build through the graph store.
+import { isAbsolute } from "node:path";
 import {
+  DEFAULT_CONFIG,
   MANIFEST_VERSION,
   OpenQodexError,
+  display,
   buildDisplay,
   buildExcerptDisplay,
   buildInventory,
@@ -36,6 +39,7 @@ import {
   getChange,
   getTreeChange,
   getWholeRepo,
+  modelCoverage,
   readCoverage,
   redactSecrets,
   safeGit,
@@ -57,22 +61,31 @@ import type {
   ScanResult,
   ScannerSource,
   SelectedLens,
+  SubmissionV2,
   TraceEntry,
   WholeRepo,
 } from "@openqodex/core";
 import { PacketCollision, PacketLeak, renderImpactBlock, writePacket } from "@openqodex/graph";
-import type { GraphStore, Lease } from "@openqodex/graph";
+import type { Graph, GraphStore, Lease } from "@openqodex/graph";
+import { createToolResolver } from "@openqodex/scanners";
 import { meterSession } from "./agent-usage.js";
 import { REVIEWER_NAMES, hostAgent } from "./agents/driver.js";
 import type { ReviewerDriver, ReviewerSession } from "./agents/driver.js";
 import { converse, deliverRanges, redactSnapshot } from "./conversation.js";
-import type { Conversation } from "./conversation.js";
+import type { Conversation, Speaker } from "./conversation.js";
+import { modelSession, modelToolEntry } from "./model-loop.js";
+import type { ModelSession } from "./model-loop.js";
+import { modelRecord, modelReport, reviewRender } from "./model-record.js";
+import { agentReviewer } from "./reviewer.js";
+import type { Budget, Disposition, ModelReviewer, ResultFinding, ReviewChangeInput, ReviewChangeOptions, Reviewer, ReviewResult } from "./reviewer.js";
+import { serverSnapshots } from "./server-snapshot.js";
+import { TOOL_NAMES } from "./tools/index.js";
 import { buildGraphRun, buildHotSpots, nothingToReviewLine, ruleCoverage, scanChange, wholeRepoLenses } from "./pipeline.js";
 import type { GraphHost, PipelineResult, ScanHost } from "./pipeline.js";
 import { redactStored } from "./redact.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
 import { usageTotals } from "./usage.js";
-import type { CallRecord, UsageTotals } from "./usage.js";
+import type { CallRecord, ModelReviewEvidence, ToolLogEntry, UsageTotals } from "./usage.js";
 
 // A frozen copy of the state under review: `tree` is the folder the
 // scanners and the reviewer read; `folder` holds it and whatever the maker
@@ -128,6 +141,9 @@ export type ReviewInputs = {
   timeoutMs: number;
   // The version the run's manifest names.
   runtimeVersion: string;
+  // The lowest confidence a finding may have, in the brief and in the
+  // check; left out, the global floor (the laptop passes none).
+  confidenceFloor?: number;
 };
 
 // Every line and stage of a run, in the order they happen. The host acts on
@@ -180,6 +196,10 @@ export type ReviewDeps = {
   // agents/ time their own stop on the system clock, so a host that uses
   // them passes Date.now.
   now: () => number;
+  // A model reviewer the host supplies in place of the drivers
+  // (reviewChange's server profile): the brain runs the conversation with
+  // its own five tools and asks `budget` before every model call.
+  model?: { reviewer: ModelReviewer; budget?: Budget };
 };
 
 export type ReviewCoreResult =
@@ -203,9 +223,23 @@ export type ReviewCoreResult =
       whole: boolean;
       target: RunTarget | null;
       usage: { calls: CallRecord[]; totals: UsageTotals };
+    }
+  // A model reviewer ran (`ReviewDeps.model`). No agent completion record is
+  // made for it: `report` is the checked report without one, and `evidence`
+  // is what the model completion record is built from (model-record.ts).
+  // `usage`: one record per model attempt.
+  | {
+      ended: "model-reviewed";
+      report: Report;
+      evidence: ModelReviewEvidence;
+      submission: unknown;
+      change: Change;
+      scan: ScanResult;
+      secrets: string[];
+      usage: { calls: CallRecord[]; totals: UsageTotals };
     };
 
-type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
+type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] } | { model: { reviewer: ModelReviewer; budget?: Budget } };
 
 // `choice` (auto or a driver's name), else the agent running this command
 // when its driver is enabled, else the first enabled driver. A driver is
@@ -338,11 +372,11 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
   const { repoRoot, config } = inputs;
   const say = (line: string) => deps.onEvent({ type: "progress", line });
   const warn = (line: string) => deps.onEvent({ type: "warning", line });
-  const chosen = await chooseReviewer(inputs.reviewer, deps.drivers, repoRoot);
+  const chosen: Chosen = deps.model ? { model: deps.model } : await chooseReviewer(inputs.reviewer, deps.drivers, repoRoot);
   const deadline = deps.now() + inputs.timeoutMs;
 
   let snapshot: Snapshot | null = null;
-  let session: ReviewerSession | null = null;
+  let session: (Speaker & { close(): Promise<void>; kill?(): void }) | null = null;
   // The graph build this review read, held until the review ends.
   let graphLease: Lease | null = null;
   // A driver's boundary check that is running (Codex's sandbox probe): its
@@ -388,15 +422,18 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     let lenses: SelectedLens[];
     let impact: ImpactSummary;
     let brief: { text: string; diffFiles: Set<string> };
+    // The graph a model reviewer's find_callers asks, and why there is none.
+    let graph: Graph | null = null;
     if (prep.whole) {
       const hot = await buildHotSpots(p, graphHost, inputs.noGraph);
       impact = hot.impact;
       lenses = wholeRepoLenses(prep.whole, ruleCoverage(p));
-      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) } });
+      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) }, confidenceFloor: inputs.confidenceFloor });
     } else {
       const run = await buildGraphRun(p, graphHost, inputs.noGraph);
       graphLease = run.lease;
       impact = run.impact;
+      graph = run.graph;
       // The graph files the brief names, written into the snapshot before it
       // is hashed, so the reviewer reads them inside the folder it may read.
       if (run.graph) {
@@ -409,7 +446,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         }
       }
       lenses = selectLenses(change, undefined, ruleCoverage(p));
-      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, target: prep.target });
+      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, target: prep.target, confidenceFloor: inputs.confidenceFloor });
     }
     const manifest: RunManifest = {
       version: MANIFEST_VERSION,
@@ -423,27 +460,48 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     };
     deps.onEvent({ type: "brief", manifest, scan, brief: brief.text, impact });
 
+    // A model reviewer runs in the brain's own loop, with the brain's tools.
+    const model = "model" in chosen ? chosen.model : null;
+    const agent = "driver" in chosen ? chosen : null;
     // A reviewer whose trace is not complete (Codex) has no read counted:
-    // coverage is the brief and the correction rounds only.
-    const traced = chosen.driver.traced;
+    // coverage is the brief and the correction rounds only. The brain's own
+    // log of a model reviewer's tools is complete.
+    const traced = agent ? agent.driver.traced : true;
     // The driver's per-run proof of its boundary (Codex's sandbox probe),
     // on the redacted snapshot, before its hash is taken.
-    const unsafe = (await chosen.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: chosen.bin, register: (cleanup) => (checking = cleanup) })) ?? null;
-    if (unsafe !== null) return await finish({ ended: "unavailable", reasons: [`${chosen.driver.name}: ${unsafe}`], change, scan, secrets: p.secrets });
+    const unsafe = agent ? ((await agent.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: agent.bin, register: (cleanup) => (checking = cleanup) })) ?? null) : null;
+    if (agent && unsafe !== null) return await finish({ ended: "unavailable", reasons: [`${agent.driver.name}: ${unsafe}`], change, scan, secrets: p.secrets });
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
     // A secret in a path would reach the reviewer through any listing: the
     // reviewer is not started and the review is incomplete.
     const refused = redaction.named > 0 ? "a file name in the change holds a secret the scanners found, so the reviewer was not started; rename the file" : null;
-    // Each round's usage is recorded as the turns come back; the turns reach the conversation unchanged.
-    const metered = refused === null ? meterSession(chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: inputs.web }), { driver: chosen.driver.name, now: deps.now }) : null;
-    if (metered !== null) session = metered.session;
-    if (session !== null) deps.onEvent({ type: "started", driver: chosen.driver.name, version: chosen.version, pid: session.pid });
-    const pid = session?.pid ?? null;
-    if (session !== null) say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
+    let modelTalk: ModelSession | null = null;
+    // An agent's usage is recorded round by round as its turns come back;
+    // the turns reach the conversation unchanged.
+    let metered: { session: ReviewerSession; calls(): CallRecord[] } | null = null;
+    let pid: number | null = null;
+    if (refused === null && model) {
+      modelTalk = modelSession({
+        reviewer: model.reviewer,
+        role: "primary",
+        budget: model.budget,
+        box: { snapshotDir: prep.snapshot.tree, change, secrets: p.secrets, graph, graphNote: graph === null ? `the graph is ${impact.status}${impact.reasons.length > 0 ? `: ${impact.reasons.join("; ")}` : ""}` : null },
+        now: deps.now,
+      });
+      session = modelTalk;
+      deps.onEvent({ type: "started", driver: "model", version: model.reviewer.model, pid: null });
+      say(`Reviewer: model ${model.reviewer.model} started; this takes one to three minutes`);
+    } else if (refused === null && agent) {
+      metered = meterSession(agentReviewer(agent.driver, { snapshotDir: prep.snapshot.tree, deadline, bin: agent.bin, web: inputs.web }), { driver: agent.driver.name, now: deps.now });
+      session = metered.session;
+      pid = metered.session.pid;
+      deps.onEvent({ type: "started", driver: agent.driver.name, version: agent.version, pid });
+      say(`Reviewer: ${agent.driver.name} ${agent.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
+    }
     const startedIso = new Date(deps.now()).toISOString();
     const now = deps.now();
-    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], startedAt: now, endedAt: now } : await converse({
+    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], carried: [], startedAt: now, endedAt: now } : await converse({
       session,
       snapshotDir: prep.snapshot.tree,
       brief: brief.text,
@@ -452,8 +510,13 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       say,
       now: deps.now,
       check: (submission, trace, delivered) => {
-        const r = checkSubmission({ change, scan, manifest, config, submission, lineCount, wholeRepo: prep.whole ? { lines: prep.whole.lines } : undefined });
-        const unread = prep.whole ? [] : readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? trace : [], lineCount, delivered }).unread;
+        const r = checkSubmission({ change, scan, manifest, config, submission, lineCount, wholeRepo: prep.whole ? { lines: prep.whole.lines } : undefined, confidenceFloor: inputs.confidenceFloor });
+        // A model reviewer's reads count once a request carrying them was sent.
+        const unread = prep.whole
+          ? []
+          : model
+            ? modelCoverage({ change, briefSent: true, briefFiles: brief.diffFiles, toolLog: (trace as ToolLogEntry[]).map(modelToolEntry), delivered, lineCount }).unread
+            : readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? trace : [], lineCount, delivered }).unread;
         return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
       },
       deliver: (unread, earlier) => deliverRanges({ snapshotDir: prep.snapshot.tree, unread, earlier, secrets: p.secrets }),
@@ -462,6 +525,44 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     });
     if (talk.failure !== null) warn(`openqodex: ${talk.failure}`);
     const after = hashSnapshot(prep.snapshot.tree);
+
+    if ("model" in chosen) {
+      // What the brain measured, and nothing the reviewer said: its own log
+      // of every tool call, every model attempt, and coverage from what the
+      // requests that were sent carried. A correction round's ranges count
+      // only when the request carrying them was sent.
+      const sent = modelTalk?.sentRounds ?? 0;
+      const delivered = talk.carried.slice(0, Math.max(0, sent - 1)).flat();
+      const toolLog = structuredClone(modelTalk?.log ?? []);
+      const attempts = structuredClone(modelTalk?.attempts ?? []);
+      const coverage = modelCoverage({ change, briefSent: sent > 0, briefFiles: brief.diffFiles, toolLog: toolLog.map(modelToolEntry), delivered, lineCount });
+      // Redacted like the agent record: a path or a tool input may hold a secret.
+      const evidence = redactStored<ModelReviewEvidence>(
+        {
+          reviewer: "primary",
+          model: chosen.model.reviewer.model,
+          changeId: change.id,
+          snapshot: { tree: prep.tree, before, after },
+          candidates: { total: talk.required, disposed: talk.disposed },
+          coverage,
+          briefSent: sent > 0,
+          toolLog,
+          attempts,
+          rounds: talk.rounds,
+          submissionErrors: talk.report ? [] : talk.errors,
+          failure: talk.failure,
+          tools: [...TOOL_NAMES],
+          startedAt: startedIso,
+          endedAt: new Date(talk.endedAt).toISOString(),
+          durationMs: talk.endedAt - talk.startedAt,
+        },
+        p.secrets,
+      );
+      // The checked report, or an empty one; the model record goes in it
+      // where the record is built (modelReport).
+      const report: Report = { ...(talk.report ?? incompleteReport(change, scan, config, deps.now())), impact };
+      return await finish({ ended: "model-reviewed", report, evidence, submission: talk.submission, change, scan, secrets: p.secrets, usage: { calls: attempts, totals: usageTotals(attempts) } });
+    }
 
     const reviewer: ReviewerRecord | null = session === null ? null : {
       driver: chosen.driver.name,
@@ -518,4 +619,211 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     graphLease?.release();
     if (snapshot !== null) await deps.snapshots.remove(repoRoot, snapshot as Snapshot);
   }
+}
+
+// ---------- reviewChange: one change in a host's clone, server profile ----------
+
+// How long a review may run when the host gives no budget.
+const DEFAULT_DEADLINE_MS = 600_000;
+const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const short = (sha: string) => sha.slice(0, 12);
+
+// Inputs and options this version does not take, refused with what to do
+// instead: nothing given is ever ignored.
+function refuseUnsupported(input: ReviewChangeInput, reviewer: Reviewer, options: ReviewChangeOptions): void {
+  for (const key of ["previousReviewedSha", "fullReviewRequested", "scopes", "context"] as const) {
+    if (input[key] !== undefined) throw new OpenQodexError(`reviewChange: ${key} is not supported yet; it comes with incremental and scoped reviews`);
+  }
+  if ((options.profile as string) !== "server") throw new OpenQodexError('reviewChange runs the "server" profile only; the laptop review is the openqodex review command');
+  if (options.tools?.web !== false || options.tools?.shell !== false) throw new OpenQodexError("the server profile gives the reviewer no web and no shell tool: pass tools: { web: false, shell: false }");
+  if ((options.scanners as string) !== "preinstalled") throw new OpenQodexError('the server profile installs no scanner: pass scanners: "preinstalled"');
+  for (const key of ["workDir", "installRoot"] as const) {
+    if (typeof options[key] !== "string" || !isAbsolute(options[key])) throw new OpenQodexError(`reviewChange: ${key} must be an absolute path`);
+  }
+  const floor = options.confidenceFloor;
+  if (floor !== undefined && !(typeof floor === "number" && Number.isFinite(floor) && floor >= 0 && floor <= 1)) throw new OpenQodexError("reviewChange: confidenceFloor must be a number from 0 to 1");
+  if (options.budget !== undefined && (typeof options.budget.authorize !== "function" || !(typeof options.budget.deadlineMs === "number" && options.budget.deadlineMs > 0))) {
+    throw new OpenQodexError("reviewChange: budget needs an authorize function and a deadlineMs above 0");
+  }
+  if (reviewer?.kind !== "model") throw new OpenQodexError("the server profile takes a model reviewer (kind: \"model\"); agent reviewers run on the laptop");
+  if (typeof reviewer.model !== "string" || reviewer.model === "" || !Number.isInteger(reviewer.maxOutputTokens) || reviewer.maxOutputTokens < 1 || typeof reviewer.complete !== "function") {
+    throw new OpenQodexError("reviewChange: a model reviewer needs a model name, a whole maxOutputTokens of 1 or more and a complete function");
+  }
+}
+
+// The proofs made in the host's clone before anything is scanned: both ids
+// are full commit ids of commits the clone holds, and the merge base is an
+// ancestor of the head. The reason a proof failed, or null. Each reason
+// starts with the proof's name: "not a commit", "missing commit", "history
+// unknown" (a shallow clone cannot show ancestry), "diverged" or "git
+// failed".
+export async function proveChange(clonePath: string, mergeBaseSha: string, headSha: string): Promise<string | null> {
+  const named: [string, string][] = [
+    ["the merge base", mergeBaseSha],
+    ["the head", headSha],
+  ];
+  for (const [name, sha] of named) {
+    if (typeof sha !== "string" || !FULL_ID.test(sha)) return `not a commit: ${name} ${JSON.stringify(String(sha).slice(0, 80))} is not a full commit id`;
+  }
+  const failed = (r: { code: number; stderr: string }) => `git failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`;
+  try {
+    const repo = await safeGit(clonePath, ["rev-parse", "--git-dir"]);
+    if (repo.code !== 0) return failed(repo);
+    for (const [name, sha] of named) {
+      const t = await safeGit(clonePath, ["cat-file", "-t", sha]);
+      if (t.code !== 0) {
+        if (/not a valid object name|could not get object info/i.test(t.stderr)) return `missing commit: ${name} ${short(sha)} is not in the clone; fetch it before the review (git fetch origin ${sha})`;
+        return failed(t);
+      }
+      const type = t.stdout.toString("utf8").trim();
+      if (type !== "commit") return `not a commit: ${name} ${short(sha)} is a ${type}`;
+    }
+    const ancestor = await safeGit(clonePath, ["merge-base", "--is-ancestor", mergeBaseSha, headSha]);
+    if (ancestor.code === 0) return null;
+    if (ancestor.code !== 1) return failed(ancestor);
+    const shallow = await safeGit(clonePath, ["rev-parse", "--is-shallow-repository"]);
+    if (shallow.code !== 0) return failed(shallow);
+    if (shallow.stdout.toString("utf8").trim() === "true") {
+      return `history unknown: the clone's history is cut (a shallow clone), so it cannot show that the merge base ${short(mergeBaseSha)} is an ancestor of the head ${short(headSha)}; fetch the history between them (git fetch --deepen, or --unshallow) before the review`;
+    }
+    return `diverged: the merge base ${short(mergeBaseSha)} is not an ancestor of the head ${short(headSha)}; pass the merge base of the pull request, not the target branch's tip`;
+  } catch (error) {
+    if (error instanceof OpenQodexError) return `git failed: ${error.message.split("\n")[0]}`;
+    throw error;
+  }
+}
+
+// A review that stopped before a reviewer could be given the change: no
+// finding, no usage, and outputs that say why.
+function stoppedResult(status: "complete" | "incomplete", reason: string): ReviewResult {
+  const lead = status === "complete" ? "Review complete" : "Review incomplete";
+  return {
+    status,
+    reason,
+    findings: [],
+    dispositions: [],
+    summary: null,
+    coverage: null,
+    scannerVersions: {},
+    trace: [],
+    usage: { calls: [], totals: usageTotals([]) },
+    evidence: null,
+    completion: null,
+    render: {
+      markdown: () => `# ${lead}\n\n${display(reason)}\n`,
+      sarif: () => `${JSON.stringify({ $schema: "https://json.schemastore.org/sarif-2.1.0.json", version: "2.1.0", runs: [{ tool: { driver: { name: "openqodex", rules: [] } }, results: [], properties: { status, reason } }] }, null, 2)}\n`,
+      json: () => `${JSON.stringify({ status, reason }, null, 2)}\n`,
+    },
+  };
+}
+
+// The findings that passed every check, in the result's shape.
+function resultFindings(report: Report): ResultFinding[] {
+  return report.findings.map((f) => ({
+    file: f.file_path,
+    lineStart: f.line_number,
+    lineEnd: f.line_end ?? f.line_number,
+    title: f.title,
+    problem: f.problem ?? f.description,
+    consequence: f.consequence ?? "",
+    fix: f.fix ?? "",
+    severity: f.severity,
+    category: f.category,
+    confidence: f.confidence ?? 0,
+    foundBy: ["primary"],
+    source: f.source,
+    candidate: f.candidate,
+  }));
+}
+
+// What the reviewer did with each scanner candidate, from an answer that
+// passed every check: raised (the finding's file and line) or dropped (the
+// reason and the line that shows why).
+function dispositionsOf(report: Report, submission: unknown, scan: ScanResult): Disposition[] {
+  const byId = new Map(scan.candidates.map((c) => [c.id, c]));
+  const out: Disposition[] = [];
+  for (const f of (submission as SubmissionV2).findings ?? []) {
+    const c = f.candidate ? byId.get(f.candidate) : undefined;
+    if (c) out.push({ candidate: c.id, token: c.token, file: c.filePath, line: c.lineStart, outcome: "raised", reason: null, cited: { file: f.file_path, line: f.line_number }, by: "primary" });
+  }
+  for (const d of report.dropped) {
+    out.push({ candidate: d.candidate.id, token: d.candidate.token, file: d.candidate.filePath, line: d.candidate.lineStart, outcome: "dropped", reason: d.reason, cited: d.cited ? { file: d.cited.file_path, line: d.cited.line_number } : null, by: "primary" });
+  }
+  return out;
+}
+
+// Reviews the change from `input.mergeBaseSha` to `input.headSha` in the
+// host's clone with a model reviewer, in the server profile: the merge base
+// proved first; the snapshot, a work tree of the head under
+// `options.workDir`; scanners only as preinstalled under
+// `options.installRoot`; no instructions file read from the clone (the host
+// gives the config); the brain's five tools and no others; the budget asked
+// before every model call. Nothing is printed, no signal handler is added
+// and no environment variable is written; progress lines go to
+// `options.onProgress`. A proof that fails, or a clone that lacks what the
+// review needs, ends as incomplete with the reason, never as a throw; a
+// call this version cannot serve throws at once. `runtimeVersion`: the
+// version the manifest names (the library entry passes the package's).
+export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer, options: ReviewChangeOptions, runtimeVersion = "unknown"): Promise<ReviewResult> {
+  refuseUnsupported(input, reviewer, options);
+  const model = reviewer as ModelReviewer;
+  const say = options.onProgress ?? (() => {});
+  const proof = await proveChange(input.clonePath, input.mergeBaseSha, input.headSha);
+  if (proof !== null) return stoppedResult("incomplete", proof);
+  const config = structuredClone(input.config ?? DEFAULT_CONFIG);
+  let r: ReviewCoreResult;
+  try {
+    r = await runReviewCore(
+      {
+        repoRoot: input.clonePath,
+        config,
+        scope: {},
+        target: input.headSha,
+        noGraph: false,
+        reviewer: "auto",
+        web: false,
+        timeoutMs: options.budget?.deadlineMs ?? DEFAULT_DEADLINE_MS,
+        runtimeVersion,
+        ...(options.confidenceFloor !== undefined ? { confidenceFloor: options.confidenceFloor } : {}),
+      },
+      {
+        drivers: [],
+        snapshots: serverSnapshots(options.workDir),
+        resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, home: options.installRoot }),
+        resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
+        instructions: () => ({ text: "", hash: null }),
+        onEvent: (e) => {
+          if (e.type === "progress" || e.type === "warning") say(e.line);
+        },
+        now: Date.now,
+        model: { reviewer: model, ...(options.budget ? { budget: options.budget } : {}) },
+      },
+    );
+  } catch (error) {
+    // What the clone could not give (a partial clone's missing tree or
+    // file), or a step that could not run, ends the review with its reason.
+    if (error instanceof OpenQodexError) return stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message);
+    throw error;
+  }
+  if (r.ended === "nothing") return stoppedResult("complete", "nothing to review: the head adds no change since the merge base");
+  if (r.ended !== "model-reviewed") return stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given");
+  const completion = modelRecord(r.evidence, { secrets: r.secrets });
+  const report = modelReport(r.report, completion);
+  const complete = completion.status === "complete";
+  return {
+    status: complete ? (report.verdict === "blocked" ? "complete_blocking" : "complete") : "incomplete",
+    ...(complete ? {} : { reason: completion.missing.join("; ") }),
+    findings: resultFindings(report),
+    // Only an answer that passed every check has dispositions; the empty
+    // report of one that did not has no summary.
+    dispositions: r.report.summary === null ? [] : redactStored(dispositionsOf(r.report, r.submission, r.scan), r.secrets),
+    summary: report.summary,
+    coverage: r.evidence.coverage,
+    scannerVersions: Object.fromEntries(r.scan.scanners.map((s) => [s.scanner, s.version])),
+    trace: r.evidence.toolLog,
+    usage: r.usage,
+    evidence: r.evidence,
+    completion,
+    render: reviewRender(report),
+  };
 }

@@ -21,6 +21,16 @@ import {
   selectLenses,
   selectLensesForDiff,
 } from "@openqodex/core";
+import { reviewChange as reviewChangeAt, reviewerContract } from "@openqodex/review";
+import type { ReviewChangeInput, ReviewChangeOptions, Reviewer, ReviewResult } from "@openqodex/review";
+
+// Reviews one change in a host's clone with the host's model reviewer, in
+// the server profile: the same brain as `openqodex review` (scanners, graph,
+// lenses, brief, checked answer, completion record). The run's manifest
+// names this package's version.
+export function reviewChange(input: ReviewChangeInput, reviewer: Reviewer, options: ReviewChangeOptions): Promise<ReviewResult> {
+  return reviewChangeAt(input, reviewer, options, __OPENQODEX_VERSION__);
+}
 
 export {
   // scanners
@@ -48,6 +58,8 @@ export {
   renderSarif,
   renderJson,
   renderReview,
+  // the reviewer contract's version
+  reviewerContract,
 };
 
 // The same functions grouped by what they belong to.
@@ -93,3 +105,33 @@ export type {
 } from "@openqodex/core";
 export type { RunScannersResult, Recipe, Toolchain } from "@openqodex/scanners";
 export type { BuildArgs, FileFacts, Graph, Lang } from "@openqodex/graph";
+export type {
+  // the reviewer contract
+  Reviewer,
+  AgentReviewer,
+  ModelReviewer,
+  ModelRequest,
+  ModelResponse,
+  ModelUsage,
+  Message,
+  ToolCallRequest,
+  ToolDefinition,
+  ToolParameter,
+  // the budget
+  Budget,
+  AuthorizeRequest,
+  // reviewChange's input, options and result
+  ReviewChangeInput,
+  ReviewChangeOptions,
+  ReviewResult,
+  ReviewStatus,
+  ResultFinding,
+  Disposition,
+  // usage and the brain's evidence
+  CallRecord,
+  UsageTotals,
+  ModelPurpose,
+  ReviewerRole,
+  ToolLogEntry,
+  ModelReviewEvidence,
+} from "@openqodex/review";

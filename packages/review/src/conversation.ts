@@ -6,7 +6,7 @@ import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OpenQodexError, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
 import type { Hunk, Report, TraceEntry } from "@openqodex/core";
-import type { ReviewerSession, Turn } from "./agents/driver.js";
+import type { Turn } from "./agents/driver.js";
 import { classify } from "./agents/trace.js";
 import { MAX_FILE_BYTES, snapshotFiles } from "./snapshot.js";
 
@@ -183,9 +183,17 @@ export type Conversation = {
   submission: unknown;
   // Changed ranges the tool put in front of the reviewer in a correction.
   delivered: Hunk[];
+  // The same, by the correction round that carried them: the first entry is
+  // the second answer's message. A model reviewer counts a round's ranges
+  // only when the request carrying them was invoked.
+  carried: Hunk[][];
   startedAt: number;
   endedAt: number;
 };
+
+// What the conversation talks to: an agent reviewer, or a model reviewer's
+// session in the brain's own loop. Each `send` asks for one answer.
+export type Speaker = { send(text: string): Promise<Turn> };
 
 // The brief, then at most two correction rounds. A
 // round goes back when the answer failed a check or when changed ranges are
@@ -194,7 +202,7 @@ export type Conversation = {
 // file. The message is never printed or saved. A read outside the snapshot
 // ends the conversation when the driver's trace is complete.
 export async function converse(args: {
-  session: ReviewerSession;
+  session: Speaker;
   snapshotDir: string;
   brief: string;
   deadline: number;
@@ -208,7 +216,7 @@ export async function converse(args: {
   now: () => number;
 }): Promise<Conversation> {
   const startedAt = args.now();
-  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], startedAt, endedAt: startedAt };
+  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
   const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
   heartbeat.unref();
   try {
@@ -227,7 +235,8 @@ export async function converse(args: {
       } finally {
         clearTimeout(timer);
       }
-      c.trace.push(...turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) })));
+      // A model reviewer's turn carries the brain's own log, already checked.
+      c.trace.push(...(turn.brain?.trace ?? turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) }))));
       c.usage = turn.usage;
       if (turn.failure !== null) {
         c.failure = turn.failure;
@@ -251,6 +260,7 @@ export async function converse(args: {
       }
       if (problems.length === 0 && given.delivered.length === 0) break;
       c.delivered.push(...given.delivered);
+      c.carried.push(given.delivered);
       args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
       text = [
         ...(problems.length > 0 ? ["Your answer failed these checks. Fix every one.", "", ...problems, ""] : []),

@@ -204,7 +204,8 @@ export type Disposition = {
 
 // The review. `status`: "complete" when every condition of a complete
 // review holds, "complete_blocking" when it also has a finding at or above
-// the config's block_on_severity, else "incomplete" with `reason`. An
+// the config's block_on_severity, else "incomplete" with `reason` (a
+// complete review has a `reason` only when there was nothing to review). An
 // incomplete review keeps the findings of an answer that passed every
 // check. `coverage` and `evidence` are null when the review stopped before
 // a reviewer could start (a merge base that could not be proved, nothing

@@ -14,6 +14,7 @@ import type { ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ReviewerUsage } from "@openqodex/core";
+import type { CallRecord, ToolLogEntry } from "../usage.js";
 import type { ToolCall } from "./trace.js";
 
 // Set in every reviewer's environment. A `review` that starts with it set
@@ -29,7 +30,20 @@ export type Detected = { ok: true; version: string; bin: string } | { ok: false;
 // decides from them, by script, what was read and where.
 // `models`: the model names the agent itself reported with the answer
 // (Claude Code's modelUsage); absent when the driver cannot name one.
-export type Turn = { finalText: string; calls: ToolCall[]; usage: ReviewerUsage; sessionId: string | null; failure: string | null; models?: string[] };
+// `brain`: set only on a model reviewer's turn (model-loop.ts), where the
+// brain ran every tool itself: `trace` is its own log of this turn's tool
+// calls, already checked, taken in place of `calls`; `attempts` are this
+// turn's model attempts; `sent` says whether the turn's text reached the
+// model in a request that was invoked.
+export type Turn = {
+  finalText: string;
+  calls: ToolCall[];
+  usage: ReviewerUsage;
+  sessionId: string | null;
+  failure: string | null;
+  models?: string[];
+  brain?: { trace: ToolLogEntry[]; attempts: CallRecord[]; sent: boolean };
+};
 
 // An open reviewer. `send` asks for one answer in the same session: the
 // brief first, then each correction round. A driver whose agent cannot keep a
