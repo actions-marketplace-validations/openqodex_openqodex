@@ -390,6 +390,9 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   const walkSteps = new Map<string, number>(); // URL entries visited per application
   const capped = (app: string | null) => (perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP || (walkSteps.get(app ?? "-") ?? 0) >= MAX_WALK_STEPS;
 
+  let paths: Set<string> | null = null;
+  const pathSet = (): Set<string> => (paths ??= new Set(index.paths()));
+
   // ---------- views ----------
   // How a view is written: a name, `Class.as_view()`, or `Class()` (an instance).
   type ViewShape = "ref" | "as_view" | "instance";
@@ -449,6 +452,16 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       // binding of the name, proves the view is missing.
       const read = index.factsOf(lk.target).length > 0;
       const value = factsOf(lk.target, "assigned").some((a) => a.names.includes(lk.name));
+      // A module the graph did not read at all (over the size cap, a parse
+      // error) says nothing about what it defines: the target itself, or the
+      // submodule of a package the name stands for.
+      const sub = lk.target.endsWith("__init__.py") ? `${posix.dirname(lk.target) === "." ? "" : `${posix.dirname(lk.target)}/`}${lk.name}.py` : null;
+      const unread = index.languageFacts(lk.target) === null ? lk.target : sub !== null && pathSet().has(sub) && index.languageFacts(sub) === null ? sub : null;
+      if (unread !== null) {
+        reg.handler.status = "unresolved";
+        out.gap({ site, scope, affects: ["handles"], cause: "file-not-parsed", name: show(ref), note: `the view ${show(ref)} is in ${unread}, which the graph did not read` });
+        return;
+      }
       if (!read || value) {
         reg.handler.status = "unresolved";
         out.gap({ site, scope, affects: ["handles"], cause: "dynamic", name: show(ref), note: `the view ${show(ref)} is a value of ${lk.target}, not a definition the graph follows` });

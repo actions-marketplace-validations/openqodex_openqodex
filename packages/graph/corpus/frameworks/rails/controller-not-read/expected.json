@@ -1,0 +1,23 @@
+{
+  "guards": "keeps a Rails route whose controller was not read as unresolved with a file-not-parsed gap, never missing",
+  "build": {
+    "maxFileBytes": 2048
+  },
+  "frameworks": {
+    "plugin": "rails",
+    "registrations": [
+      {
+        "site": "config/routes.rb:2",
+        "pattern": "/posts/:id",
+        "status": "unresolved"
+      }
+    ],
+    "unknowns": [
+      {
+        "file": "config/routes.rb",
+        "line": 2,
+        "cause": "file-not-parsed"
+      }
+    ]
+  }
+}

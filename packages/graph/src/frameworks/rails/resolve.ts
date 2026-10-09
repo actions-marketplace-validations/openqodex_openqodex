@@ -294,6 +294,14 @@ class Resolver {
       gap("miss", `there is no controller file ${file} for ${reg.handler.written}`);
       return;
     }
+    // A controller the graph did not read (over the size cap, a parse
+    // error) says nothing about the actions it defines.
+    if (this.w.index.languageFacts(file) === null) {
+      reg.handler.status = "unresolved";
+      reg.handler.targets = [file];
+      gap("file-not-parsed", `${file} was not read, so whether it defines ${reg.handler.written} is not known`);
+      return;
+    }
     const classes = this.w.classesIn(file).filter((c) => !c.module);
     let cls = classes.find((c) => c.name === expected) ?? null;
     let acronym = false;
