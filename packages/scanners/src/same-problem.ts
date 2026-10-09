@@ -39,6 +39,19 @@ export const SAME_PROBLEM: readonly Group[] = [
       { source: "zizmor", rule: "template-injection" },
     ],
   },
+  // trivy config 0.75.0 and Checkov 3.3.22 on the same resource and lines:
+  // each pair names one missing setting (adapters-iac.subprocess.test.ts).
+  // trivy splits the S3 public access block into four checks; Checkov has one.
+  { name: "s3-public-access-block", members: [...["AWS-0086", "AWS-0087", "AWS-0091", "AWS-0093"].map((rule) => ({ source: "trivy" as const, rule })), { source: "checkov", rule: "CKV2_AWS_6" }] },
+  { name: "s3-versioning", members: [{ source: "trivy", rule: "AWS-0090" }, { source: "checkov", rule: "CKV_AWS_21" }] },
+  { name: "s3-access-logging", members: [{ source: "trivy", rule: "AWS-0089" }, { source: "checkov", rule: "CKV_AWS_18" }] },
+  { name: "s3-customer-managed-key", members: [{ source: "trivy", rule: "AWS-0132" }, { source: "checkov", rule: "CKV_AWS_145" }] },
+  { name: "rds-publicly-accessible", members: [{ source: "trivy", rule: "AWS-0180" }, { source: "checkov", rule: "CKV_AWS_17" }] },
+  { name: "rds-iam-authentication", members: [{ source: "trivy", rule: "AWS-0176" }, { source: "checkov", rule: "CKV_AWS_161" }] },
+  { name: "kubernetes-cpu-limit", members: [{ source: "trivy", rule: "KSV-0011" }, { source: "checkov", rule: "CKV_K8S_11" }] },
+  { name: "kubernetes-cpu-request", members: [{ source: "trivy", rule: "KSV-0015" }, { source: "checkov", rule: "CKV_K8S_10" }] },
+  { name: "kubernetes-memory-request", members: [{ source: "trivy", rule: "KSV-0016" }, { source: "checkov", rule: "CKV_K8S_12" }] },
+  { name: "kubernetes-memory-limit", members: [{ source: "trivy", rule: "KSV-0018" }, { source: "checkov", rule: "CKV_K8S_13" }] },
 ];
 
 // A RustSec advisory id. osv-scanner (through osv.dev) and cargo-deny

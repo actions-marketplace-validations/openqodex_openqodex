@@ -79,8 +79,9 @@ module "sg" {
 `;
 
 // The planted files, with only `changed` lines counted as changed (every
-// line of a file not named there). The tool must already be installed.
-async function scanLines(scanner: BuiltinScanner, files: Record<string, string>, changed: Record<string, number[]> = {}) {
+// line of a file not named there), scanned by `scanner` and any `also` in
+// one scan. The tools must already be installed.
+async function scanLines(scanner: BuiltinScanner, files: Record<string, string>, changed: Record<string, number[]> = {}, also: BuiltinScanner[] = []) {
   const repo = mkdtempSync(join(tmpdir(), `oq-iac-${scanner}-`));
   for (const [name, body] of Object.entries(files)) {
     mkdirSync(dirname(join(repo, name)), { recursive: true });
@@ -88,7 +89,7 @@ async function scanLines(scanner: BuiltinScanner, files: Record<string, string>,
   }
   const paths = Object.keys(files);
   const coverage = new Map(paths.map((p) => [p, new Set(changed[p] ?? readFileSync(join(repo, p), "utf8").split("\n").map((_, i) => i + 1))]));
-  const result = await runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null }), only: [scanner] });
+  const result = await runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null }), only: [scanner, ...also] });
   const status = result.scan.scanners[0]!;
   return { repo, result, status };
 }
@@ -248,6 +249,61 @@ describe("checkov", () => {
     const { status } = await scanLines("checkov", { "infra/main.tf": `module "outside" {\n  source = "../../outside"\n}\n\n${SG}`, "clean/main.tf": UNUSED });
     expect(status.status).toBe("ran");
     expect(status.reason).toContain("not run on infra/: a module path that leaves the repository");
+  }, 300_000);
+});
+
+// trivy and Checkov check many of the same settings. Where both report one
+// missing setting on the same lines of a file, the report keeps one
+// scanner's finding and names the other's beside it (same-problem.ts); each
+// group there is held here. A group whose scanner stopped reporting its rule,
+// or moved it to other lines, fails: every rule of the group must be named.
+describe("trivy and Checkov on one missing setting", () => {
+  const BUCKET_AND_DATABASE = `resource "aws_s3_bucket" "exports" {
+  bucket = "orders-exports"
+}
+
+resource "aws_db_instance" "orders" {
+  identifier          = "orders"
+  engine              = "postgres"
+  instance_class      = "db.t3.micro"
+  allocated_storage   = 20
+  username            = "app"
+  publicly_accessible = true
+}
+`;
+  const NO_RESOURCES = `apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+spec:
+  containers:
+    - name: worker
+      image: busybox:1.36
+`;
+  const groups: [string, string[]][] = [
+    ["main.tf", ["trivy:AWS-0086", "trivy:AWS-0087", "trivy:AWS-0091", "trivy:AWS-0093", "checkov:CKV2_AWS_6"]],
+    ["main.tf", ["trivy:AWS-0090", "checkov:CKV_AWS_21"]],
+    ["main.tf", ["trivy:AWS-0089", "checkov:CKV_AWS_18"]],
+    ["main.tf", ["trivy:AWS-0132", "checkov:CKV_AWS_145"]],
+    ["main.tf", ["trivy:AWS-0180", "checkov:CKV_AWS_17"]],
+    ["main.tf", ["trivy:AWS-0176", "checkov:CKV_AWS_161"]],
+    ["pod.yaml", ["trivy:KSV-0011", "checkov:CKV_K8S_11"]],
+    ["pod.yaml", ["trivy:KSV-0015", "checkov:CKV_K8S_10"]],
+    ["pod.yaml", ["trivy:KSV-0016", "checkov:CKV_K8S_12"]],
+    ["pod.yaml", ["trivy:KSV-0018", "checkov:CKV_K8S_13"]],
+  ];
+
+  it("keeps one scanner's finding for each setting both report, with the other scanner named", async () => {
+    const { result } = await scanLines("trivy", { "main.tf": BUCKET_AND_DATABASE, "pod.yaml": NO_RESOURCES }, {}, ["checkov"]);
+    expect(result.scan.scanners.map((s) => [s.scanner, s.status])).toEqual([
+      ["trivy", "ran"],
+      ["checkov", "ran"],
+    ]);
+    const seen = groups.map(([file, tokens]) => {
+      const kept = result.scan.candidates.filter((c) => c.filePath === file && tokens.includes(c.token));
+      return { file, sources: new Set(kept.map((c) => c.source)).size, named: kept.flatMap((c) => [c.token, ...(c.alsoReportedBy ?? [])]).sort() };
+    });
+    expect(seen).toEqual(groups.map(([file, tokens]) => ({ file, sources: 1, named: [...tokens].sort() })));
   }, 300_000);
 });
 
