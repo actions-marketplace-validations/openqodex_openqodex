@@ -217,7 +217,7 @@ The comments are found by a small reader per comment family, not a full parser. 
 - Runs offline (`--offline`): the audits that ask the GitHub API do not run, and no GitHub token reaches it.
 - Reads the repo's zizmor settings: the first of `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` and `zizmor.yaml` at the repository root. They hold rule settings only: a rule switched off, ignore entries, allow lists and severity changes. A zizmor settings file anywhere else is not read.
 - Severity: zizmor's own. A finding zizmor reports with low confidence ranks one step lower.
-- Sends: nothing.
+- Sends: nothing. A run on 2026-10-08 with the proxy variables pointing at a logging proxy opened no connection.
 - Licence: MIT ([LICENSE](https://github.com/zizmorcore/zizmor/blob/v1.30.1/LICENSE)).
 
 ## trivy
@@ -232,7 +232,7 @@ The comments are found by a small reader per comment family, not a full parser. 
 - Finds Postgres migration steps that lock or rewrite a busy table, or lose data: an index built without `CONCURRENTLY`, a constraint or foreign key added without `NOT VALID`, a `NOT NULL` column with no default, a column type change, a dropped or renamed column or table.
 - Severity: its rules that ask for a habit rank low: `IF NOT EXISTS`, lock and statement timeouts, `bigint`, `text`, `timestamptz` and identity columns. The rest rank medium.
 - Reads the repo's `.squawk.toml` at the repository root: rules left out or added, paths left out, the Postgres version, and whether a transaction wraps each file. A `.squawk.toml` anywhere else is not read.
-- Sends: nothing. OpenQodex never runs its `upload-to-github` command.
+- Sends: nothing. OpenQodex never runs its `upload-to-github` command. A run on 2026-10-08 with the proxy variables pointing at a logging proxy opened no connection.
 - Licence: Apache-2.0 or MIT, at your choice ([LICENSE-APACHE](https://github.com/sbdchd/squawk/blob/v2.66.0/LICENSE-APACHE), [LICENSE-MIT](https://github.com/sbdchd/squawk/blob/v2.66.0/LICENSE-MIT)).
 
 ## kube-linter
@@ -265,7 +265,7 @@ The comments are found by a small reader per comment family, not a full parser. 
 - Reads SQLFluff's settings as SQLFluff finds them, in the folder of each changed file and the folders above it: `.sqlfluff`, the `[sqlfluff` sections of `setup.cfg`, `tox.ini`, `pep8.ini` and `pyproject.toml`, and `.sqlfluffignore`. They choose the dialect, the rules left out and the rules that only warn. Where none names a dialect, it reads the file as `postgres`. Your own SQLFluff settings folder (`~/Library/Application Support/sqlfluff` or `~/.config/sqlfluff`) is not read.
 - Never runs code from the repo: it always uses SQLFluff's raw templater with no library path, whatever the settings name, so a Jinja macro library or a dbt project is never loaded. Jinja and dbt templates are not expanded.
 - A statement it cannot parse in the dialect is not checked, and its parse error is not reported. A file over 20,000 bytes is skipped, as SQLFluff does unless its settings raise the limit.
-- Sends: nothing.
+- Sends: nothing. A run on 2026-10-08 with the proxy variables pointing at a logging proxy opened no connection.
 - Licence: MIT ([LICENSE.md](https://github.com/sqlfluff/sqlfluff/blob/4.3.0/LICENSE.md)).
 
 ## Choosing scanners
