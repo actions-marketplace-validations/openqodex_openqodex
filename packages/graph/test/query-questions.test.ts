@@ -29,6 +29,8 @@
 // 13. Every question, asked of every corpus repository, breaks the answer
 //     shape: no graph block, no unknown block, a count that is neither a
 //     number nor null, an error with items, or a zero worded as "unused".
+// 14. Overrides derived from the inheritance stop at the depth asked and
+//     say nothing of the subclasses past it.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -415,5 +417,35 @@ describe("questions the corpus holds nothing for", () => {
     const back = q({ kind: "path", target: { name: "c" }, to: { name: "d" } });
     expect(back.items.map((i) => (i as Item).toName)).toEqual(["a", "b", "c"]);
     expect((back.items as (Item & { direction?: string })[])[0]?.direction).toBe("reverse");
+  });
+});
+
+describe("implementers at the edge of what the graph reads", () => {
+  let s: Session;
+  const files: Record<string, string> = {
+    "src/base.ts": "export class Base {\n  run(): number {\n    return 0;\n  }\n}\n",
+    "src/l1.ts": 'import { Base } from "./base";\nexport class L1 extends Base {}\n',
+    "src/l2.ts": 'import { L1 } from "./l1";\nexport class L2 extends L1 {}\n',
+    "src/l3.ts": 'import { L2 } from "./l2";\nexport class L3 extends L2 {}\n',
+    "src/l4.ts": 'import { L3 } from "./l3";\nexport class L4 extends L3 {\n  run(): number {\n    return 4;\n  }\n}\n',
+  };
+  beforeAll(async () => {
+    const repo = makeRepo(files);
+    dirs.push(repo);
+    const graph = await buildGraph({ repoRoot: repo, store: null });
+    s = { graph, generation: "edge-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+  });
+  const q = (req: Omit<Request, "apiVersion">) => query(s, { apiVersion: 1, ...req } as Request);
+
+  it("says the depth stopped a derived override search, and names the subclass past it (14)", () => {
+    const three = q({ kind: "implementers", target: { name: "Base.run" } });
+    expect(three.error).toBeNull();
+    expect(three.items).toEqual([]);
+    expect(three.truncated.by).toBe("depth");
+    expect(three.truncated.frontier?.some((id) => id.includes("#L3@"))).toBe(true);
+    const four = q({ kind: "implementers", target: { name: "Base.run" }, depth: 4 });
+    expect((four.items as Item[]).map((i) => i.fromName)).toEqual(["run"]);
+    expect((four.items as Item[])[0]?.from).toMatch(/#L4\.run@/);
+    expect(four.truncated.by).toBeNull();
   });
 });

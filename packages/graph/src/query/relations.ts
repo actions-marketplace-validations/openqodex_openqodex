@@ -87,8 +87,10 @@ export class Overrides {
     return this.walk?.pending() ?? [];
   }
 
-  get stoppedWalk(): boolean {
-    return false;
+  // Subclasses at the depth asked with more inheriting from them: an
+  // override past them is not looked for.
+  get past(): string[] {
+    return this.walk?.past ?? [];
   }
 
   run(budget: Budget): boolean {
@@ -172,6 +174,7 @@ export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>)
     if (derive) {
       if (!derive.run(budget)) return stoppedAt({ ...base, target }, [], derive.pending(), derive.pending().length);
       items = derive.items;
+      beyond = derive.past;
     } else {
       const w = walk as Walk;
       if (!w.run(budget)) return stoppedAt({ ...base, target }, w.items, w.pending(), w.pending().length);
