@@ -72,8 +72,9 @@
 //      included; one is missed there, or in the forms they take (`tfsec:`,
 //      `trivy:exp:...:ignore:`, `bridgecrew:skip=`).
 //  23. checkov's Kubernetes annotation key and CloudFormation Metadata key
-//      are missed as YAML code, or counted in a YAML comment or a quoted
-//      value; a marker of one family is read in another's units.
+//      are missed as a YAML or JSON key (block, flow, JSON, an alias), or
+//      counted in a YAML comment or a quoted value; a marker of one family
+//      is read in another's units.
 //  24. The HCL reader takes more than linear time on hostile input.
 
 import { describe, expect, it } from "vitest";
@@ -692,12 +693,15 @@ describe("trivy and checkov read their markers on the raw line (22)", () => {
       [3, "checkov:skip="],
       [4, "bridgecrew:skip="],
       [5, "cortex:skip="],
+      // Terraform is not YAML: the Metadata key is looked for on its raw
+      // lines, wider than checkov.
+      [6, "Metadata checkov key"],
     ]);
   });
 });
 
 describe("checkov's YAML keys, a family of their own in one entry (23)", () => {
-  it("a Kubernetes skip annotation key counts as YAML code, never in a comment or a quoted value; the skip comment counts on the line", () => {
+  it("a Kubernetes skip annotation counts as a YAML key, never in a comment or a quoted value; the skip comment counts on the line", () => {
     const text = src(
       "apiVersion: v1",
       "kind: Pod",
@@ -716,7 +720,7 @@ describe("checkov's YAML keys, a family of their own in one entry (23)", () => {
     ]);
   });
 
-  it("a CloudFormation Metadata checkov or bridgecrew key counts as YAML code, in block or flow form, never in a value", () => {
+  it("a CloudFormation Metadata checkov or bridgecrew key counts as a YAML key, in block or flow form, never in a value", () => {
     const text = src(
       "Resources:",
       "  SgA:",
@@ -734,6 +738,34 @@ describe("checkov's YAML keys, a family of their own in one entry (23)", () => {
       [5, "Metadata checkov key"],
       [8, "Metadata bridgecrew key"],
     ]);
+  });
+
+  it("the annotation key in flow style, in JSON and through an alias, as checkov's YAML loader reads them", () => {
+    const flow = src("apiVersion: v1", "kind: Pod", 'metadata: {name: a, annotations: {"checkov.io/skip1": "CKV_K8S_16=x"}}');
+    expect(findMarkers(flow, ["checkov"]).map((m) => [m.line, m.name])).toEqual([[3, "checkov.io/skip annotation"]]);
+    const json = src("{", '  "apiVersion": "v1", "kind": "Pod",', '  "metadata": {"annotations": {"cortex.io/skip1": "CKV_K8S_16"}}', "}");
+    expect(findMarkers(json, ["checkov"]).map((m) => [m.line, m.name])).toEqual([[3, "cortex.io/skip annotation"]]);
+    const alias = src("x-common: &skips", "  checkov.io/skip1: CKV_K8S_16", "---", "apiVersion: v1", "kind: Pod", "metadata:", "  annotations: *skips");
+    expect(findMarkers(alias, ["checkov"]).map((m) => m.line)).toEqual([2]);
+    const anchored = src("apiVersion: v1", "kind: Pod", "x-common: &skips", "  checkov.io/skip1: CKV_K8S_16", "metadata:", "  annotations: *skips");
+    expect(findMarkers(anchored, ["checkov"]).map((m) => m.line)).toEqual([4, 6]);
+  });
+
+  it("the CloudFormation Metadata key in a JSON template", () => {
+    const text = src('{"Resources": {"A": {', '  "Type": "AWS::S3::Bucket",', '  "Metadata": {"checkov": {"skip": [{"id": "CKV_AWS_18"}]}}', "}}}");
+    expect(findMarkers(text, ["checkov"]).map((m) => [m.line, m.name])).toEqual([[3, "Metadata checkov key"]]);
+  });
+});
+
+describe("trivy's marker in each file form it reads (22)", () => {
+  it("counts it in a YAML comment, a YAML value and a JSON string, as on any line", () => {
+    const yaml = src("Resources:", "  # trivy:ignore:AWS-0107", "  Sg:", "    Type: AWS::EC2::SecurityGroup", '    Properties: {GroupDescription: "x tfsec:ignore:aws-ec2-x"}');
+    expect(findMarkers(yaml, ["trivy"]).map((m) => [m.line, m.name])).toEqual([
+      [2, "trivy:ignore"],
+      [5, "tfsec:ignore"],
+    ]);
+    const json = src('{"Resources": {"Sg": {"Type": "AWS::EC2::SecurityGroup",', '  "Properties": {"GroupDescription": "see trivy:ignore:*"}}}}');
+    expect(findMarkers(json, ["trivy"]).map((m) => m.line)).toEqual([2]);
   });
 });
 
@@ -765,4 +797,200 @@ describe("lines and names", () => {
     ]);
     for (const m of found) expect(m.name).not.toContain(key);
   });
+});
+
+// zizmor, squawk and SQLFluff. Each case was run through the scanner at its
+// pinned version: zizmor 1.30.1, squawk 2.66.0, sqlfluff 4.3.0.
+// Failure list, written before the code:
+//  Z1. A zizmor marker zizmor obeys is missed: it reads `# zizmor:
+//      ignore[...]` from the first `#` of each line of a finding's span, so
+//      for its line-read audits (unredacted-secrets, obfuscation and others)
+//      the marker counts inside a `run: |` body and a quoted value too.
+//  Z2. A form zizmor rejects is raised: no blank after the `#` or the colon.
+//  S1. A squawk marker inside a string is raised: '...' with '' for a
+//      quote, E'...' with backslash escapes, a $$ or $tag$ body, a "quoted
+//      identifier". squawk's lexer reads each of them as one token.
+//  S2. A real comment is missed after a string that holds a comment opener
+//      or a backslash: in a plain string a backslash is a character, so
+//      'a\' ends there and what follows is code.
+//  S3. Block comments nest in Postgres: a `--` inside `/* /* */ */` is part
+//      of the comment, and a comment after the outer close is real.
+//  S4. `$1` (a parameter) or `a$b$` (an identifier) is taken for a dollar
+//      quote and swallows a later comment.
+//  S5. A marker squawk reads is missed: `--squawk-ignore` with no blank, a
+//      `/* */` comment, `squawk-ignore-file`, a trailing `-- note`, and
+//      `squawk-disable-assume-in-transaction`, which changes what squawk
+//      reports for the whole file; or one it rejects is raised: text before
+//      the marker, upper case.
+//  S6. An opener left open at the end of the file (a string, a dollar quote,
+//      a quoted identifier, a block comment) hides every marker after it.
+//  S7. Many unclosed openers, many distinct dollar tags or deep block
+//      comments take more than linear time.
+//  F1. A SQLFluff marker is missed. SQLFluff reads `noqa` at the start of a
+//      comment or after its last `--`, in `--`, `/* */` and, in dialects such
+//      as ansi and mysql, `#` comments; which strings and comments exist
+//      depends on the repo's dialect, so the marker counts anywhere on the
+//      line.
+//  F2. A form SQLFluff rejects is raised: text between the opener and
+//      `noqa`, upper case.
+describe("zizmor, # zizmor: ignore[...] anywhere on the line", () => {
+  it("finds it in a comment, a block scalar body and a quoted value, as zizmor obeys it there (Z1)", () => {
+    const text = src(
+      "on: push",
+      "jobs:",
+      "  a:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo ${{ github.event.issue.title }} # zizmor: ignore[template-injection]",
+      "      - run: |",
+      "          echo ${{ fromJSON(secrets.CREDS).password }} # zizmor: ignore[unredacted-secrets]",
+      "      - run: 'echo ${{ fromJSON(secrets.CREDS).password }} # zizmor: ignore[unredacted-secrets] done'",
+      "      - run: echo hi # why # zizmor: ignore[template-injection]",
+    );
+    expect(findMarkers(text, ["zizmor"]).map((m) => [m.line, m.name])).toEqual([
+      [6, "# zizmor: ignore[...]"],
+      [8, "# zizmor: ignore[...]"],
+      [9, "# zizmor: ignore[...]"],
+      [10, "# zizmor: ignore[...]"],
+    ]);
+  });
+
+  it("raises nothing for the forms zizmor rejects (Z2)", () => {
+    const text = src(
+      "      - run: echo a # zizmor:ignore[template-injection]",
+      "      - run: echo b #zizmor: ignore[template-injection]",
+      "      - run: echo c #  zizmor: ignore[template-injection]",
+      "      - run: echo d # zizmor: ignore template-injection",
+    );
+    expect(findMarkers(text, ["zizmor"])).toEqual([]);
+  });
+});
+
+describe("squawk, -- squawk-ignore at the start of a SQL comment", () => {
+  const IGNORE = "squawk-ignore require-concurrent-index-creation";
+  const at = (text: string) => findMarkers(text, ["squawk"]).map((m) => [m.line, m.name]);
+
+  it("finds the forms squawk obeys and none it rejects (S5)", () => {
+    const text = src(
+      `-- ${IGNORE}`,
+      `CREATE INDEX idx ON t (c); -- ${IGNORE}`,
+      `--${IGNORE}`,
+      `/* ${IGNORE} */`,
+      `-- ${IGNORE} -- why`,
+      "-- squawk-ignore-file require-concurrent-index-creation",
+      "-- squawk-disable-assume-in-transaction",
+      "/*",
+      `  ${IGNORE}`,
+      "*/",
+      `-- note ${IGNORE}`,
+      `-- SQUAWK-IGNORE require-concurrent-index-creation`,
+    );
+    expect(at(text)).toEqual([
+      [1, "-- squawk-ignore"],
+      [2, "-- squawk-ignore"],
+      [3, "-- squawk-ignore"],
+      [4, "-- squawk-ignore"],
+      [5, "-- squawk-ignore"],
+      [6, "-- squawk-ignore-file"],
+      [7, "-- squawk-disable-assume-in-transaction"],
+      [9, "-- squawk-ignore"],
+    ]);
+  });
+
+  it("never in a string, an escape string, a dollar quote or a quoted identifier (S1)", () => {
+    const text = src(
+      `SELECT '-- ${IGNORE}';`,
+      `SELECT 'it''s -- ${IGNORE}';`,
+      `SELECT E'it\\'s -- ${IGNORE}';`,
+      "SELECT $$",
+      `-- ${IGNORE}`,
+      "$$;",
+      "SELECT $fn$ x $f$",
+      `-- ${IGNORE}`,
+      "$fn$;",
+      'SELECT "a',
+      `-- ${IGNORE}`,
+      '";',
+      `SELECT x FROM t; -- ${IGNORE}`,
+    );
+    expect(at(text)).toEqual([[13, "-- squawk-ignore"]]);
+  });
+
+  it("reads a comment after a plain string that ends in a backslash or holds a comment opener (S2)", () => {
+    const text = src(`SELECT 'a\\' -- ${IGNORE}`, `SELECT '/*', '--' -- ${IGNORE}`, `SELECT e'a\\\\' -- ${IGNORE}`);
+    expect(at(text).map(([line]) => line)).toEqual([1, 2, 3]);
+  });
+
+  it("reads nested block comments as one comment (S3)", () => {
+    const text = src("/* a /* b */", `-- ${IGNORE}`, `*/ SELECT 1; -- ${IGNORE}`, `/* a /* b */ c */ -- ${IGNORE}`);
+    expect(at(text).map(([line]) => line)).toEqual([3, 4]);
+  });
+
+  it("never takes a parameter or an identifier with $ for a dollar quote (S4)", () => {
+    const text = src(`SELECT $1 -- ${IGNORE}`, `SELECT a$b$ -- ${IGNORE}`, `SELECT a$$ -- ${IGNORE}`);
+    expect(at(text).map(([line]) => line)).toEqual([1, 2, 3]);
+  });
+
+  it("reads an opener left open at the end of the file as code (S6)", () => {
+    for (const opener of ["'", "E'", "$$", "$x$", '"', "/*"]) {
+      expect(at(src(`SELECT ${opener}`, `-- ${IGNORE}`)), opener).toEqual([[2, "-- squawk-ignore"]]);
+    }
+  });
+
+  it("counts lines in a file with CRLF line ends", () => {
+    expect(at(`SELECT 1;\r\n-- ${IGNORE}\r\n`)).toEqual([[2, "-- squawk-ignore"]]);
+  });
+});
+
+describe("SQLFluff, noqa anywhere on the line", () => {
+  const at = (text: string) => findMarkers(text, ["sqlfluff"]).map((m) => m.line);
+
+  it("finds the forms SQLFluff obeys in every dialect (F1)", () => {
+    const q = "SELECT id FROM users WHERE x = NULL;";
+    const text = src(
+      `${q} -- noqa`,
+      `${q} -- noqa: CV05`,
+      `${q} --noqa`,
+      `${q} /* noqa */`,
+      `${q} -- why -- noqa: CV05`,
+      "-- noqa: disable=CV05",
+      "/* noqa: enable=all */",
+      `${q} # noqa`,
+      "/*",
+      "noqa: disable=all */",
+    );
+    expect(at(text)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 10]);
+  });
+
+  it("raises nothing for the forms SQLFluff rejects (F2)", () => {
+    expect(at(src("SELECT 1; -- this noqa", "SELECT 1; -- NOQA", "SELECT 1; -- no qa"))).toEqual([]);
+  });
+});
+
+describe("linear time on hostile SQL (S7)", () => {
+  const MB = 1024 * 1024;
+  const fill = (unit: (k: number) => string) => {
+    const parts: string[] = [];
+    let size = 0;
+    for (let k = 0; size < MB; k++) {
+      const part = unit(k);
+      parts.push(part);
+      size += part.length;
+    }
+    return parts.join("");
+  };
+  const cases: [string, string][] = [
+    ["many unclosed openers of each kind", fill((k) => [`a = '${k}\n`, `b = E'${k}\n`, `c = "${k}\n`, `/* ${k}\n`, `d = $$${k}\n`][k % 5] as string)],
+    ["many distinct dollar tags left open", fill((k) => `SELECT $t${k}$ x\n`)],
+    ["many dollar tags, each closed by a later one", fill((k) => `$a${k}$ $a${k + 1}$\n`)],
+    ["deep nesting of block comments", fill(() => "/* ")],
+    ["one very long line", `SELECT ${fill(() => "'a' || $$b$$ || ")}1; -- squawk-ignore x\n`],
+  ];
+  for (const [what, text] of cases) {
+    it(`squawk: ${what}`, () => {
+      const started = performance.now();
+      findMarkers(text, ["squawk"]);
+      expect(performance.now() - started).toBeLessThan(1000);
+    });
+  }
 });

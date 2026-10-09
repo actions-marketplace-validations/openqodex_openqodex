@@ -27,3 +27,4 @@ packages/cli/LICENSE
 packages/cli/NOTICE
 *.tgz
 tests/e2e/runs/
+.tmp/

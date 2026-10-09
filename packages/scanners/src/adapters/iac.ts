@@ -25,7 +25,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { hclMasked, yamlCode } from "../comments.js";
+import { isAlias, isMap, isScalar, isSeq, parseAllDocuments } from "yaml";
+import { hclMasked } from "../comments.js";
 import type { RepoFacts } from "../detect.js";
 import { noLinkOnTheWay, readRepoFile, repoFileOrReason } from "./read.js";
 
@@ -432,137 +433,66 @@ type YamlNode = {
   items: { line: number; endLine: number; value: YamlNode }[];
 };
 
-type YamlLine = { indent: number; text: string; line: number };
+type Ranged = { range?: [number, number, number] } | null | undefined;
 
-const isSeqItem = (text: string): boolean => text === "-" || text.startsWith("- ") || text.startsWith("-\t");
+// The largest YAML file whose structure is read; a larger one, or one the
+// parser cannot read, has none, and its findings keep the resource's first
+// line.
+const MAX_YAML_BYTES = 4 * 1024 * 1024;
 
-// The key a line of YAML code holds (quoted or plain) and the offset of the
-// colon after it, or null.
-function yamlKey(text: string): { key: string; colon: number } | null {
-  const q = text[0];
-  const ends = (k: number): boolean => k + 1 >= text.length || text[k + 1] === " " || text[k + 1] === "\t";
-  if (q === '"' || q === "'") {
-    const close = text.indexOf(q, 1);
-    if (close < 0) return null;
-    let k = close + 1;
-    while (text[k] === " " || text[k] === "\t") k++;
-    return text[k] === ":" && ends(k) ? { key: text.slice(1, close), colon: k } : null;
-  }
-  if (q === "{" || q === "[" || q === undefined) return null;
-  for (let k = text.indexOf(":"); k >= 0; k = text.indexOf(":", k + 1)) {
-    if (ends(k)) {
-      const key = text.slice(0, k).trim();
-      return key === "" ? null : { key, colon: k };
-    }
-  }
-  return null;
-}
-
-// The documents of a YAML file, each with its root node, read from its code
-// alone (comments.ts, yamlCode): block mappings and sequences by indentation,
-// a flow collection or a scalar as one value with its continuation lines.
+// The documents of a YAML or JSON file, each as its root node with the lines
+// of every key and item, read by the `yaml` library (it builds a syntax tree
+// and runs nothing). An alias is a value of its own line; a document with an
+// error has no structure.
 function yamlDocuments(text: string): YamlNode[] {
-  const lines: YamlLine[] = yamlCode(text).map((c, k) => {
-    const indent = c.text.length - c.text.trimStart().length;
-    return { indent, text: c.text.trim(), line: k + 1 };
-  });
-  const docs: YamlNode[] = [];
-  let p = 0;
-  const skipBlank = (): void => {
-    while (p < lines.length && (lines[p] as YamlLine).text === "") p++;
+  if (text.length > MAX_YAML_BYTES) return [];
+  const lineOf = lineIndex(text);
+  // The line of the last character of a node that is not a blank.
+  const lastLine = (from: number, to: number): number => {
+    let k = to - 1;
+    while (k > from && /\s/.test(text[k] as string)) k--;
+    return lineOf(Math.max(from, k));
   };
-  const docEnd = (l: YamlLine): boolean => l.indent === 0 && (/^---(\s|$)/.test(l.text) || /^\.\.\.(\s|$)/.test(l.text));
   const scalar = (line: number): YamlNode => ({ kind: "scalar", line, endLine: line, entries: [], items: [] });
-  // Lines indented deeper than `indent` after a value that ends on its own line
-  // continue it; returns the last such line.
-  const continuation = (indent: number, last: number): number => {
-    for (;;) {
-      let q = p;
-      while (q < lines.length && (lines[q] as YamlLine).text === "") q++;
-      const l = lines[q];
-      if (!l || l.indent <= indent || docEnd(l)) return last;
-      last = l.line;
-      p = q + 1;
-    }
-  };
-  const node = (minIndent: number, depth: number): YamlNode | null => {
-    skipBlank();
-    const l = lines[p];
-    if (!l || l.indent < minIndent || docEnd(l)) return null;
-    if (depth >= MAX_DEPTH) {
-      p++;
-      return { ...scalar(l.line), endLine: continuation(l.indent - 1, l.line) };
-    }
-    if (isSeqItem(l.text)) return seq(l.indent, depth);
-    if (yamlKey(l.text) !== null) return map(l.indent, depth);
-    p++;
-    return { ...scalar(l.line), endLine: continuation(l.indent, l.line) };
-  };
-  const map = (indent: number, depth: number): YamlNode => {
-    const out: YamlNode = { kind: "map", line: (lines[p] as YamlLine).line, endLine: (lines[p] as YamlLine).line, entries: [], items: [] };
-    for (;;) {
-      skipBlank();
-      const l = lines[p];
-      if (!l || l.indent !== indent || docEnd(l)) break;
-      const found = yamlKey(l.text);
-      if (found === null) break;
-      p++;
-      const rest = l.text.slice(found.colon + 1).trim();
-      let value: YamlNode;
-      if (rest !== "") {
-        value = { ...scalar(l.line), endLine: continuation(indent, l.line) };
-      } else {
-        skipBlank();
-        const next = lines[p];
-        if (next && !docEnd(next) && next.indent > indent) value = node(indent + 1, depth + 1) ?? scalar(l.line);
-        else if (next && !docEnd(next) && next.indent === indent && isSeqItem(next.text)) value = seq(indent, depth + 1);
-        else value = scalar(l.line);
+  const convert = (node: unknown, depth: number): YamlNode | null => {
+    const range = (node as Ranged)?.range;
+    if (!range) return null;
+    const out: YamlNode = { ...scalar(lineOf(range[0])), endLine: lastLine(range[0], range[1]) };
+    if (depth >= MAX_DEPTH) return out;
+    if (isMap(node)) {
+      out.kind = "map";
+      for (const pair of node.items) {
+        const keyRange = (pair.key as Ranged)?.range;
+        if (!isScalar(pair.key) || !keyRange) continue;
+        const line = lineOf(keyRange[0]);
+        const value = convert(pair.value, depth + 1) ?? scalar(line);
+        out.entries.push({ key: String(pair.key.value), line, endLine: Math.max(line, value.endLine), value });
       }
-      const endLine = Math.max(l.line, value.endLine);
-      out.entries.push({ key: found.key, line: l.line, endLine, value });
-      out.endLine = endLine;
+    } else if (isSeq(node)) {
+      out.kind = "seq";
+      for (const item of node.items) {
+        const value = convert(item, depth + 1);
+        if (value) out.items.push({ line: value.line, endLine: value.endLine, value });
+      }
+    } else if (!isScalar(node) && !isAlias(node)) {
+      return null;
     }
     return out;
   };
-  const seq = (indent: number, depth: number): YamlNode => {
-    const out: YamlNode = { kind: "seq", line: (lines[p] as YamlLine).line, endLine: (lines[p] as YamlLine).line, entries: [], items: [] };
-    for (;;) {
-      skipBlank();
-      const l = lines[p];
-      if (!l || l.indent !== indent || docEnd(l) || !isSeqItem(l.text)) break;
-      const content = l.text.slice(1).trimStart();
-      let value: YamlNode;
-      if (content === "") {
-        p++;
-        value = node(indent + 1, depth + 1) ?? scalar(l.line);
-      } else if (depth + 1 < MAX_DEPTH && (isSeqItem(content) || yamlKey(content) !== null)) {
-        // The item's content starts on its own line: read it as a line of its own.
-        lines[p] = { indent: indent + (l.text.length - content.length), text: content, line: l.line };
-        value = isSeqItem(content) ? seq((lines[p] as YamlLine).indent, depth + 1) : map((lines[p] as YamlLine).indent, depth + 1);
-      } else {
-        p++;
-        value = { ...scalar(l.line), endLine: continuation(indent, l.line) };
-      }
-      const endLine = Math.max(l.line, value.endLine);
-      out.items.push({ line: l.line, endLine, value });
-      out.endLine = endLine;
+  try {
+    const docs = parseAllDocuments(text, { prettyErrors: false, uniqueKeys: false, strict: false });
+    if (!Array.isArray(docs)) return [];
+    const out: YamlNode[] = [];
+    for (const doc of docs) {
+      if (doc.errors.length > 0) continue;
+      const root = convert(doc.contents, 0);
+      if (root) out.push(root);
     }
     return out;
-  };
-  while (p < lines.length) {
-    skipBlank();
-    const l = lines[p];
-    if (!l) break;
-    if (docEnd(l)) {
-      p++;
-      continue;
-    }
-    const before = p;
-    const root = node(0, 0);
-    if (root) docs.push(root);
-    if (p === before) p++;
+  } catch {
+    // Nesting too deep for the parser.
+    return [];
   }
-  return docs;
 }
 
 // ---------- anchoring ----------

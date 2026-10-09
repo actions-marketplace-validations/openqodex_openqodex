@@ -51,7 +51,7 @@ export const CATEGORIES = ["bug", "security", "performance", "maintainability", 
 export const SEVERITIES = ["info", "nitpick", "minor", "major", "critical"];
 // Who is expected to find a bug: a scanner by name, the reviewer's reading
 // of the diff, or the reviewer helped by the code graph's caller list.
-export const FINDERS = ["gitleaks", "semgrep", "bandit", "ruff", "oxlint", "osv-scanner", "hadolint", "shellcheck", "actionlint", "brakeman", "rubocop", "golangci", "suppression", "reasoning", "graph"];
+export const FINDERS = ["gitleaks", "semgrep", "bandit", "ruff", "oxlint", "osv-scanner", "hadolint", "shellcheck", "actionlint", "brakeman", "rubocop", "golangci", "zizmor", "trivy", "squawk", "kube-linter", "tflint", "kubeconform", "cargo-deny", "checkov", "sqlfluff", "suppression", "reasoning", "graph"];
 
 const FIXED_DATE = "2026-01-01T00:00:00Z";
 const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";

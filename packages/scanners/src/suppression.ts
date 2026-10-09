@@ -11,7 +11,8 @@
 // its osv-scanner.toml, and sqllint has none.
 
 import type { BuiltinScanner } from "@openqodex/core";
-import { comments, yamlCode } from "./comments.js";
+import { comments } from "./comments.js";
+import { yamlKeys } from "./yaml-keys.js";
 import type { Comment, Family } from "./comments.js";
 
 type Marker = {
@@ -34,11 +35,15 @@ type Marker = {
 };
 
 // "line": the scanner obeys the marker anywhere on the line, in a comment,
-// a string or code alike. "yaml-code": the scanner obeys it as YAML, such
-// as a key of an object's annotations, so it counts on each line's YAML code
-// (comments.ts, yamlCode) and never in a comment, a quoted value or a block
-// scalar's body.
-type Unit = Family | "line" | "yaml-code";
+// a string or code alike. "yaml-keys": the scanner obeys it as a key of a
+// YAML or JSON mapping, such as an object's annotations, in any style
+// (yaml-keys.ts): the pattern is tested on each key as the scanner decodes
+// it, and a hit counts on the key's line, or on the line of an alias that
+// brings the key in. A file the parser cannot read, or one too large, is
+// tested line by line instead, so the reading is never narrower than the
+// scanner's. A "yaml-keys" pattern must not be anchored to the start: in
+// that fallback a unit is a whole line.
+type Unit = Family | "line" | "yaml-keys";
 type Entry = { family: Unit; markers: Marker[] };
 
 export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
@@ -114,6 +119,40 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
     family: "js",
     markers: [{ name: "{kw}", pattern: /^\/[/*]\s*(?<at>(?<kw>(?:eslint|oxlint)-disable(?:-next-line|-line)?))(?=\s|\*\/|$)/dg }],
   },
+  // `# zizmor: ignore[` with one blank after the `#` and the colon
+  // (IGNORE_EXPR in crates/zizmor/src/finding/location.rs). Anywhere on the
+  // line: for the audits that locate a finding by its raw span
+  // (unredacted-secrets, obfuscation and four more), zizmor reads each line
+  // from its first `#`, so 1.30.1 obeys the marker inside a `run: |` body and
+  // a quoted value too. The closing `]` and what follows it are not checked,
+  // so this is wider than zizmor, never narrower.
+  zizmor: { family: "line", markers: [{ name: "# zizmor: ignore[...]", pattern: /(?<at># zizmor: ignore\[)/dg }] },
+  // A `--` or `/* */` comment whose text starts, after blanks, with
+  // squawk-ignore or squawk-ignore-file (crates/squawk_linter/src/ignore.rs,
+  // ignore_rule_info), or with squawk-disable-assume-in-transaction, which
+  // changes what squawk reports for the whole file. Case-sensitive. A bare
+  // `squawk-ignore` with no rule silences nothing in 2.66.0; it still counts.
+  squawk: {
+    family: "sql",
+    markers: [
+      { name: "-- {kw}", pattern: /^(?:--|\/\*)\s*(?<at>(?<kw>squawk-ignore(?:-file)?))/dg },
+      { name: "-- squawk-disable-assume-in-transaction", pattern: /^(?:--|\/\*)\s*(?<at>squawk-disable-assume-in-transaction)/dg },
+    ],
+  },
+  // SQLFluff reads `noqa` at the start of a comment, or after the comment's
+  // last `--` (sqlfluff/core/rules/noqa.py, _parse_noqa), lower case only.
+  // Which text is a comment depends on the dialect the repo names: `#`
+  // starts one in ansi and mysql, not in postgres, and strings differ too.
+  // So the marker counts anywhere on the line after `--`, `#` or `/*`, and
+  // at the start of a line, for a block comment whose `noqa` is on the line
+  // after its opener: wider than SQLFluff in every dialect.
+  sqlfluff: {
+    family: "line",
+    markers: [
+      { name: "-- noqa", pattern: /(?:--|#|\/\*)[ \t]*(?<at>noqa)/dg },
+      { name: "-- noqa", pattern: /^[ \t]*(?<at>noqa)/dg },
+    ],
+  },
   // trivy reads every line of a Terraform file (.tf and .tf.json) and of a
   // CloudFormation YAML template as raw text, a string included: a word of
   // the line (split at blanks) that, once its leading #, / and * are cut,
@@ -125,19 +164,22 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
     markers: [{ name: "{kw}:ignore", pattern: /(?:^|[ \t])[#/*]*(?<at>(?<kw>trivy|tfsec):[^ \t]*?ignore:[^ \t])/dg }],
   },
   // checkov reads the lines of a Terraform resource and of a CloudFormation
-  // resource as raw text, a string included, for checkov:skip=,
-  // bridgecrew:skip= or cortex:skip= (checkov/common/comment/enum.py,
-  // COMMENT_REGEX). It reads a Kubernetes object's annotation keys that hold
-  // checkov.io/skip, bridgecrew.io/skip or cortex.io/skip
-  // (checkov/kubernetes/kubernetes_utils.py), and a CloudFormation resource's
-  // Metadata keys checkov and bridgecrew with a skip list
-  // (checkov/cloudformation/context_parser.py), both as YAML.
+  // resource as raw text, a comment of any style or a string alike, for
+  // checkov:skip=, bridgecrew:skip= or cortex:skip=
+  // (checkov/common/comment/enum.py, COMMENT_REGEX). It reads a Kubernetes
+  // object's annotation keys that hold checkov.io/skip, bridgecrew.io/skip or
+  // cortex.io/skip (checkov/kubernetes/kubernetes_utils.py), and a
+  // CloudFormation resource's Metadata keys checkov and bridgecrew with a skip
+  // list (checkov/cloudformation/context_parser.py), both as keys of YAML or
+  // JSON. The Metadata key counts wherever a key is checkov or bridgecrew.
   checkov: {
     family: "line",
     markers: [
       { name: "{kw}:skip=", pattern: /(?<at>(?<kw>checkov|bridgecrew|cortex):skip=)/dg },
-      { name: "{kw}.io/skip annotation", pattern: /(?<at>(?<kw>checkov|bridgecrew|cortex)\.io\/skip)/dg, family: "yaml-code" },
-      { name: "Metadata {kw} key", pattern: /(?<![\w.-])["']?(?<at>(?<kw>checkov|bridgecrew))["']?[ \t]*:(?=[ \t{]|$)/dg, family: "yaml-code" },
+      { name: "{kw}.io/skip annotation", pattern: /(?<at>(?<kw>checkov|bridgecrew|cortex)\.io\/skip)/dg, family: "yaml-keys" },
+      // In a file the parser cannot read (Terraform), the raw lines: a skip
+      // comment there is already counted by the first marker.
+      { name: "Metadata {kw} key", pattern: /(?<![\w./-])(?<at>(?<kw>checkov|bridgecrew))(?![\w./-]|:skip=)/dg, family: "yaml-keys" },
     ],
   },
   // tflint: `tflint-ignore: ` or `tflint-ignore-file: ` then a rule list, in
@@ -173,10 +215,21 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
     return lo + 1;
   };
   const units = new Map<Unit, Comment[]>();
+  // True when the "yaml-keys" units are keys, so a hit counts on the key's
+  // line whatever the key's escapes made of its offsets.
+  let keyUnits = false;
   const unitsOf = (family: Unit): Comment[] => {
     let found = units.get(family);
     if (found === undefined) {
-      found = family === "line" ? starts.map((start) => lineAt(text, start)) : family === "yaml-code" ? yamlCode(text) : comments(text, family);
+      if (family === "line") {
+        found = starts.map((start) => lineAt(text, start));
+      } else if (family === "yaml-keys") {
+        const read = yamlKeys(text);
+        found = read.units;
+        keyUnits = read.keys;
+      } else {
+        found = comments(text, family);
+      }
       units.set(family, found);
     }
     return found;
@@ -210,12 +263,13 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
     const entry = SUPPRESSION_MARKERS[scanner];
     if (entry === undefined) continue;
     for (const marker of entry.markers) {
-      for (const unit of unitsOf(marker.family ?? entry.family)) {
+      const family = marker.family ?? entry.family;
+      for (const unit of unitsOf(family)) {
         if (marker.ownLine && text.slice(starts[lineOf(unit.start) - 1], unit.start).trim() !== "") continue;
         if (marker.header && pastHeader(unit)) continue;
         for (const m of unit.text.matchAll(marker.pattern)) {
           const at = m.indices?.groups?.at?.[0] ?? m.index;
-          const line = lineOf(unit.start + at);
+          const line = family === "yaml-keys" && keyUnits ? lineOf(unit.start) : lineOf(unit.start + at);
           const name = marker.name.replace("{kw}", (m.groups?.kw ?? "").replace(/\s+/g, " "));
           const key = `${scanner}\0${line}\0${name}`;
           if (seen.has(key)) continue;
