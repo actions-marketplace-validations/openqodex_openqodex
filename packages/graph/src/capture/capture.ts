@@ -12,7 +12,7 @@
 // temporary folder. Every git call goes through safeGit, so no hook, filter
 // or fetch runs, and no path from the repository is placed where git reads
 // an option.
-import { copyFileSync, existsSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { safeGit } from "@openqodex/core";
@@ -40,7 +40,16 @@ async function withIndexCopy<T>(root: string, run: (env: Record<string, string>,
   try {
     const index = await gitPath(root, "index");
     const copy = join(tmp, "index");
-    if (existsSync(index)) copyFileSync(index, copy);
+    if (existsSync(index)) {
+      copyFileSync(index, copy);
+      // Git trusts a file's stat over its content unless the entry is as new
+      // as the index itself (a "racy" entry). The copy would carry a later
+      // time and hide an edit made at the same size in the second the index
+      // was written; the original's time, rounded down, keeps that check, as
+      // in the change source (packages/core/src/change.ts).
+      const at = Math.floor(statSync(index).mtimeMs / 1000);
+      utimesSync(copy, at, at);
+    }
     return await run({ GIT_INDEX_FILE: copy }, tmp);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

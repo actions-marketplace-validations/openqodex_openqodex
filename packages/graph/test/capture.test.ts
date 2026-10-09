@@ -15,9 +15,14 @@
 // 5. A tracked path under a folder the snapshot now holds as a link is
 //    looked at through that link, so the target text of a link outside the
 //    repository is stored in the repository's objects as the path's link.
+// 6. A file edited at the same size in the second the index was written is
+//    stored as it was before the edit. Git trusts a file's size and times
+//    over its content unless the entry is as new as the index itself; the
+//    capture's copy of the index carries a later time than the original, so
+//    without the original's time git skips the edit (issue #85).
 import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { captureSnapshot, captureWorkingTree, treeBlobs } from "../src/capture/capture.js";
@@ -148,5 +153,25 @@ describe("the capture", () => {
     expect(await showBlob(repo, sha, "a.ts", 4)).toBeNull();
     expect(existsSync(join(repo, "x"))).toBe(false);
   });
-});
 
+  it("stores a file edited at the same size in the second the index was written as it is now (6)", async () => {
+    const repo = makeRepo({ "a.ts": "return 1;\n" });
+    // Ctime is set by the system alone; with it ignored, the file's size and
+    // mtime decide, as they do on every file system for an edit made within
+    // the second.
+    git(repo, "config", "core.trustctime", "false");
+    // A whole second in the past: the commit writes the index later, so git
+    // does not mark the entry as one to compare by content.
+    const second = Math.floor(Date.now() / 1000) - 100;
+    utimesSync(join(repo, "a.ts"), second, second);
+    commitAll(repo);
+    // The edit, at the same size and the same mtime, in the second the
+    // index was written: the original index still asks git to compare it.
+    writeFileSync(join(repo, "a.ts"), "return 2;\n");
+    utimesSync(join(repo, "a.ts"), second, second);
+    utimesSync(join(repo, ".git", "index"), second, second);
+    expect(git(repo, "diff", "--name-only")).toBe("a.ts\n");
+    const work = await captureWorkingTree(repo);
+    expect((await treeBlobs(repo, work)).get("a.ts")).toBe(blobId(Buffer.from("return 2;\n")));
+  });
+});
