@@ -1,0 +1,35 @@
+{
+  "guards": "derives every Next.js route from the file tree with groups dropped and private folders skipped, binds each to its export, keeps the app and pages routers apart, and runs middleware only for the routes its matcher selects",
+  "frameworks": {
+    "plugin": "nextjs",
+    "apps": 2,
+    "registrations": [
+      { "site": "app/page.tsx:4", "methods": ["GET"], "pattern": "/", "handler": "app/page.tsx#Home", "status": "bound", "mounted": true },
+      { "site": "app/(marketing)/about/page.tsx:1", "methods": ["GET"], "pattern": "/about", "handler": "app/(marketing)/about/page.tsx#About" },
+      { "site": "app/blog/[slug]/page.tsx:1", "methods": ["GET"], "pattern": "/blog/[slug]", "handler": "app/blog/[slug]/page.tsx#Post" },
+      { "site": "app/dashboard/page.tsx:4", "methods": ["GET"], "pattern": "/dashboard", "handler": "app/dashboard/page.tsx#Dashboard" },
+      { "site": "app/api/users/route.ts:4", "methods": ["GET"], "pattern": "/api/users", "handler": "app/api/users/route.ts#GET", "status": "bound" },
+      { "site": "app/api/users/route.ts:8", "methods": ["POST"], "pattern": "/api/users", "handler": "app/api/users/route.ts#POST" },
+      { "site": "pages/api/legacy.ts:3", "methods": ["*"], "pattern": "/api/legacy", "handler": "pages/api/legacy.ts#handler" },
+      { "site": "pages/old.tsx:1", "methods": ["GET"], "pattern": "/old", "handler": "pages/old.tsx#Old" },
+      { "site": "app/actions.ts:3", "methods": ["POST"], "pattern": null, "handler": "app/actions.ts#saveProfile", "status": "bound" }
+    ],
+    "edges": [{ "kind": "applies_middleware", "from": "registration:app/dashboard/page.tsx:4", "to": "middleware.ts#middleware", "tier": "certain" }],
+    "roles": [
+      { "target": "app/api/users/route.ts#GET", "role": "route_handler", "detail": "route" },
+      { "target": "app/actions.ts#saveProfile", "role": "route_handler", "detail": "server-action" },
+      { "target": "app/dashboard/layout.tsx#DashboardLayout", "role": "component", "detail": "layout" },
+      { "target": "app/dashboard/loading.tsx#Loading", "role": "component", "detail": "loading" },
+      { "target": "app/dashboard/error.tsx#DashboardError", "role": "component", "detail": "error" },
+      { "target": "components/Counter.tsx#Counter", "role": "component", "detail": "client" },
+      { "target": "middleware.ts#middleware", "role": "middleware", "detail": "nextjs" }
+    ],
+    "unknowns": [{ "file": "app/@team/page.tsx", "line": 1, "cause": "unsupported-rule" }],
+    "notEdges": [
+      { "kind": "applies_middleware", "from": "registration:app/page.tsx:4" },
+      { "kind": "applies_middleware", "from": "registration:app/api/users/route.ts:4" },
+      { "kind": "handles", "to": "app/_drafts/page.tsx#Draft" },
+      { "kind": "handles", "to": "app/@team/page.tsx#Team" }
+    ]
+  }
+}

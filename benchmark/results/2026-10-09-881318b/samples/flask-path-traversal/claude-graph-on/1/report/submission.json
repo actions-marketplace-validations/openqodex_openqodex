@@ -1,0 +1,79 @@
+{
+  "version": 2,
+  "change_id": "1b9dcc940469",
+  "summary": "Adds a /download endpoint that serves files from the upload directory by name. Changes the dev server to bind all interfaces with debug mode on.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "files/app.py",
+      "line_number": 17,
+      "line_end": 20,
+      "title": "Path traversal in download endpoint",
+      "problem": "The download handler joins the name query parameter onto UPLOAD_DIR without any check. A name like ../../etc/passwd or an absolute path like /etc/passwd escapes UPLOAD_DIR, because os.path.join discards the base for absolute names.",
+      "consequence": "Any client can read any file the server process can read. That includes secrets, config files and source code.",
+      "fix": "Serve the file with send_from_directory, which rejects paths outside the base. Alternatively, resolve the path and check that it stays under UPLOAD_DIR.",
+      "suggested_change": "    return send_from_directory(UPLOAD_DIR, name)",
+      "source": "lens:path-traversal-in-fs-access"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Debug mode enabled on a public bind",
+      "problem": "The change starts the app with debug=True and binds it to 0.0.0.0. This exposes the interactive Werkzeug debugger to the network.",
+      "consequence": "Anyone who reaches port 5000 and triggers an error can try to run arbitrary code through the debugger console. Debug pages also leak stack traces and local values.",
+      "fix": "Keep debug off by default and read it from an environment variable. Keep the default bind at 127.0.0.1.",
+      "suggested_change": "    app.run(host=\"127.0.0.1\", port=5000, debug=os.environ.get(\"FLASK_DEBUG\") == \"1\")",
+      "source": "bandit:B201",
+      "candidate": "c1"
+    },
+    {
+      "severity": "minor",
+      "category": "security",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 24,
+      "line_end": 24,
+      "title": "Server bind widened to all interfaces",
+      "problem": "The change moves the bind from 127.0.0.1 to 0.0.0.0. The development server now accepts connections from every network interface.",
+      "consequence": "Other hosts on the network can reach the development server and the new download endpoint. Before this change, only local clients could reach it.",
+      "fix": "Keep 127.0.0.1 as the default. Make the host configurable through an environment variable if remote access is needed.",
+      "suggested_change": null,
+      "source": "bandit:B104",
+      "candidate": "c4"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "files/app.py",
+      "line_number": 15,
+      "line_end": 20,
+      "title": "New download endpoint has no tests",
+      "problem": "The repository has no tests for the new download handler. Nothing checks the 404 path or the rejection of traversal attempts.",
+      "consequence": "Future changes could break or weaken the file access check without anyone noticing.",
+      "fix": "Add tests that cover a valid file, a missing file and a traversal name such as ../etc/passwd.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "This duplicates the all-interfaces bind problem already raised from c4 on the same line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    },
+    {
+      "candidate": "c3",
+      "reason": "This duplicates the debug mode problem already raised from c1 on the same line.",
+      "file_path": "files/app.py",
+      "line_number": 24
+    }
+  ]
+}

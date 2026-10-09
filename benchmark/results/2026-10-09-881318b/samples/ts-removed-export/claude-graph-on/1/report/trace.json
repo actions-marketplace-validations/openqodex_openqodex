@@ -1,0 +1,29 @@
+[
+  {
+    "tool": "Read",
+    "path": "src/cart.ts",
+    "inside": true,
+    "range": [
+      1,
+      10
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "src/money.ts",
+    "inside": true,
+    "range": [
+      1,
+      10
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Grep",
+    "path": ".",
+    "inside": true,
+    "range": null,
+    "ok": true
+  }
+]

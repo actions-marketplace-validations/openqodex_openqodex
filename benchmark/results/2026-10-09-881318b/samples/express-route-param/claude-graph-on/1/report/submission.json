@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "change_id": "256602956034",
+  "summary": "getUser now reads the user id from a destructured route param, puts the id in its 404 message, and adds a fetchedAt timestamp to the response.",
+  "findings": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.95,
+      "file_path": "src/handlers/users.js",
+      "line_number": 8,
+      "line_end": 9,
+      "title": "Handler reads a route param that does not exist",
+      "problem": "getUser reads req.params.userId. The route in src/routes/users.js:7 declares the param as :id, so userId is always undefined.",
+      "consequence": "findUser(undefined) returns nothing, so every GET /users/:id call gets a 404. The 404 message also reads 'no user with id undefined'.",
+      "fix": "Read the id param that the route defines. Renaming the route param to :userId would also work.",
+      "suggested_change": "  const { id: userId } = req.params;\n  const user = findUser(userId);",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/handlers/users.js",
+      "line_number": 14,
+      "line_end": 14,
+      "title": "No test covers the changed getUser behaviour",
+      "problem": "This change alters how getUser reads its param and what it returns. The repository has no test that exercises getUser.",
+      "consequence": "A test calling the route would have caught the broken param lookup. Without one, future regressions in this handler will also go unnoticed.",
+      "fix": "Add a test that requests GET /users/1 and checks for a 200 status with a fetchedAt field. Add a second test that checks the 404 for an unknown id.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

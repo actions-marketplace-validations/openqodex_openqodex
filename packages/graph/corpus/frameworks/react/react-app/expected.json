@@ -1,0 +1,33 @@
+{
+  "guards": "binds JSX elements to the components they render and tests to the components they render, keeps a computed element as an unknown, and never mistakes a use-named function or a same-named component for the real one",
+  "callers": [
+    {
+      "to": "src/components/Button.tsx#Button",
+      "site": "src/components/UserCard.tsx:15",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "react",
+    "apps": 1,
+    "edges": [
+      { "kind": "renders", "from": "src/components/UserCard.tsx#UserCard", "to": "src/components/Button.tsx#Button", "tier": "certain" },
+      { "kind": "renders", "from": "src/components/Shell.tsx#Shell", "to": "src/components/UserCard.tsx#UserCard", "tier": "certain" },
+      { "kind": "renders", "from": "src/components/Shell.tsx#Shell", "to": "src/components/Legacy.tsx#Legacy", "tier": "certain" },
+      { "kind": "renders", "from": "src/App.tsx#App", "to": "src/context/theme.tsx#ThemeProvider", "tier": "certain" },
+      { "kind": "tests", "from": "src/components/UserCard.test.tsx", "to": "src/components/UserCard.tsx#UserCard", "tier": "certain", "category": "component-render" }
+    ],
+    "roles": [
+      { "target": "src/components/Button.tsx#Button", "role": "component", "detail": "function" },
+      { "target": "src/components/Legacy.tsx#Legacy", "role": "component", "detail": "class" },
+      { "target": "src/hooks/useUser.ts#useUser", "role": "hook", "detail": "react" },
+      { "target": "src/components/UserCard.test.tsx", "role": "test", "detail": "react-testing" }
+    ],
+    "unknowns": [{ "file": "src/components/Picker.tsx", "line": 8, "cause": "dynamic" }],
+    "notEdges": [
+      { "kind": "renders", "to": "src/other/Button.tsx#Button" },
+      { "kind": "renders", "from": "src/components/Picker.tsx#Picker" },
+      { "kind": "renders", "to": "src/context/theme.tsx#ThemeContext" }
+    ]
+  }
+}

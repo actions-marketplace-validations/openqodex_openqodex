@@ -1,0 +1,8 @@
+{
+  "name": "pinger",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}

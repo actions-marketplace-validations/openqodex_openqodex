@@ -1,0 +1,8 @@
+{
+  "name": "mini-router",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

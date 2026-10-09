@@ -1,0 +1,47 @@
+{
+  "guards": "composes a mux mounted directly or through http.StripPrefix into the mux that serves it, under an aliased net/http import, binds a method value, and keeps a computed prefix and a computed request path as unknowns",
+  "callers": [
+    {
+      "to": "api/api.go#GetUser",
+      "site": "api/api_test.go:11",
+      "tier": "certain"
+    }
+  ],
+  "frameworks": {
+    "plugin": "go-http",
+    "apps": 3,
+    "registrations": [
+      { "site": "main.go:29", "methods": ["GET"], "pattern": "/healthz", "handler": "main.go#server.health", "status": "bound", "mounted": true },
+      { "site": "api/api.go:9", "methods": ["GET"], "pattern": "/api/users/{id}", "handler": "api/api.go#GetUser", "status": "bound" },
+      { "site": "api/api.go:9", "methods": ["GET"], "pattern": "/users/{id}", "handler": "api/api.go#GetUser", "status": "bound" },
+      { "site": "api/api.go:9", "methods": ["GET"], "pattern": null, "handler": "api/api.go#GetUser" },
+      { "site": "main.go:32", "methods": ["*"], "pattern": "/legacy/report", "handler": "main.go#server.health", "status": "bound" },
+      { "site": "main.go:33", "methods": ["*"], "pattern": "/elsewhere", "handler": "main.go#server.health" },
+      { "site": "main.go:36", "methods": ["*"], "pattern": "/audit/", "handler": null, "status": "unresolved" }
+    ],
+    "edges": [
+      { "kind": "mounts", "from": "fw:go-http:app:main.go:28", "to": "fw:go-http:app:api/api.go:6", "tier": "certain" },
+      { "kind": "mounts", "from": "fw:go-http:app:main.go:28", "to": "fw:go-http:app:main.go:31", "tier": "certain" },
+      { "kind": "applies_middleware", "from": "registration:main.go:36", "to": "main.go#withAudit", "tier": "certain" },
+      { "kind": "tests", "from": "api/api_test.go#TestGetUser", "to": "registration:api/api.go:9", "tier": "likely", "category": "route-request" },
+      { "kind": "tests", "from": "api/api_test.go#TestGetUser", "to": "api/api.go#GetUser", "tier": "certain", "category": "direct-call" }
+    ],
+    "roles": [
+      { "target": "main.go#server.health", "role": "route_handler", "detail": "net/http" },
+      { "target": "api/api.go#GetUser", "role": "route_handler", "detail": "net/http" },
+      { "target": "main.go#withAudit", "role": "middleware", "detail": "net/http" },
+      { "target": "api/api_test.go#TestGetUser", "role": "test", "detail": "go test" }
+    ],
+    "unknowns": [
+      { "file": "main.go", "line": 35, "cause": "dynamic" },
+      { "file": "main.go", "line": 36, "cause": "unsupported-rule" },
+      { "file": "api/api_test.go", "line": 16, "cause": "dynamic" }
+    ],
+    "notEdges": [
+      { "kind": "handles", "from": "registration:main.go:36" },
+      { "kind": "mounts", "from": "fw:go-http:app:main.go:31" },
+      { "kind": "mounts", "from": "fw:go-http:app:api/api.go:6" },
+      { "kind": "tests", "from": "api/api_test.go#TestComputedPath" }
+    ]
+  }
+}

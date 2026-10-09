@@ -40,6 +40,7 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `django-model-view` | Python, Django | a Decimal times a float (major), a field with no migration (major), an order readable by any user (critical), CSRF turned off on a POST (major); reasoning, semgrep for CSRF |
 | `django-renamed-view` | Python, Django | a view renamed while the app's `urls.py`, outside the diff, still registers its old name, so loading the URLs fails (critical; reasoning, graph) |
 | `express-admin-routes` | JavaScript, Express | a delete route without the admin check (critical), `forEach` with an async callback that is not awaited (major); reasoning |
+| `express-route-param` | JavaScript, Express | a handler that now reads `req.params.userId` while its route, registered in another file outside the diff, declares `:id`, so every lookup answers 404 (major; reasoning, graph) |
 | `flask-path-traversal` | Python, Flask | a download path built from a parameter (critical), the debug server on every interface (major); semgrep, bandit, reasoning |
 | `go-http-handler` | Go | SQL built with `Sprintf` (critical; semgrep, golangci-lint), a mutex left locked on an early return (major), a deferred close before the error check (major) |
 | `js-dynamic-dispatch-gap` | JavaScript | a handler made async while its caller, reached only through `table[action](id)`, uses the result as a string (major); the brief must say the graph could not bind that call |
@@ -51,7 +52,7 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `ts-removed-export` | TypeScript | a renamed export still imported by a file outside the change (major; reasoning, graph); nothing in the diff shows it |
 | `ts-workspace-caller-break` | TypeScript, pnpm workspace | `safeGit` changed from returning a string to returning an object, with callers in another package (major; reasoning, graph) |
 
-Thirty-nine planted bugs in all: 12 critical, 21 major, 6 minor.
+Forty planted bugs in all: 13 critical, 21 major, 6 minor.
 
 Each case is a folder under `benchmark/cases/<case>/`: `case.json` (the spec), `base/` (the base commit), `change/` (the files the change writes) and an optional `delete.txt`. `demo-polyglot` reads `examples/demo-repo` instead, and its secret is generated when the case is built, the same value every time, never committed. The repositories are built in a temporary folder; none is committed. `node benchmark/build.mjs <case>` builds one so you can read it.
 
@@ -63,7 +64,7 @@ From a clone, with Node 22, Claude Code installed and logged in:
 pnpm install
 node benchmark/build-cli.mjs           # pnpm build, and a record of the commit and tree it built from
 node benchmark/run.mjs --dry-run       # print the plan, run nothing
-node benchmark/run.mjs                 # 16 cases, graph off and on, 3 repeats: 96 reviews
+node benchmark/run.mjs                 # 17 cases, graph off and on, 3 repeats: 102 reviews
 node benchmark/score.mjs benchmark/results/<date>-<commit>
 ```
 
@@ -228,6 +229,31 @@ What it showed:
 - On the 14 cases both runs hold, the review found 33 of 37 plants: every critical and major one. The four misses are minor: three Dockerfile issues in the demo repository that the scanners raised and the reviewer dropped, and the list items without keys in the Next.js case, as in the earlier runs.
 - No finding was false. Three findings matched side issues the cases list as real but not planted.
 - The graph gap line is unchanged: the `js-dynamic-dispatch-gap` brief still does not name the computed call `table[action](id)`. Phase 2 changes that, and this branch does not hold phase 2.
+
+## Code graph phase 4b: the framework plugins
+
+`benchmark/results/2026-10-09-881318b`: build `881318b` (openqodex 0.10.0, the Express, React, Next.js, FastAPI and Go net/http plugins), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, graph on, one repeat of the 15 cases: 15 reviews, all complete. It is compared with the graph-on reviews of the first run, scored against this run's specs (`baseline-752b77f-score-cases.json` in this run's folder). Eight cases were edited after the first run, so for those the first run reviewed other files than its score assumes: its Rails `permit!` plant sat behind the admin check, and 0 of 3 of its reviews found it.
+
+| Measure | 752b77f, graph on, 3 repeats, 14 cases | 881318b, graph on, 1 repeat, 15 cases |
+|---|---|---|
+| Planted bugs found | 100/111 (90%) | 35/38 (92%) |
+| critical | 33/36 | 12/12 |
+| major | 57/57 | 20/20 |
+| minor | 10/18 | 3/6 |
+| Findings that are planted bugs | 100/100 | 35/35 |
+| False findings | 0 | 0 |
+| Clean changes with no finding | 6/6 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 5/5 |
+| Graph gaps disclosed in the brief | 3/6 | 1/2 |
+| `express-route-param` (new: a handler reading a parameter its route does not declare) | not in the run | 1/1 |
+| Time per review, mean | 25 s | 27 s |
+| Cost per review, mean | $0.11 | $0.12 |
+
+What it showed:
+
+- No benchmark line moved. The plugins put their routes, middleware and test links on the graph, but nothing in the brief reads them yet: the brief lines that show a changed handler's route come with phase 4a's interface work, so this phase's effect on reviews can be measured only once those are merged.
+- The reviewer found the new `express-route-param` bug by reading the route file, which the brief lists as a file that imports the changed handler; the brief does not yet say which route the handler serves.
+- The three misses are minor: two Dockerfile issues in the demo repository the reviewer dropped as harmless (as in the first run), and the list items without keys in the Next.js case, a candidate the reviewer dropped.
 
 ## Claims cite a run
 

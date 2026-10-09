@@ -1,0 +1,9 @@
+Passed with warnings: 4 findings (2 critical, 1 major, 1 minor)
+Change abd88064b93d against HEAD, 2 files, +68 -1
+Summary: Adds three endpoints to the directory API: a user search by name, a per-key request counter guarded by a mutex, and an upstream status probe.
+1. Critical security: Search query built from request input (internal/api/handler.go:34-35)
+2. Critical bug: Mutex left locked on missing key (internal/api/handler.go:63)
+3. Major bug: Response body closed before error check (internal/api/handler.go:83)
+4. Minor maintainability: New handlers have no covering test (internal/api/handler.go:31-88)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

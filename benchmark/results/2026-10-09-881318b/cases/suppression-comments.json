@@ -1,0 +1,79 @@
+{
+  "id": "suppression-comments",
+  "guards": "an added suppression comment that hides a real injection is reported, and a harmless one (a long documentation link) is not",
+  "language": "python",
+  "framework": "none",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "nosec-shell-injection",
+      "file": "tools/thumbs.py",
+      "lines": [
+        8,
+        9
+      ],
+      "anchor": {
+        "line": 9,
+        "text": "shell=True, check=True)  # nosec B602"
+      },
+      "mentions": [
+        "inject",
+        "shell",
+        "command",
+        "nosec",
+        "suppress"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "suppression",
+        "reasoning"
+      ],
+      "truth": "The file name from the upload form goes into a shell command, and the nosec comment hides the scanner rule that would report it, so a name with shell syntax runs commands. The fix is to pass an argument list without shell=True and to drop the suppression."
+    },
+    {
+      "id": "suppressed-eval",
+      "file": "web/server.js",
+      "lines": [
+        11,
+        12
+      ],
+      "anchor": {
+        "line": 12,
+        "text": "eval(String(req.query.expr)); // nosemgrep"
+      },
+      "mentions": [
+        "eval",
+        "inject",
+        "code execution",
+        "arbitrary",
+        "suppress"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "suppression",
+        "reasoning"
+      ],
+      "truth": "eval runs the expr query parameter as JavaScript, so any caller runs code on the server; two suppression comments hide the rules that would report it. The fix is an arithmetic parser, never eval, and no suppression."
+    }
+  ],
+  "extras": [
+    {
+      "file": "tools/thumbs.py",
+      "lines": [
+        8,
+        9
+      ],
+      "mentions": [
+        "path traversal",
+        "traversal"
+      ],
+      "why": "a name with ../ also writes the thumbnail outside the thumbs folder; real, not planted (found by the first run)"
+    }
+  ]
+}

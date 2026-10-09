@@ -1,0 +1,38 @@
+{
+  "id": "express-route-param",
+  "guards": "a handler that reads a route parameter under a name its route, registered in another file outside the diff, does not declare is reported",
+  "language": "javascript",
+  "framework": "express",
+  "clean": false,
+  "graph": {},
+  "bugs": [
+    {
+      "id": "param-name-not-in-route",
+      "file": "src/handlers/users.js",
+      "lines": [
+        8,
+        9
+      ],
+      "anchor": {
+        "line": 8,
+        "text": "const { userId } = req.params;"
+      },
+      "mentions": [
+        "userid",
+        ":id",
+        "params.id",
+        "route parameter",
+        "undefined"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning",
+        "graph"
+      ],
+      "truth": "src/routes/users.js registers getUser for /:id under the /users mount, so Express fills req.params.id; req.params.userId is always undefined and every GET /users/:id now answers 404. Read req.params.id, or rename the route parameter to :userId."
+    }
+  ]
+}
