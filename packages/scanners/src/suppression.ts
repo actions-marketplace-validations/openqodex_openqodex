@@ -6,9 +6,10 @@
 // pinned version, and was run through the scanner itself for all but rubocop
 // and golangci-lint, which need Ruby and Go. Where the two disagree, the
 // entry follows what the scanner does. docs/scanners.md lists the sources.
-// actionlint, brakeman, osv-scanner and sqllint have no inline marker:
-// actionlint and brakeman read only their settings or ignore files, osv-scanner
-// its osv-scanner.toml, and sqllint has none.
+// actionlint, brakeman, osv-scanner, sqllint, kubeconform and cargo-deny
+// have no inline marker: actionlint and brakeman read only their settings or
+// ignore files, osv-scanner its osv-scanner.toml, cargo-deny only the config
+// OpenQodex writes for it, and sqllint and kubeconform have none.
 
 import type { BuiltinScanner } from "@openqodex/core";
 import { comments } from "./comments.js";

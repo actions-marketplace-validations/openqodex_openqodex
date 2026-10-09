@@ -1,4 +1,4 @@
-// The thirteen builtin scanners. Each adapter names the files of a change it
+// The built-in scanners. Each adapter names the files of a change it
 // checks (`files`), so the toolchain is never asked for a tool the change
 // does not need, and runs its tool from the resolved path (`run`). The
 // selector (select.ts) asks every adapter the same questions for a review,
@@ -105,9 +105,10 @@ export const ADAPTERS: readonly Adapter[] = [
 // or the adapter's own lookup). `anyFolder`: that name in any folder, which
 // the tool finds by walking up from the scanned file. `ruffTable`: only when
 // a changed line of the file is inside a `[tool.ruff` table.
-// Not listed: oxlint, rubocop, brakeman and golangci run on settings of
-// their own; bandit reads `.bandit` only with -r, which the adapter never
-// passes (it names the files).
+// Not listed: oxlint, rubocop, brakeman, golangci and kube-linter run on
+// settings of their own; kubeconform reads no settings file; bandit reads
+// `.bandit` only with -r, which the adapter never passes (it names the
+// files).
 export type SettingsFile = { path: string; anyFolder?: true; ruffTable?: true };
 
 export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFile[]>> = {

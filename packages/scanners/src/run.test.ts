@@ -86,6 +86,7 @@ import type {
   StaticFinding,
   ToolResolution,
 } from "@openqodex/core";
+import { ADAPTERS } from "./adapters/index.js";
 import { OSV_OFFLINE_REASON } from "./adapters/osv-scanner.js";
 import { SEMGREP_OFFLINE_REASON } from "./adapters/semgrep.js";
 import { runScanners, toRunDirRelative } from "./run.js";
@@ -193,7 +194,8 @@ describe("runScanners", () => {
     });
     // semgrep and gitleaks look at every change; shellcheck at .sh files.
     expect(asked.sort()).toEqual(["gitleaks", "semgrep", "shellcheck"]);
-    expect(scan.scanners).toHaveLength(13);
+    // One row for every built-in scanner.
+    expect(scan.scanners).toHaveLength(ADAPTERS.length);
     expect(scan.scanners.find((s) => s.scanner === "shellcheck")).toMatchObject({
       status: "not_installed",
       reason: "shellcheck is not installed",
@@ -435,7 +437,10 @@ describe("runScanners", () => {
       onProgress: (line) => progress.push(line),
     });
     expect(progress).toHaveLength(1);
-    expect(progress[0]).toMatch(/^Scanners: 1 ran, 10 had nothing to check, 2 not installed, \d+ candidates? to check$/);
+    // sqllint runs; semgrep, gitleaks, squawk and SQLFluff want the .sql file
+    // and are not installed; every other built-in scanner has nothing to check.
+    const idle = ADAPTERS.length - 5;
+    expect(progress[0]).toMatch(new RegExp(`^Scanners: 1 ran, ${idle} had nothing to check, 4 not installed, \\d+ candidates? to check$`));
     expect(progress.join("\n")).not.toContain("raw finding");
   });
 });
