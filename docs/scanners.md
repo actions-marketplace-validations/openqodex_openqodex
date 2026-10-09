@@ -44,7 +44,7 @@ Once a month a workflow in this repository (`.github/workflows/pin-bump.yml`) lo
 
 The workflow moves the kubeconform binary only. The schemas kubeconform validates against are pinned apart, in `toolchain.json` under `kubeconform.schemas`: one commit of `yannh/kubernetes-json-schema` and one Kubernetes version. Refresh them by hand when a new Kubernetes minor version is out: pick a commit of that repository that holds the version's `-standalone-strict` folder, set `commit` and `kubernetes` together, and run the kubeconform real-binary checks (`packages/scanners/test/adapters-kube-rust.subprocess.test.ts`). The schema cache is kept per commit, so a new commit downloads afresh.
 
-Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
+Installed scanners take more disk than their downloads. The sixteen scanners the demo needs take about 1 GB of disk on an Apple Silicon Mac, measured on 2026-10-08, besides uv's download cache in `~/.openqodex/cache/uv`. semgrep with its Python takes about 250 MB of that, Checkov about 175 MB and trivy about 160 MB.
 
 OpenQodex does not install Ruby or Go. Without them, the report lists the scanners that need them as not installed, with the reason.
 
