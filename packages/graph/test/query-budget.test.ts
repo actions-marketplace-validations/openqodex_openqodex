@@ -291,7 +291,15 @@ describe("work with a budget check inside each element (10)", () => {
     query(t, req, { budget: b });
     expect(b.checks).toBeGreaterThan(3 * SUBCLASSES);
   });
-});
+
+  it("stops a path search inside a point with 3,000 edges, and goes on from there to the whole answer", () => {
+    const req: Request = { apiVersion: 1, kind: "path", target: { id: idOf("fan") }, to: { id: idOf("far") }, edges: ["calls"], depth: 2 };
+    const whole = query(t, req);
+    expect(whole.error).toBeNull();
+    expect(whole.items).toEqual([]);
+    // Ten checks in: still inside the first point's edges, so a few of its
+    // callees wait, never all of them.
+    const early = query(t, req, { budget: checksBudget(10) });
     expect(early.truncated.by).toBe("budget");
     expect(early.truncated.frontierTotal ?? 0).toBeGreaterThan(0);
     expect(early.truncated.frontierTotal ?? 0).toBeLessThan(20);

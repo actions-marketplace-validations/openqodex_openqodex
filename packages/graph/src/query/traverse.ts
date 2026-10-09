@@ -3,8 +3,9 @@
 // cycles of a graph, a list sorted. Each piece keeps its state in an object
 // and checks the question's budget (wall time, and the caller's
 // cancellation) at every element it touches: every node a name is looked
-// up in, every edge a walk expands, every point past the depth it checks,
-// every thousand comparisons of a sort. When the budget is spent the piece
+// up in, every site of every edge a walk or a path search reads, every
+// edge of a point past the depth it checks, every thousand comparisons of
+// a sort. When the budget is spent the piece
 // stops where it is and can be run again with a new budget to go on from
 // there: a question stopped by its budget says where it stopped, never a
 // count of what lies past it, and its cursor resumes it.
@@ -166,29 +167,40 @@ function goFilesOf(g: Graph, target: string): string[] {
   return byDir.get(target.slice(3)) ?? [];
 }
 
-// The edges leaving (or entering) a point, of the asked kinds. A file's
-// imports are edges out of the file; a Go package import reaches every
-// file of the folder. The default (null) is what `in` and `out` hold:
-// calls and inheritance.
-export function neighbours(g: Graph, at: string, dir: "in" | "out", kinds: ReadonlySet<string> | null): { edge: GraphEdge; other: string }[] {
-  const out: { edge: GraphEdge; other: string }[] = [];
+// The edges leaving (or entering) a point, of the asked kinds, one at a
+// time. A file's imports are edges out of the file; a Go package import
+// reaches every file of the folder. The default (null) is what `in` and
+// `out` hold: calls and inheritance.
+function* neighbours(g: Graph, at: string, dir: "in" | "out", kinds: ReadonlySet<string> | null): Generator<{ edge: GraphEdge; other: string }> {
   const want = (k: string) => kinds === null || kinds.has(k);
-  for (const e of (dir === "in" ? g.in.get(at) : g.out.get(at)) ?? []) if (want(e.kind)) out.push({ edge: e, other: dir === "in" ? e.from : e.to });
+  for (const e of (dir === "in" ? g.in.get(at) : g.out.get(at)) ?? []) if (want(e.kind)) yield { edge: e, other: dir === "in" ? e.from : e.to };
   if (kinds !== null && kinds.has("imports")) {
     if (dir === "out") {
       for (const e of importsFrom(g, at)) {
-        if (e.to.startsWith("go:")) for (const f of goFilesOf(g, e.to)) out.push({ edge: e, other: f });
-        else out.push({ edge: e, other: e.to });
+        if (e.to.startsWith("go:")) for (const f of goFilesOf(g, e.to)) yield { edge: e, other: f };
+        else yield { edge: e, other: e.to };
       }
     } else {
-      for (const e of g.importers.get(at) ?? []) out.push({ edge: e, other: e.from });
+      for (const e of g.importers.get(at) ?? []) yield { edge: e, other: e.from };
       if (at.endsWith(".go")) {
         const dir2 = at.includes("/") ? at.slice(0, at.lastIndexOf("/")) : "";
-        for (const e of g.importers.get(`go:${dir2}`) ?? []) out.push({ edge: e, other: e.from });
+        for (const e of g.importers.get(`go:${dir2}`) ?? []) yield { edge: e, other: e.from };
       }
     }
   }
-  return out;
+}
+
+// Every site of every edge of a point, one at a time, `last` on the last
+// site of each edge (an edge with no site gives one step with none). A
+// point with thousands of edges, or an edge with thousands of sites, is
+// read with the budget checked at each step, and goes on where it stopped.
+export type PointStep = { edge: GraphEdge; other: string; site: GraphSite | null; last: boolean };
+export function* pointSites(g: Graph, at: string, dir: "in" | "out", kinds: ReadonlySet<string> | null): Generator<PointStep> {
+  for (const { edge, other } of neighbours(g, at, dir, kinds)) {
+    const n = edge.sites.length;
+    if (n === 0) yield { edge, other, site: null, last: true };
+    for (let i = 0; i < n; i++) yield { edge, other, site: edge.sites[i] as GraphSite, last: i === n - 1 };
+  }
 }
 
 // ---------- a name looked up ----------
@@ -243,9 +255,9 @@ export class Walk {
   private next: string[] = [];
   private d = 1;
   private i = 0; // the next point of the frontier to expand
-  private edge = 0; // the next edge of that point
-  private edges: { edge: GraphEdge; other: string }[] | null = null;
+  private steps: Iterator<PointStep> | null = null; // the point being expanded, where it stopped
   private pastChecked = 0;
+  private pastSteps: Iterator<PointStep> | null = null;
   readonly past: string[] = []; // points at the last depth with edges past it
   private phase: "walk" | "past" | "sort" | "done" = "walk";
 
@@ -291,23 +303,23 @@ export class Walk {
         continue;
       }
       const at = this.frontier[this.i] as string;
-      if (this.edges === null) {
+      if (this.steps === null) {
         if (spent(budget)) return false;
-        this.edges = neighbours(g, at, this.dir, this.kinds);
-        this.edge = 0;
+        this.steps = pointSites(g, at, this.dir, this.kinds);
         this.expanded.add(at);
       }
-      while (this.edge < this.edges.length) {
+      for (;;) {
         if (spent(budget)) return false;
-        const { edge: e, other } = this.edges[this.edge] as { edge: GraphEdge; other: string };
-        this.edge++;
-        for (const site of e.sites) if (this.tiers.has(site.tier)) this.items.push(toItem(g, e, site, this.d));
-        if (!this.seen.has(other)) {
+        const r = this.steps.next();
+        if (r.done) break;
+        const { edge: e, other, site, last } = r.value;
+        if (site && this.tiers.has(site.tier)) this.items.push(toItem(g, e, site, this.d));
+        if (last && !this.seen.has(other)) {
           this.seen.add(other);
           this.next.push(other);
         }
       }
-      this.edges = null;
+      this.steps = null;
       this.i++;
     }
     // Points one hop past the last depth: the answer stops at the depth asked.
@@ -316,9 +328,24 @@ export class Walk {
         this.phase = "sort";
         break;
       }
-      if (spent(budget)) return false;
-      const at = this.frontier[this.pastChecked++] as string;
-      if (neighbours(g, at, this.dir, this.kinds).some(({ other }) => !this.seen.has(other))) this.past.push(at);
+      const at = this.frontier[this.pastChecked] as string;
+      if (this.pastSteps === null) {
+        if (spent(budget)) return false;
+        this.pastSteps = pointSites(g, at, this.dir, this.kinds);
+      }
+      let more = false;
+      for (;;) {
+        if (spent(budget)) return false;
+        const r = this.pastSteps.next();
+        if (r.done) break;
+        if (!this.seen.has(r.value.other)) {
+          more = true;
+          break;
+        }
+      }
+      if (more) this.past.push(at);
+      this.pastSteps = null;
+      this.pastChecked++;
     }
     if (this.phase === "sort") {
       if (!sortWithin(this.items, byItem, budget)) return false;
@@ -344,6 +371,8 @@ export class PathSearch {
   private d = 1;
   private i = 0;
   private done = false;
+  private steps: Iterator<PointStep> | null = null; // the point being expanded, where it stopped
+  private best: GraphSite | null = null; // the strongest site so far of the edge being read
 
   constructor(
     private readonly g: Graph,
@@ -365,13 +394,10 @@ export class PathSearch {
     return [...this.frontier.slice(this.i), ...this.next];
   }
 
-  private strongest(e: GraphEdge): GraphSite | undefined {
-    let best: GraphSite | undefined;
-    for (const s of e.sites) {
-      if (!this.tiers.has(s.tier)) continue;
-      if (!best || RANK[s.tier] < RANK[best.tier] || (RANK[s.tier] === RANK[best.tier] && (s.file < best.file || (s.file === best.file && s.line < best.line)))) best = s;
-    }
-    return best;
+  // True when `s` is a site of an asked tier stronger than `best`.
+  private stronger(s: GraphSite, best: GraphSite | null): boolean {
+    if (!this.tiers.has(s.tier)) return false;
+    return !best || RANK[s.tier] < RANK[best.tier] || (RANK[s.tier] === RANK[best.tier] && (s.file < best.file || (s.file === best.file && s.line < best.line)));
   }
 
   run(budget: Budget): boolean {
@@ -388,16 +414,26 @@ export class PathSearch {
         this.d++;
         continue;
       }
-      if (spent(budget)) return false;
       const at = this.frontier[this.i] as string;
-      // One point's edges at a time: a point is expanded whole or not at all,
-      // so a stop never leaves it half read.
-      for (const { edge: e, other } of neighbours(this.g, at, "out", this.kinds)) {
-        if (this.visited.has(other)) continue;
-        const site = this.strongest(e);
-        if (!site) continue;
+      if (this.steps === null) {
+        if (spent(budget)) return false;
+        this.steps = pointSites(this.g, at, "out", this.kinds);
+        this.best = null;
+      }
+      // One site at a time, the budget checked at each: a stop keeps the
+      // place, and the next run goes on with the same edge.
+      for (;;) {
+        if (spent(budget)) return false;
+        const r = this.steps.next();
+        if (r.done) break;
+        const { edge: e, other, site, last } = r.value;
+        if (site && !this.visited.has(other) && this.stronger(site, this.best)) this.best = site;
+        if (!last) continue;
+        const best = this.best;
+        this.best = null;
+        if (!best || this.visited.has(other)) continue;
         this.visited.add(other);
-        this.parent.set(other, { from: at, edge: e, site });
+        this.parent.set(other, { from: at, edge: e, site: best });
         if (other === this.b) {
           const hops: Item[] = [];
           let cur = this.b;
@@ -412,6 +448,7 @@ export class PathSearch {
         }
         this.next.push(other);
       }
+      this.steps = null;
       this.i++;
     }
     return true;
