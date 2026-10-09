@@ -28,7 +28,7 @@
 // match steps, composition steps and lookups. Each cap, once reached, adds
 // one unknown and stops that kind of work for the rest of the build.
 import type { Cause, Tier } from "../../model/records.js";
-import type { GraphNode } from "../../types.js";
+import type { DefFact, GraphNode, TypeRef } from "../../types.js";
 import type { Detection, FrameworkEdge, FrameworkEdgeKind, FrameworkEvidence, FrameworkUnknown, HandlerStatus, Lookup, PluginIndex, PluginOutput, Registration, RoleAssignment, Site } from "../plugin.js";
 import { appId, entityId } from "../plugin.js";
 import type { Expr, GoHttpFact } from "./facts.js";
@@ -64,12 +64,14 @@ type Via = FrameworkEvidence["via"];
 
 // A mux: an application. `dflt` marks a project's default mux.
 type Mux = { kind: "mux"; id: string; file: string; name: string; line: number; column: number; project: string; dflt: boolean; served: Site[]; first: Site | null };
-// A registration's receiver that is a parameter typed as a mux: the caller decides which.
-type ParamMux = { kind: "param"; file: string; name: string; type: string; line: number };
+// A registration's receiver typed as a mux the plugin cannot name: a
+// parameter (the caller decides which), a struct field or a call's declared
+// result (the code sets it elsewhere).
+type ParamMux = { kind: "param"; what: "parameter" | "field" | "result"; file: string; name: string; type: string; line: number };
 
 type Event = { file: string; site: Site; prop: "Handle" | "HandleFunc"; pattern: Expr; handler: Expr };
 
-type Why = { cause: Cause; note: string; name: string | null; at: { line: number; column: number } };
+type Why = { cause: Cause; note: string; name: string | null; at: { line: number; column: number }; affects: FrameworkEdgeKind[] };
 type Wrapper = { targets: string[]; tier: Tier; via: Via; note: string | null };
 type Bound = {
   status: HandlerStatus;
@@ -111,6 +113,8 @@ const METHOD_CONSTANTS: Record<string, string> = {
   MethodTrace: "TRACE",
 };
 const SERVE_ARG: Record<string, number> = { ListenAndServe: 1, ListenAndServeTLS: 3, Serve: 1, ServeTLS: 1 };
+// What a wrapper no rule binds hides: the handler and the middleware.
+const WRAPPED: FrameworkEdgeKind[] = ["handles", "applies_middleware"];
 
 const dirOf = (file: string): string => {
   const i = file.lastIndexOf("/");
@@ -337,7 +341,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     if (!d || steps > MAX_VALUE_STEPS) return null;
     if (d.kind === "param") {
       const t = d.fact.type;
-      return t.length === 2 && identity(d.file).http.has(t[0] as string) && t[1] === "ServeMux" ? { kind: "param", file: d.file, name: d.fact.name, type: `${d.fact.pointer ? "*" : ""}${t.join(".")}`, line: d.fact.line } : null;
+      return t.length === 2 && identity(d.file).http.has(t[0] as string) && t[1] === "ServeMux" ? { kind: "param", what: "parameter", file: d.file, name: d.fact.name, type: `${d.fact.pointer ? "*" : ""}${t.join(".")}`, line: d.fact.line } : null;
     }
     const v = d.fact;
     if (makesMux(d.file, v.value)) return muxAt(d.file, v);
@@ -352,57 +356,6 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
 
   // Every mux made anywhere is an application, registered on or not.
   for (const file of files) for (const v of of(file, "value")) if (makesMux(file, v.value)) muxAt(file, v);
-
-  // ---------- registrations and servers ----------
-  const events = new Map<string, Event[]>();
-  const paramEvents: { param: ParamMux; event: Event }[] = [];
-  for (const file of files) {
-    for (const f of of(file, "call")) {
-      if (f.prop !== "Handle" && f.prop !== "HandleFunc") continue;
-      const pattern = f.args[0];
-      const handler = f.args[1];
-      const site: Site = { file, line: f.line, column: f.column };
-      if (!f.omitted && (!pattern || !handler || f.args.length !== 2)) continue;
-      const target = isPkg(file, f.recv, "http", null) ? defaultMux(index.projectOf(file), f.omitted ? null : site) : muxOfRef(file, f.recv, f.line, false, f.omitted ? null : site, 0);
-      if (!target) continue;
-      if (f.omitted || !pattern || !handler) {
-        gap({ plugin: PLUGIN, site, scope: { file }, affects: ["handles"], cause: "fan-out-capped", name: null, note: `the call has more than ${MAX_ARGS} arguments; the ${f.omitted ?? 0} past that were not read, so it is not listed as a registration`, count: f.omitted ?? null, exact: f.omitted !== undefined });
-        continue;
-      }
-      const event: Event = { file, site, prop: f.prop, pattern, handler };
-      if (target.kind === "param") {
-        paramEvents.push({ param: target, event });
-        continue;
-      }
-      (events.get(target.id) ?? events.set(target.id, []).get(target.id))?.push(event);
-    }
-  }
-  for (const list of events.values()) list.sort((a, b) => (a.file === b.file ? a.site.line - b.site.line || a.site.column - b.site.column : a.file < b.file ? -1 : 1));
-
-  // A server serves a mux, the default one when given nil.
-  const serve = (file: string, e: Expr, site: Site) => {
-    let cur = e;
-    // `ListenAndServe(addr, logging(mux))` still serves mux.
-    for (let i = 0; i < MAX_MOUNT_DEPTH && cur.t === "call"; i++) cur = cur.args.find((a) => a.t === "ref" || a.t === "call" || isCut(a)) ?? cur.args[0] ?? cur;
-    if (isCut(cur)) {
-      gap({ plugin: PLUGIN, site, scope: { file }, affects: [], cause: "fan-out-capped", name: null, note: "the handler this server is given lies past the plugin's read limit, so which mux it serves is not known", count: null, exact: false });
-      return;
-    }
-    const m = cur.t === "nil" ? defaultMux(index.projectOf(file), null) : muxOfRef(file, cur, site.line, false, null, 0);
-    if (m && m.kind === "mux" && !m.served.some((s) => siteKey(s) === siteKey(site))) m.served.push(site);
-  };
-  for (const file of files) {
-    for (const f of of(file, "call")) {
-      const at = SERVE_ARG[f.prop];
-      if (at === undefined || !isPkg(file, f.recv, "http", null)) continue;
-      const arg = f.args[at];
-      if (arg) serve(file, arg, { file, line: f.line, column: f.column });
-    }
-    for (const f of of(file, "server")) {
-      if (!identity(file).http.has(f.type[0] as string)) continue;
-      serve(file, f.handler ?? { t: "nil", line: f.line, column: f.column }, { file, line: f.line, column: f.column });
-    }
-  }
 
   // ---------- handlers ----------
   // Each package's methods by `Type.method`, built once per package from the
@@ -430,17 +383,20 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   };
   // The methods named `name` declared on a type in its package.
   const methodsOn = (type: GraphNode, name: string): string[] => methodsOf(dirOf(type.file), pkgName(type.file)).get(`${type.name}.${name}`) ?? [];
-  // Each file's definitions by name and line, built once per file.
-  const defsByPlace = new Map<string, Map<string, number>>();
-  const embeds = (type: GraphNode): boolean => {
-    let m = defsByPlace.get(type.file);
+  // Each file's definitions (language facts) by name and line, built once per file.
+  const defsByPlace = new Map<string, Map<string, DefFact>>();
+  const defOf = (node: GraphNode): DefFact | null => {
+    let m = defsByPlace.get(node.file);
     if (!m) {
       m = new Map();
-      for (const d of index.languageFacts(type.file)?.defs ?? []) m.set(`${d.name}\0${d.line}`, d.bases.length);
-      defsByPlace.set(type.file, m);
+      for (const d of index.languageFacts(node.file)?.defs ?? []) m.set(`${d.name}\0${d.line}`, d);
+      defsByPlace.set(node.file, m);
     }
-    return (m.get(`${type.name}\0${type.startLine}`) ?? 0) > 0;
+    return m.get(`${node.name}\0${node.startLine}`) ?? null;
   };
+  const embeds = (type: GraphNode): boolean => (defOf(type)?.bases.length ?? 0) > 0;
+  // Whether a declared type is net/http's ServeMux, read in the file that declares it.
+  const isServeMux = (file: string, t: TypeRef | null | undefined): boolean => !!t && t.qualifier !== null && identity(file).http.has(t.qualifier) && t.name === "ServeMux";
   // Each file's functions by name and line, built once per file.
   const functionsByPlace = new Map<string, Map<string, GraphNode>>();
   const functionAt = (file: string, name: string, line: number): GraphNode | null => {
@@ -454,7 +410,9 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   };
 
   type Res = Omit<Bound, "wrappers" | "wrapCut" | "mount">;
-  const fail = (status: HandlerStatus, cause: Cause, note: string, name: string | null, at: Expr): Res => ({ status, targets: [], tier: "certain", via: null, note: null, why: { cause, note, name, at: { line: at.line, column: at.column } } });
+  // A handler no rule binds: its status and the unknown that says why, with
+  // the relations it hides (the handles edge, and middleware for a call).
+  const fail = (status: HandlerStatus, cause: Cause, note: string, name: string | null, at: Expr, affects: FrameworkEdgeKind[] = ["handles"]): Res => ({ status, targets: [], tier: "certain", via: null, note: null, why: { cause, note, name, at: { line: at.line, column: at.column }, affects } });
   const fromLookup = (found: Lookup, e: Expr, what: string): Res => {
     switch (found.kind) {
       case "symbol":
@@ -593,10 +551,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       }
       const w = wrapperOf(file, call, line);
       if (!w) {
+        // A call no rule binds as a wrapper may be middleware of its own: it
+        // hides the middleware edge as well as the handler.
         return done(
           wrappers.length > 0
-            ? fail("unresolved", "unsupported-rule", `the handler is the value ${show(e)} returns; whether the wrappers call ${show(call)} is not proved, so the handler is not bound`, show(call), e)
-            : fail("unresolved", "unsupported-rule", `the handler is the value ${show(call)} returns; no rule reads what it returns`, show(call), call),
+            ? fail("unresolved", "unsupported-rule", `the handler is the value ${show(e)} returns; whether the wrappers call ${show(call)} is not proved, so the handler is not bound`, show(call), e, WRAPPED)
+            : fail("unresolved", "unsupported-rule", `the handler is the value ${show(call)} returns; no rule reads what it returns, so neither the handler nor any middleware it applies is listed`, show(call), call, call.args.length > 0 ? WRAPPED : undefined),
         );
       }
       if (wrappers.length < MAX_MIDDLEWARE_CHAIN) wrappers.push({ targets: w.res.targets, tier: w.res.tier, via: w.res.via, note: w.res.note });
@@ -607,7 +567,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     }
     if (wrappers.length > 0) {
       const outer = show(e.t === "call" ? e.fn : e);
-      return done(fail("unresolved", "unsupported-rule", `the handler is the value ${show(e)} returns; whether ${outer} calls ${show(cur)} is not proved, so the handler is not bound`, show(cur), e));
+      return done(fail("unresolved", "unsupported-rule", `the handler is the value ${show(e)} returns; whether ${outer} calls ${show(cur)} is not proved, so the handler is not bound`, show(cur), e, WRAPPED));
     }
     switch (cur.t) {
       case "fn":
@@ -618,7 +578,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
         if (!fnValue) {
           const m = muxOfRef(file, cur, line, false, null, 0);
           if (m?.kind === "mux") return done({ status: "bound", targets: [], tier: "certain", via: null, note: null, why: null }, { mux: m, strip });
-          if (m?.kind === "param") return done(fail("dynamic", "dynamic", `the handler is the parameter ${m.name} (${m.type}), a mux the caller passes`, m.name, cur));
+          if (m?.kind === "param") return done(fail("dynamic", "dynamic", `the handler is the ${m.what} ${m.name} (${m.type}), a mux the plugin cannot name`, m.name, cur, ["handles", "mounts"]));
         }
         const r = bindRef(file, cur, line, fnValue, steps);
         if ("follow" in r) {
@@ -644,6 +604,121 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     }
     return b;
   };
+
+  // ---------- registrations and servers ----------
+  // What a call returns, by the callee's declared result: a ServeMux, another
+  // type, or not known.
+  const resultOf = (file: string, call: Extract<Expr, { t: "call" }>): "mux" | "other" | null => {
+    const fn = call.fn;
+    if (fn.t !== "ref" || fn.local) return null;
+    if (isPkg(file, fn, "http", "NewServeMux")) return "mux";
+    if (fn.path.length === 2 && identity(file).http.has(fn.path[0] as string)) return "other";
+    const found = lookup(file, fn.path);
+    if (found.kind === "external") return "other";
+    const node = found.kind === "symbol" ? index.node(found.ids[0] as string) : null;
+    const def = node ? defOf(node) : null;
+    if (!node || !def) return null;
+    const r = def.results?.[0];
+    return r && isServeMux(node.file, r) ? "mux" : "other";
+  };
+  const resultMux = (file: string, call: Expr, line: number): ParamMux => ({ kind: "param", what: "result", file, name: show(call), type: "*http.ServeMux", line });
+  // What a registration call's receiver is: a mux; a mux the plugin cannot
+  // name (a parameter, a field or a call's result typed as one); "other" for
+  // a value known not to be a net/http mux; null when the plugin cannot tell.
+  const receiverOf = (file: string, recv: Expr, line: number, create: Site | null): Mux | ParamMux | "other" | null => {
+    if (isPkg(file, recv, "http", null)) return defaultMux(index.projectOf(file), create) ?? "other";
+    if (recv.t === "call") {
+      const r = resultOf(file, recv);
+      return r === "mux" ? resultMux(file, recv, line) : r;
+    }
+    if (recv.t !== "ref") return null;
+    const direct = muxOfRef(file, recv, line, false, create, 0);
+    if (direct) return direct;
+    if (isPkg(file, recv, "http", "DefaultServeMux")) return "other"; // past the application cap
+    const found = declPath(file, recv.path, recv.decl, line, false);
+    if (!found) {
+      // `router.HandleFunc` of another package's function, or a dependency's value.
+      if (recv.decl !== null) return null;
+      const m = lookup(file, recv.path);
+      return m.kind === "module" || m.kind === "external" ? "other" : null;
+    }
+    const d = found.decl;
+    if (found.rest.length === 0) {
+      if (d.kind === "param") return "other"; // typed, and not a ServeMux
+      const v = d.fact.value;
+      if (v.t === "call") {
+        const r = resultOf(d.file, v);
+        return r === "mux" ? resultMux(d.file, v, d.fact.line) : r;
+      }
+      return v.t === "ref" || v.t === "other" ? null : "other";
+    }
+    if (found.rest.length !== 1) return null;
+    // A field: its declared type, read from the struct that declares it.
+    const t = typeOfDecl(d);
+    if (!t) return null;
+    const tn = typeNode(t.file, t.path);
+    if (!("node" in tn)) return tn.found.kind === "external" ? "other" : null;
+    const field = defOf(tn.node)?.fields[found.rest[0] as string];
+    if (!field) return null;
+    return isServeMux(tn.node.file, field) ? { kind: "param", what: "field", file, name: show(recv), type: `${field.qualifier}.${field.name}`, line } : "other";
+  };
+
+  const events = new Map<string, Event[]>();
+  const paramEvents: { param: ParamMux; event: Event }[] = [];
+  for (const file of files) {
+    for (const f of of(file, "call")) {
+      if (f.prop !== "Handle" && f.prop !== "HandleFunc") continue;
+      const pattern = f.args[0];
+      const handler = f.args[1];
+      const site: Site = { file, line: f.line, column: f.column };
+      const whole = !f.omitted && pattern !== undefined && handler !== undefined && f.args.length === 2;
+      if (!whole && !f.omitted) continue; // Handle and HandleFunc take two arguments
+      const target = receiverOf(file, f.recv, f.line, whole ? site : null);
+      if (target === "other") continue;
+      if (target === null) {
+        if (identity(file).http.size > 0) {
+          gap({ plugin: PLUGIN, site, scope: { file }, affects: ["handles"], cause: "no-receiver-type", name: show(f.recv), note: `${f.prop} is called on ${show(f.recv)}, a value whose type the plugin does not read; if it is a net/http mux, this route is not listed`, count: null, exact: false });
+        }
+        continue;
+      }
+      if (!whole) {
+        gap({ plugin: PLUGIN, site, scope: { file }, affects: ["handles"], cause: "fan-out-capped", name: null, note: `the call has more than ${MAX_ARGS} arguments; the ${f.omitted ?? 0} past that were not read, so it is not listed as a registration`, count: f.omitted ?? null, exact: f.omitted !== undefined });
+        continue;
+      }
+      const event: Event = { file, site, prop: f.prop, pattern: pattern as Expr, handler: handler as Expr };
+      if (target.kind === "param") {
+        paramEvents.push({ param: target, event });
+        continue;
+      }
+      (events.get(target.id) ?? events.set(target.id, []).get(target.id))?.push(event);
+    }
+  }
+  for (const list of events.values()) list.sort((a, b) => (a.file === b.file ? a.site.line - b.site.line || a.site.column - b.site.column : a.file < b.file ? -1 : 1));
+
+  // A server serves a mux, the default one when given nil.
+  const serve = (file: string, e: Expr, site: Site) => {
+    let cur = e;
+    // `ListenAndServe(addr, logging(mux))` still serves mux.
+    for (let i = 0; i < MAX_MOUNT_DEPTH && cur.t === "call"; i++) cur = cur.args.find((a) => a.t === "ref" || a.t === "call" || isCut(a)) ?? cur.args[0] ?? cur;
+    if (isCut(cur)) {
+      gap({ plugin: PLUGIN, site, scope: { file }, affects: [], cause: "fan-out-capped", name: null, note: "the handler this server is given lies past the plugin's read limit, so which mux it serves is not known", count: null, exact: false });
+      return;
+    }
+    const m = cur.t === "nil" ? defaultMux(index.projectOf(file), null) : muxOfRef(file, cur, site.line, false, null, 0);
+    if (m && m.kind === "mux" && !m.served.some((s) => siteKey(s) === siteKey(site))) m.served.push(site);
+  };
+  for (const file of files) {
+    for (const f of of(file, "call")) {
+      const at = SERVE_ARG[f.prop];
+      if (at === undefined || !isPkg(file, f.recv, "http", null)) continue;
+      const arg = f.args[at];
+      if (arg) serve(file, arg, { file, line: f.line, column: f.column });
+    }
+    for (const f of of(file, "server")) {
+      if (!identity(file).http.has(f.type[0] as string)) continue;
+      serve(file, f.handler ?? { t: "nil", line: f.line, column: f.column }, { file, line: f.line, column: f.column });
+    }
+  }
 
   // ---------- patterns ----------
   const roleSeen = new Set<string>();
@@ -685,7 +760,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   // The handles edge, the handler's unknown and the middleware chain of one registration.
   const attach = (reg: Registration, e: Event, b: Bound) => {
     const app = reg.app;
-    if (b.why) gap({ plugin: PLUGIN, site: { file: e.file, line: b.why.at.line, column: b.why.at.column }, scope: { file: e.file }, affects: ["handles"], cause: b.why.cause, name: b.why.name, note: b.why.note, count: null, exact: false });
+    if (b.why) gap({ plugin: PLUGIN, site: { file: e.file, line: b.why.at.line, column: b.why.at.column }, scope: { file: e.file }, affects: b.why.affects, cause: b.why.cause, name: b.why.name, note: b.why.note, count: null, exact: false });
     for (const t of b.targets) {
       const ev: FrameworkEvidence = { kind: "route-call", tier: b.tier, site: e.site, via: b.via, premises: [], rule: rule("go-http-route"), note: b.note };
       addEdge({ from: reg.id, to: t, kind: "handles", plugin: PLUGIN, app, evidence: ev });
@@ -809,7 +884,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       handler: { written: show(e.handler), status: b.status, targets: b.targets },
     };
     registrations.push(reg);
-    gap({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles", "mounts"], cause: "dynamic", name: param.name, note: `the route is registered on the parameter ${param.name} (${param.type}); which mux it lands on, and under which prefix, is decided by the caller`, count: null, exact: false });
+    gap({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles", "mounts"], cause: "dynamic", name: param.name, note: `the route is registered on the ${param.what} ${param.name} (${param.type}); which mux it lands on, and under which prefix, is decided ${param.what === "parameter" ? "by the caller" : "where that mux is made"}`, count: null, exact: false });
     attach(reg, e, b);
   }
 

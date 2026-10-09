@@ -486,6 +486,50 @@ describe("the net/http plugin on small repositories", () => {
     expect(at("main.go", 12).map((u) => u.cause)).toEqual(["fan-out-capped"]);
     expect(at("main_test.go", 9).map((u) => u.cause)).toEqual(["fan-out-capped"]);
   });
+
+  it("never lets a route vanish silently because its receiver or its wrapper cannot be bound", async () => {
+    const main = [
+      "package main", // 1
+      "", // 2
+      'import "net/http"', // 3
+      "", // 4
+      "type chiLike struct{}", // 5
+      "func (c *chiLike) HandleFunc(p string, f func(http.ResponseWriter, *http.Request)) {}", // 6
+      "type server struct {", // 7
+      "\trouter *http.ServeMux", // 8
+      "\tother  *chiLike", // 9
+      "}", // 10
+      "func h(w http.ResponseWriter, r *http.Request) {}", // 11
+      "func newMux() *http.ServeMux { return http.NewServeMux() }", // 12
+      "func wrapWith() func(http.Handler) http.Handler { return nil }", // 13
+      "func (s *server) routes() {", // 14
+      '\ts.router.HandleFunc("/field", h)', // 15
+      '\ts.other.HandleFunc("/chi", h)', // 16
+      '\tnewMux().HandleFunc("/made", h)', // 17
+      "\tmw := wrapWith()", // 18
+      '\ts.router.Handle("/mw", mw(http.HandlerFunc(h)))', // 19
+      '\ts.router.Handle("/gone", missingWrap(http.HandlerFunc(h)))', // 20
+      '\tmuxes[0].HandleFunc("/indexed", h)', // 21
+      "}", // 22
+      "var muxes []*http.ServeMux", // 23
+    ].join("\n");
+    const g = await graphOf({ "main.go": main });
+    const at = (line: number) => goUnknowns(g).filter((u) => u.site?.file === "main.go" && u.site.line === line);
+    // A receiver typed *http.ServeMux, a field or a call's declared result: listed with no application.
+    for (const [pattern, line] of [["/field", 15], ["/made", 17]] as const) {
+      const r = goRegs(g).find((x) => x.pattern === pattern);
+      expect(r?.app).toBe(null);
+      expect(r?.handler.status).toBe("bound");
+      expect(at(line).map((u) => u.cause)).toEqual(["dynamic"]);
+    }
+    // A receiver of another type is no route, and needs no unknown.
+    expect(goRegs(g).some((r) => r.pattern === "/chi")).toBe(false);
+    expect(at(16)).toEqual([]);
+    // A receiver the plugin cannot read is said.
+    expect(at(21).map((u) => `${u.cause} ${u.affects.join(",")}`)).toEqual(["no-receiver-type handles"]);
+    // A wrapper that cannot be bound hides middleware as well as the handler.
+    for (const line of [19, 20]) expect(at(line).some((u) => u.affects.includes("handles") && u.affects.includes("applies_middleware"))).toBe(true);
+  });
 });
 
 const goUnknowns = (g: Graph) => (g.frameworks?.unknowns ?? []).filter((u) => u.plugin === "go-http");
