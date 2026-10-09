@@ -91,7 +91,8 @@ export function usageTotals(calls: readonly CallRecord[]): UsageTotals {
 //   delivered  true once a later request carrying that result was handed
 //              to the transport; a result served after the last request
 //              never reached the model and counts for nothing
-//   inScope    null while no scopes are given (scopes are step 4)
+//   inScope    null while the review has no folder scopes; else whether the
+//              path the call asked for is inside them (tools/index.ts)
 //   reason     why the call was refused or its result cut; null when the
 //              result was served whole
 //   callId     the model call whose reply asked for the tool

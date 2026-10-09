@@ -20,21 +20,27 @@
 //     attempt), or a request carries an attempt other than 1.
 //  8. A correction round is not sent as its own call with its purpose.
 //  9. The server floor reaches only the brief or only the check.
-// 10. The step-4 inputs or a laptop-only option are silently ignored.
+// 10. A malformed step-4 input or a laptop-only option is silently ignored.
 // 11. The server run prints, registers a signal handler, writes
 //     process.env, or leaves its snapshot or a work tree behind.
 // 12. The changed ranges a correction round carries are credited although
 //     the request carrying them was refused and never sent.
 // 13. The result's completion record is missing, of the agent's kind, or
 //     holds fields beyond the record's own, or the renderers leave it out.
-import { existsSync, readdirSync } from "node:fs";
+// 14. The step-4 inputs do not reach the review: with scopes, a file outside
+//     them reaches the brief, a scanner, a tool reply or the context; a tool
+//     call for a path outside them is served or leaves the review complete;
+//     with a previously reviewed ancestor, the obligation is not the delta,
+//     a finding on a line of the whole change outside the delta is refused,
+//     or `result.scope` does not say which; the review writes in the clone.
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reviewChange } from "../src/review-change.js";
 import type { AuthorizeRequest, ReviewChangeOptions, ReviewResult } from "../src/reviewer.js";
 import { fixtureModel, recorded } from "./fixture-model.js";
 import type { Finding, Fixture, FixtureOptions } from "./fixture-model.js";
-import { changeRepo } from "./repos.js";
+import { changeRepo, git } from "./repos.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -311,17 +317,99 @@ describe("a model reviewer through reviewChange", () => {
   });
 });
 
+describe("scoped and incremental reviews through reviewChange", () => {
+  const opts = (): ReviewChangeOptions => ({
+    profile: "server",
+    workDir: tempDir("oq-rc-work-"),
+    installRoot: tempDir("oq-rc-install-"),
+    tools: { web: false, shell: false },
+    scanners: "preinstalled",
+    budget: { deadlineMs: 120_000, authorize: async () => true },
+  });
+  const briefOf = (model: Fixture) => model.requests[0]!.messages.find((m) => m.role === "user")!.text;
+
+  it("14. scopes keep the change, the brief, the scanners, the tools and the context inside them, and nothing is written in the clone", async () => {
+    // The change touches src/math.ts and adds db/x.sql, which the SQL
+    // scanner flags; the scope is src.
+    const repo = changeRepo();
+    const model = fixtureModel({ probes: [{ name: "list_files", args: {} }, { name: "search_code", args: { pattern: "FUNCTION" } }] });
+    const options = opts();
+    const context = [
+      { kind: "note" as const, text: "The db folder is frozen.", source: "project notes", scopes: ["db"] },
+      { kind: "comment" as const, text: "Why does add subtract now?", source: "pull request comment 7", scopes: ["src"] },
+    ];
+    const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head, scopes: ["src"], context }, model, options);
+    expect(result.reason).toBeUndefined();
+    expect(result.status).toBe("complete");
+    expect(result.scope).toEqual({ kind: "full", reason: "no previous review: the whole change is reviewed" });
+    const brief = briefOf(model);
+    expect(brief).toContain("src/math.ts");
+    expect(brief).not.toContain("db/x.sql");
+    expect(brief).not.toContain("The db folder is frozen.");
+    expect(result.dispositions).toEqual([]);
+    expect(result.evidence?.candidates.total).toBe(0);
+    const [listed, searched] = result.trace;
+    expect(listed).toMatchObject({ tool: "list_files", ok: true, inside: true, inScope: true });
+    expect(searched).toMatchObject({ tool: "search_code", ok: true, inside: true, inScope: true });
+    const replies = model.requests[1]!.messages.filter((m) => m.role === "tool").map((m) => m.text);
+    expect(replies).toHaveLength(2);
+    expect(replies[0]).toContain("src/math.ts");
+    for (const reply of replies) expect(reply).not.toContain("db/");
+    expect(result.context.map((c) => [c.kind, c.omitted])).toEqual([
+      ["note", "its folders (db) hold no file of this change"],
+      ["comment", null],
+    ]);
+    expect(readdirSync(options.workDir)).toEqual([]);
+    const worktrees = join(repo.dir, ".git", "worktrees");
+    expect(existsSync(worktrees) ? readdirSync(worktrees) : []).toEqual([]);
+  });
+
+  it("14. a tool call for a path outside the scopes is refused, logged out of scope, and leaves the review incomplete", async () => {
+    const repo = changeRepo();
+    const model = fixtureModel({ probes: [{ name: "read_file", args: { path: "db/x.sql" } }] });
+    const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head, scopes: ["src"] }, model, opts());
+    expect(result.trace[0]).toMatchObject({ tool: "read_file", path: "db/x.sql", ok: false, inside: true, inScope: false, reason: "outside the review's scopes" });
+    expect(model.requests[1]!.messages.at(-1)).toMatchObject({ role: "tool", text: "refused: outside the review's scopes" });
+    expect(result.status).toBe("incomplete");
+    expect(result.reason).toContain("the reviewer asked for a path outside the review's scopes: db/x.sql");
+  });
+
+  it("14. a previously reviewed ancestor makes the delta the obligation, and a finding on the whole change still counts", async () => {
+    const repo = changeRepo();
+    // One more commit after the previous review, on src/use.ts only.
+    writeFileSync(join(repo.dir, "src/use.ts"), 'import { add } from "./math";\n\nexport function total(xs: number[]): number {\n  return xs.reduce((s, x) => add(s, x), 1);\n}\n');
+    git(repo.dir, "commit", "-qam", "Start the total at one");
+    const head = git(repo.dir, "rev-parse", "HEAD");
+    // The finding is on src/math.ts:2, changed before the previous review.
+    const model = fixtureModel({ findings: [SUBTRACTION] });
+    const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: head, previousReviewedSha: repo.head }, model, opts());
+    expect(result.scope?.kind).toBe("delta");
+    expect(result.scope?.reason).toMatch(/^delta: only what changed since the previously reviewed commit [0-9a-f]{12} is reviewed/);
+    const brief = briefOf(model);
+    expect(brief).toContain("add(s, x), 1)");
+    expect(brief).not.toContain("return a - b;");
+    expect(brief).not.toContain("db/x.sql");
+    expect(result.status).toBe("complete");
+    expect(result.findings).toEqual([expect.objectContaining({ file: "src/math.ts", lineStart: 2, title: "Subtraction in add" })]);
+  });
+});
+
 describe("what reviewChange refuses", () => {
   const base = { profile: "server" as const, tools: { web: false as const, shell: false as const }, scanners: "preinstalled" as const };
 
-  it("10. refuses the next step's inputs and the laptop's options with a clear error", async () => {
+  it("10. refuses malformed step-4 inputs and the laptop's options with a clear error", async () => {
     const repo = changeRepo();
     const workDir = tempDir("oq-rc-work-");
     const opts = { ...base, workDir, installRoot: workDir };
     const input = { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head };
     const model = fixtureModel();
-    for (const extra of [{ previousReviewedSha: repo.base }, { fullReviewRequested: true }, { scopes: ["src"] }]) {
-      await expect(reviewChange({ ...input, ...extra }, model, opts), JSON.stringify(extra)).rejects.toThrow(/not supported yet/);
+    for (const [extra, error] of [
+      [{ previousReviewedSha: 42 }, /previousReviewedSha must be a commit id/],
+      [{ fullReviewRequested: "yes" }, /fullReviewRequested must be true or false/],
+      [{ scopes: [] }, /scopes must name at least one folder/],
+      [{ scopes: ["../outside"] }, /is not a folder of the repository/],
+    ] as const) {
+      await expect(reviewChange({ ...input, ...(extra as object) }, model, opts), JSON.stringify(extra)).rejects.toThrow(error);
     }
     for (const bad of [{ profile: "laptop" }, { tools: { web: true, shell: false } }, { tools: { web: false, shell: true } }, { scanners: "download" }, { confidenceFloor: 1.5 }]) {
       await expect(reviewChange(input, model, { ...opts, ...bad } as unknown as ReviewChangeOptions), JSON.stringify(bad)).rejects.toThrow();

@@ -22,10 +22,11 @@ import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, read
 import { isAbsolute, join, posix } from "node:path";
 import { REDACTED, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
-import { API_VERSION, query } from "@openqodex/graph";
+import { API_VERSION, PACKET_ROOT, query } from "@openqodex/graph";
 import type { Candidate, Graph, Item } from "@openqodex/graph";
 import { classify } from "../agents/trace.js";
 import type { ToolDefinition } from "../reviewer.js";
+import type { Admit } from "../scopes.js";
 import { MAX_FILE_BYTES } from "../snapshot.js";
 import { compileGlob, compilePattern, matchesLine } from "./pattern.js";
 import type { Program } from "./pattern.js";
@@ -121,26 +122,46 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 // What the tools read: the snapshot folder, the change (for the diffs), the
 // run's secrets (raw, in memory only) and the code graph, when one was
 // built (`graphNote` says why there is none).
-export type ToolBox = { snapshotDir: string; change: Change; secrets: string[]; graph: Graph | null; graphNote: string | null };
+// `admit`: the review's folder scopes (scopes.ts), when it has any. A path
+// a tool is asked for must pass it, the graph's packet folder aside (the
+// brief names it, and its files hold only what the scopes admit); a
+// listing and a search return only paths that pass it.
+export type ToolBox = { snapshotDir: string; change: Change; secrets: string[]; graph: Graph | null; graphNote: string | null; admit?: Admit };
 
 // One call, run or refused. `text` is the reply that goes into the
 // transcript; the other fields are the brain's log of it (ToolLogEntry
-// without the delivery fields).
+// without the delivery fields). `inScope`: null when the review has no
+// folder scopes or the call was not placed inside the snapshot; else
+// whether the path it asked for is inside them (a listing or a search is,
+// its results filtered).
 export type ToolOutcome = {
   tool: string;
   text: string;
   ok: boolean;
   path: string | null;
   inside: boolean | null;
+  inScope: boolean | null;
   range: [number, number] | null;
   reason: string | null;
   detail: string;
 };
 
 type Args = Record<string, unknown>;
-type Placed = { rel: string } | { refused: Omit<ToolOutcome, "tool" | "detail"> };
+// A tool's own result: the log fields the dispatcher adds are left out.
+type Result = Omit<ToolOutcome, "tool" | "detail" | "inScope">;
+type Placed = { rel: string } | { refused: Result };
 
-const refusal = (reason: string, inside: boolean | null, path: string | null): Omit<ToolOutcome, "tool" | "detail"> => ({ text: `refused: ${reason}`, ok: false, path, inside, range: null, reason });
+const refusal = (reason: string, inside: boolean | null, path: string | null): Result => ({ text: `refused: ${reason}`, ok: false, path, inside, range: null, reason });
+
+// The reply to a path the review's folder scopes do not admit.
+const OUT_OF_SCOPE = "outside the review's scopes";
+
+// Whether a snapshot path is inside the review's folder scopes: always,
+// when it has none; the graph's packet folder is always readable.
+function inScope(box: ToolBox, rel: string): boolean {
+  if (box.admit === undefined) return true;
+  return rel === PACKET_ROOT || rel.startsWith(`${PACKET_ROOT}/`) || box.admit(rel);
+}
 const badArgs = (why: string) => refusal(`bad arguments: ${why}`, true, null);
 
 // The arguments as an object: the object itself, or a JSON text holding one.
@@ -185,6 +206,8 @@ function placePath(box: ToolBox, tool: string, raw: string, field: "path" | "glo
   if (rel === "" || rel === ".") return field === "glob" ? { rel: "**" } : { refused: refusal("name a file, not the root folder", true, ".") };
   const parts = rel.split("/");
   if (parts[0]!.toLowerCase() === ".git") return { refused: refusal("the .git entry is not part of the code under review", true, rel) };
+  // A glob is no path: what it matches is filtered (filesFor).
+  if (field === "path" && !inScope(box, rel)) return { refused: refusal(OUT_OF_SCOPE, true, rel) };
   if (!walk) return { rel };
   let at = box.snapshotDir;
   for (const [i, part] of parts.entries()) {
@@ -256,7 +279,7 @@ function fill(header: string, rows: string[]): { text: string; shown: number } {
   return { text: [header, ...rows.slice(0, shown)].join("\n"), shown };
 }
 
-function readFile(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"> {
+function readFile(box: ToolBox, args: Args): Result {
   const raw = str(args, "path", true);
   const start = int(args, "start");
   const count = int(args, "lines");
@@ -345,9 +368,15 @@ function walkFiles(root: string, glob: Program | null): Walk {
 }
 
 // The files a call considers: every one, or those a glob admits, or the
-// refusal of the glob. A glob is placed like a path (outside, absolute and
-// `.git` refused) and then matched by the bounded matcher.
-function filesFor(box: ToolBox, tool: string, glob: string | null): Walk | { refused: Omit<ToolOutcome, "tool" | "detail"> } {
+// refusal of the glob, less any outside the review's folder scopes. A glob
+// is placed like a path (outside, absolute and `.git` refused) and then
+// matched by the bounded matcher.
+function filesFor(box: ToolBox, tool: string, glob: string | null): Walk | { refused: Result } {
+  const walk = walkFor(box, tool, glob);
+  return "refused" in walk ? walk : { ...walk, files: walk.files.filter((f) => inScope(box, f)) };
+}
+
+function walkFor(box: ToolBox, tool: string, glob: string | null): Walk | { refused: Result } {
   if (glob === null) return walkFiles(box.snapshotDir, null);
   if (glob.length > MAX_GLOB_CHARS) return { refused: badArgs(`glob is over ${MAX_GLOB_CHARS} characters`) };
   // Refused before it is placed: placing expands brace lists.
@@ -359,7 +388,7 @@ function filesFor(box: ToolBox, tool: string, glob: string | null): Walk | { ref
   return walkFiles(box.snapshotDir, compiled.program);
 }
 
-async function searchCode(box: ToolBox, args: Args): Promise<Omit<ToolOutcome, "tool" | "detail">> {
+async function searchCode(box: ToolBox, args: Args): Promise<Result> {
   const pattern = str(args, "pattern", true);
   const glob = str(args, "glob", false);
   for (const v of [pattern, glob]) if (isBad(v)) return badArgs(v.bad);
@@ -412,7 +441,7 @@ async function searchCode(box: ToolBox, args: Args): Promise<Omit<ToolOutcome, "
   return { text, ok: true, path: ".", inside: true, range: null, reason: reason === "" ? null : `${reason}; narrow the pattern or the glob` };
 }
 
-function listFiles(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"> {
+function listFiles(box: ToolBox, args: Args): Result {
   const glob = str(args, "glob", false);
   if (isBad(glob)) return badArgs(glob.bad);
   const listed = filesFor(box, "list_files", glob);
@@ -424,7 +453,7 @@ function listFiles(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail
   return { text, ok: true, path: ".", inside: true, range: null, reason: reasons.length > 0 ? `${reasons.join("; ")}; narrow the glob` : null };
 }
 
-function readDiff(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"> {
+function readDiff(box: ToolBox, args: Args): Result {
   const raw = str(args, "path", true);
   if (isBad(raw)) return badArgs(raw.bad);
   // A deleted file's diff is part of the change, so the path need not exist.
@@ -449,7 +478,7 @@ function readDiff(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"
   };
 }
 
-function findCallers(box: ToolBox, args: Args): Omit<ToolOutcome, "tool" | "detail"> {
+function findCallers(box: ToolBox, args: Args): Result {
   const symbol = str(args, "symbol", true);
   const file = str(args, "file", true);
   for (const v of [symbol, file]) if (isBad(v)) return badArgs(v.bad);
@@ -494,7 +523,7 @@ export async function runTool(box: ToolBox, name: string, raw: unknown): Promise
   } catch {
     detail = "(arguments that could not be written as JSON)";
   }
-  let out: Omit<ToolOutcome, "tool" | "detail">;
+  let out: Result;
   if (!(TOOL_NAMES as readonly string[]).includes(tool)) {
     out = refusal(`${tool} is not a tool the brain defined; the tools are ${TOOL_NAMES.join(", ")}`, null, null);
   } else {
@@ -510,8 +539,11 @@ export async function runTool(box: ToolBox, name: string, raw: unknown): Promise
   // A path as the reviewer asked for it (an attempt outside) is redacted too.
   const path = out.path === null ? null : redactSecrets(out.path, box.secrets);
   const reason = out.reason === null ? null : redactSecrets(out.reason, box.secrets);
+  // Asked of the path before its redaction; a listing or a search ("."), or
+  // a call that named no path, asked for nothing outside the scopes.
+  const scoped = box.admit === undefined || out.inside !== true ? null : out.path === null || out.path === "." ? true : inScope(box, out.path);
   if (secretTexts(box.secrets).some((s) => text.includes(s))) {
-    return { tool, ...refusal("a secret the scanners found is in the reply", out.inside, path), detail };
+    return { tool, ...refusal("a secret the scanners found is in the reply", out.inside, path), inScope: scoped, detail };
   }
-  return { tool, ...out, text, path, reason, detail };
+  return { tool, ...out, text, path, reason, inScope: scoped, detail };
 }

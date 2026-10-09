@@ -262,7 +262,7 @@ export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole
           const out: ToolOutcome =
             i < MAX_TOOL_CALLS_PER_REPLY
               ? await runTool(args.box, request.name, request.args)
-              : { tool: request.name.slice(0, 100), text: `refused: at most ${MAX_TOOL_CALLS_PER_REPLY} tool calls are run per reply; ask again`, ok: false, path: null, inside: true, range: null, reason: `over ${MAX_TOOL_CALLS_PER_REPLY} tool calls in one reply`, detail: "" };
+              : { tool: request.name.slice(0, 100), text: `refused: at most ${MAX_TOOL_CALLS_PER_REPLY} tool calls are run per reply; ask again`, ok: false, path: null, inside: true, inScope: null, range: null, reason: `over ${MAX_TOOL_CALLS_PER_REPLY} tool calls in one reply`, detail: "" };
           // The review ended while the tool ran: nothing more is logged or sent.
           if (closed) return turn("", "the review stopped before the model answered");
           const entry: ToolLogEntry = {
@@ -274,7 +274,7 @@ export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole
             detail: out.detail,
             served: true,
             delivered: false,
-            inScope: null,
+            inScope: out.inScope,
             reason: out.reason,
             callId: called.callId,
             toolCallId: request.id,

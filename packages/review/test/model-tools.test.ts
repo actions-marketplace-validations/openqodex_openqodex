@@ -40,6 +40,9 @@
 //     100 brace lists or of many `**` steps, a listing or a search over a
 //     snapshot of 20,000 files. Each must end under a fixed time, and a call
 //     that stops at a bound must say so in its reply and its log reason.
+// 16. With folder scopes, a tool reads, lists, searches or finds callers in
+//     a path outside them, logs such a call as in scope, or refuses the
+//     graph's packet folder the brief tells the reviewer to read.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,6 +53,7 @@ import { buildGraph } from "@openqodex/graph";
 import { TOOL_DEFINITIONS, TOOL_REPLY_BYTES, WALK_FILES, runTool } from "../src/tools/index.js";
 import { compileGlob, compilePattern, matchesLine } from "../src/tools/pattern.js";
 import type { ToolBox } from "../src/tools/index.js";
+import { admitted } from "../src/scopes.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -405,5 +409,39 @@ describe("15. the bounds on the work one call may ask for", () => {
       const program = (c as { program: Parameters<typeof matchesLine>[0] }).program;
       expect(paths.filter((p) => matchesLine(program, p)), glob).toEqual(want);
     }
+  });
+});
+
+describe("the review's folder scopes", () => {
+  it("16. refuse a path outside them, filter listings and searches, log inScope, and keep the packet readable", async () => {
+    const dir = tempDir("oq-tools-scoped-");
+    for (const [path, text] of [
+      ["src/a.ts", "export const inside = 1;\n"],
+      ["lib/b.ts", "export const outside = 2;\n"],
+      [".openqodex-review/graph/index.md", "# The graph files\n"],
+    ] as const) {
+      mkdirSync(join(dir, path, ".."), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    }
+    const scoped: ToolBox = { snapshotDir: dir, change, secrets: [], graph: null, graphNote: null, admit: admitted(["src"], []) };
+    for (const [tool, args] of [
+      ["read_file", { path: "lib/b.ts" }],
+      ["read_diff_for_file", { path: "lib/b.ts" }],
+      ["find_callers", { symbol: "outside", file: "lib/b.ts" }],
+    ] as const) {
+      const r = await runTool(scoped, tool, args);
+      expect(r, tool).toMatchObject({ ok: false, inside: true, inScope: false, path: "lib/b.ts", reason: "outside the review's scopes", text: "refused: outside the review's scopes" });
+    }
+    expect(await runTool(scoped, "read_file", { path: "src/a.ts" })).toMatchObject({ ok: true, inScope: true });
+    expect(await runTool(scoped, "read_file", { path: ".openqodex-review/graph/index.md" })).toMatchObject({ ok: true, inScope: true });
+    const listed = await runTool(scoped, "list_files", {});
+    expect(listed).toMatchObject({ ok: true, inScope: true });
+    expect(listed.text.split("\n").slice(1).sort()).toEqual([".openqodex-review/graph/index.md", "src/a.ts"]);
+    const searched = await runTool(scoped, "search_code", { pattern: "export const" });
+    expect(searched).toMatchObject({ ok: true, inScope: true });
+    expect(searched.text).toContain("src/a.ts:1:");
+    expect(searched.text).not.toContain("lib/b.ts");
+    // With no folder scopes the field stays null.
+    expect((await runTool({ ...scoped, admit: undefined }, "read_file", { path: "lib/b.ts" })).inScope).toBeNull();
   });
 });

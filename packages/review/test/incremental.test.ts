@@ -22,10 +22,8 @@
 //     diverged, or narrows the review.
 //  6. A previous commit the clone does not hold, or an id that is not a
 //     commit, narrows the review or throws.
-//  7. A merge base that fails a proof (the target branch's tip given, a
-//     missing commit, not a commit, no repository) does not end the review
-//     as incomplete with the proof's own reason.
-import { writeFileSync } from "node:fs";
+// The merge base proofs themselves are tested once, through reviewChange
+// (merge-base.test.ts).
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { decideIncremental, reviewChanges } from "../src/incremental.js";
@@ -140,27 +138,5 @@ describe("an explicit full review, with its reason", () => {
       expect(n.decision.scope.kind, id).toBe("full");
       expect(n.decision.scope.reason, id).toMatch(/^not a commit: the previously reviewed commit .* the whole change is reviewed$/);
     }
-  });
-});
-
-describe("the merge base proofs", () => {
-  async function refused(dir: string, mergeBaseSha: string, headSha: string): Promise<string> {
-    const d = await decideIncremental({ clonePath: dir, mergeBaseSha, headSha });
-    if (d.ok) throw new Error("the merge base passed");
-    return d.reason;
-  }
-
-  it("7. each failed proof ends the review as incomplete with its own reason", async () => {
-    const h = history();
-    git(h.dir, "checkout", "-q", "main");
-    writeFileSync(join(h.dir, "later.txt"), "later on main\n");
-    const tip = commit(h.dir, "later");
-    git(h.dir, "checkout", "-q", "feature");
-    expect(await refused(h.dir, tip, h.head)).toBe(`diverged: the merge base ${tip.slice(0, 12)} is not an ancestor of the head ${h.head.slice(0, 12)}; pass the merge base of the pull request, not the target branch's tip`);
-    expect(await refused(h.dir, "2".repeat(40), h.head)).toBe(`missing commit: the merge base ${"2".repeat(12)} is not in the clone; fetch it before the review (git fetch origin ${"2".repeat(40)})`);
-    const tree = git(h.dir, "rev-parse", `${h.base}^{tree}`);
-    expect(await refused(h.dir, tree, h.head)).toBe(`not a commit: the merge base ${tree.slice(0, 12)} is a tree`);
-    expect(await refused(h.dir, h.base, "head")).toBe('not a commit: the head "head" is not a full commit id');
-    expect(await refused(tempDir("oq-inc-norepo-"), h.base, h.head)).toMatch(/^git failed: /);
   });
 });

@@ -13,6 +13,7 @@
 // shown and what was used come from the brain's own records.
 import type { Category, Config, ContextItem, Coverage, Disagreement, ModelCompletionRecord, RunManifest, Severity } from "@openqodex/core";
 import type { ReviewerDriver, Turn } from "./agents/driver.js";
+import type { ReviewScope } from "./incremental.js";
 import type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
 
 export const reviewerContract = 1;
@@ -142,8 +143,12 @@ export type Budget = { authorize(call: AuthorizeRequest): Promise<boolean>; dead
 // `context`: lessons, comments, summaries, notes and earlier findings the
 // brief quotes as data (context.ts); an item over 32 KB, items over 128 KB
 // together, or a malformed item make the call throw, never cut.
-// `previousReviewedSha`, `fullReviewRequested` and `scopes` are the next
-// step's; given now, the call throws and says so.
+// `previousReviewedSha`: the head of the last review; when the clone proves
+// it an ancestor of the head, only what changed since is the review's
+// obligation, and findings are still anchored on the whole change
+// (incremental.ts). `fullReviewRequested`: review the whole change anyway.
+// `scopes`: the folders the review stays inside, less review.paths.exclude
+// (scopes.ts); left out, the whole repository.
 export type ReviewChangeInput = {
   clonePath: string;
   mergeBaseSha: string;
@@ -219,12 +224,17 @@ export type Disposition = {
 // `scannerVersions`: each scanner that ran and its version. `completion`:
 // the model completion record built from `evidence` (model-record.ts), null
 // when `evidence` is. `notes`: the second reviewer's failures that leave the
-// review complete. `disagreements`: the candidates one reviewer raised and
+// review complete, and what a scoped review could not hold (a file renamed
+// in from outside the scopes, a link or a submodule the snapshot left out,
+// a base version outside the scopes that was asked for). `disagreements`: the candidates one reviewer raised and
 // the other dropped. `context`: every context item given, in order, as the
-// run manifest lists it, with why the brief left one out.
+// run manifest lists it, with why the brief left one out. `scope`: whether
+// the obligation was the delta since the previous review or the whole
+// change, and why; null when a proof failed before the decision.
 export type ReviewResult = {
   status: ReviewStatus;
   reason?: string;
+  scope: ReviewScope | null;
   findings: ResultFinding[];
   dispositions: Disposition[];
   summary: string | null;

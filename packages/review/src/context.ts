@@ -15,6 +15,8 @@
 import { createHash } from "node:crypto";
 import { OpenQodexError, canonicalJson, redactSecrets } from "@openqodex/core";
 import type { Change, ContextItem, ContextKind, RunManifest } from "@openqodex/core";
+import { admitted } from "./scopes.js";
+import type { Admit } from "./scopes.js";
 
 export type { ContextItem, ContextKind } from "@openqodex/core";
 
@@ -80,20 +82,20 @@ export function checkContext(items: unknown): ContextItem[] {
   return out;
 }
 
-// Whether `path` is in folder `f` or below it.
-const inFolder = (path: string, f: string) => path === f || path.startsWith(`${f}/`);
-
 // Checked items against the change: an item with folders is shown when one
 // of them holds a file of the change (its path, or a renamed file's old
-// path); else it is left out and reported. `secrets`: the scan's matched
-// secrets, redacted from every source and folder named in the omissions and
-// the manifest.
-export function useContext(items: readonly ContextItem[], change: Change, secrets: string[]): ContextUse {
-  const paths = change.files.flatMap((f) => (f.oldPath ? [f.path, f.oldPath] : [f.path]));
+// path); else it is left out and reported. Both questions go through the
+// one folder rule of scopes.ts: `admit`, the review's own admission (a
+// scoped server review), decides which of those paths count at all, and an
+// item's folders are an admission of their own. `secrets`: the scan's
+// matched secrets, redacted from every source and folder named in the
+// omissions and the manifest.
+export function useContext(items: readonly ContextItem[], change: Change, secrets: string[], admit?: Admit): ContextUse {
+  const paths = change.files.flatMap((f) => (f.oldPath ? [f.path, f.oldPath] : [f.path])).filter((p) => admit === undefined || admit(p));
   const clean = (text: string) => redactSecrets(text, secrets);
   const use: ContextUse = { shown: [], omitted: [], manifest: [] };
   items.forEach((item, index) => {
-    const touched = item.scopes === undefined || item.scopes.some((f) => paths.some((p) => inFolder(p, f)));
+    const touched = item.scopes === undefined || paths.some(admitted(item.scopes, []));
     const reason = touched ? null : clean(`its folders (${(item.scopes ?? []).join(", ")}) hold no file of this change`);
     if (reason === null) use.shown.push(item);
     else use.omitted.push({ index, kind: item.kind, source: clean(item.source), reason });

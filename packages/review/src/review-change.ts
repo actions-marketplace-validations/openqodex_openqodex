@@ -84,12 +84,17 @@ import { agentReviewer } from "./reviewer.js";
 import type { Budget, Disposition, ModelReviewer, ResultFinding, ReviewChangeInput, ReviewChangeOptions, Reviewer, ReviewResult } from "./reviewer.js";
 import { disagreementsOf, mergeFindings, runSecondReviewer, withSecondReviewer } from "./second.js";
 import type { SecondRun } from "./second.js";
-import { serverSnapshots } from "./server-snapshot.js";
 import { buildGraphRun, buildHotSpots, nothingToReviewLine, ruleCoverage, scanChange, wholeRepoLenses } from "./pipeline.js";
 import type { GraphHost, PipelineResult, ScanHost } from "./pipeline.js";
+import { decideIncremental } from "./incremental.js";
+import type { ReviewScope } from "./incremental.js";
+import { MissingObjects } from "./materialize.js";
 import { redactStored } from "./redact.js";
+import { serverScope } from "./scoped.js";
 import type { ScopedParts } from "./scoped.js";
+import { admitted } from "./scopes.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
+import type { ToolBox } from "./tools/index.js";
 import { usageTotals } from "./usage.js";
 import type { CallRecord, ModelReviewEvidence, ToolLogEntry, UsageTotals } from "./usage.js";
 
@@ -448,7 +453,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     if (redaction.redacted > 0) say(`Redacted secrets in ${redaction.redacted} ${redaction.redacted === 1 ? "file" : "files"} of the snapshot`);
     if (redaction.removed.length > 0) warn(redact(`Left out of the review, too large to check for secrets: ${redaction.removed.join(", ")}`));
     const instructions = deps.instructions(p.secrets);
-    const context = contextItems ? useContext(contextItems, change, p.secrets) : null;
+    const context = contextItems ? useContext(contextItems, change, p.secrets, deps.scoped?.admit) : null;
     let lenses: SelectedLens[];
     let impact: ImpactSummary;
     let brief: { text: string; diffFiles: Set<string> };
@@ -507,6 +512,16 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // A secret in a path would reach the reviewer through any listing: the
     // reviewer is not started and the review is incomplete.
     const refused = redaction.named > 0 ? "a file name in the change holds a secret the scanners found, so the reviewer was not started; rename the file" : null;
+    // What a model reviewer's tools read: the snapshot, the change, the
+    // graph, and the folder scopes when the review has any.
+    const box: ToolBox = {
+      snapshotDir: prep.snapshot.tree,
+      change,
+      secrets: p.secrets,
+      graph,
+      graphNote: graph === null ? `the graph is ${impact.status}${impact.reasons.length > 0 ? `: ${impact.reasons.join("; ")}` : ""}` : null,
+      ...(deps.scoped?.folderScopes ? { admit: deps.scoped.admit } : {}),
+    };
     let modelTalk: ModelSession | null = null;
     // An agent's usage is recorded round by round as its turns come back;
     // the turns reach the conversation unchanged.
@@ -517,7 +532,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         reviewer: model.reviewer,
         role: "primary",
         budget: model.budget,
-        box: { snapshotDir: prep.snapshot.tree, change, secrets: p.secrets, graph, graphNote: graph === null ? `the graph is ${impact.status}${impact.reasons.length > 0 ? `: ${impact.reasons.join("; ")}` : ""}` : null },
+        box,
         now: deps.now,
       });
       session = modelTalk;
@@ -555,7 +570,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       return runSecondReviewer({
         reviewer,
         budget: m.budget,
-        box: { snapshotDir: prep.snapshot.tree, change, secrets: p.secrets, graph, graphNote: graph === null ? `the graph is ${impact.status}${impact.reasons.length > 0 ? `: ${impact.reasons.join("; ")}` : ""}` : null },
+        box,
         earlier: first.attempts,
         now: deps.now,
         started: (s) => {
@@ -653,15 +668,14 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
 
 // How long a review may run when the host gives no budget.
 const DEFAULT_DEADLINE_MS = 600_000;
-const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const short = (sha: string) => sha.slice(0, 12);
 
-// Inputs and options this version does not take, refused with what to do
-// instead: nothing given is ever ignored.
+// Inputs and options this version does not take, or cannot use as given,
+// refused with what to do instead: nothing given is ever ignored.
 function refuseUnsupported(input: ReviewChangeInput, reviewer: Reviewer, options: ReviewChangeOptions): void {
-  for (const key of ["previousReviewedSha", "fullReviewRequested", "scopes"] as const) {
-    if (input[key] !== undefined) throw new OpenQodexError(`reviewChange: ${key} is not supported yet; it comes with incremental and scoped reviews`);
-  }
+  if (input.previousReviewedSha !== undefined && typeof input.previousReviewedSha !== "string") throw new OpenQodexError("reviewChange: previousReviewedSha must be a commit id");
+  if (input.fullReviewRequested !== undefined && typeof input.fullReviewRequested !== "boolean") throw new OpenQodexError("reviewChange: fullReviewRequested must be true or false");
+  // The scopes are checked the way the review will use them.
+  if (input.scopes !== undefined) admitted(input.scopes, []);
   if ((options.profile as string) !== "server") throw new OpenQodexError('reviewChange runs the "server" profile only; the laptop review is the openqodex review command');
   if (options.tools?.web !== false || options.tools?.shell !== false) throw new OpenQodexError("the server profile gives the reviewer no web and no shell tool: pass tools: { web: false, shell: false }");
   if ((options.scanners as string) !== "preinstalled") throw new OpenQodexError('the server profile installs no scanner: pass scanners: "preinstalled"');
@@ -690,55 +704,15 @@ function refuseSecond(second: Reviewer | undefined): void {
   }
 }
 
-// The proofs made in the host's clone before anything is scanned: both ids
-// are full commit ids of commits the clone holds, and the merge base is an
-// ancestor of the head. The reason a proof failed, or null. Each reason
-// starts with the proof's name: "not a commit", "missing commit", "history
-// unknown" (a shallow clone cannot show ancestry), "diverged" or "git
-// failed".
-export async function proveChange(clonePath: string, mergeBaseSha: string, headSha: string): Promise<string | null> {
-  const named: [string, string][] = [
-    ["the merge base", mergeBaseSha],
-    ["the head", headSha],
-  ];
-  for (const [name, sha] of named) {
-    if (typeof sha !== "string" || !FULL_ID.test(sha)) return `not a commit: ${name} ${JSON.stringify(String(sha).slice(0, 80))} is not a full commit id`;
-  }
-  const failed = (r: { code: number; stderr: string }) => `git failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`;
-  try {
-    const repo = await safeGit(clonePath, ["rev-parse", "--git-dir"]);
-    if (repo.code !== 0) return failed(repo);
-    for (const [name, sha] of named) {
-      const t = await safeGit(clonePath, ["cat-file", "-t", sha]);
-      if (t.code !== 0) {
-        if (/not a valid object name|could not get object info/i.test(t.stderr)) return `missing commit: ${name} ${short(sha)} is not in the clone; fetch it before the review (git fetch origin ${sha})`;
-        return failed(t);
-      }
-      const type = t.stdout.toString("utf8").trim();
-      if (type !== "commit") return `not a commit: ${name} ${short(sha)} is a ${type}`;
-    }
-    const ancestor = await safeGit(clonePath, ["merge-base", "--is-ancestor", mergeBaseSha, headSha]);
-    if (ancestor.code === 0) return null;
-    if (ancestor.code !== 1) return failed(ancestor);
-    const shallow = await safeGit(clonePath, ["rev-parse", "--is-shallow-repository"]);
-    if (shallow.code !== 0) return failed(shallow);
-    if (shallow.stdout.toString("utf8").trim() === "true") {
-      return `history unknown: the clone's history is cut (a shallow clone), so it cannot show that the merge base ${short(mergeBaseSha)} is an ancestor of the head ${short(headSha)}; fetch the history between them (git fetch --deepen, or --unshallow) before the review`;
-    }
-    return `diverged: the merge base ${short(mergeBaseSha)} is not an ancestor of the head ${short(headSha)}; pass the merge base of the pull request, not the target branch's tip`;
-  } catch (error) {
-    if (error instanceof OpenQodexError) return `git failed: ${error.message.split("\n")[0]}`;
-    throw error;
-  }
-}
-
 // A review that stopped before a reviewer could be given the change: no
-// finding, no usage, and outputs that say why.
-function stoppedResult(status: "complete" | "incomplete", reason: string): ReviewResult {
+// finding, no usage, and outputs that say why. `scope`: the decision, when
+// the proofs got that far.
+function stoppedResult(status: "complete" | "incomplete", reason: string, scope: ReviewScope | null = null, notes: string[] = []): ReviewResult {
   const lead = status === "complete" ? "Review complete" : "Review incomplete";
   return {
     status,
     reason,
+    scope,
     findings: [],
     dispositions: [],
     summary: null,
@@ -748,7 +722,7 @@ function stoppedResult(status: "complete" | "incomplete", reason: string): Revie
     usage: { calls: [], totals: usageTotals([]) },
     evidence: null,
     completion: null,
-    notes: [],
+    notes,
     disagreements: [],
     context: [],
     render: {
@@ -797,8 +771,12 @@ function dispositionsOf(report: Report, submission: unknown, scan: ScanResult, b
 
 // Reviews the change from `input.mergeBaseSha` to `input.headSha` in the
 // host's clone with a model reviewer, in the server profile: the merge base
-// proved first; the snapshot, a work tree of the head under
-// `options.workDir`; scanners only as preinstalled under
+// proved first, and the previous review's commit, which decides between a
+// delta and a full review (incremental.ts); the change, the snapshot, the
+// scanners, the graph, the tools and the context kept inside
+// `input.scopes` (scoped.ts); the snapshot, the head's admitted files
+// written under `options.workDir`, nothing written in the clone; scanners
+// only as preinstalled under
 // `options.installRoot`; no instructions file read from the clone (the host
 // gives the config); the brain's five tools and no others; the budget asked
 // before every model call. Nothing is printed, no signal handler is added
@@ -811,9 +789,16 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   refuseUnsupported(input, reviewer, options);
   const model = reviewer as ModelReviewer;
   const say = options.onProgress ?? (() => {});
-  const proof = await proveChange(input.clonePath, input.mergeBaseSha, input.headSha);
-  if (proof !== null) return stoppedResult("incomplete", proof);
+  const decision = await decideIncremental({
+    clonePath: input.clonePath,
+    mergeBaseSha: input.mergeBaseSha,
+    headSha: input.headSha,
+    ...(input.previousReviewedSha !== undefined ? { previousReviewedSha: input.previousReviewedSha } : {}),
+    ...(input.fullReviewRequested !== undefined ? { fullReviewRequested: input.fullReviewRequested } : {}),
+  });
+  if (!decision.ok) return stoppedResult("incomplete", decision.reason);
   const config = structuredClone(input.config ?? DEFAULT_CONFIG);
+  const scope = serverScope({ clonePath: input.clonePath, workDir: options.workDir, ...(input.scopes !== undefined ? { scopes: input.scopes } : {}), exclude: config.exclude, decision });
   let r: ReviewCoreResult;
   try {
     r = await runReviewCore(
@@ -832,7 +817,8 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
       },
       {
         drivers: [],
-        snapshots: serverSnapshots(options.workDir),
+        snapshots: scope.snapshots,
+        scoped: scope.scoped,
         resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, home: options.installRoot }),
         resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
         instructions: () => ({ text: "", hash: null }),
@@ -846,11 +832,15 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   } catch (error) {
     // What the clone could not give (a partial clone's missing tree or
     // file), or a step that could not run, ends the review with its reason.
-    if (error instanceof OpenQodexError) return stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message);
+    if (error instanceof MissingObjects) return stoppedResult("incomplete", error.message, decision.scope, scope.notes());
+    if (error instanceof OpenQodexError) return stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes());
     throw error;
   }
-  if (r.ended === "nothing") return stoppedResult("complete", "nothing to review: the head adds no change since the merge base");
-  if (r.ended !== "model-reviewed") return stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given");
+  if (r.ended === "nothing") {
+    const since = decision.scope.kind === "delta" ? "since the previously reviewed commit" : "since the merge base";
+    return stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, scope.notes());
+  }
+  if (r.ended !== "model-reviewed") return stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes());
   // Only an answer that passed every check has dispositions; the empty
   // report of one that did not has no summary.
   const answered = r.report.summary !== null;
@@ -877,6 +867,7 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   return {
     status: complete ? (report.verdict === "blocked" ? "complete_blocking" : "complete") : "incomplete",
     ...(complete ? {} : { reason: completion.missing.join("; ") }),
+    scope: decision.scope,
     findings: resultFindings(report, foundBy),
     dispositions: redactStored(dispositions, r.secrets),
     summary: report.summary,
@@ -886,7 +877,7 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
     usage: r.usage,
     evidence: r.evidence,
     completion,
-    notes: completion.notes ?? [],
+    notes: [...(completion.notes ?? []), ...scope.notes()],
     disagreements: completion.disagreements ?? [],
     context: r.context ?? [],
     render: reviewRender(report),

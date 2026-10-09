@@ -8,7 +8,7 @@ export { buildGraphRun, buildHotSpots, nothingToReviewLine, ruleCoverage, scanCh
 export type { GraphHost, GraphRun, PipelineResult, ScanHost } from "./pipeline.js";
 export { redactStored, redactWith } from "./redact.js";
 export { lfsPaths } from "./snapshot.js";
-export { proveChange, reviewChange, reviewerOrder, runReviewCore } from "./review-change.js";
+export { reviewChange, reviewerOrder, runReviewCore } from "./review-change.js";
 export type { ResolvedTarget, ReviewCoreResult, ReviewDeps, ReviewEvent, ReviewInputs, Snapshot, SnapshotMaker } from "./review-change.js";
 export { DEPTH_ENV, REVIEWER_NAMES, findOnPath, hostAgent, killGroup, spawnGroup } from "./agents/driver.js";
 export type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./agents/driver.js";
@@ -27,7 +27,6 @@ export { MODEL_SYSTEM, callModel, modelSession, modelToolEntry } from "./model-l
 export type { ModelCaller, ModelSession } from "./model-loop.js";
 export { TOOL_DEFINITIONS, TOOL_NAMES, TOOL_REPLY_BYTES, runTool } from "./tools/index.js";
 export type { ToolBox, ToolOutcome } from "./tools/index.js";
-export { serverSnapshots } from "./server-snapshot.js";
 export { admitted } from "./scopes.js";
 export type { Admit } from "./scopes.js";
 export { MissingObjects, materialize, materializedSnapshots, scopedBaseReader, snapshotInventory } from "./materialize.js";

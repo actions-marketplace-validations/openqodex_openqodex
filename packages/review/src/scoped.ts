@@ -25,6 +25,11 @@ export type ScopedParts = {
   readBase: (path: string, maxBytes: number) => Promise<Buffer | null>;
   // The graph's inventory of the snapshot whose tree is `tree`.
   inventory(tree: string): ListedFile[];
+  // The review's one admission: the context items ask it too. The
+  // reviewer's tools ask it, and log `inScope`, only when `folderScopes`:
+  // with no folders given, an excluded file is simply not in the snapshot.
+  admit: Admit;
+  folderScopes: boolean;
 };
 
 export type ServerScope = {
@@ -69,6 +74,8 @@ export function serverScope(args: { clonePath: string; workDir: string; scopes?:
         const snap = maker.made.get(tree);
         return snap ? snapshotInventory(snap) : [];
       },
+      admit,
+      folderScopes: args.scopes !== undefined,
     },
     notes() {
       return [
