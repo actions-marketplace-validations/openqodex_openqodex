@@ -175,6 +175,18 @@ describe("trivy config", () => {
     expect(hosts).toEqual([]);
   }, 300_000);
 
+  // trivy resolves a `../` module path against the staging copy, so enough
+  // of them reach any folder on the machine: such a folder is held back
+  // like one with a module to download, and trivy reads nothing outside.
+  it("is not handed a folder whose local module path leaves the staging copy, and reads nothing there", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "oq-trivy-outside-"));
+    writeFileSync(join(outside, "main.tf"), SG);
+    const escape = `${"../".repeat(64)}${outside.slice(1)}`;
+    const { status } = await scanLines("trivy", { "infra/main.tf": `module "outside" {\n  source = "${escape}"\n}\n\n${UNUSED}` });
+    expect([status.status, status.rawCount]).toEqual(["disabled", 0]);
+    expect(status.reason).toContain("not run on infra/: a module from outside the repository");
+  }, 300_000);
+
   // A folder held back is a note, not a failure: the scanner ran on the rest.
   it("still ran, with the held folder named, when it held one folder back and found nothing in another", async () => {
     const { status } = await scanLines("trivy", { "infra/main.tf": `${REMOTE}${SG}`, "clean/main.tf": UNUSED });

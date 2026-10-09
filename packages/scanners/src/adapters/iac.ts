@@ -127,18 +127,24 @@ function jsonModuleSources(text: string): (string | null)[] {
 export type ModuleVerdict = { trivy: boolean; checkov: boolean };
 
 // Whether trivy and checkov may read a folder whose modules have these
-// sources. trivy: only `./` and `../` paths, which it resolves inside the
-// staging copy. checkov: any source except one that is not known (an
-// expression), an absolute path, or a `./` or `../` path that leaves the
-// repository; it downloads nothing (no --download-external-modules).
+// sources. trivy: only `./` and `../` paths that stay inside the repository,
+// which it resolves against the staging copy: enough `../` would reach any
+// folder on the machine. checkov: any source except one that is not known
+// (an expression), an absolute path, or a `./` or `../` path that leaves the
+// repository; it downloads nothing (no --download-external-modules). The
+// staging copy holds the same folders at the same paths, and only folders
+// whose own sources passed here, so a module a staged module calls in turn
+// is either one of them or not there at all.
 export function moduleVerdict(folder: string, sources: (string | null)[]): ModuleVerdict {
   const local = (s: string): boolean => s.startsWith("./") || s.startsWith("../");
-  const trivy = sources.every((s) => s !== null && local(s));
-  const checkov = sources.every((s) => {
-    if (s === null || s.startsWith("/") || s.startsWith("~")) return false;
-    if (!local(s)) return true;
+  const inside = (s: string): boolean => {
     const resolved = path.posix.normalize(path.posix.join(folder === "" ? "." : folder, s));
     return resolved !== ".." && !resolved.startsWith("../");
+  };
+  const trivy = sources.every((s) => s !== null && local(s) && inside(s));
+  const checkov = sources.every((s) => {
+    if (s === null || s.startsWith("/") || s.startsWith("~")) return false;
+    return !local(s) || inside(s);
   });
   return { trivy, checkov };
 }

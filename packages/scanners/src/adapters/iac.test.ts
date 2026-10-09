@@ -207,13 +207,14 @@ describe("which Terraform folders each scanner may read (6)", () => {
     expect(moduleSources('{"module": [{"a": {"source": 1}}]}', "m.tf.json")).toEqual([null]);
   });
 
-  it("lets trivy read local modules only, and checkov anything that stays in the repository", () => {
+  it("lets trivy read local modules that stay in the repository only, and checkov anything that stays in it", () => {
     expect(moduleVerdict("infra", ["./modules/net", "../shared"])).toEqual({ trivy: true, checkov: true });
     expect(moduleVerdict("infra", ["terraform-aws-modules/vpc/aws"])).toEqual({ trivy: false, checkov: true });
     expect(moduleVerdict("infra", ["git::https://example.com/x.git"])).toEqual({ trivy: false, checkov: true });
     expect(moduleVerdict("infra", [null])).toEqual({ trivy: false, checkov: false });
-    expect(moduleVerdict("infra", ["../../outside"])).toEqual({ trivy: true, checkov: false });
-    expect(moduleVerdict("", ["../x"])).toEqual({ trivy: true, checkov: false });
+    expect(moduleVerdict("infra", ["../../outside"])).toEqual({ trivy: false, checkov: false });
+    expect(moduleVerdict("", ["../x"])).toEqual({ trivy: false, checkov: false });
+    expect(moduleVerdict("infra", ["./a/../../../x"])).toEqual({ trivy: false, checkov: false });
     expect(moduleVerdict("infra", ["/etc/x"])).toEqual({ trivy: false, checkov: false });
     expect(moduleVerdict("infra", [".hidden/x"])).toEqual({ trivy: false, checkov: true });
     expect(moduleVerdict("infra", [])).toEqual({ trivy: true, checkov: true });

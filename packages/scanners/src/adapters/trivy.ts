@@ -52,7 +52,7 @@ export async function runTrivy(args: {
     else held.push(folder);
   }
   const others = files.filter((p) => !isTerraformPath(p));
-  const heldNote = held.length > 0 ? `not run on ${folderList(held)}: a module from outside the repository, which trivy would download` : null;
+  const heldNote = held.length > 0 ? `not run on ${folderList(held)}: a module from outside the repository, which trivy would download or read` : null;
   if (folders.length === 0 && others.length === 0) return { findings: [], error: null, skipped: heldNote };
 
   try {
