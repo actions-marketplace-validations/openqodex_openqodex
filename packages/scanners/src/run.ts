@@ -29,7 +29,6 @@ import {
 import type {
   AdapterResult,
   BuiltinScanner,
-  DeletionPoint,
   Candidate,
   Config,
   DiffCoverage,
@@ -44,7 +43,8 @@ import { sameProblemClass } from "./same-problem.js";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import { repoFacts, type RepoFacts } from "./detect.js";
 import { DISABLED_REASON, selectScanners, type ScannerChoice } from "./select.js";
-import type { SettingsFile, SettingsTable } from "./adapters/index.js";
+import type { SettingsFile } from "./adapters/index.js";
+import type { SettingsReader } from "./shared-settings.js";
 import { readRepoFile, repoFileOrReason } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
@@ -86,9 +86,9 @@ export async function runScanners(args: {
   // The changed lines. Absent for a whole-repo review: then every finding
   // in a file of `changedPaths` is kept, whatever its line.
   coverage?: DiffCoverage;
-  // Where the change only deleted lines, and the base's copy of a file: what
-  // tells whether a change touched ruff's table in pyproject.toml.
-  deletionPoints?: Map<string, DeletionPoint[]>;
+  // The base's copy of a file (null when the base has none): what tells
+  // whether a change altered what a scanner reads from a shared file such
+  // as pyproject.toml.
   baseText?: (path: string) => Promise<string | null>;
   config: Config;
   resolveTool: ResolveTool;
@@ -138,7 +138,6 @@ export async function runScanners(args: {
         repoDir: args.repoDir,
         changedPaths: args.changedPaths,
         coverage,
-        deletionPoints: args.deletionPoints,
         baseText: args.baseText,
         wanted,
       }),
@@ -223,65 +222,46 @@ function projectsOf(paths: string[], facts: RepoFacts): { root: string; framewor
   return [...seen].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, frameworks]) => ({ root, frameworks }));
 }
 
-// The line ranges (1-based, inclusive) of every TOML table or INI section
-// whose header `table` names.
-function tableRanges(text: string, table: SettingsTable): [number, number][] {
-  const lines = text.split(/\r?\n/);
-  const out: [number, number][] = [];
-  let start: number | null = null;
-  lines.forEach((line, i) => {
-    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]/.exec(line);
-    if (!header) return;
-    if (start !== null) out.push([start, i]);
-    // TOML lets a key be quoted and spaced: [tool."ruff".lint], [ tool . ruff ].
-    const name = (header[1] as string).replace(/["'\s]/g, "");
-    start = table.header.test(name) ? i + 1 : null;
-  });
-  if (start !== null) out.push([start, lines.length]);
-  return out;
-}
-
 const SETTINGS_MAX_BYTES = 1024 * 1024;
 
-const mentions = (text: string, table: SettingsTable): number => text.match(table.word)?.length ?? 0;
-
-// True when the change may touch the tool's settings in this shared file
-// (ruff or SQLFluff in pyproject.toml, SQLFluff in setup.cfg). It does not
-// parse TOML or INI, so it errs towards yes: a changed line or a deletion
-// inside the tool's section, a changed line that names the tool in any form
-// (a dotted key under [tool], an inline table), a different count of the
-// word between the base and the head, or a file that cannot be read.
-async function touchesTable(args: SettingsArgs, filePath: string, table: SettingsTable): Promise<boolean> {
-  let head: string | null;
+// The file as the head has it: null when the change deleted it, undefined
+// when it cannot be read (a link, too large, not a regular file).
+async function headSettingsText(repoDir: string, filePath: string): Promise<string | null | undefined> {
   try {
-    head = await readRepoFile(args.repoDir, filePath, SETTINGS_MAX_BYTES);
-  } catch {
-    return true;
+    return await readRepoFile(repoDir, filePath, SETTINGS_MAX_BYTES);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : undefined;
   }
-  // A deleted file: only the base can say whether it held ruff settings.
-  if (head === null) {
-    if (args.baseText === undefined) return true;
-    const gone = await args.baseText(filePath).catch(() => undefined);
-    return gone === undefined || mentions(gone ?? "", table) > 0;
-  }
-  const tables = tableRanges(head, table);
-  const inside = (n: number) => tables.some(([a, b]) => a <= n && n <= b);
-  const lines = head.split(/\r?\n/);
-  const changed = [...(args.coverage.get(filePath) ?? [])];
-  if (changed.some((n) => inside(n) || mentions(lines[n - 1] ?? "", table) > 0)) return true;
-  if ((args.deletionPoints?.get(filePath) ?? []).some((p) => p.anchors.some(inside))) return true;
-  if (args.baseText === undefined) return false;
+}
+
+// True when what the scanner reads from this shared file (ruff or SQLFluff
+// in pyproject.toml, SQLFluff in setup.cfg, tox.ini or pep8.ini) differs
+// between the base and the head, by meaning (shared-settings.ts). It errs
+// towards yes: a side that cannot be read, is over the size cap or does not
+// parse counts as a change, and with no base to compare against the file
+// counts when the head holds the scanner's settings at all.
+async function touchesShared(args: SettingsArgs, filePath: string, reader: SettingsReader): Promise<boolean> {
+  const read = (text: string | null): string | null => {
+    if (text === null) return "";
+    if (Buffer.byteLength(text, "utf8") > SETTINGS_MAX_BYTES) return null;
+    return reader(text);
+  };
+  const head = await headSettingsText(args.repoDir, filePath);
+  if (head === undefined) return true;
+  const after = read(head);
+  if (after === null) return true;
+  if (args.baseText === undefined) return after !== "";
   const base = await args.baseText(filePath).catch(() => undefined);
   if (base === undefined) return true;
-  return mentions(base ?? "", table) !== mentions(head, table);
+  const before = read(base);
+  return before === null || before !== after;
 }
 
 type SettingsArgs = {
   repoDir: string;
   changedPaths: string[];
   coverage: DiffCoverage;
-  deletionPoints?: Map<string, DeletionPoint[]>;
-  // The file as the base has it, for a settings block the change removed.
+  // The file as the base has it, null when the base has none.
   baseText?: (path: string) => Promise<string | null>;
   wanted: (s: BuiltinScanner) => boolean;
 };
@@ -298,7 +278,7 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
       const name = filePath.slice(filePath.lastIndexOf("/") + 1);
       const entry = files.find((f) => (f.anyFolder ? f.path === name : f.path === filePath));
       if (entry === undefined) continue;
-      if (entry.table && !(await touchesTable(args, filePath, entry.table))) continue;
+      if (entry.reader && !(await touchesShared(args, filePath, entry.reader))) continue;
       // A loop, not Math.min(...lines): a file can have more changed lines
       // than a call can take as arguments.
       let line = Infinity;

@@ -878,38 +878,98 @@ describe("toRunDirRelative", () => {
   });
 });
 
-// SQLFluff also reads its settings from a [sqlfluff] section of setup.cfg,
-// tox.ini and pep8.ini, and from [tool.sqlfluff] in pyproject.toml, from each
-// SQL file's folder upwards. A change there can hide its findings; a change
-// to another section of the same file cannot.
-describe("SQLFluff settings in shared config files", () => {
-  const scanOf = async (files: Record<string, string>, changed: string, at: number) => {
-    const dir = repo({ "db/report.sql": "SELECT 1;\n", ...files });
+// ruff reads [tool.ruff] of pyproject.toml, and [project] requires-python
+// beside it as its target version; SQLFluff reads [tool.sqlfluff] there and
+// its [sqlfluff] sections of setup.cfg, tox.ini and pep8.ini. Those files
+// belong to other tools too, so one counts as a settings file only when the
+// change alters what the scanner reads from it, by meaning: TOML as a TOML
+// parser reads it, INI as Python's configparser reads it for SQLFluff. A
+// reader of lines and words missed each form marked "missed by lines".
+describe("a settings file other tools share counts when what the scanner reads from it changed", () => {
+  const notes = async (file: string, base: string | null, head: string | null, changed: number[]) => {
+    const files: Record<string, string> = { "db/report.sql": "SELECT 1;\n", "app/main.py": "import os\n" };
+    if (head !== null) files[file] = head;
+    const dir = repo(files);
     const { scan } = await runScanners({
       repoDir: dir,
-      changedPaths: ["db/report.sql", changed],
+      changedPaths: ["db/report.sql", "app/main.py", file],
       coverage: new Map([
         ["db/report.sql", lines(1)],
-        [changed, lines(at)],
+        ["app/main.py", lines(1)],
+        [file, lines(...changed)],
       ]),
+      baseText: async (p) => (p === file ? base : null),
       config: config(),
       resolveTool: notInstalled(),
     });
-    return scan.candidates.filter((c) => c.ruleId === "settings-file").map((c) => `${c.token} ${c.filePath}:${c.lineStart}`);
+    return scan.candidates.filter((c) => c.ruleId === "settings-file").map((c) => c.token);
   };
+  const PROJECT = '[project]\nname = "app"\n';
 
-  it("raises the note for a change inside a [sqlfluff] section of setup.cfg, tox.ini or pep8.ini", async () => {
+  it("raises the ruff note for an escaped [tool.\"\\u0072uff\"] header (missed by lines)", async () => {
+    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."\\u0072uff".lint]\nignore = ["F401"]\n`, [3, 4, 5])).toEqual(["ruff:settings-file"]);
+  });
+
+  it("raises the sqlfluff note for an escaped [tool.\"\\u0073qlfluff\"] header (missed by lines)", async () => {
+    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."\\u0073qlfluff".core]\nexclude_rules = "CV05"\n`, [3, 4, 5])).toEqual(["sqlfluff:settings-file"]);
+  });
+
+  it("raises the note for a quoted header and for a header with a comment after it", async () => {
+    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."ruff".lint]\nignore = ["F401"]\n`, [3, 4, 5])).toEqual(["ruff:settings-file"]);
+    expect(await notes("pyproject.toml", PROJECT, `${PROJECT}\n[tool."sqlfluff".core]\nexclude_rules = "CV05"\n`, [3, 4, 5])).toEqual(["sqlfluff:settings-file"]);
+    const commented = `${PROJECT}\n[tool.sqlfluff.core] # shared with the data team\ndialect = "postgres"\n`;
+    expect(await notes("pyproject.toml", commented, `${commented}exclude_rules = "CV05"\n`, [6])).toEqual(["sqlfluff:settings-file"]);
+  });
+
+  it("raises the note for a line added to a dotted key's array under [tool] (missed by lines)", async () => {
+    const ruff = (rules: string) => `${PROJECT}\n[tool]\nruff.lint.ignore = [\n  "E501",\n${rules}]\n`;
+    expect(await notes("pyproject.toml", ruff(""), ruff('  "F401",\n'), [7])).toEqual(["ruff:settings-file"]);
+    const fluff = (rules: string) => `${PROJECT}\n[tool]\nsqlfluff.core.exclude_rules = [\n  "AL01",\n${rules}]\n`;
+    expect(await notes("pyproject.toml", fluff(""), fluff('  "CV05",\n'), [7])).toEqual(["sqlfluff:settings-file"]);
+  });
+
+  it("raises the ruff note when requires-python changes beside [tool.ruff], and not without it (missed by lines)", async () => {
+    const pyproject = (version: string, ruff: boolean) => `[project]\nname = "app"\nrequires-python = "${version}"\n${ruff ? '\n[tool.ruff.lint]\nselect = ["UP"]\n' : ""}`;
+    expect(await notes("pyproject.toml", pyproject(">=3.12", true), pyproject(">=3.8", true), [3])).toEqual(["ruff:settings-file"]);
+    expect(await notes("pyproject.toml", pyproject(">=3.12", false), pyproject(">=3.8", false), [3])).toEqual([]);
+  });
+
+  it("raises nothing when only another tool's part of the file changed, the scanner's part rewritten in another form", async () => {
+    const before = `${PROJECT}version = "1.0.0"\n\n[tool.ruff]\nline-length = 100\n\n[tool.sqlfluff.core]\ndialect = "postgres"\n`;
+    const after = `${PROJECT}version = "1.0.1"\n\n[tool]\nruff = { line-length = 100 }\nsqlfluff.core.dialect = "postgres"\n`;
+    expect(await notes("pyproject.toml", before, after, [3, 5, 6, 7, 8, 9])).toEqual([]);
+  });
+
+  it("raises the sqlfluff note for a [DEFAULT] key, which configparser gives every section (missed by lines)", async () => {
     for (const name of ["setup.cfg", "tox.ini", "db/pep8.ini"]) {
-      expect(await scanOf({ [name]: "[metadata]\nname = app\n\n[sqlfluff:rules]\nexclude_rules = CV05\n" }, name, 5)).toEqual([`sqlfluff:settings-file ${name}:5`]);
+      const base = "[sqlfluff]\ndialect = postgres\n";
+      expect(await notes(name, base, `[DEFAULT]\nexclude_rules = CV05\n\n${base}`, [1, 2, 3]), name).toEqual(["sqlfluff:settings-file"]);
     }
   });
 
-  it("raises the note for a change inside [tool.sqlfluff] of pyproject.toml", async () => {
-    expect(await scanOf({ "pyproject.toml": "[project]\nname = \"app\"\n\n[tool.sqlfluff.core]\nexclude_rules = \"CV05\"\n" }, "pyproject.toml", 5)).toEqual(["sqlfluff:settings-file pyproject.toml:5"]);
+  it("raises the sqlfluff note for an indented header, which configparser reads as the value above going on (missed by lines)", async () => {
+    const base = "[sqlfluff]\ntemplater = raw\n\n[metadata]\nname = app\n";
+    const head = "[sqlfluff]\ntemplater = raw\n  [metadata]\nexclude_rules = CV05\n";
+    expect(await notes("setup.cfg", base, head, [3, 4])).toEqual(["sqlfluff:settings-file"]);
   });
 
-  it("raises nothing for a change outside those sections", async () => {
-    expect(await scanOf({ "setup.cfg": "[metadata]\nname = app\n\n[sqlfluff]\ndialect = postgres\n" }, "setup.cfg", 2)).toEqual([]);
-    expect(await scanOf({ "pyproject.toml": "[project]\nname = \"app\"\n\n[tool.sqlfluff.core]\ndialect = \"postgres\"\n" }, "pyproject.toml", 2)).toEqual([]);
+  it("raises the sqlfluff note for a header with text after it, and for a continuation line", async () => {
+    expect(await notes("setup.cfg", "[metadata]\nname = app\n", "[metadata]\nname = app\n\n[sqlfluff] shared settings\nexclude_rules = CV05\n", [3, 4, 5])).toEqual(["sqlfluff:settings-file"]);
+    expect(await notes("setup.cfg", "[sqlfluff]\nexclude_rules = AL01,\n    ST03\n", "[sqlfluff]\nexclude_rules = AL01,\n    CV05\n", [3])).toEqual(["sqlfluff:settings-file"]);
+  });
+
+  it("raises nothing for a section SQLFluff does not read: another name, another case, or an indented header", async () => {
+    const base = "[metadata]\nname = app\n";
+    expect(await notes("setup.cfg", base, `${base}\n[SQLFluff]\nexclude_rules = CV05\n`, [3, 4, 5])).toEqual([]);
+    expect(await notes("setup.cfg", base, `${base}\n[flake8]\nmax-line-length = 100\n`, [3, 4, 5])).toEqual([]);
+    expect(await notes("setup.cfg", base, `${base}  [sqlfluff]\n  exclude_rules = CV05\n`, [3, 4])).toEqual([]);
+  });
+
+  it("raises the note for a file it cannot read: a duplicate section, a line with no =, a deleted file that held settings, broken TOML", async () => {
+    const base = "[sqlfluff]\ndialect = postgres\n";
+    expect(await notes("setup.cfg", base, `${base}\n[sqlfluff]\nexclude_rules = CV05\n`, [3, 4, 5])).toEqual(["sqlfluff:settings-file"]);
+    expect(await notes("setup.cfg", base, `${base}exclude_rules CV05\n`, [3])).toEqual(["sqlfluff:settings-file"]);
+    expect(await notes("tox.ini", base, null, [])).toEqual(["sqlfluff:settings-file"]);
+    expect(await notes("pyproject.toml", `${PROJECT}\n[tool.ruff]\nline-length = 100\n`, `${PROJECT}\n[tool.ruff\nline-length = 100\n`, [4])).toEqual(["ruff:settings-file", "sqlfluff:settings-file"]);
   });
 });

@@ -5,3 +5,6 @@ import "../../packages/scanners/test/adapters.subprocess.test.js";
 import "../../packages/scanners/test/adapters-workflow-sql.subprocess.test.js";
 import "../../packages/scanners/test/adapters-iac.subprocess.test.js";
 import "../../packages/scanners/test/adapters-kube-rust.subprocess.test.js";
+// What ruff and SQLFluff read from files other tools share (pyproject.toml,
+// setup.cfg), by meaning.
+import "../../packages/scanners/test/settings-shared.subprocess.test.js";

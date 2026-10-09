@@ -5,6 +5,7 @@
 // init, doctor and the GitHub Action.
 import type { AdapterResult, BuiltinScanner, DiffCoverage, ResolvedTool } from "@openqodex/core";
 import type { RepoFacts } from "../detect.js";
+import { ruffPyproject, sqlfluffIni, sqlfluffPyproject, type SettingsReader } from "../shared-settings.js";
 import { actionlint } from "./actionlint.js";
 import { bandit } from "./bandit.js";
 import { brakeman } from "./brakeman.js";
@@ -94,24 +95,14 @@ export const ADAPTERS: readonly Adapter[] = [
 // findings, so the runner notes it. `path` with no folder and `anyFolder`
 // false: only the copy at the repository root (the scanner's working folder
 // or the adapter's own lookup). `anyFolder`: that name in any folder, which
-// the tool finds by walking up from the scanned file. `table`: a file the
-// scanner shares with other tools, which counts only when the change may
-// touch the scanner's own section of it.
+// the tool finds by walking up from the scanned file. `reader`: a file the
+// scanner shares with other tools (pyproject.toml, setup.cfg), which counts
+// only when what the scanner reads from it differs between the base and the
+// head, as shared-settings.ts reads it.
 // Not listed: oxlint, rubocop, brakeman and golangci run on settings of
 // their own; bandit reads `.bandit` only with -r, which the adapter never
 // passes (it names the files).
-export type SettingsFile = { path: string; anyFolder?: true; table?: SettingsTable };
-
-// A settings file the scanner shares with other tools (pyproject.toml,
-// setup.cfg): it counts only when a changed line is inside a section whose
-// header name, quotes and blanks taken out, matches `header` (TOML
-// `[tool.ruff.lint]`, INI `[sqlfluff:rules]`), or when the change may have
-// touched the tool's settings in a form the reader cannot place (a line or a
-// count of `word`).
-export type SettingsTable = { header: RegExp; word: RegExp };
-const RUFF_TABLE: SettingsTable = { header: /^tool\.ruff(\.|$)/, word: /ruff/gi };
-const SQLFLUFF_INI: SettingsTable = { header: /^sqlfluff(:|$)/, word: /sqlfluff/gi };
-const SQLFLUFF_TOML: SettingsTable = { header: /^tool\.sqlfluff(\.|$)/, word: /sqlfluff/gi };
+export type SettingsFile = { path: string; anyFolder?: true; reader?: SettingsReader };
 
 export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFile[]>> = {
   // gitleaks.ts: the root config and the root ignore list only.
@@ -119,7 +110,7 @@ export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFil
   // semgrep, run from the repository root.
   semgrep: [{ path: ".semgrepignore" }],
   // ruff finds its config from each file's folder upwards.
-  ruff: [{ path: "ruff.toml", anyFolder: true }, { path: ".ruff.toml", anyFolder: true }, { path: "pyproject.toml", anyFolder: true, table: RUFF_TABLE }],
+  ruff: [{ path: "ruff.toml", anyFolder: true }, { path: ".ruff.toml", anyFolder: true }, { path: "pyproject.toml", anyFolder: true, reader: ruffPyproject }],
   // hadolint, run from the repository root.
   hadolint: [{ path: ".hadolint.yaml" }, { path: ".hadolint.yml" }],
   // shellcheck looks from each script's folder upwards.
@@ -137,9 +128,9 @@ export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFil
   sqlfluff: [
     { path: ".sqlfluff", anyFolder: true },
     { path: ".sqlfluffignore", anyFolder: true },
-    { path: "setup.cfg", anyFolder: true, table: SQLFLUFF_INI },
-    { path: "tox.ini", anyFolder: true, table: SQLFLUFF_INI },
-    { path: "pep8.ini", anyFolder: true, table: SQLFLUFF_INI },
-    { path: "pyproject.toml", anyFolder: true, table: SQLFLUFF_TOML },
+    { path: "setup.cfg", anyFolder: true, reader: sqlfluffIni },
+    { path: "tox.ini", anyFolder: true, reader: sqlfluffIni },
+    { path: "pep8.ini", anyFolder: true, reader: sqlfluffIni },
+    { path: "pyproject.toml", anyFolder: true, reader: sqlfluffPyproject },
   ],
 };
