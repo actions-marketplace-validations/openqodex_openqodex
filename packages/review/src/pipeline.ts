@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { DIFF_CAP_BYTES, loadLensCatalog, safeGit, selectLensesForDiff } from "@openqodex/core";
 import type { Change, Config, HotSpot, ImpactSummary, ResolveTool, RuleCoverage, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
 import { buildGraph, detectImpact, emptyImpact, hotSymbols, isManifest, langOf } from "@openqodex/graph";
-import type { Graph, GraphStore, Lease } from "@openqodex/graph";
+import type { Graph, GraphStore, Lease, ListedFile } from "@openqodex/graph";
 import { customAdapters, runScanners } from "@openqodex/scanners";
 import { redactStored } from "./redact.js";
 
@@ -45,6 +45,9 @@ export function nothingToReviewLine(change: Change): string {
 // offer for a scanner that failed).
 export type ScanHost = { resolveTool: ResolveTool; onProgress: (line: string) => void; onScan?: (scan: ScanResult) => void };
 
+// The most of a base version a scanner is given through a base reader.
+const BASE_TEXT_BYTES = 64 * 1024 * 1024;
+
 // The scanners on a change already worked out. For the whole repository no
 // coverage is passed: every finding in a file of the inventory is kept.
 export async function scanChange<C extends Change>(args: {
@@ -56,6 +59,9 @@ export async function scanChange<C extends Change>(args: {
   only?: ScannerSource[];
   skip?: ScannerSource[];
   host: ScanHost;
+  // How a base version is read, when not with git show in repoRoot (the
+  // server review's scope-checking reader over its private clone).
+  readBase?: (path: string, maxBytes: number) => Promise<Buffer | null>;
 }): Promise<PipelineResult & { change: C }> {
   const { repoRoot, config, change, host } = args;
   const workDir = args.workDir ?? repoRoot;
@@ -66,6 +72,7 @@ export async function scanChange<C extends Change>(args: {
     changedPaths: change.changedPaths,
     coverage: args.wholeRepo ? undefined : change.coverage,
     baseText: async (path) => {
+      if (args.readBase) return (await args.readBase(path, BASE_TEXT_BYTES))?.toString("utf8") ?? null;
       const r = await safeGit(repoRoot, ["show", "--no-textconv", `${change.baseSha}:${path}`]);
       return r.code === 0 ? r.stdout.toString("utf8") : null;
     },
@@ -90,6 +97,10 @@ export type GraphHost = {
   store?: () => Promise<{ store: GraphStore | null; refused?: string }>;
   onProgress: (line: string) => void;
   warn: (line: string) => void;
+  // The server review's snapshot, a folder git does not know: the files the
+  // graph builds from, and how it reads base versions (scoped.ts).
+  inventory?: (dir: string) => ListedFile[];
+  readBase?: (path: string, maxBytes: number) => Promise<Buffer | null>;
 };
 
 // The graph for this run, or the summary saying why there is none. For the
@@ -119,7 +130,8 @@ export async function graphFor(p: PipelineResult, host: GraphHost, noGraph: bool
       maxFileBytes: p.config.graph.maxFileBytes,
       maxHeapMb: p.config.graph.maxHeapMb,
       onProgress: host.onProgress,
-      base: withBase ? { sha: p.change.baseSha, files: p.change.files } : undefined,
+      base: withBase ? { sha: p.change.baseSha, files: p.change.files, ...(host.readBase ? { read: host.readBase } : {}) } : undefined,
+      ...(host.inventory ? { inventory: host.inventory(p.workDir) } : {}),
     });
   } catch (error) {
     const reason = ((error as Error).message ?? String(error)).split("\n")[0] ?? "unknown error";

@@ -69,6 +69,7 @@ import type { Conversation } from "./conversation.js";
 import { buildGraphRun, buildHotSpots, nothingToReviewLine, ruleCoverage, scanChange, wholeRepoLenses } from "./pipeline.js";
 import type { GraphHost, PipelineResult, ScanHost } from "./pipeline.js";
 import { redactStored } from "./redact.js";
+import type { ScopedParts } from "./scoped.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
 
 // A frozen copy of the state under review: `tree` is the folder the
@@ -177,6 +178,11 @@ export type ReviewDeps = {
   // agents/ time their own stop on the system clock, so a host that uses
   // them passes Date.now.
   now: () => number;
+  // The server review's scoped parts (scoped.ts): a target's change over the
+  // admitted paths and the review's obligation (the delta of an incremental
+  // review), base versions read through the scope check, and the graph's
+  // inventory of the snapshot. Left out (the laptop), all is as before.
+  scoped?: ScopedParts;
 };
 
 export type ReviewCoreResult =
@@ -234,6 +240,9 @@ type Prepared = {
   tree: string | null;
   target?: RunTarget;
   whole?: WholeRepo;
+  // The whole change findings anchor on, when the scan and the brief took
+  // less of it (an incremental review); else the scan's change is the whole.
+  full?: Change;
 };
 
 // A report that carries no finding: an incomplete review.
@@ -278,7 +287,9 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
     try {
       for (const note of t.notes) warn(note);
       say(`Reviewing ${inputs.target} at ${t.headSha.slice(0, 12)}: base ${t.baseRef} (from ${t.baseSource}), merge base ${t.mergeBase.slice(0, 12)}`);
-      const change = await getTreeChange({ repoRoot, baseRef: t.baseRef, baseSha: t.mergeBase, headSha: t.headSha, exclude: config.exclude });
+      const target = { repoRoot, baseRef: t.baseRef, baseSha: t.mergeBase, headSha: t.headSha, exclude: config.exclude };
+      const scoped = deps.scoped ? await deps.scoped.change(target) : null;
+      const change = scoped?.obligation ?? (await getTreeChange(target));
       if (change.files.length === 0) {
         warn(nothingToReviewLine(change));
         return null;
@@ -288,9 +299,9 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
       deps.snapshots.placeSettings(repoRoot, snapshot.tree);
       const lfs = await deps.snapshots.lfsPaths(snapshot.tree, change.changedPaths);
       if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
-      const target: RunTarget = { spec: inputs.target, base_ref: t.baseRef, base_source: t.baseSource, base_sha: t.baseSha, merge_base: t.mergeBase, head_sha: t.headSha, repo_root: repoRoot, checkout: snapshot.tree };
-      const p = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, only, skip, host: scanHost });
-      return { p, snapshot, tree: null, target };
+      const runTarget: RunTarget = { spec: inputs.target, base_ref: t.baseRef, base_source: t.baseSource, base_sha: t.baseSha, merge_base: t.mergeBase, head_sha: t.headSha, repo_root: repoRoot, checkout: snapshot.tree };
+      const p = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, only, skip, host: scanHost, ...(deps.scoped ? { readBase: deps.scoped.readBase } : {}) });
+      return { p, snapshot, tree: null, target: runTarget, ...(scoped ? { full: scoped.full } : {}) };
     } finally {
       await t.release();
     }
@@ -359,7 +370,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     await deps.onResult?.(result);
     return result;
   };
-  const graphHost: GraphHost = { store: deps.graphStore, onProgress: say, warn };
+  const graphHost: GraphHost = { store: deps.graphStore, onProgress: say, warn, ...(deps.scoped ? { inventory: deps.scoped.inventory, readBase: deps.scoped.readBase } : {}) };
   try {
     const prep = await prepare(inputs, deps, scanHost, (s) => (snapshot = s));
     if (prep === null) {
@@ -369,6 +380,8 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     const { p } = prep;
     const scan = p.scan as ScanResult;
     const change = p.change;
+    // What findings anchor on and are checked against.
+    const full = prep.full ?? change;
     deps.onEvent({ type: "prepared", change, scan, secrets: p.secrets });
     // No reviewer can start: the scanner candidates stay unchecked, never a review.
     if ("unavailable" in chosen) return await finish({ ended: "unavailable", reasons: chosen.unavailable, change, scan, secrets: p.secrets });
@@ -396,7 +409,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       // is hashed, so the reviewer reads them inside the folder it may read.
       if (run.graph) {
         try {
-          const packet = await writePacket({ root: prep.snapshot.tree, repoRoot, graph: run.graph, impact, baseSha: change.baseSha, secrets: p.secrets });
+          const packet = await writePacket({ root: prep.snapshot.tree, repoRoot, graph: run.graph, impact, baseSha: change.baseSha, secrets: p.secrets, ...(deps.scoped ? { readBase: deps.scoped.readBase } : {}) });
           impact = { ...impact, packet: packet.dir };
         } catch (error) {
           if (error instanceof PacketCollision || error instanceof PacketLeak) throw new OpenQodexError(error.message);
@@ -445,7 +458,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       say,
       now: deps.now,
       check: (submission, trace, delivered) => {
-        const r = checkSubmission({ change, scan, manifest, config, submission, lineCount, wholeRepo: prep.whole ? { lines: prep.whole.lines } : undefined });
+        const r = checkSubmission({ change: full, scan, manifest, config, submission, lineCount, wholeRepo: prep.whole ? { lines: prep.whole.lines } : undefined });
         const unread = prep.whole ? [] : readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? trace : [], lineCount, delivered }).unread;
         return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
       },
@@ -484,7 +497,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // An incomplete review keeps the findings of an answer that passed every
     // check: the report prints them as the findings so far.
     const report: Report = {
-      ...(talk.report ?? incompleteReport(change, scan, config, deps.now())),
+      ...(talk.report ?? incompleteReport(full, scan, config, deps.now())),
       impact: prep.whole ? null : impact,
       completion,
     };
@@ -503,8 +516,8 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           read: snapshotText(prep.snapshot.tree),
           secrets: p.secrets,
         })
-      : buildDisplay({ change, secrets: p.secrets });
-    return await finish({ ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null });
+      : buildDisplay({ change: full, secrets: p.secrets });
+    return await finish({ ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change: full, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null });
   } finally {
     over = true;
     graphLease?.release();

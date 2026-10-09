@@ -16,3 +16,11 @@ export { CODEX_TESTED, PROBE_REFUSED, codexArgs, codexDriver, codexEnv, codexVer
 export { CURSOR_NOT_ENABLED, cursorDriver } from "./agents/cursor.js";
 export { classify } from "./agents/trace.js";
 export type { ToolCall } from "./agents/trace.js";
+export { admitted } from "./scopes.js";
+export type { Admit } from "./scopes.js";
+export { MissingObjects, materialize, materializedSnapshots, scopedBaseReader, snapshotInventory } from "./materialize.js";
+export type { Materialized, MaterializedFile, SkippedEntry } from "./materialize.js";
+export { decideIncremental, deltaChange, reviewChanges } from "./incremental.js";
+export type { IncrementalDecision, ReviewScope } from "./incremental.js";
+export { serverScope } from "./scoped.js";
+export type { ScopedParts, ServerScope } from "./scoped.js";
