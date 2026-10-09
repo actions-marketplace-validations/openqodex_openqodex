@@ -26,7 +26,9 @@ import type {
 } from "./types.js";
 import { OpenQodexError } from "./types.js";
 
-const GLOBAL_CONFIDENCE_FLOOR = 0.7;
+// The lowest confidence a finding may have unless the caller sets its own
+// floor (checkSubmission's confidenceFloor); a lens's higher floor still wins.
+export const GLOBAL_CONFIDENCE_FLOOR = 0.7;
 
 const severity = z.enum(["critical", "major", "minor", "nitpick", "info"]);
 const category = z.enum(["bug", "security", "performance", "maintainability", "style"]);
@@ -456,6 +458,10 @@ export function checkSubmission(args: {
   submission: unknown;
   lineCount: (path: string) => number | null;
   wholeRepo?: { lines: Map<string, number> };
+  // The lowest confidence a finding may have, the same value the brief
+  // states (buildReviewerBrief's confidenceFloor); GLOBAL_CONFIDENCE_FLOOR
+  // when left out. A lens's higher floor still wins.
+  confidenceFloor?: number;
 }): SubmissionCheck {
   const { change, scan, manifest, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
@@ -531,7 +537,7 @@ export function checkSubmission(args: {
     const source = f.source ?? null;
     if (disabled(source, config)) continue;
     const lensFloor = source?.startsWith("lens:") ? floors.get(source.slice("lens:".length)) : undefined;
-    const floor = Math.max(GLOBAL_CONFIDENCE_FLOOR, lensFloor ?? 0);
+    const floor = Math.max(args.confidenceFloor ?? GLOBAL_CONFIDENCE_FLOOR, lensFloor ?? 0);
     if (f.confidence < floor) {
       lowConfidence.push({ title: f.title, file_path: f.file_path, confidence: f.confidence, floor });
       continue;
