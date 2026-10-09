@@ -391,3 +391,32 @@ describe("the FastAPI plugin on a hostile repository", () => {
     expect(performance.now() - t0).toBeLessThan(50);
   });
 });
+
+// A repository of tens of thousands of classes: a chain where each class
+// subclasses the one before, starting from Pydantic's BaseModel.
+describe("the FastAPI plugin on a repository of many model classes", () => {
+  const CHAIN = 30_000;
+  let root: string;
+  let graph: Graph;
+
+  beforeAll(async () => {
+    const chain = ["from pydantic import BaseModel", "", "", "class C0(BaseModel):", "    pass"];
+    for (let i = 1; i < CHAIN; i++) chain.push("", "", `class C${i}(C${i - 1}):`, "    pass");
+    root = mkdtempSync(join(tmpdir(), "oq-fastapi-models-"));
+    writeTree(root, { "pyproject.toml": '[project]\nname = "models"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "models/__init__.py": "", "models/chain.py": `${chain.join("\n")}\n` });
+    commitAll(root);
+    graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 4 * 1024 * 1024, budgetMs: 120_000 });
+  }, 180_000);
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it("finds the models among thirty thousand classes in under a second, reading each file's classes once rather than once per base", () => {
+    const run = graph.frameworks?.plugins.find((p) => p.id === "fastapi");
+    expect(run?.status, run?.reason ?? "").toBe("ok");
+    expect(run?.ms ?? Infinity).toBeLessThan(1000);
+  });
+
+  it("marks only the classes at most eight bases from BaseModel, whatever order the classes are read in", () => {
+    const models = (graph.frameworks?.roles ?? []).filter((r) => r.plugin === "fastapi" && r.role === "model").map((r) => graph.nodes.get(r.target)?.name);
+    expect(models.sort()).toEqual(["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7"]);
+  });
+});

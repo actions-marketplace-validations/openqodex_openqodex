@@ -552,10 +552,11 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     const omitted = inheritedOmitted + ownDeps.omitted;
 
     const routes = routesOf.get(val.id) ?? [];
-    for (const e of routes) {
+    for (let i = 0; i < routes.length; i++) {
+      const e = routes[i] as RouteEvent;
       if (!spend(caps.regs, e.site)) {
         // Past the build's cap: count what this router still holds and stop.
-        caps.regs.left += routes.length - routes.indexOf(e) - 1;
+        caps.regs.left += routes.length - i - 1;
         break;
       }
       const pattern = base === null ? null : base + e.written;
@@ -694,9 +695,24 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
 
   // ---------- Pydantic models and pytest tests, from the language facts ----------
   type ModelProof = { tier: Tier; via: FrameworkEvidence["via"]; note: string | null };
+  // The class definitions of a file by name and line, built once per file.
+  const classesMemo = new Map<string, Map<string, DefFact>>();
+  const classAt = (file: string, name: string, line: number): DefFact | null => {
+    let m = classesMemo.get(file);
+    if (!m) {
+      m = new Map();
+      for (const d of index.languageFacts(file)?.defs ?? []) if (d.kind === "class") m.set(`${d.name}@${d.line}`, d);
+      classesMemo.set(file, m);
+    }
+    return m.get(`${name}@${line}`) ?? null;
+  };
+  // Whether a class reaches BaseModel within `steps` bases (BaseModel
+  // itself is one step). Memoised per class and step count, so the answer
+  // never depends on the order the classes are read in, and the recursion
+  // is at most MAX_MODEL_DEPTH deep.
   const modelMemo = new Map<string, ModelProof | null>();
-  const isModel = (file: string, def: DefFact, depth: number): ModelProof | null => {
-    const k = `${file}\0${def.name}\0${def.line}`;
+  const isModel = (file: string, def: DefFact, steps: number): ModelProof | null => {
+    const k = `${file}\0${def.name}\0${def.line}\0${steps}`;
     if (modelMemo.has(k)) return modelMemo.get(k) ?? null;
     modelMemo.set(k, null); // a base cycle reads as no model
     let found: ModelProof | null = null;
@@ -706,14 +722,14 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         found = { tier: "certain", via: null, note: null };
         break;
       }
-      if (depth >= MAX_MODEL_DEPTH) continue;
+      if (steps <= 1) continue;
       const l = lookup(file, path);
       if (l.kind !== "symbol") continue;
       for (const id of l.ids) {
         const node = index.node(id);
         if (!node || node.kind !== "class") continue;
-        const parent = index.languageFacts(node.file)?.defs.find((d) => d.kind === "class" && d.name === node.name && d.line === node.startLine);
-        const inner = parent ? isModel(node.file, parent, depth + 1) : null;
+        const parent = classAt(node.file, node.name, node.startLine);
+        const inner = parent ? isModel(node.file, parent, steps - 1) : null;
         if (!inner) continue;
         const tier = weakest(l.tier, inner.tier);
         found = { tier, via: l.via, note: tier === "certain" ? null : (l.note ?? inner.note ?? `the base class ${path.join(".")} binds as ${tier}`) };
@@ -732,7 +748,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     if (declares(file, "pydantic") || declares(file, "fastapi")) {
       for (const def of lf.defs) {
         if (def.kind !== "class" || def.bases.length === 0) continue;
-        const m = isModel(file, def, 0);
+        const m = isModel(file, def, MAX_MODEL_DEPTH);
         const sym = m ? symbolAt(file, def.name, def.line) : null;
         if (!m || !sym) continue;
         addRole(sym.id, "model", "pydantic", null, { kind: "role-base", tier: m.tier, site: { file, line: def.line, column: def.column }, via: m.via, premises: [], rule: rule("fastapi-pydantic-model"), note: m.note });
