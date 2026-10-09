@@ -489,3 +489,46 @@ describe("the net/http plugin on small repositories", () => {
 });
 
 const goUnknowns = (g: Graph) => (g.frameworks?.unknowns ?? []).filter((u) => u.plugin === "go-http");
+
+// A package of thousands of types used as handlers and thousands of test
+// functions among tens of thousands of other functions: a lookup that scans
+// a file's or a package's symbols once per item is quadratic here.
+describe("the net/http plugin on a package of many symbols", () => {
+  let graph: Graph;
+
+  beforeAll(async () => {
+    const files: Record<string, string> = { "go.mod": "module example.com/many\n\ngo 1.22\n" };
+    for (let k = 0; k < 4; k++) {
+      const lines = [GO_HEAD];
+      for (let n = k * 750; n < (k + 1) * 750; n++) lines.push(`type T${n} struct{}\n\nfunc (T${n}) ServeHTTP(http.ResponseWriter, *http.Request) {}\n`);
+      files[`types${k}.go`] = lines.join("\n");
+    }
+    for (let k = 0; k < 2; k++) {
+      const lines = [GO_HEAD, k === 0 ? "var Mux = http.NewServeMux()\n" : "", "func init() {"];
+      for (let n = k * 1500; n < (k + 1) * 1500; n++) lines.push(`\tMux.Handle("/t${n}", T${n}{})`);
+      lines.push("}");
+      files[`routes${k}.go`] = lines.join("\n");
+    }
+    for (let k = 0; k < 4; k++) {
+      const lines = ['package main\n\nimport "testing"\n'];
+      for (let n = 0; n < 12000; n++) lines.push(`func a${k}x${n}() {}`);
+      for (let n = 0; n < 900; n++) lines.push(`func TestM${k}x${n}(t *testing.T) {}`);
+      files[`many${k}_test.go`] = lines.join("\n");
+    }
+    const root = writeRepo("oq-go-many-", files);
+    try {
+      graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it("a crafted repository cannot hang or exhaust the build: no lookup scans a file's or a package's symbols once per handler type or test function", () => {
+    const run = graph.frameworks?.plugins.find((p) => p.id === "go-http");
+    console.log(`go-http on a package of many symbols: resolve ${run?.ms} ms`);
+    expect(run?.status).toBe("ok");
+    expect(goRegs(graph).filter((r) => r.handler.status === "bound").length).toBe(3000);
+    expect((graph.frameworks?.roles ?? []).filter((r) => r.plugin === "go-http" && r.role === "test").length).toBe(3600);
+    expect(run?.ms ?? Infinity).toBeLessThan(1000);
+  });
+});

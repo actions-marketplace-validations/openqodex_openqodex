@@ -167,13 +167,21 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     else goFiles.set(d, [p]);
   }
   const pkgName = (file: string): string => index.languageFacts(file)?.goPackage ?? "";
-  // The package a folder's non-test files declare.
+  // The package a folder's non-test files declare, read once per folder.
+  const dirPackages = new Map<string, string>();
   const pkgOfDir = (dir: string): string => {
+    const kept = dirPackages.get(dir);
+    if (kept !== undefined) return kept;
+    let found = "";
     for (const f of goFiles.get(dir) ?? []) {
       const p = pkgName(f);
-      if (p !== "" && !p.endsWith("_test")) return p;
+      if (p !== "" && !p.endsWith("_test")) {
+        found = p;
+        break;
+      }
     }
-    return "";
+    dirPackages.set(dir, found);
+    return found;
   };
   const of = <K extends GoHttpFact["kind"]>(file: string, kind: K): Fact<K>[] => index.factsOf(file).filter((f): f is Fact<K> => f.kind === kind);
 
@@ -363,21 +371,53 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   }
 
   // ---------- handlers ----------
-  const symbolsOf = (dir: string, pkg: string): GraphNode[] => (goFiles.get(dir) ?? []).filter((f) => pkgName(f) === pkg).flatMap((f) => [...index.symbols(f)]);
-  const methodsCache = new Map<string, string[]>();
-  // The methods named `name` declared on a type in its package.
-  const methodsOn = (type: GraphNode, name: string): string[] => {
-    const k = `${type.id}\0${name}`;
-    let ids = methodsCache.get(k);
-    if (!ids) {
-      ids = symbolsOf(dirOf(type.file), pkgName(type.file))
-        .filter((s) => s.kind === "method" && s.name === name && s.id.startsWith(`${s.file}#${type.name}.${name}@`))
-        .map((s) => s.id);
-      methodsCache.set(k, ids);
+  // Each package's methods by `Type.method`, built once per package from the
+  // symbol ids (`file#Type.method@line:column`): a lookup per handler type
+  // never scans the package again.
+  const packageMethods = new Map<string, Map<string, string[]>>();
+  const methodsOf = (dir: string, pkg: string): Map<string, string[]> => {
+    const k = `${dir}\0${pkg}`;
+    let m = packageMethods.get(k);
+    if (m) return m;
+    m = new Map();
+    for (const f of goFiles.get(dir) ?? []) {
+      if (pkgName(f) !== pkg) continue;
+      for (const s of index.symbols(f)) {
+        if (s.kind !== "method") continue;
+        const hash = s.id.indexOf("#");
+        const at = s.id.lastIndexOf("@");
+        if (hash < 0 || at < hash) continue;
+        const key = s.id.slice(hash + 1, at);
+        (m.get(key) ?? m.set(key, []).get(key))?.push(s.id);
+      }
     }
-    return ids;
+    packageMethods.set(k, m);
+    return m;
   };
-  const embeds = (type: GraphNode): boolean => (index.languageFacts(type.file)?.defs ?? []).some((d) => d.name === type.name && d.line === type.startLine && d.bases.length > 0);
+  // The methods named `name` declared on a type in its package.
+  const methodsOn = (type: GraphNode, name: string): string[] => methodsOf(dirOf(type.file), pkgName(type.file)).get(`${type.name}.${name}`) ?? [];
+  // Each file's definitions by name and line, built once per file.
+  const defsByPlace = new Map<string, Map<string, number>>();
+  const embeds = (type: GraphNode): boolean => {
+    let m = defsByPlace.get(type.file);
+    if (!m) {
+      m = new Map();
+      for (const d of index.languageFacts(type.file)?.defs ?? []) m.set(`${d.name}\0${d.line}`, d.bases.length);
+      defsByPlace.set(type.file, m);
+    }
+    return (m.get(`${type.name}\0${type.startLine}`) ?? 0) > 0;
+  };
+  // Each file's functions by name and line, built once per file.
+  const functionsByPlace = new Map<string, Map<string, GraphNode>>();
+  const functionAt = (file: string, name: string, line: number): GraphNode | null => {
+    let m = functionsByPlace.get(file);
+    if (!m) {
+      m = new Map();
+      for (const n of index.symbols(file)) if (n.kind === "function") m.set(`${n.name}\0${n.startLine}`, n);
+      functionsByPlace.set(file, m);
+    }
+    return m.get(`${name}\0${line}`) ?? null;
+  };
 
   type Res = Omit<Bound, "wrappers" | "wrapCut" | "mount">;
   const fail = (status: HandlerStatus, cause: Cause, note: string, name: string | null, at: Expr): Res => ({ status, targets: [], tier: "certain", via: null, note: null, why: { cause, note, name, at: { line: at.line, column: at.column } } });
@@ -863,7 +903,7 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     const testing = identity(file).testing;
     for (const f of of(file, "test-func")) {
       if (f.param.length !== 2 || !testing.has(f.param[0] as string) || f.param[1] !== "T" || !isTestName(f.name)) continue;
-      const sym = index.symbols(file).find((n) => n.kind === "function" && n.name === f.name && n.startLine === f.line);
+      const sym = functionAt(file, f.name, f.line);
       if (!sym) continue;
       addRole(sym.id, "test", "go test", null, { kind: "role-path", tier: "certain", site: { file, line: f.line, column: f.column }, via: null, premises: [], rule: rule("go-http-test-function"), note: null });
     }
