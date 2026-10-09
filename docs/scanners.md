@@ -40,7 +40,7 @@ Scanners download on first use into `~/.openqodex/tools/<scanner>/<version>/`. `
 
 A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. `openqodex doctor --install` installs the scanners the repository's files call for and waits; `--all-scanners` installs every scanner.
 
-Once a month a workflow in this repository (`.github/workflows/pin-bump.yml`) looks for a scanner release that is at least seven days old and newer than its pin. For each one it opens a pull request with the new pin, its sha256 or its new lock file, and the result of the gate run on it. A person merges it.
+Once a month a workflow in this repository (`.github/workflows/pin-bump.yml`) looks for a scanner release that is at least seven days old and newer than its pin. For each one it opens a pull request with the new pin, its sha256 or its new lock file, and the result of the gate run on it. A person merges it. A TFLint bump also means re-reading the recommended rules of its bundled terraform ruleset for a new one whose message prints an evaluated value; OpenQodex switches such a rule off, as it does `terraform_map_duplicate_keys`.
 
 Installed scanners take more disk than their downloads. The eight scanners the demo needs take about 700 MB of disk on an Apple Silicon Mac. semgrep with its Python takes about 440 MB of that.
 
@@ -62,7 +62,7 @@ A scanner problem never changes the exit code.
 
 ## Changed scanner settings
 
-Several scanners read settings or an ignore list from the repository, as OpenQodex runs them. At the repository root only: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`; semgrep `.semgrepignore`; hadolint `.hadolint.yaml` and `.hadolint.yml`; actionlint `.github/actionlint.yaml` and `.github/actionlint.yml`; zizmor `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` and `zizmor.yaml`; squawk `.squawk.toml`. In any folder: ruff `ruff.toml` and `.ruff.toml`, and `pyproject.toml` when the change touches its `[tool.ruff` table; shellcheck `.shellcheckrc` and `shellcheckrc`; osv-scanner `osv-scanner.toml`; sqlfluff `.sqlfluff` and `.sqlfluffignore`. A change to one of them can hide that scanner's findings.
+Several scanners read settings or an ignore list from the repository, as OpenQodex runs them. At the repository root only: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`; semgrep `.semgrepignore`; hadolint `.hadolint.yaml` and `.hadolint.yml`; actionlint `.github/actionlint.yaml` and `.github/actionlint.yml`; zizmor `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` and `zizmor.yaml`; squawk `.squawk.toml`; trivy `.trivyignore`. In any folder: ruff `ruff.toml` and `.ruff.toml`, and `pyproject.toml` when the change touches its `[tool.ruff` table; shellcheck `.shellcheckrc` and `shellcheckrc`; osv-scanner `osv-scanner.toml`; sqlfluff `.sqlfluff` and `.sqlfluffignore`. A change to one of them can hide that scanner's findings.
 
 In a review, each such changed file is a major candidate of that scanner, rule `settings-file`, on its first changed line; the reviewer verifies it and raises it or drops it with a reason. In a scan (`scan`, which the pre-commit hook and the Action run) nobody can clear it, so it is a minor finding and counts toward the verdict. The scanner still reads the changed file. `scanners.disable` leaves it out with its scanner. `--only` and `--skip` do not, since they pick scanners for one run and the file still silences the scanner in every other run. A changed settings file in a fixture folder is listed too: a config outside the folder can extend it (ruff's `extend`), so it can hide findings in code that is not a fixture.
 
@@ -74,7 +74,7 @@ In a review, the reviewer verifies it and raises it or drops it with a reason. I
 
 `review.severity_threshold` never hides an added suppression comment or a changed settings file, in a scan or as a finding the reviewer raised: since the scanner reports nothing there, the report always lists them.
 
-A comment counts where its scanner reads it, and the match is never narrower than the scanner's. For the scanners that read only comments, OpenQodex finds the comments of the whole file first, so the same text inside a string, a multi-line string or a heredoc does not count. It reads the code inside an f-string field, a shell `$( )` or backticks (also inside double quotes and an unquoted heredoc) as code, as the scanners do. semgrep and gitleaks obey their marker anywhere on the line, in a string too, and so does OpenQodex. A string, heredoc, template, raw string or block comment left open at the end of the file is read as code, so it hides nothing after it. A Dockerfile heredoc opens only in `RUN`, `COPY` and `ADD`, as BuildKit reads it. A shell heredoc ends where shellcheck ends it: `<<"E\"OF"` at a line `E\"OF`, with blanks allowed after the word. A file over 1,000,000 bytes raises no semgrep candidate, since semgrep skips it; a file over 64 MB is not read at all. The readers take time in proportion to the file, whatever it holds.
+A comment counts where its scanner reads it, and the match is never narrower than the scanner's. For the scanners that read only comments, OpenQodex finds the comments of the whole file first, so the same text inside a string, a multi-line string or a heredoc does not count. It reads the code inside an f-string field, a shell `$( )` or backticks (also inside double quotes and an unquoted heredoc) as code, as the scanners do. semgrep and gitleaks obey their marker anywhere on the line, in a string too, and so does OpenQodex. A string, heredoc, template, raw string or block comment left open at the end of the file is read as code, so it hides nothing after it. A Dockerfile heredoc opens only in `RUN`, `COPY` and `ADD`, as BuildKit reads it. A shell heredoc ends where shellcheck ends it: `<<"E\"OF"` at a line `E\"OF`, with blanks allowed after the word. An HCL string ends at its line end, as TFLint reads a valid file; a heredoc ends at the line that reads its word once blanks are trimmed, for `<<` and `<<-` alike; `$${` and `%%{` are text. A file over 1,000,000 bytes raises no semgrep candidate, since semgrep skips it; a file over 64 MB is not read at all. The readers take time in proportion to the file, whatever it holds.
 
 | Scanner | Comment | Where it counts | Checked against |
 |---|---|---|---|
@@ -90,8 +90,11 @@ A comment counts where its scanner reads it, and the match is never narrower tha
 | zizmor | `# zizmor: ignore[` and a rule list, with one blank after the `#` and after the colon | anywhere on the line: zizmor reads each line of a finding from its first `#`, so for some of its audits it obeys the comment inside a `run:` block or a quoted value too | the 1.30.1 binary; [location.rs](https://github.com/zizmorcore/zizmor/blob/v1.30.1/crates/zizmor/src/finding/location.rs) |
 | squawk | `squawk-ignore` and `squawk-ignore-file`, with a rule list or without; `squawk-disable-assume-in-transaction` | the start of a `--` or `/* */` comment, after blanks; never in a string, a dollar-quoted body or a quoted identifier. Block comments nest, as Postgres reads them | the 2.66.0 binary; [ignore.rs](https://github.com/sbdchd/squawk/blob/v2.66.0/crates/squawk_linter/src/ignore.rs) |
 | sqlfluff | `noqa`, `noqa:` with rules, `noqa: disable=` and `noqa: enable=` | anywhere on the line after `--`, `#` or `/*`, and at the start of a line: SQLFluff reads it at the start of a comment or after the comment's last `--`, and which text is a comment depends on the dialect | the 4.3.0 binary; [noqa.py](https://github.com/sqlfluff/sqlfluff/blob/4.3.0/src/sqlfluff/core/rules/noqa.py) |
+| trivy | `trivy:ignore:` or `tfsec:ignore:` with a check id, also after other sections such as `exp:` | anywhere on the line, as a word that starts with them once its leading `#`, `/` and `*` are cut: trivy reads every line of a Terraform file and of a CloudFormation YAML template as text, so it obeys one inside a string too. It obeys none in Kubernetes YAML or CloudFormation JSON, where OpenQodex still counts one | the 0.75.0 binary; [parse.go](https://github.com/aquasecurity/trivy/blob/v0.75.0/pkg/iac/ignore/parse.go) |
+| checkov | `checkov:skip=`, `bridgecrew:skip=` or `cortex:skip=` with a check id; the Kubernetes annotation keys `checkov.io/skip<n>`, `bridgecrew.io/skip<n>` and `cortex.io/skip<n>`; a CloudFormation resource's `Metadata` keys `checkov` and `bridgecrew` with a `skip` list | the skip comment anywhere on the line, a string included: Checkov reads a Terraform or CloudFormation resource's lines as text. The annotation and `Metadata` keys as keys of YAML or JSON, in block or flow style or through an alias; the `Metadata` key counts wherever a key is `checkov` or `bridgecrew` | the 3.3.22 binary; [enum.py](https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/common/comment/enum.py), [kubernetes_utils.py](https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/kubernetes/kubernetes_utils.py), [context_parser.py](https://github.com/bridgecrewio/checkov/blob/3.3.22/checkov/cloudformation/context_parser.py) |
+| tflint | `tflint-ignore: ` and `tflint-ignore-file: ` with a rule list or `all` | a `#`, `//` or `/* */` HCL comment, never a string or a heredoc body; in a `.tf.json` file, the start of a string. TFLint obeys the file form only at the very start of a file, and in JSON only as the root `"//"` key's value; OpenQodex counts it anywhere | the 0.64.0 binary; [annotation.go](https://github.com/terraform-linters/tflint/blob/v0.64.0/tflint/annotation.go) |
 
-Where OpenQodex is wider than the scanner, it errs towards a candidate the reviewer drops: semgrep's marker also counts without the space before it and in any comment form, ruff's `# isort: off` with extra blanks, a `disable=` inside a quoted value or a trailing note of a shellcheck directive, a hadolint or rubocop comment whose rule list the scanner would reject, a `# ruff: noqa` or generated-file comment the scanner reads differently, the text of JSX or a Ruby `__END__` block read as code, and everything after an opener left open. hadolint 2.15.1 cannot parse a Dockerfile with a heredoc at all and reports only a parse error, so its comments there are moot.
+Where OpenQodex is wider than the scanner, it errs towards a candidate the reviewer drops: semgrep's marker also counts without the space before it and in any comment form, ruff's `# isort: off` with extra blanks, a `disable=` inside a quoted value or a trailing note of a shellcheck directive, a hadolint or rubocop comment whose rule list the scanner would reject, a `# ruff: noqa` or generated-file comment the scanner reads differently, the text of JSX or a Ruby `__END__` block read as code, and everything after an opener left open. For the infrastructure scanners: trivy's marker in Kubernetes YAML and CloudFormation JSON, which trivy 0.75.0 does not read; Checkov's skip comment in Kubernetes YAML; Checkov's `Metadata` key wherever a key is `checkov` or `bridgecrew`, and on any line of a file that is not YAML; TFLint's file form anywhere in a comment. hadolint 2.15.1 cannot parse a Dockerfile with a heredoc at all and reports only a parse error, so its comments there are moot.
 
 actionlint, brakeman, osv-scanner and sqllint have no inline comment. actionlint ([usage](https://github.com/rhysd/actionlint/blob/v1.7.7/docs/usage.md)) and osv-scanner ([configuration](https://google.github.io/osv-scanner/configuration/)) skip findings only through their settings files; brakeman ([ignoring false positives](https://brakemanscanner.org/docs/ignoring_false_positives/)) only through its ignore file.
 
@@ -222,7 +225,17 @@ The comments are found by a small reader per comment family, not a full parser. 
 
 ## trivy
 
-- PLACEHOLDER trivy: the builder of this scanner replaces this line.
+- Version: 0.75.0. `trivy config` only: its misconfiguration checks for Terraform, Kubernetes and CloudFormation, never its vulnerability, secret or image scanning.
+- Runs when: a `.tf` or `.tf.json` file changed, a YAML file holding a Kubernetes object changed (top-level `apiVersion` and `kind`), or a CloudFormation template changed: a `.yaml`, `.yml`, `.json` or `.template` file with a top-level `AWSTemplateFormatVersion`, or a top-level `Resources` whose entries have a `Type` that starts with `AWS::`. OpenQodex reads at most the first 64 KB of such a file to tell. Terraform reads a module as its whole folder, so trivy gets every `.tf`, `.tf.json`, `terraform.tfvars` and `.auto.tfvars` file of the changed file's folder, not of its subfolders. Not a Dockerfile (hadolint checks those) and not a Helm template: a file holding `{{` is not YAML until Helm renders it, and a rendered line is not a line of the template.
+- Needs: nothing. 49.0 MB on Apple Silicon, 51.7 MB on Linux x64.
+- Runs on a copy of those files outside the repository, with no `PATH`, and with a home, cache and module folder of its own that are removed after the run. It loads no `trivy.yaml` (`--config ""`), no check bundle (`--skip-check-update`: it uses the checks built into the pinned binary) and none of your own trivy settings or modules.
+- Not on a folder whose Terraform calls a module from outside the repository (the Terraform registry, git, a URL, or a source that is not a plain `./` or `../` path): trivy 0.75.0 downloads such a module, and starts git to do it, with no switch to stop it. The report names the folders it left out; checkov and tflint still check them.
+- Reads the repo's `.trivyignore` at the repository root, a list of check ids to leave out.
+- Where a finding goes: on the lines trivy names as its cause. A cause that is a whole block (a resource that lacks an attribute, a container) goes on the block's first line, so a change elsewhere in the block does not bring it back.
+- Severity: trivy's own.
+- Sends: nothing. Telemetry and the version check are off (`--disable-telemetry`, `--skip-version-check`), and a proxy that logged every connection saw none.
+- Finds misconfigured infrastructure: a security group open to the internet, a privileged container, an unencrypted bucket, a public database, and the other checks of trivy's misconfiguration scanner.
+- Licence: Apache-2.0 ([LICENSE](https://github.com/aquasecurity/trivy/blob/v0.75.0/LICENSE)). The pin is checked by sha256 against the release's checksum file and GitHub's digest; trivy 0.69.4, the release an attacker published on 2026-03-19, is never pinned.
 
 ## squawk
 
@@ -241,7 +254,18 @@ The comments are found by a small reader per comment family, not a full parser. 
 
 ## tflint
 
-- PLACEHOLDER tflint: the builder of this scanner replaces this line.
+- Version: 0.64.0, with the terraform ruleset 0.15.0 built into the binary.
+- Runs when: a `.tf` or `.tf.json` file changed. It checks the folder of each changed file, as trivy gets it.
+- Needs: nothing. 16.3 MB on Apple Silicon, 17.1 MB on Linux x64.
+- Uses OpenQodex's own settings: the bundled terraform ruleset with its `recommended` preset (unused declarations, deprecated syntax, modules without a pinned version, missing version constraints, and the other rules about mistakes; not the naming and documentation rules of the `all` preset), and no other plugin. A `.tflint.hcl` in the repo is not loaded.
+- No plugin is downloaded or started: `tflint --init` never runs, and its plugin folder is an empty folder of the run's own, so a `.tflint.d` folder in the repo or in your home cannot replace the bundled ruleset. Plugins come back only when TFLint verifies them by signature and OpenQodex pins them; today there are none.
+- Module calls are off (`call_module_type = "none"`): TFLint reads no module from anywhere. The terraform ruleset checks each module as written, so this hides none of its findings.
+- TFLint evaluates the Terraform it checks, and an expression can read any file you can read (`file()` and `fileexists()` take an absolute path). So the one recommended rule whose message prints an evaluated value, `terraform_map_duplicate_keys`, is off: a duplicate map key written as `file("<path>")` would put that file into the report. Every other recommended rule prints names, literals of the configuration or fixed text. An error TFLint reports, such as a function it could not evaluate, is listed by its file and TFLint's short summary only, never its detail, which can name a path and say whether a file is there.
+- Runs on a copy of the files outside the repository, with no `PATH` and a home of its own.
+- Severity: an `error` is high; a `warning`, the ruleset's level for most rules, is low; a `notice` is info.
+- Sends: nothing. A proxy that logged every connection saw none.
+- Finds Terraform mistakes: a variable, local or data source nothing uses, deprecated interpolation and index syntax, a module from the registry or git with no pinned version, a provider with no version constraint.
+- Licence: MPL-2.0 ([LICENSE](https://github.com/terraform-linters/tflint/blob/v0.64.0/LICENSE)).
 
 ## kubeconform
 
@@ -253,7 +277,17 @@ The comments are found by a small reader per comment family, not a full parser. 
 
 ## checkov
 
-- PLACEHOLDER checkov: the builder of this scanner replaces this line.
+- Version: 3.3.22, with its terraform, cloudformation and kubernetes checks only. Not helm or kustomize, which start other programs, and not its secret, dependency or image scanning.
+- Runs when: the same files as trivy, beside it. Many of its checks name a problem a trivy check names too.
+- Needs: Python 3.11, which OpenQodex downloads through uv, as for semgrep. Its own environment takes about 170 MB on Apple Silicon after its first runs, installed from a hash-locked lock file of 96 packages.
+- Runs on a copy of the files outside the repository, with a home and a temporary folder of its own, and a `PATH` that holds only its own environment. So it loads no `.checkov.yaml` from the repo or from your home: such a file can name a folder or a git repository of Python checks, which Checkov would run.
+- Not on a folder whose Terraform calls a module by a path that leaves the repository, an absolute path or an expression: Checkov reads a local module from disk wherever it points. It reads other module sources and downloads none.
+- Where a finding goes: on the attributes Checkov says it evaluated, such as the `cidr_blocks` of an `ingress` block. When none of them is in the file (an attribute the resource lacks), on the first line of the deepest block on their path that is, and else on the resource's first line. In a JSON file, on the resource's first line.
+- Severity: medium for every finding. Checkov gives a severity only with the Prisma Cloud platform.
+- Sends: nothing. `--skip-download` fetches nothing from the platform, no API key is passed and `--skip-results-upload` uploads nothing, `--download-external-modules false` downloads no module, and `CKV_SKIP_PACKAGE_UPDATE_CHECK=true` stops the version lookup on pypi.org that Checkov otherwise makes on every start. A proxy that logged every connection saw none.
+- Takes about 2 seconds on a few small files once installed, measured on Apple Silicon.
+- Finds misconfigured infrastructure with its own checks (`CKV_*` and `CKV2_*`), many of them the same problems trivy names.
+- Licence: Apache-2.0 ([LICENSE](https://github.com/bridgecrewio/checkov/blob/3.3.22/LICENSE)).
 
 ## sqlfluff
 

@@ -1,4 +1,4 @@
-// The thirteen builtin scanners. Each adapter names the files of a change it
+// The built-in scanners. Each adapter names the files of a change it
 // checks (`files`), so the toolchain is never asked for a tool the change
 // does not need, and runs its tool from the resolved path (`run`). The
 // selector (select.ts) asks every adapter the same questions for a review,
@@ -8,6 +8,7 @@ import type { RepoFacts } from "../detect.js";
 import { actionlint } from "./actionlint.js";
 import { bandit } from "./bandit.js";
 import { brakeman } from "./brakeman.js";
+import { checkov } from "./checkov.js";
 import { gitleaks } from "./gitleaks.js";
 import { golangci } from "./golangci.js";
 import { hadolint } from "./hadolint.js";
@@ -20,6 +21,8 @@ import { shellcheck } from "./shellcheck.js";
 import { sqllint } from "./sql-lint.js";
 import { sqlfluff } from "./sqlfluff.js";
 import { squawk, SQUAWK_CONFIG } from "./squawk.js";
+import { tflint } from "./tflint.js";
+import { trivy } from "./trivy.js";
 import { zizmor, ZIZMOR_CONFIGS } from "./zizmor.js";
 
 export type Adapter = {
@@ -73,6 +76,12 @@ export const ADAPTERS: readonly Adapter[] = [
   zizmor,
   // Dockerfiles.
   hadolint,
+  // Terraform, Kubernetes and CloudFormation misconfiguration.
+  trivy,
+  // The same files, by Checkov's checks; deduplicated against trivy's on the same lines.
+  checkov,
+  // Terraform language mistakes.
+  tflint,
   // .sh / .bash scripts.
   shellcheck,
   // Python lint.
@@ -96,9 +105,9 @@ export const ADAPTERS: readonly Adapter[] = [
 // or the adapter's own lookup). `anyFolder`: that name in any folder, which
 // the tool finds by walking up from the scanned file. `ruffTable`: only when
 // a changed line of the file is inside a `[tool.ruff` table.
-// Not listed: oxlint, rubocop, brakeman and golangci run on settings of
-// their own; bandit reads `.bandit` only with -r, which the adapter never
-// passes (it names the files).
+// Not listed: oxlint, rubocop, brakeman, golangci, checkov and tflint run on
+// settings of their own; bandit reads `.bandit` only with -r, which the
+// adapter never passes (it names the files).
 export type SettingsFile = { path: string; anyFolder?: true; ruffTable?: true };
 
 export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFile[]>> = {
@@ -124,4 +133,6 @@ export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFil
   // sections of setup.cfg, tox.ini, pep8.ini and pyproject.toml are read too
   // but not listed: run.ts checks a section only for ruff today.
   sqlfluff: [{ path: ".sqlfluff", anyFolder: true }, { path: ".sqlfluffignore", anyFolder: true }],
+  // trivy.ts hands trivy the ignore list at the repository root.
+  trivy: [{ path: ".trivyignore" }],
 };
