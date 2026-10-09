@@ -54,6 +54,19 @@ const DJANGO_SIGNAL_MODULES = ["django.db.models.signals.", "django.core.signals
 const DJANGO_SIGNAL_CLASSES = new Set(["django.dispatch.Signal", "django.dispatch.dispatcher.Signal"]);
 const MODEL_BASES = new Set(["django.db.models.Model", "django.db.models.base.Model"]);
 const RELATED_FIELDS = new Set(["ForeignKey", "OneToOneField", "ManyToManyField"]);
+// Django's field classes whose names do not end in Field.
+const FIELD_CLASSES = new Set(["ForeignKey", "ForeignObject", "GenericForeignKey", "GenericRelation"]);
+// How many classes deep a repository field class is followed to Django's.
+const MAX_FIELD_CHAIN = 8;
+
+// Whether a dotted name of Django's own is one of its field classes: a
+// class of django.db.models or of a contrib app named like Django names
+// its fields.
+function djangoField(name: string): boolean {
+  if (!name.startsWith("django.db.models.") && !name.startsWith("django.contrib.")) return false;
+  const tail = name.slice(name.lastIndexOf(".") + 1);
+  return tail.endsWith("Field") || FIELD_CLASSES.has(tail);
+}
 const TEST_BASES = new Set(["django.test.TestCase", "django.test.SimpleTestCase", "django.test.TransactionTestCase", "django.test.LiveServerTestCase", "rest_framework.test.APITestCase", "rest_framework.test.APISimpleTestCase", "rest_framework.test.APITransactionTestCase", "unittest.TestCase"]);
 const COMMAND_BASES = new Set(["django.core.management.base.BaseCommand", "django.core.management.BaseCommand", "django.core.management.base.AppCommand", "django.core.management.base.LabelCommand"]);
 const REVERSE_FUNCTIONS = new Set(["django.urls.reverse", "django.urls.reverse_lazy", "django.shortcuts.resolve_url", "django.core.urlresolvers.reverse"]);
@@ -915,21 +928,54 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const dir = posix.dirname(file);
     return posix.basename(dir) === "models" || posix.basename(dir) === "migrations" ? posix.dirname(dir) : dir;
   };
+  // The Django field class a repository class derives from through its
+  // bases, at most MAX_FIELD_CHAIN classes deep; null when none. A result
+  // cut by the depth is not kept, so a shorter path from elsewhere still counts.
+  const fieldBases = new Map<string, string | null>();
+  const fieldBase = (cls: GraphNode, depth: number, visiting: Set<string>): { name: string | null; cut: boolean } => {
+    const kept = fieldBases.get(cls.id);
+    if (kept !== undefined) return { name: kept, cut: false };
+    if (visiting.has(cls.id)) return { name: null, cut: false };
+    if (depth >= MAX_FIELD_CHAIN) return { name: null, cut: true };
+    visiting.add(cls.id);
+    let cut = false;
+    let found: string | null = null;
+    for (const b of classDef(index, cls)?.bases ?? []) {
+      const ref = [...(b.qualifier ? b.qualifier.split(".") : []), b.name];
+      const name = canonical(index, cls.file, ref);
+      if (name !== null && djangoField(name)) {
+        found = name;
+        break;
+      }
+      const lk = index.lookup(cls.file, ref);
+      if (lk.kind !== "symbol") continue;
+      for (const id of lk.ids) {
+        const base = index.node(id);
+        if (base?.kind !== "class") continue;
+        const r = fieldBase(base, depth + 1, visiting);
+        cut ||= r.cut;
+        found = r.name;
+        if (found) break;
+      }
+      if (found) break;
+    }
+    visiting.delete(cls.id);
+    if (found !== null || !cut) fieldBases.set(cls.id, found);
+    return { name: found, cut: found === null && cut };
+  };
   // The field class a model attribute's constructor names: Django's own
-  // (certain), or a repository class whose base binds to one (likely).
+  // field class (certain), or a repository class that derives from one,
+  // however it is named or imported (likely). Anything else is no field.
   const fieldClass = (file: string, ctor: Ref, line: number): { name: string; tier: Tier; note: string | null } | null => {
     const name = canonical(index, file, ctor, { line });
-    if (name !== null) return name.startsWith("django.db.models.") || name.startsWith("django.contrib.") ? { name, tier: "certain", note: null } : null;
+    if (name !== null && djangoField(name)) return { name, tier: "certain", note: null };
     const lk = index.lookup(file, ctor);
     if (lk.kind !== "symbol") return null;
     for (const id of lk.ids) {
       const cls = index.node(id);
       if (!cls || cls.kind !== "class") continue;
-      const def = classDef(index, cls);
-      for (const b of def?.bases ?? []) {
-        const base = canonical(index, cls.file, [...(b.qualifier ? b.qualifier.split(".") : []), b.name]);
-        if (base?.startsWith("django.db.models.")) return { name: base, tier: "likely", note: `a field class of the repository whose base is ${base}` };
-      }
+      const base = fieldBase(cls, 0, new Set()).name;
+      if (base !== null) return { name: base, tier: lk.tier === "possible" ? "possible" : "likely", note: joinNote(lk.note, `a field class of the repository that derives from ${base}`) };
     }
     return null;
   };

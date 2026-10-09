@@ -10,7 +10,8 @@ import { RULES, detectDjango, resolveDjango } from "./resolve.js";
 // 3: a router's trailing_slash option.
 // 4: what the facts could not read is a fact of its own (kind "unread").
 // 5: 1-based columns, as the language facts.
-const VERSION = 5;
+// 6: every class attribute built by a named call is a field candidate.
+const VERSION = 6;
 const SUPPORTED = "Django 3.2 to 5.1, Django REST framework routers 3.x";
 
 // Corpus case names are relative to packages/graph/corpus/frameworks/django/.
@@ -68,7 +69,7 @@ export const django: FrameworkPlugin<DjangoFact> = {
         version: RULES.models.version,
         description: "A class whose base binds to django.db.models.Model, or to such a class, is a model with its fields, its relations and its table.",
         emits: ["model", "declares_field", "uses_type", "maps_to", "model_field", "table"],
-        fixtures: { positive: ["models-migrations", "real-code-shapes"], aliased: ["models-migrations"], unrelatedSameName: ["models-migrations"], dynamic: { none: "a model base is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
+        fixtures: { positive: ["models-migrations", "real-code-shapes", "field-classes"], aliased: ["models-migrations"], unrelatedSameName: ["models-migrations", "field-helper"], dynamic: { none: "a model base is a name, never a computed value" }, metadataEdit: ["dependency-added"] },
       },
       {
         id: RULES.migrations.id,

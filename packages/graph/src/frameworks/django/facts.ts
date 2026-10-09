@@ -373,10 +373,13 @@ export function djangoFacts(root: Node): DjangoFact[] {
         }
         continue;
       }
-      if (right.type === "call") {
+      // Every class attribute built by a call of a named constructor, in a
+      // class with a base: resolve proves by the constructor's class which
+      // ones are fields, never by its name.
+      if (right.type === "call" && bases.length > 0) {
         const ctor = calleeOf(right);
         const tail = last(ctor);
-        if (ctor && tail && (tail.endsWith("Field") || tail === "ForeignKey" || tail === "GenericForeignKey")) {
+        if (ctor && tail) {
           const { positional, keyword } = pyArgs(right);
           const target = keyword.get("to") ?? (tail === "ForeignKey" || tail === "OneToOneField" || tail === "ManyToManyField" ? positional[0] : undefined);
           let related: Ref | string | null = null;
