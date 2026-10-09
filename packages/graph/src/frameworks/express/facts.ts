@@ -9,6 +9,7 @@
 // imports, so a fact never claims what only another file can prove.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
+import { keepParts, pathText } from "../shared/literals.js";
 import type { Expr } from "./js.js";
 import type { Up } from "./js.js";
 import { exported, FN_TYPES, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, patternNames, pos, readExpr, stringValue, walk } from "./js.js";
@@ -179,7 +180,89 @@ export function readFacts(root: Node): ExpressFact[] {
   });
   if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
   for (const [line, s] of scopes) out.push({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all });
-  return out;
+  return keepRead(out);
+}
+
+// ---------- the literals the facts keep ----------
+// A string is kept only where resolve reads one (shared/literals.ts): the
+// path or prefix a watched call or a `route(...)` call is given first, and
+// a module constant such a path names. Every other literal, in a handler,
+// an option, a header, a value or an export, is kept as `other`, and a
+// test block keeps no title.
+const unread = (e: Expr): Expr => ({ t: "other", line: e.line, column: e.column });
+// The calls whose first argument is a path or a prefix.
+const PATH_FIRST = new Set<string>([...HTTP_METHODS, "del", "use", "route"]);
+
+function keepRead(facts: ExpressFact[]): ExpressFact[] {
+  const used = new Set<string>();
+  const use = (ref: string[]) => {
+    if (ref.length === 1) used.add(ref[0] as string);
+  };
+  // An expression read as a path: a literal in the form resolve reads it, a
+  // name whose constant it may need, or a list of those.
+  const path = (e: Expr): Expr => {
+    switch (e.t) {
+      case "str": {
+        const v = pathText(e.v);
+        return v === null ? unread(e) : { ...e, v };
+      }
+      case "dyn": {
+        const parts = e.parts ? keepParts(e.parts, pathText, use) : null;
+        return parts === null ? unread(e) : { ...e, parts };
+      }
+      case "ref":
+        use(e.path);
+        return e;
+      case "array":
+        return { ...e, items: e.items.map(path) };
+      default:
+        return names(e);
+    }
+  };
+  // An expression read only for its names and calls: no literal in it,
+  // except the path a `route(...)` call in a chain is given.
+  const names = (e: Expr): Expr => {
+    switch (e.t) {
+      case "str":
+      case "dyn":
+        return unread(e);
+      case "call": {
+        const fn = names(e.fn);
+        const route = (e.fn.t === "member" && e.fn.prop === "route") || (e.fn.t === "ref" && e.fn.path[e.fn.path.length - 1] === "route");
+        return { ...e, fn, args: e.args.map((a, i) => (route && i === 0 ? path(a) : names(a))) };
+      }
+      case "member":
+        return { ...e, obj: names(e.obj) };
+      case "array":
+        return { ...e, items: e.items.map(names) };
+      case "object":
+        return { ...e, props: e.props.map((p) => ({ key: p.key, value: names(p.value) })) };
+      default:
+        return e;
+    }
+  };
+  const out: ExpressFact[] = facts.map((f) => {
+    switch (f.kind) {
+      case "call":
+        return { ...f, recv: names(f.recv), args: f.args.map((a, i) => (i === 0 && PATH_FIRST.has(f.prop) ? path(a) : names(a))) };
+      case "server":
+        return { ...f, args: f.args.map(names) };
+      case "value":
+        return f.value.t === "str" ? f : { ...f, value: names(f.value) };
+      case "cjs-export":
+        return { ...f, value: names(f.value) };
+      case "test-block":
+        return { ...f, name: null };
+      default:
+        return f;
+    }
+  });
+  // A constant is kept only when a path names it, and only as a path.
+  return out.map((f) => {
+    if (f.kind !== "value" || f.value.t !== "str") return f;
+    const v = used.has(f.name) ? pathText(f.value.v) : null;
+    return { ...f, value: v === null ? unread(f.value) : { ...f.value, v } };
+  });
 }
 
 // A type written as a name or a qualified name: `Express`, `express.Router`,

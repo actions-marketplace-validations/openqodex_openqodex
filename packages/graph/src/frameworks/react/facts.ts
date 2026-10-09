@@ -9,7 +9,7 @@
 // step climbs the parents, so a deeply nested file stays linear.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
-import { exported, identifierName, MAX_SOURCE_BYTES, namePath, pos, stringValue } from "../express/js.js";
+import { exported, identifierName, MAX_SOURCE_BYTES, namePath, pos } from "../express/js.js";
 
 export type ReactFact =
   // A function or class that may be a component: its name, where it is
@@ -251,7 +251,8 @@ export function readFacts(root: Node): ReactFact[] {
         const callee = namePath(node.childForFieldName("function"));
         const last = callee ? (callee[callee.length - 1] as string) : null;
         if (callee && last && isHookName(last) && callee.length <= 2) out.push({ kind: "hook-call", ...pos(node), name: callee, scope: topFn()?.line ?? 0, local: (locals.get(callee[0] as string) ?? 0) > 0 });
-        if (callee && callee.length === 1 && TEST_FNS.has(last as string)) out.push({ kind: "test-block", ...pos(node), fn: last as string, name: stringValue(node.childForFieldName("arguments")?.firstNamedChild ?? null) });
+        // A test block is counted, never named: its title may hold any literal, and the cached facts keep none they do not read.
+        if (callee && callee.length === 1 && TEST_FNS.has(last as string)) out.push({ kind: "test-block", ...pos(node), fn: last as string, name: null });
       }
     }
     if (descend && cursor.gotoFirstChild()) {

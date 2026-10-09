@@ -15,6 +15,7 @@
 // function of a node comes from a stack kept during the one walk over the
 // tree, never from a walk up its parents.
 import type { Node } from "web-tree-sitter";
+import { keepParts, methodText, pathText, urlParts } from "../shared/literals.js";
 import type { FrameworkFactBase } from "../plugin.js";
 
 export const MAX_SOURCE_BYTES = 256 * 1024;
@@ -375,6 +376,120 @@ const namedChildren = (list: Node | null): Node[] => {
   return out;
 };
 
+// ---------- the literals the facts keep ----------
+// A string is kept only where resolve reads one (shared/literals.ts): the
+// pattern Handle and HandleFunc are given, the prefix http.StripPrefix is
+// given, the method and target of a request, and a package constant one of
+// those names. Every other literal, in a handler, a value, a server or an
+// address, is kept as `other`, and an unused constant is not kept.
+type Form = "pattern" | "path" | "method" | "target";
+const unread = (e: Expr): Expr => ({ t: "other", line: e.line, column: e.column });
+const isHostChar = (c: number) => (c >= 48 && c <= 58) || ((c | 32) >= 97 && (c | 32) <= 122) || c === 45 || c === 46 || c === 91 || c === 93;
+
+// The start of a pattern, `[METHOD ][HOST]/[PATH]`: a path, or a method
+// and its spaces, then a host up to the first "/". Null when the text
+// cannot begin one.
+function patternText(s: string): string | null {
+  if (s.startsWith("/")) return s;
+  let rest = s;
+  let sp = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === " " || s[i] === "\t") {
+      sp = i;
+      break;
+    }
+  }
+  if (sp >= 0) {
+    if (methodText(s.slice(0, sp)) === null) return null;
+    rest = s.slice(sp).trimStart();
+  }
+  const slash = rest.indexOf("/");
+  const host = slash < 0 ? rest : rest.slice(0, slash);
+  for (let i = 0; i < host.length; i++) if (!isHostChar(host.charCodeAt(i))) return null;
+  return s;
+}
+
+// A request target: an absolute URL with its scheme, host and path, or
+// the text before a query or a fragment (resolve says when that is no path).
+function targetText(s: string): string {
+  const u = urlParts(s);
+  if (u) return u.origin + u.path;
+  return (s.split("#")[0] as string).split("?")[0] as string;
+}
+const FORMS: Record<Form, (s: string) => string | null> = { pattern: patternText, path: pathText, method: methodText, target: targetText };
+
+function keepRead(facts: GoHttpFact[]): GoHttpFact[] {
+  const used = new Map<string, Set<Form>>();
+  const use = (ref: string[], form: Form) => {
+    if (ref.length === 1) (used.get(ref[0] as string) ?? used.set(ref[0] as string, new Set()).get(ref[0] as string))?.add(form);
+  };
+  const text = (e: Expr | undefined, form: Form): Expr | undefined => {
+    if (e === undefined) return e;
+    switch (e.t) {
+      case "str": {
+        const v = FORMS[form](e.v);
+        return v === null ? unread(e) : { ...e, v };
+      }
+      case "dyn": {
+        if (!e.parts || form === "method") return unread(e);
+        const parts = keepParts(e.parts, FORMS[form], (ref, first) => {
+          if (!e.parts?.some((p) => "ref" in p && p.ref === ref && p.local)) use(ref, first ? form : "path");
+        });
+        return parts === null ? unread(e) : { ...e, parts };
+      }
+      case "ref":
+        if (!e.local) use(e.path, form);
+        return e;
+      default:
+        return names(e);
+    }
+  };
+  // An expression read only for its names, calls and literals' types: no
+  // string in it, except the prefix http.StripPrefix is given.
+  const names = (e: Expr): Expr => {
+    switch (e.t) {
+      case "str":
+      case "dyn":
+        return unread(e);
+      case "call": {
+        const strip = e.fn.t === "ref" && e.fn.path[e.fn.path.length - 1] === "StripPrefix";
+        return { ...e, fn: names(e.fn), args: e.args.map((a, i) => (strip && i === 0 ? (text(a, "path") as Expr) : names(a))) };
+      }
+      case "lit":
+        return { ...e, fields: e.fields.map((f) => ({ key: f.key, value: names(f.value) })) };
+      default:
+        return e;
+    }
+  };
+  const READ: Record<string, (Form | null)[]> = { Handle: ["pattern"], HandleFunc: ["pattern"], NewRequest: ["method", "target"], NewRequestWithContext: [null, "method", "target"] };
+  const out: GoHttpFact[] = facts.map((f) => {
+    switch (f.kind) {
+      case "call": {
+        const read = READ[f.prop] ?? [];
+        return { ...f, recv: names(f.recv), args: f.args.map((a, i) => (read[i] ? (text(a, read[i] as Form) as Expr) : names(a))) };
+      }
+      case "value":
+        return { ...f, value: names(f.value) };
+      case "server":
+        return { ...f, handler: f.handler && names(f.handler) };
+      default:
+        return f;
+    }
+  });
+  // A constant is kept, in the form a use reads it in, only when some use reads it.
+  const kept: GoHttpFact[] = [];
+  for (const f of out) {
+    if (f.kind !== "const") {
+      kept.push(f);
+      continue;
+    }
+    const forms = used.get(f.name);
+    const v = forms ? ([...forms].map((form) => FORMS[form](f.value)).find((x) => x !== null) ?? null) : null;
+    if (v !== null) kept.push({ ...f, value: v });
+  }
+  return kept;
+}
+
 // The facts another file can use, kept from a file that holds no watched
 // call and no server literal: package-level values (a mux or a handler
 // named from another file), parameters typed as a handler (a wrapper's
@@ -590,7 +705,7 @@ export function readFacts(root: Node): GoHttpFact[] {
       // Leaving the node at this depth: the scopes it opened close, and the names it declares bind.
       close(depth);
       if (cursor.gotoNextSibling()) break;
-      if (!cursor.gotoParent()) return out.some((f) => f.kind === "call" || f.kind === "server") ? out : out.filter(keepOutside);
+      if (!cursor.gotoParent()) return keepRead(out.some((f) => f.kind === "call" || f.kind === "server") ? out : out.filter(keepOutside));
       depth--;
     }
   }
