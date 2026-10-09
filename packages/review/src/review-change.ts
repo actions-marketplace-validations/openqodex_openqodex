@@ -62,6 +62,7 @@ import type {
 } from "@openqodex/core";
 import { PacketCollision, PacketLeak, renderImpactBlock, writePacket } from "@openqodex/graph";
 import type { GraphStore, Lease } from "@openqodex/graph";
+import { meterSession } from "./agent-usage.js";
 import { REVIEWER_NAMES, hostAgent } from "./agents/driver.js";
 import type { ReviewerDriver, ReviewerSession } from "./agents/driver.js";
 import { converse, deliverRanges, redactSnapshot } from "./conversation.js";
@@ -70,6 +71,8 @@ import { buildGraphRun, buildHotSpots, nothingToReviewLine, ruleCoverage, scanCh
 import type { GraphHost, PipelineResult, ScanHost } from "./pipeline.js";
 import { redactStored } from "./redact.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
+import { usageTotals } from "./usage.js";
+import type { CallRecord, UsageTotals } from "./usage.js";
 
 // A frozen copy of the state under review: `tree` is the folder the
 // scanners and the reviewer read; `folder` holds it and whatever the maker
@@ -181,6 +184,7 @@ export type ReviewCoreResult =
   | { ended: "unavailable"; reasons: string[]; change: Change; scan: ScanResult; secrets: string[] }
   // The reviewer ran. `report` carries the completion record and says
   // incomplete when the record does; `display` is the code report.html shows.
+  // `usage`: one record per round, from the driver's running totals.
   | {
       ended: "reviewed";
       report: Report;
@@ -192,6 +196,7 @@ export type ReviewCoreResult =
       secrets: string[];
       whole: boolean;
       target: RunTarget | null;
+      usage: { calls: CallRecord[]; totals: UsageTotals };
     };
 
 type Chosen = { driver: ReviewerDriver; version: string; bin: string } | { unavailable: string[] };
@@ -419,7 +424,9 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // A secret in a path would reach the reviewer through any listing: the
     // reviewer is not started and the review is incomplete.
     const refused = redaction.named > 0 ? "a file name in the change holds a secret the scanners found, so the reviewer was not started; rename the file" : null;
-    if (refused === null) session = chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: inputs.web });
+    // Each round's usage is recorded as the turns come back; the turns reach the conversation unchanged.
+    const metered = refused === null ? meterSession(chosen.driver.start({ snapshotDir: prep.snapshot.tree, deadline, bin: chosen.bin, web: inputs.web }), { driver: chosen.driver.name, now: deps.now }) : null;
+    if (metered !== null) session = metered.session;
     if (session !== null) deps.onEvent({ type: "started", driver: chosen.driver.name, version: chosen.version, pid: session.pid });
     const pid = session?.pid ?? null;
     if (session !== null) say(`Reviewer: ${chosen.driver.name} ${chosen.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
@@ -493,7 +500,8 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           secrets: p.secrets,
         })
       : buildDisplay({ change, secrets: p.secrets });
-    return { ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null };
+    const calls = metered?.calls() ?? [];
+    return { ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null, usage: { calls, totals: usageTotals(calls) } };
   } finally {
     over = true;
     graphLease?.release();

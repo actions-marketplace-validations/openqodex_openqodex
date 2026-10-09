@@ -20,3 +20,4 @@ export { agentReviewer, reviewerContract } from "./reviewer.js";
 export type { AgentReviewer, AuthorizeRequest, Budget, Disposition, Message, ModelRequest, ModelResponse, ModelReviewer, ModelUsage, ResultFinding, ReviewChangeInput, ReviewChangeOptions, Reviewer, ReviewResult, ReviewStatus, ToolCallRequest, ToolDefinition, ToolParameter } from "./reviewer.js";
 export { usageTotals } from "./usage.js";
 export type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
+export { agentRoundCall, meterSession } from "./agent-usage.js";

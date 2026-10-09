@@ -27,7 +27,9 @@ export type Detected = { ok: true; version: string; bin: string } | { ok: false;
 // it timed out, it started with more than it was given).
 // `calls`: every tool call of this answer, as the agent sent it; the run
 // decides from them, by script, what was read and where.
-export type Turn = { finalText: string; calls: ToolCall[]; usage: ReviewerUsage; sessionId: string | null; failure: string | null };
+// `models`: the model names the agent itself reported with the answer
+// (Claude Code's modelUsage); absent when the driver cannot name one.
+export type Turn = { finalText: string; calls: ToolCall[]; usage: ReviewerUsage; sessionId: string | null; failure: string | null; models?: string[] };
 
 // An open reviewer. `send` asks for one answer in the same session: the
 // brief first, then each correction round. A driver whose agent cannot keep a
