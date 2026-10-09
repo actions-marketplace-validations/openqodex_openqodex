@@ -5,14 +5,18 @@
 // of those names), so a secret written anywhere else in the code, such as
 // an API key, a client's argument, a header, a URL's user or query, a
 // decorator's argument or a test's title, is never copied into the graph
-// folder. The constants the routes are built from still resolve.
+// folder: not into a facts file, not into a kept build's framework data
+// (index/frameworks.json), and not into the packet or the graph block of a
+// review's brief. The constants the routes are built from still resolve.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { buildGraph, openStore } from "../index.js";
+import { getChange } from "@openqodex/core";
+import { buildGraph, detectImpact, openStore, renderImpactBlock } from "../index.js";
+import { writePacket } from "../review/packet.js";
 import type { Graph, Registration } from "../index.js";
 
 const S = `sk_live_${randomBytes(16).toString("hex")}`;
@@ -111,6 +115,7 @@ func main() {
 `,
   "web/package.json": JSON.stringify({ name: "web", private: true, dependencies: { next: "^15.1.6", react: "^19.0.0" }, devDependencies: { "@testing-library/react": "^16.0.0", vitest: "^3.2.4" } }),
   "web/app/page.tsx": `const KEY = "${S}";\nexport default function Page() {\n  return <div data-key="${S}">{KEY}</div>;\n}\n`,
+  "web/middleware.ts": `"${S}";\nexport function middleware() {\n  return undefined;\n}\nexport const config = { matcher: ["/dashboard/:path*", "${S}"] };\n`,
   "web/app/page.test.tsx": `import { render } from "@testing-library/react";\nimport { it } from "vitest";\nimport Page from "./page";\nit("${S}", () => {\n  render(<Page />);\n});\n`,
 };
 
@@ -142,7 +147,8 @@ describe("the framework plugins on a repository with a secret written in many pl
     git("commit", "-q", "-m", "base");
     const opened = await openStore(root, { home });
     if (!opened.ok) throw new Error(opened.reason);
-    graph = await buildGraph({ repoRoot: root, store: opened.store });
+    // Kept with its index, as a build over the five-second line is, so its framework data is written too.
+    graph = await buildGraph({ repoRoot: root, store: opened.store, mode: "retained" });
   }, 120_000);
   afterAll(() => {
     rmSync(root, { recursive: true, force: true });
@@ -170,6 +176,7 @@ describe("the framework plugins on a repository with a secret written in many pl
         return `${x.f.slice(root.length + 1)}: ${holding(parsed, "", []).join(" ")}`;
       });
     expect(leaks).toEqual([]);
+    expect(walk(join(root, ".openqodex")).some((f) => f.endsWith("frameworks.json")), "the build kept no framework data").toBe(true);
   });
 
   it("still builds each route from the constants its path names, a later piece such as a version included", () => {
@@ -181,5 +188,18 @@ describe("the framework plugins on a repository with a secret written in many pl
     expect(patterns("fastapi")).toEqual(["/guarded", "/items", "/v1/users"]);
     expect(patterns("express")).toEqual(["/v1/users", "/x"]);
     expect(patterns("go-http")).toEqual(["/v1/users", "/x", "/y"]);
+  });
+
+  it("puts the key in no packet file and no line of the brief's graph block for a change the scanners find no key in", async () => {
+    // A change to a file with no key in each project: nothing redacts the key elsewhere.
+    for (const [path, body] of [["py/app/extra.py", "def extra():\n    return 1\n"], ["js/src/extra.js", "export function extra() {\n  return 1;\n}\n"], ["go/extra.go", "package main\n\nfunc extra() int {\n\treturn 1\n}\n"], ["web/app/extra.ts", "export function extra(): number {\n  return 1;\n}\n"]] as const) writeFileSync(join(root, path), body);
+    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+    const g = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const impact = detectImpact(g, change);
+    const packet = await writePacket({ root, repoRoot: root, graph: g, impact, baseSha: change.baseSha, secrets: [] });
+    expect(packet.files.length).toBeGreaterThan(0);
+    expect(walk(join(root, packet.dir)).filter((f) => readFileSync(f, "utf8").includes(S)).map((f) => f.slice(root.length + 1))).toEqual([]);
+    expect(renderImpactBlock(impact).includes(S)).toBe(false);
+    expect(JSON.stringify(g.frameworks ?? null).includes(S)).toBe(false);
   });
 });

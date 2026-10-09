@@ -28,6 +28,7 @@ export function wants(): boolean {
 }
 
 const MAX_MATCHERS = 64;
+const DIRECTIVES = new Set(["use client", "use server"]);
 
 // The directives of a statement list's prologue: the string statements
 // before anything else.
@@ -49,7 +50,8 @@ function prologue(list: Node | null): { value: string; node: Node }[] {
 export function readFacts(root: Node): NextFact[] {
   if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
   const out: NextFact[] = [];
-  for (const d of prologue(root)) out.push({ kind: "directive", ...pos(d.node), value: d.value });
+  // Only the directives the plugin reads are kept: a prologue string is any literal (shared/literals.ts).
+  for (const d of prologue(root)) if (DIRECTIVES.has(d.value)) out.push({ kind: "directive", ...pos(d.node), value: d.value });
   let broken = 0;
   let firstBroken = 0;
   walk(
@@ -85,6 +87,8 @@ export function readFacts(root: Node): NextFact[] {
           let values: string[] | null = null;
           if (v.t === "str") values = [v.v];
           else if (v.t === "array" && v.items.length <= MAX_MATCHERS && v.items.every((x) => x.t === "str")) values = v.items.map((x) => (x.t === "str" ? x.v : ""));
+          // A matcher is a path that starts with "/": any other (Next.js refuses it) makes the list unread, so no other literal is kept.
+          if (values?.some((x) => !x.startsWith("/"))) values = null;
           const fact: NextFact = { kind: "matcher", ...pos(node), values };
           if (values !== null && v.t === "array" && v.more) fact.more = v.more;
           out.push(fact);
