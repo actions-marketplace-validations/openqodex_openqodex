@@ -57,6 +57,9 @@ export function comments(text: string, family: Family): Comment[] {
 
 const MAX_DEPTH = 64;
 
+// The length recorded for a line whose key is longer than MAX_WORD.
+const NO_KEY = 0xffff;
+
 // A 32-bit FNV-1a hash of s[from, to), by UTF-16 code unit.
 function keyHash(s: string, from: number, to: number): number {
   let h = 0x811c9dc5;
@@ -76,12 +79,14 @@ class Reader {
   // The offset of every line start, built once.
   private starts: number[] | null = null;
   // For each heredoc end rule (indent, trailing blanks): each line's key,
-  // its text read by that rule (lines up to MAX_WORD long), by a 32-bit hash
-  // of the key, to the start of the line, or to the starts in order when
-  // several lines share the hash. Numbers, not the lines' text, key the map:
-  // a map of hundreds of thousands of distinct strings costs more per line
-  // as it grows, and a file of distinct heredoc words made one.
-  private readonly lines = new Map<string, Map<number, number | number[]>>();
+  // its text read by that rule, as its offset and length by line number
+  // (typed arrays, a length past MAX_WORD as NO_KEY), and an index from a
+  // 32-bit hash of the key to the line's number, or to the numbers in file
+  // order when several lines share the hash. Small numbers, not the lines'
+  // text, key the map and fill it: a map of hundreds of thousands of
+  // distinct strings, or of numbers too large to store inline, costs more
+  // per line as it grows, and a file of distinct heredoc words made one.
+  private readonly lines = new Map<string, { index: Map<number, number | number[]>; keyFrom: Uint32Array; keyLength: Uint16Array }>();
   // For each list of starts that share a hash, the words looked up in it:
   // the list index a lookup started from, and the index of the first line
   // at or after it that is the word (-1: none to the end). The reader moves
@@ -136,38 +141,50 @@ class Reader {
   // The offset past the first line at or after `from` that reads `word` once
   // `h.indent` is removed (and, with `h.trailing`, trailing blanks), or -1
   // with none. The lines are indexed once per rule, by the hash of their
-  // key; a line found by the hash is the end only when its key has the
-  // word's length and text, and a line whose key only shares the hash is
-  // passed over, however many there are, as the scanner passes over them.
-  // Each line that shares a hash is compared with a given word once in a
-  // forward read (scanned), so a file of lines crafted to share one hash
-  // costs time in proportion to its size.
+  // key. A line found by the hash is the end only when, in this order, its
+  // key's length is the word's (one number read by line number) and its
+  // text is the word (a compare of at most the word's length); a line whose
+  // key only shares the hash is passed over, however many there are, as the
+  // scanner passes over them. Each line that shares a hash is checked
+  // against a given word once in a forward read (scanned), so a file of
+  // lines crafted to share one hash costs time in proportion to its size.
   closer(h: Heredoc, from: number): number {
     const word = h.word;
     if (word.length > MAX_WORD) return -1;
     const rule = `${h.indent}\0${h.trailing}`;
-    let index = this.lines.get(rule);
-    if (index === undefined) {
-      index = new Map();
-      for (const start of this.lineStarts()) {
-        const [a, b] = this.keyOf(start, h.indent, h.trailing);
-        if (b - a > MAX_WORD) continue;
+    const starts = this.lineStarts();
+    let built = this.lines.get(rule);
+    if (built === undefined) {
+      const index = new Map<number, number | number[]>();
+      const keyFrom = new Uint32Array(starts.length);
+      const keyLength = new Uint16Array(starts.length);
+      for (let line = 0; line < starts.length; line++) {
+        const [a, b] = this.keyOf(starts[line] as number, h.indent, h.trailing);
+        keyFrom[line] = a;
+        if (b - a > MAX_WORD) {
+          keyLength[line] = NO_KEY;
+          continue;
+        }
+        keyLength[line] = b - a;
         const key = keyHash(this.s, a, b);
         const at = index.get(key);
-        if (at === undefined) index.set(key, start);
-        else if (typeof at === "number") index.set(key, [at, start]);
-        else at.push(start);
+        if (at === undefined) index.set(key, line);
+        else if (typeof at === "number") index.set(key, [at, line]);
+        else at.push(line);
       }
-      this.lines.set(rule, index);
+      built = { index, keyFrom, keyLength };
+      this.lines.set(rule, built);
     }
-    const found = index.get(keyHash(word, 0, word.length));
+    const { keyFrom, keyLength } = built;
+    const found = built.index.get(keyHash(word, 0, word.length));
     if (found === undefined) return -1;
-    const isWord = (start: number): boolean => {
-      const [a, b] = this.keyOf(start, h.indent, h.trailing);
-      return b - a === word.length && this.s.startsWith(word, a);
-    };
-    if (typeof found === "number") return found >= from && isWord(found) ? this.eol(found) + 1 : -1;
-    const k = this.firstAtOrAfter(found, from);
+    // The length first, then the text.
+    const isWord = (line: number): boolean => keyLength[line] === word.length && this.s.startsWith(word, keyFrom[line] as number);
+    const end = (line: number): number => this.eol(starts[line] as number) + 1;
+    // The first line that starts at or after `from`.
+    const first = this.firstAtOrAfter(starts, from);
+    if (typeof found === "number") return found >= first && isWord(found) ? end(found) : -1;
+    const k = this.firstAtOrAfter(found, first);
     let memos = this.scanned.get(found);
     if (memos === undefined) {
       memos = [];
@@ -178,7 +195,7 @@ class Reader {
     // the word in [memo.from, memo.match), and the word at memo.match.
     if (memo !== undefined && memo.from <= k && (memo.match < 0 || memo.match >= k)) {
       memo.from = k;
-      return memo.match < 0 ? -1 : this.eol(found[memo.match] as number) + 1;
+      return memo.match < 0 ? -1 : end(found[memo.match] as number);
     }
     let match = -1;
     for (let j = k; j < found.length; j++) {
@@ -194,7 +211,7 @@ class Reader {
       memo.from = k;
       memo.match = match;
     }
-    return match < 0 ? -1 : this.eol(found[match] as number) + 1;
+    return match < 0 ? -1 : end(found[match] as number);
   }
 
   // Runs `find` (a search for a closer from `from`, returning the offset past

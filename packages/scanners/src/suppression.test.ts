@@ -568,8 +568,9 @@ describe("a heredoc ends only on a line that is its word", () => {
   });
 
   // Lines that all share one hash cost each lookup no rescan: a file of
-  // them with a heredoc on every other line grows linearly. CPU time of the
-  // fastest of three runs after one untimed run, at 1 MB and four times that.
+  // them with a heredoc on every other line (172,000 lines that share the
+  // word's hash at 3.94 MB) grows linearly. CPU time of the fastest of three
+  // runs after one untimed run, at 1 MB, 2 MB and 3.94 MB.
   it("stays linear on a file of lines that all share the word's hash", () => {
     const MB = 1024 * 1024;
     const timed = (size: number) => {
@@ -585,8 +586,11 @@ describe("a heredoc ends only on a line that is its word", () => {
       return Math.min(...runs);
     };
     const small = timed(MB);
+    const middle = timed(2 * MB);
     const large = timed(4 * MB - 64 * 1024);
-    expect(large / Math.max(small, 20), `${small.toFixed(0)} ms for 1 MB, ${large.toFixed(0)} ms for 3.94 MB`).toBeLessThan(8);
+    const shown = `${small.toFixed(0)}, ${middle.toFixed(0)} and ${large.toFixed(0)} ms for 1, 2 and 3.94 MB`;
+    expect(middle / Math.max(small, 20), shown).toBeLessThan(8);
+    expect(large / Math.max(small, 20), shown).toBeLessThan(8);
     expect(small).toBeLessThan(4000);
   }, 180_000);
 });
