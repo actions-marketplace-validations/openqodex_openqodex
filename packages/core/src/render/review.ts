@@ -3,7 +3,7 @@
 // indent) or for markdown (headings, bullets and bold labels). The words and
 // their order are the same in both; only the markup differs.
 import pc from "picocolors";
-import type { Report, ReportFinding, ReviewerRecord } from "../types.js";
+import type { ModelCompletionRecord, Report, ReportFinding, ReviewerRecord } from "../types.js";
 import { candidateLocation, coverageLine, display, escapeMarkdown, location, notOpenedLabel, orderFindings, severityBreakdown, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 
@@ -31,6 +31,23 @@ export function reviewerLine(r: ReviewerRecord | null): string {
   if (r.usage.output_tokens !== null) parts.push(`${r.usage.output_tokens.toLocaleString("en-US")} out`);
   if (r.usage.cost_usd !== null) parts.push(`$${r.usage.cost_usd.toFixed(2)}`);
   return `Reviewer: ${parts.join(", ")}`;
+}
+
+// The reviewer line of a model review, from the brain's own record of every
+// attempt: the requested model (and the models that answered, when another
+// one did), the calls made, and the tokens and cost the responses reported.
+// A value no response reported is "not reported", never a zero.
+export function modelReviewerLine(record: ModelCompletionRecord): string {
+  const r = record.reviewer;
+  const answered = record.attempts.filter((a) => a.usage !== null);
+  // A sum is known only when every response that came back reported its part.
+  const sum = (values: (number | null | undefined)[]): number | null => (values.length > 0 && values.every((v) => typeof v === "number") ? (values as number[]).reduce((n, v) => n + v, 0) : null);
+  const input = sum(answered.map((a) => a.usage?.inputTokens));
+  const output = sum(answered.map((a) => a.usage?.outputTokens));
+  const cost = sum(answered.map((a) => a.usage?.costUsd));
+  const served = r.servedModels.length > 0 && (r.servedModels.length !== 1 || r.servedModels[0] !== r.model) ? ` (served by ${r.servedModels.join(", ")})` : "";
+  const shown = (n: number | null) => (n === null ? "not reported" : n.toLocaleString("en-US"));
+  return `Reviewed by a model reviewer, ${r.model}${served}, ${plural(r.calls, "call", "calls")}, tokens in ${shown(input)}, out ${shown(output)}, cost ${cost === null ? "not reported" : `$${cost.toFixed(2)}`}`;
 }
 
 // "1. Critical security: Search query built from request input"
@@ -102,7 +119,7 @@ function lines(report: Report): Line[] {
   }
   if (report.not_reviewed_paths.length > 0) out.push({ kind: "field", label: "Left out, change too large", text: report.not_reviewed_paths.join(", ") });
   out.push({ kind: "text", text: `Scanners: ${coverageLine(report.scanners)}` });
-  out.push({ kind: "text", text: reviewerLine(c?.reviewer ?? null) });
+  out.push({ kind: "text", text: c?.contract === "openqodex-model-review-1" ? modelReviewerLine(c) : reviewerLine(c?.reviewer ?? null) });
   out.push({ kind: "text", text: CLOSING });
   return out;
 }
