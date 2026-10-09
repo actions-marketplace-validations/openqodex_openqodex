@@ -26,8 +26,9 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 // as an expression the facts cannot name (`extends mixin(Base)`, a Python
 // base made by a call or a subscript, a Ruby superclass or mixin that is
 // not a constant), as the class's dynamic bases. 17: the framework
-// plugins' facts beside the language facts (FileFacts.frameworks).
-export const EXTRACTOR_VERSION = 17;
+// plugins' facts beside the language facts (FileFacts.frameworks). 18: how
+// a Ruby class takes a mixin written as an expression.
+export const EXTRACTOR_VERSION = 18;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -2404,7 +2405,7 @@ function extractRuby(tree: Tree): FileFacts {
               for (const a of [...args].reverse()) {
                 if (a.type === "constant" || a.type === "scope_resolution") def.bases.push({ name: a.text, qualifier: cls.cls, ...pos(a), rel: method.text as "include" | "extend" | "prepend" });
                 // `extend self` adds the module's own methods; any other expression is a mixin not known.
-                else if (a.type !== "self" && a.type !== "comment") (def.dynamicBases ??= []).push(pos(a));
+                else if (a.type !== "self" && a.type !== "comment") (def.dynamicBases ??= []).push({ ...pos(a), rel: method.text as "include" | "extend" | "prepend" });
               }
             }
             return;

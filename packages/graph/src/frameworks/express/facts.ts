@@ -179,8 +179,11 @@ export function readFacts(root: Node): ExpressFact[] {
     if (broken++ === 0) firstBroken = line;
   });
   if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
-  for (const [line, s] of scopes) out.push({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all });
-  return keepRead(out);
+  // First, so the core's per-file fact cap drops calls and values before
+  // it drops a scope: a name read in a function whose scope is missing would
+  // otherwise bind to the module.
+  const scopeFacts: ExpressFact[] = [...scopes].map(([line, s]) => ({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all }));
+  return keepRead([...scopeFacts, ...out]);
 }
 
 // ---------- the literals the facts keep ----------

@@ -44,8 +44,12 @@ export const DISPATCH_CAP = 32;
 // 8: dispatch through interfaces and base types, language lookup orders
 // (Python C3, Go embedding depth, Ruby mixins), value and type uses,
 // may_invoke, overrides and implements. 9: a dynamic-base gap on each class
-// that names a base with an expression.
-export const RESOLVER_VERSION = 9;
+// that names a base with an expression. 10: such a base keeps its place in
+// the lookup order, so a member found past it is likely at most.
+export const RESOLVER_VERSION = 10;
+
+// How a base written as an expression stands in a lookup order.
+const DYNAMIC_BASE = "\u0000a base written as an expression";
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -140,7 +144,8 @@ type Value =
 
 type Def = DefFact & { id: string; file: string; family: Family };
 
-type ClassInfo = { file: string; family: Family; ids: string[]; files: Set<string>; bases: TypeRef[]; fields: Map<string, TypeRef>; nesting: string | null };
+// `dynamic`: the bases written as expressions the facts cannot name.
+type ClassInfo = { file: string; family: Family; ids: string[]; files: Set<string>; bases: TypeRef[]; dynamic: NonNullable<DefFact["dynamicBases"]>; fields: Map<string, TypeRef>; nesting: string | null };
 
 export type ResolveInput = {
   files: FileInput[];
@@ -313,12 +318,13 @@ export function createWorld(input: ResolveInput): World {
         classOfId.set(id, key);
         let info = classes.get(key);
         if (!info) {
-          info = { file: path, family, ids: [], files: new Set(), bases: [], fields: new Map(), nesting: d.owner };
+          info = { file: path, family, ids: [], files: new Set(), bases: [], dynamic: [], fields: new Map(), nesting: d.owner };
           classes.set(key, info);
         }
         info.ids.push(id);
         info.files.add(path);
         info.bases.push(...d.bases);
+        if (d.dynamicBases) info.dynamic.push(...d.dynamicBases);
         for (const [k, t] of Object.entries(d.fields)) info.fields.set(k, t);
       }
     }
@@ -1080,7 +1086,29 @@ export function createWorld(input: ResolveInput): World {
     baseKeys.set(key, out);
     const info = classes.get(key);
     if (!info) return out;
-    for (const b of info.bases) {
+    // A base written as an expression keeps its place as a base outside
+    // the graph: a member found past it is likely at most, never certain
+    // (typing's own Generic[T] and Protocol[T] name no class). In Python and
+    // TypeScript it stands where it is written; a Ruby class looks in it
+    // first among those it takes the same way.
+    const dynamic = info.dynamic.filter((d) => !(d.head && info.family === "python" && (isTyping(info.file, d.head, "Generic") || isTyping(info.file, d.head, "Protocol"))));
+    const at = (p: { line: number; column: number }) => p.line * 100_000 + p.column;
+    const written: ({ b: TypeRef } | { d: (typeof dynamic)[number] })[] = info.bases.map((b) => ({ b }));
+    if (info.family === "ruby") written.unshift(...dynamic.map((d) => ({ d })));
+    else {
+      for (const d of dynamic) {
+        const i = written.findIndex((w) => "b" in w && at(w.b) > at(d));
+        written.splice(i < 0 ? written.length : i, 0, { d });
+      }
+    }
+    for (const w of written) {
+      if ("d" in w) {
+        out.outside = true;
+        // Named by its place, so two such bases of one class stay two.
+        out.order.push({ outside: `${DYNAMIC_BASE}@${w.d.line}:${w.d.column}`, rel: w.d.rel });
+        continue;
+      }
+      const b = w.b;
       const k = typeKey(info.file, info.family, b);
       if (k !== null && k !== "ext" && k.key !== key) {
         out.order.push({ i: out.keys.length });
@@ -1100,7 +1128,10 @@ export function createWorld(input: ResolveInput): World {
   // A member found past a base outside the graph that the language looks
   // in first: that base may define it, so the binding is likely at most.
   const pastOutside = (outside: string, name: string, ev: Ev | null): Ev => {
-    const caveat: Ev = { kind: "same-scope", tier: "likely", via: null, note: `The lookup passes ${outside}, a class outside the graph, before it finds ${name}; the graph assumes ${outside} does not define it.`, rule: "lookup-past-outside" };
+    const caveat: Ev =
+      outside.startsWith(DYNAMIC_BASE)
+        ? { kind: "same-scope", tier: "likely", via: null, note: `The lookup passes a base written as an expression, which the graph does not read, before it finds ${name}; that base may define it.`, rule: "lookup-past-dynamic-base" }
+        : { kind: "same-scope", tier: "likely", via: null, note: `The lookup passes ${outside}, a class outside the graph, before it finds ${name}; the graph assumes ${outside} does not define it.`, rule: "lookup-past-outside" };
     return ev ? chain(ev, caveat) : caveat;
   };
 

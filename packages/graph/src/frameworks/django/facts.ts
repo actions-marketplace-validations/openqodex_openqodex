@@ -28,7 +28,8 @@ export type DjangoFact = At &
     // One statement that builds a URL list: it replaces the list or extends
     // it, in statement order (`seq`), inside a branch that may not run or not.
     | { kind: "urllist"; name: string; literal: boolean; seq: number; op: "replace" | "extend"; cond: boolean }
-    | { kind: "urlrouter"; name: string; router: Ref }
+    // A router's urls joined into a list, at the statement that joins them.
+    | { kind: "urlrouter"; name: string; router: Ref; seq: number }
     | { kind: "app_name"; value: Lit }
     | { kind: "assigned"; names: string[]; complete: boolean } // the names top-level assignments bind: module-level values
     // Something the facts saw and could not read: a URL list item that is
@@ -298,6 +299,10 @@ export function djangoFacts(root: Node): DjangoFact[] {
       bindTarget(left);
       // `a = b = value` binds b too.
       for (let r = right; r?.type === "assignment"; r = r.childForFieldName("right")) bindTarget(r.childForFieldName("left"));
+      // An item or a slice of a URL list written by index: the graph does not
+      // apply it, so which routes the list holds after it is not known.
+      const indexed = left?.type === "subscript" ? left.childForFieldName("value") : null;
+      if (indexed?.type === "identifier" && urlLists.has(indexed.text)) unread(left as Node, indexed.text, seq, `an item of ${indexed.text} written by index or slice`, "dynamic");
       if (!name || !right) continue;
       const at = lineOf(asg);
       const augmented = asg.type === "augmented_assignment";
@@ -309,7 +314,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (sawList) urlLists.add(name);
       for (const part of parts) {
         const ref = dotted(part);
-        if (ref && ref.length >= 2 && last(ref) === "urls" && (name === "urlpatterns" || sawList)) out.push({ kind: "urlrouter", ...at, name, router: ref.slice(0, -1) });
+        if (ref && ref.length >= 2 && last(ref) === "urls" && (name === "urlpatterns" || sawList)) out.push({ kind: "urlrouter", ...at, name, router: ref.slice(0, -1), seq });
       }
       // The parts of a URL list's right side the facts do not read as entries:
       // another list of the module joined in (resolve follows it), or a call.
@@ -630,7 +635,7 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
     case "urllist":
       return isStr(f.name) && typeof f.literal === "boolean" && Number.isInteger(f.seq) && (f.op === "replace" || f.op === "extend") && typeof f.cond === "boolean";
     case "urlrouter":
-      return isStr(f.name) && isRef(f.router);
+      return isStr(f.name) && isRef(f.router) && Number.isInteger(f.seq);
     case "assigned":
       return Array.isArray(f.names) && f.names.length <= MAX_ASSIGNED && f.names.every(isStr) && typeof f.complete === "boolean";
     case "unread":

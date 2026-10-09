@@ -52,8 +52,9 @@ export type DefFact = {
   // Classes: each base written as an expression the facts cannot name (a
   // call such as a mixin, a conditional, a subscript), where it stands.
   // `head`: a Python subscript's head when it is a name (`Generic` of
-  // `Generic[T]`), so the resolver can tell typing's own apart.
-  dynamicBases?: { line: number; column: number; head?: TypeRef }[];
+  // `Generic[T]`), so the resolver can tell typing's own apart; `rel`: how a
+  // Ruby class takes it (absent: its superclass).
+  dynamicBases?: { line: number; column: number; head?: TypeRef; rel?: "include" | "extend" | "prepend" }[];
   fields: Record<string, TypeRef>; // classes and structs: field name to its declared or constructed type
   results?: (TypeRef | null)[]; // functions and methods: the declared result types
   static?: boolean; // methods called on the class itself: JS `static`, Ruby `def self.x`

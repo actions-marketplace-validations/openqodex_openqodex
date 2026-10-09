@@ -11,7 +11,7 @@
 // can prove.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
-import { keepParts, keptShape, ledForm, methodText, nameText, requestPathText, requestSegmentText, routePathText, routeSegmentText, urlParts } from "../shared/kept.js";
+import { keepParts, keptShape, ledForm, methodText, nameText, requestSegmentText, routePathText, routeSegmentText, urlParts } from "../shared/kept.js";
 import type { Expr, Kw, Part, Scope } from "./py.js";
 import { isExpr, isKws, MAX_ARGS, namePath, pos, readExpr, walkScoped } from "./py.js";
 
@@ -360,16 +360,23 @@ function bare(e: Expr): string {
   }
 }
 
-// A request target written as a literal: an absolute URL's path, or the
-// text before a query or a fragment, which may be relative to the test
-// client's base URL (resolve joins it to that URL's path).
+// A request target written as a literal, or a test client's base URL: an
+// absolute URL's scheme, host and path (no user, password, query or
+// fragment), or the text before a query or a fragment, which may be
+// relative to the test client's base URL (resolve joins it to that URL's
+// path, as httpx does).
 function targetText(s: string): string | null {
   const u = urlParts(s);
-  if (u) return u.path;
+  if (u) return u.origin + u.path;
   const at = [s.indexOf("?"), s.indexOf("#")].filter((i) => i >= 0);
   return at.length > 0 ? s.slice(0, Math.min(...at)) : s;
 }
-const FORMS: Record<Form, (s: string) => string | null> = { path: routePathText, target: keptShape(targetText), tpath: requestPathText, method: methodText, name: nameText, segment: routeSegmentText, tsegment: requestSegmentText };
+// A constant a request's target names: a path or an absolute URL, never a relative text.
+const targetPathText = (s: string): string | null => {
+  const t = targetText(s);
+  return t !== null && (t.startsWith("/") || urlParts(t) !== null) ? t : null;
+};
+const FORMS: Record<Form, (s: string) => string | null> = { path: routePathText, target: keptShape(targetText), tpath: keptShape(targetPathText), method: methodText, name: nameText, segment: routeSegmentText, tsegment: requestSegmentText };
 // The path form of each place a text is read in.
 const PATH_FORM: Partial<Record<Form, "route" | "request">> = { path: "route", target: "request" };
 
@@ -466,21 +473,25 @@ function keepRead(facts: FastApiFact[]): FastApiFact[] {
   const args = (list: Expr[], read: (Form | null)[], client = true): Expr[] => list.map((a, i) => (read[i] ? (text(a, read[i] as Form, client) as Expr) : names(a)));
   const kws = (list: Kw[], read: Record<string, Form>, client = true): Kw[] => list.map((k) => ({ key: k.key, value: read[k.key] ? (text(k.value, read[k.key] as Form, client) as Expr) : names(k.value) }));
   const ROUTE_KW: Record<string, Form> = { path: "path", methods: "method", name: "name" };
+  // A test client made in place or bound: its app and the other names as
+  // names, and its base URL (the second argument, or `base_url`) as a target.
+  const client = (e: Expr): Expr => (e.t === "call" ? { ...(names(e) as Extract<Expr, { t: "call" }>), args: e.args.map((a, i) => (i === 1 ? (text(a, "target") as Expr) : names(a))), kw: kws(e.kw, { base_url: "target" }) } : names(e));
   const out: FastApiFact[] = facts.map((f) => {
     at = "scope" in f ? f.scope : 0;
     switch (f.kind) {
       case "route":
         return { ...f, args: args(f.args, ["path"]), kw: kws(f.kw, ROUTE_KW), params: f.params.map((p) => ({ call: names(p.call), type: p.type && names(p.type) })) };
       case "call": {
-        const recv = names(f.recv);
-        const client = isClientCall(f.recv) || (f.recv.t === "ref" && f.recv.path.length === 1 && clients.has(f.recv.path[0] as string));
-        if (f.prop === "request") return { ...f, recv, args: args(f.args, ["method", "target"], client), kw: kws(f.kw, { method: "method", url: "target" }, client) };
+        const recv = isClientCall(f.recv) ? client(f.recv) : names(f.recv);
+        const isClient = isClientCall(f.recv) || (f.recv.t === "ref" && f.recv.path.length === 1 && clients.has(f.recv.path[0] as string));
+        if (f.prop === "request") return { ...f, recv, args: args(f.args, ["method", "target"], isClient), kw: kws(f.kw, { method: "method", url: "target" }, isClient) };
         if (f.prop === "include_router") return { ...f, recv, args: args(f.args, []), kw: kws(f.kw, { prefix: "path" }) };
         if (f.prop === "add_api_route" || f.prop === "add_api_websocket_route") return { ...f, recv, args: args(f.args, ["path"]), kw: kws(f.kw, ROUTE_KW) };
-        return { ...f, recv, args: args(f.args, ["target"], client), kw: kws(f.kw, { url: "target" }, client) };
+        return { ...f, recv, args: args(f.args, ["target"], isClient), kw: kws(f.kw, { url: "target" }, isClient) };
       }
       case "value":
-        // A router's prefix is read; a string is decided below, once every use is known.
+        // A router's prefix and a test client's base URL are read; a string is decided below, once every use is known.
+        if (isClientCall(f.value)) return { ...f, value: client(f.value) };
         if (f.value.t === "call") return { ...f, value: { ...names(f.value), kw: kws(f.value.kw, { prefix: "path" }) } as Expr };
         return f.value.t === "str" ? f : { ...f, value: names(f.value) };
       default:

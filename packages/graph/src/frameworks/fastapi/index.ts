@@ -13,7 +13,8 @@ import { isFastApiFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
 // 5: every kept string follows the one rule of shared/kept.ts.
-export const VERSION = 5;
+// 6: a test client keeps its base URL, and a request is joined to its path.
+export const VERSION = 6;
 const SUPPORTED = "FastAPI 0.100 and later";
 
 const app = "fastapi-app";

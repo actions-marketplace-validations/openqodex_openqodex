@@ -14,7 +14,8 @@ import { RULES, detectDjango, resolveDjango } from "./resolve.js";
 // 7: a literal is kept only where resolve reads its value.
 // 8: a kept literal is bounded, with key-shaped text redacted.
 // 9: a literal over the bound is not kept, and a redacted run is named by its hash.
-const VERSION = 9;
+// 10: a router join keeps its statement, and an item written by index is a gap.
+const VERSION = 10;
 const SUPPORTED = "Django 3.2 to 5.1, Django REST framework routers 3.x";
 
 // Corpus case names are relative to packages/graph/corpus/frameworks/django/.

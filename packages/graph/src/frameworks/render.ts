@@ -80,7 +80,10 @@ export function renderFrameworkLines(fw: ImpactFrameworks | undefined, packet: s
   if (fw.routes.length > 0) {
     const rows = fw.routes.map((r) => {
       let what: string;
-      if (r.status !== "bound" && r.status !== "external") what = `no handler now: the handler is ${STATUS[r.status]}`;
+      // Only a handler that is gone is absent; a computed, wrapped or
+      // ambiguous one is there, and the graph cannot tell what it runs.
+      if (r.status === "missing") what = "no handler now: the handler is missing";
+      else if (r.status !== "bound" && r.status !== "external") what = `the handler is ${STATUS[r.status]}, so what it runs is not known`;
       else if (r.reach && r.reach.hops === 0) what = `handles ${literal(r.reach.seedName)} (${tierText(r.reach.tier, r.reach.note)})`;
       else if (r.reach) what = `reaches ${literal(r.reach.seedName)} in ${r.reach.hops} ${r.reach.hops === 1 ? "hop" : "hops"} (${tierText(r.reach.tier, r.reach.note)})`;
       else what = "declared by this change";

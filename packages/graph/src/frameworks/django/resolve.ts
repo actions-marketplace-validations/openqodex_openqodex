@@ -658,7 +658,9 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   };
 
   // ---------- the URL walk ----------
-  const walk = (app: string | null, file: string, list: string, parent: number, prefix: Part[] | null, via: Site[], namespaces: string[], depth: number, stack: string[]) => {
+  // `until`: a list joined into another by `+` is a copy made at the joining
+  // statement, so only what the list held before it counts.
+  const walk = (app: string | null, file: string, list: string, parent: number, prefix: Part[] | null, via: Site[], namespaces: string[], depth: number, stack: string[], until = Number.POSITIVE_INFINITY) => {
     const scope = app ? { app } : { file };
     if (capped(app)) {
       if ((perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP) capGap(app, file);
@@ -670,7 +672,9 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     // every branch's entries, with a gap.
     let live: Set<number> | null = null;
     if (parent === -1) {
-      const steps = [...listSteps(file, list)].sort((a, b) => a.seq - b.seq);
+      const steps = listSteps(file, list)
+        .filter((l) => l.seq < until)
+        .sort((a, b) => a.seq - b.seq);
       let from = -1;
       for (const l of steps) if (l.op === "replace" && !l.cond) from = l.seq;
       live = new Set(steps.filter((l) => l.seq >= from).map((l) => l.seq));
@@ -679,16 +683,16 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       // What the facts could not read in this list: a gap each, and a list
       // of the module joined in is walked as part of it.
       for (const u of unreadOf(file, list)) {
-        // Before the last replacement that always runs, nothing is served.
-        if (u.seq < from) continue;
+        // Before the last replacement that always runs, and after the copy, nothing is served.
+        if (u.seq < from || u.seq >= until) continue;
         if (u.join !== undefined && entriesOf(file, u.join, -1).length > 0 && depth < MAX_INCLUDE_DEPTH && !stack.includes(`${file}#${u.join}`)) {
-          walk(app, file, u.join, -1, prefix, via, namespaces, depth + 1, [...stack, `${file}#${u.join}`]);
+          walk(app, file, u.join, -1, prefix, via, namespaces, depth + 1, [...stack, `${file}#${u.join}`], u.seq);
           continue;
         }
         out.gap({ site: siteOf(file, u), scope, affects: ["handles", "mounts"], cause: u.cause, name: list, note: `${u.what}; its routes may be missing` });
       }
-      // The routers whose urls are joined into this list.
-      for (const r of grouped(file, "urlrouter", (x) => x.name).get(list) ?? []) routerRegistrations(app, file, r.router[0] as string, prefix, via, namespaces);
+      // The routers whose urls are joined into this list by a statement Django keeps.
+      for (const r of grouped(file, "urlrouter", (x) => x.name).get(list) ?? []) if (r.seq >= from && r.seq < until) routerRegistrations(app, file, r.router[0] as string, prefix, via, namespaces);
     }
     if (parent === -1 && list === "urlpatterns") {
       visited.add(file);
@@ -696,8 +700,10 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       if (decl) out.gap({ site: siteOf(file, decl), scope, affects: ["handles", "mounts"], cause: "dynamic", name: "urlpatterns", note: "urlpatterns is built by code the graph does not run; its routes may be missing" });
     }
     entriesOf(file, list, parent).forEach(({ f, i }) => {
-      // An entry of a list a later assignment replaced is not served.
+      // An entry of a list a later assignment replaced is not served, and
+      // neither is one added to a joined list after the copy.
       if (live !== null && live.size > 0 && !live.has(f.seq)) return;
+      if (f.seq >= until) return;
       if (!take(file)) return;
       const site = siteOf(file, f);
       const steps = (walkSteps.get(app ?? "-") ?? 0) + 1;
@@ -739,7 +745,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
           return;
         }
         if (v.inline) {
-          walk(app, file, list, i, parts, nextVia, ns, depth + 1, stack);
+          walk(app, file, list, i, parts, nextVia, ns, depth + 1, stack, until);
           return;
         }
         if (v.ref) {
@@ -937,16 +943,25 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     return posix.basename(dir) === "models" || posix.basename(dir) === "migrations" ? posix.dirname(dir) : dir;
   };
   // The Django field class a repository class derives from through its
-  // bases, at most MAX_FIELD_CHAIN classes deep; null when none. A result
-  // cut by the depth is not kept, so a shorter path from elsewhere still counts.
+  // bases, at most MAX_FIELD_CHAIN classes deep; null when none. Every
+  // class a walk visits spends a step of the work budget, and each answer
+  // is kept by class and depth (a whole answer by class alone), so a
+  // lattice of classes that inherit from many others costs its classes
+  // times the depth, never the number of paths. `cut`: the depth or the
+  // budget stopped the walk before it found one.
   const fieldBases = new Map<string, string | null>();
-  const fieldBase = (cls: GraphNode, depth: number, visiting: Set<string>): { name: string | null; cut: boolean } => {
+  const fieldMemo = new Map<string, { name: string | null; cut: boolean }>();
+  const fieldBase = (cls: GraphNode, depth: number, visiting: Set<string>): { name: string | null; cut: boolean; cycle?: boolean } => {
     const kept = fieldBases.get(cls.id);
     if (kept !== undefined) return { name: kept, cut: false };
-    if (visiting.has(cls.id)) return { name: null, cut: false };
-    if (depth >= MAX_FIELD_CHAIN) return { name: null, cut: true };
+    const mk = `${cls.id}\0${depth}`;
+    const memo = fieldMemo.get(mk);
+    if (memo) return memo;
+    if (visiting.has(cls.id)) return { name: null, cut: false, cycle: true };
+    if (depth >= MAX_FIELD_CHAIN || !take(cls.file)) return { name: null, cut: true };
     visiting.add(cls.id);
     let cut = false;
+    let cycle = false;
     let found: string | null = null;
     for (const b of classDef(index, cls)?.bases ?? []) {
       const ref = [...(b.qualifier ? b.qualifier.split(".") : []), b.name];
@@ -962,14 +977,18 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
         if (base?.kind !== "class") continue;
         const r = fieldBase(base, depth + 1, visiting);
         cut ||= r.cut;
+        cycle ||= r.cycle === true;
         found = r.name;
         if (found) break;
       }
       if (found) break;
     }
     visiting.delete(cls.id);
-    if (found !== null || !cut) fieldBases.set(cls.id, found);
-    return { name: found, cut: found === null && cut };
+    const out = { name: found, cut: found === null && cut };
+    if (found !== null || (!cut && !cycle)) fieldBases.set(cls.id, found);
+    // An answer a cycle through the classes being visited shaped is not kept.
+    else if (!cycle) fieldMemo.set(mk, out);
+    return cycle ? { ...out, cycle } : out;
   };
   // The field class a model attribute's constructor names: Django's own
   // field class (certain), or a repository class that derives from one,
@@ -1034,7 +1053,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       const field = fieldClass(m.file, f.ctor, f.line);
       if (field === null) continue;
       if ("cut" in field) {
-        out.gap({ site: fsite, scope: { file: m.file }, affects: ["declares_field"], cause: "fan-out-capped", name: `${m.node.name}.${f.name}`, note: `the base classes of ${show(f.ctor)} go deeper than ${MAX_FIELD_CHAIN} levels, so whether ${m.node.name}.${f.name} is a field is not known`, count: null, exact: false });
+        out.gap({ site: fsite, scope: { file: m.file }, affects: ["declares_field"], cause: "fan-out-capped", name: `${m.node.name}.${f.name}`, note: `the base classes of ${show(f.ctor)} were not all followed (they go deeper than ${MAX_FIELD_CHAIN} levels, or past the work budget), so whether ${m.node.name}.${f.name} is a field is not known`, count: null, exact: false });
         continue;
       }
       const id = out.entity({ kind: "model_field", id: entityId(PLUGIN, app, "model_field", `${m.node.id}.${f.name}`), plugin: PLUGIN, app, name: `${m.node.name}.${f.name}`, site: fsite, file: null, detail: show(f.ctor) });

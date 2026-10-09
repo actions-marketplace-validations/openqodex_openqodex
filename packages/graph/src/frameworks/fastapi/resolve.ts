@@ -86,7 +86,9 @@ const METHODS = new Set<string>(ROUTE_METHODS);
 const REQUEST_METHODS = new Set(["get", "post", "put", "patch", "delete", "options", "head"]);
 
 // A value the plugin knows: an application, a router, or a test client.
-type Val = { kind: "app" | "router"; id: string; file: string; name: string; line: number; column: number; scope: number; call: Call } | { kind: "client"; file: string; target: Expr | null; scope: number; line: number };
+// A test client: the app it is given, and its base URL (null: the default,
+// http://testserver).
+type Val = { kind: "app" | "router"; id: string; file: string; name: string; line: number; column: number; scope: number; call: Call } | { kind: "client"; file: string; target: Expr | null; base: Expr | null; scope: number; line: number };
 type Known = Extract<Val, { kind: "app" | "router" }>;
 
 export type Analysis = { apps: Detection[]; output: PluginOutput };
@@ -318,7 +320,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     if (q === null) return null;
     if (APP_NAMES.has(q)) return { kind: "app", id: appId(PLUGIN, file, v.line), file, name: v.name, line: v.line, column: v.column, scope: v.scope, call: e };
     if (ROUTER_NAMES.has(q)) return { kind: "router", id: routerKey(file, v.line), file, name: v.name, line: v.line, column: v.column, scope: v.scope, call: e };
-    if (CLIENT_NAMES.has(q)) return { kind: "client", file, target: e.args[0] ?? kwOf(e, "app") ?? null, scope: v.scope, line: v.line };
+    if (CLIENT_NAMES.has(q)) return { kind: "client", file, target: e.args[0] ?? kwOf(e, "app") ?? null, base: e.args[1] ?? kwOf(e, "base_url") ?? null, scope: v.scope, line: v.line };
     return null;
   };
 
@@ -846,8 +848,15 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       siteGap(r.site, "dynamic", ["tests"], r.path ? show(r.path) : null, `the test requests a computed path (${r.path ? show(r.path) : "none"}), so the route it reaches is not known`);
       continue;
     }
+    // The client joins the request to its base URL's path (#81); one it
+    // cannot read leaves the path the request reaches unknown.
+    const base = r.client.base === null ? DEFAULT_BASE_URL : evaluate(r.client.base, constant(r.client.file, r.client.scope));
+    if (base === null) {
+      siteGap(r.site, "dynamic", ["tests"], show(r.client.base as Expr), `the test client's base URL (${show(r.client.base as Expr)}) is computed, so the path this request reaches is not known`);
+      continue;
+    }
     if (matchStopped || !spend(caps.requests, r.site)) continue;
-    const path = requestPath(raw);
+    const path = requestPath(raw, base);
     const a = byApp.get(app.id);
     if (!a) continue;
     // Too long to match: say so once for the request, never "no route".
@@ -985,8 +994,11 @@ export function isTestFile(path: string): boolean {
   return base.endsWith(".py") && (base.startsWith("test_") || base.endsWith("_test.py"));
 }
 
-// A request path as the route table sees it: no scheme and host, no query, no fragment.
-function requestPath(raw: string): string {
+// The base URL a test client has when it is given none.
+const DEFAULT_BASE_URL = "http://testserver";
+
+// A URL's path: no scheme and host, no query, no fragment.
+function pathOf(raw: string): string {
   let p = raw;
   if (p.startsWith("http://") || p.startsWith("https://")) {
     const slash = p.indexOf("/", p.indexOf("//") + 2);
@@ -996,8 +1008,23 @@ function requestPath(raw: string): string {
   if (q >= 0) p = p.slice(0, q);
   const h = p.indexOf("#");
   if (h >= 0) p = p.slice(0, h);
-  // The test client joins a relative path to its base URL, whose path is "/".
-  return p.startsWith("/") ? p : `/${p}`;
+  return p;
+}
+
+// A request path as the route table sees it, as the test client (httpx)
+// makes it: an absolute URL is requested as it is; any other URL, with a
+// leading "/" or not, is appended to the path of the client's base URL,
+// which ends with "/" (base http://testserver/api/ and "/items" request
+// /api/items).
+function requestPath(raw: string, base = DEFAULT_BASE_URL): string {
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    const p = pathOf(raw);
+    return p.startsWith("/") ? p : `/${p}`;
+  }
+  let b = pathOf(base);
+  if (!b.startsWith("/")) b = `/${b}`;
+  if (!b.endsWith("/")) b = `${b}/`;
+  return `${b}${pathOf(raw).replace(/^\/+/, "")}`;
 }
 
 // The same path with its trailing slash added or taken away: Starlette

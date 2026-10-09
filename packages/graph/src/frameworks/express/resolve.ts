@@ -232,14 +232,15 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   // The function scope, from `scope` outwards, that declares `name`, or 0
   // when no function around the place does (the module's own name, or an
   // import). The chain is followed at most MAX_SCOPE_CHAIN functions out;
-  // past that the name counts as declared locally, which proves nothing.
+  // past that, or at a function whose scope record is missing (the fact cap
+  // dropped it), the name counts as declared there, which proves nothing.
   const MAX_SCOPE_CHAIN = 64;
   const bindingScope = (file: string, scope: number, name: string): number => {
     let s = scope;
     for (let steps = 0; s !== 0; steps++) {
       if (steps >= MAX_SCOPE_CHAIN) return scope;
       const info = fx(file).scopes.get(s);
-      if (!info) return 0;
+      if (!info) return s;
       if (info.all || info.names.includes(name)) return s;
       s = info.parent;
     }
