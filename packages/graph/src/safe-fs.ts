@@ -179,7 +179,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
     (r.arg === undefined || (isInt(r.arg) && (r.arg as number) >= 0)) &&
     (r.key === undefined || isStr(r.key));
   const isTypeUse = (t: unknown) => isObj(t) && isTypeRef(t.ref, imports) && isInt(t.caller) && (t.caller as number) < defs;
-  const isTable = (t: unknown) => isObj(t) && isStr(t.name) && isInt(t.line) && isList(t.values, (i) => isIndex(i, values), 4096);
+  const isTable = (t: unknown) => isObj(t) && isStr(t.name) && isInt(t.line) && isList(t.values, (i) => isIndex(i, values), 4096) && optBool(t.open);
   const isImport = (i: unknown) =>
     isObj(i) &&
     isStr(i.spec) &&

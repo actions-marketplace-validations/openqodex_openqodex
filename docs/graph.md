@@ -54,7 +54,7 @@ A call no rule can bind is kept as an unknown with its cause, never dropped:
 - no-receiver-type: a method called on a value whose type no rule knows, or a member that an interface or a type alias does not declare.
 - untyped-receiver: a method called on a value typed `any`, `unknown`, `object` or an object type written in place such as `{ save(): number }` (Python `object` or `Any`, Go `any`). It may reach any method of that name, so it is never counted as external.
 - not-exported: a path of a workspace package that its `exports` map does not expose.
-- dynamic: a call through a parameter, a local value, a computed member such as `handlers[key]()`, or what another call returned. Such a call could reach any function of its project; on a literal table it is narrowed to the table's entries.
+- dynamic: a call through a parameter, a local value, a computed member such as `handlers[key]()`, or what another call returned. Such a call could reach any function of its project; on a literal table that nothing else can change it is narrowed to the table's entries.
 - miss: the evidence names a place where no such symbol exists now.
 - ambiguous: several definitions could be meant and nothing picks one.
 - budget: the time budget ran out before the file's calls were resolved.
@@ -166,7 +166,7 @@ A function named where it is not called (an argument, the right side of an assig
 
 - a callee in the repository whose body calls that parameter (`each(items, helper)` where `each` calls `cb`): the caller that passes it may run it;
 - a local given it once (`const fn = helper; fn()`);
-- a computed call on a literal table (`handlers[key]()` where `handlers = { save: onSave }`), which keeps its `dynamic` gap narrowed to the table's entries;
+- a computed call on a literal table (`handlers[key]()` where `handlers = { save: onSave }`), which keeps its `dynamic` gap. The gap is narrowed to the table's entries only when nothing else can change the table: it is not exported, not a Python module's or a Go package's, never written through a member or an index, never passed on, and no method is called on it. Otherwise a function put in it later may be called, and the gap keeps the whole project;
 - a function returned by name and then called (`pick(k)()`).
 
 A wrapper that never calls its parameter, or returns something else, gives no possible caller to what it was given. A function passed to code outside the repository (`items.map(helper)`) is a use as a value and nothing more.

@@ -1897,14 +1897,20 @@ export function createWorld(input: ResolveInput): World {
           const u: UnknownSite = { file: path, line: call.line, column: call.column, name: call.name, cause: out.unknown, shape: out.shape, caller: callerId, scope: out.scope ?? "file" };
           if (out.note) u.note = out.note;
           if (out.candidates) u.candidates = out.candidates;
-          // A known table narrows the gap to its entries (or a key it does not hold).
+          // A table nothing else can change narrows the gap to its entries
+          // (or a key it does not hold). One that may change elsewhere keeps
+          // the gap's whole scope: a function put in it later may be called.
           if (table && listed.length > 0) {
-            u.scope = "file";
             u.candidates = listed;
-            u.note =
+            const which =
               entries.length > listed.length
-                ? `a computed member of the table ${table.name} (line ${table.line}): one of its ${entries.length.toLocaleString("en-US")} entries, of which the first ${listed.length} are listed as possible targets and ${(entries.length - listed.length).toLocaleString("en-US")} are not, or a key the table does not hold`
-                : `a computed member of the table ${table.name} (line ${table.line}): one of its entries, listed as possible targets, or a key the table does not hold`;
+                ? `one of its ${entries.length.toLocaleString("en-US")} entries, of which the first ${listed.length} are listed as possible targets and ${(entries.length - listed.length).toLocaleString("en-US")} are not`
+                : "one of its entries, listed as possible targets";
+            if (table.open) u.note = `a computed member of the table ${table.name} (line ${table.line}), which may be changed elsewhere (it is exported, a module's or a package's, written through a member or an index, or passed on): ${which}, or any function put in it`;
+            else {
+              u.scope = "file";
+              u.note = `a computed member of the table ${table.name} (line ${table.line}): ${which}, or a key the table does not hold`;
+            }
           }
           unknowns.push(u);
           continue;

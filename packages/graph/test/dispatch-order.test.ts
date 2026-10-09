@@ -89,7 +89,7 @@ describe("lookup orders and value rules", () => {
     expect(into(g, idOf(g, "src/b-repo.ts", "BRepo.find"))).toEqual(["src/use.ts:3 dispatches_to possible"]);
   });
 
-  it.skip("keeps the gap of a computed call on a table project-wide when the table is changed, passed on or exported (8)", async () => {
+  it("keeps the gap of a computed call on a table project-wide when the table is changed, passed on or exported (8)", async () => {
     const g = await graphOf({
       "src/other.ts": "export function g(): number {\n  return 2;\n}\n",
       "src/written.ts": 'import { g } from "./other";\nfunction f(): number {\n  return 1;\n}\nconst handlers: Record<string, () => number> = { a: f };\nhandlers.b = g;\nexport function run(k: string): number {\n  return handlers[k]();\n}\n',

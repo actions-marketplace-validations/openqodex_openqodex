@@ -1,5 +1,5 @@
 {
-  "guards": "lists each function of a Go map literal as a possible callee of an index call on it, and keeps the call's gap narrowed to the file",
+  "guards": "lists each function of a Go map literal as a possible callee of an index call on it, and keeps the call's gap project-wide, since other modules or files can change the table",
   "callers": [
     {
       "to": "app/handlers.go#handleA",
@@ -33,7 +33,7 @@
       "file": "app/route.go",
       "line": 6,
       "cause": "dynamic",
-      "scope": "file"
+      "scope": "project"
     }
   ],
   "floor": {

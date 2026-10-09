@@ -1,5 +1,5 @@
 {
-  "guards": "lists each function of a Python module dict as a possible callee of a computed call on it, and keeps the call's gap narrowed to the file",
+  "guards": "lists each function of a Python module dict as a possible callee of a computed call on it, and keeps the call's gap project-wide, since other modules or files can change the table",
   "callers": [
     {
       "to": "pkg/handlers.py#on_save",
@@ -33,7 +33,7 @@
       "file": "pkg/router.py",
       "line": 7,
       "cause": "dynamic",
-      "scope": "file"
+      "scope": "project"
     }
   ],
   "floor": {

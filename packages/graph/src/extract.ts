@@ -226,9 +226,13 @@ class Ctx {
   // Computed calls on a name: the table it is bound to, decided once every
   // scope is known (a module's table may be declared below the function).
   private tableCalls: { call: number; name: string; scope: Scope }[] = [];
+  // Uses of a name that may change a table it is bound to (a write through
+  // a member or an index), decided the same way; and the tables found open.
+  private tableUses: { name: string; scope: Scope }[] = [];
+  private openTables = new Set<number>();
   // Object literals waiting for their table: the declaration that binds
   // the literal is read before the literal's entries.
-  pendingTables = new Map<number, { name: string; line: number; scope: Scope }>();
+  pendingTables = new Map<number, { name: string; line: number; scope: Scope; open?: boolean }>();
 
   constructor(readonly lang: Lang) {
     const root = { def: -1, cls: null, locals: new Map(), parent: null, depth: 0, caller: -1, clsScope: null, inFunction: false } as unknown as Scope;
@@ -470,9 +474,11 @@ class Ctx {
 
   // A name bound to an object, dict or map literal whose entries are the
   // value references `values`, in the scope that declares it.
-  bindTable(name: string, line: number, values: number[], scope: Scope): void {
+  bindTable(name: string, line: number, values: number[], scope: Scope, open = false): void {
     const index = this.tables.length;
     this.tables.push({ name, line, values });
+    // A Python module's or a Go package's table may be written from other modules or files.
+    if (open || (scope.depth === 0 && (this.lang === "python" || this.lang === "go"))) this.openTables.add(index);
     scope.tables ??= new Map();
     scope.tables.set(name, index);
   }
@@ -480,6 +486,17 @@ class Ctx {
   // A computed call on `name` (`handlers[key]()`, call index `call`).
   tableCall(call: number, name: string): void {
     this.tableCalls.push({ call, name, scope: this.top });
+  }
+
+  // A use of `name` that may change what a table bound to it holds: a write
+  // through a member or an index, a method called on it, the name passed on.
+  tableUse(name: string): void {
+    this.tableUses.push({ name, scope: this.top });
+  }
+
+  // A table that something outside this file may change from the start.
+  openTable(index: number): void {
+    this.openTables.add(index);
   }
 
   // A named type read in an annotation, a cast or a type test, once per
@@ -503,6 +520,9 @@ class Ctx {
         // answering keeps the type the walk had at the call; a nearer scope
         // that declared the name later decides instead.
         const at = this.lookup(scope, ident.name);
+        // A method called on a table (`handlers.set(...)`) may change what it holds.
+        const table = at?.tables?.get(ident.name);
+        if (table !== undefined) this.openTables.add(table);
         if (at !== ident.at || call.recv.kind === "name") call.recv = receiverIn(at, ident.name, ident.path, topNames);
         continue;
       }
@@ -532,6 +552,11 @@ class Ctx {
       if (table !== undefined) (this.calls[t.call] as CallFact).table = table;
     }
     this.tableCalls = [];
+    for (const u of this.tableUses) {
+      const table = this.lookup(u.scope, u.name)?.tables?.get(u.name);
+      if (table !== undefined) this.openTables.add(table);
+    }
+    this.tableUses = [];
     for (const { call, callNode } of aliasCalls) {
       const inner = this.callAt.get(callNode);
       if (inner !== undefined) call.result = inner;
@@ -541,6 +566,11 @@ class Ctx {
     // renumbered over the ones kept.
     const drop = new Set<ValueRef>();
     for (const { ref, scope, ident } of this.pendingValues) {
+      // The name of a table passed on, assigned or returned: what it holds may change elsewhere.
+      if (!ident && ref.recv.kind === "none") {
+        const table = this.lookup(scope, ref.name)?.tables?.get(ref.name);
+        if (table !== undefined) this.openTables.add(table);
+      }
       if (ident) {
         const at = this.lookup(scope, ident.name);
         ref.recv = receiverIn(at, ident.name, ident.path, topNames);
@@ -576,7 +606,7 @@ class Ctx {
       if (kept.length > 0) d.returns = kept;
       else delete d.returns;
     }
-    const tables = this.tables.map((t) => ({ ...t, values: t.values.map((i) => renumber.get(i)).filter((i): i is number => i !== undefined) }));
+    const tables = this.tables.map((t, i) => ({ ...t, values: t.values.map((v) => renumber.get(v)).filter((v): v is number => v !== undefined), ...(this.openTables.has(i) ? { open: true } : {}) }));
     // Each type name binds through the scope it was read in: what that scope
     // holds now, or the import it held when the type was read if the code
     // assigned the name something else after.
@@ -1213,7 +1243,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         for (const t of jsTypeNames(annotation)) ctx.addTypeUse(t, ctx.caller());
         if (value?.type === "object") {
           // A table: the names of its entries, read when the literal is.
-          if (isConst) ctx.pendingTables.set(value.startIndex, { name: name.text, line: node.startPosition.row + 1, scope: block ? ctx.top.decl : ctx.top.fnDecl });
+          if (isConst) ctx.pendingTables.set(value.startIndex, { name: name.text, line: node.startPosition.row + 1, scope: block ? ctx.top.decl : ctx.top.fnDecl, open: isExportedDecl(node) });
           // A module-level literal with a function in it is a module whose
           // functions are its methods (`api.run()`).
           const hasFn = value.namedChildren.some((c) => c.type === "method_definition" || (c.type === "pair" && isFnNode(c.childForFieldName("value"))));
@@ -1340,7 +1370,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         const pending = ctx.pendingTables.get(node.startIndex);
         if (pending) {
           ctx.pendingTables.delete(node.startIndex);
-          ctx.bindTable(pending.name, pending.line, refs, pending.scope);
+          ctx.bindTable(pending.name, pending.line, refs, pending.scope, pending.open === true);
         }
         return;
       }
@@ -1392,6 +1422,9 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
           const exported = jsCommonExport(ctx, node, left, right);
           if (exported) return typeof exported === "function" ? exported : undefined;
         }
+        // `handlers.b = g`, `handlers[k] = g`: what a table bound to the name holds changes.
+        const target = left?.type === "member_expression" || left?.type === "subscript_expression" ? left.childForFieldName("object") : null;
+        if (target?.type === "identifier") ctx.tableUse(target.text);
         const cls = ctx.cls();
         if (type && cls && left?.type === "member_expression" && left.childForFieldName("object")?.type === "this") {
           const prop = left.childForFieldName("property");
@@ -1708,7 +1741,11 @@ function extractPython(tree: Tree): FileFacts {
         } else if (left?.type === "pattern_list" || left?.type === "tuple_pattern" || left?.type === "list_pattern") {
           // `a, b = pair`: each name is assigned a value whose type is not known.
           if (!(inner.cls !== null && inner.locals === null)) for (const n of patternNames(left)) ctx.assign(n, null, true);
-        } else if (left?.type === "attribute" && left.childForFieldName("object")?.text === "self") {
+        } else if ((left?.type === "subscript" || left?.type === "attribute") && left.childForFieldName(left.type === "subscript" ? "value" : "object")?.type === "identifier") {
+          // `HANDLERS["k"] = g`: what a table bound to the name holds changes.
+          ctx.tableUse(left.childForFieldName(left.type === "subscript" ? "value" : "object")?.text ?? "");
+        }
+        if (left?.type === "attribute" && left.childForFieldName("object")?.text === "self") {
           const attr = left.childForFieldName("attribute");
           const cls = ctx.cls();
           if (attr && cls && type) (ctx.defs[cls.def] as DefFact).fields[attr.text] = type;
@@ -2087,7 +2124,12 @@ function extractGo(tree: Tree): FileFacts {
         // x = y: a name assigned again is no alias; a function on the right is a value.
         const left = node.childForFieldName("left")?.namedChildren ?? [];
         const right = node.childForFieldName("right")?.namedChildren ?? [];
-        for (const l of left) if (l.type === "identifier") ctx.noteAssign(l.text, null, false);
+        for (const l of left) {
+          if (l.type === "identifier") ctx.noteAssign(l.text, null, false);
+          // `handlers["k"] = g`: what a table bound to the name holds changes.
+          const operand = l.type === "index_expression" ? l.childForFieldName("operand") : null;
+          if (operand?.type === "identifier") ctx.tableUse(operand.text);
+        }
         for (const r of right) {
           const v = goValueNode(ctx, r);
           if (v) ctx.addValue(v, "assign");
@@ -2160,6 +2202,8 @@ function extractGo(tree: Tree): FileFacts {
         let i = 0;
         for (const a of node.childForFieldName("arguments")?.namedChildren ?? []) {
           if (a.type === "comment") continue;
+          // A table passed to a function may be changed there.
+          if (a.type === "identifier") ctx.tableUse(a.text);
           const v = goValueNode(ctx, a);
           if (v) ctx.addValue(v, "arg", call !== undefined ? { call, arg: i } : {});
           i++;

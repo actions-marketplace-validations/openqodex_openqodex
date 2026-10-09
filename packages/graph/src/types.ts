@@ -97,8 +97,11 @@ export type TypeUse = { ref: TypeRef; caller: number };
 
 // An object, dict or map literal bound to a name: the value references of
 // its entries. A computed call on the name (`handlers[key]()`) may call
-// any of them.
-export type TableFact = { name: string; line: number; values: number[] };
+// any of them. `open`: something else may change what it holds: it is
+// exported, a Python module's or a Go package's (other modules and files
+// can write it), written through a member or an index, passed on, or has
+// a method called on it.
+export type TableFact = { name: string; line: number; values: number[]; open?: boolean };
 
 // A name bound by an import made inside a function or a block, in that
 // scope only: the import (an index into FileFacts.imports) and the name it
