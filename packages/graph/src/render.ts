@@ -8,9 +8,44 @@
 // Every cut names the packet file that holds the rest; the packet lies
 // inside the folder the reviewer reads, so following the brief never reads
 // outside it.
+//
+// File paths, symbol names and the notes and reasons that quote them come
+// from the repository, and the reviewer reads this text (#71). So each is
+// made one line by core's `display` (line breaks and every other run of
+// whitespace become one space; control characters are dropped): a name is
+// a bounded code span whose own quote character is replaced, a path and a
+// note have every character markdown gives meaning to escaped with core's
+// `escapeMarkdown`. Repository text never starts a line of the brief and
+// never opens markdown in it. As the framework lines do
+// (frameworks/render.ts).
+import { display, escapeMarkdown } from "@openqodex/core";
 import type { ImpactEdge, ImpactSite, ImpactSummary, ImpactSymbol } from "@openqodex/core";
 import { INLINE_POSSIBLE, INLINE_SITES } from "./impact.js";
 import { TIER_RANK, weakest } from "./model/records.js";
+
+const MAX_NAME = 120;
+const MAX_PROSE = 600;
+
+function bounded(text: string, max: number): string {
+  const one = display(text).trim();
+  const chars = [...one];
+  return chars.length > max ? `${chars.slice(0, max - 3).join("")}...` : one;
+}
+
+// A name from the repository: one line, bounded, a code span that cannot be closed from inside.
+function code(text: string): string {
+  return `\`${bounded(text, MAX_NAME).replaceAll("`", "'")}\``;
+}
+
+// A path from the repository: one line, markdown escaped, never cut (the reviewer opens it).
+function path(text: string): string {
+  return escapeMarkdown(display(text).trim());
+}
+
+// Prose that quotes the repository (a note, a reason): one line, bounded, markdown escaped.
+function prose(text: string): string {
+  return escapeMarkdown(bounded(text, MAX_PROSE));
+}
 
 const MAX_TOUCHED = 25;
 const MAX_IMPORTERS = 12;
@@ -69,7 +104,7 @@ const VERB: Record<string, string> = { calls: "calls", inherits: "extends", impl
 
 function siteTier(site: ImpactSite): string {
   if (site.tier === "certain") return "certain";
-  return site.note ? `${site.tier}: ${site.note}` : site.tier;
+  return site.note ? `${site.tier}: ${prose(site.note)}` : site.tier;
 }
 
 // `overflow`: where the rest is when there is no packet (the agent-led
@@ -77,7 +112,7 @@ function siteTier(site: ImpactSite): string {
 export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: string } = {}): string {
   const out = ["## What this change reaches", ""];
   if (impact.status === "off" || impact.status === "skipped" || impact.status === "failed") {
-    const why = impact.reasons.join("; ") || impact.status;
+    const why = prose(impact.reasons.join("; ")) || impact.status;
     const lead = impact.status === "off" ? "The code graph is off" : impact.status === "skipped" ? "The code graph was skipped" : "The code graph could not be built";
     out.push(`${lead}: ${why}. Find the callers of changed code with your own tools.`);
     return out.join("\n");
@@ -90,12 +125,13 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
   const counted = b.unresolvedSites === null ? "" : `; ${n(b.unresolvedSites, "call site")} in the repository could not be bound`;
   out.push(`Built on this machine from ${n(b.parsedFiles, "file")} of ${n(b.eligibleFiles, "eligible file")} in ${seconds(b.durationMs)}${b.mode ? `, ${b.mode === "fresh" ? "fresh from cached facts" : "from the retained index"}` : ""}${counted}.`);
   if (impact.status === "partial") {
-    out.push(`The graph is partial: ${impact.reasons.join("; ")}. Callers in the files left out are missing, so check the ones that matter with your own tools.`);
+    out.push(`The graph is partial: ${prose(impact.reasons.join("; "))}. Callers in the files left out are missing, so check the ones that matter with your own tools.`);
   }
 
   const sym = new Map<string, ImpactSymbol>(impact.symbols.map((s) => [s.id, s]));
-  const name = (id: string) => sym.get(id)?.name ?? id;
-  const where = (s: ImpactSymbol) => `${s.file}:${s.startLine}`;
+  // A symbol's name as a code span (a file's top level by its path); where it is, escaped.
+  const name = (id: string) => code(sym.get(id)?.name ?? id);
+  const where = (s: ImpactSymbol) => `${path(s.file)}:${s.startLine}`;
   const moved = impact.removed.filter((id) => sym.get(id)?.movedTo);
   const removed = impact.removed.filter((id) => !sym.get(id)?.movedTo);
 
@@ -122,7 +158,7 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
     out.push("", "Touched symbols:");
     for (const id of impact.touched.slice(0, MAX_TOUCHED)) {
       const s = sym.get(id);
-      if (s) out.push(`- ${where(s)} \`${s.name}\` (${s.kind})`);
+      if (s) out.push(`- ${where(s)} ${code(s.name)} (${s.kind})`);
     }
     if (impact.touched.length > MAX_TOUCHED) out.push(`- and ${impact.touched.length - MAX_TOUCHED} more`);
   }
@@ -139,7 +175,7 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
       const s = sym.get(id);
       if (!s) continue;
       const c = called.get(id) ?? 0;
-      out.push(`- ${where(s)} \`${s.name}\` (${s.kind})${c > 0 ? `, still called from ${n(c, "site")}` : ""}`);
+      out.push(`- ${where(s)} ${code(s.name)} (${s.kind})${c > 0 ? `, still called from ${n(c, "site")}` : ""}`);
     }
     if (removed.length > MAX_TOUCHED) out.push(`- and ${removed.length - MAX_TOUCHED} more`);
   }
@@ -148,21 +184,21 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
     for (const id of moved.slice(0, MAX_TOUCHED)) {
       const s = sym.get(id);
       if (!s?.movedTo) continue;
-      const to = s.movedTo.renamed ? `moved and renamed to \`${name(s.movedTo.id)}\` at ${s.movedTo.file}:${s.movedTo.line} (the same body)` : `moved to ${s.movedTo.file}:${s.movedTo.line}`;
-      out.push(`- ${where(s)} \`${s.name}\` (${s.kind}), ${to}`);
+      const to = s.movedTo.renamed ? `moved and renamed to ${name(s.movedTo.id)} at ${path(s.movedTo.file)}:${s.movedTo.line} (the same body)` : `moved to ${path(s.movedTo.file)}:${s.movedTo.line}`;
+      out.push(`- ${where(s)} ${code(s.name)} (${s.kind}), ${to}`);
     }
     if (moved.length > MAX_TOUCHED) out.push(`- and ${moved.length - MAX_TOUCHED} more`);
   }
   if (impact.exports.length > 0) {
     out.push("", "Public names this change removed or bound to another definition (compared in the base and the changed version):");
     for (const e of impact.exports.slice(0, MAX_EXPORTS)) {
-      const what = e.change === "removed" ? "no longer exported" : `now bound to ${e.after ? `\`${name(e.after.id)}\` at ${e.after.file}:${e.after.line}` : "another definition"}`;
-      const was = e.before ? `, was ${e.before.file}:${e.before.line}` : "";
+      const what = e.change === "removed" ? "no longer exported" : `now bound to ${e.after ? `${name(e.after.id)} at ${path(e.after.file)}:${e.after.line}` : "another definition"}`;
+      const was = e.before ? `, was ${path(e.before.file)}:${e.before.line}` : "";
       const users = e.consumersTotal === 0 ? "no consumer in the repository used it" : `${n(e.consumersTotal, "site")} used it`;
-      out.push(`- \`${e.name}\` in ${e.file}${e.line ? `:${e.line}` : ""}: ${what}${was}; ${users}`);
+      out.push(`- ${code(e.name)} in ${path(e.file)}${e.line ? `:${e.line}` : ""}: ${what}${was}; ${users}`);
       for (const c of e.consumers.slice(0, MAX_CONSUMERS)) {
         const now = c.now === "broken" ? "binds nothing now" : c.now === "retargeted" ? "binds another definition now" : c.now === "unchanged" ? "binds the same definition now" : "its file changed too";
-        out.push(`  - ${c.file}:${c.line} in \`${name(c.from)}\`, ${now}`);
+        out.push(`  - ${path(c.file)}:${c.line} in ${name(c.from)}, ${now}`);
       }
       const more = e.consumersTotal - Math.min(e.consumers.length, MAX_CONSUMERS);
       // The packet holds every consumer; impact.json beside the brief holds the summary's first ones.
@@ -176,16 +212,16 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
   // possible (each step of a path counted at its weakest), capped apart.
   const rowsOf = (paths: typeof impact.callers, qualified: boolean): { tier: number; text: string }[] => {
     const rows: { tier: number; text: string }[] = [];
-    const label = (id: string) => (qualified ? qualifiedOf(id, name(id)) : name(id));
+    const label = (id: string) => (qualified ? code(qualifiedOf(id, sym.get(id)?.name ?? id)) : name(id));
     for (const p of paths) {
       const last = p.edges[p.edges.length - 1] as ImpactEdge;
       const first = p.edges[0] as ImpactEdge;
-      const via = p.edges.length === 2 ? `, which ${VERB[first.kind] ?? "calls"} \`${label(p.seed)}\` (2 hops` : " (1 hop";
+      const via = p.edges.length === 2 ? `, which ${VERB[first.kind] ?? "calls"} ${label(p.seed)} (2 hops` : " (1 hop";
       const verb = VERB[last.kind] ?? "calls";
       const inner = p.edges.length === 2 ? [...first.sites].sort((a, b) => TIER_RANK[b.tier] - TIER_RANK[a.tier])[0] ?? null : null;
       for (const raw of last.sites) {
         const site = throughStep(raw, inner);
-        rows.push({ tier: site.tier === "certain" ? 0 : site.tier === "likely" ? 1 : 2, text: `- ${site.file}:${site.line} in \`${name(last.from)}\` ${verb} \`${label(last.to)}\`${via}, ${siteTier(site)})` });
+        rows.push({ tier: site.tier === "certain" ? 0 : site.tier === "likely" ? 1 : 2, text: `- ${path(site.file)}:${site.line} in ${name(last.from)} ${verb} ${label(last.to)}${via}, ${siteTier(site)})` });
       }
     }
     return rows.sort((a, b) => a.tier - b.tier);
@@ -205,13 +241,13 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
     if (rows.length > INLINE_POSSIBLE) out.push(`- and ${n(rows.length - INLINE_POSSIBLE, "more possible call site")}${at("callers/", ", every one in")}`);
   }
   for (const h of impact.hubs) {
-    out.push(`- \`${name(h.symbol)}\` is a hub: called by ${n(h.callers, "symbol")} from ${n(h.sites, "site")} in ${n(h.files, "file")}; the 20 nearest callers are listed${at(`callers/${symbolKey(h.symbol)}.json`, ", the rest in")}.`);
+    out.push(`- ${name(h.symbol)} is a hub: called by ${n(h.callers, "symbol")} from ${n(h.sites, "site")} in ${n(h.files, "file")}; the 20 nearest callers are listed${at(`callers/${symbolKey(h.symbol)}.json`, ", the rest in")}.`);
   }
   for (const c of impact.cuts) {
-    if (c.by === "second-hop") out.push(`- The second hop left out ${n(c.omitted ?? 0, "caller")} of \`${name(c.at ?? "")}\`${at(`second-hop/${symbolKey(c.at ?? "")}.json`, "; every one is in")}.`);
-    if (c.by === "walk-limit") out.push(`- ${c.note}.`);
-    if (c.by === "hub" && c.note.includes("possible callers")) out.push(`- \`${name(c.at ?? "")}\` has ${c.note}${at(`callers/${symbolKey(c.at ?? "")}.json`, ", the rest in")}.`);
-    if (c.by === "fan-out") out.push(`- ${c.note.charAt(0).toUpperCase()}${c.note.slice(1)} (the fan-out cap).`);
+    if (c.by === "second-hop") out.push(`- The second hop left out ${n(c.omitted ?? 0, "caller")} of ${name(c.at ?? "")}${at(`second-hop/${symbolKey(c.at ?? "")}.json`, "; every one is in")}.`);
+    if (c.by === "walk-limit") out.push(`- ${prose(c.note)}.`);
+    if (c.by === "hub" && c.note.includes("possible callers")) out.push(`- ${name(c.at ?? "")} has ${prose(c.note)}${at(`callers/${symbolKey(c.at ?? "")}.json`, ", the rest in")}.`);
+    if (c.by === "fan-out") out.push(`- ${prose(`${c.note.charAt(0).toUpperCase()}${c.note.slice(1)}`)} (the fan-out cap).`);
   }
 
   // Other uses of the touched code: as a value, as a type, implemented or overridden.
@@ -223,15 +259,15 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
       .flatMap((r) => r.edge.sites.map((s) => ({ r, s })))
       .sort((a, b) => (ORDER[a.r.edge.kind] ?? 3) - (ORDER[b.r.edge.kind] ?? 3) || TIER_RANK[b.s.tier] - TIER_RANK[a.s.tier] || a.s.file.localeCompare(b.s.file) || a.s.line - b.s.line);
     for (const { r, s } of rows.slice(0, MAX_REFERENCES)) {
-      const from = qualifiedOf(r.edge.from, name(r.edge.from));
-      const to = qualifiedOf(r.seed, name(r.seed));
-      const what = r.edge.kind === "overrides" ? `\`${from}\` overrides or implements \`${to}\`` : r.edge.kind === "uses_value" ? `in \`${name(r.edge.from)}\` uses \`${to}\` as a value` : `in \`${name(r.edge.from)}\` names \`${to}\` as a type`;
-      out.push(`- ${s.file}:${s.line} ${what} (${siteTier(s)})`);
+      const from = code(qualifiedOf(r.edge.from, sym.get(r.edge.from)?.name ?? r.edge.from));
+      const to = code(qualifiedOf(r.seed, sym.get(r.seed)?.name ?? r.seed));
+      const what = r.edge.kind === "overrides" ? `${from} overrides or implements ${to}` : r.edge.kind === "uses_value" ? `in ${name(r.edge.from)} uses ${to} as a value` : `in ${name(r.edge.from)} names ${to} as a type`;
+      out.push(`- ${path(s.file)}:${s.line} ${what} (${siteTier(s)})`);
     }
     const seeds = [...new Set(refs.map((r) => r.seed))];
     const pages = seeds.length === 1 ? at(`references/${symbolKey(seeds[0] as string)}.json`, ", every one in") : at("references/", ", every one in");
     if (rows.length > MAX_REFERENCES) out.push(`- and ${n(rows.length - MAX_REFERENCES, "more use")}${pages}`);
-    for (const c of impact.cuts) if (c.by === "references") out.push(`- ${c.note}.`);
+    for (const c of impact.cuts) if (c.by === "references") out.push(`- ${prose(c.note)}.`);
   }
 
   if (impact.callees.length > 0) {
@@ -243,7 +279,7 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
       seen.add(e.to);
       if (seen.size > MAX_CALLEES) continue;
       const s = sym.get(e.to);
-      if (s) out.push(`- ${where(s)} \`${s.name}\` (${s.kind})`);
+      if (s) out.push(`- ${where(s)} ${code(s.name)} (${s.kind})`);
     }
     if (seen.size > MAX_CALLEES) out.push(`- and ${seen.size - MAX_CALLEES} more`);
   }
@@ -254,19 +290,19 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
   const near = impact.unknown.near;
   if (floors.length > 0 || near.length > 0 || impact.unknown.notReadTotal > 0) {
     out.push("", "What the graph could not see:");
-    for (const s of floors.slice(0, MAX_FLOOR_SEEDS)) out.push(`- The callers of \`${name(s.seed)}\` are a floor: ${s.reasons.join("; ")}.`);
+    for (const s of floors.slice(0, MAX_FLOOR_SEEDS)) out.push(`- The callers of ${name(s.seed)} are a floor: ${prose(s.reasons.join("; "))}.`);
     if (floors.length > MAX_FLOOR_SEEDS) out.push(`- and ${floors.length - MAX_FLOOR_SEEDS} more symbols with a floor`);
     const byCause = Object.entries(impact.unknown.causes)
       .filter(([, v]) => v !== null && v > 0)
       .map(([k, v]) => `${v} ${k}`);
     if (byCause.length > 0) out.push(`- In the changed files and their callers' files, ${n(impact.unknown.nearTotal, "call site")} could not be bound to one definition (${byCause.join(", ")}):`);
     for (const u of near.slice(0, MAX_NEAR)) {
-      const at = u.file && u.line ? `${u.file}:${u.line}` : (u.file ?? "the repository");
-      out.push(`  - ${at}${u.name ? ` \`${u.name}\`` : ""}: ${u.cause}${u.note ? `, ${u.note}` : ""}`);
+      const at = u.file && u.line ? `${path(u.file)}:${u.line}` : u.file ? path(u.file) : "the repository";
+      out.push(`  - ${at}${u.name ? ` ${code(u.name)}` : ""}: ${u.cause}${u.note ? `, ${prose(u.note)}` : ""}`);
     }
     if (impact.unknown.nearTotal > MAX_NEAR) out.push(`  - and ${impact.unknown.nearTotal - MAX_NEAR} more${at("unknowns.json")}`);
     if (impact.unknown.notReadTotal > 0) {
-      const sample = impact.unknown.notRead.slice(0, 5).map((f) => `${f.file} (${f.reason})`);
+      const sample = impact.unknown.notRead.slice(0, 5).map((f) => `${path(f.file)} (${f.reason})`);
       out.push(`- ${n(impact.unknown.notReadTotal, "eligible file")} ${impact.unknown.notReadTotal === 1 ? "was" : "were"} not read: ${sample.join(", ")}${impact.unknown.notReadTotal > sample.length ? ", ..." : ""}`);
     }
   }
@@ -278,7 +314,8 @@ function pushImporters(out: string[], impact: ImpactSummary, at: (rel: string) =
   out.push("", "Files that import a changed file:");
   for (const e of impact.importers.slice(0, MAX_IMPORTERS)) {
     const site = e.sites[0];
-    out.push(`- ${site ? `${site.file}:${site.line}` : e.from} imports ${e.to.replace(/^go:/, "package ")}${site && site.tier !== "certain" ? ` (${siteTier(site)})` : ""}`);
+    const to = e.to.startsWith("go:") ? `package ${path(e.to.slice(3))}` : path(e.to);
+    out.push(`- ${site ? `${path(site.file)}:${site.line}` : path(e.from)} imports ${to}${site && site.tier !== "certain" ? ` (${siteTier(site)})` : ""}`);
   }
   if (impact.importers.length > MAX_IMPORTERS) out.push(`- and ${impact.importers.length - MAX_IMPORTERS} more${at("importers/")}`);
 }
