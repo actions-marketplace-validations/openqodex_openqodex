@@ -43,6 +43,9 @@
 //      its printed path ends with the root key.
 //  15. Two advisories osv-scanner groups as aliases of one another (two
 //      GHSA ids for one CVE) become two findings for one problem.
+//  16. A Rust advisory group whose ids osv.dev lists GHSA first is named by
+//      the GHSA id, so cargo-deny's finding of the same advisory, named by
+//      its RustSec id, never merges with it.
 
 import { describe, expect, it } from "vitest";
 import { parseOsvScannerJson } from "./osv-scanner.js";
@@ -192,6 +195,19 @@ describe("aliased advisories (15)", () => {
       new Map(),
     );
     expect(out.map((f) => f.ruleId)).toEqual(["GHSA-35jh-r3h4-6jhm", "GHSA-p6mc-m468-83gw"]);
+  });
+
+  it("names a group by its RustSec id, in whatever order the ids come (16)", () => {
+    for (const ids of [
+      ["GHSA-43w2-9j62-hq99", "RUSTSEC-2021-0003"],
+      ["RUSTSEC-2021-0003", "GHSA-43w2-9j62-hq99"],
+    ]) {
+      const out = parseOsvScannerJson(
+        report("Cargo.lock", [pkg("smallvec", "1.6.0", ids.map((id) => ({ id })), [{ ids, aliases: ["CVE-2021-25900"], max_severity: "9.8" }])]),
+        new Map(),
+      );
+      expect(out.map((f) => f.ruleId)).toEqual(["RUSTSEC-2021-0003"]);
+    }
   });
 });
 

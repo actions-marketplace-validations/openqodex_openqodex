@@ -38,6 +38,9 @@
 //  14. A lock that pins one package twice, or whose hash lines run into the
 //      next requirement, is taken, or the file written is the raw text and
 //      not the checked structure.
+// Added with kubeconform:
+//  15. A release checksum file named CHECKSUMS, as kubeconform publishes it,
+//      is not read, so its sums are never checked against the bytes.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -66,6 +69,8 @@ type Release = {
   bytes: (name: string) => Buffer;
   digest?: (name: string) => string;
   checksums?: (names: string[]) => string;
+  // The checksum file's name; demo_<version>_checksums.txt when not given.
+  checksumsName?: string;
   assetUrlRepo?: string;
   redirectTo?: string;
   apiRedirect?: boolean;
@@ -78,6 +83,10 @@ const servers: Server[] = [];
 
 function assetNames(version: string): string[] {
   return Object.values(PLATFORMS).map((p) => `demo_${version}_${p}.tar.gz`);
+}
+
+function sumsName(version: string): string {
+  return release.checksumsName ?? `demo_${version}_checksums.txt`;
 }
 
 function handle(req: IncomingMessage, res: ServerResponse): void {
@@ -95,7 +104,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
       browser_download_url: `${origin}/${release.assetUrlRepo ?? "acme/demo"}/releases/download/${release.tag}/${name}`,
     }));
     if (release.checksums) {
-      const file = `demo_${version}_checksums.txt`;
+      const file = sumsName(version);
       assets.push({ name: file, digest: `sha256:${sha(release.checksums(names))}`, browser_download_url: `${origin}/acme/demo/releases/download/${release.tag}/${file}` });
     }
     const published = new Date(Date.now() - release.ageDays * DAY).toISOString();
@@ -109,7 +118,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   const blob = /^\/blob\/([^/]+)$/.exec(url.pathname);
-  if (blob && release.streamBytes !== undefined && !blob[1]!.endsWith("_checksums.txt")) {
+  if (blob && release.streamBytes !== undefined && blob[1] !== sumsName(version)) {
     // A large asset sent slowly; `sent` counts what left before the client
     // hung up.
     res.writeHead(200);
@@ -129,7 +138,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   if (blob) {
     const name = blob[1]!;
     const names = assetNames(version);
-    res.writeHead(200).end(name.endsWith("_checksums.txt") && release.checksums ? release.checksums(names) : release.bytes(name));
+    res.writeHead(200).end(name === sumsName(version) && release.checksums ? release.checksums(names) : release.bytes(name));
     return;
   }
   const day = (n: number) => new Date(Date.now() - n * DAY).toISOString();
@@ -325,6 +334,18 @@ describe("what the code review found in pin-bump", () => {
     expect((await bump(repoRoot().root)).stdout).toMatch(/^sums=checksum-file-and-digest$/m);
     release = { ...good(), checksums: undefined };
     expect((await bump(repoRoot().root)).stdout).toMatch(/^sums=digest-only$/m);
+  });
+
+  it("reads a checksum file named CHECKSUMS and refuses bytes it disagrees with (15)", async () => {
+    release = { ...good(), checksumsName: "CHECKSUMS", checksums: (names) => names.map((n) => `${"a".repeat(64)}  ${n}`).join("\n") + "\n" };
+    const refused = repoRoot();
+    const r = await bump(refused.root);
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.stderr).toMatch(/the checksum file says/);
+    expect(readFileSync(refused.table, "utf8")).toBe(refused.before);
+
+    release = { ...good(), checksumsName: "CHECKSUMS" };
+    expect((await bump(repoRoot().root)).stdout).toMatch(/^sums=checksum-file-and-digest$/m);
   });
 
   it("stops reading an asset at the size limit instead of after it (11)", async () => {

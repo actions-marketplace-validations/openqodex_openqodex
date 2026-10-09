@@ -1,0 +1,450 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "24db58b1ace8a483d2513bff71b4afd64a2b50bdfd539f161dd51d4be892c3c6",
+  "base": {
+    "ref": "HEAD",
+    "sha": "1467960164153a8e182f2b1cfbedf392deb100ab"
+  },
+  "generated_at": "2026-10-09T06:22:17.677Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds a status column and a customer and status index to orders. New orders now start as placed, and a new query lists a customer's open orders.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "db/migrations/0002_order_status.sql",
+      "line_number": 3,
+      "line_end": 3,
+      "title": "Required column added to a populated table without a default",
+      "description": "The migration adds status as NOT NULL with no default to the existing orders table. Postgres rejects this ALTER whenever orders already holds rows. The migration fails on any database with existing orders, so the deploy breaks. The new code in src/orders.js then queries a status column that does not exist. Add the column with a default, or add it nullable, backfill existing orders, then set NOT NULL. Choose the backfill value on purpose, because existing orders count as open if they get placed.",
+      "suggested_change": "ALTER TABLE orders ADD COLUMN status text NOT NULL DEFAULT 'placed';",
+      "source": "squawk:adding-required-field",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The migration adds status as NOT NULL with no default to the existing orders table. Postgres rejects this ALTER whenever orders already holds rows.",
+      "consequence": "The migration fails on any database with existing orders, so the deploy breaks. The new code in src/orders.js then queries a status column that does not exist.",
+      "fix": "Add the column with a default, or add it nullable, backfill existing orders, then set NOT NULL. Choose the backfill value on purpose, because existing orders count as open if they get placed."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "performance",
+      "confidence": 0.7,
+      "file_path": "db/migrations/0002_order_status.sql",
+      "line_number": 5,
+      "line_end": 5,
+      "title": "Index build blocks writes to orders",
+      "description": "The migration builds orders_customer_status_idx without CONCURRENTLY. Postgres blocks every write to orders until the build finishes. On a large orders table, createOrder calls stall or time out while the index builds. Build the index with CREATE INDEX CONCURRENTLY, outside a transaction.",
+      "suggested_change": "CREATE INDEX CONCURRENTLY orders_customer_status_idx ON orders (customer_id, status);",
+      "source": "squawk:require-concurrent-index-creation",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "The migration builds orders_customer_status_idx without CONCURRENTLY. Postgres blocks every write to orders until the build finishes.",
+      "consequence": "On a large orders table, createOrder calls stall or time out while the index builds.",
+      "fix": "Build the index with CREATE INDEX CONCURRENTLY, outside a transaction."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "src/orders.js",
+      "line_number": 13,
+      "line_end": 19,
+      "title": "New open orders query has no covering test",
+      "description": "The change adds listOpenOrders and makes createOrder set a status. The repository has no test that covers either one. A wrong status filter or a missing status on insert can ship without anyone noticing. Add tests that create orders with each status and check which ones listOpenOrders returns.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds listOpenOrders and makes createOrder set a status. The repository has no test that covers either one.",
+      "consequence": "A wrong status filter or a missing status on insert can ship without anyone noticing.",
+      "fix": "Add tests that create orders with each status and check which ones listOpenOrders returns."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [
+    {
+      "candidate": {
+        "source": "squawk",
+        "ruleId": "require-lock-timeout",
+        "filePath": "db/migrations/0002_order_status.sql",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "low",
+        "message": "Missing `set lock_timeout` before potentially slow ACCESS EXCLUSIVE lock operations Configure a `lock_timeout` before this statement. Statement requires: ACCESS EXCLUSIVE lock; blocking: reads, writes, schema changes.",
+        "reference": "https://squawkhq.com/docs/require-lock-timeout",
+        "id": "c3",
+        "token": "squawk:require-lock-timeout",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "Adding a column without a default only changes metadata, so the migration holds the lock briefly. A lock timeout here is optional hardening, not a defect.",
+      "cited": {
+        "file_path": "db/migrations/0002_order_status.sql",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "squawk",
+        "ruleId": "require-statement-timeout",
+        "filePath": "db/migrations/0002_order_status.sql",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "low",
+        "message": "Missing `set statement_timeout` before potentially slow operations Configure a `statement_timeout` before this statement",
+        "reference": "https://squawkhq.com/docs/require-statement-timeout",
+        "id": "c4",
+        "token": "squawk:require-statement-timeout",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "This ALTER does not rewrite the table, so the statement does not run long. A statement timeout adds little here.",
+      "cited": {
+        "file_path": "db/migrations/0002_order_status.sql",
+        "line_number": 3
+      }
+    },
+    {
+      "candidate": {
+        "source": "squawk",
+        "ruleId": "prefer-robust-stmts",
+        "filePath": "db/migrations/0002_order_status.sql",
+        "lineStart": 3,
+        "lineEnd": 3,
+        "severity": "low",
+        "message": "Missing `IF NOT EXISTS`, the migration can't be rerun if it fails part way through.",
+        "reference": "https://squawkhq.com/docs/prefer-robust-stmts",
+        "id": "c5",
+        "token": "squawk:prefer-robust-stmts",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "The migration is a one-time versioned file, matching 0001_create_orders.sql, which also omits IF NOT EXISTS. Rerun guards are optional style here.",
+      "cited": {
+        "file_path": "db/migrations/0001_create_orders.sql",
+        "line_number": 7
+      }
+    },
+    {
+      "candidate": {
+        "source": "squawk",
+        "ruleId": "prefer-robust-stmts",
+        "filePath": "db/migrations/0002_order_status.sql",
+        "lineStart": 5,
+        "lineEnd": 5,
+        "severity": "low",
+        "message": "Missing `IF NOT EXISTS`, the migration can't be rerun if it fails part way through. Use an explicit name for a concurrently created index",
+        "reference": "https://squawkhq.com/docs/prefer-robust-stmts",
+        "id": "c6",
+        "token": "squawk:prefer-robust-stmts",
+        "reviewSeverity": "nitpick"
+      },
+      "reason": "The index already has an explicit name, and the repo's versioned migrations do not use IF NOT EXISTS. The concurrency concern is raised separately.",
+      "cited": {
+        "file_path": "db/migrations/0002_order_status.sql",
+        "line_number": 5
+      }
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 2969,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 21,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "ran",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 4,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "ran",
+      "version": "2.66.0",
+      "rawCount": 6,
+      "keptCount": 6,
+      "durationMs": 16,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "ran",
+      "version": "4.3.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 230,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 10,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 2,
+    "additions": 16,
+    "deletions": 2
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 87424,
+      "started_at": "2026-10-09T06:21:51.126Z",
+      "ended_at": "2026-10-09T06:22:17.678Z",
+      "duration_ms": 26552,
+      "rounds": 1,
+      "usage": {
+        "turns": 4,
+        "input_tokens": 35419,
+        "output_tokens": 2165,
+        "cost_usd": 0.108345
+      }
+    },
+    "snapshot": {
+      "change_id": "24db58b1ace8a483d2513bff71b4afd64a2b50bdfd539f161dd51d4be892c3c6",
+      "tree": "b770c1371954bf61a67be8406d17aec0549fe171",
+      "before": "996acc70d4c157c792fc3fe21efdd532a241b4209e8cbde3dbaf3259f8783713",
+      "after": "996acc70d4c157c792fc3fe21efdd532a241b4209e8cbde3dbaf3259f8783713"
+    },
+    "candidates": {
+      "total": 6,
+      "disposed": 6
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [
+        "db/migrations/0001_create_orders.sql"
+      ],
+      "files_not_read": [
+        "db/migrations/0002_order_status.sql",
+        "src/orders.js"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

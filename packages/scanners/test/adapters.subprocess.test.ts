@@ -1,20 +1,12 @@
 // Real binaries on tiny planted inputs, one case per builtin scanner: each
 // guards that scanner's invocation, output parser, changed-line filter and tool
 // resolution together. Run by the end-to-end config, not the unit config.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import http from "node:http";
-import net from "node:net";
 import { randomBytes } from "node:crypto";
-import { dirname, join } from "node:path";
+import { readdirSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
-import { parseConfig } from "@openqodex/core";
-import type { BuiltinScanner } from "@openqodex/core";
-import { createToolResolver, runScanners } from "@openqodex/scanners";
-import { cacheFolder, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
-
-const scannerHome = process.env.OPENQODEX_E2E_HOME ?? cacheFolder("openqodex-e2e-home");
-process.env.OPENQODEX_HOME = scannerHome;
-process.env.HOME = tempDir("oq-adapter-user-");
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+import { plant, resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
+import type { Case } from "./subprocess-support.js";
 
 const generatedSecret = `sk_live_${randomBytes(12).toString("hex")}`;
 // A React page whose effect reads `id` and leaves it out of its dependencies.
@@ -28,9 +20,6 @@ export default function Page({ id }: { id: string }) {
 }
 `;
 
-// runtime: the language runtime a scanner needs that this machine may lack, and
-// the reason the product must give when it is missing.
-type Case = { scanner: BuiltinScanner; rule: string; files: Record<string, string>; anchor: string; runtime?: RegExp; network?: true };
 const cases: Case[] = [
   { scanner: "gitleaks", rule: "stripe-access-token", files: { "config.py": `STRIPE_KEY = '${generatedSecret}'\n` }, anchor: "config.py" },
   { scanner: "osv-scanner", rule: "GHSA-p6mc-m468-83gw", files: { "package-lock.json": JSON.stringify({ name: "tiny", lockfileVersion: 2, packages: { "": { name: "tiny" }, "node_modules/lodash": { version: "4.17.15" } } }, null, 2) }, anchor: "package-lock.json", network: true },
@@ -56,19 +45,6 @@ def query():
   { scanner: "ruff", rule: "DJ001", files: { "requirements.txt": "Django==5.0\n", "shop/models.py": "from django.db import models\n\n\nclass Item(models.Model):\n    name = models.CharField(max_length=10, null=True)\n\n    def __str__(self):\n        return self.name\n" }, anchor: "shop/models.py" },
   { scanner: "golangci", rule: "gosec", files: { "go.mod": "module example.com/tiny\n\ngo 1.22\n", "main.go": "package main\nimport \"crypto/md5\"\nfunc main() { _ = md5.New() }\n" }, anchor: "main.go", runtime: /^needs Go/ },
 ];
-
-function plant(spec: Case): string {
-  const repo = tempDir(`oq-adapter-${spec.scanner}-`);
-  for (const [name, body] of Object.entries(spec.files)) { const path = join(repo, name); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, body); }
-  return repo;
-}
-
-// Every line of every planted file counts as changed, as for a new file.
-async function scan(spec: Case, repo = plant(spec)) {
-  const paths = Object.keys(spec.files);
-  const coverage = new Map(paths.map((p) => [p, new Set(readFileSync(join(repo, p), "utf8").split("\n").map((_, i) => i + 1))]));
-  return runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: createToolResolver({ allowInstall: true, installBudgetMs: null }), only: [spec.scanner] });
-}
 
 let ran = 0; let skipped = 0;
 afterAll(() => {
@@ -131,39 +107,14 @@ describe("builtin scanner subprocesses", () => {
   // logs every host the scan opens a tunnel to holds that promise.
   it("osv-scanner reads a bun.lock and opens api.osv.dev only", async () => {
     if (process.env.OPENQODEX_E2E_OFFLINE === "1") return;
-    const hosts: string[] = [];
-    const proxy = http.createServer((_req, res) => res.writeHead(403).end());
-    proxy.on("connect", (req, socket, head) => {
-      const [host, port] = (req.url ?? "").split(":");
-      hosts.push(host ?? "");
-      const upstream = net.connect(Number(port), host, () => {
-        socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        upstream.write(head);
-        upstream.pipe(socket);
-        socket.pipe(upstream);
-      });
-      upstream.on("error", () => socket.destroy());
-      socket.on("error", () => upstream.destroy());
-    });
-    await new Promise<void>((done) => proxy.listen(0, "127.0.0.1", done));
-    const { port } = proxy.address() as net.AddressInfo;
-    const saved = { HTTPS_PROXY: process.env.HTTPS_PROXY, HTTP_PROXY: process.env.HTTP_PROXY };
-    process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
-    process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
-    try {
-      // Resolved first, outside the proxy, so the download is not counted.
-      await createToolResolver({ allowInstall: true, installBudgetMs: null })("osv-scanner");
-      hosts.length = 0;
-      const bun = '{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "tiny", "dependencies": { "lodash": "4.17.15" } } },\n  "packages": {\n    "lodash": ["lodash@4.17.15", "", {}, "sha512-x"]\n  }\n}\n';
-      const pom = "<project><modelVersion>4.0.0</modelVersion><groupId>a</groupId><artifactId>b</artifactId><version>1</version><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>\n";
-      const result = await scan({ scanner: "osv-scanner", rule: "", files: { "bun.lock": bun, "pom.xml": pom }, anchor: "" });
-      expect(result.scan.scanners[0]!.status).toBe("ran");
-      expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "osv-scanner", ruleId: "GHSA-p6mc-m468-83gw", filePath: "bun.lock" }));
-      expect([...new Set(hosts)]).toEqual(["api.osv.dev"]);
-    } finally {
-      for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
-      proxy.close();
-    }
+    // Resolved first, outside the proxy, so the download is not counted.
+    await resolveFirst("osv-scanner");
+    const bun = '{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "tiny", "dependencies": { "lodash": "4.17.15" } } },\n  "packages": {\n    "lodash": ["lodash@4.17.15", "", {}, "sha512-x"]\n  }\n}\n';
+    const pom = "<project><modelVersion>4.0.0</modelVersion><groupId>a</groupId><artifactId>b</artifactId><version>1</version><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>\n";
+    const { result, hosts } = await withLoggingProxy(() => scan({ scanner: "osv-scanner", rule: "", files: { "bun.lock": bun, "pom.xml": pom }, anchor: "" }));
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "osv-scanner", ruleId: "GHSA-p6mc-m468-83gw", filePath: "bun.lock" }));
+    expect(hosts).toEqual(["api.osv.dev"]);
   }, 300_000);
 
   // Semgrep writes each rule pack to its temp folder as semgrep-*.rules and

@@ -19,7 +19,8 @@
 // 8. A home folder that cannot be written gives a stack trace or a crash
 //    instead of one plain line naming the fix.
 // 9. A missing developer runtime (Ruby 3.0 or newer for brakeman, whose pinned
-//    gem needs it, Ruby 2.7 or newer for rubocop, Go) is not named.
+//    gem needs it, Ruby 2.7 or newer for rubocop, Go, Cargo for cargo-deny)
+//    is not named.
 // 10. openqodexHome ignores OPENQODEX_HOME.
 // 11. An installed launcher fails when started the way scanners are started:
 //     a small environment (PATH, HOME, TMPDIR, LANG) with the tool env on top.
@@ -333,7 +334,7 @@ describe("toolchain", () => {
     const caller = `
       const tc = await import(${JSON.stringify(dist)});
       const resolve = tc.createToolResolver({ allowInstall: true, installBudgetMs: null });
-      process.stdout.write(JSON.stringify([await resolve("brakeman"), await resolve("rubocop"), await resolve("golangci")]));
+      process.stdout.write(JSON.stringify([await resolve("brakeman"), await resolve("rubocop"), await resolve("golangci"), await resolve("cargo-deny")]));
     `;
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", caller], {
       encoding: "utf8",
@@ -343,6 +344,7 @@ describe("toolchain", () => {
       { ok: false, status: "not_installed", reason: "needs Ruby 3.0 or newer" },
       { ok: false, status: "not_installed", reason: "needs Ruby 2.7 or newer" },
       { ok: false, status: "not_installed", reason: "needs Go" },
+      { ok: false, status: "not_installed", reason: "needs Cargo (Rust)" },
     ]);
   });
 });

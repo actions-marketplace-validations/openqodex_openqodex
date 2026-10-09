@@ -1,0 +1,69 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a /calc endpoint that evaluates an arithmetic expression from the query string. Also adds a helper that shells out to ImageMagick convert to thumbnail uploaded images, plus a docs URL constant.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.97,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "Request query evaluated as JavaScript",
+      "problem": "The /calc handler passes req.query.expr straight to eval. The added comments switch off the linters that would flag this line.",
+      "consequence": "Any HTTP client can run arbitrary JavaScript on the server, including spawning processes and reading secrets. That gives them full remote code execution.",
+      "fix": "Parse the expression with a restricted arithmetic evaluator such as expr-eval, or a small hand-written parser. Reject any input that is not numbers and operators, and remove the suppression comments.",
+      "suggested_change": "  const value = new Parser().evaluate(String(req.query.expr));",
+      "source": "lens:eval-on-user-input",
+      "candidate": null
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 9,
+      "line_end": 9,
+      "title": "Shell command built from upload name",
+      "problem": "make_thumbnail puts upload_name, which comes from the upload form, into a shell command string. The function then runs that string with shell=True, and the added suppression comment hides the warning.",
+      "consequence": "A user can upload a file named like a.png;rm -rf ~ and run any shell command as the service. Names containing spaces or path segments also break the conversion or escape the upload directory.",
+      "fix": "Pass an argument list to subprocess.run without shell=True. Reduce upload_name to a safe base name first, and remove the suppression comment.",
+      "suggested_change": "    subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The noqa comment only silences the line-length warning on a long documentation URL constant. It hides no real problem.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    },
+    {
+      "candidate": "c3",
+      "reason": "The nosec comment hides the shell command injection, which finding c1 already reports on the same line.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c4",
+      "reason": "The eslint-disable comment hides the eval call, which the eval-on-user-input finding already reports.",
+      "file_path": "web/server.js",
+      "line_number": 11
+    },
+    {
+      "candidate": "c5",
+      "reason": "The nosemgrep comment hides the eval call, which the eval-on-user-input finding already reports.",
+      "file_path": "web/server.js",
+      "line_number": 12
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is not a problem by itself. Finding c1 covers the unsafe call on line 9.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 1
+    }
+  ]
+}

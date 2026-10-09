@@ -1,0 +1,10 @@
+Passed with warnings: 5 findings (1 critical, 2 major, 2 minor)
+Change c856f8e5689f against HEAD, 3 files, +29 -0
+Summary: Adds a discount code field to Order, plus two new endpoints. One returns an order's details and the other redeems a welcome discount code.
+1. Critical security: Order detail lacks owner check (orders/views.py:18)
+2. Major bug: Decimal multiplied by float (orders/models.py:19)
+3. Major bug: Missing migration for discount_code (orders/models.py:11)
+4. Minor security: CSRF protection disabled on redeem (orders/views.py:22)
+5. Minor maintainability: New discount behaviour has no tests (orders/models.py:16-21)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

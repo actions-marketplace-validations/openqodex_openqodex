@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "change_id": "32c939b7a434",
+  "summary": "Moves the unset-or-empty check for environment settings into a shared helper and exports the default port and host as constants. Adds tests for PORT and HOST parsing.",
+  "findings": [],
+  "dropped": []
+}

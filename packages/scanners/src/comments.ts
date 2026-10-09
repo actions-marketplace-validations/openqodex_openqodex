@@ -16,7 +16,7 @@
 // - Nesting deeper than MAX_DEPTH ($( ) in $( ), f-string fields, Ruby #{ })
 //   is read as plain code instead of recursing.
 
-export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go";
+export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go" | "yaml" | "sql" | "hcl";
 
 // `start` is the offset of the comment's opener in the file; `text` runs from
 // the opener to the end of the comment (the line end for a line comment,
@@ -42,11 +42,30 @@ export function comments(text: string, family: Family): Comment[] {
     case "go":
       slashComments(r, family);
       break;
+    case "yaml":
+      yamlComments(r);
+      break;
+    case "sql":
+      sqlComments(r);
+      break;
+    case "hcl":
+      hclCode(r, 0, false, 0);
+      break;
   }
   return r.out;
 }
 
 const MAX_DEPTH = 64;
+
+// The length recorded for a line whose key is longer than MAX_WORD.
+const NO_KEY = 0xffff;
+
+// A 32-bit FNV-1a hash of s[from, to), by UTF-16 code unit.
+function keyHash(s: string, from: number, to: number): number {
+  let h = 0x811c9dc5;
+  for (let i = from; i < to; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return h;
+}
 
 // The longest heredoc end word looked up. A longer word is never found, so
 // its heredoc is read as code.
@@ -59,10 +78,20 @@ class Reader {
   private readonly unclosed = new Map<string, number>();
   // The offset of every line start, built once.
   private starts: number[] | null = null;
-  // For each heredoc end rule (indent, trailing blanks): each line's text
-  // read by that rule (lines up to MAX_WORD long) to the starts of the
-  // lines that read so.
-  private readonly lines = new Map<string, Map<string, number[]>>();
+  // For each heredoc end rule (indent, trailing blanks): each line's key,
+  // its text read by that rule, as its offset and length by line number
+  // (typed arrays, a length past MAX_WORD as NO_KEY), and an index from a
+  // 32-bit hash of the key to the line's number, or to the numbers in file
+  // order when several lines share the hash. Small numbers, not the lines'
+  // text, key the map and fill it: a map of hundreds of thousands of
+  // distinct strings, or of numbers too large to store inline, costs more
+  // per line as it grows, and a file of distinct heredoc words made one.
+  private readonly lines = new Map<string, { index: Map<number, number | number[]>; keyFrom: Uint32Array; keyLength: Uint16Array }>();
+  // For each list of starts that share a hash, the words looked up in it:
+  // the list index a lookup started from, and the index of the first line
+  // at or after it that is the word (-1: none to the end). The reader moves
+  // forward, so each line of a list is compared with a word once.
+  private readonly scanned = new Map<number[], { word: string; from: number; match: number }[]>();
   constructor(readonly s: string) {}
 
   private lineStarts(): number[] {
@@ -93,36 +122,96 @@ class Reader {
     return next < starts.length ? (starts[next] as number) - 1 : this.s.length;
   }
 
+  // The key of the line that starts at `start` by a heredoc end rule: the
+  // line without its `\r`, its indent (tabs, or tabs and blanks) and, with
+  // `trailing`, its trailing blanks, as [from, to).
+  private keyOf(start: number, indent: Heredoc["indent"], trailing: boolean): [number, number] {
+    const s = this.s;
+    let end = s.indexOf("\n", start);
+    if (end < 0) end = s.length;
+    if (end > start && s.charCodeAt(end - 1) === 13) end--;
+    let from = start;
+    if (indent === "tabs") while (from < end && s.charCodeAt(from) === 9) from++;
+    else if (indent === "blanks") while (from < end && (s.charCodeAt(from) === 9 || s.charCodeAt(from) === 32)) from++;
+    let to = end;
+    if (trailing) while (to > from && (s.charCodeAt(to - 1) === 9 || s.charCodeAt(to - 1) === 32)) to--;
+    return [from, to];
+  }
+
   // The offset past the first line at or after `from` that reads `word` once
   // `h.indent` is removed (and, with `h.trailing`, trailing blanks), or -1
-  // with none. The lines are indexed once per rule, so each heredoc costs
-  // one lookup.
+  // with none. The lines are indexed once per rule, by the hash of their
+  // key. A line found by the hash is the end only when, in this order, its
+  // key's length is the word's (one number read by line number) and its
+  // text is the word (a compare of at most the word's length); a line whose
+  // key only shares the hash is passed over, however many there are, as the
+  // scanner passes over them. Each line that shares a hash is checked
+  // against a given word once in a forward read (scanned), so a file of
+  // lines crafted to share one hash costs time in proportion to its size.
   closer(h: Heredoc, from: number): number {
     const word = h.word;
     if (word.length > MAX_WORD) return -1;
     const rule = `${h.indent}\0${h.trailing}`;
-    let index = this.lines.get(rule);
-    if (index === undefined) {
-      index = new Map();
-      const starts = this.lineStarts();
-      for (const start of starts) {
-        const end = this.s.indexOf("\n", start);
-        let line = this.s.slice(start, end < 0 ? this.s.length : end);
-        if (line.endsWith("\r")) line = line.slice(0, -1);
-        let key = line.replace(INDENT[h.indent], "");
-        if (h.trailing) key = key.replace(/[ \t]+$/, "");
-        if (key.length > MAX_WORD) continue;
+    const starts = this.lineStarts();
+    let built = this.lines.get(rule);
+    if (built === undefined) {
+      const index = new Map<number, number | number[]>();
+      const keyFrom = new Uint32Array(starts.length);
+      const keyLength = new Uint16Array(starts.length);
+      for (let line = 0; line < starts.length; line++) {
+        const [a, b] = this.keyOf(starts[line] as number, h.indent, h.trailing);
+        keyFrom[line] = a;
+        if (b - a > MAX_WORD) {
+          keyLength[line] = NO_KEY;
+          continue;
+        }
+        keyLength[line] = b - a;
+        const key = keyHash(this.s, a, b);
         const at = index.get(key);
-        if (at) at.push(start);
-        else index.set(key, [start]);
+        if (at === undefined) index.set(key, line);
+        else if (typeof at === "number") index.set(key, [at, line]);
+        else at.push(line);
       }
-      this.lines.set(rule, index);
+      built = { index, keyFrom, keyLength };
+      this.lines.set(rule, built);
     }
-    const at = index.get(word);
-    if (at === undefined) return -1;
-    const k = this.firstAtOrAfter(at, from);
-    if (k >= at.length) return -1;
-    return this.eol(at[k] as number) + 1;
+    const { keyFrom, keyLength } = built;
+    const found = built.index.get(keyHash(word, 0, word.length));
+    if (found === undefined) return -1;
+    // The length first, then the text.
+    const isWord = (line: number): boolean => keyLength[line] === word.length && this.s.startsWith(word, keyFrom[line] as number);
+    const end = (line: number): number => this.eol(starts[line] as number) + 1;
+    // The first line that starts at or after `from`.
+    const first = this.firstAtOrAfter(starts, from);
+    if (typeof found === "number") return found >= first && isWord(found) ? end(found) : -1;
+    const k = this.firstAtOrAfter(found, first);
+    let memos = this.scanned.get(found);
+    if (memos === undefined) {
+      memos = [];
+      this.scanned.set(found, memos);
+    }
+    let memo = memos.find((m) => m.word === word);
+    // What an earlier lookup from no later a line already knows: no line of
+    // the word in [memo.from, memo.match), and the word at memo.match.
+    if (memo !== undefined && memo.from <= k && (memo.match < 0 || memo.match >= k)) {
+      memo.from = k;
+      return memo.match < 0 ? -1 : end(found[memo.match] as number);
+    }
+    let match = -1;
+    for (let j = k; j < found.length; j++) {
+      if (isWord(found[j] as number)) {
+        match = j;
+        break;
+      }
+    }
+    if (memo === undefined) {
+      memo = { word, from: k, match };
+      memos.push(memo);
+    } else {
+      memo.from = k;
+      memo.match = match;
+    }
+    return match < 0 ? -1 : end(found[match] as number);
   }
 
   // Runs `find` (a search for a closer from `from`, returning the offset past
@@ -264,8 +353,6 @@ function skipField(r: Reader, i: number, depth: number): number {
 // blanks may follow it (shellcheck accepts them). `expands`: a shell heredoc
 // whose word is not quoted runs the $( ) and backticks in its body.
 type Heredoc = { word: string; indent: "none" | "tabs" | "blanks"; trailing: boolean; expands: boolean };
-
-const INDENT = { none: /^/, tabs: /^\t*/, blanks: /^[\t ]*/ } as const;
 
 // The offset after the bodies of the heredocs opened on the line that ended
 // just before `i`, read in order: each runs to a line that is exactly its
@@ -770,4 +857,408 @@ function rubyComments(r: Reader): void {
       i++;
     }
   }
+}
+
+// YAML: `#` opens a comment at a line start or after a blank, outside a
+// quoted scalar and a block scalar's body. A quote opens a quoted scalar
+// only where a scalar starts: after the indentation and any `- `, `? ` or
+// `--- `, after a `: ` (or a colon at the line end), after an anchor or a
+// tag, and after `[`, `{` or `,` in a flow collection. Anywhere else it is
+// text of a plain scalar (`run: echo it's`). '...' doubles a quote to
+// escape it, "..." takes backslash escapes, and both may span lines. A
+// block scalar (`|` or `>` with its chomping and indentation indicators,
+// where a scalar starts) holds every following line that is blank or
+// indented deeper than the key or `-` that holds it.
+function yamlComments(r: Reader): void {
+  const s = r.s;
+  const blankOrEnd = (k: number): boolean => k >= s.length || s[k] === " " || s[k] === "\t" || s[k] === "\n" || s[k] === "\r";
+  const comment = (k: number): number => r.lineComment(k);
+  let flow = 0;
+  let i = 0;
+  while (i < s.length) {
+    // `i` is at a line start.
+    let j = i;
+    while (s[j] === " ") j++;
+    // The column of the `-` that holds this line's value, when a sequence
+    // entry starts here, and of the key that follows it.
+    let entry = -1;
+    if (flow === 0) {
+      if (j === i && (s.startsWith("---", j) || s.startsWith("...", j)) && blankOrEnd(j + 3)) {
+        j += 3;
+        while (s[j] === " " || s[j] === "\t") j++;
+      }
+      while ((s[j] === "-" || s[j] === "?") && blankOrEnd(j + 1) && s[j + 1] !== "\n" && s[j + 1] !== "\r" && j + 1 < s.length) {
+        entry = j - i;
+        j++;
+        while (s[j] === " " || s[j] === "\t") j++;
+      }
+    }
+    const keyColumn = j - i;
+    let keyed = false;
+    let start = true;
+    let next = -1;
+    i = j;
+    while (i < s.length && s[i] !== "\n") {
+      const c = s[i] as string;
+      if (c === "#" && (i === 0 || s[i - 1] === " " || s[i - 1] === "\t" || s[i - 1] === "\n")) {
+        i = comment(i);
+        break;
+      }
+      if (c === " " || c === "\t" || c === "\r") {
+        i++;
+      } else if (start && (c === "'" || c === '"')) {
+        const from = i;
+        const end = r.open(c, i, () => (c === "'" ? skipSingleQuoted(s, from + 1) : skipString(s, from + 1, '"', true, true)));
+        start = false;
+        if (end < 0) {
+          i++;
+          continue;
+        }
+        i = end;
+      } else if (start && flow === 0 && (c === "|" || c === ">")) {
+        const header = blockHeader(s, i);
+        if (header < 0) {
+          start = false;
+          i++;
+          continue;
+        }
+        let k = header;
+        while (s[k] === " " || s[k] === "\t") k++;
+        if (s[k] === "#") k = comment(k);
+        const parent = keyed ? keyColumn : entry;
+        next = skipBlockBody(s, lineEnd(s, k) + 1, parent);
+        break;
+      } else if (start && (c === "&" || c === "!")) {
+        // An anchor or a tag: the scalar starts after it.
+        while (i < s.length && !blankOrEnd(i)) i++;
+      } else if (start && (c === "[" || c === "{")) {
+        flow++;
+        i++;
+      } else if (flow > 0 && (c === "]" || c === "}")) {
+        flow--;
+        start = false;
+        i++;
+      } else if (flow > 0 && c === ",") {
+        start = true;
+        i++;
+      } else if (c === ":" && (blankOrEnd(i + 1) || (flow > 0 && ",]}".includes(s[i + 1] as string)))) {
+        start = true;
+        keyed = true;
+        i++;
+      } else {
+        start = false;
+        i++;
+      }
+    }
+    i = next >= 0 ? next : i + 1;
+  }
+}
+
+// The offset past a single-quoted YAML scalar whose body starts at `i` (a
+// doubled quote is a quote), or -1 with no closer before the end of the file.
+function skipSingleQuoted(s: string, i: number): number {
+  for (;;) {
+    const k = s.indexOf("'", i);
+    if (k < 0) return -1;
+    if (s[k + 1] !== "'") return k + 1;
+    i = k + 2;
+  }
+}
+
+// The offset past a block scalar's indicators at `i` (`|` or `>`, then a
+// chomping indicator and an indentation digit in either order), or -1 when
+// what follows on the line is neither blanks nor a comment, so the `|` or
+// `>` is text.
+function blockHeader(s: string, i: number): number {
+  let k = i + 1;
+  const chomp = (c: string | undefined) => c === "+" || c === "-";
+  const digit = (c: string | undefined) => c !== undefined && c >= "1" && c <= "9";
+  if (chomp(s[k])) {
+    k++;
+    if (digit(s[k])) k++;
+  } else if (digit(s[k])) {
+    k++;
+    if (chomp(s[k])) k++;
+  }
+  let m = k;
+  while (s[m] === " " || s[m] === "\t") m++;
+  if (m >= s.length || s[m] === "\n" || s[m] === "\r") return k;
+  return s[m] === "#" && m > k ? k : -1;
+}
+
+// The offset of the first line at or after `i` that is not blank and is
+// indented no deeper than `parent` columns: the line after a block scalar's
+// body. Each line is looked at once.
+function skipBlockBody(s: string, i: number, parent: number): number {
+  while (i < s.length) {
+    let q = i;
+    while (s[q] === " ") q++;
+    const end = lineEnd(s, i);
+    let blank = true;
+    for (let t = q; t < end; t++) {
+      if (s[t] !== " " && s[t] !== "\t" && s[t] !== "\r") {
+        blank = false;
+        break;
+      }
+    }
+    if (!blank && q - i <= parent) return i;
+    i = end + 1;
+  }
+  return s.length;
+}
+
+// A character of a SQL identifier after its first: a letter, a digit, `_`,
+// `$` or any character past ASCII (Postgres scan.l, ident_cont).
+const SQL_IDENT_CONT = /[A-Za-z0-9_$\u0080-￿]/;
+const SQL_IDENT_START = /[A-Za-z_\u0080-￿]/;
+const sqlIdentCont = (c: string | undefined): boolean => c !== undefined && SQL_IDENT_CONT.test(c);
+
+// The `$tag$` (or `$$`) that opens a dollar quote at `i`, or null. The tag is
+// a word that does not start with a digit and holds no `$` ($1 is a
+// parameter). The scan stops at the next `$`, so the scans from all `$`
+// signs of a file cover it once.
+function sqlDollarTag(s: string, i: number): string | null {
+  if (s[i + 1] === "$") return "$$";
+  if (!SQL_IDENT_START.test(s[i + 1] ?? "")) return null;
+  let k = i + 2;
+  while (k < s.length && s[k] !== "$" && k - i <= MAX_WORD) {
+    if (!SQL_IDENT_CONT.test(s[k] as string)) return null;
+    k++;
+  }
+  return s[k] === "$" ? s.slice(i, k + 1) : null;
+}
+
+// The offset past a SQL string or quoted identifier whose body starts at `i`
+// and ends with `close`: a doubled `close` stands for one, and with
+// `backslash` a backslash hides the next character. -1 with no closer.
+function skipSqlQuoted(s: string, i: number, close: string, backslash: boolean): number {
+  while (i < s.length) {
+    const c = s[i];
+    if (backslash && c === "\\") {
+      i += 2;
+    } else if (c === close) {
+      if (s[i + 1] !== close) return i + 1;
+      i += 2;
+    } else {
+      i++;
+    }
+  }
+  return -1;
+}
+
+// The offset past a block comment that opens at `i`, counting the `/*` and
+// `*/` inside it, as Postgres nests them; -1 with no closer.
+function skipSqlBlock(s: string, i: number): number {
+  let depth = 1;
+  i += 2;
+  while (i < s.length) {
+    if (s[i] === "/" && s[i + 1] === "*") {
+      depth++;
+      i += 2;
+    } else if (s[i] === "*" && s[i + 1] === "/") {
+      depth--;
+      i += 2;
+      if (depth === 0) return i;
+    } else {
+      i++;
+    }
+  }
+  return -1;
+}
+
+// SQL as Postgres (and squawk's lexer, crates/squawk_lexer) reads it: `--`
+// comments to the line end, and `/* */` comments, which nest. Strings:
+// '...' with '' for a quote and a backslash taken as a character; E'...',
+// where an E that starts a word also makes a backslash hide the next
+// character; "quoted identifiers" with "" for a quote; and dollar quotes
+// $$...$$ and $tag$...$tag$, whose `$` opens one only at the start of a word
+// (a$b$ is an identifier).
+function sqlComments(r: Reader): void {
+  const s = r.s;
+  // Every offset each `$tag$` text starts at, built once: the closer of a
+  // dollar quote is the first one at or after its body.
+  let dollars: Map<string, number[]> | null = null;
+  const closerOf = (tag: string, from: number): number => {
+    if (dollars === null) {
+      dollars = new Map();
+      for (let k = s.indexOf("$"); k >= 0; k = s.indexOf("$", k + 1)) {
+        const t = sqlDollarTag(s, k);
+        if (t === null) continue;
+        const list = dollars.get(t);
+        if (list) list.push(k);
+        else dollars.set(t, [k]);
+      }
+    }
+    const at = dollars.get(tag) ?? [];
+    let lo = 0;
+    let hi = at.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((at[mid] as number) < from) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < at.length ? (at[lo] as number) + tag.length : -1;
+  };
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i] as string;
+    if (c === "-" && s[i + 1] === "-") {
+      i = r.lineComment(i);
+    } else if (c === "/" && s[i + 1] === "*") {
+      const from = i;
+      const end = r.open("/*", from, () => skipSqlBlock(s, from));
+      if (end < 0) {
+        i += 2;
+      } else {
+        r.out.push({ start: from, text: s.slice(from, end) });
+        i = end;
+      }
+    } else if (c === "'") {
+      const from = i;
+      const escape = (s[i - 1] === "e" || s[i - 1] === "E") && !sqlIdentCont(s[i - 2]);
+      const end = r.open(escape ? "E'" : "'", from, () => skipSqlQuoted(s, from + 1, "'", escape));
+      i = end < 0 ? i + 1 : end;
+    } else if (c === '"') {
+      const from = i;
+      const end = r.open('"', from, () => skipSqlQuoted(s, from + 1, '"', false));
+      i = end < 0 ? i + 1 : end;
+    } else if (c === "$" && !sqlIdentCont(s[i - 1])) {
+      const tag = sqlDollarTag(s, i);
+      const from = i;
+      const end = tag === null ? -1 : r.open(tag, from, () => closerOf(tag, from + tag.length));
+      i = end < 0 ? i + 1 : end;
+    } else if (sqlIdentCont(c)) {
+      // A word, so a `$` inside it never opens a dollar quote.
+      i++;
+      while (i < s.length && sqlIdentCont(s[i])) i++;
+    } else {
+      i++;
+    }
+  }
+}
+
+// HCL (Terraform), as hclsyntax 2.24 lexes it (scan_tokens.rl): `#` and `//`
+// line comments and `/* */` block comments, which the first `*/` ends. A
+// quoted string ends at its closing quote, with backslash escapes, and never
+// runs past its line (a string the line end leaves open makes the file
+// invalid, and tflint then reads no comment at all). `${` and `%{` inside a
+// string open a template sequence that holds code, with its own strings and
+// comments, up to the matching `}`; `$${` and `%%{` are text. A heredoc
+// opens with `<<` or `<<-`, a word and the line end, and holds every line up
+// to one that reads the word once its blanks are trimmed (for both forms);
+// its `${` and `%{` sequences are code too. In a template sequence, `{` and
+// `}` nest.
+//
+// `masked`, when given, collects the spans that are not code: comments, the
+// inside of a quoted string (between its quotes) and a heredoc's body (its
+// lines before the closing word), template sequences included.
+function hclCode(r: Reader, i: number, inTemplate: boolean, depth: number, masked?: [number, number][]): number {
+  const s = r.s;
+  let braces = 0;
+  while (i < s.length) {
+    const c = s[i] as string;
+    if (inTemplate && c === "}" && braces === 0) return i + 1;
+    if (c === "#" || (c === "/" && s[i + 1] === "/")) {
+      const end = r.lineComment(i);
+      masked?.push([i, end]);
+      i = end;
+    } else if (c === "/" && s[i + 1] === "*") {
+      const from = i;
+      const end = r.open("*/", i, () => {
+        const close = s.indexOf("*/", from + 2);
+        return close < 0 ? -1 : close + 2;
+      });
+      if (end < 0) {
+        i += 2;
+      } else {
+        r.out.push({ start: i, text: s.slice(i, end) });
+        masked?.push([i, end]);
+        i = end;
+      }
+    } else if (c === '"') {
+      i = hclString(r, i, depth, masked);
+    } else if (c === "<" && s[i + 1] === "<") {
+      i = hclHeredoc(r, i, depth, masked);
+    } else {
+      if (c === "{") braces++;
+      else if (c === "}") braces--;
+      i++;
+    }
+  }
+  return s.length;
+}
+
+// A `${` or `%{` at `j` that opens a template sequence: not `$${` or `%%{`,
+// whose first sign makes it text.
+const hclTemplateAt = (s: string, j: number): boolean => (s[j] === "$" || s[j] === "%") && s[j + 1] === "{" && s[j - 1] !== s[j];
+
+// The offset past a quoted string whose opening quote is at `i`; the line end
+// when the line leaves it open.
+function hclString(r: Reader, i: number, depth: number, masked?: [number, number][]): number {
+  const s = r.s;
+  let j = i + 1;
+  while (j < s.length && s[j] !== "\n") {
+    const c = s[j];
+    if (c === "\\") {
+      j += 2;
+    } else if (c === '"') {
+      masked?.push([i + 1, j]);
+      return j + 1;
+    } else if (hclTemplateAt(s, j) && depth < MAX_DEPTH) {
+      // A sequence left open reads the rest of the file as code.
+      j = hclCode(r, j + 2, true, depth + 1, masked);
+    } else {
+      j++;
+    }
+  }
+  const end = Math.min(j, s.length);
+  masked?.push([i + 1, end]);
+  return end;
+}
+
+const HCL_HEREDOC = /^<<-?([A-Za-z_][A-Za-z0-9_-]*)\r?\n/;
+
+// The offset past a heredoc whose `<<` is at `i`, its closing line included;
+// past the `<<` alone when it opens none or has no closing line.
+function hclHeredoc(r: Reader, i: number, depth: number, masked?: [number, number][]): number {
+  const s = r.s;
+  const m = HCL_HEREDOC.exec(s.slice(i, i + MAX_WORD + 8));
+  if (!m) return i + 2;
+  const body = i + m[0].length;
+  const end = r.closer({ word: m[1] as string, indent: "blanks", trailing: true, expands: false }, body);
+  if (end < 0) return i + 2;
+  // The start of the closing line: the body ends before it.
+  const last = Math.max(body, s.lastIndexOf("\n", end - 2) + 1);
+  masked?.push([body, last]);
+  let j = body;
+  while (j < last) {
+    if (hclTemplateAt(s, j) && depth < MAX_DEPTH) {
+      j = hclCode(r, j + 2, true, depth + 1, masked);
+    } else {
+      j++;
+    }
+  }
+  // A sequence that ran past the closing line read that text already.
+  return Math.min(Math.max(end, j), s.length);
+}
+
+// The text of an HCL file with everything that is not code turned into
+// blanks, line ends kept: comments, the inside of quoted strings and heredoc
+// bodies. Offsets and lines stay those of the file, so a reader of its
+// structure (blocks, attributes, braces) never takes a brace or an `=` in a
+// string, a heredoc or a comment for code.
+export function hclMasked(text: string): string {
+  const masked: [number, number][] = [];
+  hclCode(new Reader(text), 0, false, 0, masked);
+  masked.sort((a, b) => a[0] - b[0]);
+  const parts: string[] = [];
+  let at = 0;
+  for (const [from, to] of masked) {
+    if (to <= at) continue;
+    const begin = Math.max(from, at);
+    parts.push(text.slice(at, begin), text.slice(begin, to).replace(/[^\n]/g, " "));
+    at = to;
+  }
+  parts.push(text.slice(at));
+  return parts.join("");
 }

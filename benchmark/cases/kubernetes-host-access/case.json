@@ -1,0 +1,76 @@
+{
+  "id": "kubernetes-host-access",
+  "guards": "a Kubernetes change that mounts the node's Docker socket into a worker and puts the pod on the node's network is reported; kube-linter and semgrep find both on the changed lines, while trivy and Checkov place both on the unchanged top of the manifest",
+  "language": "yaml",
+  "framework": "kubernetes",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "docker-socket-mount",
+      "file": "deploy/worker.yaml",
+      "lines": [
+        55,
+        57
+      ],
+      "also": [
+        {
+          "file": "deploy/worker.yaml",
+          "lines": [
+            68,
+            71
+          ]
+        }
+      ],
+      "anchor": {
+        "line": 57,
+        "text": "mountPath: /var/run/docker.sock"
+      },
+      "mentions": [
+        "docker.sock",
+        "docker socket",
+        "socket",
+        "hostPath",
+        "container escape",
+        "root on the node"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "kube-linter",
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "Mounting the node's Docker socket gives the worker full control of the node's Docker daemon: it can start a privileged container with the node's filesystem and so become root on the node, and reach every pod there. The fix is to run each conversion without Docker access, for example as a Kubernetes Job or with a rootless builder inside the pod."
+    },
+    {
+      "id": "host-network",
+      "file": "deploy/worker.yaml",
+      "lines": [
+        19,
+        20
+      ],
+      "anchor": {
+        "line": 20,
+        "text": "hostNetwork: true"
+      },
+      "mentions": [
+        "hostNetwork",
+        "host network",
+        "network namespace",
+        "node's network"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "kube-linter",
+        "semgrep",
+        "reasoning"
+      ],
+      "truth": "hostNetwork: true puts the pod in the node's network namespace: it can bind the node's ports, reach every service that listens only on the node's localhost, and is not held by network policies. The fix is to reach the image cache through a Service or a node-local address instead."
+    }
+  ]
+}

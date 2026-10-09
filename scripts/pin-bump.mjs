@@ -238,9 +238,10 @@ async function verifiedAssets(tool, recipe, found, up) {
     if (typeof a.browser_download_url !== "string" || a.browser_download_url !== `${base}${name}`) throw new Refused(`${tool}: ${name} is outside ${base}`);
     return (await download(a.browser_download_url, up.assetOrigins, up.maxAssetBytes)).toString("utf8");
   };
-  // The project's checksum file for the whole release, when it has one.
+  // The project's checksum file for the whole release, when it has one
+  // (kubeconform names its file CHECKSUMS).
   const sumText = new Map();
-  for (const name of [...listed.keys()].filter((n) => /checksums?\.txt$|SHA256SUMS$|sha256sums\.txt$/i.test(n))) {
+  for (const name of [...listed.keys()].filter((n) => /checksums?\.txt$|^checksums$|SHA256SUMS$|sha256sums\.txt$/i.test(n))) {
     sumText.set(name, await fetchText(name));
   }
   const entries = Object.entries(recipe.assets);

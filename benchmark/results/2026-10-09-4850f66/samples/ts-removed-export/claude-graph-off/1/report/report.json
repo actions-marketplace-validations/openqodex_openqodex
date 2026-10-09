@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "857e2b75ee60551f6319310f6fdcdde54824f572398b981d0efbf5e103c3758d",
+  "base": {
+    "ref": "HEAD",
+    "sha": "efb4f26d878c3ab58ccaf6dfb1c6f532f8cee630"
+  },
+  "generated_at": "2026-10-09T06:24:25.288Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Renames formatPrice to formatMoney in src/money.ts and makes it format through Intl.NumberFormat with a currency argument. invoiceLines now passes a currency that defaults to USD.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.97,
+      "file_path": "src/money.ts",
+      "line_number": 3,
+      "line_end": 4,
+      "title": "Removed export still imported by cart.ts",
+      "description": "The change renames formatPrice to formatMoney and leaves no formatPrice export behind. src/cart.ts line 1 still imports formatPrice, and src/cart.ts line 8 still calls it. The TypeScript compiler rejects cart.ts, so the build fails. A bundler without type checks would ship a cart total that throws at runtime. Update src/cart.ts to call formatMoney with a currency. Another option is to keep formatPrice as a wrapper that calls formatMoney with USD.",
+      "suggested_change": "export function formatMoney(cents: number, currency: string): string {\n  return new Intl.NumberFormat(\"en-US\", { style: \"currency\", currency }).format(cents / 100);\n}\n\nexport function formatPrice(cents: number): string {\n  return formatMoney(cents, \"USD\");\n}",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change renames formatPrice to formatMoney and leaves no formatPrice export behind. src/cart.ts line 1 still imports formatPrice, and src/cart.ts line 8 still calls it.",
+      "consequence": "The TypeScript compiler rejects cart.ts, so the build fails. A bundler without type checks would ship a cart total that throws at runtime.",
+      "fix": "Update src/cart.ts to call formatMoney with a currency. Another option is to keep formatPrice as a wrapper that calls formatMoney with USD."
+    }
+  ],
+  "below_threshold": 1,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 3063,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 27,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "ran",
+      "version": "1.86.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 12,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 2,
+    "additions": 5,
+    "deletions": 5
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 9458,
+      "started_at": "2026-10-09T06:24:14.084Z",
+      "ended_at": "2026-10-09T06:24:25.289Z",
+      "duration_ms": 11205,
+      "rounds": 1,
+      "usage": {
+        "turns": 3,
+        "input_tokens": 18678,
+        "output_tokens": 1093,
+        "cost_usd": 0.062029
+      }
+    },
+    "snapshot": {
+      "change_id": "857e2b75ee60551f6319310f6fdcdde54824f572398b981d0efbf5e103c3758d",
+      "tree": "06d9e5a29096fe14fbd450d6282d1592fda4a9fc",
+      "before": "828c165a754a659a2eb6e7271289a0e797a6f767ed8a2d9a87b6a5d46740abad",
+      "after": "828c165a754a659a2eb6e7271289a0e797a6f767ed8a2d9a87b6a5d46740abad"
+    },
+    "candidates": {
+      "total": 0,
+      "disposed": 0
+    },
+    "coverage": {
+      "hunks": 3,
+      "covered": 3,
+      "unread": [],
+      "files_read": [],
+      "files_not_read": [
+        "src/invoice.ts",
+        "src/money.ts"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

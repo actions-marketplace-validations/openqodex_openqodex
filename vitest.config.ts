@@ -7,7 +7,7 @@ export default defineConfig({
     include: ["packages/*/src/**/*.test.ts", "packages/*/test/**/*.test.ts", "benchmark/test/**/*.test.mjs", "tests/*.test.ts"],
     // The real-binary adapter checks need every scanner installed; the
     // end-to-end config runs them.
-    exclude: ["**/node_modules/**", "packages/scanners/test/adapters.subprocess.test.ts"],
+    exclude: ["**/node_modules/**", "packages/scanners/test/*.subprocess.test.ts"],
     passWithNoTests: true,
     // Every temp folder a test makes is removed by its file; the run fails
     // when one is left (tests/temp-guard.ts).

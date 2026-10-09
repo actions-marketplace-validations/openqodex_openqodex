@@ -1,0 +1,407 @@
+{
+  "version": 1,
+  "kind": "review",
+  "impact": {
+    "version": 2,
+    "status": "off",
+    "reasons": [
+      "--no-graph was given"
+    ],
+    "risk": null,
+    "build": {
+      "durationMs": 0,
+      "cacheHits": 0,
+      "parses": 0,
+      "eligibleFiles": 0,
+      "parsedFiles": 0,
+      "omittedFiles": 0,
+      "unresolvedSites": null,
+      "externalSites": null,
+      "mode": null,
+      "generation": null
+    },
+    "symbols": [],
+    "touched": [],
+    "removed": [],
+    "callers": [],
+    "callees": [],
+    "importers": [],
+    "hubs": [],
+    "exports": [],
+    "unknown": {
+      "floor": true,
+      "seeds": [],
+      "causes": {},
+      "near": [],
+      "nearTotal": 0,
+      "notRead": [],
+      "notReadTotal": 0
+    },
+    "cuts": [],
+    "truncated": {
+      "walk": false,
+      "inline": false,
+      "omittedSites": null
+    },
+    "packet": null
+  },
+  "change_id": "4dd55d237fe92e4ff6bc6f9fa837b4d38e552878b120ebdbb030177dbb0874bc",
+  "base": {
+    "ref": "HEAD",
+    "sha": "d6cb66faef0b0dfca4374dab319b05d30a393139"
+  },
+  "generated_at": "2026-10-09T06:23:08.524Z",
+  "verdict": "passed",
+  "block_on_severity": null,
+  "summary": "Adds an email search filter to the user index, a self-service profile update endpoint, a user delete endpoint, and a welcome email callback on the User model.",
+  "findings": [
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "Search filter interpolates request input into SQL",
+      "description": "The index action puts params[:q] straight into the LIKE clause text. Any quote in q ends the string literal and adds caller-controlled SQL. Any authenticated user can read or change arbitrary database rows, including other users' API tokens. Bind q as a parameter and escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1",
+      "notes": [],
+      "problem": "The index action puts params[:q] straight into the LIKE clause text. Any quote in q ends the string literal and adds caller-controlled SQL.",
+      "consequence": "Any authenticated user can read or change arbitrary database rows, including other users' API tokens.",
+      "fix": "Bind q as a parameter and escape LIKE wildcards with sanitize_sql_like."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.93,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 21,
+      "line_end": 21,
+      "title": "Any user can delete any user",
+      "description": "The change adds destroy to the require_admin exception list on line 2. The destroy action then deletes whatever record params[:id] names, with no ownership or role check. Any holder of a valid API token can delete every account, including admin accounts. Remove destroy from the require_admin exception list so only admins reach this action.",
+      "suggested_change": null,
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c2",
+      "notes": [],
+      "problem": "The change adds destroy to the require_admin exception list on line 2. The destroy action then deletes whatever record params[:id] names, with no ownership or role check.",
+      "consequence": "Any holder of a valid API token can delete every account, including admin accounts.",
+      "fix": "Remove destroy from the require_admin exception list so only admins reach this action."
+    },
+    {
+      "origin": "agent",
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.88,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Profile update permits every attribute",
+      "description": "The profile action permits every key in the user params, so any column is accepted. A caller can set admin or api_token on their own record. Any authenticated user can make themselves an admin and pass require_admin. Permit only the fields a user may edit, such as email.",
+      "suggested_change": "    @current_user.update!(params.require(:user).permit(:email))",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The profile action permits every key in the user params, so any column is accepted. A caller can set admin or api_token on their own record.",
+      "consequence": "Any authenticated user can make themselves an admin and pass require_admin.",
+      "fix": "Permit only the fields a user may edit, such as email."
+    },
+    {
+      "origin": "agent",
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "description": "The after_save callback runs on updates as well as creates. Every profile update or other save therefore queues another welcome email. Existing users receive repeated welcome emails whenever their record changes. Use after_create_commit so the mail goes out once, after the insert commits.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The after_save callback runs on updates as well as creates. Every profile update or other save therefore queues another welcome email.",
+      "consequence": "Existing users receive repeated welcome emails whenever their record changes.",
+      "fix": "Use after_create_commit so the mail goes out once, after the insert commits."
+    },
+    {
+      "origin": "agent",
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 15,
+      "line_end": 22,
+      "title": "New endpoints have no covering tests",
+      "description": "The change adds search, profile and destroy behaviour plus a model callback. No test file exists in the repository to exercise them. Regressions in authorization and filtering will go unnoticed. Add request specs for search, profile update, destroy authorization and the welcome email callback.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null,
+      "notes": [],
+      "problem": "The change adds search, profile and destroy behaviour plus a model callback. No test file exists in the repository to exercise them.",
+      "consequence": "Regressions in authorization and filtering will go unnoticed.",
+      "fix": "Add request specs for search, profile update, destroy authorization and the welcome email callback."
+    }
+  ],
+  "below_threshold": 0,
+  "outside_change": [],
+  "low_confidence": [],
+  "not_reviewed": [],
+  "dropped": [],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 3,
+      "keptCount": 2,
+      "durationMs": 3282,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 59,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 1,
+      "reason": "needs Ruby 3.0 or newer"
+    },
+    {
+      "scanner": "rubocop",
+      "status": "not_installed",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 1,
+      "reason": "needs Ruby 2.7 or newer"
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "not_reviewed_paths": [],
+  "stats": {
+    "files": 3,
+    "additions": 25,
+    "deletions": 3
+  },
+  "completion": {
+    "version": 1,
+    "contract": "openqodex-review-2",
+    "status": "complete",
+    "missing": [],
+    "reviewer": {
+      "driver": "claude",
+      "version": "2.1.295",
+      "pid": 94324,
+      "started_at": "2026-10-09T06:22:36.645Z",
+      "ended_at": "2026-10-09T06:23:08.524Z",
+      "duration_ms": 31878,
+      "rounds": 2,
+      "usage": {
+        "turns": 6,
+        "input_tokens": 46887,
+        "output_tokens": 3592,
+        "cost_usd": 0.1481406
+      }
+    },
+    "snapshot": {
+      "change_id": "4dd55d237fe92e4ff6bc6f9fa837b4d38e552878b120ebdbb030177dbb0874bc",
+      "tree": "cb8159150b319e77b96a8276bf540d87fe8e6e3e",
+      "before": "b929b9079ae302c58e6d58d20883221caa21ab66339dcc2f49310336458e5b1e",
+      "after": "b929b9079ae302c58e6d58d20883221caa21ab66339dcc2f49310336458e5b1e"
+    },
+    "candidates": {
+      "total": 2,
+      "disposed": 2
+    },
+    "coverage": {
+      "hunks": 5,
+      "covered": 5,
+      "unread": [],
+      "files_read": [
+        "app/controllers/application_controller.rb",
+        "app/mailers/user_mailer.rb"
+      ],
+      "files_not_read": [
+        "app/controllers/users_controller.rb",
+        "app/models/user.rb",
+        "config/routes.rb"
+      ]
+    },
+    "outside_reads": [],
+    "trace_complete": true
+  }
+}

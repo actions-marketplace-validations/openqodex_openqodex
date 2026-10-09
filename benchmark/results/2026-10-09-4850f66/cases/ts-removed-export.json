@@ -1,0 +1,38 @@
+{
+  "id": "ts-removed-export",
+  "guards": "a renamed export is reported with the file that still imports the old name, when that file is not part of the change and nothing in the diff shows it",
+  "language": "typescript",
+  "framework": "none",
+  "clean": false,
+  "graph": {
+    "callers": [
+      "src/cart.ts:8"
+    ]
+  },
+  "bugs": [
+    {
+      "id": "removed-export-still-imported",
+      "file": "src/money.ts",
+      "lines": [
+        3,
+        5
+      ],
+      "anchor": {
+        "line": 3,
+        "text": "export function formatMoney"
+      },
+      "mentions": [
+        "cart"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning",
+        "graph"
+      ],
+      "truth": "The change renames formatPrice to formatMoney and updates invoice.ts, but src/cart.ts still imports and calls formatPrice, so the build fails and cartTotal breaks. The fix is to update cart.ts to formatMoney with a currency, or keep formatPrice as a wrapper."
+    }
+  ]
+}

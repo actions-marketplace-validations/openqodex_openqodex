@@ -1,0 +1,66 @@
+[
+  {
+    "tool": "Read",
+    "path": ".github/workflows/ci.yml",
+    "inside": true,
+    "range": [
+      1,
+      23
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "app/server.py",
+    "inside": true,
+    "range": [
+      1,
+      41
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "app/config.py",
+    "inside": true,
+    "range": [
+      1,
+      4
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Glob",
+    "path": null,
+    "inside": true,
+    "range": null,
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "db/migrations/001_create_items.sql",
+    "inside": true,
+    "range": [
+      1,
+      8
+    ],
+    "ok": true
+  },
+  {
+    "tool": "Read",
+    "path": "deploy/deployment.yaml",
+    "inside": true,
+    "range": [
+      1,
+      79
+    ],
+    "ok": true
+  }
+]

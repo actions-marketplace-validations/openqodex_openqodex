@@ -1,0 +1,5 @@
+kube-linter 0.8.3, run from the repository root as the adapter runs it:
+  kube-linter lint --config <owned config> --format json -- k8s/workloads.yaml
+on workloads.yaml (then named k8s/bad.yaml under /tmp/oqc/klfix/repo).
+The only edit: the absolute path of the scanned file, now /repo/k8s/workloads.yaml.
+Exit code 1, stderr "Error: found 33 lint errors".

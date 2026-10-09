@@ -29,7 +29,6 @@ import {
 import type {
   AdapterResult,
   BuiltinScanner,
-  DeletionPoint,
   Candidate,
   Config,
   DiffCoverage,
@@ -40,11 +39,13 @@ import type {
   ScannerSource,
   StaticFinding,
 } from "@openqodex/core";
+import { sameProblemClass } from "./same-problem.js";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import { repoFacts, type RepoFacts } from "./detect.js";
 import { DISABLED_REASON, selectScanners, type ScannerChoice } from "./select.js";
 import type { SettingsFile } from "./adapters/index.js";
-import { readRepoFile, repoFileOrReason } from "./adapters/read.js";
+import type { SettingsReader } from "./shared-settings.js";
+import { readRepoFile, repoFileOrReason, scannerInputs } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
 import { SEMGREP_MAX_TARGET_BYTES } from "./adapters/semgrep.js";
@@ -85,9 +86,9 @@ export async function runScanners(args: {
   // The changed lines. Absent for a whole-repo review: then every finding
   // in a file of `changedPaths` is kept, whatever its line.
   coverage?: DiffCoverage;
-  // Where the change only deleted lines, and the base's copy of a file: what
-  // tells whether a change touched ruff's table in pyproject.toml.
-  deletionPoints?: Map<string, DeletionPoint[]>;
+  // The base's copy of a file (null when the base has none): what tells
+  // whether a change altered what a scanner reads from a shared file such
+  // as pyproject.toml.
   baseText?: (path: string) => Promise<string | null>;
   config: Config;
   resolveTool: ResolveTool;
@@ -102,11 +103,23 @@ export async function runScanners(args: {
   // Read once for the whole run: every scanner and the suppression check ask
   // the same questions about the same files.
   const facts = repoFacts(args.repoDir);
+  // The changed files a built-in scanner may be handed: no link, nothing
+  // outside the repository (adapters/read.ts, isScannerInput). The settings
+  // and suppression checks below still read every changed path, through
+  // their own checks.
+  // A refused file a scanner would have checked is named in its reason.
+  const { inputs, refused } = scannerInputs(args.repoDir, args.changedPaths);
   const choices = new Map(
-    selectScanners({ repoDir: args.repoDir, paths: args.changedPaths, config: args.config, facts }).map((c) => [c.scanner, c]),
+    selectScanners({ repoDir: args.repoDir, paths: inputs, config: args.config, facts }).map((c) => [c.scanner, c]),
   );
   const builtins = ADAPTERS.filter((a) => selected(a.source)).map((adapter) =>
-    guard(adapter.source, () => runBuiltin(adapter, choices.get(adapter.source)!, facts, args)),
+    guard(adapter.source, async () => {
+      const outcome = await runBuiltin(adapter, choices.get(adapter.source)!, facts, { ...args, changedPaths: inputs });
+      const held = refused.size === 0 || outcome.summary.status === "disabled" ? [] : adapter.files([...refused.keys()], facts);
+      if (held.length === 0) return outcome;
+      const named = held.map((p) => `${p}: ${refused.get(p)}`).join("; ");
+      return { ...outcome, summary: { ...outcome.summary, reason: outcome.summary.reason ? `${named}; ${outcome.summary.reason}` : named } };
+    }),
   );
   const customs = (args.custom ?? [])
     .filter((c) => selected(c.source))
@@ -137,7 +150,6 @@ export async function runScanners(args: {
         repoDir: args.repoDir,
         changedPaths: args.changedPaths,
         coverage,
-        deletionPoints: args.deletionPoints,
         baseText: args.baseText,
         wanted,
       }),
@@ -170,7 +182,8 @@ export async function runScanners(args: {
 
   // Cross-scanner dedup, then a severity sort that is stable within a
   // severity, so ties keep the ensemble order (semgrep before gitleaks).
-  const deduped = dedupByRuleClass(postRules);
+  const mergedInto = new Map<StaticFinding, string[]>();
+  const deduped = dedupByRuleClass(postRules, mergedInto);
   deduped.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
   const candidates: Candidate[] = deduped.map((f, i) => ({
@@ -179,6 +192,7 @@ export async function runScanners(args: {
     id: `c${i + 1}`,
     token: `${f.source}:${f.ruleId}`,
     reviewSeverity: mapScannerSeverity(f.severity),
+    ...(mergedInto.has(f) ? { alsoReportedBy: mergedInto.get(f) } : {}),
   }));
 
   const kept = new Map<ScannerSource, number>();
@@ -220,63 +234,46 @@ function projectsOf(paths: string[], facts: RepoFacts): { root: string; framewor
   return [...seen].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, frameworks]) => ({ root, frameworks }));
 }
 
-// The line ranges (1-based, inclusive) of every `[tool.ruff...]` table.
-function ruffTables(text: string): [number, number][] {
-  const lines = text.split(/\r?\n/);
-  const out: [number, number][] = [];
-  let start: number | null = null;
-  lines.forEach((line, i) => {
-    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]/.exec(line);
-    if (!header) return;
-    if (start !== null) out.push([start, i]);
-    // TOML lets a key be quoted and spaced: [tool."ruff".lint], [ tool . ruff ].
-    const name = (header[1] as string).replace(/["'\s]/g, "");
-    start = /^tool\.ruff(\.|$)/.test(name) ? i + 1 : null;
-  });
-  if (start !== null) out.push([start, lines.length]);
-  return out;
-}
-
 const SETTINGS_MAX_BYTES = 1024 * 1024;
 
-const mentionsRuff = (text: string): number => text.match(/ruff/gi)?.length ?? 0;
-
-// True when the change may touch ruff's settings in this pyproject.toml. It
-// does not parse TOML, so it errs towards yes: a changed line or a deletion
-// inside a ruff table, a changed line that names ruff in any form (a dotted
-// key under [tool], an inline table), a different count of the word between
-// the base and the head, or a file that cannot be read.
-async function touchesRuffTable(args: SettingsArgs, filePath: string): Promise<boolean> {
-  let head: string | null;
+// The file as the head has it: null when the change deleted it, undefined
+// when it cannot be read (a link, too large, not a regular file).
+async function headSettingsText(repoDir: string, filePath: string): Promise<string | null | undefined> {
   try {
-    head = await readRepoFile(args.repoDir, filePath, SETTINGS_MAX_BYTES);
-  } catch {
-    return true;
+    return await readRepoFile(repoDir, filePath, SETTINGS_MAX_BYTES);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : undefined;
   }
-  // A deleted file: only the base can say whether it held ruff settings.
-  if (head === null) {
-    if (args.baseText === undefined) return true;
-    const gone = await args.baseText(filePath).catch(() => undefined);
-    return gone === undefined || mentionsRuff(gone ?? "") > 0;
-  }
-  const tables = ruffTables(head);
-  const inside = (n: number) => tables.some(([a, b]) => a <= n && n <= b);
-  const lines = head.split(/\r?\n/);
-  const changed = [...(args.coverage.get(filePath) ?? [])];
-  if (changed.some((n) => inside(n) || mentionsRuff(lines[n - 1] ?? "") > 0)) return true;
-  if ((args.deletionPoints?.get(filePath) ?? []).some((p) => p.anchors.some(inside))) return true;
-  if (args.baseText === undefined) return false;
+}
+
+// True when what the scanner reads from this shared file (ruff or SQLFluff
+// in pyproject.toml, SQLFluff in setup.cfg, tox.ini or pep8.ini) differs
+// between the base and the head, by meaning (shared-settings.ts). It errs
+// towards yes: a side that cannot be read, is over the size cap or does not
+// parse counts as a change, and with no base to compare against the file
+// counts when the head holds the scanner's settings at all.
+async function touchesShared(args: SettingsArgs, filePath: string, reader: SettingsReader): Promise<boolean> {
+  const read = (text: string | null): string | null => {
+    if (text === null) return "";
+    if (Buffer.byteLength(text, "utf8") > SETTINGS_MAX_BYTES) return null;
+    return reader(text);
+  };
+  const head = await headSettingsText(args.repoDir, filePath);
+  if (head === undefined) return true;
+  const after = read(head);
+  if (after === null) return true;
+  if (args.baseText === undefined) return after !== "";
   const base = await args.baseText(filePath).catch(() => undefined);
   if (base === undefined) return true;
-  return mentionsRuff(base ?? "") !== mentionsRuff(head);
+  const before = read(base);
+  return before === null || before !== after;
 }
 
 type SettingsArgs = {
   repoDir: string;
   changedPaths: string[];
   coverage: DiffCoverage;
-  deletionPoints?: Map<string, DeletionPoint[]>;
-  // The file as the base has it, for a settings block the change removed.
+  // The file as the base has it, null when the base has none.
   baseText?: (path: string) => Promise<string | null>;
   wanted: (s: BuiltinScanner) => boolean;
 };
@@ -293,7 +290,7 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
       const name = filePath.slice(filePath.lastIndexOf("/") + 1);
       const entry = files.find((f) => (f.anyFolder ? f.path === name : f.path === filePath));
       if (entry === undefined) continue;
-      if (entry.ruffTable && !(await touchesRuffTable(args, filePath))) continue;
+      if (entry.reader && !(await touchesShared(args, filePath, entry.reader))) continue;
       // A loop, not Math.min(...lines): a file can have more changed lines
       // than a call can take as arguments.
       let line = Infinity;
@@ -448,8 +445,9 @@ function skippedOutcome(
 
 // A scanner that ran. An error with no findings is a failure; an error next
 // to findings (one Go module of several failed, one .sql file unreadable)
-// keeps the findings and the note. An adapter that chose not to run is
-// disabled, with its reason.
+// keeps the findings and the note. A note (a folder held back) is the reason
+// of a scanner that ran. An adapter that chose not to run is disabled, with
+// its reason.
 function ranOutcome(
   scanner: ScannerSource,
   result: AdapterResult,
@@ -466,7 +464,7 @@ function ranOutcome(
       rawCount: result.findings.length,
       keptCount: 0,
       durationMs: Date.now() - started,
-      reason: result.error,
+      reason: result.error ?? result.note ?? null,
     },
     findings: result.findings,
     secrets: result.secrets ?? [],
@@ -619,8 +617,18 @@ function severityRank(s: ScannerSeverity): number {
 // A candidate OpenQodex raises about the change itself (a changed settings
 // file, an added suppression comment) is not a scanner hit: it has a class
 // of its own, so a scanner's finding on the same line never swallows it.
+//
+// Rules of different scanners that name one problem share the class of
+// their group in same-problem.ts. The word classes apply only to the
+// scanners they were written for (WORD_CLASSED) and to custom scanners: a
+// scanner added later merges through same-problem.ts or not at all, since a
+// word in its rule id ("env-var-secret", "excessive-permissions") does not
+// say it names the problem a secret or access rule of another scanner names.
 export function ruleClassFor(f: StaticFinding): string {
   if (isOwnCandidate(f)) return `${f.source}:${f.ruleId}`;
+  const same = sameProblemClass(f);
+  if (same !== null) return same;
+  if (!WORD_CLASSED.has(f.source) && !f.source.startsWith("custom:")) return `${f.source}:${f.ruleId}`;
   if (f.source === "gitleaks") return "secret";
   const id = f.ruleId.toLowerCase();
   if (/secret|credential|api[-_]?key|access[-_]?key|password|token/.test(id)) {
@@ -641,6 +649,22 @@ export function ruleClassFor(f: StaticFinding): string {
   return `${f.source}:${f.ruleId}`;
 }
 
+const WORD_CLASSED: ReadonlySet<string> = new Set<BuiltinScanner>([
+  "semgrep",
+  "gitleaks",
+  "sqllint",
+  "osv-scanner",
+  "actionlint",
+  "hadolint",
+  "shellcheck",
+  "ruff",
+  "brakeman",
+  "rubocop",
+  "bandit",
+  "oxlint",
+  "golangci",
+]);
+
 // Group by (file, lineStart, lineEnd, ruleClass). The class merge is only
 // across scanners: semgrep and gitleaks reporting the same secret on one
 // line is one problem, so the scanner with the highest-severity hit keeps
@@ -648,9 +672,14 @@ export function ruleClassFor(f: StaticFinding): string {
 // first occurrence: semgrep precedes gitleaks in the input order, and its
 // rule message is the more descriptive). Two different rules from one
 // scanner on one span are two problems and both stay; only an exact repeat
-// (same scanner, same rule) collapses.
+// (same scanner, same rule) collapses. Findings on different lines never
+// merge, even where their spans overlap.
+//
+// `merged`, when given, receives for each finding kept the tokens
+// ("<source>:<ruleId>") of the other scanners' findings merged into it, in
+// input order, so the report can say who else reported it.
 // Exported for unit tests.
-export function dedupByRuleClass(findings: StaticFinding[]): StaticFinding[] {
+export function dedupByRuleClass(findings: StaticFinding[], merged?: Map<StaticFinding, string[]>): StaticFinding[] {
   const groups = new Map<string, StaticFinding[]>();
   for (const f of findings) {
     const key = `${f.filePath}::${f.lineStart}::${f.lineEnd}::${ruleClassFor(f)}`;
@@ -664,11 +693,18 @@ export function dedupByRuleClass(findings: StaticFinding[]): StaticFinding[] {
       (a, b) => severityRank(b.severity) - severityRank(a.severity),
     )[0];
     const seenRules = new Set<string>();
+    const others: string[] = [];
     for (const f of bucket) {
-      if (f.source !== winner.source || seenRules.has(f.ruleId)) continue;
+      if (f.source !== winner.source) {
+        const token = `${f.source}:${f.ruleId}`;
+        if (!others.includes(token)) others.push(token);
+        continue;
+      }
+      if (seenRules.has(f.ruleId)) continue;
       seenRules.add(f.ruleId);
       emitted.add(f);
     }
+    if (merged && others.length > 0) merged.set(winner, others);
   }
   // Walk the input once so survivors keep their input order.
   return findings.filter((f) => emitted.has(f));

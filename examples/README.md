@@ -2,7 +2,7 @@
 
 ## demo-repo
 
-A tiny shop API (Flask, a deploy script, a Dockerfile, a lockfile and a GitHub workflow) with bugs planted on purpose, so you can watch OpenQodex find them. `openqodex demo [dir]` builds it for you:
+A tiny shop API (Flask, a deploy script, a Dockerfile, a lockfile, a GitHub workflow, a Postgres migration, Terraform and a Kubernetes manifest) with bugs planted on purpose, so you can watch OpenQodex find them. `openqodex demo [dir]` builds it for you:
 
 1. copies `demo-repo/baseline/` into a new folder and commits it, so the baseline is the base of the change;
 2. copies `demo-repo/planted/` over it and leaves those changes uncommitted;
@@ -24,7 +24,10 @@ The baseline is clean: every scanner that reads its files reports nothing. The p
 | `package-lock.json` | 11 | lodash 4.17.15, with known advisories (CVE-2020-8203 among them) | osv-scanner |
 | `scripts/deploy.sh` | 7 | `rm -rf $DEPLOY_DIR/` unquoted: an empty variable deletes from `/` | shellcheck `SC2115`, `SC2086` |
 | `scripts/deploy.sh` | 11 | a loop over unquoted `ls` output | shellcheck `SC2045`, `SC2086` |
-| `.github/workflows/ci.yml` | 15 | the pull request title is pasted into a shell command (script injection) | actionlint `expression`, semgrep |
+| `.github/workflows/ci.yml` | 17 | the pull request title is pasted into a shell command (script injection) | actionlint `expression`, semgrep, zizmor `template-injection`; the report shows it once |
+| `db/migrations/002_index_item_names.sql` | 2 | an index built without `CONCURRENTLY`, which blocks writes to the table while it builds | squawk `require-concurrent-index-creation` |
+| `infra/main.tf` | 28 | SSH opened to every address (`0.0.0.0/0`) | trivy `AWS-0107`, Checkov `CKV_AWS_24` |
+| `deploy/deployment.yaml` | 42, 43 | a privileged container that may escalate its privileges | Checkov `CKV_K8S_16`, `CKV_K8S_20`, kube-linter, semgrep |
 | `app/server.py` | 23 | pagination skips the first page (`page * PAGE_SIZE` with pages counted from 1) | no scanner: only a reviewer reading the code finds it |
 
 `demo-repo/expected.json` holds the same list with exact rule ids, for the end-to-end test.

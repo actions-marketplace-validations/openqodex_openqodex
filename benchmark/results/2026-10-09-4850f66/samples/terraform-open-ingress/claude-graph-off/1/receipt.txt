@@ -1,0 +1,9 @@
+Passed with warnings: 4 findings (4 major)
+Change f40cc0629aaa against HEAD, 3 files, +60 -0
+Summary: Adds a bastion security group with SSH access to the app hosts and a Postgres RDS instance for orders, plus a sensitive db_password variable.
+1. Major security: Bastion SSH open to the whole internet (infra/bastion.tf:12)
+2. Major bug: Standalone rule on a security group with inline rules (infra/bastion.tf:24-32)
+3. Major security: Orders database marked publicly accessible (infra/database.tf:17)
+4. Major bug: Database security group does not allow Postgres traffic (infra/database.tf:16)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

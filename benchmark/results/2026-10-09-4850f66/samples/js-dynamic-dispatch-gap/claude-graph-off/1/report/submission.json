@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "change_id": "eab11e18f842",
+  "summary": "onSave is now async and writes the whole store to data/notes.json after each save. Its caller in the router and HTTP server still treats the return value as a string.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "bug",
+      "confidence": 0.9,
+      "file_path": "src/handlers.js",
+      "line_number": 6,
+      "line_end": 8,
+      "title": "Async onSave breaks synchronous dispatch caller",
+      "problem": "dispatch in src/router.js:7 returns the promise from onSave without awaiting it. The server in src/main.js:9 then passes that promise to res.end, which accepts only a string or Buffer.",
+      "consequence": "Node throws ERR_INVALID_ARG_TYPE inside the request listener, and this uncaught exception crashes the server on every POST /save request. A writeFile rejection also goes unhandled, because no caller awaits the promise or attaches a catch.",
+      "fix": "Make dispatch async and await the handler. In main.js, await dispatch inside an async listener and catch errors to send a 500 response.",
+      "suggested_change": null,
+      "source": "lens:async-floating-promise",
+      "candidate": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "src/handlers.js",
+      "line_number": 8,
+      "line_end": 8,
+      "title": "Snapshot write has no covering test",
+      "problem": "onSave now writes the store to disk and returns a promise. The repository has no test that covers this behaviour.",
+      "consequence": "Nothing catches regressions like the broken caller in the router and HTTP server.",
+      "fix": "Add a test that calls dispatch for a save. The test should check the response text and the snapshot file contents.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": []
+}

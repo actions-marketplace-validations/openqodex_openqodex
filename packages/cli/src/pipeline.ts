@@ -117,7 +117,6 @@ export async function scanChange<C extends Change>(args: {
     repoDir: workDir,
     changedPaths: change.changedPaths,
     coverage: args.wholeRepo ? undefined : change.coverage,
-    deletionPoints: change.deletionPoints,
     baseText: async (path) => {
       const r = await safeGit(repoRoot, ["show", "--no-textconv", `${change.baseSha}:${path}`]);
       return r.code === 0 ? r.stdout.toString("utf8") : null;

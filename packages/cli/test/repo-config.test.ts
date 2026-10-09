@@ -40,10 +40,10 @@ describe("the repo config across versions", () => {
   });
 
   it("a scanner name this version does not know in scanners.disable gives one warning and the run goes on (failure 2)", () => {
-    const s = withConfig("version: 1\nscanners:\n  disable: [trivy]\n");
+    const s = withConfig("version: 1\nscanners:\n  disable: [snyk]\n");
     const r = cli(s, ["scan", "--no-install", "--offline", "--format", "json"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr.match(/scanners\.disable: trivy is not a scanner this version knows; it is ignored/g)).toHaveLength(1);
+    expect(r.stderr.match(/scanners\.disable: snyk is not a scanner this version knows; it is ignored/g)).toHaveLength(1);
   });
 
   it("min_version above this version stops the run with exit 2 and the version it needs (failure 3)", () => {

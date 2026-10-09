@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "change_id": "82deb6d1898e",
+  "summary": "The image-worker Deployment now uses the node's network namespace. It also mounts the node's Docker socket so each conversion can run in its own container.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "deploy/worker.yaml",
+      "line_number": 68,
+      "line_end": 71,
+      "title": "Node Docker socket mounted into worker pod",
+      "problem": "The Deployment mounts the host's /var/run/docker.sock into the worker container. Any process holding that socket can drive the node's Docker daemon as root.",
+      "consequence": "An attacker who compromises the worker can start a privileged container and take over the node. This bypasses runAsNonRoot, dropped capabilities and seccomp, and exposes every pod and secret on that node.",
+      "fix": "Remove the docker volume and volumeMount. Run conversions as Kubernetes Jobs, or use a sandboxed runner such as rootless BuildKit or a gVisor runtime class.",
+      "suggested_change": null,
+      "source": "kube-linter:docker-sock",
+      "candidate": "c1"
+    },
+    {
+      "severity": "major",
+      "category": "security",
+      "confidence": 0.85,
+      "file_path": "deploy/worker.yaml",
+      "line_number": 20,
+      "line_end": 20,
+      "title": "Worker pod shares the node network namespace",
+      "problem": "The worker pod sets hostNetwork to true just to reach a cache on the node's localhost. The pod then shares the node's network namespace and bypasses pod NetworkPolicies.",
+      "consequence": "A compromised worker can reach every service bound to node localhost, including kubelet and daemon ports. It can also observe other pods' traffic on that node.",
+      "fix": "Remove hostNetwork. Reach the image cache through a node-local Service, or at the node IP from the downward API.",
+      "suggested_change": null,
+      "source": "kube-linter:host-network",
+      "candidate": "c2"
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c3",
+      "reason": "This is the same Docker socket mount already raised under c1. Setting readOnly would not stop Docker API calls over the socket.",
+      "file_path": "deploy/worker.yaml",
+      "line_number": 70
+    },
+    {
+      "candidate": "c4",
+      "reason": "This duplicates the hostNetwork finding raised under c2.",
+      "file_path": "deploy/worker.yaml",
+      "line_number": 20
+    },
+    {
+      "candidate": "c5",
+      "reason": "This duplicates the Docker socket mount finding raised under c1.",
+      "file_path": "deploy/worker.yaml",
+      "line_number": 69
+    }
+  ]
+}

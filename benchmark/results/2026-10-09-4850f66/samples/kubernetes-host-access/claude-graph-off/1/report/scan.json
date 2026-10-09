@@ -1,0 +1,272 @@
+{
+  "candidates": [
+    {
+      "source": "kube-linter",
+      "ruleId": "docker-sock",
+      "filePath": "deploy/worker.yaml",
+      "lineStart": 70,
+      "lineEnd": 70,
+      "severity": "high",
+      "message": "host system directory \"/var/run/docker.sock\" is mounted on container \"worker\". Ensure the Docker socket is not mounted inside any containers by removing the associated Volume and VolumeMount in deployment yaml specification. If the Docker socket is mounted inside a container it could allow processes running within the container to execute Docker commands which would effectively allow for full control of the host.",
+      "reference": "https://docs.kubelinter.io/#/generated/checks?id=docker-sock",
+      "id": "c1",
+      "token": "kube-linter:docker-sock",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "kube-linter",
+      "ruleId": "host-network",
+      "filePath": "deploy/worker.yaml",
+      "lineStart": 20,
+      "lineEnd": 20,
+      "severity": "high",
+      "message": "resource shares host's network namespace (via hostNetwork=true). Ensure the host's network namespace is not shared.",
+      "reference": "https://docs.kubelinter.io/#/generated/checks?id=host-network",
+      "id": "c2",
+      "token": "kube-linter:host-network",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "kube-linter",
+      "ruleId": "writable-host-mount",
+      "filePath": "deploy/worker.yaml",
+      "lineStart": 70,
+      "lineEnd": 70,
+      "severity": "high",
+      "message": "container worker mounts path /var/run/docker.sock on the host as writable. Set containers to mount host paths as readOnly, if you need to access files on the host.",
+      "reference": "https://docs.kubelinter.io/#/generated/checks?id=writable-host-mount",
+      "id": "c3",
+      "token": "kube-linter:writable-host-mount",
+      "reviewSeverity": "major"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "yaml.kubernetes.security.hostnetwork-pod.hostnetwork-pod",
+      "filePath": "deploy/worker.yaml",
+      "lineStart": 20,
+      "lineEnd": 20,
+      "severity": "medium",
+      "message": "Pod may use the node network namespace. This gives the pod access to the loopback device, services listening on localhost, and could be used to snoop on network activity of other pods on the same node. Remove the 'hostNetwork' key to disable this functionality.",
+      "reference": "https://kubernetes.io/docs/concepts/policy/pod-security-policy/#host-namespaces",
+      "id": "c4",
+      "token": "semgrep:yaml.kubernetes.security.hostnetwork-pod.hostnetwork-pod",
+      "reviewSeverity": "minor"
+    },
+    {
+      "source": "semgrep",
+      "ruleId": "yaml.kubernetes.security.exposing-docker-socket-hostpath.exposing-docker-socket-hostpath",
+      "filePath": "deploy/worker.yaml",
+      "lineStart": 69,
+      "lineEnd": 71,
+      "severity": "medium",
+      "message": "Exposing host's Docker socket to containers via a volume. The owner of this socket is root. Giving someone access to it is equivalent to giving unrestricted root access to your host. Remove 'docker.sock' from hostpath to prevent this.",
+      "reference": "https://kubernetes.io/docs/concepts/storage/volumes/#hostpath",
+      "id": "c5",
+      "token": "semgrep:yaml.kubernetes.security.exposing-docker-socket-hostpath.exposing-docker-socket-hostpath",
+      "reviewSeverity": "minor"
+    }
+  ],
+  "scanners": [
+    {
+      "scanner": "semgrep",
+      "status": "ran",
+      "version": "1.94.0",
+      "rawCount": 2,
+      "keptCount": 2,
+      "durationMs": 4039,
+      "reason": null
+    },
+    {
+      "scanner": "gitleaks",
+      "status": "ran",
+      "version": "8.21.2",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 25,
+      "reason": null
+    },
+    {
+      "scanner": "sqllint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "squawk",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "actionlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "zizmor",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "hadolint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "trivy",
+      "status": "ran",
+      "version": "0.75.0",
+      "rawCount": 4,
+      "keptCount": 0,
+      "durationMs": 574,
+      "reason": null
+    },
+    {
+      "scanner": "checkov",
+      "status": "ran",
+      "version": "3.3.22",
+      "rawCount": 4,
+      "keptCount": 0,
+      "durationMs": 1816,
+      "reason": null
+    },
+    {
+      "scanner": "tflint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "kube-linter",
+      "status": "ran",
+      "version": "0.8.3",
+      "rawCount": 3,
+      "keptCount": 3,
+      "durationMs": 92,
+      "reason": null
+    },
+    {
+      "scanner": "kubeconform",
+      "status": "ran",
+      "version": "0.8.0",
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 51,
+      "reason": null
+    },
+    {
+      "scanner": "shellcheck",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "ruff",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "brakeman",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "rubocop",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "bandit",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "oxlint",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    },
+    {
+      "scanner": "golangci",
+      "status": "no_matching_files",
+      "version": null,
+      "rawCount": 0,
+      "keptCount": 0,
+      "durationMs": 0,
+      "reason": null
+    }
+  ],
+  "fixturesDropped": 0,
+  "secretFingerprints": [],
+  "projects": []
+}

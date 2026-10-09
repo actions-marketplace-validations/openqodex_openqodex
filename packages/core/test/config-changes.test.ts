@@ -86,10 +86,10 @@ describe("the file init writes", () => {
 
 describe("a value or key from another version", () => {
   it("an unknown name in scanners.disable is ignored with a warning, naming the scanner it is near (failure 20)", () => {
-    const { config, warnings } = parseConfig("scanners:\n  disable: [trivy, semgrp, gitleaks]\n");
+    const { config, warnings } = parseConfig("scanners:\n  disable: [snyk, semgrp, gitleaks]\n");
     expect(config.disabledScanners).toEqual(["gitleaks"]);
     expect(warnings).toHaveLength(2);
-    expect(warnings[0]).toMatch(/^scanners\.disable: trivy is not a scanner this version knows; it is ignored \(the scanners are semgrep, gitleaks, /);
+    expect(warnings[0]).toMatch(/^scanners\.disable: snyk is not a scanner this version knows; it is ignored \(the scanners are semgrep, gitleaks, /);
     expect(warnings[1]).toBe("scanners.disable: semgrp is not a scanner this version knows; it is ignored (did you mean semgrep?)");
   });
 
