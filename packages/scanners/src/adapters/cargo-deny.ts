@@ -42,7 +42,7 @@
 // All errors are captured into the result; the runner never throws on a
 // scanner failure.
 
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { homeGuard } from "@openqodex/core";
@@ -360,7 +360,11 @@ function trimMessage(m: string): string {
 // holds a [workspace]. Starting Cargo outside the repository and with
 // --frozen constrains none of that, so before Cargo starts every such path
 // must stay inside the repository, through no link, and the search for a
-// workspace must end inside it. Null when it does, else the first problem.
+// workspace must end inside it. The gate fails closed: every manifest a path
+// names must be a regular file the TOML parser (smol-toml) reads whole; a
+// member pattern is not expanded, since Cargo expands it over the file system
+// and follows links there; a walk past its limit stops. Null when the project
+// passes, else the first problem.
 const CARGO_MANIFEST_MAX_BYTES = 1024 * 1024;
 const MAX_CARGO_MANIFESTS = 1000;
 const DEPENDENCY_TABLES = ["dependencies", "dev-dependencies", "dev_dependencies", "build-dependencies", "build_dependencies"];
@@ -391,39 +395,6 @@ function linkOnTheWay(repoDir: string, rel: string): string | null {
   return null;
 }
 
-// A member pattern's folders: each `*`, `?` or `[...]` segment matched
-// against the real folders (never a link) of the one above. A `**` is not
-// expanded: null.
-function memberFolders(repoDir: string, pattern: string): string[] | null {
-  let found = [""];
-  for (const segment of pattern === "" ? [] : pattern.split("/")) {
-    if (segment === "**") return null;
-    if (!/[*?[]/.test(segment)) {
-      found = found.map((f) => (f === "" ? segment : `${f}/${segment}`));
-      continue;
-    }
-    const source = segment.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
-    let match: RegExp;
-    try {
-      match = new RegExp(`^${source}$`);
-    } catch {
-      return null;
-    }
-    const next: string[] = [];
-    for (const f of found) {
-      let entries;
-      try {
-        entries = readdirSync(path.join(repoDir, f), { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const e of entries) if (e.isDirectory() && match.test(e.name)) next.push(f === "" ? e.name : `${f}/${e.name}`);
-    }
-    found = next;
-  }
-  return found;
-}
-
 export async function cargoPathProblem(repoDir: string, folder: string): Promise<string | null> {
   let realRepo: string;
   try {
@@ -431,30 +402,32 @@ export async function cargoPathProblem(repoDir: string, folder: string): Promise
   } catch {
     return "the repository cannot be read";
   }
-  const queue: string[] = [];
+  // Each manifest to read, and whether it must be there: one a path names
+  // must; one in a folder above the project is read only when present.
+  const queue: { rel: string; required: boolean }[] = [];
   const seen = new Set<string>();
   const manifestOf = (dir: string): string => (dir === "" ? "Cargo.toml" : `${dir}/Cargo.toml`);
-  const visit = (dir: string): void => {
+  const visit = (dir: string, required = true): void => {
     const rel = manifestOf(dir);
     if (!seen.has(rel)) {
       seen.add(rel);
-      queue.push(rel);
+      queue.push({ rel, required });
     }
   };
   // The project, and each folder above it inside the repository: Cargo reads
   // their manifests looking for the workspace.
   const parts = folder === "" ? [] : folder.split("/");
-  for (let depth = parts.length; depth >= 0; depth--) visit(parts.slice(0, depth).join("/"));
+  for (let depth = parts.length; depth >= 0; depth--) visit(parts.slice(0, depth).join("/"), depth === parts.length);
   const chain = new Set(seen);
   let workspaceInside = false;
 
   while (queue.length > 0) {
     if (seen.size > MAX_CARGO_MANIFESTS) return "more Cargo manifests than OpenQodex reads";
-    const rel = queue.shift() as string;
+    const { rel, required } = queue.shift() as { rel: string; required: boolean };
     const verdict = scannerInput(realRepo, repoDir, rel);
     if (!verdict.ok) {
-      if (verdict.reason === null) continue;
-      return `${rel}: ${verdict.reason}`;
+      if (verdict.reason === null && !required) continue;
+      return `${rel}: ${verdict.reason ?? "no such manifest"}`;
     }
     let doc: Record<string, unknown>;
     try {
@@ -525,17 +498,9 @@ export async function cargoPathProblem(repoDir: string, folder: string): Promise
         for (const member of list) {
           if (typeof member !== "string") continue;
           checks.push(() => {
-            const inside = insidePath(dir, member);
-            if (inside === null) return problem("a workspace member");
-            if (!/[*?[]/.test(member)) return folderPath(member, "a workspace member");
-            const folders = memberFolders(repoDir, inside);
-            if (folders === null) return `${rel}: a workspace member pattern OpenQodex does not expand`;
-            for (const f of folders) {
-              const linked = linkOnTheWay(repoDir, f);
-              if (linked !== null) return `${rel}: a workspace member ${linked}`;
-              visit(f);
-            }
-            return null;
+            if (insidePath(dir, member) === null) return problem("a workspace member");
+            if (/[*?[\]{}!]/.test(member)) return `${rel}: a workspace member pattern, which Cargo expands over the file system`;
+            return folderPath(member, "a workspace member");
           });
         }
       }

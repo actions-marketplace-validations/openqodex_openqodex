@@ -140,7 +140,7 @@ describe("cargoPathProblem", () => {
       `${pkg("app")}\n[dev-dependencies]\nout = { path = "../../${"../".repeat(20)}${outside.slice(1)}" }\n`,
       `${pkg("app")}\n[target.'cfg(unix)'.build-dependencies]\nout = { path = "${outside}" }\n`,
       `[workspace]\nmembers = ["${outside}"]\n`,
-      `[workspace]\nmembers = ["crates/*", "../out"]\n`,
+      `[workspace]\nmembers = ["crates/a", "../out"]\n`,
       `${pkg("app", `workspace = "${outside}"\n`)}`,
       `${pkg("app")}\n[patch.crates-io]\nserde = { path = "${outside}" }\n`,
       `${pkg("app")}\n[replace]\n"serde:1.0.0" = { path = "${outside}" }\n`,
@@ -174,7 +174,7 @@ describe("cargoPathProblem", () => {
     writeFileSync(join(parent, "Cargo.toml"), `[workspace]\nmembers = ["repo/crates/a", "${outside}"]\n`);
     expect(await cargoPathProblem(repo, "crates/a")).toMatch(/above the repository/);
     // A [workspace] inside the repository ends the search there.
-    writeFileSync(join(repo, "Cargo.toml"), '[workspace]\nmembers = ["crates/*"]\n');
+    writeFileSync(join(repo, "Cargo.toml"), '[workspace]\nmembers = ["crates/a"]\n');
     expect(await cargoPathProblem(repo, "crates/a")).toBeNull();
   });
 
@@ -187,9 +187,34 @@ describe("cargoPathProblem", () => {
     expect(await cargoPathProblem(repo, "")).toMatch(/outside the repo/);
   });
 
+  // The gate fails closed: Cargo reads each manifest with its own parser and
+  // expands member patterns over the file system, following links, so a
+  // manifest the gate cannot read whole, a pattern, or a walk past its limit
+  // withholds the project.
+  //  14. A path dependency, member or workspace root names a folder with no
+  //      readable Cargo.toml, and the gate passes it unread.
+  //  15. A member manifest does not parse as TOML and is passed unread.
+  //  16. A member pattern (`crates/*`) is expanded by the gate differently
+  //      from Cargo, which follows a link to a folder outside.
+  //  17. A workspace with more manifests than the gate walks is passed.
+  it("withholds a project when a manifest it names is missing, does not parse, is a pattern, or the walk is too long (14-17)", async () => {
+    const missing = plant({ "Cargo.toml": `${pkg("app")}\n[dependencies]\nlib = { path = "crates/lib" }\n` });
+    mkdirSync(join(missing.repo, "crates/lib"), { recursive: true });
+    expect(await cargoPathProblem(missing.repo, "")).toMatch(/crates\/lib\/Cargo\.toml/);
+    const broken = plant({ "Cargo.toml": '[workspace]\nmembers = ["crates/a"]\n', "crates/a/Cargo.toml": '[package]\nname = "a"\nname = "b"\n' });
+    expect(await cargoPathProblem(broken.repo, "")).toMatch(/crates\/a\/Cargo\.toml/);
+    const pattern = plant({ "Cargo.toml": '[workspace]\nmembers = ["crates/*"]\n', "crates/a/Cargo.toml": pkg("a") });
+    symlinkSync(outside, join(pattern.repo, "crates", "evil"));
+    expect(await cargoPathProblem(pattern.repo, "")).toMatch(/pattern/);
+    const members = Array.from({ length: 1001 }, (_, k) => `c${k}`);
+    const files: Record<string, string> = { "Cargo.toml": `[workspace]\nmembers = ${JSON.stringify(members)}\n` };
+    for (const m of members) files[`${m}/Cargo.toml`] = pkg(m);
+    expect(await cargoPathProblem(plant(files).repo, "")).toMatch(/more Cargo manifests/);
+  });
+
   it("accepts a workspace whose members, path dependencies and patches stay inside (13)", async () => {
     const { repo } = plant({
-      "Cargo.toml": `[workspace]\nmembers = ["crates/*"]\n\n[workspace.dependencies]\nshared = { path = "crates/shared" }\n\n[patch.crates-io]\nserde = { path = "vendor/serde" }\n`,
+      "Cargo.toml": `[workspace]\nmembers = ["crates/app", "crates/local", "crates/shared"]\n\n[workspace.dependencies]\nshared = { path = "crates/shared" }\n\n[patch.crates-io]\nserde = { path = "vendor/serde" }\n`,
       "crates/app/Cargo.toml": `${pkg("app")}\n[dependencies]\nshared = { workspace = true }\nlocal = { path = "../local" }\n`,
       "crates/app/src/main.rs": "fn main() {}\n",
       "crates/local/Cargo.toml": pkg("local"),
