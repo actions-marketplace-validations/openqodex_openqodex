@@ -1,0 +1,44 @@
+{
+  "resources": [
+    {
+      "filename": "k8s/broken.yaml",
+      "kind": "",
+      "name": "",
+      "version": "",
+      "status": "statusError",
+      "msg": "error unmarshalling resource: error converting YAML to JSON: yaml: line 7: did not find expected '-' indicator"
+    },
+    {
+      "filename": "k8s/app.yaml",
+      "kind": "Service",
+      "name": "api",
+      "version": "v1",
+      "status": "statusInvalid",
+      "msg": "problem validating schema. Check JSON formatting: jsonschema validation failed with 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/8df8a883b68a24a104b4a9e43c1288090ae60b3b/v1.37.1-standalone-strict/service-v1.json#' - at '/spec/ports/0': additional properties 'protocl' not allowed",
+      "validationErrors": [
+        {
+          "path": "/spec/ports/0",
+          "msg": "additional properties 'protocl' not allowed"
+        }
+      ]
+    },
+    {
+      "filename": "k8s/app.yaml",
+      "kind": "Deployment",
+      "name": "api",
+      "version": "apps/v1",
+      "status": "statusInvalid",
+      "msg": "problem validating schema. Check JSON formatting: jsonschema validation failed with 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/8df8a883b68a24a104b4a9e43c1288090ae60b3b/v1.37.1-standalone-strict/deployment-apps-v1.json#' - at '/metadata/labels/app.kubernetes.io~1version': got number, want null or string - at '/spec': validation failed   - at '/spec/replicas': got string, want null or integer   - at '/spec/template/spec': validation failed     - at '/spec/template/spec/containers/0/ports/0/containerPort': got string, want integer     - at '/spec/template/spec': additional properties 'imagePullPolicy' not allowed",
+      "validationErrors": [
+        {
+          "path": "/metadata/labels/app.kubernetes.io/version",
+          "msg": "got number, want null or string"
+        },
+        {
+          "path": "/spec",
+          "msg": "validation failed"
+        }
+      ]
+    }
+  ]
+}

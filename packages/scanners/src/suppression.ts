@@ -6,9 +6,10 @@
 // pinned version, and was run through the scanner itself for all but rubocop
 // and golangci-lint, which need Ruby and Go. Where the two disagree, the
 // entry follows what the scanner does. docs/scanners.md lists the sources.
-// actionlint, brakeman, osv-scanner and sqllint have no inline marker:
-// actionlint and brakeman read only their settings or ignore files, osv-scanner
-// its osv-scanner.toml, and sqllint has none.
+// actionlint, brakeman, osv-scanner, sqllint, kubeconform and cargo-deny
+// have no inline marker: actionlint and brakeman read only their settings or
+// ignore files, osv-scanner its osv-scanner.toml, cargo-deny only the config
+// OpenQodex writes for it, and sqllint and kubeconform have none.
 
 import type { BuiltinScanner } from "@openqodex/core";
 import { comments } from "./comments.js";
@@ -193,6 +194,18 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
     markers: [
       { name: "tflint-ignore{kw}:", pattern: /(?<at>tflint-ignore(?<kw>-file)?: )[^\n*/#]/dg },
       { name: 'tflint-ignore-file: in a JSON "//" value', pattern: /"(?<at>tflint-ignore-file: )[^\n*/#"]/dg, family: "line" },
+    ],
+  },
+  // An object annotation whose key is ignore-check.kube-linter.io/<check> or
+  // kube-linter.io/ignore-all (pkg/ignore/ignore.go, read from the object's
+  // metadata.annotations as the Kubernetes YAML decoder gives them, aliases
+  // and merge keys resolved). Any key holding the text counts, at any depth:
+  // wider than kube-linter, never narrower.
+  "kube-linter": {
+    family: "yaml-keys",
+    markers: [
+      { name: "ignore-check.kube-linter.io annotation", pattern: /(?<at>ignore-check\.kube-linter\.io\/)/dg },
+      { name: "kube-linter.io/ignore-all annotation", pattern: /(?<at>kube-linter\.io\/ignore-all)/dg },
     ],
   },
 };

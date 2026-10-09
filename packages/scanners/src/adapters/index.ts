@@ -10,9 +10,12 @@ import { actionlint } from "./actionlint.js";
 import { bandit } from "./bandit.js";
 import { brakeman } from "./brakeman.js";
 import { checkov } from "./checkov.js";
+import { cargoDeny } from "./cargo-deny.js";
 import { gitleaks } from "./gitleaks.js";
 import { golangci } from "./golangci.js";
 import { hadolint } from "./hadolint.js";
+import { kubeLinter } from "./kube-linter.js";
+import { kubeconform } from "./kubeconform.js";
 import { osvScanner } from "./osv-scanner.js";
 import { oxlint } from "./oxlint.js";
 import { rubocop } from "./rubocop.js";
@@ -71,6 +74,9 @@ export const ADAPTERS: readonly Adapter[] = [
   sqlfluff,
   // Dependency vulnerabilities. No-op unless a lockfile changed.
   osvScanner,
+  // Rust dependency policy: RustSec advisories and crate sources. No-op
+  // unless a Cargo.lock changed.
+  cargoDeny,
   // GitHub Actions workflows under .github/workflows/.
   actionlint,
   // GitHub workflow, action and Dependabot security.
@@ -83,6 +89,9 @@ export const ADAPTERS: readonly Adapter[] = [
   checkov,
   // Terraform language mistakes.
   tflint,
+  // Kubernetes objects: workload and RBAC checks, then schema validity.
+  kubeLinter,
+  kubeconform,
   // .sh / .bash scripts.
   shellcheck,
   // Python lint.
@@ -108,9 +117,10 @@ export const ADAPTERS: readonly Adapter[] = [
 // scanner shares with other tools (pyproject.toml, setup.cfg), which counts
 // only when what the scanner reads from it differs between the base and the
 // head, as shared-settings.ts reads it.
-// Not listed: oxlint, rubocop, brakeman, golangci, checkov and tflint run on
-// settings of their own; bandit reads `.bandit` only with -r, which the
-// adapter never passes (it names the files).
+// Not listed: oxlint, rubocop, brakeman, golangci, checkov, tflint and
+// kube-linter run on settings of their own; kubeconform reads no settings
+// file; bandit reads `.bandit` only with -r, which the adapter never passes
+// (it names the files).
 export type SettingsFile = { path: string; anyFolder?: true; reader?: SettingsReader };
 
 export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFile[]>> = {
@@ -128,6 +138,9 @@ export const SETTINGS_FILES: Partial<Record<BuiltinScanner, readonly SettingsFil
   "osv-scanner": [{ path: "osv-scanner.toml", anyFolder: true }],
   // actionlint finds .github from the repository root.
   actionlint: [{ path: ".github/actionlint.yaml" }, { path: ".github/actionlint.yml" }],
+  // cargo-deny looks from the project's folder upwards for its licence
+  // exceptions; OpenQodex runs no licence check, but a broken file stops it.
+  "cargo-deny": [{ path: "deny.exceptions.toml", anyFolder: true }, { path: ".deny.exceptions.toml", anyFolder: true }],
   // zizmor.ts: the first of these at the repository root, passed by path.
   zizmor: ZIZMOR_CONFIGS.map((path) => ({ path })),
   // squawk.ts: the root .squawk.toml, passed by path.

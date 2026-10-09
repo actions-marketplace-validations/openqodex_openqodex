@@ -576,6 +576,8 @@ describe("linear time on 1 MB of generated input, per reader family (16)", () =>
     ["shellcheck", "deep nesting", `x="${fill("$(\"")}"\n`],
     ["shellcheck", "a $( ) left open in every heredoc body (18)", fill("cat <<E\n$(echo\nE\n")],
     ["shellcheck", "backticks left open in every heredoc body (18)", fill("cat <<E\n`echo\nE\n")],
+    ["kube-linter", "one very long flow map of near-miss keys", `a: {${fill(", ignore-check.kube-linter.io/x y")}}\n`],
+    ["kube-linter", "many lines of dashes before a near-miss key", fill("- - - - kube-linter.io/ignore-all x\n")],
     ["hadolint", "many distinct heredoc words", `FROM a\n${fill((k) => `RUN <<E${k}\n`)}`],
     ["hadolint", "one very long line", `FROM a\nRUN ${fill("<<a ")}\n`],
     ["hadolint", "deep nesting", `FROM a\n${fill("RUN a \\\n")}`],
@@ -769,6 +771,42 @@ describe("trivy's marker in each file form it reads (22)", () => {
   });
 });
 
+// kube-linter 0.8.3 skips an object whose metadata.annotations hold the key
+// ignore-check.kube-linter.io/<check> or kube-linter.io/ignore-all
+// (pkg/ignore/ignore.go); checked with the binary: the annotation silences
+// privileged-container, the same text in a YAML comment does not.
+describe("kube-linter, its ignore annotations as YAML keys", () => {
+  it("finds the annotation keys at a key position, quoted or in a flow map, never in a comment, a quoted value, a plain value or a block scalar (1, 2, 5)", () => {
+    const text = src(
+      "apiVersion: apps/v1",
+      "kind: Deployment",
+      "metadata:",
+      "  name: web",
+      "  annotations:",
+      '    ignore-check.kube-linter.io/privileged-container: "needs the host"',
+      '    kube-linter.io/ignore-all: "true"',
+      '    "ignore-check.kube-linter.io/run-as-non-root": x',
+      '    note: "ignore-check.kube-linter.io/latest-tag: x"',
+      "    # ignore-check.kube-linter.io/latest-tag: x",
+      "    other: ignore-check.kube-linter.io/latest-tag",
+      '  labels: {app: web, kube-linter.io/ignore-all: "true"}',
+      "data:",
+      "  script: |",
+      "    ignore-check.kube-linter.io/host-network: x",
+      "list:",
+      "  - kube-linter.io/ignore-all",
+      "  - ignore-check.kube-linter.io/host-pid: x",
+    );
+    expect(findMarkers(text, ["kube-linter"]).map((m) => [m.line, m.name])).toEqual([
+      [6, "ignore-check.kube-linter.io annotation"],
+      [7, "kube-linter.io/ignore-all annotation"],
+      [8, "ignore-check.kube-linter.io annotation"],
+      [12, "kube-linter.io/ignore-all annotation"],
+      [18, "ignore-check.kube-linter.io annotation"],
+    ]);
+  });
+});
+
 describe("lines and names", () => {
   it("counts lines in a file with CRLF line ends (6)", () => {
     const text = "import os\r\nx = 1  # noqa\r\ny = 2 # nosec\r\n";
@@ -780,7 +818,7 @@ describe("lines and names", () => {
 
   it("a scanner with no inline marker reports none (7)", () => {
     const text = src("# nosec # noqa nosemgrep gitleaks:allow", "-- nosemgrep");
-    for (const scanner of ["actionlint", "brakeman", "osv-scanner", "sqllint"] as const) {
+    for (const scanner of ["actionlint", "brakeman", "osv-scanner", "sqllint", "kubeconform", "cargo-deny"] as const) {
       expect(findMarkers(text, [scanner]), scanner).toEqual([]);
     }
   });

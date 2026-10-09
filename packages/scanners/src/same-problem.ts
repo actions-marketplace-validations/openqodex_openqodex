@@ -41,15 +41,23 @@ export const SAME_PROBLEM: readonly Group[] = [
   },
 ];
 
+// A RustSec advisory id. osv-scanner (through osv.dev) and cargo-deny
+// (through the RustSec database) both report a Rust advisory under it, on the
+// crate's Cargo.lock entry: one problem, so the two merge on the same lines.
+export const RUSTSEC_ID = /^RUSTSEC-\d{4}-\d{4,}$/;
+const ADVISORY_SCANNERS: ReadonlySet<string> = new Set<BuiltinScanner>(["osv-scanner", "cargo-deny"]);
+
 const matches = (m: Member, f: StaticFinding): boolean =>
   m.source === f.source &&
   (typeof m.rule === "string" ? m.rule === f.ruleId : m.rule.test(f.ruleId)) &&
   (m.message === undefined || m.message.test(f.message));
 
-// "same:<group>" for a finding a group names, or null.
+// "same:<group>" for a finding a group names, "same:advisory:<id>" for a
+// RustSec advisory, or null.
 export function sameProblemClass(f: StaticFinding): string | null {
   for (const group of SAME_PROBLEM) {
     if (group.members.some((m) => matches(m, f))) return `same:${group.name}`;
   }
+  if (ADVISORY_SCANNERS.has(f.source) && RUSTSEC_ID.test(f.ruleId)) return `same:advisory:${f.ruleId}`;
   return null;
 }
