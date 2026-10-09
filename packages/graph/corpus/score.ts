@@ -416,8 +416,13 @@ export function totalsOf(cases: CaseScore[]): CorpusTotals {
 }
 
 export async function scoreCorpus(root: string): Promise<CorpusScore> {
+  return scoreCases(root, findCases(root));
+}
+
+// The cases in `dirs`, named relative to `root`.
+export async function scoreCases(root: string, dirs: readonly string[]): Promise<CorpusScore> {
   const cases: CaseScore[] = [];
-  for (const dir of findCases(root)) cases.push(await scoreCase(dir, relative(root, dir)));
+  for (const dir of dirs) cases.push(await scoreCase(dir, relative(root, dir)));
   const failing = cases.filter((c) => !c.pass).map((c) => c.case);
   return { cases, totals: totalsOf(cases), gate: { pass: failing.length === 0, failing } };
 }
