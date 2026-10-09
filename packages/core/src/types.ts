@@ -553,6 +553,16 @@ export type Report = {
   reviewed_by?: string;
 };
 
+// A piece of context a host gives a review with the change (reviewChange):
+// a lesson from earlier reviews, a comment on the change, a summary, a note,
+// or a finding from an earlier review. The brief quotes it as data, under one
+// heading per kind, framed as the owners' instructions are: it never grants a
+// tool and never changes a rule. `source`: where it came from, as the host
+// names it. `scopes`: the folders it is about; an item whose folders hold no
+// file of the change is left out of the brief, and the result says so.
+export type ContextKind = "lesson" | "comment" | "summary" | "note" | "prior_finding";
+export type ContextItem = { kind: ContextKind; text: string; source: string; scopes?: string[] };
+
 // manifest.json in the report folder, written by `review --agent`, read by
 // `review --finalize` so a review is bound to the change, the config and the
 // scan it was briefed on.
@@ -573,6 +583,10 @@ export type RunManifest = {
   target?: RunTarget;
   // The run folder's name, which `review --finalize --run` takes.
   run_id?: string;
+  // The context items a host gave the review, in the order given: each one's
+  // kind, source and the sha256 of the item, and `omitted`, why the brief
+  // left it out (null when the brief carries it). Absent when none was given.
+  context?: { kind: ContextKind; source: string; sha256: string; omitted: string | null }[];
 };
 
 // Where the base of a target review came from, in the order they are tried.
