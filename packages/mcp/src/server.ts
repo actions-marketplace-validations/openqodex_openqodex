@@ -13,14 +13,16 @@
 // Every later question is answered from that held build, and says when
 // files changed since (`laterEditsKnown`); `graph_refresh` moves to a new
 // build. The lease goes when the agent disconnects, and a crash leaves one
-// the collector drops by its process check.
+// the collector drops by its process check. A question's walk runs in
+// slices with a turn of the event loop between them, so its cancellation
+// stops it.
 //
 // The SDK is pinned to one version in package.json and driven by its own
 // client in the tests.
 import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { findRepoRoot, loadConfig } from "@openqodex/core";
-import { BUILD_ID_PATTERN, laterEdits, openStore, pinWorkTree, query } from "@openqodex/graph";
+import { BUILD_ID_PATTERN, laterEdits, openStore, pinWorkTree, querySliced } from "@openqodex/graph";
 import type { Answer, GraphStore, Pinned } from "@openqodex/graph";
 import { openqodexHome } from "@openqodex/scanners";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -171,7 +173,7 @@ export class GraphServer {
     if (compares) {
       const cmp = await pinWorkTree({ repoRoot: ready.root, store: ready.store, storeRefused: ready.storeRefused, settings: ready.settings, purpose: "mcp", compare: { base: typeof args.base === "string" ? args.base : undefined, exclude: ready.exclude, defaultBase: ready.defaultBase }, onProgress: progress });
       try {
-        const a = query(cmp.session, requestOf(tool, args), { changes: cmp.changes, change: cmp.change, signal });
+        const a = await querySliced(cmp.session, requestOf(tool, args), { changes: cmp.changes, change: cmp.change, signal });
         return text(a, isError(a));
       } finally {
         cmp.release();
@@ -185,7 +187,7 @@ export class GraphServer {
       s.laterEditsKnown = await laterEdits(ready.root, pinned.reference, ready.settings.maxFileBytes);
     }
     const req = tool.op === "refresh" ? { apiVersion: 1, kind: "status" as const } : requestOf(tool, args);
-    const a = query(s, req, { signal });
+    const a = await querySliced(s, req, { signal });
     return text(tool.op === "refresh" ? { ...a, kind: "refresh" } : a, isError(a));
   }
 

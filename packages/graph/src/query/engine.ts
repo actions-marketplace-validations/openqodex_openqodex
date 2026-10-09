@@ -13,7 +13,9 @@
 // anything else and checked at every element its work touches, the name
 // lookup and the sort included; the caller's cancellation stops it the same
 // way. Work the budget stopped is a floor that names where it stopped, and
-// its cursor goes on from there (page.ts).
+// its cursor goes on from there (page.ts). `querySliced` gives the same
+// answer in slices with a turn of the event loop between them, so a
+// cancellation that arrives while the work runs is seen (the MCP server).
 import { floorReasons, toImpactUnknown } from "../impact.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION } from "../model/records.js";
 import type { Tier } from "../model/records.js";
@@ -349,4 +351,24 @@ export function query(s: Session, req: Request, extra: Extra = {}): Answer {
   const st = start(s, req, extra);
   if (isAnswer(st)) return st;
   return settle(s, req, st.job, st.job(st.budget), st.offset);
+}
+
+// Budget checks in one slice of a question's work.
+export const SLICE_CHECKS = 2048;
+
+// The answer `query` gives, worked in slices of `slice` budget checks with
+// a turn of the event loop between them, so a cancellation that arrives
+// while the work runs is seen and stops it (the MCP server). The question's
+// own budget is its time and its cancellation; a budget counted in checks
+// is for `query`.
+export async function querySliced(s: Session, req: Request, extra: Omit<Extra, "budget"> = {}, slice = SLICE_CHECKS): Promise<Answer> {
+  const st = start(s, req, extra);
+  if (isAnswer(st)) return st;
+  const { job, budget, offset } = st;
+  for (;;) {
+    const part: Budget = { deadline: budget.deadline, signal: budget.signal, stopped: false, checks: 0, limit: slice };
+    const out = job(part);
+    if (isAnswer(out) || !out.stopped || spent(budget)) return settle(s, req, job, out, offset);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }

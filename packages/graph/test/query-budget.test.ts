@@ -14,11 +14,13 @@
 //  6. The work tree changed in a file the graph reads besides source (a
 //     package.json exports map, a tsconfig paths alias), and the answer
 //     says no edit is known.
+//  7. A cancellation that arrives while the work runs is not seen until
+//     the work ends: the whole walk runs in one turn of the event loop.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph, laterEdits, pinWorkTree } from "../src/index.js";
-import { query } from "../src/query/engine.js";
+import { query, querySliced } from "../src/query/engine.js";
 import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { checksBudget } from "../src/query/traverse.js";
 import { commitAll, makeRepo } from "./helpers.js";
@@ -128,6 +130,25 @@ describe("the budget of a question", () => {
     expect(p2.truncated.by).toBe("limit");
     expect(p2.items).toHaveLength(100);
     expect(p2.items.map((i) => where(i as Item))).not.toEqual(p1.items.map((i) => where(i as Item)));
+  });
+});
+
+describe("a question worked in slices", () => {
+  it("sees a cancellation that arrives while the walk runs, and stops there (7)", async () => {
+    const req: Request = { apiVersion: 1, kind: "callers", target: { name: "hub" }, depth: 2, limit: 500 };
+    const abort = new AbortController();
+    // Queued before the question: it runs at the first turn the work gives back.
+    setImmediate(() => abort.abort());
+    const cancelled = await querySliced(s, req, { signal: abort.signal }, 100);
+    expect(cancelled.truncated.by).toBe("budget");
+    expect(cancelled.unknown.floor).toBe(true);
+    expect(cancelled.counts).toEqual({ certain: null, likely: null, possible: null });
+    // Not cancelled, the slices give the answer one run gives.
+    const sliced = await querySliced(s, req, {}, 100);
+    const whole = ask(req);
+    expect(sliced.truncated.by).toBe("limit");
+    expect(sliced.items.map((i) => where(i as Item))).toEqual(whole.items.map((i) => where(i as Item)));
+    expect(sliced.counts).toEqual(whole.counts);
   });
 });
 
