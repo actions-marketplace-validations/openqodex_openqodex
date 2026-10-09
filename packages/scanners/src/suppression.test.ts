@@ -1004,32 +1004,64 @@ describe("SQLFluff, noqa anywhere on the line", () => {
     expect(at(src("SELECT 1; -- this noqa", "SELECT 1; -- NOQA", "SELECT 1; -- no qa"))).toEqual([]);
   });
 
-  // F3. An inline setting is missed. A line that starts with `-- sqlfluff`
-  // or `--sqlfluff` (core/config/fluffconfig.py, process_raw_file_for_config)
-  // sets SQLFluff's settings for the file: `ignore:linting`, `exclude_rules`,
-  // `rules`, `warnings` or the dialect hide or downgrade what it reports.
-  // Lines are split as Python's splitlines splits them, so a carriage
-  // return, a form feed and the Unicode line separators start one too.
-  it("finds an inline setting at the start of a line, as SQLFluff reads it (F3)", () => {
-    const text = src(
+  // F3. An inline setting is missed, or one SQLFluff ignores is raised. A
+  // line that starts with `-- sqlfluff:` or `--sqlfluff:`, then a key and a
+  // value parted by a colon, sets SQLFluff's settings for the file
+  // (core/config/fluffconfig.py, process_raw_file_for_config and
+  // process_inline_config). Lines are split as Python's splitlines splits
+  // them. Each form below was run through SQLFluff 4.3.0 on a `= NULL`
+  // comparison: the first group hid or downgraded CV05, the second did not.
+  it("finds an inline setting exactly where SQLFluff obeys one (F3)", () => {
+    const obeyed = [
       "-- sqlfluff:ignore:linting",
       "--sqlfluff:exclude_rules:CV05",
-      "-- sqlfluff:rules:AL04",
+      "-- sqlfluff: exclude_rules : CV05",
       "-- sqlfluff:warnings:CV05",
-      "SELECT 1; -- sqlfluff:rules:AL04",
-      "  -- sqlfluff:rules:AL04",
-      "SELECT 1;\r-- sqlfluff:dialect:mysql",
-      "SELECT 1;\u2028--sqlfluff:rules:AL04",
-    );
-    expect(findMarkers(text, ["sqlfluff"]).map((m) => [m.line, m.name])).toEqual([
-      [1, "-- sqlfluff:"],
-      [2, "-- sqlfluff:"],
-      [3, "-- sqlfluff:"],
-      [4, "-- sqlfluff:"],
-      [7, "-- sqlfluff:"],
-      [8, "-- sqlfluff:"],
-    ]);
+      "SELECT 1;\r-- sqlfluff:exclude_rules:CV05",
+      "SELECT 1; -- sqlfluff:exclude_rules:CV05",
+      "SELECT 1;\v-- sqlfluff:exclude_rules:CV05",
+    ];
+    const ignored = [
+      "-- SQLFLUFF:exclude_rules:CV05",
+      "-- sqlfluff :exclude_rules:CV05",
+      "--  sqlfluff:exclude_rules:CV05",
+      "--\tsqlfluff:exclude_rules:CV05",
+      "SELECT 1; -- sqlfluff:exclude_rules:CV05",
+      "/* sqlfluff:exclude_rules:CV05 */",
+      "  -- sqlfluff:exclude_rules:CV05",
+      "-- sqlfluff:ignore",
+    ];
+    for (const line of obeyed) expect(findMarkers(src(line), ["sqlfluff"]).map((m) => m.name), line).toEqual(["-- sqlfluff:"]);
+    for (const line of ignored) expect(findMarkers(src(line), ["sqlfluff"]), line).toEqual([]);
   });
+});
+
+// A UTF-8 byte order mark at the start of a file is read by the scanners as
+// no text at all (SQLFluff, Python's tools, the YAML and HCL parsers), so a
+// marker on the first line counts as if it were not there. One marker per
+// reader family, on the first line after a mark.
+describe("a byte order mark hides no marker on the first line", () => {
+  const BOM = "﻿";
+  const cases: [BuiltinScanner, string][] = [
+    ["sqlfluff", "-- sqlfluff:ignore:linting\nSELECT 1;\n"],
+    ["semgrep", "x = 1  # nosemgrep\n"],
+    ["ruff", "# ruff: noqa\nimport os\n"],
+    ["shellcheck", "# shellcheck disable=SC2086\necho $1\n"],
+    ["hadolint", "# hadolint ignore=DL3007\nFROM python:latest\n"],
+    ["golangci", "//nolint:all\npackage main\n"],
+    ["rubocop", "# rubocop:disable all\nx = 1\n"],
+    ["oxlint", "// oxlint-disable\nvar x = 1;\n"],
+    ["squawk", "-- squawk-ignore-file\nCREATE INDEX i ON t (c);\n"],
+    ["tflint", "# tflint-ignore: terraform_unused_declarations\nvariable \"x\" {}\n"],
+    ["kube-linter", "metadata:\n  annotations:\n    kube-linter.io/ignore-all: \"x\"\n"],
+  ];
+  for (const [scanner, text] of cases) {
+    it(`${scanner} on a file that starts with a byte order mark`, () => {
+      const plain = findMarkers(text, [scanner]).map((m) => [m.line, m.name]);
+      expect(plain.length, "the marker is found without the mark").toBeGreaterThan(0);
+      expect(findMarkers(`${BOM}${text}`, [scanner]).map((m) => [m.line, m.name])).toEqual(plain);
+    });
+  }
 });
 
 describe("linear time on hostile SQL (S7)", () => {

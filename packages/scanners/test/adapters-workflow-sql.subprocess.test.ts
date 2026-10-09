@@ -275,6 +275,8 @@ describe("workflow and SQL scanner subprocesses", () => {
       "b.sql": `--sqlfluff:exclude_rules:CV05\n${NULL_COMPARISON}`,
       "c.sql": `-- sqlfluff:rules:AL04\n${NULL_COMPARISON}`,
       "d.sql": `-- sqlfluff:warnings:CV05\n${NULL_COMPARISON}`,
+      // A byte order mark first: SQLFluff reads past it.
+      "e.sql": `\uFEFF-- sqlfluff:ignore:linting\n${NULL_COMPARISON}`,
     };
     const result = await scanAt(repo, "sqlfluff", files, Object.keys(files));
     expect(result.scan.scanners[0]).toMatchObject({ status: "ran", reason: null });
@@ -285,6 +287,7 @@ describe("workflow and SQL scanner subprocesses", () => {
       `c.sql:1:${SUPPRESSION_RULE}:medium`,
       "d.sql:2:CV05:info",
       `d.sql:1:${SUPPRESSION_RULE}:medium`,
+      `e.sql:1:${SUPPRESSION_RULE}:medium`,
     ].sort());
   }, 300_000);
 

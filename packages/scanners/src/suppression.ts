@@ -150,10 +150,14 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
   // starts with `-- sqlfluff` or `--sqlfluff` sets SQLFluff's settings for
   // the file (core/config/fluffconfig.py, process_raw_file_for_config):
   // `ignore:linting`, `exclude_rules`, `rules`, `warnings` or the dialect can
-  // hide or downgrade what it reports, so each one counts. SQLFluff splits
-  // lines as Python's splitlines does: a carriage return, a vertical tab, a
-  // form feed, \x1c to \x1e, \x85 and the Unicode line and paragraph
-  // separators start a line too.
+  // hide or downgrade what it reports, so each one counts. Exactly as
+  // SQLFluff reads one: `--` and at most one space at the very start of the
+  // line, then `sqlfluff:`, then a key and a value parted by a colon
+  // (process_inline_config); any other spacing, case, opener or a key with
+  // no value is ignored, as checked through the 4.3.0 binary. SQLFluff
+  // splits lines as Python's splitlines does: a carriage return, a vertical
+  // tab, a form feed, \x1c to \x1e, \x85 and the Unicode line and
+  // paragraph separators start a line too.
   sqlfluff: {
     family: "line",
     markers: [
@@ -161,7 +165,7 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
       { name: "-- noqa", pattern: /^[ \t]*(?<at>noqa)/dg },
       // The control characters are Python's line breaks, matched on purpose.
       // oxlint-disable-next-line no-control-regex
-      { name: "-- sqlfluff:", pattern: /(?:^|[\r\v\f\x1c-\x1e\x85\u2028\u2029])(?<at>--[ \t]*sqlfluff)/dg },
+      { name: "-- sqlfluff:", pattern: /(?:^|[\r\v\f\x1c-\x1e\x85\u2028\u2029])(?<at>-- ?sqlfluff:)(?=[^\n\r\v\f\x1c-\x1e\x85\u2028\u2029]*:)/dg },
     ],
   },
   // trivy reads every line of a Terraform file (.tf and .tf.json) and of a
@@ -224,7 +228,12 @@ export type MarkerHit = { scanner: BuiltinScanner; line: number; name: string };
 
 // Every suppression marker in `text` that one of `scanners` obeys, with its
 // 1-based line, in line order. Each family's comments are found once.
-export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): MarkerHit[] {
+export function findMarkers(file: string, scanners: readonly BuiltinScanner[]): MarkerHit[] {
+  // A UTF-8 byte order mark first is no text to the scanners (SQLFluff,
+  // Python's tools, the YAML and HCL parsers read past it), so it is no text
+  // here either: a marker at the start of the first line still counts. It
+  // holds no line end, so every line keeps its number.
+  const text = file.charCodeAt(0) === 0xfeff ? file.slice(1) : file;
   const starts = [0];
   for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
   const lineOf = (offset: number): number => {
