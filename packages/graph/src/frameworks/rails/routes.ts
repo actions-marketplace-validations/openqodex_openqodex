@@ -96,6 +96,9 @@ type Scope = {
   level: Level;
   res: Res | null;
   dynamic: string | null; // why the composed prefix is computed
+  // Why the controller of the routes inside is not known: a computed
+  // module, controller or action. A route there gets no handler by guess.
+  handlerUnknown: string | null;
 };
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "match", "root"]);
@@ -290,7 +293,8 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               shallowPrefix: joinName(S.shallowPrefix, text(o.shallow_prefix) ?? nsAs),
               level: "default",
               res: null,
-              dynamic: S.dynamic ?? dyn ?? (isDyn(o.path) || isDyn(o.module) ? "a namespace option is computed" : null),
+              dynamic: S.dynamic ?? dyn ?? (isDyn(o.path) ? "a namespace option is computed" : null),
+              handlerUnknown: S.handlerUnknown ?? (name === null || isDyn(o.module) ? "the namespace's module is computed, so the controllers of its routes are not known" : null),
             });
             return;
           }
@@ -304,8 +308,9 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               path = t === null ? path : `${path}/${t}`;
               shown = `${shown}/${t ?? COMPUTED}`;
             }
-            if (isDyn(o.module) || isDyn(o.as) || isDyn(o.controller) || isDyn(o.action)) dyn = dyn ?? "a scope option is computed";
+            const hidden = isDyn(o.module) || isDyn(o.controller) || isDyn(o.action) ? "a scope's module, controller or action is computed, so the controllers of its routes are not known" : null;
             if (dyn) gap(f, "dynamic", `a computed scope: ${dyn}`);
+            if (hidden) gap(f, "dynamic", hidden);
             const mod = text(o.module);
             walk(kids, {
               ...S,
@@ -319,13 +324,14 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
               shallowPrefix: joinName(S.shallowPrefix, text(o.shallow_prefix)),
               shallow: o.shallow?.t === "bool" ? o.shallow.v : S.shallow,
               dynamic: S.dynamic ?? dyn,
+              handlerUnknown: S.handlerUnknown ?? hidden,
             });
             return;
           }
           case "controller": {
             const c = text(f.args[0]);
             if (c === null) gap(f, "dynamic", "a computed controller name: the routes in it have no known handler");
-            walk(kids, { ...S, controller: c ?? S.controller, dynamic: S.dynamic ?? (c === null ? "the controller name is computed" : null) });
+            walk(kids, { ...S, controller: c ?? S.controller, handlerUnknown: S.handlerUnknown ?? (c === null ? "the controller name is computed" : null) });
             return;
           }
           case "shallow":
@@ -444,7 +450,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
             methods = via === null || via.includes("all") ? ["*"] : via.map((v) => v.toUpperCase());
             if (isDyn(o.via)) gap(f, "dynamic", "computed route methods: the registration takes any method here", null, ["tests"]);
           }
-          const handler = handlerOf(p.to, o, S, res, level, defaultAction, p.lit);
+          const handler = guarded(handlerOf(p.to, o, S, res, level, defaultAction, p.lit), S);
           emit(f, {
             methods,
             pattern: dyn !== null || local === null ? null : root ? normalizePath(S.path) : joinPath(base, local),
@@ -502,8 +508,13 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
         const except = listOf(o.except);
         const filterDyn = isDyn(o.only) || isDyn(o.except);
         if (filterDyn) gap(f, "dynamic", `computed only: or except: options: the ${f.call} routes are not listed`);
-        const dyn = S.dynamic ?? (isDyn(o.path) || isDyn(o.as) || isDyn(o.controller) || isDyn(o.module) ? `a computed ${f.call} option` : null);
+        // Only the path option makes the pattern computed; a computed
+        // controller or module hides the handler, a computed `as` the names.
+        const dyn = S.dynamic ?? (isDyn(o.path) ? `a computed ${f.call} path` : null);
         if (dyn && dyn !== S.dynamic) gap(f, "dynamic", `${dyn}: the routes have no known pattern`, null, ["tests"]);
+        const hidden = isDyn(o.controller) || isDyn(o.module) ? `the ${f.call} controller is computed, so its routes' handlers are not known` : null;
+        if (hidden) gap(f, "dynamic", hidden);
+        const unnamed = isDyn(o.as);
         const shallow = S.shallow || (o.shallow?.t === "bool" && o.shallow.v);
         // Every name of the call; the block nests under the last one.
         names.forEach((name, i) => {
@@ -535,9 +546,9 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
           const local = (full: string) => (full.startsWith(S.path) && S.path !== "/" ? full.slice(S.path.length) || "/" : full);
           for (const action of actions) {
             const r = routes[action] as { methods: string[]; path: string; name: string | null };
-            const handler: HandlerSpec = dyn !== null && (isDyn(o.controller) || isDyn(o.module)) ? { kind: "dynamic", note: "the resource's controller is computed" } : { kind: "action", controller, action };
-            if (r.name !== null) taken.add(r.name);
-            emit(f, { methods: r.methods, pattern: dyn === null ? r.path : null, written: dyn === null ? local(r.path) : null, name: r.name, handler, handlerWritten: written(handler), action, partial: dyn === null || isDyn(o.path) ? null : partialOf(shownOf(r.path)) });
+            const handler: HandlerSpec = guarded(hidden !== null ? { kind: "dynamic", note: hidden } : { kind: "action", controller, action }, S);
+            if (r.name !== null && !unnamed) taken.add(r.name);
+            emit(f, { methods: r.methods, pattern: dyn === null ? r.path : null, written: dyn === null ? local(r.path) : null, name: unnamed ? null : r.name, handler, handlerWritten: written(handler), action, partial: dyn === null || isDyn(o.path) ? null : partialOf(shownOf(r.path)) });
           }
           if (i !== names.length - 1 || !kids) return;
           const res: Res = {
@@ -552,7 +563,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
             memberAs: singular ? S.as : memberBase.as,
           };
           const nestedPath = singular ? collectionPath : joinPath(collectionPath, `:${one}_${param}`);
-          walk(kids, { ...S, path: nestedPath, shown: shownOf(nestedPath), as: joinName(S.as, one), controller: null, level: "nested", res, shallow, dynamic: dyn });
+          walk(kids, { ...S, path: nestedPath, shown: shownOf(nestedPath), as: joinName(S.as, one), controller: null, level: "nested", res, shallow, dynamic: dyn, handlerUnknown: S.handlerUnknown ?? hidden });
         });
       };
 
@@ -629,11 +640,17 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
         level: "default",
         res: null,
         dynamic: null,
+        handlerUnknown: null,
       };
       walk(children.get(-1), rootScope);
     });
   }
   return out;
+}
+
+// A controller action under a scope that hides its controller is computed.
+function guarded(h: HandlerSpec, S: Scope): HandlerSpec {
+  return h.kind === "action" && S.handlerUnknown !== null ? { kind: "dynamic", note: S.handlerUnknown } : h;
 }
 
 // The handler as `rails routes` writes it: "admin/posts#index".
