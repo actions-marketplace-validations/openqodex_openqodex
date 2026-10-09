@@ -12,9 +12,12 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { stableNodePath } from "../src/launcher.js";
 import { BIN, env, sandbox, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;

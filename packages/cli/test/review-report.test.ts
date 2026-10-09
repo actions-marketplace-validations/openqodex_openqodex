@@ -55,11 +55,10 @@
 //     report.json or the receipt without the redaction: a line of a private
 //     key quoted in the summary, a secret in a suggested change, a dropped
 //     reason or a file name, or a secret in the repository's absolute path.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { redactSecrets, renderReceipt } from "@openqodex/core";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
@@ -70,6 +69,9 @@ import { redactStored, reportFolderWriter, reviewOutputs, systemAlias } from "..
 import { readHomeLastReview, readHomeReceipt, readHomeRun } from "../src/receipts.js";
 import { run as findings } from "../src/commands/findings.js";
 import { cli, sandbox } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -83,7 +85,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 function repo(): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "oq-receipt-")));
+  const dir = realpathSync(tempDir("oq-receipt-"));
   git(dir, "init", "-q", "-b", "main");
   writeFileSync(join(dir, "README.md"), "hello\n");
   git(dir, "add", "-A");
@@ -161,7 +163,7 @@ beforeEach(() => {
   out = "";
   err = "";
   htmlAtReceipt = null;
-  home = mkdtempSync(join(tmpdir(), "oq-receipt-home-"));
+  home = tempDir("oq-receipt-home-");
   vi.stubEnv("OPENQODEX_HOME", home);
   vi.stubEnv(DEPTH_ENV, "");
   vi.spyOn(process.stdout, "write").mockImplementation((s) => {
@@ -231,7 +233,7 @@ describe("the receipt", () => {
 
     out = "";
     err = "";
-    const folder = join(mkdtempSync(join(tmpdir(), "oq-receipt-dir-")), "review");
+    const folder = join(tempDir("oq-receipt-dir-"), "review");
     mkdirSync(join(folder, "report.html"), { recursive: true });
     const fresh = repo();
     expect(await review(fresh, fake([three]), [], folder)).toBe(2);
@@ -285,7 +287,7 @@ describe("report.html", () => {
   });
 
   it("6. with no reviewer, the page says the review is unavailable and nothing claims a review", async () => {
-    const folder = join(mkdtempSync(join(tmpdir(), "oq-receipt-dir-")), "review");
+    const folder = join(tempDir("oq-receipt-dir-"), "review");
     expect(await review(repo(), fake([three], false), [], folder)).toBe(2);
     expect(out).toBe("");
     expect(readdirSync(folder).sort()).toEqual(["report.html", "reviewer.json", "unchecked-candidates.json"]);
@@ -411,8 +413,8 @@ describe("13. a report folder reached through a link", () => {
   it("is refused with exit 2 before anything is written, for review and scan, and nothing lands where the link points", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
-    const target = mkdtempSync(join(tmpdir(), "oq-link-target-"));
-    const link = join(mkdtempSync(join(tmpdir(), "oq-link-")), "out");
+    const target = tempDir("oq-link-target-");
+    const link = join(tempDir("oq-link-"), "out");
     symlinkSync(target, link);
     for (const command of [["review", "--report-dir", link], ["scan", "--no-install", "--report-dir", link], ["review", "--report-dir", join(link, "review")]]) {
       const r = cli(s, command);
@@ -425,7 +427,7 @@ describe("13. a report folder reached through a link", () => {
   it("13. a report file in the folder that is a link into the repository is refused with exit 2, and the file it points at is unchanged", () => {
     const s = sandbox({ "README.md": "hello\n", "package.json": "{\"name\":\"mine\"}\n" });
     writeFileSync(join(s.repo, "notes.txt"), "one line\n");
-    const folder = join(mkdtempSync(join(tmpdir(), "oq-out-")), "out");
+    const folder = join(tempDir("oq-out-"), "out");
     mkdirSync(folder);
     symlinkSync(join(s.repo, "package.json"), join(folder, "report.json"));
     for (const command of [["review", "--report-dir", folder], ["scan", "--no-install", "--report-dir", folder]]) {

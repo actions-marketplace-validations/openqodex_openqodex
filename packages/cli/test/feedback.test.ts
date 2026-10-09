@@ -34,11 +34,13 @@
 // 12. --send-last follows a symbolic link, or sends a saved body that was
 //     edited after it was shown, or sends without printing it again.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const cliRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const BIN = join(cliRoot, "dist", "bin.js");
@@ -49,7 +51,7 @@ const HEADLINE = "OpenQodex had a problem. Nothing has been sent.";
 const LATER = "To create the issue, run: openqodex report --send-last\nTo ignore it, do nothing\n";
 
 function temp(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), `oq-feedback-${prefix}-`));
+  return tempDir(`oq-feedback-${prefix}-`);
 }
 
 // A folder for PATH with git and a recorder for the browser openers.

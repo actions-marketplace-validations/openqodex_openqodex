@@ -1,14 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Candidate, Report } from "@openqodex/core";
+import { cacheFolder, tempDir } from "../temp-dirs.mjs";
 
 export const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 export const bin = join(root, "packages/cli/dist/bin.js");
-export const toolsHome = process.env.OPENQODEX_E2E_HOME ?? join(tmpdir(), "openqodex-e2e-home");
+export const toolsHome = process.env.OPENQODEX_E2E_HOME ?? cacheFolder("openqodex-e2e-home");
 const runs = join(root, "tests/e2e/runs");
 mkdirSync(runs, { recursive: true });
 const sessionFile = join(runs, `.session-${process.ppid}`);
@@ -20,7 +20,7 @@ export type Result = { status: number | null; stdout: string; stderr: string; ms
 // Runs the built CLI (or, with shell, one command line through `sh -c`) with a
 // temporary HOME and saves the command, exit code, time and output to the receipt.
 export function run(label: string, cwd: string, args: string[], options: { home?: string; tools?: string; input?: string; timeout?: number; shell?: boolean; env?: NodeJS.ProcessEnv } = {}): Result {
-  const home = options.home ?? mkdtempSync(join(tmpdir(), "oq-e2e-user-"));
+  const home = options.home ?? tempDir("oq-e2e-user-");
   mkdirSync(home, { recursive: true });
   // OPENQODEX_AUTO_UPDATE=0: a command run through the launcher starts no update worker here.
   const base: NodeJS.ProcessEnv = { ...process.env, HOME: home, OPENQODEX_HOME: options.tools ?? toolsHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", OPENQODEX_AUTO_UPDATE: "0" };
@@ -43,19 +43,19 @@ export function run(label: string, cwd: string, args: string[], options: { home?
   return out;
 }
 export function git(cwd: string, ...args: string[]): string {
-  const p = spawnSync("git", ["-c", "user.name=E2E", "-c", "user.email=e2e@openqodex.invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", env: { ...process.env, HOME: mkdtempSync(join(tmpdir(), "oq-git-home-")), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } });
+  const p = spawnSync("git", ["-c", "user.name=E2E", "-c", "user.email=e2e@openqodex.invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", env: { ...process.env, HOME: tempDir("oq-git-home-"), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } });
   if (p.status !== 0) throw new Error(`git ${args.join(" ")}: ${p.stderr}`);
   return p.stdout;
 }
 // The demo repo built by the product: baseline committed, planted change left uncommitted.
 export function demo(label: string): string {
-  const target = join(mkdtempSync(join(tmpdir(), "oq-demo-")), "repo");
+  const target = join(tempDir("oq-demo-"), "repo");
   const p = run(`${label}-create`, root, ["demo", target, "--no-install", "--offline"]);
   if (p.status !== 0) throw new Error(p.stderr);
   return target;
 }
 export function baseline(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-clean-"));
+  const dir = tempDir("oq-clean-");
   cpSync(join(root, "examples/demo-repo/baseline"), dir, { recursive: true });
   git(dir, "init", "-q"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "Baseline");
   return dir;

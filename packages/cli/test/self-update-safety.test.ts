@@ -61,12 +61,14 @@
 //     from removing runtime/.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bundleChildEntry } from "./bundle.js";
 import { AGENT_ENV, BIN, agentFreePath, cli, env, git, sandbox, snapshot, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 const OLDER = "0.98.0";
@@ -215,7 +217,7 @@ describe("4. a worker killed while it holds the boundary", () => {
 describe("5. three processes contending for the boundary", () => {
   it("never has two inside at once, over five rounds", async () => {
     for (let round = 0; round < 5; round++) {
-      const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-boundary-")));
+      const home = realpathSync(tempDir("oq-boundary-"));
       const log = join(home, "log");
       const code = `const { appendFileSync } = await import("node:fs"); await m.withBoundary(process.env.H, { wait: 60000 }, async () => { appendFileSync(process.env.L, "in\\n"); await new Promise((r) => setTimeout(r, 120)); appendFileSync(process.env.L, "out\\n"); });`;
       const kids = Array.from({ length: 3 }, () => exited(nodeChild(code, { H: home, L: log })));
@@ -228,7 +230,7 @@ describe("5. three processes contending for the boundary", () => {
 
 describe("6. the boundary's listener", () => {
   it("does not keep the process alive once the work inside is done", () => {
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-boundary-")));
+    const home = realpathSync(tempDir("oq-boundary-"));
     const started = Date.now();
     const r = spawnSync(process.execPath, ["--input-type=module", "-e", `const m = await import(${JSON.stringify(child)}); await m.withBoundary(process.env.H, { wait: 0 }, () => "done");`], {
       env: { ...process.env, H: home },
@@ -447,7 +449,7 @@ describe("14. Claude Code permission rules", () => {
   // A home whose path needs no shell quoting, so the launcher is written
   // bare and one rule matches it.
   function plain(): { home: string; oqHome: string; repo: string; env: NodeJS.ProcessEnv; run: (args: string[]) => ReturnType<typeof spawnSync> } {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oqperm")));
+    const root = realpathSync(tempDir("oqperm"));
     const home = join(root, "home");
     const repo = join(root, "repo");
     mkdirSync(home);
@@ -612,7 +614,7 @@ describe("18. a queued daily worker", () => {
 describe("19. a hostile release archive", () => {
   const gnu = /GNU/.test(spawnSync("tar", ["--version"], { encoding: "utf8" }).stdout);
   function tarball(build: (dir: string) => string[]): string {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "oq-tar-")));
+    const dir = realpathSync(tempDir("oq-tar-"));
     mkdirSync(join(dir, "package/dist"), { recursive: true });
     writeFileSync(join(dir, "package/dist/bin.js"), "console.log('x')\n");
     const out = join(dir, "x.tgz");
@@ -621,7 +623,7 @@ describe("19. a hostile release archive", () => {
     return out;
   }
   async function unpack(tgz: string): Promise<{ out: string; home: string }> {
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-hostile-")));
+    const home = realpathSync(tempDir("oq-hostile-"));
     const p = nodeChild(`try { await m.unpackRelease(process.env.H, "9.9.9", (await import("node:fs")).readFileSync(process.env.T), ${JSON.stringify(CONTRACT)}); } catch (e) { process.stdout.write(String(e.message)); }`, { H: home, T: tgz });
     return { out: (await exited(p)).out, home };
   }
@@ -738,8 +740,10 @@ describe("20 to 27. the third review", () => {
   });
 
   it("a linked spelling of the home and one with a trailing slash share the lock (failure 26)", () => {
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-spell-")));
-    const link = `${home}-link`;
+    const base = realpathSync(tempDir("oq-spell-"));
+    const home = join(base, "home");
+    const link = join(base, "home-link");
+    mkdirSync(home);
     symlinkSync(home, link);
     const code = `const m = await import(${JSON.stringify(child)}); await m.withBoundary(process.env.A, { wait: 0 }, async () => { try { await m.withBoundary(process.env.B, { wait: 0 }, () => {}); process.stdout.write("both inside"); } catch (e) { process.stdout.write(e.held ? "held" : e.message); } });`;
     for (const other of [link, `${home}/`, `${link}/`]) {
@@ -749,7 +753,7 @@ describe("20 to 27. the third review", () => {
   });
 
   it("a child spawned inside the boundary does not keep the port once the holder exits (failure 27)", () => {
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "oq-inherit-")));
+    const home = realpathSync(tempDir("oq-inherit-"));
     const hold = `const m = await import(${JSON.stringify(child)}); const { spawn } = await import("node:child_process"); await m.withBoundary(process.env.H, { wait: 0 }, () => { spawn(process.execPath, ["-e", "setTimeout(() => {}, 8000)"], { detached: true, stdio: "ignore" }).unref(); });`;
     expect(spawnSync(process.execPath, ["--input-type=module", "-e", hold], { env: { ...process.env, H: home }, encoding: "utf8" }).status).toBe(0);
     const again = `const m = await import(${JSON.stringify(child)}); await m.withBoundary(process.env.H, { wait: 0 }, () => process.stdout.write("taken"));`;

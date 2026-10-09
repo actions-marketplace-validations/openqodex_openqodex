@@ -1,9 +1,11 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { demo, git, run, writeConfig } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // `hook install` and a real `git push` to a local bare remote. The hook looks
 // up the review of what is pushed; it never scans or reviews by itself.
@@ -11,7 +13,7 @@ describe("git pre-push hook", () => {
   let dir: string; let home: string; let remote: string;
   const remoteHead = () => git(remote, "rev-parse", "main").trim();
   beforeAll(() => {
-    dir = demo("git-hook"); home = mkdtempSync(join(tmpdir(), "oq-hook-home-")); remote = join(dir, "../hook-remote.git");
+    dir = demo("git-hook"); home = tempDir("oq-hook-home-"); remote = join(dir, "../hook-remote.git");
     git(dir, "init", "--bare", remote);
     git(dir, "remote", "add", "origin", remote);
     const installed = run("git-hook-install", dir, ["hook", "install"], { home });

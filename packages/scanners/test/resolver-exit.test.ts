@@ -2,16 +2,18 @@
 // process alive for the whole install budget, so every scan takes 45 seconds
 // even when nothing is installed or everything already is.
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const dist = join(dirname(dirname(fileURLToPath(import.meta.url))), "dist", "index.js");
 
 it("a process that resolved a tool with a 45 second budget exits at once, not when the budget ends", async () => {
-  const home = mkdtempSync(join(tmpdir(), "openqodex-exit-"));
+  const home = tempDir("openqodex-exit-");
   const script = `
     const { createToolResolver } = await import(${JSON.stringify(pathToFileURL(dist).href)});
     const resolve = createToolResolver({ allowInstall: false, installBudgetMs: 45000 });

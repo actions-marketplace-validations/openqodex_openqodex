@@ -26,6 +26,9 @@ import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, renderImpactBlock, symbolKey } from "../src/index.js";
 import { PACKET_DIR, writePacket } from "../src/review/packet.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

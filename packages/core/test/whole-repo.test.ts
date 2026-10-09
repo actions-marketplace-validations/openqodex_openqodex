@@ -16,11 +16,13 @@
 //    repo brings the outside files into the scope, so their lines are
 //    reviewed and finalize accepts findings on them.
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DIFF_CAP_BYTES, getWholeRepo } from "../src/change.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const roots: string[] = [];
 const savedEnv = { global: process.env.GIT_CONFIG_GLOBAL, system: process.env.GIT_CONFIG_NOSYSTEM };
@@ -50,7 +52,7 @@ function write(repo: string, path: string, content: string | Buffer): void {
 // A committed repo with a tracked file, an ignored file, an untracked file,
 // an excluded file, a binary file and the tool's own state folder.
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-whole-test-"));
+  const dir = tempDir("oq-whole-test-");
   roots.push(dir);
   git(dir, "init", "-q");
   write(dir, ".gitignore", "build/\n");
@@ -112,7 +114,7 @@ describe("getWholeRepo", () => {
 
   it("never reads a file through a folder that is a symbolic link to outside the repo", async () => {
     const dir = repo();
-    const outside = mkdtempSync(join(tmpdir(), "oq-whole-outside-"));
+    const outside = tempDir("oq-whole-outside-");
     roots.push(outside);
     writeFileSync(join(outside, "app.py"), "secret = 1\n");
     rmSync(join(dir, "src"), { recursive: true });
@@ -123,7 +125,7 @@ describe("getWholeRepo", () => {
   });
 
   it("reviews what is on disk in a repository with no commits", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-whole-test-"));
+    const dir = tempDir("oq-whole-test-");
     roots.push(dir);
     git(dir, "init", "-q");
     write(dir, "a.py", "x = 1\n");

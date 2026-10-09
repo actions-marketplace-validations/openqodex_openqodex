@@ -85,7 +85,6 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -95,10 +94,12 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BIN, cli, env, git, inTerminal, promptsAsked, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // What the volume does with another spelling of an existing folder, by the
 // evidence the write check itself uses: whether that spelling reaches the
@@ -439,7 +440,7 @@ describe("init, files the developer owns or edited", () => {
 describe("init, repository symlinks", () => {
   it("refuses a .cursor/rules folder that links outside the repo", () => {
     const s = sandbox();
-    const outside = mkdtempSync(join(tmpdir(), "oq outside "));
+    const outside = tempDir("oq outside ");
     mkdirSync(join(s.repo, ".cursor"));
     symlinkSync(outside, join(s.repo, ".cursor/rules"));
     const r = cli(s, ["init", "--yes", "--agent", "cursor"]);

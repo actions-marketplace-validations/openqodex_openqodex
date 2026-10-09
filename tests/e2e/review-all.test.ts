@@ -21,11 +21,14 @@
 //     a file late in the alphabet gets no lens once earlier files are large.
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Candidate, Report } from "@openqodex/core";
 import "./global-setup.js";
 import { baseline, demo, git, noReviewerEnv, readJson, root, run, skipNetwork, submission } from "./support.js";
 import type { Brief, Result } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // The newest whole-repo run, from its own receipt (never latest.json).
 const allDir = (dir: string) => join(dir, readJson<{ dir: string }>(join(dir, ".openqodex/latest-all.json")).dir);

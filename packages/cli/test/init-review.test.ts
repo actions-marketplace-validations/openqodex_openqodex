@@ -36,16 +36,18 @@
 //     (finished, incomplete, skipped, unavailable) and which reviewer was found;
 //     or a review that ran but could not write report.html is called skipped,
 //     with "nothing to review".
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gitDirs, gitPath, inWorkTree, repoRootOf } from "../src/agents/git.js";
 import { reviewAfterInit } from "../src/commands/init-review.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { agentFreePath, cli, inTerminal, sandbox, snapshot } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -59,7 +61,7 @@ function git(cwd: string, ...args: string[]): void {
 }
 
 function repo(change: boolean): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-init-review-"));
+  const dir = tempDir("oq-init-review-");
   git(dir, "init", "-q", "-b", "main");
   writeFileSync(join(dir, "README.md"), "hello\n");
   git(dir, "add", "-A");
@@ -98,7 +100,7 @@ let err: string;
 beforeEach(() => {
   out = "";
   err = "";
-  vi.stubEnv("OPENQODEX_HOME", mkdtempSync(join(tmpdir(), "oq-init-review-home-")));
+  vi.stubEnv("OPENQODEX_HOME", tempDir("oq-init-review-home-"));
   vi.stubEnv(DEPTH_ENV, "");
   vi.spyOn(process.stdout, "write").mockImplementation((s) => ((out += String(s)), true));
   vi.spyOn(process.stderr, "write").mockImplementation((s) => ((err += String(s)), true));
@@ -211,7 +213,7 @@ describe("the review init ends with", () => {
 // answers detection as Claude Code does, then answers every message with an
 // empty, valid submission for the change id the brief names.
 function standIn(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-init-review-bin-"));
+  const dir = tempDir("oq-init-review-bin-");
   writeFileSync(
     join(dir, "claude"),
     [
@@ -403,7 +405,7 @@ describe("7. what init wrote is not part of the first review", () => {
 
 describe("which files init writes count as work tree files", () => {
   it("9. a work tree nested inside its bare repository still counts its own files, and the git folders stay out", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-nested-bare-")));
+    const root = realpathSync(tempDir("oq-nested-bare-"));
     const seed = join(root, "seed");
     git(root, "init", "-q", "-b", "main", seed);
     writeFileSync(join(seed, "README.md"), "hello\n");

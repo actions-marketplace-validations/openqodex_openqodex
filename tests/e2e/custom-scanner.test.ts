@@ -1,7 +1,10 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
 import "./global-setup.js";
 import { demo, report, run, skipNetwork, writeConfig } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // A custom scanner from GitHub releases, on the demo repo's workflow file. Trust
 // is per repository in the shared tools folder, so each fresh demo repo starts

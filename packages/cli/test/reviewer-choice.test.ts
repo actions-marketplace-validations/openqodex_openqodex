@@ -29,11 +29,10 @@
 // 12. `--reviewer-web off` (the GitHub Action passes it) loses to the user
 //     config, or needs the file edited: a config written as a flow mapping
 //     breaks, and a run that dies leaves the file changed.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { runReview } from "../src/review-run.js";
@@ -43,6 +42,9 @@ import { cursorDriver } from "../src/reviewers/cursor.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { DEFAULT_REVIEWER_WEB } from "../src/reviewers/settings.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -53,7 +55,7 @@ function git(cwd: string, ...args: string[]): void {
 
 // A repo with one commit and an uncommitted text file: no scanner candidate.
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-choice-"));
+  const dir = tempDir("oq-choice-");
   git(dir, "init", "-q", "-b", "main");
   writeFileSync(join(dir, "README.md"), "hello\n");
   git(dir, "add", "-A");
@@ -99,7 +101,7 @@ let home: string;
 beforeEach(() => {
   out = "";
   err = "";
-  home = mkdtempSync(join(tmpdir(), "oq-choice-home-"));
+  home = tempDir("oq-choice-home-");
   vi.stubEnv("OPENQODEX_HOME", home);
   vi.stubEnv(DEPTH_ENV, "");
   // The agent running the tests must not decide `auto`.

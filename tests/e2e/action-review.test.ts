@@ -15,13 +15,15 @@
 // - With a real review, it needs Claude Code installed and logged in, so it
 //   skips with a printed reason in CI, which has no login, and offline.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
 import "./global-setup.js";
 import { bin, demo, generatedSecret, git, offline, receipt, reviewerMissing, root, toolsHome } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const SCRIPT = join(root, "scripts/action-scan.sh");
 const PINNED = /claude-code-version:[\s\S]*?default: "(\d+\.\d+\.\d+)"/.exec(readFileSync(join(root, "action.yml"), "utf8"))![1]!;
@@ -29,7 +31,7 @@ const PINNED = /claude-code-version:[\s\S]*?default: "(\d+\.\d+\.\d+)"/.exec(rea
 const KEY = "openqodex-e2e-placeholder-not-an-api-key";
 // One runner temporary folder for the file, as one job has: the Claude Code
 // the script installs there is reused by the later cases.
-const runnerTemp = mkdtempSync(join(tmpdir(), "oq-e2e-runner-"));
+const runnerTemp = tempDir("oq-e2e-runner-");
 
 type Run = { status: number | null; stdout: string; stderr: string; outputs: Record<string, string>; summary: string; calls: string; probe: string | null };
 
@@ -38,7 +40,7 @@ type Run = { status: number | null; stdout: string; stderr: string; outputs: Rec
 // key was in its environment (never the key), and the review command's
 // arguments, one per line.
 function runAction(label: string, dir: string, env: Record<string, string>): Run {
-  const shim = mkdtempSync(join(tmpdir(), "oq-e2e-npx-"));
+  const shim = tempDir("oq-e2e-npx-");
   writeFileSync(
     join(shim, "npx"),
     [
@@ -52,7 +54,7 @@ function runAction(label: string, dir: string, env: Record<string, string>): Run
     ].join("\n"),
   );
   chmodSync(join(shim, "npx"), 0o755);
-  const out = mkdtempSync(join(tmpdir(), "oq-e2e-gh-"));
+  const out = tempDir("oq-e2e-gh-");
   const files = { outputs: join(out, "output"), summary: join(out, "summary"), calls: join(out, "calls"), probe: join(out, "probe") };
   writeFileSync(files.outputs, "");
   writeFileSync(files.calls, "");
@@ -156,7 +158,7 @@ function pullRequest(label: string, baseFiles: Record<string, string>, headFiles
   };
   write(baseFiles);
   if (Object.keys(baseFiles).length > 0) git(dir, "commit", "-qm", "Team files");
-  const origin = join(mkdtempSync(join(tmpdir(), "oq-e2e-origin-")), "origin.git");
+  const origin = join(tempDir("oq-e2e-origin-"), "origin.git");
   git(dir, "clone", "--bare", "-q", dir, origin);
   git(dir, "remote", "add", "origin", origin);
   const base = git(dir, "rev-parse", "HEAD").trim();
@@ -206,7 +208,7 @@ const allFiles = (dir: string): string[] => readdirSync(dir, { recursive: true, 
 
 describe("the Action's review mode with no login", () => {
   const skip = offline() ? "OPENQODEX_E2E_OFFLINE=1" : null;
-  const noLogin = { CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "oq-e2e-no-login-")) };
+  const noLogin = { CLAUDE_CONFIG_DIR: tempDir("oq-e2e-no-login-") };
 
   it("R1, R3, R8, R12, R15, R16, R17. review: required with no key and no login: the pinned Claude Code, no planted report, the scanner findings instead, and a failed job", () => {
     if (skip !== null) return void process.stdout.write(`action review with no login: skipped, ${skip}\n`);
@@ -302,10 +304,10 @@ describe("an incomplete review and the scanner findings", () => {
 
   it("R22, R30. a review forced incomplete by --timeout never hides a planted secret, even with .openqodex/reviews committed as a link: the scan runs without the key, the job is blocked, and the secret's finding is in the SARIF", () => {
     if (skip !== null) return void process.stdout.write(`action review forced incomplete: skipped, ${skip}\n`);
-    const elsewhere = mkdtempSync(join(tmpdir(), "oq-e2e-reviews-"));
+    const elsewhere = tempDir("oq-e2e-reviews-");
     const { dir, base } = pullRequest("action-incomplete-secret", {}, {}, linkReviews(elsewhere));
     // A placeholder key and no login: the reviewer starts, and its deadline has passed already.
-    const r = runAction("action-incomplete-secret", dir, { CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "oq-e2e-no-login-")), ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "1", BASE_SHA: base, BASE_REF: "main", BLOCK_ON_SEVERITY: "major" });
+    const r = runAction("action-incomplete-secret", dir, { CLAUDE_CONFIG_DIR: tempDir("oq-e2e-no-login-"), ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "1", BASE_SHA: base, BASE_REF: "main", BLOCK_ON_SEVERITY: "major" });
     expect(r.status, r.stderr).toBe(0);
     expect(r.calls).toBe("doctor key=\nreview key=set\nscan key=\n");
     expect(r.outputs["review-status"]).toBe("incomplete");
@@ -343,7 +345,7 @@ describe("an incomplete review and the scanner findings", () => {
       writeFileSync(join(d, hostile), Buffer.alloc(65 * 1024 * 1024, "a\n"));
       git(d, "add", "-f", hostile);
     });
-    const r = runAction("action-hostile-text", dir, { CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "oq-e2e-no-login-")), ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "1", BASE_SHA: base, BASE_REF: "main" });
+    const r = runAction("action-hostile-text", dir, { CLAUDE_CONFIG_DIR: tempDir("oq-e2e-no-login-"), ANTHROPIC_API_KEY: KEY, OQ_REVIEW_TIMEOUT: "1", BASE_SHA: base, BASE_REF: "main" });
     expect(r.status, r.stderr).toBe(0);
     expect(r.outputs["review-status"]).toBe("incomplete");
     // The hostile line reached the log, and the runner reads no command in it.
@@ -370,9 +372,9 @@ describe("the Action's review mode with the real Claude Code", () => {
 
   it("R2, R3, R18, R20, R27, R30. review: required with a logged-in Claude Code: a complete review of the planted secret and SQL injection, blocking at the workflow's severity, whatever links the pull request put at .openqodex/latest.json and .openqodex/reviews", () => {
     if (missing !== null) return void process.stdout.write(`action review with claude: skipped, ${missing}\n`);
-    const outside = join(mkdtempSync(join(tmpdir(), "oq-e2e-latest-")), "latest.json");
+    const outside = join(tempDir("oq-e2e-latest-"), "latest.json");
     writeFileSync(outside, "{}\n");
-    const elsewhere = mkdtempSync(join(tmpdir(), "oq-e2e-reviews-"));
+    const elsewhere = tempDir("oq-e2e-reviews-");
     const { dir, base } = pullRequest(
       "action-claude",
       { ".openqodex/custom-instructions.md": BASE_INSTRUCTIONS },

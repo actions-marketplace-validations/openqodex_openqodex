@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fetchAttestations, fetchTarball } from "../../packages/cli/src/update/fetch.js";
 import { RELEASE_SIGNER, verifyRelease } from "../../packages/cli/src/update/verify.js";
 import { skipNetwork } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // Release verification for the self-update, against the real npm registry:
 // the published openqodex@0.2.0 tarball and its real Sigstore attestations,

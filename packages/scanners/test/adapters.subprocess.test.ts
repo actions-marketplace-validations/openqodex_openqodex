@@ -1,20 +1,22 @@
 // Real binaries on tiny planted inputs, one case per builtin scanner: each
 // guards that scanner's invocation, output parser, changed-line filter and tool
 // resolution together. Run by the end-to-end config, not the unit config.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { createToolResolver, runScanners } from "@openqodex/scanners";
+import { cacheFolder, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
-const scannerHome = process.env.OPENQODEX_E2E_HOME ?? join(tmpdir(), "openqodex-e2e-home");
+afterAll(removeTempDirs);
+
+const scannerHome = process.env.OPENQODEX_E2E_HOME ?? cacheFolder("openqodex-e2e-home");
 process.env.OPENQODEX_HOME = scannerHome;
-process.env.HOME = mkdtempSync(join(tmpdir(), "oq-adapter-user-"));
+process.env.HOME = tempDir("oq-adapter-user-");
 
 const generatedSecret = `sk_live_${randomBytes(12).toString("hex")}`;
 // A React page whose effect reads `id` and leaves it out of its dependencies.
@@ -59,7 +61,7 @@ def query():
 
 // Every line of every planted file counts as changed, as for a new file.
 async function scan(spec: Case) {
-  const repo = mkdtempSync(join(tmpdir(), `oq-adapter-${spec.scanner}-`));
+  const repo = tempDir(`oq-adapter-${spec.scanner}-`);
   for (const [name, body] of Object.entries(spec.files)) { const path = join(repo, name); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, body); }
   const paths = Object.keys(spec.files);
   const coverage = new Map(paths.map((p) => [p, new Set(readFileSync(join(repo, p), "utf8").split("\n").map((_, i) => i + 1))]));

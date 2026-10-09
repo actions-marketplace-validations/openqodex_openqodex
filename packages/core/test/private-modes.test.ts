@@ -14,18 +14,20 @@
 //     such content without a word.
 //  5. A file the developer owns, which init edits in place and keeps as it
 //     is (keepMode), loses its own mode.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { Guard } from "../src/guarded-fs.js";
 import { writeRepoFile } from "../src/repo-state.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const mode = (path: string): number => statSync(path).mode & 0o777;
 
 function repo(): string {
-  return realpathSync(mkdtempSync(join(tmpdir(), "oq-modes-")));
+  return realpathSync(tempDir("oq-modes-"));
 }
 
 function stderr(): { lines: () => string } {

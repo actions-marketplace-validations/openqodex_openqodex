@@ -48,8 +48,7 @@
 //    repository: missing there, the manifest is dropped with nothing said;
 //    over the cap there, the report gives that outside file's size.
 import { afterAll, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, floorReasons, openStore } from "../src/index.js";
@@ -59,6 +58,9 @@ import { discoverProjects, linkageOf, pathLinkOff } from "../src/discovery/proje
 import { RepoReader } from "../src/safe-fs.js";
 import { deserializeModel, serializeModel } from "../src/store/graph-files.js";
 import { at, callSites, commitAll, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const home = makeHome();
 const repos: string[] = [home];
@@ -131,7 +133,7 @@ describe("file: dependencies bind by where their path leads", () => {
   });
 
   it("takes .. in a file: path by its spelling, as npm and pnpm do, so a link that .. climbs back out of changes nothing (11)", async () => {
-    const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+    const outside = tempDir("oq-outside-");
     repos.push(outside);
     // Through the link, packages/pivot/.. is `outside`, which holds a package of the same name.
     writeFiles(outside, { "deep/.keep": "", "shared/package.json": json({ name: "shared", main: "index.ts" }), "shared/index.ts": "export function helper() {\n  return 2;\n}\n" });
@@ -320,7 +322,7 @@ describe("a manifest or tsconfig the graph cannot read is said, never dropped", 
     for (const there of [{}, { "package.json": json({ name: "@x/core", description: "x".repeat(MiB) }) }]) {
       const root = repo(files);
       commitAll(root);
-      const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+      const outside = tempDir("oq-outside-");
       repos.push(outside);
       writeFiles(outside, there);
       rmSync(join(root, "packages/core"), { recursive: true });

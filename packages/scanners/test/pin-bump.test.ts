@@ -40,13 +40,15 @@
 //      not the checked structure.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runner = join(here, "pin-bump-runner.mjs");
@@ -193,7 +195,7 @@ afterAll(() => {
 
 // A repo root holding only the pinned table, with demo 1.0.0 in it.
 function repoRoot(): { root: string; table: string; before: string } {
-  const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-"));
+  const root = tempDir("oq-pin-bump-");
   mkdirSync(join(root, "packages", "scanners"), { recursive: true });
   mkdirSync(join(root, ".changeset"));
   const assets = Object.fromEntries(
@@ -338,13 +340,13 @@ describe("what the code review found in pin-bump", () => {
 
   it("with --locks takes a PyPI pin's lock files only by the recorded sha256 and PyPI's hashes, and starts no uv (12)", async () => {
     const make = () => {
-      const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-uv-"));
+      const root = tempDir("oq-pin-bump-uv-");
       mkdirSync(join(root, "packages", "scanners", "locks"), { recursive: true });
       mkdirSync(join(root, ".changeset"));
       const table = join(root, "packages", "scanners", "toolchain.json");
       const before = `${JSON.stringify({ schema: 1, tools: { pydemo: { version: "1.0.0", method: "uv", package: "pydemo", python: "3.11", binary: "pydemo" } } }, null, 2)}\n`;
       writeFileSync(table, before);
-      const given = mkdtempSync(join(tmpdir(), "oq-locks-"));
+      const given = tempDir("oq-locks-");
       return { root, table, before, given };
     };
     const lock = (hash: string) => `${uvBlock("dep", "1.2")}${uvBlock("leaf", "3.0")}pydemo==2.0.0 \\\n    --hash=sha256:${hash}\n`;
@@ -383,13 +385,13 @@ describe("what the code review found in pin-bump", () => {
 
 // A repo with one registry pin at 1.0.0, and a folder of lock files for it.
 function registryRoot(tool: string, recipe: Record<string, unknown>) {
-  const root = mkdtempSync(join(tmpdir(), "oq-pin-bump-reg-"));
+  const root = tempDir("oq-pin-bump-reg-");
   mkdirSync(join(root, "packages", "scanners", "locks"), { recursive: true });
   mkdirSync(join(root, ".changeset"));
   const table = join(root, "packages", "scanners", "toolchain.json");
   const before = `${JSON.stringify({ schema: 1, tools: { [tool]: recipe } }, null, 2)}\n`;
   writeFileSync(table, before);
-  const given = mkdtempSync(join(tmpdir(), "oq-locks-"));
+  const given = tempDir("oq-locks-");
   return { root, table, before, given };
 }
 

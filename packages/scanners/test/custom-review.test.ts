@@ -25,19 +25,21 @@
 // 10. An install: path binary swapped after the adapter was built still runs.
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { parseConfig, type CustomScanner } from "@openqodex/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { approve, customAdapters, resolveCustomArtifact, revoke, trustState, type ResolvedArtifact } from "../src/custom/index.js";
 import { parseJsonMap } from "../src/formats/json-map.js";
 import { parseSarif } from "../src/formats/sarif.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
-const tmp = (prefix: string) => mkdtempSync(join(tmpdir(), prefix));
+const tmp = (prefix: string) => tempDir(prefix);
 
 let home: string;
 const saved = { home: process.env.OPENQODEX_HOME, path: process.env.PATH };

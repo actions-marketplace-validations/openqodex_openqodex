@@ -54,10 +54,13 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { run } from "../src/toolchain/fetch.js";
 import { publishVersion, readGemLock, readLock, takeOverStaleLock } from "../src/toolchain/install.js";
 import { lockedFolder } from "../src/toolchain/table.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist", "index.js");
@@ -81,7 +84,7 @@ afterEach(() => {
 });
 
 function freshHome(): string {
-  const home = mkdtempSync(join(tmpdir(), "oq-toolchain-"));
+  const home = tempDir("oq-toolchain-");
   process.env.OPENQODEX_HOME = home;
   return home;
 }
@@ -170,7 +173,7 @@ describe("toolchain", () => {
   }, 90_000);
 
   it("gives a plain reason when the home folder cannot be written", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "oq-readonly-"));
+    const parent = tempDir("oq-readonly-");
     chmodSync(parent, 0o555);
     const home = join(parent, "home");
     process.env.OPENQODEX_HOME = home;
@@ -224,7 +227,7 @@ describe("toolchain", () => {
   });
 
   it("refuses a gem lock line in any other shape (26)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-gemlock-"));
+    const dir = tempDir("oq-gemlock-");
     const good = `# note\nbrakeman 6.2.1 sha256:${"a".repeat(64)}\n`;
     writeFileSync(join(dir, "good.txt"), good);
     expect(readGemLock(join(dir, "good.txt"))).toEqual([{ name: "brakeman", version: "6.2.1", sha256: "a".repeat(64) }]);
@@ -298,7 +301,7 @@ describe("toolchain", () => {
   });
 
   it("a relative OPENQODEX_HOME installs where the caller looks", () => {
-    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "oq-relinstall-")));
+    const cwd = realpathSync(tempDir("oq-relinstall-"));
     const out = execFileSync(process.execPath, [worker, "resolve", "actionlint", "null"], {
       encoding: "utf8",
       cwd,
@@ -344,7 +347,7 @@ describe("toolchain", () => {
 
 describe("downloadVerified and extractArchive", () => {
   it("refuses an archive member that escapes the destination", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
+    const dir = tempDir("oq-tar-");
     const archive = join(dir, "evil.tar.gz");
     writeFileSync(archive, gzipSync(tarOf([["ok.txt", "fine\n"], ["../escape.txt", "outside\n"]])));
     const dest = join(dir, "out");
@@ -355,7 +358,7 @@ describe("downloadVerified and extractArchive", () => {
   });
 
   it("refuses symlink and hardlink members", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
+    const dir = tempDir("oq-tar-");
     const payload = join(dir, "payload");
     writeFileSync(payload, "#!/bin/sh\necho payload\n", { mode: 0o755 });
     for (const [type, link] of [["2", payload], ["1", payload]] as const) {
@@ -368,7 +371,7 @@ describe("downloadVerified and extractArchive", () => {
   });
 
   it("a normal archive still unpacks, so the member refusals do not reject every archive", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-tar-"));
+    const dir = tempDir("oq-tar-");
     const archive = join(dir, "good.tar.gz");
     writeFileSync(archive, gzipSync(tarOf([["a/b.txt", "hello\n"]])));
     const dest = join(dir, "out");
@@ -378,7 +381,7 @@ describe("downloadVerified and extractArchive", () => {
   });
 
   it("returns the sha256 of what it downloaded and refuses a wrong one", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-dl-"));
+    const dir = tempDir("oq-dl-");
     const asset = table.tools.actionlint.assets["linux-arm64"];
     const got = await tc.downloadVerified(asset.url, null, join(dir, "a"));
     expect(got.sha256).toBe(asset.sha256);
@@ -399,7 +402,7 @@ describe("downloadVerified and extractArchive", () => {
     });
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const dir = mkdtempSync(join(tmpdir(), "oq-dl-"));
+    const dir = tempDir("oq-dl-");
     try {
       const started = Date.now();
       await expect(tc.downloadVerified(`${base}/slow`, null, join(dir, "a"), { deadlineMs: 1000 })).rejects.toThrow(/download failed/);
