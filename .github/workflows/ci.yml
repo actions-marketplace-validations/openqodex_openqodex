@@ -55,6 +55,10 @@ jobs:
         env:
           OPENQODEX_E2E_HOME: ${{ runner.temp }}/openqodex-e2e-home
           GITHUB_TOKEN: ${{ github.token }}
+      # The review of the demo's planted change with both reviewer drivers,
+      # compared file by file with tests/golden/expected.
+      - name: Golden run
+        run: pnpm golden:check
       - name: Skill and plugin manifests
         run: node scripts/validate-skill.mjs
       - name: Config docs

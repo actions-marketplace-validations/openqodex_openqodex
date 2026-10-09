@@ -5,9 +5,9 @@
 // the change calls for, from the files, the project each file is in and the
 // config; the tool is resolved only for those, everything runs in
 // parallel, then one pipeline: paths rebased to repo-relative, the
-// changed-line filter, the fixture filter, `disabled_rules`, cross-scanner
-// dedup, a severity sort, candidate ids. Custom scanners join after the
-// builtins through the same pipeline.
+// changed-line filter, the fixture filter, `disabled_rules`, one fixed
+// order, cross-scanner dedup, a severity sort, candidate ids. Custom
+// scanners join after the builtins through the same pipeline.
 //
 // Nothing a scanner does can reject this function: a missing tool, a
 // failed install, a timeout, bad JSON or a thrown error all become a status
@@ -180,10 +180,17 @@ export async function runScanners(args: {
           (f) => !args.config.disabledRules.some((glob) => matchesGlob(`${f.source}:${f.ruleId}`, glob)),
         );
 
-  // Cross-scanner dedup, then a severity sort that is stable within a
-  // severity, so ties keep the ensemble order (semgrep before gitleaks).
+  // One fixed order, whatever order the scanners printed in (checkov on
+  // Linux prints its framework reports as they finish, issue #89): by
+  // scanner in ensemble order (builtins, then custom scanners as configured),
+  // then file, line start, line end, rule id and message. The dedup then sees
+  // the same input every run, and the stable severity sort after it gives
+  // the candidates, and so their ids, the order severity, scanner, file,
+  // line start, line end, rule id, message.
+  const ensemble = [...ADAPTERS.map((a) => a.source), ...(args.custom ?? []).map((c) => c.source)];
+  const ordered = [...postRules].sort(placeOrder(ensemble));
   const mergedInto = new Map<StaticFinding, string[]>();
-  const deduped = dedupByRuleClass(postRules, mergedInto);
+  const deduped = dedupByRuleClass(ordered, mergedInto);
   deduped.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
   const candidates: Candidate[] = deduped.map((f, i) => ({
@@ -600,6 +607,26 @@ const SEVERITY_RANK: Record<ScannerSeverity, number> = {
 
 function severityRank(s: ScannerSeverity): number {
   return SEVERITY_RANK[s] ?? 0;
+}
+
+// Code unit order, the same on every machine (localeCompare is not).
+function byText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Scanner (by its place in `ensemble`; one not there after them, by name),
+// file, line start, line end, rule id, message.
+function placeOrder(ensemble: ScannerSource[]): (a: StaticFinding, b: StaticFinding) => number {
+  const place = new Map(ensemble.map((s, i) => [s, i]));
+  const rank = (s: ScannerSource) => place.get(s) ?? ensemble.length;
+  return (a, b) =>
+    rank(a.source) - rank(b.source) ||
+    byText(a.source, b.source) ||
+    byText(a.filePath, b.filePath) ||
+    a.lineStart - b.lineStart ||
+    a.lineEnd - b.lineEnd ||
+    byText(a.ruleId, b.ruleId) ||
+    byText(a.message, b.message);
 }
 
 // Coarse category used for cross-scanner dedup. Different rule IDs for
