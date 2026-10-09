@@ -1,11 +1,15 @@
 // The Rails plugin on a small real application and on hostile input.
 import { getChange } from "@openqodex/core";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { buildGraph, detectImpact, frameworkLayer, openStore, renderImpactBlock } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { rails } from "../src/frameworks/rails/index.js";
 import { parserFor } from "../src/parser.js";
 import { commitAll, git, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const MiB = 1024 * 1024;
 const home = makeHome();

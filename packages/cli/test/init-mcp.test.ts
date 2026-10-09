@@ -51,8 +51,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BIN, cli, inTerminal, sandbox, snapshot, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const version = (JSON.parse(readFileSync(join(BIN, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 

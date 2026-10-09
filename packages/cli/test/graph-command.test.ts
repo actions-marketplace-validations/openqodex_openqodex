@@ -22,6 +22,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStore, pinGeneration, query } from "@openqodex/graph";
 import type { Answer } from "@openqodex/graph";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
 const dirs: string[] = [];

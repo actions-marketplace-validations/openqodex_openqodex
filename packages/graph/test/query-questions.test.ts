@@ -64,6 +64,10 @@ import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { findCases, matches } from "../corpus/score.js";
 import type { Expected } from "../corpus/score.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const corpusRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "corpus");
 const dirs: string[] = [];

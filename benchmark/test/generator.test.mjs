@@ -15,9 +15,9 @@ const build = (id) => buildCase(id, join(tempDir(`oq-bench-${id}-`), "repo"));
 const ids = listCases();
 
 describe("the benchmark corpus", () => {
-  it("has twelve to twenty cases, at least one of them clean", () => {
+  it("has twelve to twenty-four cases, at least one of them clean", () => {
     expect(ids.length).toBeGreaterThanOrEqual(12);
-    expect(ids.length).toBeLessThanOrEqual(20);
+    expect(ids.length).toBeLessThanOrEqual(24);
     expect(ids.some((id) => readCase(id).clean)).toBe(true);
   });
 

@@ -12,12 +12,16 @@
 //    without a word.
 // 4. A chain or a cycle of includes is followed without a bound.
 // 5. An include past the byte cap is read in full.
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { buildGraph } from "../src/index.js";
 import { discoverProjects } from "../src/discovery/projects.js";
 import { MANIFEST_BYTES } from "../src/discovery/manifests.js";
 import { RepoReader } from "../src/safe-fs.js";
 import { commitAll, makeRepo } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 function model(files: Record<string, string>) {
   const root = makeRepo(files);

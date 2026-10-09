@@ -108,6 +108,10 @@ def test_x():
   "go/main.go": `package main
 
 import "net/http"
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 func h(w http.ResponseWriter, r *http.Request) {}
 

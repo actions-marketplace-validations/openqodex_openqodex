@@ -11,11 +11,15 @@ import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { writePacket } from "../src/review/packet.js";
 import { buildGraph, detectImpact, openStore, renderImpactBlock } from "../src/index.js";
 import type { Registration } from "../src/index.js";
 import { commitAll, makeHome, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const S = `sk_live_${randomBytes(16).toString("hex")}`;
 

@@ -25,6 +25,10 @@ import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, renderImpactBlock, symbolKey } from "../src/index.js";
 import { PACKET_DIR, writePacket } from "../src/review/packet.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

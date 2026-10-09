@@ -4,11 +4,15 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChange } from "@openqodex/core";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { PLUGINS, buildGraph, detectImpact, renderImpactBlock, validateFrameworkEvidence } from "../src/index.js";
 import type { FrameworkPlugin } from "../src/index.js";
 import { runFrameworks } from "../src/frameworks/stage.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const corpus = join(dirname(fileURLToPath(import.meta.url)), "..", "corpus");
 

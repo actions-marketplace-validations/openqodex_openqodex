@@ -37,6 +37,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { OPERATIONS } from "@openqodex/graph";
 import type { Answer } from "@openqodex/graph";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "cli", "dist", "bin.js");
 const dirs: string[] = [];

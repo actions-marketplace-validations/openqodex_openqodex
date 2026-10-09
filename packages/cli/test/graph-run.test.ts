@@ -123,7 +123,7 @@ describe("the review's graph run", () => {
     const block = renderImpactBlock(run.impact);
     expect(block).toContain("/[redacted]/items");
     expect(block).not.toContain(secret);
-    const snapshot = mkdtempSync(join(tmpdir(), "oq-graph-run-snapshot-"));
+    const snapshot = tempDir("oq-graph-run-snapshot-");
     dirs.push(snapshot);
     const packet = await writePacket({ root: snapshot, repoRoot: root, graph: run.graph as never, impact: run.impact, baseSha: change.baseSha, secrets: [secret] });
     const files: string[] = [];

@@ -34,6 +34,10 @@ import { query, querySliced } from "../src/query/engine.js";
 import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { checksBudget } from "../src/query/traverse.js";
 import { commitAll, makeRepo } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 afterAll(() => {

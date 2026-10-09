@@ -25,6 +25,10 @@ import { rmSync } from "node:fs";
 import { buildGraph, detectImpact, renderImpactBlock } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 afterAll(() => {

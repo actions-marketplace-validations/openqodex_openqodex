@@ -19,6 +19,10 @@ import { parserFor } from "../src/parser.js";
 import { createWorld } from "../src/resolve.js";
 import { RepoReader } from "../src/safe-fs.js";
 import { makeRepo } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

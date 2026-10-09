@@ -2,13 +2,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { PACKET_DIR, writePacket } from "../src/review/packet.js";
 import { buildGraph, detectImpact, frameworkLayer, openStore, renderImpactBlock } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { django } from "../src/frameworks/django/index.js";
 import { parserFor } from "../src/parser.js";
 import { commitAll, git, makeHome, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const MiB = 1024 * 1024;
 const home = makeHome();

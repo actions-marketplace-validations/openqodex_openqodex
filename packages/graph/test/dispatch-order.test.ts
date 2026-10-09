@@ -33,6 +33,10 @@ import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { makeRepo } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+// Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

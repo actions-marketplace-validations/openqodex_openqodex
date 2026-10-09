@@ -13,11 +13,13 @@
 // build over the five-second line) and the packet a reviewer reads are
 // checked in packages/graph/src/frameworks/secrets.test.ts.
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
 import { git, run } from "./support.js";
+
+afterAll(removeTempDirs);
 
 const KEY = `sk_live_${randomBytes(16).toString("hex")}`;
 
@@ -58,8 +60,8 @@ const holding = (list: string[]) => list.filter((f) => readFileSync(f).includes(
 
 describe("a key in the code and the framework plugins", () => {
   it("keeps the key in no facts file, no file of the review and nothing the review prints", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oq-fw-key-"));
-    const tools = mkdtempSync(join(tmpdir(), "oq-fw-key-tools-"));
+    const dir = tempDir("oq-fw-key-");
+    const tools = tempDir("oq-fw-key-tools-");
     const write = (set: Record<string, string>) => {
       for (const [path, content] of Object.entries(set)) {
         mkdirSync(dirname(join(dir, path)), { recursive: true });
