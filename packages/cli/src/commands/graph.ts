@@ -10,7 +10,7 @@
 // graph or an ambiguous name included; 2 when the question could not be
 // answered (not found, a capability this build lacks, a bad request) or
 // the build failed.
-import { findRepoRoot, loadConfig, OpenQodexError } from "@openqodex/core";
+import { display, findRepoRoot, loadConfig, OpenQodexError } from "@openqodex/core";
 import { laterEdits, openStore, OPERATIONS, parseTarget, pinGeneration, pinWorkTree, query } from "@openqodex/graph";
 import { openqodexHome } from "@openqodex/scanners";
 import type { Answer, GraphStore, Item, Operation, Pinned, Request } from "@openqodex/graph";
@@ -47,6 +47,17 @@ function say(line: string): void {
   process.stderr.write(`${line}\n`);
 }
 
+// One line of an answer. Text from the repository (a file name, a symbol, a
+// note that quotes either) may hold a line break or a control character, so
+// every line of an answer goes through core's display(): each run of
+// whitespace becomes one space and control characters are dropped, so no
+// part of a name can start a line of its own or reach the terminal as a
+// command. The indent is ours and is kept.
+function line(text = ""): void {
+  const indent = /^ */.exec(text)?.[0] ?? "";
+  out(indent + display(text.slice(indent.length)));
+}
+
 function intFlag(values: Map<string, string>, name: string): number | undefined {
   const v = values.get(name);
   if (v === undefined) return undefined;
@@ -71,30 +82,30 @@ function itemLine(i: Item, op: Operation): string {
 // One fact per line: sites as file:line, tiers spelled out.
 function printText(a: Answer, op: Operation): void {
   if (a.error) {
-    out(`${a.error.code}: ${a.error.message}`);
-    if (Array.isArray(a.target)) for (const c of a.target) out(`  candidate ${c.file}:${c.line} ${c.kind} ${c.name} (${c.id})`);
+    line(`${a.error.code}: ${a.error.message}`);
+    if (Array.isArray(a.target)) for (const c of a.target) line(`  candidate ${c.file}:${c.line} ${c.kind} ${c.name} (${c.id})`);
   }
   const t = a.target && !Array.isArray(a.target) ? a.target : null;
-  if (t) out(`${t.kind} ${t.name} at ${t.file}:${t.line} (${t.id})`);
-  else if (Array.isArray(a.target) && !a.error) for (const c of a.target) out(`${c.kind} ${c.name} at ${c.file}:${c.line} (${c.id})`);
-  for (const l of a.leads) out(`lead ${l.file}:${l.line} ${l.kind} ${l.name} (${l.id})`);
+  if (t) line(`${t.kind} ${t.name} at ${t.file}:${t.line} (${t.id})`);
+  else if (Array.isArray(a.target) && !a.error) for (const c of a.target) line(`${c.kind} ${c.name} at ${c.file}:${c.line} (${c.id})`);
+  for (const l of a.leads) line(`lead ${l.file}:${l.line} ${l.kind} ${l.name} (${l.id})`);
   a.items.forEach((raw, n) => {
     const i = raw as Item & Record<string, unknown>;
-    if (op === "path" && i.site && i.edge) out(`${n + 1}. ${itemLine(i, op)}${i.direction === "reverse" ? " (from the second point to the first)" : ""}`);
-    else if (i.site && i.edge) out(itemLine(i, op));
-    else if (Array.isArray(i.hops)) out(`${String(i.type)}: ${(i.hops as Item[]).map((h) => `${siteLine(h)} ${h.fromName ?? h.from} ${VERB[h.kind] ?? h.kind} ${h.toName ?? h.to} (${h.site.tier})`).join(" < ")}`);
-    else if (op === "cycles" && Array.isArray(i.members)) out(`cycle of ${String(i.size)}: ${(i.members as string[]).join(", ")}`);
-    else if (op === "outline") out(`${String(i.file)}:${String(i.line)} ${String(i.kind)} ${String(i.qualified)}${i.exported ? ", exported" : ""}, ${String(i.callerSites)} call sites in, ${String(i.calleeSites)} out`);
-    else out(JSON.stringify(raw));
+    if (op === "path" && i.site && i.edge) line(`${n + 1}. ${itemLine(i, op)}${i.direction === "reverse" ? " (from the second point to the first)" : ""}`);
+    else if (i.site && i.edge) line(itemLine(i, op));
+    else if (Array.isArray(i.hops)) line(`${String(i.type)}: ${(i.hops as Item[]).map((h) => `${siteLine(h)} ${h.fromName ?? h.from} ${VERB[h.kind] ?? h.kind} ${h.toName ?? h.to} (${h.site.tier})`).join(" < ")}`);
+    else if (op === "cycles" && Array.isArray(i.members)) line(`cycle of ${String(i.size)}: ${(i.members as string[]).join(", ")}`);
+    else if (op === "outline") line(`${String(i.file)}:${String(i.line)} ${String(i.kind)} ${String(i.qualified)}${i.exported ? ", exported" : ""}, ${String(i.callerSites)} call sites in, ${String(i.calleeSites)} out`);
+    else line(JSON.stringify(raw));
   });
-  if (a.counts.certain !== null) out(`counts: ${a.counts.certain} certain, ${a.counts.likely} likely, ${a.counts.possible} possible`);
+  if (a.counts.certain !== null) line(`counts: ${a.counts.certain} certain, ${a.counts.likely} likely, ${a.counts.possible} possible`);
   const tr = a.truncated;
-  if (tr.by === "limit" || (tr.by === "budget" && tr.cursor)) out(`truncated by ${tr.by}: ${tr.omitted ?? "an unknown number of"} more; --cursor ${tr.cursor}`);
-  else if (tr.by === "budget") out(`stopped at the time budget: what lies past ${tr.frontierTotal ?? "the"} unexpanded ${tr.frontierTotal === 1 ? "point" : "points"} is not counted; ask again with a larger --budget-ms`);
-  else if (tr.by === "depth") out(`stopped at the depth asked: ${tr.frontierTotal ?? "some"} ${tr.frontierTotal === 1 ? "point has" : "points have"} more past it; --depth goes further`);
-  if (a.unknown.floor) out(`floor: ${a.unknown.reasons.join("; ") || "the graph could not see every relation"}`);
+  if (tr.by === "limit" || (tr.by === "budget" && tr.cursor)) line(`truncated by ${tr.by}: ${tr.omitted ?? "an unknown number of"} more; --cursor ${tr.cursor}`);
+  else if (tr.by === "budget") line(`stopped at the time budget: what lies past ${tr.frontierTotal ?? "the"} unexpanded ${tr.frontierTotal === 1 ? "point" : "points"} is not counted; ask again with a larger --budget-ms`);
+  else if (tr.by === "depth") line(`stopped at the depth asked: ${tr.frontierTotal ?? "some"} ${tr.frontierTotal === 1 ? "point has" : "points have"} more past it; --depth goes further`);
+  if (a.unknown.floor) line(`floor: ${a.unknown.reasons.join("; ") || "the graph could not see every relation"}`);
   const g = a.graph;
-  out(`graph: build ${g.generation ?? "not saved"}, ${g.status}, ${g.mode}${g.reasons.length > 0 ? `: ${g.reasons.join("; ")}` : ""}${g.freshness.laterEditsKnown ? "; files changed since this build" : ""}`);
+  line(`graph: build ${g.generation ?? "not saved"}, ${g.status}, ${g.mode}${g.reasons.length > 0 ? `: ${g.reasons.join("; ")}` : ""}${g.freshness.laterEditsKnown ? "; files changed since this build" : ""}`);
 }
 
 function exitOf(a: Answer): number {
@@ -131,7 +142,8 @@ export async function run(args: string[]): Promise<number> {
   const generation = values.get("--generation");
   if (generation !== undefined) {
     const fail = (message: string): number => {
-      out(json ? JSON.stringify({ apiVersion: 1, kind: op, error: { code: "generation-unavailable", message } }) : `generation-unavailable: ${message}`);
+      if (json) out(JSON.stringify({ apiVersion: 1, kind: op, error: { code: "generation-unavailable", message } }));
+      else line(`generation-unavailable: ${message}`);
       return EXIT_TOOL_FAILED;
     };
     if (!store) return fail("--generation needs the graph folder, and it is not usable here");
@@ -162,8 +174,8 @@ export async function run(args: string[]): Promise<number> {
       const s = session.graph.status;
       if (json) out(JSON.stringify(query(session, { apiVersion: 1, kind: "status" })));
       else {
-        out(`Built ${s.filesParsed} of ${s.eligibleFiles} files in ${(s.durationMs / 1000).toFixed(1)} s: ${s.parses} parsed, ${s.cacheHits} from cache, mode ${s.mode} (predicted ${s.predictedMs ?? "?"} ms).`);
-        out(`build ${s.generation ?? "not saved"}, ${s.status}${s.reasons.length > 0 ? `: ${s.reasons.join("; ")}` : ""}`);
+        line(`Built ${s.filesParsed} of ${s.eligibleFiles} files in ${(s.durationMs / 1000).toFixed(1)} s: ${s.parses} parsed, ${s.cacheHits} from cache, mode ${s.mode} (predicted ${s.predictedMs ?? "?"} ms).`);
+        line(`build ${s.generation ?? "not saved"}, ${s.status}${s.reasons.length > 0 ? `: ${s.reasons.join("; ")}` : ""}`);
       }
       return s.generation === null && store !== null ? EXIT_TOOL_FAILED : EXIT_OK;
     }
