@@ -1,0 +1,20 @@
+{
+  "guards": "matches a test request against a regex route with its repetition bounds kept",
+  "frameworks": {
+    "plugin": "django",
+    "edges": [
+      {
+        "kind": "tests",
+        "from": "mysite/tests.py#YearTests.test_full",
+        "to": "registration:mysite/urls.py:6",
+        "category": "route-request"
+      }
+    ],
+    "notEdges": [
+      {
+        "kind": "tests",
+        "from": "mysite/tests.py#YearTests.test_short"
+      }
+    ]
+  }
+}

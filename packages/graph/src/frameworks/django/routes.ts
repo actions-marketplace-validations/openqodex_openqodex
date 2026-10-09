@@ -7,7 +7,8 @@
 // never matched.
 
 export type ParamClass = "digit" | "slug" | "segment" | "hex" | "any";
-export type Tok = { lit: string } | { param: ParamClass; min: 0 | 1 };
+// A parameter matches between `min` and `max` characters of its class (`max` null: no bound).
+export type Tok = { lit: string } | { param: ParamClass; min: number; max: number | null };
 
 // The route's display text, and its tokens; null tokens when the route
 // cannot be matched against a request (a regex outside the subset).
@@ -58,34 +59,53 @@ export function pathTokens(route: string): Tok[] | null {
     const colon = inner.indexOf(":");
     const conv = colon < 0 ? "str" : inner.slice(0, colon);
     const name = colon < 0 ? inner : inner.slice(colon + 1);
-    if (isIdentifier(name) && (colon < 0 || isIdentifier(conv))) toks.push({ param: CONVERTERS[conv] ?? "segment", min: 1 });
+    if (isIdentifier(name) && (colon < 0 || isIdentifier(conv))) toks.push(conv === "uuid" ? { param: "hex", min: 36, max: 36 } : { param: CONVERTERS[conv] ?? "segment", min: 1, max: null });
     else pushLit(toks, route.slice(open, close + 1));
     i = close + 1;
   }
   return toks.length > MAX_TOKENS ? null : toks;
 }
 
-// The group bodies a `re_path()` regex may use to be matched, and their class.
+// The character classes a `re_path()` group may use to be matched.
 const REGEX_CLASSES: Record<string, ParamClass> = {
-  "\\d+": "digit",
-  "[0-9]+": "digit",
-  "\\d{4}": "digit",
-  "\\d{2}": "digit",
-  "\\d{1,2}": "digit",
-  "[0-9]{4}": "digit",
-  "[0-9]{2}": "digit",
-  "\\w+": "slug",
-  "[-\\w]+": "slug",
-  "[\\w-]+": "slug",
-  "[-a-zA-Z0-9_]+": "slug",
-  "[a-zA-Z0-9_-]+": "slug",
-  "[^/]+": "segment",
-  "[^/.]+": "segment",
-  "[0-9a-f-]+": "hex",
-  "[0-9a-fA-F-]+": "hex",
-  ".+": "any",
-  ".*": "any",
+  "\\d": "digit",
+  "[0-9]": "digit",
+  "\\w": "slug",
+  "[-\\w]": "slug",
+  "[\\w-]": "slug",
+  "[-a-zA-Z0-9_]": "slug",
+  "[a-zA-Z0-9_-]": "slug",
+  "[^/]": "segment",
+  "[^/.]": "segment",
+  "[0-9a-f-]": "hex",
+  "[0-9a-fA-F-]": "hex",
+  ".": "any",
 };
+
+// A group body as a class and its repetition bounds: `+`, `*`, `{n}`,
+// `{n,m}` read exactly; anything else is outside the subset.
+function groupClass(body: string): Tok | null {
+  let cls = body;
+  let min = 1;
+  let max: number | null = null;
+  if (body.endsWith("+")) cls = body.slice(0, -1);
+  else if (body.endsWith("*")) {
+    cls = body.slice(0, -1);
+    min = 0;
+  } else if (body.endsWith("}")) {
+    const open = body.lastIndexOf("{");
+    if (open < 0) return null;
+    const bounds = body.slice(open + 1, -1).split(",");
+    const lo = Number(bounds[0]);
+    const hi = bounds.length === 1 ? lo : Number(bounds[1]);
+    if (bounds.length > 2 || !Number.isInteger(lo) || !Number.isInteger(hi) || lo < 0 || hi < lo || hi > 512) return null;
+    cls = body.slice(0, open);
+    min = lo;
+    max = hi;
+  } else return null;
+  const param = REGEX_CLASSES[cls];
+  return param ? { param, min, max } : null;
+}
 
 const LITERAL_ESCAPES = new Set(["/", ".", "-", "_", "~"]);
 
@@ -107,9 +127,9 @@ export function regexTokens(regex: string): Tok[] | null {
         if (end < 0 || !isIdentifier(body.slice(3, end))) return null;
         body = body.slice(end + 1);
       } else if (body.startsWith("?:")) body = body.slice(2);
-      const cls = REGEX_CLASSES[body];
-      if (!cls) return null;
-      toks.push({ param: cls, min: body.endsWith("*") ? 0 : 1 });
+      const tok = groupClass(body);
+      if (!tok) return null;
+      toks.push(tok);
       i = close + 1;
       continue;
     }
@@ -122,7 +142,7 @@ export function regexTokens(regex: string): Tok[] | null {
     }
     if (c === "/" && s[i + 1] === "?" && i + 2 === s.length) {
       // A trailing optional slash: the request may or may not end with one.
-      toks.push({ param: "any", min: 0 });
+      toks.push({ param: "any", min: 0, max: 1 });
       return toks.length > MAX_TOKENS ? null : toks;
     }
     if (isWordChar(c) || c === "/" || c === "-" || c === "~") {
@@ -209,7 +229,8 @@ export function matchTokens(toks: readonly Tok[], path: string, budget: Budget):
       continue;
     }
     let end = pos;
-    while (end < n && inClass(path[end] as string, t.param)) end++;
+    const limit = t.max === null ? n : Math.min(n, pos + t.max);
+    while (end < limit && inClass(path[end] as string, t.param)) end++;
     const next = toks[ti + 1];
     for (let e = pos + t.min; e <= end; e++) {
       if (--budget.steps < 0) return "budget";
