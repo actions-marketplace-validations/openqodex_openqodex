@@ -46,10 +46,11 @@ Each finding counts for one bug at most. A review that wrote no report misses ev
 | `python-caller-break` | Python | a function that may now return `None`, with callers in another `src` package that add and divide its result (major; reasoning, graph) |
 | `rails-controller-model` | Ruby, Rails | SQL built from params (critical), `destroy` left out of the admin check (critical), `permit!` (major), a welcome email on every save (major); brakeman, semgrep, reasoning |
 | `suppression-comments` | Python, JavaScript | a shell injection hidden by `# nosec` (critical), an `eval` hidden by `eslint-disable` and `nosemgrep` (critical); a harmless `# noqa: E501` that must not be reported |
+| `ts-interface-dispatch-break` | TypeScript | an implementation of a `Cache` interface whose `get` now throws where the interface promises an empty string, called only through the interface from two files among many other calls named `get` (major; reasoning, graph) |
 | `ts-removed-export` | TypeScript | a renamed export still imported by a file outside the change (major; reasoning, graph); nothing in the diff shows it |
 | `ts-workspace-caller-break` | TypeScript, pnpm workspace | `safeGit` changed from returning a string to returning an object, with callers in another package (major; reasoning, graph) |
 
-Thirty-seven planted bugs in all: 11 critical, 20 major, 6 minor.
+Thirty-eight planted bugs in all: 11 critical, 21 major, 6 minor.
 
 Each case is a folder under `benchmark/cases/<case>/`: `case.json` (the spec), `base/` (the base commit), `change/` (the files the change writes) and an optional `delete.txt`. `demo-polyglot` reads `examples/demo-repo` instead, and its secret is generated when the case is built, the same value every time, never committed. The repositories are built in a temporary folder; none is committed. `node benchmark/build.mjs <case>` builds one so you can read it.
 
@@ -61,7 +62,7 @@ From a clone, with Node 22, Claude Code installed and logged in:
 pnpm install
 node benchmark/build-cli.mjs           # pnpm build, and a record of the commit and tree it built from
 node benchmark/run.mjs --dry-run       # print the plan, run nothing
-node benchmark/run.mjs                 # 14 cases, graph off and on, 3 repeats: 84 reviews
+node benchmark/run.mjs                 # 15 cases, graph off and on, 3 repeats: 90 reviews
 node benchmark/score.mjs benchmark/results/<date>-<commit>
 ```
 
