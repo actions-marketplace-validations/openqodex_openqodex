@@ -2,9 +2,10 @@
 // ~/.openqodex/tools/<tool>/<version>/. A builtin scanner is never taken from
 // PATH, so two machines report the same findings.
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { BuiltinScanner, ResolveTool, ToolResolution, ToolStatus } from "@openqodex/core";
 import { InstallError } from "./fetch.js";
 import {
@@ -51,14 +52,43 @@ export const INSTALL_WORKER_COMMAND = "__install";
 // never starts another install process.
 const WORKER_MARKER = "OPENQODEX_INSTALL_WORKER";
 
-let workerEntry: string | null = null;
+// The package.json in `dir`, or null when there is none.
+function manifest(dir: string): { name?: unknown; bin?: unknown } | null {
+  try {
+    return JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name?: unknown; bin?: unknown };
+  } catch {
+    return null;
+  }
+}
 
-// The program that answers `__install <tool>`: the openqodex CLI names its own
-// bin when it starts. Never the running script (process.argv[1]): a script
-// that imports the resolver would be started again as its own worker, and
-// each copy would start another, without end.
-export function setInstallWorkerEntry(path: string): void {
-  workerEntry = resolve(path);
+// The bin of the openqodex package rooted at `dir`, or null.
+function openqodexBin(dir: string): string | null {
+  const pkg = manifest(dir);
+  if (pkg?.name !== "openqodex") return null;
+  const bin = typeof pkg.bin === "string" ? pkg.bin : (pkg.bin as Record<string, unknown> | undefined)?.openqodex;
+  return typeof bin === "string" ? join(dir, bin) : null;
+}
+
+// The program that answers `__install <tool>`: the openqodex CLI bin, found
+// from where this code lies and never from the running script
+// (process.argv[1]), which a caller could name. In the published package
+// this code is bundled into that bin; in the workspace it is the scanners
+// package, beside packages/cli. Null when neither holds.
+function findWorkerEntry(): string | null {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const pkg = manifest(dir);
+    if (pkg !== null) return pkg.name === "@openqodex/scanners" ? openqodexBin(join(dir, "..", "cli")) : openqodexBin(dir);
+    const up = dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+let workerEntryFound: string | null | undefined;
+function workerEntry(): string | null {
+  if (workerEntryFound === undefined) workerEntryFound = findWorkerEntry();
+  return workerEntryFound;
 }
 
 // A path as the file system names it, so a link to the bin counts as the bin.
@@ -70,13 +100,14 @@ function realPath(path: string): string {
   }
 }
 
-// The body of `openqodex __install <tool>`. It installs only in the program
-// named by setInstallWorkerEntry: any other entry, such as a script that
+// The body of `openqodex __install <tool>`. It installs only when this
+// process runs the openqodex bin: any other entry, such as a script that
 // imports this package and calls it, gets one line and exit code 1, and
 // nothing is installed. Returns 0 installed, 1 failed.
 export async function runInstallWorker(tool: string): Promise<number> {
   const entry = process.argv[1];
-  if (workerEntry === null || entry === undefined || realPath(entry) !== realPath(workerEntry)) {
+  const bin = workerEntry();
+  if (bin === null || entry === undefined || realPath(entry) !== realPath(bin)) {
     process.stderr.write(`openqodex: a scanner install runs only as \`openqodex ${INSTALL_WORKER_COMMAND} <tool>\`\n`);
     return 1;
   }
@@ -88,8 +119,9 @@ export async function runInstallWorker(tool: string): Promise<number> {
 // The program this process starts as an install process, or why it starts none.
 function workerProgram(): { entry: string } | { refusal: string } {
   if (process.env[WORKER_MARKER]) return { refusal: "an install process does not start another install" };
-  if (workerEntry === null) return { refusal: "no install program is set: run `npx openqodex doctor --install`" };
-  return { entry: workerEntry };
+  const entry = workerEntry();
+  if (entry === null) return { refusal: "the openqodex program that runs installs was not found: run `npx openqodex doctor --install`" };
+  return { entry };
 }
 
 // The worker runs in another folder, so it gets this process's absolute home:

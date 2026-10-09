@@ -11,10 +11,12 @@
 // 3. The worker is not the openqodex bin with its __install argument.
 // 4. A process that is itself an install worker (the marker in its
 //    environment) starts another worker.
-// 5. A script that names no worker program gets one guessed for it instead
-//    of a plain reason.
-// 6. The install body runs in a program other than the one named, such as a
-//    script that imports it and calls it, instead of stopping with one line.
+// 5. A script names its own file as the install program, and the resolver
+//    starts it or the install body runs in it (found by the review of the
+//    first fix: the program was a name any caller could set).
+// 6. The install body runs in a program other than the openqodex bin, such
+//    as a script that imports it and calls it, instead of stopping with one
+//    line.
 // 7. A process that may not start an install also stops waiting on one that
 //    another process already runs (init-review.test.ts, case 12, guards it).
 //
@@ -41,11 +43,11 @@ beforeAll(() => {
 });
 
 // The throwaway script: notes each start of itself in a file, imports the
-// resolver, names the worker program it is given (OQ_TEST_WORKER: a path,
-// or "self" for its own file), and then either resolves actionlint or, with
-// OQ_TEST_CALL=worker, calls the install body itself. A start past
-// MAX_STARTS ends at once, so a script that starts itself again shows in
-// the count instead of running on.
+// resolver, tries to name its own file as the install program (should the
+// package ever let a caller name one), and then either resolves actionlint
+// or, with OQ_TEST_CALL=worker, calls the install body itself. A start past
+// MAX_STARTS ends at once, so a script that starts itself again shows in the
+// count instead of running on.
 function throwaway(): { script: string; starts: string } {
   const dir = tempDir("oq-worker-script-");
   const script = join(dir, "debug.mjs");
@@ -57,8 +59,7 @@ function throwaway(): { script: string; starts: string } {
       `appendFileSync(${JSON.stringify(starts)}, process.pid + "\\n");`,
       `if (readFileSync(${JSON.stringify(starts)}, "utf8").trim().split("\\n").length > ${MAX_STARTS}) process.exit(0);`,
       `const tc = await import(${JSON.stringify(dist)});`,
-      "const named = process.env.OQ_TEST_WORKER === 'self' ? process.argv[1] : process.env.OQ_TEST_WORKER;",
-      "if (named) tc.setInstallWorkerEntry(named);",
+      "if (typeof tc.setInstallWorkerEntry === 'function') tc.setInstallWorkerEntry(process.argv[1]);",
       "if (process.env.OQ_TEST_CALL === 'worker') {",
       '  process.stdout.write(JSON.stringify({ code: await tc.runInstallWorker("actionlint") }));',
       "} else {",
@@ -138,8 +139,8 @@ async function runScript(env: Record<string, string>): Promise<Run> {
 }
 
 describe("the install worker", () => {
-  it("is the openqodex bin with __install, started once, and never the script that imported the resolver (1, 2, 3)", async () => {
-    const run = await runScript({ OQ_TEST_WORKER: bin });
+  it("is the openqodex bin with __install, started once, even for a script that tries to name itself (1, 2, 3, 5)", async () => {
+    const run = await runScript({});
     expect(run.result).toMatchObject({ ok: true });
     expect(run.starts).toBe(1);
     expect([...run.workers.values()].map((command) => command.includes(`${bin} __install actionlint`))).toEqual([true]);
@@ -147,38 +148,19 @@ describe("the install worker", () => {
   }, 90_000);
 
   it("is not started by a process that is itself a worker (4)", async () => {
-    const run = await runScript({ OQ_TEST_WORKER: bin, OPENQODEX_INSTALL_WORKER: "1" });
+    const run = await runScript({ OPENQODEX_INSTALL_WORKER: "1" });
     expect(run.result).toEqual({ ok: false, status: "not_installed", reason: "an install process does not start another install" });
     expect(run.starts).toBe(1);
     expect(run.workers.size).toBe(0);
     expect(readdirSync(join(run.home, "tools", "actionlint"))).toEqual([]);
   }, 90_000);
 
-  it("ends the old fault at one copy: a script that names itself as the worker is started once more, and that copy starts none (1, 4)", async () => {
-    const run = await runScript({ OQ_TEST_WORKER: "self" });
-    expect(run.result).toEqual({ ok: false, status: "failed", reason: "install failed" });
-    expect(run.starts).toBe(2);
-    expect(run.workers.size).toBeLessThanOrEqual(1);
-    expect(existsSync(join(run.home, "tools", "actionlint", "install.log"))).toBe(false);
-  }, 90_000);
-
-  it("is not guessed for a script that names no worker program: a plain reason instead (1, 5)", async () => {
-    const run = await runScript({});
-    expect(run.result).toEqual({ ok: false, status: "not_installed", reason: "no install program is set: run `npx openqodex doctor --install`" });
+  it("stops with one line when a script that tries to name itself runs the install body (5, 6)", async () => {
+    const run = await runScript({ OQ_TEST_CALL: "worker" });
+    expect(run.result).toEqual({ code: 1 });
+    expect(run.stderr).toBe("openqodex: a scanner install runs only as `openqodex __install <tool>`\n");
     expect(run.starts).toBe(1);
     expect(run.workers.size).toBe(0);
-    expect(readdirSync(join(run.home, "tools", "actionlint"))).toEqual([]);
-  }, 90_000);
-
-  it("stops with one line when the install body runs in any program but the one named (6)", async () => {
-    for (const named of [{}, { OQ_TEST_WORKER: bin }]) {
-      const run = await runScript({ ...named, OQ_TEST_CALL: "worker" });
-      const label = JSON.stringify(named);
-      expect(run.result, label).toEqual({ code: 1 });
-      expect(run.stderr, label).toBe("openqodex: a scanner install runs only as `openqodex __install <tool>`\n");
-      expect(run.starts, label).toBe(1);
-      expect(run.workers.size, label).toBe(0);
-      expect(existsSync(join(run.home, "tools")), label).toBe(false);
-    }
+    expect(existsSync(join(run.home, "tools"))).toBe(false);
   }, 90_000);
 });

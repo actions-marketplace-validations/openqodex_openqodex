@@ -65,7 +65,8 @@ afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist", "index.js");
-// The program each install runs as, as in the published package.
+// The program each install runs as: the toolchain finds the built CLI beside
+// this package, as the published package finds its own bin.
 const bin = join(here, "..", "..", "cli", "dist", "bin.js");
 const caller = join(here, "resolve-caller.mjs");
 const table = JSON.parse(readFileSync(join(here, "..", "toolchain.json"), "utf8"));
@@ -77,7 +78,6 @@ let tc: Toolchain;
 beforeAll(async () => {
   if (!existsSync(dist) || !existsSync(bin)) throw new Error("run pnpm build before these tests");
   tc = (await import(dist)) as Toolchain;
-  tc.setInstallWorkerEntry(bin);
 });
 
 const savedHome = process.env.OPENQODEX_HOME;
@@ -157,7 +157,7 @@ describe("toolchain", () => {
   it("returns installing past the budget and finishes after the caller exits", async () => {
     const home = freshHome();
     // A separate caller process: resolves with a 1 ms budget, prints the result,
-    // exits. The install runs on in the built CLI it named.
+    // exits. The install runs on in the built CLI.
     const started = Date.now();
     const out = execFileSync(process.execPath, [caller, "resolve", "actionlint", "1"], {
       encoding: "utf8",

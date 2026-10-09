@@ -37,7 +37,7 @@
 //     or a review that ran but could not write report.html is called skipped,
 //     with "nothing to review".
 import { appendFileSync, chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gitDirs, gitPath, inWorkTree, repoRootOf } from "../src/agents/git.js";
@@ -52,7 +52,9 @@ afterAll(removeTempDirs);
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
 // A repo config that switches off the two scanners a text file calls for, so
-// a subprocess init starts no download and its review waits on none.
+// an init or a review starts no download and waits on none. The toolchain
+// finds the built CLI and installs for real, so a test that wants no network
+// carries this config.
 const NO_DOWNLOADS = { ".openqodex/config.yaml": "scanners:\n  disable: [semgrep, gitleaks]\n" };
 
 function git(cwd: string, ...args: string[]): void {
@@ -64,6 +66,10 @@ function repo(change: boolean): string {
   const dir = tempDir("oq-init-review-");
   git(dir, "init", "-q", "-b", "main");
   writeFileSync(join(dir, "README.md"), "hello\n");
+  for (const [path, text] of Object.entries(NO_DOWNLOADS)) {
+    mkdirSync(join(dir, dirname(path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  }
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "Base");
   if (change) writeFileSync(join(dir, "notes.txt"), "one line\n");
