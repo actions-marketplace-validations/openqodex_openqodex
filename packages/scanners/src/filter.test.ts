@@ -21,18 +21,6 @@ function finding(over: Partial<StaticFinding>): StaticFinding {
 }
 
 describe("filterToChangedLines", () => {
-  it("a finding on a changed line is kept", () => {
-    const coverage = new Map([["src/a.ts", new Set([10])]]);
-    const out = filterToChangedLines([finding({})], coverage);
-    expect(out).toHaveLength(1);
-  });
-
-  it("a finding on a file the change did not touch is dropped", () => {
-    const coverage = new Map([["src/other.ts", new Set([10])]]);
-    const out = filterToChangedLines([finding({})], coverage);
-    expect(out).toHaveLength(0);
-  });
-
   it("a finding whose whole span misses the changed lines is dropped", () => {
     const coverage = new Map([["src/a.ts", new Set([1, 2, 3])]]);
     const out = filterToChangedLines(

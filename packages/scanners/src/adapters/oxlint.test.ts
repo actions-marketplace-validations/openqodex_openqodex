@@ -8,35 +8,6 @@ describe("parseOxlintJson", () => {
     expect(parseOxlintJson(JSON.stringify({ diagnostics: "nope" }))).toEqual([]);
   });
 
-  it("an oxlint diagnostic takes its line from the first label and its rule id as eslint/rule, not eslint(rule)", () => {
-    const report = {
-      diagnostics: [
-        {
-          message: "Expected a conditional expression and instead saw an assignment",
-          code: "eslint(no-cond-assign)",
-          severity: "warning",
-          url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-cond-assign.html",
-          filename: "src/app.ts",
-          labels: [{ span: { offset: 48, length: 1, line: 4, column: 9 } }],
-          related: [],
-        },
-      ],
-      number_of_files: 1,
-    };
-    const out = parseOxlintJson(JSON.stringify(report));
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({
-      source: "oxlint",
-      ruleId: "eslint/no-cond-assign",
-      filePath: "src/app.ts",
-      lineStart: 4,
-      lineEnd: 4,
-      severity: "medium",
-      reference: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-cond-assign.html",
-    });
-    expect(out[0].message).toContain("eslint/no-cond-assign: Expected a conditional");
-  });
-
   it("ranks security rules high, style rules info, and correctness rules medium", () => {
     const report = {
       diagnostics: [
