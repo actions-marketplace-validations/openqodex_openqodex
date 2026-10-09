@@ -10,7 +10,10 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
+import { parseConfig } from "@openqodex/core";
+import type { BuiltinScanner } from "@openqodex/core";
+import { runScanners } from "@openqodex/scanners";
+import { installedOnly, resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
 import type { Case } from "./subprocess-support.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -76,6 +79,19 @@ const cases: Case[] = [
   { scanner: "kubeconform", rule: "type", files: { "k8s/web.yaml": STRING_REPLICAS }, anchor: "k8s/web.yaml", network: true },
 ];
 
+// The planted files, with only the `changed` lines of each counted as
+// changed, as a change to an existing manifest has them.
+async function scanChanged(scanner: BuiltinScanner, files: Record<string, string>, changed: Record<string, number[]>) {
+  const repo = mkdtempSync(join(tmpdir(), `oq-kube-changed-${scanner}-`));
+  for (const [name, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(repo, name)), { recursive: true });
+    writeFileSync(join(repo, name), body);
+  }
+  const paths = Object.keys(files);
+  const coverage = new Map(paths.map((p) => [p, new Set(changed[p] ?? [])]));
+  return runScanners({ repoDir: repo, changedPaths: paths, coverage, config: parseConfig("").config, resolveTool: installedOnly(), only: [scanner] });
+}
+
 let ran = 0;
 let skipped = 0;
 afterAll(() => {
@@ -105,6 +121,18 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
       expect(status.status).toBe("ran");
       expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: spec.scanner, ruleId: spec.rule, filePath: spec.anchor }));
     }, 300_000);
+
+  // Two objects of one kind and name in one file, apart by namespace: an
+  // error in the second is anchored in the second, not on the first's field.
+  it("kubeconform anchors an error to its own document when two share a kind and a name", async () => {
+    if (offline()) return;
+    const api = (ns: string, replicas: string) => STRING_REPLICAS.replace("  name: web\n", `  name: api\n  namespace: ${ns}\n`).replace('replicas: "2"', `replicas: ${replicas}`);
+    const text = `${api("blue", "1")}---\n${api("green", '"2"')}`;
+    const line = text.split("\n").findIndex((l, k) => k > 10 && l.includes('replicas: "2"')) + 1;
+    const result = await scanChanged("kubeconform", { "k8s/api.yaml": text }, { "k8s/api.yaml": [line] });
+    expect(result.scan.scanners[0]!.status, result.scan.scanners[0]!.reason ?? "").toBe("ran");
+    expect(result.scan.candidates.filter((c) => c.source === "kubeconform").map((c) => [c.ruleId, c.lineStart])).toEqual([["type", line]]);
+  }, 300_000);
 
   // kube-linter runs only on the changed files, so a check that needs the
   // object a Service selects, kept in another file, would report every

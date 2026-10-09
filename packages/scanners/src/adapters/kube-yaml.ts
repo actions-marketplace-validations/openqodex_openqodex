@@ -21,6 +21,9 @@ import { isMap, isScalar, isSeq, parseAllDocuments } from "yaml";
 export type KubeDoc = {
   // First line of the object, 1-based.
   first: number;
+  // The document's text in its file, `---` marker included: [from, to).
+  from: number;
+  to: number;
   kind: string | null;
   name: string | null;
   namespace: string | null;
@@ -74,7 +77,8 @@ export function kubeDocuments(source: string): KubeDoc[] {
     const at = startOf(root);
     // An empty document (after a closing `---`) holds a null scalar.
     if (root === null || at === null || (isScalar(root) && root.value === null)) continue;
-    const kube: KubeDoc = { first: lineAt(at), kind: null, name: null, namespace: null, root, lineAt };
+    const range = (doc as { range?: [number, number, number] }).range;
+    const kube: KubeDoc = { first: lineAt(at), from: range ? range[0] : at, to: range ? range[2] : source.length, kind: null, name: null, namespace: null, root, lineAt };
     kube.kind = text(field(kube, rootPlace(kube), "kind")?.node);
     const metadata = field(kube, rootPlace(kube), "metadata");
     if (metadata) {

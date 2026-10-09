@@ -26,9 +26,15 @@
 // kubeconform reports an object and a field path, never a line, and keeps
 // all but the first level of an object's errors in its message text. Each
 // error is read from that text and anchored to the line of its field
-// (kube-yaml.ts). All errors are captured into the result; the runner never
-// throws on a scanner failure.
+// (kube-yaml.ts). It names an object by kind and name only, so two objects
+// of one kind and name in one file (apart by namespace) would be told apart
+// by nothing: each document is handed to it as a file of its own, in a
+// temporary folder outside the repository, and an error is anchored in the
+// document it came from. All errors are captured into the result; the runner
+// never throws on a scanner failure.
 
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { homeGuard } from "@openqodex/core";
 import type { AdapterResult, ResolvedTool, ScannerSeverity, StaticFinding } from "@openqodex/core";
@@ -116,12 +122,26 @@ export async function runKubeconform(args: {
   const pin = schemaPin();
   if (typeof pin === "string") return { findings: [], error: pin };
   const texts = await readManifests(args.repoDir, files);
+  const stage = await fs.mkdtemp(path.join(os.tmpdir(), "openqodex-kubeconform-"));
   try {
+    // One file per document, named by number; a file whose documents cannot
+    // be told apart is handed whole.
+    const staged = new Map<string, Staged>();
+    for (const rel of files) {
+      const text = texts.get(path.normalize(rel));
+      if (text === undefined) continue;
+      const docs = kubeDocuments(text);
+      for (const part of docs.length > 0 ? docs.map((doc) => ({ doc, body: text.slice(doc.from, doc.to) })) : [{ doc: null, body: text }]) {
+        const name = `${String(staged.size + 1).padStart(6, "0")}.yaml`;
+        await fs.writeFile(path.join(stage, name), part.body);
+        staged.set(name, { rel: path.normalize(rel), text, doc: part.doc });
+      }
+    }
     const cacheDir = cacheFolder(pin);
     const notes: string[] = [];
-    const findings = await runInChunks("kubeconform", safeFileArgs(files), KUBECONFORM_TIMEOUT_MS, async (chunk, left) => {
+    const findings = await runInChunks("kubeconform", [...staged.keys()], KUBECONFORM_TIMEOUT_MS, async (chunk, left) => {
       const run = await execTool(tool.path, kubeconformArgs(pin, cacheDir, chunk), {
-        cwd: args.repoDir,
+        cwd: stage,
         timeoutMs: left,
         maxBytes: KUBECONFORM_OUTPUT_MAX_BYTES,
         env: tool.env,
@@ -133,7 +153,7 @@ export async function runKubeconform(args: {
       if (!run.stdout.trim()) throw new Error(`kubeconform exit ${run.exitCode}: ${stderrTail(run)}`);
       let parsed: ReturnType<typeof parseKubeconformJson>;
       try {
-        parsed = parseKubeconformJson(run.stdout, { text: (rel) => texts.get(rel) ?? null });
+        parsed = parseKubeconformJson(run.stdout, { text: (rel) => texts.get(rel) ?? null, staged: (name) => staged.get(name) ?? null });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new Error(`parse: exit ${run.exitCode}, ${message.slice(0, 200)}`);
@@ -145,8 +165,15 @@ export async function runKubeconform(args: {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true }).catch(() => undefined);
   }
 }
+
+// A document handed to kubeconform as a file of its own: its file in the
+// repository, that file's text, and the document (null for a file handed
+// whole).
+type Staged = { rel: string; text: string; doc: KubeDoc | null };
 
 export const kubeconform: Adapter = {
   source: "kubeconform",
@@ -196,9 +223,11 @@ function ruleFor(text: string): { rule: string; severity: ScannerSeverity } {
   return { rule: "schema", severity: "medium" };
 }
 
+// `staged`: the document a file name kubeconform reports stands for, when
+// each document was handed as a file of its own.
 export function parseKubeconformJson(
   json: string,
-  opts: { text: (rel: string) => string | null },
+  opts: { text: (rel: string) => string | null; staged?: (name: string) => Staged | null },
 ): { findings: StaticFinding[]; failed: string | null } {
   const findings: StaticFinding[] = [];
   let failed: string | null = null;
@@ -215,7 +244,8 @@ export function parseKubeconformJson(
   };
   for (const raw of parsed.resources as KubeconformResource[]) {
     if (!raw || typeof raw !== "object") continue;
-    const rel = path.normalize(str(raw.filename));
+    const stagedAs = opts.staged?.(str(raw.filename)) ?? null;
+    const rel = stagedAs?.rel ?? path.normalize(str(raw.filename));
     const status = str(raw.status);
     const msg = str(raw.msg);
     if (!rel || rel === ".") continue;
@@ -224,16 +254,17 @@ export function parseKubeconformJson(
         failed ??= msg;
         continue;
       }
-      // Not YAML, or a document with no kind or apiVersion: kubeconform
-      // cannot say which document, so the finding spans the file.
-      const file = fileOf(rel);
-      const last = file === null ? 1 : Math.max(1, file.text.split("\n").length - (file.text.endsWith("\n") ? 1 : 0));
+      // Not YAML, or a document with no kind or apiVersion: the finding
+      // spans the document handed alone, else the file.
+      const file = stagedAs ?? fileOf(rel);
+      const whole = file === null ? 1 : Math.max(1, file.text.split("\n").length - (file.text.endsWith("\n") ? 1 : 0));
+      const own = stagedAs?.doc ?? null;
       findings.push({
         source: "kubeconform",
         ruleId: "invalid-yaml",
         filePath: rel,
-        lineStart: 1,
-        lineEnd: last,
+        lineStart: own === null ? 1 : own.lineAt(own.from),
+        lineEnd: own === null ? whole : Math.max(own.lineAt(own.from), own.lineAt(Math.max(own.from, own.to - 1))),
         severity: "high",
         message: trimMessage(`This file does not read as Kubernetes objects: ${msg}`),
         reference: "https://github.com/yannh/kubeconform",
@@ -243,8 +274,8 @@ export function parseKubeconformJson(
     if (status !== "statusInvalid") continue;
     const kind = str(raw.kind);
     const name = str(raw.name);
-    const file = fileOf(rel);
-    const doc = file === null ? null : findDocument(file.docs, { kind, name, namespace: "" });
+    const file = stagedAs === null ? fileOf(rel) : null;
+    const doc = stagedAs !== null ? stagedAs.doc : file === null ? null : findDocument(file.docs, { kind, name, namespace: "" });
     let leaves = leafErrors(msg);
     if (leaves.length === 0 && Array.isArray(raw.validationErrors)) {
       leaves = (raw.validationErrors as { path?: unknown; msg?: unknown }[])
