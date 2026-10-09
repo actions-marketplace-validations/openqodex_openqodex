@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getAdmittedTreeChange, getTreeChange } from "../src/change.js";
 import { matchesGlob } from "../src/glob.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
@@ -93,10 +93,16 @@ describe("the change over the admitted paths", () => {
     const listing = (dir: string): string[] =>
       readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => `${join(e.parentPath, e.name)} ${createHash("sha256").update(readFileSync(join(e.parentPath, e.name))).digest("hex")}`).sort();
     const before = listing(join(r.dir, ".git"));
-    const temps = readdirSync(tmpdir()).filter((n) => n.startsWith("openqodex-scope-"));
-    await getAdmittedTreeChange({ repoRoot: r.dir, baseRef: "main", baseSha: r.base, headSha: r.head, exclude: [], admit: scoped([]) });
-    expect(listing(join(r.dir, ".git"))).toEqual(before);
-    expect(readdirSync(tmpdir()).filter((n) => n.startsWith("openqodex-scope-"))).toEqual(temps);
+    // A temp folder of this test's own: other test files running at the
+    // same time make and remove their own openqodex-scope- folders.
+    vi.stubEnv("TMPDIR", tempDir("oq-admitted-tmp-"));
+    try {
+      await getAdmittedTreeChange({ repoRoot: r.dir, baseRef: "main", baseSha: r.base, headSha: r.head, exclude: [], admit: scoped([]) });
+      expect(listing(join(r.dir, ".git"))).toEqual(before);
+      expect(readdirSync(tmpdir())).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("3. a commit holding a path no checkout may write is refused, never quietly dropped", async () => {
