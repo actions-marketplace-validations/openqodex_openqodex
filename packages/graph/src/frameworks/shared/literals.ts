@@ -80,13 +80,14 @@ export function nameText(s: string): string | null {
 // The pieces of a concatenation in a place a plugin reads a path: the first
 // literal in the form `first` gives (null drops the whole concatenation),
 // later literals as written, and the pieces up to a query string or a
-// fragment and no further. `use` hears of each name a piece reads, and
-// whether it is the first piece, so its constant can be kept.
-export function keepParts<P extends { s: string } | { ref: string[] }>(parts: readonly P[], first: (s: string) => string | null, use: (ref: string[], first: boolean) => void): P[] | null {
+// fragment and no further. `use` hears of each name a piece reads, with
+// the first piece that leads it (null for the first piece itself), so its
+// constant can be kept in the form that place reads (`ledForm`).
+export function keepParts<P extends { s: string } | { ref: string[] }>(parts: readonly P[], first: (s: string) => string | null, use: (ref: string[], lead: P | null) => void): P[] | null {
   const out: P[] = [];
   for (const [i, p] of parts.entries()) {
     if (!("s" in p)) {
-      use(p.ref, i === 0);
+      use(p.ref, i === 0 ? null : (parts[0] as P));
       out.push(p);
       continue;
     }
@@ -98,4 +99,21 @@ export function keepParts<P extends { s: string } | { ref: string[] }>(parts: re
     if (cut !== p.s || (urlParts(p.s) !== null && (p.s.includes("?") || p.s.includes("#")))) break;
   }
   return out;
+}
+
+// A later piece of a path, such as the `v1` of `/${VERSION}/users`: any
+// text before a query string, but no absolute URL.
+export function segmentText(s: string): string | null {
+  return urlParts(s) === null ? cutQuery(s) : null;
+}
+
+// The form a constant read as a later piece of a concatenation is kept in.
+// After a literal path, or a name whose constant is a path, it is a piece of
+// that path: a segment. After an absolute URL, or a name whose constant is
+// one, the concatenation is an address of another host, and a piece of it
+// is kept only as a path, so a key written into such an address
+// (`"https://api.example.com/bot" + TOKEN`) is not kept.
+export function ledForm(lead: { s: string } | { ref: string[] }, constant: (name: string) => string | null): "segment" | "path" {
+  const text = "s" in lead ? lead.s : lead.ref.length === 1 ? constant(lead.ref[0] as string) : null;
+  return text !== null && urlParts(text) === null && pathText(text) !== null ? "segment" : "path";
 }

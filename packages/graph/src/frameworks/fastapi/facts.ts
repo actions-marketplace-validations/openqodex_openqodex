@@ -11,8 +11,8 @@
 // can prove.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
-import { keepParts, methodText, nameText, pathText } from "../shared/literals.js";
-import type { Expr, Kw, Scope } from "./py.js";
+import { keepParts, ledForm, methodText, nameText, pathText, segmentText } from "../shared/literals.js";
+import type { Expr, Kw, Part, Scope } from "./py.js";
 import { isExpr, isKws, MAX_ARGS, namePath, pos, readExpr, show, walkScoped } from "./py.js";
 
 // The most bytes of one file the plugin reads; a larger file gets one
@@ -339,7 +339,7 @@ export function readFacts(root: Node): FastApiFact[] {
 // request's method and target, and a module constant one of those names.
 // Every other literal, in any argument, keyword, decorator or value, is
 // kept as `other`.
-type Form = "path" | "target" | "method" | "name";
+type Form = "path" | "target" | "method" | "name" | "segment";
 
 const unread = (e: Expr): Expr => ({ t: "other", line: e.line, column: e.column });
 
@@ -348,11 +348,13 @@ const unread = (e: Expr): Expr => ({ t: "other", line: e.line, column: e.column 
 function targetText(s: string): string | null {
   return pathText(s) ?? `/${s.split("#")[0]?.split("?")[0] ?? ""}`;
 }
-const FORMS: Record<Form, (s: string) => string | null> = { path: pathText, target: targetText, method: methodText, name: nameText };
+const FORMS: Record<Form, (s: string) => string | null> = { path: pathText, target: targetText, method: methodText, name: nameText, segment: segmentText };
 
 function keepRead(facts: FastApiFact[]): FastApiFact[] {
   const used = new Map<string, Set<Form>>();
   const use = (name: string, form: Form) => (used.get(name) ?? used.set(name, new Set()).get(name))?.add(form);
+  // Names read as a later piece of a concatenation, with the piece that leads them.
+  const led: { name: string; lead: Part }[] = [];
   // An expression read only for its names and calls: no literal in it.
   const names = (e: Expr): Expr => {
     switch (e.t) {
@@ -377,8 +379,10 @@ function keepRead(facts: FastApiFact[]): FastApiFact[] {
       }
       case "dyn": {
         if (!e.parts || form === "method" || form === "name") return unread(e);
-        const parts = keepParts(e.parts, FORMS[form], (ref) => {
-          if (ref.length === 1) use(ref[0] as string, form === "target" ? "path" : form);
+        const parts = keepParts(e.parts, FORMS[form], (ref, lead) => {
+          if (ref.length !== 1) return;
+          if (lead === null) use(ref[0] as string, form === "target" ? "path" : form);
+          else led.push({ name: ref[0] as string, lead });
         });
         return parts === null ? unread(e) : { ...e, parts };
       }
@@ -414,6 +418,17 @@ function keepRead(facts: FastApiFact[]): FastApiFact[] {
         return f;
     }
   });
+  // A module constant as resolve reads one: every module-level assignment gives the same string.
+  const constant = (name: string): string | null => {
+    let v: string | null = null;
+    for (const f of facts) {
+      if (f.kind !== "value" || f.name !== name || f.scope !== 0) continue;
+      if (f.value.t !== "str" || (v !== null && v !== f.value.v)) return null;
+      v = f.value.v;
+    }
+    return v;
+  };
+  for (const l of led) use(l.name, ledForm(l.lead, constant));
   // A constant is kept, in the form a use reads it in, only when some use reads it.
   return out.map((f) => {
     if (f.kind !== "value" || f.value.t !== "str") return f;

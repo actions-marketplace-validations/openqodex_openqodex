@@ -32,6 +32,8 @@ billing = Billing("${S}", region="eu")
 TOKEN = os.environ.get("TOKEN", "${S}")
 PREFIX = "/items"
 URL = "https://user:${S}@api.example.com/items?key=${S}"
+VERSION = "v1"
+BOT_TOKEN = "${S}"
 
 
 @app.get(PREFIX, summary="${S}")
@@ -45,8 +47,14 @@ def guarded():
     return 1
 
 
+@app.get("/" + VERSION + "/users")
+def users():
+    return []
+
+
 def notify():
     requests.post("https://hooks.example.com/x?key=${S}", headers={"Authorization": "${S}"})
+    requests.get("https://api.telegram.org/bot" + BOT_TOKEN + "/getMe")
 
 
 def test_items():
@@ -58,7 +66,11 @@ def test_items():
 const API_KEY = "${S}";
 const stripe = new Stripe("${S}");
 const PATH = "/x";
+const VERSION = "v1";
+const BOT_TOKEN = "${S}";
 const app = express();
+app.get(\`/\${VERSION}/users\`, (req, res) => res.end());
+axios.get("https://api.telegram.org/bot" + BOT_TOKEN + "/getMe");
 app.use(basicAuth({ users: { admin: "${S}" } }));
 app.get(PATH, (req, res) => res.send("${S}"));
 axios.get("https://user:${S}@api.example.com/v1?key=${S}", { headers: { Authorization: "${S}" } });
@@ -78,6 +90,8 @@ import "net/http"
 
 const apiKey = "${S}"
 const path = "/x"
+const version = "v1"
+const botToken = "${S}"
 
 var token = "${S}"
 
@@ -86,6 +100,9 @@ func h(w http.ResponseWriter, r *http.Request) {}
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, h)
+	mux.HandleFunc("/"+version+"/users", h)
+	bot, _ := http.NewRequest("GET", "https://api.telegram.org/bot"+botToken+"/getMe", nil)
+	_ = bot
 	mux.Handle("/y", auth("${S}", http.HandlerFunc(h)))
 	req, _ := http.NewRequest("GET", "https://user:${S}@api.example.com/v1?key=${S}", nil)
 	_ = req
@@ -155,14 +172,14 @@ describe("the framework plugins on a repository with a secret written in many pl
     expect(leaks).toEqual([]);
   });
 
-  it("still builds each route from the constant its path names", () => {
+  it("still builds each route from the constants its path names, a later piece such as a version included", () => {
     const patterns = (plugin: string) =>
       (graph.frameworks?.entities ?? [])
         .filter((e): e is Registration => e.kind === "registration" && e.plugin === plugin)
         .map((r) => r.pattern)
         .sort();
-    expect(patterns("fastapi")).toEqual(["/guarded", "/items"]);
-    expect(patterns("express")).toEqual(["/x"]);
-    expect(patterns("go-http")).toEqual(["/x", "/y"]);
+    expect(patterns("fastapi")).toEqual(["/guarded", "/items", "/v1/users"]);
+    expect(patterns("express")).toEqual(["/v1/users", "/x"]);
+    expect(patterns("go-http")).toEqual(["/v1/users", "/x", "/y"]);
   });
 });
