@@ -214,7 +214,23 @@ describe("checkov", () => {
     expect(other.status.status).toBe("ran");
     expect(rules(other.result, "checkov").filter(([rule]) => rule === "CKV_AWS_24")).toEqual([]);
     const cidr = await scanLines("checkov", { "main.tf": SG }, { "main.tf": [10] });
-    expect(rules(cidr.result, "checkov")).toContainEqual(["CKV_AWS_24", "main.tf", 7, 10]);
+    // Checkov evaluated from_port, to_port and cidr_blocks; the span runs
+    // over the ones the change touched.
+    expect(rules(cidr.result, "checkov")).toContainEqual(["CKV_AWS_24", "main.tf", 10, 10]);
+    const whole = await scanLines("checkov", { "main.tf": SG });
+    expect(rules(whole.result, "checkov")).toContainEqual(["CKV_AWS_24", "main.tf", 7, 10]);
+  }, 300_000);
+
+  // The attributes Checkov evaluated are separate ranges: a change to an
+  // attribute between two of them (a description) is not a change to what
+  // it evaluated, and must not bring the finding back.
+  it("keeps a finding only for a change to an attribute it evaluated, not one between them", async () => {
+    const between = 'resource "aws_security_group" "web" {\n  name = "web"\n\n  ingress {\n    from_port   = 22\n    to_port     = 22\n    description = "ssh for the on-call team"\n    protocol    = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\n';
+    const description = await scanLines("checkov", { "main.tf": between }, { "main.tf": [7] });
+    expect(description.status.status).toBe("ran");
+    expect(rules(description.result, "checkov").filter(([rule]) => rule === "CKV_AWS_24")).toEqual([]);
+    const cidr = await scanLines("checkov", { "main.tf": between }, { "main.tf": [9] });
+    expect(rules(cidr.result, "checkov").map(([rule]) => rule)).toContain("CKV_AWS_24");
   }, 300_000);
 
   it("anchors a Kubernetes finding to the key it names", async () => {

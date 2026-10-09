@@ -906,8 +906,11 @@ function yamlRoot(docs: YamlNode[], line: number): YamlNode | null {
 
 export type FileIndex = {
   // The lines a finding on the resource [start, end] is anchored to, from the
-  // key paths the scanner says it evaluated.
+  // key paths the scanner says it evaluated: one span over them all.
   anchor(start: number, end: number, keys: string[]): [number, number];
+  // The same, one range per key path found, in file order, so a line between
+  // two of them (an attribute the scanner did not evaluate) is in none.
+  anchorRanges(start: number, end: number, keys: string[]): [number, number][];
   // The lines a cause [start, end] is anchored to: its first line when it is
   // a whole block.
   blockCause(start: number, end: number): [number, number];
@@ -919,8 +922,7 @@ export function indexFile(text: string, file: string): FileIndex {
   let yaml: YamlNode[] | null = null;
   const hclNodes = () => (hcl ??= hclStructure(text));
   const yamlNodes = () => (yaml ??= yamlDocuments(text));
-  return {
-    anchor(start, end, keys) {
+  const ranges = (start: number, end: number, keys: string[]): [number, number][] => {
       const walks: { done: boolean; steps: Step[] }[] = [];
       if (format === "hcl") {
         const root = hclNodes().find((n) => n.kind === "block" && n.line === start);
@@ -930,7 +932,7 @@ export function indexFile(text: string, file: string): FileIndex {
         if (root) for (const key of keys) walks.push(walkYaml(root, key.split("/")));
       }
       const done = walks.filter((w) => w.done && w.steps.length > 0).map((w) => w.steps[w.steps.length - 1] as Step);
-      if (done.length > 0) return [Math.min(...done.map((s) => s.line)), Math.max(...done.map((s) => s.endLine))];
+      if (done.length > 0) return done.map((s): [number, number] => [s.line, s.endLine]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
       // Nothing named exists: the first line of the deepest node on a path
       // that does, else the resource's own first line.
       let best: Step | null = null;
@@ -942,7 +944,13 @@ export function indexFile(text: string, file: string): FileIndex {
           depth = w.steps.length;
         }
       }
-      return best ? [best.line, best.line] : [start, start];
+      return best ? [[best.line, best.line]] : [[start, start]];
+  };
+  return {
+    anchorRanges: ranges,
+    anchor(start, end, keys) {
+      const found = ranges(start, end, keys);
+      return [Math.min(...found.map((r) => r[0])), Math.max(...found.map((r) => r[1]))];
     },
     blockCause(start, end) {
       if (end <= start) return [start, start];

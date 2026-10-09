@@ -27,7 +27,7 @@
 // scanner failure: static analysis is additive context, not a gate.
 
 import path from "node:path";
-import type { AdapterResult, ResolvedTool, StaticFinding } from "@openqodex/core";
+import type { AdapterResult, DiffCoverage, ResolvedTool, StaticFinding } from "@openqodex/core";
 import { describeFailure, execTool, stderrTail } from "../exec.js";
 import type { RepoFacts } from "../detect.js";
 import type { Adapter } from "./index.js";
@@ -44,6 +44,7 @@ export async function runCheckov(args: {
   changedPaths: string[];
   tool: ResolvedTool | null;
   facts: RepoFacts;
+  coverage?: DiffCoverage;
 }): Promise<AdapterResult> {
   const files = checkovFiles(args.changedPaths, args.facts);
   if (files.length === 0) return { findings: [], error: null };
@@ -102,7 +103,7 @@ export async function runCheckov(args: {
       } catch (err) {
         throw new Error(`parse: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
       }
-      return { findings: await anchorKeys(args.repoDir, raw), error: null, note: heldNote };
+      return { findings: await anchorKeys(args.repoDir, raw, args.coverage), error: null, note: heldNote };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -113,7 +114,12 @@ export async function runCheckov(args: {
 // A finding on the resource's lines, with the keys checkov evaluated.
 export type CheckovFinding = StaticFinding & { keys: string[] };
 
-async function anchorKeys(repoDir: string, findings: CheckovFinding[]): Promise<StaticFinding[]> {
+// Each finding on the attributes checkov evaluated, one range each. With the
+// changed lines known, the span runs over the ranges a changed line touches,
+// so a change to a line between two of them (an attribute checkov did not
+// evaluate) keeps no finding; with none touched it is the first range, which
+// the changed-line filter then drops. A whole-repository scan spans them all.
+async function anchorKeys(repoDir: string, findings: CheckovFinding[], coverage?: DiffCoverage): Promise<StaticFinding[]> {
   const texts = fileTexts(repoDir);
   const indexes = new Map<string, ReturnType<typeof indexFile> | null>();
   const out: StaticFinding[] = [];
@@ -123,8 +129,14 @@ async function anchorKeys(repoDir: string, findings: CheckovFinding[]): Promise<
       indexes.set(f.filePath, text === null ? null : indexFile(text, f.filePath));
     }
     const index = indexes.get(f.filePath);
-    const [lineStart, lineEnd] = index ? index.anchor(f.lineStart, f.lineEnd, keys) : [f.lineStart, f.lineStart];
-    out.push({ ...f, lineStart, lineEnd });
+    const ranges = index ? index.anchorRanges(f.lineStart, f.lineEnd, keys) : [[f.lineStart, f.lineStart] as [number, number]];
+    const changed = coverage?.get(f.filePath);
+    let chosen = ranges;
+    if (coverage !== undefined) {
+      const touched = ranges.filter(([from, to]) => [...(changed ?? [])].some((line) => from <= line && line <= to));
+      chosen = touched.length > 0 ? touched : ranges.slice(0, 1);
+    }
+    out.push({ ...f, lineStart: Math.min(...chosen.map((r) => r[0])), lineEnd: Math.max(...chosen.map((r) => r[1])) });
   }
   return out;
 }
