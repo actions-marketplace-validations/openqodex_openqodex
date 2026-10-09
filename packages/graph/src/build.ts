@@ -402,7 +402,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     }
     const unknowns: UnknownSite[] = [...resolved.unknowns];
     for (const file of resolved.budgetFiles) {
-      unknowns.push({ file, line: 0, column: 0, name: "", cause: "budget", shape: "other", caller: file, scope: "file", note: "the budget ran out before the calls of this file were resolved" });
+      unknowns.push({ file, line: 0, column: 0, name: "", cause: "budget", shape: "other", caller: file, scope: "file", note: "the budget ran out before every call of this file was resolved" });
     }
     const unknownNames = new Map<string, number>();
     const valueCalls = new Map<string, number>();

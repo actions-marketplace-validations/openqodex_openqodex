@@ -1094,24 +1094,42 @@ export function createWorld(input: ResolveInput): World {
   const shortKey = (key: string) => key.slice(key.lastIndexOf("::") + 2) || key;
   const stepped = (base: Ev, hit: Lookup): Lookup => (hit && "ids" in hit ? { ids: hit.ids, ev: throughBase(base, hit.ev) } : hit);
 
-  function methodOn(key: string, name: string, side: Side, depth: number): Lookup {
+  // A lookup's answer depends only on the class, the member and the side,
+  // so each is made once.
+  const lookupMemo = { s: new Map<string, Map<string, Lookup>>(), i: new Map<string, Map<string, Lookup>>() };
+  function methodOn(key: string, name: string, side: Side, _depth = 0): Lookup {
+    let perKey = lookupMemo[side].get(key);
+    if (!perKey) lookupMemo[side].set(key, (perKey = new Map()));
+    const kept = perKey.get(name);
+    if (kept !== undefined) return kept;
     const family = classes.get(key)?.family;
-    if (family === "python") return pyLookup(key, name, side);
-    if (family === "go") return goLookup(key, name, side);
-    if (family === "ruby") return rbLookup(key, name, side, depth);
-    return firstWins(key, name, side, depth);
+    const out = family === "python" ? pyLookup(key, name, side) : family === "go" ? goLookup(key, name, side) : family === "ruby" ? rbLookup(key, name, side, 0, new Set()) : firstWins(key, name, side);
+    perKey.set(name, out);
+    return out;
   }
 
   // TypeScript and JavaScript: the class, then its superclass chain, then
-  // the interfaces it implements, in the order written, depth first.
-  function firstWins(key: string, name: string, side: Side, depth: number): Lookup {
-    if (depth > MAX_DEPTH) return null;
+  // the interfaces it implements, in the order written, depth first. Each
+  // class is visited once: one met again by another path holds nothing
+  // new, so interfaces that each extend many others cost their number, not
+  // the number of paths through them.
+  function firstWins(key: string, name: string, side: Side): Lookup {
     const own = ownMethods(key, name, side);
     if (own) return { ids: own, ev: null };
-    const b = basesOf(key);
-    for (let i = 0; i < b.keys.length; i++) {
-      const hit = firstWins(b.keys[i] as string, name, side, depth + 1);
-      if (hit) return stepped(b.evs[i] as Ev, hit);
+    const seen = new Set([key]);
+    const stack: { key: string; ev: Ev }[] = [];
+    const pushBases = (k: string, ev: Ev | null) => {
+      const b = basesOf(k);
+      for (let i = b.keys.length - 1; i >= 0; i--) stack.push({ key: b.keys[i] as string, ev: ev ? chain(ev, b.evs[i] as Ev) : (b.evs[i] as Ev) });
+    };
+    pushBases(key, null);
+    while (stack.length > 0) {
+      const top = stack.pop() as { key: string; ev: Ev };
+      if (seen.has(top.key)) continue;
+      seen.add(top.key);
+      const found = ownMethods(top.key, name, side);
+      if (found) return { ids: found, ev: top.ev };
+      pushBases(top.key, top.ev);
     }
     return null;
   }
@@ -1205,13 +1223,16 @@ export function createWorld(input: ResolveInput): World {
   // first), the class, the included modules (the last included first),
   // then the superclass; on the class, its own class methods, the modules
   // it extends (the last first), then the superclass's class methods.
-  function rbLookup(key: string, name: string, side: Side, depth: number): Lookup {
-    if (depth > MAX_DEPTH) return null;
+  // `seen`: the modules and classes this lookup has entered, each entered once.
+  function rbLookup(key: string, name: string, side: Side, depth: number, seen: Set<string>): Lookup {
+    const entry = `${side} ${key}`;
+    if (depth > MAX_DEPTH || seen.has(entry)) return null;
+    seen.add(entry);
     const b = basesOf(key);
     const by = (rel: TypeRef["rel"]) => b.keys.map((_, i) => i).filter((i) => b.rels[i] === rel);
     const through = (indices: number[], at: Side): Lookup => {
       for (const i of indices) {
-        const hit = rbLookup(b.keys[i] as string, name, at, depth + 1);
+        const hit = rbLookup(b.keys[i] as string, name, at, depth + 1, seen);
         if (hit) return stepped(b.evs[i] as Ev, hit);
       }
       return null;
@@ -1235,11 +1256,27 @@ export function createWorld(input: ResolveInput): World {
     return through(by("extend").reverse(), "i") ?? through(by(undefined), "s");
   }
 
-  // Whether any class in the base chain of `key` is outside the graph.
-  const outsideBase = (key: string, depth = 0): boolean => {
-    if (depth > MAX_DEPTH) return true;
-    const b = basesOf(key);
-    return b.outside || b.keys.some((k, i) => b.rels[i] !== "implements" && outsideBase(k, depth + 1));
+  // Whether any class in the base chain of `key` is outside the graph,
+  // each class looked at once.
+  const outsideMemo = new Map<string, boolean>();
+  const outsideBase = (key: string): boolean => {
+    const kept = outsideMemo.get(key);
+    if (kept !== undefined) return kept;
+    let out = false;
+    const seen = new Set<string>();
+    const stack = [key];
+    while (stack.length > 0 && !out) {
+      const k = stack.pop() as string;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const b = basesOf(k);
+      if (b.outside) out = true;
+      b.keys.forEach((base, i) => {
+        if (b.rels[i] !== "implements") stack.push(base);
+      });
+    }
+    outsideMemo.set(key, out);
+    return out;
   };
 
   // ---------- implementers: subclasses, implementers and method sets ----------
@@ -1409,6 +1446,7 @@ export function createWorld(input: ResolveInput): World {
     const seen = new Set<string>([key]);
     const queue = childrenOf(key, args, argFile);
     for (let i = 0; i < queue.length && seen.size < 100_000; i++) {
+      if (i % 1024 === 1023) checkBudget();
       const k = queue[i] as string;
       if (seen.has(k)) continue;
       seen.add(k);
@@ -1425,14 +1463,16 @@ export function createWorld(input: ResolveInput): World {
     return out;
   };
 
-  const fieldKey = (key: string, field: string, depth = 0): TypeHit => {
-    if (depth > MAX_DEPTH) return null;
+  // `seen`: the classes this lookup has entered, each entered once.
+  const fieldKey = (key: string, field: string, depth = 0, seen = new Set<string>()): TypeHit => {
+    if (depth > MAX_DEPTH || seen.has(key)) return null;
+    seen.add(key);
     const info = classes.get(key);
     const t = info?.fields.get(field);
     if (info && t) return typeKey(info.file, info.family, t);
     const b = basesOf(key);
     for (let i = 0; i < b.keys.length; i++) {
-      const hit = fieldKey(b.keys[i] as string, field, depth + 1);
+      const hit = fieldKey(b.keys[i] as string, field, depth + 1, seen);
       if (hit === "ext") return hit;
       if (hit) return { key: hit.key, ev: throughBase(b.evs[i] as Ev, hit.ev) };
     }
@@ -1672,6 +1712,15 @@ export function createWorld(input: ResolveInput): World {
     return [...out];
   };
 
+  // The build's time budget, checked inside a file as well as between
+  // files: one file can hold enough work to run far past it. When it runs
+  // out, the file being resolved stops where it is and is listed with the
+  // files whose calls were not resolved.
+  class BudgetStop extends Error {}
+  const checkBudget = () => {
+    if (input.stop?.()) throw new BudgetStop("budget");
+  };
+
   // ---------- the world ----------
   const resolveAll = (): Resolved => {
     // One edge per (from, to, kind), found by the ids themselves: building
@@ -1731,6 +1780,15 @@ export function createWorld(input: ResolveInput): World {
         budgetFiles.push(path);
         continue;
       }
+      try {
+        resolveFile(path, f);
+      } catch (error) {
+        if (!(error instanceof BudgetStop)) throw error;
+        stopped = true;
+        budgetFiles.push(path);
+      }
+    }
+    function resolveFile(path: string, f: FileFacts): void {
       const family = familyOf(f.lang);
       const defIds = f.defs.map((d) => symbolId(path, d));
       const callerOf = (i: number): string => (i >= 0 ? (defIds[i] as string) : path);
@@ -1740,6 +1798,7 @@ export function createWorld(input: ResolveInput): World {
         if (v.call !== undefined) push(argsOf, v.call, i);
       });
       for (const [ci, call] of f.calls.entries()) {
+        if (ci % 64 === 63) checkBudget();
         const callerId = callerOf(call.caller);
         const caller = call.caller >= 0 ? defById.get(callerId) : undefined;
         const shape: Shape = call.recv.kind === "none" ? "bare" : call.recv.kind === "self" || call.recv.kind === "super" ? "self" : call.recv.kind === "type" ? "typed" : call.recv.kind === "name" ? "name" : "other";
