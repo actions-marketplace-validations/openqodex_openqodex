@@ -57,8 +57,10 @@ export const MAX_TEST_REQUESTS = 2000; // supertest requests matched
 export const MAX_TEST_LINKS = 10_000; // tests edges made from requests
 export const MAX_MATCH_WORK = 4_000_000; // pattern-by-path steps
 export const MAX_UNKNOWNS = 5000; // unknowns kept; past it one more says how many were left out
+export const MAX_APPS = 2000; // applications detected
+export const MAX_ROLES = 20_000; // roles given
 
-type Spend = "facts" | "lookups" | "mounts" | "registrations" | "middlewareEdges" | "requests" | "testLinks" | "matchWork";
+type Spend = "facts" | "lookups" | "mounts" | "registrations" | "middlewareEdges" | "requests" | "testLinks" | "matchWork" | "apps" | "roles";
 const LIMIT: Record<Spend, number> = {
   facts: MAX_FACTS_READ,
   lookups: MAX_LOOKUPS,
@@ -67,6 +69,8 @@ const LIMIT: Record<Spend, number> = {
   middlewareEdges: MAX_MIDDLEWARE_EDGES,
   requests: MAX_TEST_REQUESTS,
   testLinks: MAX_TEST_LINKS,
+  apps: MAX_APPS,
+  roles: MAX_ROLES,
   matchWork: MAX_MATCH_WORK,
 };
 
@@ -139,8 +143,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   const apps: Detection[] = [];
 
   // ---------- the build's budgets ----------
-  const spent: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, testLinks: 0, matchWork: 0 };
-  const refused: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, testLinks: 0, matchWork: 0 };
+  const spent: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, testLinks: 0, matchWork: 0, apps: 0, roles: 0 };
+  const refused: Record<Spend, number> = { facts: 0, lookups: 0, mounts: 0, registrations: 0, middlewareEdges: 0, requests: 0, testLinks: 0, matchWork: 0, apps: 0, roles: 0 };
   const take = (k: Spend, n = 1): boolean => {
     if (spent[k] + n > LIMIT[k]) {
       refused[k] += n;
@@ -567,6 +571,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     const k = `${target}\0${role}`;
     if (roleSeen.has(k)) return;
     roleSeen.add(k);
+    if (!take("roles")) return;
     roles.push({ target, role, detail, app, evidence });
   };
 
@@ -710,6 +715,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
 
   for (const v of vals.values()) {
     if (v.kind !== "app") continue;
+    // Past the build's applications, an application and its routes are left out, and counted.
+    if (!take("apps")) continue;
     const id = v.id;
     compose(id, v, "", [], [], [id], 0);
     const version = index.model().node.find((p) => p.dir === index.projectOf(v.file))?.pkg.deps.get("express") ?? null;
@@ -826,6 +833,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   if (refused.middlewareEdges > 0) cut(["applies_middleware"], "fan-out-capped", refused.middlewareEdges, `${refused.middlewareEdges} middleware edges were left out: the Express plugin keeps at most ${MAX_MIDDLEWARE_EDGES} in one build`);
   if (middlewareOmitted > 0) cut(["applies_middleware"], "fan-out-capped", middlewareOmitted, `${middlewareOmitted} middleware entries past ${MAX_MIDDLEWARE_CHAIN} in one chain were left out`);
   if (refused.testLinks > 0) cut(["tests"], "fan-out-capped", refused.testLinks, `${refused.testLinks} test links were left out: the Express plugin keeps at most ${MAX_TEST_LINKS} in one build`);
+  if (refused.apps > 0) cut(["handles", "mounts", "applies_middleware", "tests"], "fan-out-capped", refused.apps, `${refused.apps} applications and their routes were left out: the Express plugin keeps at most ${MAX_APPS} applications in one build`);
+  if (refused.roles > 0) cut(["handles", "applies_middleware", "tests"], "fan-out-capped", refused.roles, `${refused.roles} roles were left out: the Express plugin gives at most ${MAX_ROLES} roles in one build`);
   if (unmatched > 0) cut(["tests"], "budget", unmatched, `${unmatched} test requests were not matched to routes: the Express plugin matches at most ${MAX_TEST_REQUESTS} requests and ${MAX_MATCH_WORK} pattern steps in one build`);
   if (unknownsLeftOut > 0) unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects: ["handles", "mounts", "applies_middleware", "tests"], cause: "fan-out-capped", name: null, note: `${unknownsLeftOut} more unknowns past the first ${MAX_UNKNOWNS} were left out`, count: unknownsLeftOut, exact: true });
   const entities: Entity[] = registrations;

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildGraph } from "../../index.js";
 import type { FrameworkUnknown, Graph, Registration } from "../../index.js";
+import { MAX_APPS } from "./resolve.js";
 
 const H = 'import { h } from "./h.js";';
 const many = (n: number) => Array.from({ length: n }, () => "h").join(", ");
@@ -85,6 +86,29 @@ describe("the Express plugin on what a review found", () => {
     expect(gap?.cause).toBe("dynamic");
     expect(gap?.name).toBe("auth");
   });
+
+  it("keeps at most the build's applications and says how many were left out, so the stage can always append them", async () => {
+    const many: Record<string, string> = { "package.json": files["package.json"] as string, "src/h.ts": files["src/h.ts"] as string };
+    for (let f = 0; f < 2; f++) many[`src/apps${f}.ts`] = ['import express from "express";', ...Array.from({ length: 1100 }, (_, i) => `export const a${i} = express();`)].join("\n");
+    const at = mkdtempSync(join(tmpdir(), "oq-express-apps-"));
+    try {
+      for (const [path, content] of Object.entries(many)) {
+        mkdirSync(dirname(join(at, path)), { recursive: true });
+        writeFileSync(join(at, path), content);
+      }
+      const run = (...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: at, encoding: "utf8" });
+      run("init", "-q");
+      run("config", "user.email", "test@example.com");
+      run("config", "user.name", "test");
+      run("add", "-A");
+      run("commit", "-q", "-m", "apps");
+      const g = await buildGraph({ repoRoot: at, store: null });
+      expect(g.frameworks?.apps.filter((a) => a.plugin === "express").length).toBe(MAX_APPS);
+      expect(g.frameworks?.unknowns.find((u) => u.plugin === "express" && u.note.includes(`${MAX_APPS} applications`))?.count).toBe(2200 - MAX_APPS);
+    } finally {
+      rmSync(at, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it("says when a test request could not be matched because the route or the request is beyond what the matcher reads", () => {
     const atRequests = gaps("src/long.test.ts").filter((u) => u.affects.includes("tests"));
