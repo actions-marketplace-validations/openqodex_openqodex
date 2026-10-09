@@ -418,4 +418,28 @@ describe("the net/http plugin on small repositories", () => {
     const served = (g.frameworks?.apps ?? []).filter((a) => a.plugin === "go-http" && a.data?.served).map((a) => a.id);
     expect(served).toEqual(["fw:go-http:app:main.go:8"]);
   });
+
+  it("never takes a parameter, a block local or a local named httptest for the standard library", async () => {
+    const g = await graphOf({
+      "main.go": [
+        GO_HEAD,
+        "type fake struct{}\n",
+        "func (fake) HandleFunc(p string, f func(http.ResponseWriter, *http.Request)) {}\n",
+        "func h(w http.ResponseWriter, r *http.Request) {}\n",
+        "func register(http fake) {\n\thttp.HandleFunc(\"/param\", h)\n}\n",
+        "func blocks() {\n\tif true {\n\t\thttp := fake{}\n\t\thttp.HandleFunc(\"/blocked\", h)\n\t}\n\thttp.HandleFunc(\"/after\", h)\n}\n",
+        'func main() {\n\tmux := http.NewServeMux()\n\tmux.HandleFunc("/real", h)\n\thttp.ListenAndServe(":8080", mux)\n}\n',
+      ].join("\n"),
+      "main_test.go": [
+        'package main\n\nimport (\n\t"net/http/httptest"\n\t"testing"\n)\n',
+        "type recorder struct{}\n",
+        "func (recorder) NewRequest(m, p string, b any) {}\n",
+        'func TestShadowed(t *testing.T) {\n\thttptest := recorder{}\n\thttptest.NewRequest("GET", "/real", nil)\n}\n',
+        'func TestReal(t *testing.T) {\n\thttptest.NewRequest("GET", "/real", nil)\n}\n',
+      ].join("\n"),
+    });
+    expect(goRegs(g).map((r) => r.pattern).sort()).toEqual(["/after", "/real"]);
+    const from = (g.frameworks?.edges ?? []).filter((e) => e.plugin === "go-http" && e.kind === "tests" && e.category === "route-request").map((e) => g.nodes.get(e.from)?.name);
+    expect(from).toEqual(["TestReal"]);
+  });
 });
