@@ -22,7 +22,7 @@ import type { Tier } from "../model/records.js";
 import type { Graph, GraphNode, GraphSite, UnknownSite } from "../types.js";
 import { BAD_CURSOR, candidate, counts, empty, fail, graphBlock, isAnswer, listing, OPERATIONS, Point, qualified, stoppedAt } from "./answer.js";
 import type { Answer, Candidate, Extra, Job, Listing, Request, Session } from "./answer.js";
-import { frameworkLayer, routes, tests } from "./frameworks.js";
+import { frameworkLayer, noLayerReason, routes, tests } from "./frameworks.js";
 import { edgeId, readEdgeId } from "./ids.js";
 import { cursorFor, keepJob, keepList, keptJob, keptList, limitOf, pageOf, readCursor } from "./page.js";
 import { Overrides, dynamicBases, implementers, importCycles, impact, methodsNamed, outline, packages, path, references, relationsOf } from "./relations.js";
@@ -43,9 +43,9 @@ function capabilities(s: Session): Record<string, unknown> {
   const layer = frameworkLayer(s.graph);
   const unsupported: Record<string, string> = {};
   if (![...rel].some((k) => ["uses_value", "uses_type", "reads", "writes", "may_invoke", "decorates"].includes(k))) unsupported.references = "uses of a symbol as a value or a type are not resolved";
-  if (!layer) unsupported.routes = "no framework layer: routes and handlers are not read";
+  if (!layer) unsupported.routes = `${noLayerReason(s.graph)}: routes and handlers are not read`;
   if (!rel.has("dispatches_to")) unsupported["implementers of a method"] = "calls through interfaces and base types are not resolved; overrides are found by name from the inheritance";
-  if (!layer) unsupported.tests = "no test runner is read: files named like tests are leads only";
+  if (!layer) unsupported.tests = `${noLayerReason(s.graph)}: files named like tests are leads only`;
   return {
     apiVersion: API_VERSION,
     modelVersion: MODEL_VERSION,

@@ -59,6 +59,7 @@ import type { Change } from "@openqodex/core";
 import { buildGraph, detectImpact } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { OPERATIONS, query } from "../src/query/engine.js";
+import { frameworkLayer } from "../src/query/frameworks.js";
 import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { findCases, matches } from "../corpus/score.js";
 import type { Expected } from "../corpus/score.js";
@@ -167,10 +168,12 @@ describe("every question, against every corpus repository (13)", () => {
         }
       }
       // Every build resolves uses as a value or a type, so references
-      // answers; a build with no framework layer cannot say which route
-      // maps to a symbol (3).
+      // answers; a build where no framework plugin found an application
+      // cannot say which route maps to a symbol, and one where a plugin
+      // did answers from what it found (3).
       expect(ask(b, { kind: "references", target }).error?.code, name).not.toBe("unsupported");
-      expect(ask(b, { kind: "routes", target }).error?.code, name).toBe("unsupported");
+      expect(ask(b, { kind: "routes", target }).error?.code === "unsupported", name).toBe(frameworkLayer(b.graph) === null);
+      if ((b.expected.frameworks?.apps ?? 0) > 0) expect(frameworkLayer(b.graph), name).not.toBeNull();
     }
   });
 

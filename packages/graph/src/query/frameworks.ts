@@ -2,11 +2,13 @@
 // 3.2.3, phase 4). The layer's output is read here and nowhere else in the
 // query, by its documented shape (frameworks/plugin.ts: registrations as
 // entities, `handles` and `tests` edges, each with its evidence, and the
-// plugins' unknowns), from `graph.frameworks`. A build with no framework
-// layer answers `routes` with a capability boundary.
+// plugins' unknowns), from `graph.frameworks`. Every build runs the
+// framework plugins; a build where none of them found an application in
+// the repository has no layer to read, and answers `routes` with a
+// capability boundary.
 //
-// Before that layer exists, `tests` still answers with what the graph can
-// prove without a test runner: calls into the symbol from files named like
+// Without a layer, `tests` still answers with what the graph can prove
+// without a test runner: calls into the symbol from files named like
 // tests. Those are leads, never counted and never called tests or coverage,
 // and the answer is a floor: a test that requests a route or renders a
 // component reaches the symbol without a call.
@@ -40,32 +42,53 @@ type FwRegistration = {
 };
 type FwEdge = { from: string; to: string; kind: string; plugin: string; app: string | null; evidence: FwEvidence; category?: string };
 type FwUnknown = { plugin: string; site: FwSite | null; affects: string[]; cause: string; name: string | null; note: string; count: number | null; exact: boolean };
-type FwLayer = { registrations: FwRegistration[]; edges: FwEdge[]; unknowns: FwUnknown[] };
+type FwRun = { id: string; status: string; reason: string | null };
+type FwLayer = { registrations: FwRegistration[]; edges: FwEdge[]; unknowns: FwUnknown[]; runs: FwRun[] };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
-// The framework layer of a build, when it has one in the documented shape.
+// Each framework plugin's run in a build (frameworks/stage.ts, PluginRun).
+function runsOf(g: Graph): FwRun[] {
+  const f = (g as unknown as { frameworks?: unknown }).frameworks;
+  if (!isObj(f) || !Array.isArray(f.plugins)) return [];
+  return f.plugins.filter((p): p is FwRun => isObj(p) && typeof p.id === "string" && typeof p.status === "string" && (p.reason === null || typeof p.reason === "string"));
+}
+
+// Why a build has no framework layer to read, for a capability boundary.
+export function noLayerReason(g: Graph): string {
+  const ids = runsOf(g).map((r) => r.id);
+  return ids.length > 0 ? `no framework plugin of this build (${ids.join(", ")}) found an application in this repository` : "this build has no framework layer";
+}
+
+// The framework layer of a build, when it has one in the documented shape
+// and a plugin found something to read: a build where every plugin found
+// no application has none.
 export function frameworkLayer(g: Graph): FwLayer | null {
   const f = (g as unknown as { frameworks?: unknown }).frameworks;
   if (!isObj(f) || !Array.isArray(f.entities) || !Array.isArray(f.edges) || !Array.isArray(f.unknowns)) return null;
+  const runs = runsOf(g);
+  if (runs.length > 0 && runs.every((r) => r.status === "not-detected")) return null;
   const registrations = f.entities.filter((e): e is FwRegistration => isObj(e) && e.kind === "registration" && isObj(e.site) && isObj(e.handler) && Array.isArray(e.methods));
   const edges = f.edges.filter((e): e is FwEdge => isObj(e) && typeof e.from === "string" && typeof e.to === "string" && typeof e.kind === "string" && isObj(e.evidence) && isObj(e.evidence.site));
   const unknowns = f.unknowns.filter((u): u is FwUnknown => isObj(u) && Array.isArray(u.affects) && typeof u.cause === "string");
-  return { registrations, edges, unknowns };
+  return { registrations, edges, unknowns, runs };
 }
 
 function fwSite(e: FwEvidence): GraphSite {
   return { file: e.site.file, line: e.site.line, column: e.site.column, tier: e.tier, evidence: e.kind, via: e.via, note: e.note, rule: e.rule.id };
 }
 
-// The layer's gaps for one relation, gathered gap by gap.
+// The layer's gaps for one relation, gathered gap by gap, and the plugins
+// that failed or ran out of budget, whose part of the layer is missing.
 class Gaps {
   private readonly hit: FwUnknown[] = [];
+  private readonly missing: string[];
   readonly pass: Pass<FwUnknown>;
   constructor(layer: FwLayer, affects: string) {
     this.pass = new Pass(layer.unknowns, (u) => {
       if (u.affects.includes(affects)) this.hit.push(u);
     });
+    this.missing = layer.runs.filter((r) => r.status === "failed" || r.status === "stopped").map((r) => `${r.id}: ${r.reason ?? r.status}, so nothing of it is listed`);
   }
   // After the pass is whole: the answer's unknown block with the gaps.
   unknown(base: Answer): Answer["unknown"] {
@@ -74,7 +97,7 @@ class Gaps {
       const prev = causes[u.cause];
       causes[u.cause] = prev === null || u.count === null ? null : (prev ?? 0) + u.count;
     }
-    const reasons = this.hit.slice(0, 10).map((u) => `${u.plugin}: ${u.note}${u.site ? ` (${u.site.file}:${u.site.line})` : ""}`);
+    const reasons = [...this.missing, ...this.hit.slice(0, 10).map((u) => `${u.plugin}: ${u.note}${u.site ? ` (${u.site.file}:${u.site.line})` : ""}`)];
     if (this.hit.length > 10) reasons.push(`and ${this.hit.length - 10} more gaps of the framework layer`);
     return { ...base.unknown, floor: base.unknown.floor || reasons.length > 0, reasons: [...reasons, ...base.unknown.reasons], causes };
   }
@@ -100,7 +123,7 @@ const namesPoint = (t: Request["target"]) => Boolean(t && (t.id || t.name || (t.
 export function routes(s: Session, req: Request): Job | Answer {
   const g = s.graph;
   const layer = frameworkLayer(g);
-  if (!layer) return fail(s, "routes", "unsupported", "this build has no framework layer, so it knows no routes; `callers` and `importers` still answer for the handler code");
+  if (!layer) return fail(s, "routes", "unsupported", `${noLayerReason(g)}, so the graph knows no routes; \`callers\` and \`importers\` still answer for the handler code`);
   const point = namesPoint(req.target) ? new Point(g, req.target) : null;
   const text = point ? undefined : req.text;
   let n: GraphNode | null = null;
@@ -147,9 +170,9 @@ export function routes(s: Session, req: Request): Job | Answer {
 
 type TestLink = { from: string; to: string; kind: "tests"; category: string | null; depth: number; site: GraphSite; premises: string[]; edge: string; fromName: string | null; toName: string | null };
 
-// The leads-only floor of `tests` when no test runner was read.
-const LEAD_REASONS = [
-  "no test runner was read in this build, so files are taken for tests by their names only: these are leads, not test links",
+// The leads-only floor of `tests` when the build has no framework layer.
+const LEAD_REASONS = (g: Graph) => [
+  `${noLayerReason(g)}, so files are taken for tests by their names only: these are leads, not test links`,
   "a test that requests a route, renders a component or reaches the code through a value calls nothing here",
 ];
 
@@ -198,7 +221,7 @@ export function tests(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job {
       if (!gaps.pass.run(budget)) return stoppedAt({ ...base, target }, links, [], gaps.pass.left);
       return listing({ ...base, target, counts: counts(links), unknown: gaps.unknown(base) }, links);
     }
-    const floor = { ...base.unknown, floor: true, reasons: [...LEAD_REASONS, ...base.unknown.reasons], causes: { "unsupported-rule": null } };
+    const floor = { ...base.unknown, floor: true, reasons: [...LEAD_REASONS(g), ...base.unknown.reasons], causes: { "unsupported-rule": null } };
     walk ??= new Walk(g, at.id, "in", 2, tiers);
     if (!walk.run(budget)) return stoppedAt({ ...base, target, unknown: floor }, [], walk.pending(), walk.pending().length, "leads");
     picked ??= new Pass(walk.items, (i) => {
