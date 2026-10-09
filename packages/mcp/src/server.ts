@@ -15,9 +15,13 @@
 // build. A question that compares the work tree with its base (`changes`,
 // `impact` of the diff) holds the session's build first, then builds its
 // own comparison. The lease goes when the agent disconnects, and a crash
-// leaves one the collector drops by its process check. A question's walk
-// runs in slices with a turn of the event loop between them, so its
-// cancellation stops it.
+// leaves one the collector drops by its process check.
+//
+// Builds run one at a time, whoever asks: the held build, a refresh, a
+// comparison. A few wait behind the running one; a question that needs a
+// build past that is refused as busy, and one cancelled while it waits
+// leaves without building. A question's walk runs in slices with a turn of
+// the event loop between them, so its cancellation stops it.
 //
 // The SDK is pinned to one version in package.json and driven by its own
 // client in the tests.
@@ -45,6 +49,8 @@ const INSTRUCTIONS = [
 
 // How often a question checks the work tree for edits since the held build.
 const EDIT_CHECK_MS = 1000;
+// Builds that may wait behind the running one.
+const MAX_WAITING_BUILDS = 4;
 const MAX_PATH = 4096;
 
 export type ServerOptions = {
@@ -72,11 +78,37 @@ function refusal(kind: string, message: string): CallToolResult {
   return text({ apiVersion: 1, kind, error: { code: "refused", message } }, true);
 }
 
+function busy(kind: string): CallToolResult {
+  return text({ apiVersion: 1, kind, error: { code: "busy", message: `${MAX_WAITING_BUILDS} builds are already waiting behind the one running; ask again when one of them answers` } }, true);
+}
+
+// Builds one at a time, in the order asked, with at most `max` waiting. A
+// build whose question was cancelled while it waited never starts.
+class BuildQueue {
+  private tail: Promise<unknown> = Promise.resolve();
+  private waiting = 0;
+  constructor(private readonly max: number) {}
+  // The build's result, or null when `max` builds are already waiting.
+  run<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> | null {
+    if (this.waiting >= this.max) return null;
+    this.waiting++;
+    const turn = this.tail.then(() => {
+      this.waiting--;
+      signal?.throwIfAborted();
+      return work();
+    });
+    this.tail = turn.catch(() => undefined);
+    return turn;
+  }
+}
+
 export class GraphServer {
   readonly server: Server;
   private ready: Promise<Ready | string> | null = null;
   private pinned: Pinned | null = null;
+  // The first build, shared by every question that waits for it.
   private pinning: Promise<Pinned> | null = null;
+  private readonly builds = new BuildQueue(MAX_WAITING_BUILDS);
   private checkedAt = 0;
   private closed = false;
 
@@ -136,12 +168,17 @@ export class GraphServer {
   }
 
   // The held build: pinned at the first question, moved only by refresh.
-  private async pin(r: Ready, progress: (line: string) => void, refresh: boolean): Promise<Pinned> {
-    if (this.pinning) await this.pinning.catch(() => undefined);
-    if (this.pinned && !refresh) return this.pinned;
-    this.pinning = pinWorkTree({ repoRoot: r.root, store: r.store, storeRefused: r.storeRefused, settings: r.settings, purpose: "mcp", onProgress: progress });
-    try {
-      const next = await this.pinning;
+  // Null when the build queue is full.
+  private async pin(r: Ready, progress: (line: string) => void, refresh: boolean, signal: AbortSignal): Promise<Pinned | null> {
+    if (!refresh) {
+      if (this.pinned) return this.pinned;
+      if (this.pinning) return this.pinning;
+    }
+    // The first build is the session's, not one question's: a cancelled
+    // first question leaves it to build for the next.
+    const build = this.builds.run(() => pinWorkTree({ repoRoot: r.root, store: r.store, storeRefused: r.storeRefused, settings: r.settings, purpose: "mcp", onProgress: progress }), refresh ? signal : undefined);
+    if (!build) return null;
+    const held = build.then((next) => {
       const old = this.pinned;
       this.pinned = next;
       this.checkedAt = Date.now();
@@ -149,6 +186,11 @@ export class GraphServer {
       old?.release();
       if (this.closed) next.release();
       return next;
+    });
+    if (refresh) return held;
+    this.pinning = held;
+    try {
+      return await held;
     } finally {
       this.pinning = null;
     }
@@ -171,13 +213,19 @@ export class GraphServer {
 
     // The session's build first, whatever the question: a first question
     // that compares still leaves the build later questions are answered from.
-    const pinned = await this.pin(ready, progress, tool.op === "refresh");
+    const pinned = await this.pin(ready, progress, tool.op === "refresh", signal);
+    if (!pinned) return busy(tool.op);
 
     // Questions that compare the work tree with its base build their own
     // comparison, held only while it answers; the held build stays.
     const compares = tool.op === "changes" || (tool.op === "impact" && args.symbol === undefined && args.id === undefined);
     if (compares) {
-      const cmp = await pinWorkTree({ repoRoot: ready.root, store: ready.store, storeRefused: ready.storeRefused, settings: ready.settings, purpose: "mcp", compare: { base: typeof args.base === "string" ? args.base : undefined, exclude: ready.exclude, defaultBase: ready.defaultBase }, onProgress: progress });
+      const build = this.builds.run(
+        () => pinWorkTree({ repoRoot: ready.root, store: ready.store, storeRefused: ready.storeRefused, settings: ready.settings, purpose: "mcp", compare: { base: typeof args.base === "string" ? args.base : undefined, exclude: ready.exclude, defaultBase: ready.defaultBase }, onProgress: progress }),
+        signal,
+      );
+      if (!build) return busy(tool.op);
+      const cmp = await build;
       try {
         const a = await querySliced(cmp.session, requestOf(tool, args), { changes: cmp.changes, change: cmp.change, signal });
         return text(a, isError(a));

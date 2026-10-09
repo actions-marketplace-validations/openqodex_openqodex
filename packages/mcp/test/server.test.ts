@@ -20,6 +20,8 @@
 //  9. A first question that compares the work tree with its base leaves no
 //     held build, so a later question answers from a tree edited since,
 //     without `graph_refresh`.
+// 10. Many questions that each need a build start as many builds at once,
+//     with no bound on how many wait.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -239,5 +241,21 @@ describe("the builds a server starts", () => {
     const later = await ask(client, "graph_callers", { symbol: "core" });
     expect(later.answer.graph.generation).toBe(held[0]);
     expect(later.answer.counts.certain).toBe(12);
+  }, 180_000);
+
+  it("runs builds one at a time with a few waiting, and refuses the rest as busy (10)", async () => {
+    const root = repo(files);
+    write(root, { "src/core.ts": edited });
+    const { client } = await connect(root);
+    const asked = await Promise.all(Array.from({ length: 12 }, () => ask(client, "graph_changes", {})));
+    const codes = asked.map((a) => a.answer.error?.code ?? "ok");
+    expect(codes.every((c) => c === "ok" || c === "busy"), codes.join(" ")).toBe(true);
+    expect(codes.filter((c) => c === "busy").length, codes.join(" ")).toBeGreaterThan(0);
+    const ok = asked.filter((a) => a.answer.error === null);
+    expect(ok.length).toBeGreaterThan(0);
+    for (const a of ok) expect(a.answer.items).toEqual(ok[0]?.answer.items);
+    // The server goes on answering.
+    const { answer } = await ask(client, "graph_status");
+    expect(answer.error).toBeNull();
   }, 180_000);
 });
