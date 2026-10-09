@@ -18,7 +18,7 @@ In the GitHub Action's review mode, which runs only when the workflow sets `ANTH
 
 OpenQodex and the built-in scanners send no code anywhere. They use the network for these things only:
 
-- Scanner downloads on first use, into `~/.openqodex/tools/`. GitHub release files are checked against sha256 sums pinned in the package. semgrep and bandit come from PyPI through uv, with a Python 3.11 that uv downloads. oxlint comes from npm. brakeman and rubocop come from RubyGems. These package installs are pinned by version.
+- Scanner downloads on first use, into `~/.openqodex/tools/`. GitHub release files are checked against sha256 sums pinned in the package. semgrep, bandit, SQLFluff and Checkov come from PyPI through uv, with a Python 3.11 that uv downloads. brakeman and rubocop come from RubyGems. These package installs are pinned by version.
 - Semgrep rule packs. semgrep fetches `p/default`, `p/security-audit` and `p/secrets` from the Semgrep registry on each run.
 - The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code.
 - Custom scanners. `openqodex trust` reads the scanner's release from the GitHub API and downloads the asset.

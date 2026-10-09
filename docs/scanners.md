@@ -34,9 +34,9 @@ What a project's dependencies switch on:
 Scanners download on first use into `~/.openqodex/tools/<scanner>/<version>/`. `OPENQODEX_HOME` moves that folder.
 
 - GitHub release files are checked against the sha256 pinned in the package before they are unpacked.
-- semgrep and bandit install from PyPI through uv, each into a Python 3.11 environment of its own, with one Python that OpenQodex manages. uv comes from your `PATH` when present. Otherwise OpenQodex downloads a pinned uv.
+- semgrep, bandit, SQLFluff and Checkov install from PyPI through uv, each into a Python 3.11 environment of its own, with one Python that OpenQodex manages. uv comes from your `PATH` when present. Otherwise OpenQodex downloads a pinned uv.
 - brakeman and rubocop install from RubyGems with your Ruby's `gem` command.
-- Each PyPI and RubyGems scanner installs from a lock file: `locks/<scanner>-<platform>.txt` in the package, with every package of the scanner's dependency tree at one version and with its sha256. Each file is checked against that sha256 before it is installed. semgrep and bandit get exactly the packages of their lock, each from its wheel, so no build script runs. RubyGems installs from the checked files, or keeps a gem Ruby itself ships when that one meets the requirement, and never fetches from the network. The install folder is `<version>-<the lock's sha256>`, so a lock whose pins moved installs afresh.
+- Each PyPI and RubyGems scanner installs from a lock file: `locks/<scanner>-<platform>.txt` in the package, with every package of the scanner's dependency tree at one version and with its sha256. Each file is checked against that sha256 before it is installed. semgrep, bandit, SQLFluff and Checkov get exactly the packages of their lock, each from its wheel, so no build script runs. RubyGems installs from the checked files, or keeps a gem Ruby itself ships when that one meets the requirement, and never fetches from the network. The install folder is `<version>-<the lock's sha256>`, so a lock whose pins moved installs afresh.
 
 A scanner install that takes longer than 45 seconds keeps going in the background. The report lists that scanner as installing. The scanner joins the next run. `openqodex doctor --install` installs the scanners the repository's files call for and waits; `--all-scanners` installs every scanner.
 
