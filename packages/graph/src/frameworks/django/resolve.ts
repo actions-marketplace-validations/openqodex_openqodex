@@ -389,6 +389,11 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   const perApp = new Map<string, number>(); // registrations per application
   const walkSteps = new Map<string, number>(); // URL entries visited per application
   const capped = (app: string | null) => (perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP || (walkSteps.get(app ?? "-") ?? 0) >= MAX_WALK_STEPS;
+  // Said once per application, wherever the walk meets the cap.
+  const capGap = (app: string | null, file: string) =>
+    out.gap({ site: null, scope: app ? { app } : { project: index.projectOf(file) }, affects: ["handles", "mounts"], cause: "fan-out-capped", name: null, note: `the application has more than ${MAX_REGISTRATIONS_PER_APP} route registrations; the rest are not listed`, count: null, exact: false });
+  const stepGap = (app: string | null, file: string) =>
+    out.gap({ site: null, scope: app ? { app } : { project: index.projectOf(file) }, affects: ["handles", "mounts"], cause: "budget", name: null, note: `the URL walk visited ${MAX_WALK_STEPS} entries for this application and stopped`, count: null, exact: false });
 
   let paths: Set<string> | null = null;
   const pathSet = (): Set<string> => (paths ??= new Set(index.paths()));
@@ -484,7 +489,7 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     const site = siteOf(file, f);
     const count = perApp.get(app ?? "-") ?? 0;
     if (count >= MAX_REGISTRATIONS_PER_APP) {
-      out.gap({ site: null, scope: app ? { app } : { project: index.projectOf(file) }, affects: ["handles", "mounts"], cause: "fan-out-capped", name: null, note: `the application has more than ${MAX_REGISTRATIONS_PER_APP} route registrations; the rest are not listed`, count: null, exact: false });
+      capGap(app, file);
       return null;
     }
     perApp.set(app ?? "-", count + 1);
@@ -571,7 +576,11 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
   // ---------- the URL walk ----------
   const walk = (app: string | null, file: string, list: string, parent: number, prefix: Part[] | null, via: Site[], namespaces: string[], depth: number, stack: string[]) => {
     const scope = app ? { app } : { file };
-    if (capped(app)) return;
+    if (capped(app)) {
+      if ((perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP) capGap(app, file);
+      else stepGap(app, file);
+      return;
+    }
     const all = index.factsOf(file);
     // The statements Django's list is left with: from the last replacement
     // that always runs, every later one; replacements in branches keep
@@ -598,10 +607,13 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       const steps = (walkSteps.get(app ?? "-") ?? 0) + 1;
       walkSteps.set(app ?? "-", steps);
       if (steps > MAX_WALK_STEPS) {
-        out.gap({ site: null, scope, affects: ["handles", "mounts"], cause: "budget", name: null, note: `the URL walk visited ${MAX_WALK_STEPS} entries for this application and stopped`, count: null, exact: false });
+        stepGap(app, file);
         return;
       }
-      if ((perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP) return;
+      if ((perApp.get(app ?? "-") ?? 0) >= MAX_REGISTRATIONS_PER_APP) {
+        capGap(app, file);
+        return;
+      }
       const fn = canonical(index, file, f.fn, { line: f.line });
       if (!fn || !URL_FUNCTIONS.has(fn)) {
         if (app !== null) out.gap({ site, scope, affects: ["handles", "mounts"], cause: "unsupported-rule", name: show(f.fn), note: `${show(f.fn)} is not Django's path, re_path or url, so the graph does not read this entry` });
