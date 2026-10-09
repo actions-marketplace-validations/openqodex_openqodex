@@ -2,14 +2,16 @@
 // file: the calls it watches (`x.get(...)`, `x.use(...)`, `x.route(...)`,
 // `x.listen(...)`, `createServer(...)`), the values names are bound to, the
 // module-level string constants, the CommonJS exports, the parameter types
-// of functions, and the parameter counts of top-level functions. Nothing
-// here knows which name is Express: that is decided in resolve, from the
-// file's imports, so a fact never claims what only another file can prove.
+// of functions, the parameter counts of top-level functions, and the names
+// each function declares (its parameters and locals), so resolve can tell
+// when a local name shadows an import or a module constant. Nothing here
+// knows which name is Express: that is decided in resolve, from the file's
+// imports, so a fact never claims what only another file can prove.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
 import type { Expr } from "./js.js";
 import type { Up } from "./js.js";
-import { exported, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, pos, readExpr, stringValue, walk } from "./js.js";
+import { exported, FN_TYPES, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, patternNames, pos, readExpr, stringValue, walk } from "./js.js";
 
 // The member calls watched: the routing methods of an application and a
 // router, `use`, `route`, `listen`, and the requests of a test agent.
@@ -19,12 +21,14 @@ const WATCHED = new Set<string>([...HTTP_METHODS, "del", "use", "route", "listen
 export type ExpressFact =
   // A watched member call: `recv.prop(args)`. `scope` is the line of the
   // innermost function around it (0 at module level).
-  | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; scope: number })
+  // `more`: arguments past MAX_ITEMS the reader left out.
+  | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; scope: number; more?: number })
   // A call of a function named createServer: `http.createServer(app)`.
   | (FrameworkFactBase & { kind: "server"; fn: string[]; args: Expr[]; scope: number })
   // A name bound to a value: `const app = express()`, `app = express()`.
-  // `top`: declared at module level; `exported`: under an export statement.
-  | (FrameworkFactBase & { kind: "value"; name: string; value: Expr; scope: number; top: boolean; exported: boolean })
+  // `top`: declared at module level; `exported`: under an export statement;
+  // `decl`: how the name got the value (a declaration, or an assignment).
+  | (FrameworkFactBase & { kind: "value"; name: string; value: Expr; scope: number; top: boolean; exported: boolean; decl: "const" | "let" | "var" | "assign" })
   // `module.exports = x` (name "default") or `module.exports.n = x`, `exports.n = x`.
   | (FrameworkFactBase & { kind: "cjs-export"; name: string; value: Expr })
   // A parameter of a function with a type written as a name: `(app: Express)`.
@@ -37,7 +41,16 @@ export type ExpressFact =
   | (FrameworkFactBase & { kind: "too-large"; bytes: number })
   // The file has regions the parser could not read (the first at `line`):
   // nothing in them is a fact.
-  | (FrameworkFactBase & { kind: "syntax-error"; regions: number });
+  | (FrameworkFactBase & { kind: "syntax-error"; regions: number })
+  // A function's scope: the line it starts on (the scope key the other facts
+  // carry), the scope around it (0 for the module), and every name it
+  // declares, wherever in its body: parameters, variables, nested functions
+  // and classes, catch parameters. `all`: more names than MAX_SCOPE_NAMES,
+  // so every name counts as declared there.
+  | (FrameworkFactBase & { kind: "scope"; parent: number; names: string[]; all: boolean });
+
+// The most names kept for one function's scope.
+export const MAX_SCOPE_NAMES = 256;
 
 // Every file is read: a route can be registered on an imported application
 // in a file that never names express, and a name can be spelled with an
@@ -54,7 +67,41 @@ export function readFacts(root: Node): ExpressFact[] {
   const out: ExpressFact[] = [];
   let firstBroken = 0;
   let broken = 0;
+  // Each function scope's parent and declared names, by the line it starts on.
+  const scopes = new Map<number, { parent: number; names: Set<string>; all: boolean }>();
+  const declare = (at: number, names: readonly string[]) => {
+    if (at === 0) return; // the module: its own names are read from its declarations
+    const s = scopes.get(at);
+    if (!s) return;
+    for (const n of names) {
+      if (s.names.size >= MAX_SCOPE_NAMES) s.all = true;
+      else s.names.add(n);
+    }
+  };
   const visit = (node: Node, scope: number, up: Up): void => {
+    if (FN_TYPES.has(node.type) || node.type === "function_declaration" || node.type === "generator_function_declaration" || node.type === "method_definition") {
+      const own = node.startPosition.row + 1;
+      if (!scopes.has(own)) scopes.set(own, { parent: scope, names: new Set(), all: false });
+      // The function's own name lives in the scope around it; its parameters in its own.
+      const name = node.type === "function_declaration" || node.type === "generator_function_declaration" ? node.childForFieldName("name") : null;
+      if (name) {
+        const id = identifierName(name.text);
+        if (id !== null) declare(scope, [id]);
+      }
+      const params = node.childForFieldName("parameters") ?? node.childForFieldName("parameter");
+      const names: string[] = [];
+      if (params?.type === "identifier") patternNames(params, names);
+      else for (const p of params?.namedChildren ?? []) patternNames(p, names);
+      declare(own, names);
+    } else if (node.type === "class_declaration") {
+      const name = node.childForFieldName("name");
+      const id = name ? identifierName(name.text) : null;
+      if (id !== null) declare(scope, [id]);
+    } else if (node.type === "catch_clause") {
+      const names: string[] = [];
+      patternNames(node.childForFieldName("parameter"), names);
+      declare(scope, names);
+    }
     switch (node.type) {
       case "call_expression": {
         // A call the parser had to repair (a missing parenthesis) is no fact.
@@ -65,7 +112,9 @@ export function readFacts(root: Node): ExpressFact[] {
           const prop = fn.childForFieldName("property");
           const name = prop?.type === "property_identifier" ? identifierName(prop.text) : null;
           if (name !== null && WATCHED.has(name)) {
-            out.push({ kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: name, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
+            const fact: ExpressFact = { kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: name, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope };
+            if (args.length > MAX_ITEMS) fact.more = args.length - MAX_ITEMS;
+            out.push(fact);
           }
         }
         const path = namePath(fn);
@@ -76,9 +125,14 @@ export function readFacts(root: Node): ExpressFact[] {
       case "variable_declarator": {
         const name = node.childForFieldName("name");
         const value = node.childForFieldName("value");
+        const declared: string[] = [];
+        patternNames(name, declared);
+        declare(scope, declared);
         const id = name?.type === "identifier" ? identifierName(name.text) : null;
         if (id === null || !value || node.hasError) return;
-        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && up(2)?.type !== "for_statement", exported: exported(up) });
+        const holder = up(1);
+        const decl = holder?.type === "variable_declaration" ? "var" : holder?.childForFieldName("kind")?.text === "let" ? "let" : "const";
+        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && up(2)?.type !== "for_statement", exported: exported(up), decl });
         return;
       }
       case "assignment_expression": {
@@ -96,7 +150,7 @@ export function readFacts(root: Node): ExpressFact[] {
           return;
         }
         if (path.length === 1) {
-          out.push({ kind: "value", ...pos(node), name: path[0] as string, value: readExpr(right), scope, top: scope === 0, exported: false });
+          out.push({ kind: "value", ...pos(node), name: path[0] as string, value: readExpr(right), scope, top: scope === 0, exported: false, decl: "assign" });
         }
         return;
       }
@@ -124,6 +178,7 @@ export function readFacts(root: Node): ExpressFact[] {
     if (broken++ === 0) firstBroken = line;
   });
   if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
+  for (const [line, s] of scopes) out.push({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all });
   return out;
 }
 
@@ -161,11 +216,11 @@ export function isExpressFact(v: unknown): v is ExpressFact {
   if (!Number.isInteger(f.line) || !Number.isInteger(f.column)) return false;
   switch (f.kind) {
     case "call":
-      return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && Number.isInteger(f.scope);
+      return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && Number.isInteger(f.scope) && (f.more === undefined || Number.isInteger(f.more));
     case "server":
       return strings(f.fn) && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && Number.isInteger(f.scope);
     case "value":
-      return typeof f.name === "string" && isExpr(f.value) && Number.isInteger(f.scope) && typeof f.top === "boolean" && typeof f.exported === "boolean";
+      return typeof f.name === "string" && isExpr(f.value) && Number.isInteger(f.scope) && typeof f.top === "boolean" && typeof f.exported === "boolean" && (f.decl === "const" || f.decl === "let" || f.decl === "var" || f.decl === "assign");
     case "cjs-export":
       return typeof f.name === "string" && isExpr(f.value);
     case "param":
@@ -178,6 +233,8 @@ export function isExpressFact(v: unknown): v is ExpressFact {
       return Number.isInteger(f.bytes);
     case "syntax-error":
       return Number.isInteger(f.regions);
+    case "scope":
+      return Number.isInteger(f.parent) && strings(f.names) && (f.names as string[]).length <= MAX_SCOPE_NAMES && typeof f.all === "boolean";
     default:
       return false;
   }

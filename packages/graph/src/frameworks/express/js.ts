@@ -34,15 +34,18 @@ export function pos(node: Node): Pos {
 // a property of something that is not a name (`f().x`); `fn` an inline
 // function with its parameter count; `array` an array literal; `object` an
 // object literal with its literal-keyed properties; `other` anything else.
+// A list the reader cut at MAX_ITEMS (arguments, items, properties) carries
+// `more`, how many it left out, so no reader of the fact takes a cut list
+// for the whole one.
 export type Expr =
   | ({ t: "str"; v: string } & Pos)
   | ({ t: "dyn"; parts: ({ s: string } | { ref: string[] })[] | null } & Pos)
   | ({ t: "ref"; path: string[] } & Pos)
-  | ({ t: "call"; fn: Expr; args: Expr[] } & Pos)
+  | ({ t: "call"; fn: Expr; args: Expr[]; more?: number } & Pos)
   | ({ t: "member"; obj: Expr; prop: string } & Pos)
   | ({ t: "fn"; params: number } & Pos)
-  | ({ t: "array"; items: Expr[] } & Pos)
-  | ({ t: "object"; props: { key: string; value: Expr }[] } & Pos)
+  | ({ t: "array"; items: Expr[]; more?: number } & Pos)
+  | ({ t: "object"; props: { key: string; value: Expr }[]; more?: number } & Pos)
   | ({ t: "other" } & Pos);
 
 // How much of one expression is read before the rest becomes `other`: a
@@ -271,6 +274,38 @@ function isStringish(start: Node): boolean {
 export const FN_TYPES: ReadonlySet<string> = new Set(["arrow_function", "function_expression", "function", "generator_function"]);
 const SCOPE_TYPES: ReadonlySet<string> = new Set([...FN_TYPES, "function_declaration", "generator_function_declaration", "method_definition"]);
 
+// The names a binding pattern declares: `x`, `{ a, b: c }`, `[d, ...e]`,
+// `x = 1`, a typed parameter. At most 64 nodes are read.
+export function patternNames(node: Node | null, out: string[], budget = { left: 64 }): void {
+  if (!node || budget.left-- <= 0) return;
+  switch (node.type) {
+    case "identifier":
+    case "shorthand_property_identifier_pattern": {
+      const name = identifierName(node.text);
+      if (name !== null) out.push(name);
+      return;
+    }
+    case "object_pattern":
+    case "array_pattern":
+      for (const c of node.namedChildren) patternNames(c, out, budget);
+      return;
+    case "pair_pattern":
+      patternNames(node.childForFieldName("value"), out, budget);
+      return;
+    case "assignment_pattern":
+    case "object_assignment_pattern":
+      patternNames(node.childForFieldName("left"), out, budget);
+      return;
+    case "rest_pattern":
+      patternNames(node.firstNamedChild, out, budget);
+      return;
+    case "required_parameter":
+    case "optional_parameter":
+      patternNames(node.childForFieldName("pattern"), out, budget);
+      return;
+  }
+}
+
 export function paramCount(fn: Node): number {
   const params = fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter");
   if (!params) return 0;
@@ -318,31 +353,39 @@ function read(node: Node | null, depth: number, budget: { left: number }): Expr 
     case "call_expression": {
       const fn = read(node.childForFieldName("function"), depth + 1, budget);
       const args: Expr[] = [];
+      let more = 0;
       for (const a of node.childForFieldName("arguments")?.namedChildren ?? []) {
-        if (args.length >= MAX_ITEMS) break;
-        if (a.type !== "comment") args.push(read(a, depth + 1, budget));
+        if (a.type === "comment") continue;
+        if (args.length >= MAX_ITEMS) more++;
+        else args.push(read(a, depth + 1, budget));
       }
-      return { t: "call", fn, args, ...p };
+      return more > 0 ? { t: "call", fn, args, more, ...p } : { t: "call", fn, args, ...p };
     }
     case "array": {
       const items: Expr[] = [];
+      let more = 0;
       for (const c of node.namedChildren) {
-        if (items.length >= MAX_ITEMS) break;
-        if (c.type !== "comment") items.push(read(c, depth + 1, budget));
+        if (c.type === "comment") continue;
+        if (items.length >= MAX_ITEMS) more++;
+        else items.push(read(c, depth + 1, budget));
       }
-      return { t: "array", items, ...p };
+      return more > 0 ? { t: "array", items, more, ...p } : { t: "array", items, ...p };
     }
     case "object": {
       const props: { key: string; value: Expr }[] = [];
+      let more = 0;
       for (const c of node.namedChildren) {
-        if (props.length >= MAX_ITEMS) break;
+        if (props.length >= MAX_ITEMS) {
+          if (c.type === "pair" || c.type === "shorthand_property_identifier" || c.type === "spread_element") more++;
+          continue;
+        }
         if (c.type === "pair") {
           const key = c.childForFieldName("key");
           const k = key?.type === "property_identifier" ? key.text : stringValue(key);
           if (k !== null) props.push({ key: k, value: read(c.childForFieldName("value"), depth + 1, budget) });
         } else if (c.type === "shorthand_property_identifier") props.push({ key: c.text, value: { t: "ref", path: [c.text], ...pos(c) } });
       }
-      return { t: "object", props, ...p };
+      return more > 0 ? { t: "object", props, more, ...p } : { t: "object", props, ...p };
     }
     default:
       if (FN_TYPES.has(node.type)) return { t: "fn", params: paramCount(node), ...p };
@@ -451,6 +494,7 @@ export function isExpr(v: unknown, depth = 0): v is Expr {
   if (!Number.isInteger(e.line) || !Number.isInteger(e.column)) return false;
   const strings = (x: unknown) => Array.isArray(x) && x.length <= MAX_NAME_PARTS && x.every((s) => typeof s === "string");
   const list = (x: unknown): x is unknown[] => Array.isArray(x) && x.length <= MAX_PARTS + 1;
+  const more = (x: unknown): boolean => x === undefined || (Number.isInteger(x) && (x as number) > 0);
   switch (e.t) {
     case "str":
       return typeof e.v === "string";
@@ -459,15 +503,15 @@ export function isExpr(v: unknown, depth = 0): v is Expr {
     case "ref":
       return strings(e.path);
     case "call":
-      return isExpr(e.fn, depth + 1) && list(e.args) && e.args.every((a) => isExpr(a, depth + 1));
+      return isExpr(e.fn, depth + 1) && list(e.args) && e.args.every((a) => isExpr(a, depth + 1)) && more(e.more);
     case "member":
       return isExpr(e.obj, depth + 1) && typeof e.prop === "string";
     case "fn":
       return Number.isInteger(e.params);
     case "array":
-      return list(e.items) && e.items.every((a) => isExpr(a, depth + 1));
+      return list(e.items) && e.items.every((a) => isExpr(a, depth + 1)) && more(e.more);
     case "object":
-      return list(e.props) && e.props.every((p) => typeof p === "object" && p !== null && typeof (p as { key?: unknown }).key === "string" && isExpr((p as { value?: unknown }).value, depth + 1));
+      return list(e.props) && e.props.every((p) => typeof p === "object" && p !== null && typeof (p as { key?: unknown }).key === "string" && isExpr((p as { value?: unknown }).value, depth + 1)) && more(e.more);
     case "other":
       return true;
     default:

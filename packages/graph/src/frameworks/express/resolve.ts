@@ -36,7 +36,7 @@ import type { Tier } from "../../model/records.js";
 import type { ExpressFact } from "./facts.js";
 import { HTTP_METHODS } from "./facts.js";
 import type { Expr } from "./js.js";
-import { evaluate, isTestFile, JS_RUNNERS, MAX_SOURCE_BYTES, show } from "./js.js";
+import { evaluate, isTestFile, JS_RUNNERS, MAX_ITEMS, MAX_SOURCE_BYTES, show } from "./js.js";
 
 export const PLUGIN = "express";
 export const RULE_VERSION = 1;
@@ -102,6 +102,7 @@ type FileIndex = {
   testBlocks: number;
   tooLarge: Fact<"too-large"> | null;
   syntaxError: Fact<"syntax-error"> | null;
+  scopes: Map<number, Fact<"scope">>; // function scopes by the line they start on
   unread: boolean; // the build's fact budget ran out before this file
 };
 
@@ -179,7 +180,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   const fx = (file: string): FileIndex => {
     let f = fileIndexes.get(file);
     if (f) return f;
-    f = { values: new Map(), params: new Map(), cjs: new Map(), functions: new Map(), calls: [], servers: [], testBlocks: 0, tooLarge: null, syntaxError: null, unread: false };
+    f = { values: new Map(), params: new Map(), cjs: new Map(), functions: new Map(), calls: [], servers: [], testBlocks: 0, tooLarge: null, syntaxError: null, scopes: new Map(), unread: false };
     fileIndexes.set(file, f);
     const list = index.factsOf(file);
     if (!take("facts", list.length)) {
@@ -215,9 +216,43 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
         case "syntax-error":
           f.syntaxError = fact;
           break;
+        case "scope":
+          if (!f.scopes.has(fact.line)) f.scopes.set(fact.line, fact);
+          break;
       }
     }
     return f;
+  };
+
+  // ---------- bindings: which declaration a name at a place reads ----------
+  // The function scope, from `scope` outwards, that declares `name`, or 0
+  // when no function around the place does (the module's own name, or an
+  // import). The chain is followed at most MAX_SCOPE_CHAIN functions out;
+  // past that the name counts as declared locally, which proves nothing.
+  const MAX_SCOPE_CHAIN = 64;
+  const bindingScope = (file: string, scope: number, name: string): number => {
+    let s = scope;
+    for (let steps = 0; s !== 0; steps++) {
+      if (steps >= MAX_SCOPE_CHAIN) return scope;
+      const info = fx(file).scopes.get(s);
+      if (!info) return 0;
+      if (info.all || info.names.includes(name)) return s;
+      s = info.parent;
+    }
+    return 0;
+  };
+  // Every value written to the binding a name at a place reads: its
+  // declaration with a value, and every assignment to it, in any function
+  // that does not declare the name itself. A binding proves a value only
+  // when exactly one is written; two writes leave it to the run.
+  const writesCache = new Map<string, Fact<"value">[]>();
+  const writesOf = (file: string, name: string, at: number): Fact<"value">[] => {
+    const key = `${file}\0${name}\0${at}`;
+    const kept = writesCache.get(key);
+    if (kept) return kept;
+    const out = (fx(file).values.get(name) ?? []).filter((v) => (v.decl === "assign" ? bindingScope(file, v.scope, name) : v.scope) === at);
+    writesCache.set(key, out);
+    return out;
   };
 
   // ---------- which local names are Express, supertest, node's http ----------
@@ -256,6 +291,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     if (e.t !== "call" || e.fn.t !== "ref") return null;
     const id = identity(file);
     const p = e.fn.path;
+    // A parameter or local of that name shadows the import: its call is not the module's.
+    if (bindingScope(file, v.scope, p[0] as string) !== 0) return null;
     if (p.length === 1 && id.factory.has(p[0] as string)) return { kind: "app", id: appId(PLUGIN, file, v.line), file, name: v.name, line: v.line, column: v.column, scope: v.scope };
     if ((p.length === 2 && id.factory.has(p[0] as string) && p[1] === "Router") || (p.length === 1 && id.router.has(p[0] as string))) {
       return { kind: "router", id: routerKey(file, v.line), file, name: v.name, line: v.line, column: v.column, scope: v.scope };
@@ -282,35 +319,30 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   };
   const valueOf = (file: string, path: readonly string[], scope: number, line: number, depth: number): Val | Param | null => {
     const name = path[0] as string;
-    if (path.length === 1) {
-      const decls = fx(file).values.get(name) ?? [];
-      let local: Fact<"value"> | null = null;
-      let top: Fact<"value"> | null = null;
-      for (const v of decls) {
-        if (scope !== 0 && v.scope === scope && v.line <= line && (!local || v.line > local.line)) local = v;
-        if (v.scope === 0) {
-          // A module-level declaration: the last one at or before the line, else the first after it.
-          const before = v.line <= line;
-          const topBefore = top !== null && top.line <= line;
-          if (!top || (before && (!topBefore || v.line > top.line)) || (!before && !topBefore && v.line < top.line)) top = v;
-        }
-      }
-      const decl = local ?? top;
-      if (decl) {
-        const direct = classify(file, decl);
-        if (direct) return direct;
-        // `const app = other` passes a known value on.
-        if (decl.value.t === "ref" && !(decl.value.path.length === 1 && decl.value.path[0] === name)) return valueIn(file, decl.value.path, decl.scope, decl.line, depth + 1);
-        return null;
-      }
-      const param = (fx(file).params.get(name) ?? []).find((p) => p.scope === scope);
+    const at = bindingScope(file, scope, name);
+    const writes = writesOf(file, name, at);
+    if (path.length === 1 && writes.length > 0) {
+      // Two writes leave the value to the run: nothing is proved.
+      if (writes.length > 1) return null;
+      const decl = writes[0] as Fact<"value">;
+      const direct = classify(file, decl);
+      if (direct) return direct;
+      // `const app = other` passes a known value on.
+      if (decl.value.t === "ref" && !(decl.value.path.length === 1 && decl.value.path[0] === name)) return valueIn(file, decl.value.path, decl.scope, decl.line, depth + 1);
+      return null;
+    }
+    if (at !== 0) {
+      // A parameter or a local with no value the facts hold: only a parameter typed as Express says what it is.
+      const param = path.length === 1 ? (fx(file).params.get(name) ?? []).find((p) => p.scope === at) : undefined;
       if (param) {
         const id = identity(file);
         const head = param.type[0] as string;
         const typed = (param.type.length === 1 && id.types.has(head)) || (param.type.length === 2 && id.factory.has(head) && TYPE_NAMES.has(param.type[1] as string));
         return typed ? { kind: "param", file, name, type: param.type.join("."), line: param.line } : null;
       }
+      return null;
     }
+    if (writes.length > 0) return null; // `app.x` on a module value of this file: not an import
     return fromImport(file, path, depth);
   };
 
@@ -346,15 +378,22 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     return decl ? valueIn(file, [local], 0, decl.line, depth) : null;
   };
 
-  const constant = (file: string) => (path: string[]): string | null => {
+  // A name's literal string at a place: the binding it reads holds exactly
+  // one write, and that write is a string. A name a local or a parameter
+  // shadows, or one assigned twice, is no constant.
+  const constant = (file: string, scope: number) => (path: string[]): string | null => {
     if (path.length !== 1) return null;
-    const decl = (fx(file).values.get(path[0] as string) ?? []).find((v) => v.top && v.value.t === "str");
-    return decl && decl.value.t === "str" ? decl.value.v : null;
+    const name = path[0] as string;
+    const writes = writesOf(file, name, bindingScope(file, scope, name));
+    const only = writes.length === 1 ? (writes[0] as Fact<"value">) : null;
+    return only && only.value.t === "str" ? only.value.v : null;
   };
 
   // ---------- events on each application and router ----------
-  type RouteEvent = { type: "route"; file: string; site: Site; methods: string[]; path: Expr; handlers: Expr[]; scope: number };
-  type UseEvent = { type: "use"; file: string; site: Site; prefix: Expr | null; args: Expr[]; scope: number };
+  // `more`: arguments the reader cut, in the call or in an array among them.
+  type RouteEvent = { type: "route"; file: string; site: Site; methods: string[]; path: Expr; handlers: Expr[]; scope: number; more: number };
+  type UseEvent = { type: "use"; file: string; site: Site; prefix: Expr | null; args: Expr[]; scope: number; more: number };
+  const cutIn = (args: readonly Expr[], more: number | undefined): number => (more ?? 0) + args.reduce((n, a) => n + (a.t === "array" ? (a.more ?? 0) : 0), 0);
   type Event = RouteEvent | UseEvent;
   const events = new Map<string, Event[]>();
   const vals = new Map<string, Val & { kind: "app" | "router" }>();
@@ -433,8 +472,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
       if (f.prop === "use") {
         if (base.route || v.kind === "param") continue;
         const first = f.args[0];
-        const isPrefix = first !== undefined && (first.t === "str" || first.t === "dyn" || (first.t === "ref" && evaluate(first, constant(file)) !== null));
-        addEvent(v, { type: "use", file, site, prefix: isPrefix ? (first as Expr) : null, args: isPrefix ? f.args.slice(1) : f.args, scope: f.scope });
+        const isPrefix = first !== undefined && (first.t === "str" || first.t === "dyn" || (first.t === "ref" && evaluate(first, constant(file, f.scope)) !== null));
+        addEvent(v, { type: "use", file, site, prefix: isPrefix ? (first as Expr) : null, args: isPrefix ? f.args.slice(1) : f.args, scope: f.scope, more: cutIn(f.args, f.more) });
         continue;
       }
       if (!METHOD_SET.has(f.prop)) continue;
@@ -443,7 +482,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
       const handlers = base.route ? f.args : f.args.slice(1);
       if (!path || handlers.length === 0) continue;
       const method = f.prop === "all" ? "*" : f.prop === "del" ? "DELETE" : f.prop.toUpperCase();
-      const e: RouteEvent = { type: "route", file, site, methods: [method], path, handlers, scope: f.scope };
+      const e: RouteEvent = { type: "route", file, site, methods: [method], path, handlers, scope: f.scope, more: cutIn(f.args, f.more) };
       if (v.kind === "param") paramRoutes.push({ param: v, event: e });
       else addEvent(v, e);
     }
@@ -511,6 +550,18 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     return (fx(n.file).functions.get(n.name) ?? []).some((f) => f.line === n.startLine && f.params === 4);
   };
 
+  // A middleware that cannot be bound is a gap in the chain, said once per
+  // site: a dependency's middleware (`express.json()`) is known, not a gap.
+  const middlewareGap = (file: string, site: Site, b: Bound) => {
+    if (!b.why || b.status === "external") return;
+    addUnknown({ plugin: PLUGIN, site, scope: { file }, affects: ["applies_middleware"], cause: b.why.cause, name: b.why.name, note: `a middleware of this chain is not bound: ${b.why.note}`, count: null, exact: false });
+  };
+  // A call whose argument list the reader cut: its handler and the
+  // middleware past the cut were not read.
+  const cutGap = (file: string, site: Site, more: number, what: string) => {
+    addUnknown({ plugin: PLUGIN, site, scope: { file }, affects: ["handles", "mounts", "applies_middleware"], cause: "fan-out-capped", name: null, note: `the call has ${more} more arguments than the ${MAX_ITEMS} the plugin reads, so ${what} past them were not read`, count: more, exact: true });
+  };
+
   const roleSeen = new Set<string>();
   const addRole = (target: string, role: "route_handler" | "middleware" | "test", detail: string | null, app: string | null, evidence: FrameworkEvidence) => {
     const k = `${target}\0${role}`;
@@ -561,12 +612,14 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     for (const e of events.get(val.id) ?? []) {
       if (halted()) return;
       if (e.type === "use") {
-        const own = e.prefix === null ? null : evaluate(e.prefix, constant(e.file));
+        const own = e.prefix === null ? null : evaluate(e.prefix, constant(e.file, e.scope));
         if (e.prefix !== null && own === null) {
           addUnknown({ plugin: PLUGIN, site: e.site, scope: scopeOf(app, e.file), affects: ["mounts", "handles", "applies_middleware"], cause: "dynamic", name: show(e.prefix), note: `the mount path ${show(e.prefix)} is computed at run time, so the routes under it have no known pattern`, count: null, exact: false });
         }
-        const at = e.prefix === null ? prefix : own === null ? null : joinPath(prefix ?? "", own);
+        // A computed prefix anywhere above leaves every pattern below it unknown.
+        const at = e.prefix === null ? prefix : own === null || prefix === null ? null : joinPath(prefix, own);
         const known = e.prefix === null || own !== null;
+        if (e.more > 0) cutGap(e.file, e.site, e.more, "the routers and middleware");
         for (const a of e.args) {
           if (halted()) return;
           const target = a.t === "ref" ? valueIn(e.file, a.path, e.scope, e.site.line) : null;
@@ -580,7 +633,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
             }
             if (!take("mounts")) return;
             edges.push({ from: val.id, to: target.id, kind: "mounts", plugin: PLUGIN, app, evidence: { kind: "mount", tier: "certain", site: e.site, via: null, premises: [], rule: rule("express-mount"), note: null } });
-            compose(app, target, known ? (at ?? "") : null, mw.filter((m) => under(at, m.prefix)), [...via, e.site], [...stack, target.id], depth + 1);
+            compose(app, target, at, mw.filter((m) => under(at, m.prefix)), [...via, e.site], [...stack, target.id], depth + 1);
             continue;
           }
           if (target && target.kind === "app") continue; // a sub-application: its own routes, its own identity
@@ -588,27 +641,31 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
             middlewareOmitted++;
             continue;
           }
-          mw.push({ prefix: known ? at : null, site: e.site, file: e.file, expr: a, scope: e.scope });
+          // Middleware under a computed mount path is not known to apply to any route.
+          if (known) mw.push({ prefix: at, site: e.site, file: e.file, expr: a, scope: e.scope });
           // Every function given to use is middleware, whether or not a route follows it.
           const b = bindFn(e.file, a, e.scope, e.site.line, "middleware");
+          middlewareGap(e.file, { file: e.file, line: a.line, column: a.column }, b);
           for (const t of b.targets) addRole(t, "middleware", errorHandler(t) ? "error-handler" : "express", app, { kind: "route-call", tier: b.tier, site: e.site, via: b.via, premises: [], rule: rule("express-middleware"), note: b.note });
         }
         continue;
       }
       // A route.
       const h = e.handlers[e.handlers.length - 1] as Expr;
-      const written = evaluate(e.path, constant(e.file));
+      const written = evaluate(e.path, constant(e.file, e.scope));
       if (written === null) {
         computedRoute(e, h);
         continue;
       }
       if (!take("registrations")) return;
-      // A router no application reaches keeps its pattern as written; one
-      // under a computed mount path has none.
-      const pattern = prefix === null ? (via.length > 0 ? null : written) : joinPath(prefix, written);
+      // A router no application reaches is composed from "" and keeps its
+      // pattern relative; one under a computed mount path has none.
+      const pattern = prefix === null ? null : joinPath(prefix, written);
       const key = `${e.file}:${e.site.line}:${e.site.column}${via.map((s) => `@${s.file}:${s.line}:${s.column}`).join("")}`;
       const id = entityId(PLUGIN, app, "registration", key);
-      const bound = bindFn(e.file, h, e.scope, e.site.line, "handler");
+      // When the reader cut the arguments, the last one read is not the handler.
+      const bound: Bound = e.more > 0 ? { status: "unresolved", targets: [], tier: "certain", kind: "route-call", via: null, note: null, why: null } : bindFn(e.file, h, e.scope, e.site.line, "handler");
+      if (e.more > 0) cutGap(e.file, e.site, e.more, "the handler and the middleware");
       registrations.push({
         kind: "registration",
         id,
@@ -621,7 +678,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
         site: e.site,
         mountedVia: via,
         mounted: app !== null,
-        handler: { written: show(h), status: bound.status, targets: bound.targets },
+        handler: { written: e.more > 0 ? "past the arguments read" : show(h), status: bound.status, targets: bound.targets },
       });
       if (bound.why) addUnknown({ plugin: PLUGIN, site: { file: e.file, line: h.line, column: h.column }, scope: { file: e.file }, affects: ["handles"], cause: bound.why.cause, name: bound.why.name, note: bound.why.note, count: null, exact: false });
       for (const t of bound.targets) {
@@ -629,9 +686,10 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
         edges.push({ from: id, to: t, kind: "handles", plugin: PLUGIN, app, evidence: ev });
         addRole(t, "route_handler", "express", app, ev);
       }
-      // Middleware: the application's and routers' own in effect here, then the route's.
+      // Middleware: the application's and routers' own in effect here, then
+      // the route's (every argument read, when the list was cut).
       const own: Mw[] = [];
-      for (const x of e.handlers.slice(0, -1)) {
+      for (const x of e.more > 0 ? e.handlers : e.handlers.slice(0, -1)) {
         for (const item of x.t === "array" ? x.items : [x]) own.push({ prefix: null, site: e.site, file: e.file, expr: item, scope: e.scope });
       }
       const chain = [...mw.filter((m) => under(pattern, m.prefix)), ...own];
@@ -639,6 +697,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
       let order = 0;
       for (const m of chain.slice(0, MAX_MIDDLEWARE_CHAIN)) {
         const b = bindFn(m.file, m.expr, m.scope, m.site.line, "middleware");
+        middlewareGap(m.file, { file: m.file, line: m.expr.line, column: m.expr.column }, b);
         for (const t of b.targets) {
           const ev: FrameworkEvidence = { kind: "route-call", tier: b.tier, site: m.site, via: b.via, premises: [], rule: rule("express-middleware"), note: b.note };
           addRole(t, "middleware", errorHandler(t) ? "error-handler" : "express", app, ev);
@@ -669,18 +728,19 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   // Routers no application reaches: their routes are kept, relative and not served.
   for (const v of vals.values()) {
     if (v.kind !== "router" || reached.has(v.id) || (mountedBy.get(v.id) ?? 0) > 0) continue;
-    compose(null, v, null, [], [], [v.id], 0);
+    compose(null, v, "", [], [], [v.id], 0);
   }
   // Routes on a parameter typed as an application or a router.
   for (const { param, event: e } of paramRoutes) {
     const h = e.handlers[e.handlers.length - 1] as Expr;
-    const written = evaluate(e.path, constant(e.file));
+    const written = evaluate(e.path, constant(e.file, e.scope));
     if (written === null) {
       computedRoute(e, h);
       continue;
     }
     if (!take("registrations")) break;
-    const bound = bindFn(e.file, h, e.scope, e.site.line, "handler");
+    const bound: Bound = e.more > 0 ? { status: "unresolved", targets: [], tier: "certain", kind: "route-call", via: null, note: null, why: null } : bindFn(e.file, h, e.scope, e.site.line, "handler");
+    if (e.more > 0) cutGap(e.file, e.site, e.more, "the handler and the middleware");
     const id = entityId(PLUGIN, null, "registration", `${e.file}:${e.site.line}:${e.site.column}`);
     registrations.push({ kind: "registration", id, plugin: PLUGIN, app: null, methods: e.methods, pattern: written, written, name: null, site: e.site, mountedVia: [], mounted: false, handler: { written: show(h), status: bound.status, targets: bound.targets } });
     addUnknown({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles", "mounts"], cause: "dynamic", name: param.name, note: `the route is registered on the parameter ${param.name} (${param.type}); which application it lands on, and under which prefix, is decided by the caller`, count: null, exact: false });
@@ -693,12 +753,19 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   }
 
   // ---------- test requests ----------
-  // Patterns parsed once per registration, grouped by application.
+  // Patterns parsed once per registration, grouped by application. A
+  // pattern the matcher does not read is kept apart, so a request it might
+  // serve is disclosed rather than taken as no match.
   const byApp = new Map<string, { reg: Registration; pattern: Pattern }[]>();
+  const unreadByApp = new Map<string, { reg: Registration; why: "too-long" | "syntax" }[]>();
   for (const r of registrations) {
     if (r.app === null || r.pattern === null) continue;
-    const p = parsePattern(r.pattern);
-    if (p) push(byApp, r.app, { reg: r, pattern: p });
+    if (segs(r.pattern).length > MAX_PATTERN_SEGMENTS) push(unreadByApp, r.app, { reg: r, why: "too-long" });
+    else {
+      const p = parsePattern(r.pattern);
+      if (p) push(byApp, r.app, { reg: r, pattern: p });
+      else push(unreadByApp, r.app, { reg: r, why: "syntax" });
+    }
   }
   const testFiles = new Set<string>();
   let unmatched = 0; // requests the budget left unmatched
@@ -711,17 +778,26 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     const app = target.t === "ref" ? valueIn(r.agent.file, target.path, r.agent.scope, r.agent.line) : null;
     if (!app || app.kind !== "app") continue;
     testFiles.add(r.file);
-    const path = evaluate(r.path, constant(r.file));
+    const path = evaluate(r.path, constant(r.file, r.scope));
     if (path === null) {
       addUnknown({ plugin: PLUGIN, site: r.site, scope: { file: r.file }, affects: ["tests"], cause: "dynamic", name: show(r.path), note: `the test requests a computed path (${show(r.path)}), so the route it reaches is not known`, count: null, exact: false });
       continue;
     }
     const clean = (path.split("?")[0] as string).split("#")[0] as string;
     const asked = segs(clean);
-    if (asked.length > MAX_PATTERN_SEGMENTS) continue;
+    if (asked.length > MAX_PATTERN_SEGMENTS) {
+      addUnknown({ plugin: PLUGIN, site: r.site, scope: { file: r.file }, affects: ["tests"], cause: "fan-out-capped", name: null, note: `the test requests a path of ${asked.length} segments, more than the ${MAX_PATTERN_SEGMENTS} the matcher reads, so the route it reaches is not known`, count: null, exact: false });
+      continue;
+    }
+    const methodFits = (reg: Registration) => reg.methods.includes("*") || reg.methods.includes(r.method) || (r.method === "HEAD" && reg.methods.includes("GET"));
+    const unread = (unreadByApp.get(app.id) ?? []).filter((u) => methodFits(u.reg));
+    if (unread.length > 0) {
+      const long = unread.some((u) => u.why === "too-long");
+      addUnknown({ plugin: PLUGIN, site: r.site, scope: { file: r.file }, affects: ["tests"], cause: long ? "fan-out-capped" : "unsupported-rule", name: null, note: `${unread.length} routes of ${app.name} have patterns the matcher does not read (${long ? `more than ${MAX_PATTERN_SEGMENTS} segments` : "a regular expression or a wildcard inside a segment"}), so whether this request reaches one of them is not known`, count: unread.length, exact: true });
+    }
     const from = index.enclosing(r.file, r.site.line)?.id ?? r.file;
     for (const { reg, pattern } of byApp.get(app.id) ?? []) {
-      if (!reg.methods.includes("*") && !reg.methods.includes(r.method) && !(r.method === "HEAD" && reg.methods.includes("GET"))) continue;
+      if (!methodFits(reg)) continue;
       if (!take("matchWork", (pattern.length + 1) * (asked.length + 1))) {
         unmatched++;
         break;

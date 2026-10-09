@@ -1,0 +1,93 @@
+// Cases a review of the Express plugin found, each a way the plugin could
+// state a route, a pattern or a chain as proved when the code does not
+// prove it, or drop a gap without saying so. Each file of the repository
+// below plants one; each test names the failure it guards.
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { buildGraph } from "../../index.js";
+import type { FrameworkUnknown, Graph, Registration } from "../../index.js";
+
+const H = 'import { h } from "./h.js";';
+const many = (n: number) => Array.from({ length: n }, () => "h").join(", ");
+const deep = (n: number) => Array.from({ length: n }, (_, i) => `s${i}`).join("/");
+const files: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "review", private: true, type: "module", dependencies: { express: "^4.21.2", supertest: "^7.1.0" }, devDependencies: { vitest: "^3.2.4" } }),
+  "src/h.ts": "export function h(_req: unknown, _res: unknown, next?: () => void): void {\n  next?.();\n}\nexport function last(_req: unknown, _res: unknown): void {}\nexport function chooseAuth(): (req: unknown, res: unknown, next: () => void) => void {\n  return (_q, _s, next) => next();\n}\n",
+  // A factory parameter named express shadows the import: its call makes no Express application.
+  "src/shadow.ts": ['import express from "express";', H, "export function build(express: () => { get(p: string, f: unknown): void }) {", "  const app = express();", '  app.get("/shadowed", h);', "  return app;", "}", "export const real = express();"].join("\n"),
+  // A mount under a computed prefix, then a literal mount below it.
+  "src/nested.ts": ['import express, { Router } from "express";', H, "const tenant = process.env.TENANT;", "export const app = express();", "const r = Router();", "const child = Router();", 'child.get("/x", h);', 'r.use("/v1", child);', "app.use(`/${tenant}`, r);"].join("\n"),
+  // A path held in a binding that changes: no literal proves which path is registered.
+  "src/mutable.ts": ['import express from "express";', H, "export const app = express();", 'let path = "/old";', 'path = "/new";', "app.get(path, h);", 'const FIXED = "/fixed";', "export function inner(FIXED: string) {", "  app.get(FIXED, h);", "}", "app.get(FIXED, h);"].join("\n"),
+  // A route with more arguments than the reader keeps: the handler is past the cut.
+  "src/wide.ts": ['import express from "express";', 'import { h, last } from "./h.js";', "export const app = express();", `app.get("/wide", ${many(30)}, last);`].join("\n"),
+  // Middleware whose function is a value the code computes.
+  "src/auth.ts": ['import express from "express";', 'import { chooseAuth, h } from "./h.js";', "export const app = express();", "const auth = chooseAuth();", "app.use(auth);", 'app.get("/guarded", h);'].join("\n"),
+  // A route deeper than the matcher reads, a route it cannot read, and the test requests for both.
+  "src/long.ts": ['import express from "express";', H, "export const app = express();", `app.get("/${deep(70)}", h);`, 'app.get("/re/:id(\\\\d+)", h);'].join("\n"),
+  "src/long.test.ts": ['import request from "supertest";', 'import { it } from "vitest";', 'import { app } from "./long.js";', 'it("reaches the long route", async () => {', `  await request(app).get("/${deep(70)}");`, '  await request(app).get("/re/42");', "});"].join("\n"),
+};
+
+let root: string;
+let graph: Graph;
+const regs = (file: string): Registration[] => (graph.frameworks?.entities ?? []).filter((e): e is Registration => e.kind === "registration" && e.plugin === "express" && e.site.file === file);
+const gaps = (file: string): FrameworkUnknown[] => (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "express" && u.site?.file === file);
+
+beforeAll(async () => {
+  root = mkdtempSync(join(tmpdir(), "oq-express-review-"));
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+  }
+  const run = (...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
+  run("init", "-q");
+  run("config", "user.email", "test@example.com");
+  run("config", "user.name", "test");
+  run("add", "-A");
+  run("commit", "-q", "-m", "base");
+  graph = await buildGraph({ repoRoot: root, store: null });
+}, 120_000);
+afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+describe("the Express plugin on what a review found", () => {
+  it("makes no application from a call of a parameter that shadows the express import", () => {
+    expect(regs("src/shadow.ts")).toEqual([]);
+    expect(graph.frameworks?.apps.filter((a) => a.plugin === "express" && a.site.file === "src/shadow.ts").map((a) => a.site.line)).toEqual([8]);
+  });
+
+  it("keeps the pattern unknown under every mount below a computed prefix, never restarting from the literal mount", () => {
+    const x = regs("src/nested.ts");
+    expect(x.map((r) => r.pattern)).toEqual([null]);
+  });
+
+  it("does not take a path from a binding that is reassigned or shadowed: each such route is a dynamic unknown", () => {
+    const patterns = regs("src/mutable.ts").map((r) => r.pattern);
+    expect(patterns).not.toContain("/old");
+    expect(patterns).not.toContain("/new");
+    expect(gaps("src/mutable.ts").some((u) => u.site?.line === 6 && u.cause === "dynamic")).toBe(true);
+    // The module constant at module level is a literal; the parameter that shadows it is not.
+    expect(patterns).toEqual(["/fixed"]);
+    expect(gaps("src/mutable.ts").some((u) => u.site?.line === 9 && u.cause === "dynamic")).toBe(true);
+  });
+
+  it("never names a middleware as the handler when the reader cut the argument list, and says the list was cut", () => {
+    const [wide] = regs("src/wide.ts");
+    expect(wide?.handler.status).toBe("unresolved");
+    expect(wide?.handler.targets).toEqual([]);
+    expect(gaps("src/wide.ts").some((u) => u.cause === "fan-out-capped")).toBe(true);
+  });
+
+  it("says when a middleware in a route's chain cannot be bound, rather than leaving it out silently", () => {
+    const gap = gaps("src/auth.ts").find((u) => u.affects.includes("applies_middleware"));
+    expect(gap?.cause).toBe("dynamic");
+    expect(gap?.name).toBe("auth");
+  });
+
+  it("says when a test request could not be matched because the route or the request is beyond what the matcher reads", () => {
+    const atRequests = gaps("src/long.test.ts").filter((u) => u.affects.includes("tests"));
+    expect(atRequests.map((u) => u.site?.line).sort()).toEqual([5, 6]);
+  });
+});

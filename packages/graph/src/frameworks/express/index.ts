@@ -10,7 +10,7 @@ import type { ExpressFact } from "./facts.js";
 import { isExpressFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 1;
+export const VERSION = 2;
 
 const app = "express-app";
 
