@@ -69,7 +69,7 @@ describe("lookup orders and value rules", () => {
     expect(g.unknowns.filter((u) => u.file === "p.go" && u.line === 18).map((u) => u.cause)).toEqual(["ambiguous"]);
   });
 
-  it.skip("puts the first module of `include A, B` before the second, and a later include before an earlier one (6)", async () => {
+  it("puts the first module of `include A, B` before the second, and a later include before an earlier one (6)", async () => {
     const g = await graphOf({
       "m.rb": "module A\n  def m\n    1\n  end\nend\n\nmodule B\n  def m\n    2\n  end\nend\n\nclass One\n  include A, B\nend\n\nclass Two\n  include A\n  include B\nend\n\ndef run\n  One.new.m + Two.new.m\nend\n",
     });

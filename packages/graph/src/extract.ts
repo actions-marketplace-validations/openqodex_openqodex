@@ -17,7 +17,11 @@ import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Recei
 // relation, Go interface types and pointer receivers, object literal
 // modules, names in value position, type uses, literal tables, aliases,
 // calls of returned values and the invocation summary of each function.
-export const EXTRACTOR_VERSION = 13;
+// 14: the review of phase 2: Ruby mixins of one statement in the order Ruby
+// applies them, whether a function returns anything but named functions,
+// parameters given another value, abstract Python methods by decorator
+// only, and every type an annotation names.
+export const EXTRACTOR_VERSION = 14;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -2285,7 +2289,10 @@ function extractRuby(tree: Tree): FileFacts {
           if (method.text === "include" || method.text === "extend" || method.text === "prepend") {
             const cls = ctx.cls();
             if (cls && cls.def >= 0) {
-              for (const a of args) {
+              // Ruby applies the modules of one statement last first, so
+              // `include A, B` puts A before B: they are recorded in the
+              // order Ruby applies them, as if written one statement each.
+              for (const a of [...args].reverse()) {
                 if (a.type === "constant" || a.type === "scope_resolution") (ctx.defs[cls.def] as DefFact).bases.push({ name: a.text, qualifier: cls.cls, ...pos(a), rel: method.text as "include" | "extend" | "prepend" });
               }
             }
