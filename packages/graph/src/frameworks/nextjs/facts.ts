@@ -14,8 +14,8 @@ export type NextFact =
   // A function whose own body starts with "use server".
   | (FrameworkFactBase & { kind: "action"; name: string })
   // `export const config = { matcher: ... }`: the literal matchers, or null
-  // when the matcher is computed.
-  | (FrameworkFactBase & { kind: "matcher"; values: string[] | null })
+  // when the matcher is computed; `more`: entries past what the reader keeps.
+  | (FrameworkFactBase & { kind: "matcher"; values: string[] | null; more?: number })
   // The file is larger than MAX_SOURCE_BYTES and was not read.
   | (FrameworkFactBase & { kind: "too-large"; bytes: number })
   // The file has regions the parser could not read.
@@ -85,7 +85,9 @@ export function readFacts(root: Node): NextFact[] {
           let values: string[] | null = null;
           if (v.t === "str") values = [v.v];
           else if (v.t === "array" && v.items.length <= MAX_MATCHERS && v.items.every((x) => x.t === "str")) values = v.items.map((x) => (x.t === "str" ? x.v : ""));
-          out.push({ kind: "matcher", ...pos(node), values });
+          const fact: NextFact = { kind: "matcher", ...pos(node), values };
+          if (values !== null && v.t === "array" && v.more) fact.more = v.more;
+          out.push(fact);
           return;
         }
       }
@@ -108,7 +110,7 @@ export function isNextFact(v: unknown): v is NextFact {
     case "action":
       return typeof f.name === "string";
     case "matcher":
-      return f.values === null || (Array.isArray(f.values) && f.values.length <= MAX_MATCHERS && f.values.every((s) => typeof s === "string"));
+      return (f.values === null || (Array.isArray(f.values) && f.values.length <= MAX_MATCHERS && f.values.every((s) => typeof s === "string"))) && (f.more === undefined || Number.isInteger(f.more));
     case "too-large":
       return Number.isInteger(f.bytes);
     case "syntax-error":

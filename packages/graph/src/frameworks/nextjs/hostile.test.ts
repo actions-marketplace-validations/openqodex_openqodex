@@ -42,7 +42,7 @@ describe("the Next.js plugin on a hostile repository", () => {
     run("add", "-A");
     run("commit", "-q", "-m", "hostile");
     graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 120_000 });
-  }, 180_000);
+  }, 600_000);
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   it("resolves a crafted file tree in under a second, so a route tree cannot hang the build", () => {

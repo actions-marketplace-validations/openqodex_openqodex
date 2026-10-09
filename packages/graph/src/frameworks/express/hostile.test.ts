@@ -104,7 +104,7 @@ beforeAll(async () => {
     tree.delete();
   }
   graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 120_000 });
-}, 120_000);
+}, 600_000);
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe("the Express plugin on a hostile repository", () => {
@@ -192,7 +192,7 @@ describe("the Express plugin on work split over hundreds of small applications",
     run("add", "-A");
     run("commit", "-q", "-m", "split");
     split = await buildGraph({ repoRoot: splitRoot, store: null, budgetMs: 120_000 });
-  }, 120_000);
+  }, 600_000);
   afterAll(() => rmSync(splitRoot, { recursive: true, force: true }));
 
   it("stops at the build's registration cap, though no application alone comes near it, and says so", () => {

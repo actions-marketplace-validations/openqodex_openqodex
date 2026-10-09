@@ -9,7 +9,7 @@ import type { NextFact } from "./facts.js";
 import { isNextFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 1;
+export const VERSION = 2;
 const SUPPORTED = "Next.js 13.4 to 15";
 
 const app = "nextjs-app";

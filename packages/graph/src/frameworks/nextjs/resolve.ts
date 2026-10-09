@@ -39,10 +39,11 @@ export const MAX_PATHS = 1_000_000; // capture paths examined
 export const MAX_REGISTRATIONS = 10000;
 export const MAX_MIDDLEWARE_EDGES = 30_000;
 export const MAX_MATCH_WORK = 4_000_000; // matcher-by-route steps
+export const MAX_ROLES = 20_000; // roles given
 export const MAX_UNKNOWNS = 5000;
 
-type Spend = "facts" | "paths" | "registrations" | "middlewareEdges" | "matchWork";
-const LIMIT: Record<Spend, number> = { facts: MAX_FACTS_READ, paths: MAX_PATHS, registrations: MAX_REGISTRATIONS, middlewareEdges: MAX_MIDDLEWARE_EDGES, matchWork: MAX_MATCH_WORK };
+type Spend = "facts" | "paths" | "registrations" | "middlewareEdges" | "matchWork" | "roles";
+const LIMIT: Record<Spend, number> = { facts: MAX_FACTS_READ, paths: MAX_PATHS, registrations: MAX_REGISTRATIONS, middlewareEdges: MAX_MIDDLEWARE_EDGES, matchWork: MAX_MATCH_WORK, roles: MAX_ROLES };
 
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]);
 const EXTS = new Set(["js", "jsx", "ts", "tsx"]);
@@ -81,8 +82,8 @@ function run(index: PluginIndex<NextFact>): Analysis {
   const apps: Detection[] = [];
 
   // ---------- the build's budgets ----------
-  const spent: Record<Spend, number> = { facts: 0, paths: 0, registrations: 0, middlewareEdges: 0, matchWork: 0 };
-  const refused: Record<Spend, number> = { facts: 0, paths: 0, registrations: 0, middlewareEdges: 0, matchWork: 0 };
+  const spent: Record<Spend, number> = { facts: 0, paths: 0, registrations: 0, middlewareEdges: 0, matchWork: 0, roles: 0 };
+  const refused: Record<Spend, number> = { facts: 0, paths: 0, registrations: 0, middlewareEdges: 0, matchWork: 0, roles: 0 };
   const take = (k: Spend, n = 1): boolean => {
     if (spent[k] + n > LIMIT[k]) {
       refused[k] += n;
@@ -144,8 +145,18 @@ function run(index: PluginIndex<NextFact>): Analysis {
 
   // ---------- handlers ----------
   const symbolsOf = (file: string): readonly GraphNode[] => index.symbols(file);
-  // A definition at the top of a file (no owner): its id is `<file>#<name>@<line>:<column>`.
-  const topSymbol = (file: string, name: string): GraphNode | null => symbolsOf(file).find((n) => n.name === name && n.id.startsWith(`${file}#${name}@`)) ?? null;
+  // A definition at the top of a file (no owner): its id is
+  // `<file>#<name>@<line>:<column>`. Each file's are indexed by name once.
+  const tops = new Map<string, Map<string, GraphNode>>();
+  const topSymbol = (file: string, name: string): GraphNode | null => {
+    let byName = tops.get(file);
+    if (!byName) {
+      byName = new Map();
+      for (const n of symbolsOf(file)) if (n.id.startsWith(`${file}#${n.name}@`) && !byName.has(n.name)) byName.set(n.name, n);
+      tops.set(file, byName);
+    }
+    return byName.get(name) ?? null;
+  };
   // The definition behind an exported name: a declaration exported as itself, or `export { local as name }`.
   const exportedSymbol = (file: string, name: string): GraphNode | null => {
     const lf = index.languageFacts(file);
@@ -168,6 +179,7 @@ function run(index: PluginIndex<NextFact>): Analysis {
     const k = `${target}\0${role}\0${detail}`;
     if (roleSeen.has(k)) return;
     roleSeen.add(k);
+    if (!take("roles")) return;
     roles.push({ target, role, detail, app, evidence });
   };
   const at = (file: string, n: GraphNode | null): Site => ({ file, line: n?.startLine ?? 1, column: 1 });
@@ -303,7 +315,10 @@ function run(index: PluginIndex<NextFact>): Analysis {
     const file = ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"].map((f) => join(project, f)).find((f) => index.languageFacts(f) !== null);
     if (!file) continue;
     const fn = exportedSymbol(file, "middleware") ?? defaultHandler(file).target;
-    if (!fn) continue;
+    if (!fn) {
+      addUnknown({ plugin: PLUGIN, site: { file, line: 1, column: 1 }, scope: { project }, affects: ["applies_middleware"], cause: "dynamic", name: "middleware", note: "the middleware file exports no function definition named middleware and no named default export, so which routes its middleware runs for is not known", count: null, exact: false });
+      continue;
+    }
     const own = new Set(routers.filter((r) => r.project === project).map((r) => r.id));
     const matcher = of(file, "matcher")[0];
     const site = at(file, fn);
@@ -313,29 +328,43 @@ function run(index: PluginIndex<NextFact>): Analysis {
       addUnknown({ plugin: PLUGIN, site: { file, line: matcher.line, column: matcher.column }, scope: { project }, affects: ["applies_middleware"], cause: "dynamic", name: "matcher", note: "the middleware's matcher is computed, so the routes it runs for are not known", count: null, exact: false });
       continue;
     }
+    // A cut list: a route no entry read selects may be selected by one past the cut.
+    const cutList = matcher?.more ?? 0;
+    if (cutList > 0) addUnknown({ plugin: PLUGIN, site: { file, line: matcher?.line ?? 1, column: matcher?.column ?? 1 }, scope: { project }, affects: ["applies_middleware"], cause: "fan-out-capped", name: "matcher", note: `the matcher list has ${cutList} entries past the ${matcher?.values?.length ?? 0} the plugin reads, so a route only those entries select is linked as possible`, count: cutList, exact: true });
     for (const reg of registrations) {
       if (reg.app === null || !own.has(reg.app) || reg.pattern === null) continue;
+      // Once the matching budget is gone nothing more is matched; one unknown says so below.
+      if (refused.matchWork > 0) break;
       let tier: "certain" | "possible" | null = null;
+      let why: string | null = null;
       if (!parsed) tier = "certain"; // no matcher: every request
       else {
         const route = routeSegments(reg.pattern);
         for (const m of parsed) {
           if (m === null) {
             tier ??= "possible";
+            why ??= "the middleware's matcher is a pattern the plugin does not read, so it may run for this route";
             continue;
           }
-          if (!route || !take("matchWork", (m.length + 1) * (route.length + 1))) {
+          if (!route) {
             tier ??= "possible";
+            why ??= `the route has more segments than the ${MAX_PATTERN_SEGMENTS} the matcher reads, so the middleware may run for it`;
             continue;
           }
+          if (!take("matchWork", (m.length + 1) * (route.length + 1))) break;
           if (intersects(m, route)) {
             tier = "certain";
             break;
           }
         }
+        if (refused.matchWork > 0 && tier !== "certain") continue;
+        if (tier === null && cutList > 0) {
+          tier = "possible";
+          why = `no matcher entry the plugin reads selects this route, but the list has ${cutList} entries past them`;
+        }
       }
       if (tier === null || !take("middlewareEdges")) continue;
-      edges.push({ from: reg.id, to: fn.id, kind: "applies_middleware", plugin: PLUGIN, app: reg.app, order: 0, evidence: { kind: "route-path", tier, site, via: null, premises: [], rule: rule("nextjs-middleware"), note: tier === "certain" ? null : "the middleware's matcher is a pattern the plugin does not read, so it may run for this route" } });
+      edges.push({ from: reg.id, to: fn.id, kind: "applies_middleware", plugin: PLUGIN, app: reg.app, order: 0, evidence: { kind: "route-path", tier, site, via: null, premises: [], rule: rule("nextjs-middleware"), note: tier === "certain" ? null : why } });
     }
   }
 
@@ -348,6 +377,8 @@ function run(index: PluginIndex<NextFact>): Analysis {
   if (refused.registrations > 0) cut(["handles"], "fan-out-capped", refused.registrations, `${refused.registrations} routes were left out: the Next.js plugin keeps at most ${MAX_REGISTRATIONS} in one build`);
   if (refused.middlewareEdges > 0) cut(["applies_middleware"], "fan-out-capped", refused.middlewareEdges, `${refused.middlewareEdges} middleware edges were left out: the Next.js plugin keeps at most ${MAX_MIDDLEWARE_EDGES} in one build`);
   if (segmentsCut > 0) cut(["handles"], "fan-out-capped", segmentsCut, `${segmentsCut} files more than ${MAX_PATTERN_SEGMENTS} folders deep were not read as routes`);
+  if (refused.matchWork > 0) cut(["applies_middleware"], "budget", null, `the plugin stopped matching middleware to routes after ${MAX_MATCH_WORK} steps in this build; the routes past it are not linked to their middleware`);
+  if (refused.roles > 0) cut(["handles"], "fan-out-capped", refused.roles, `${refused.roles} roles were left out: the Next.js plugin gives at most ${MAX_ROLES} roles in one build`);
   if (unknownsLeftOut > 0) cut(["handles"], "fan-out-capped", unknownsLeftOut, `${unknownsLeftOut} more unknowns past the first ${MAX_UNKNOWNS} were left out`);
 
   return { apps, output: { roles, entities: registrations, edges, unknowns } };

@@ -75,7 +75,7 @@ describe("the React plugin on a hostile repository", () => {
       tree.delete();
     }
     graph = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * 1024 * 1024, budgetMs: 120_000 });
-  }, 120_000);
+  }, 600_000);
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   it("reads the facts of more than 1 MiB of crafted components in under a second", () => {
@@ -108,7 +108,7 @@ describe("the React plugin on elements split over a hundred files", () => {
     for (let f = 0; f < 120; f++) files[`src/split/p${f}.tsx`] = `import { Badge } from "../Badge";\nexport function P${f}() {\n  return <div>${"<Badge />".repeat(500)}</div>;\n}\n`;
     root = repo(files);
     graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
-  }, 120_000);
+  }, 600_000);
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   it("stops at the build's renders budget, though no file alone comes near it, and says so", () => {

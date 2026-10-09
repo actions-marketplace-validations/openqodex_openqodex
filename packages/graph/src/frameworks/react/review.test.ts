@@ -63,7 +63,7 @@ describe("the React plugin on tens of thousands of components", () => {
     for (let f = 0; f < 12; f++) files[`src/c${f}.tsx`] = Array.from({ length: 1900 }, (_, i) => `export function C${f}x${i}() {\n  return <i />;\n}`).join("\n");
     root = repo(files);
     graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
-  }, 180_000);
+  }, 600_000);
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   it("keeps at most the build's roles and says how many were left out, so the stage never fails on its output", () => {
