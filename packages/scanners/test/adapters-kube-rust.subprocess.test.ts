@@ -201,6 +201,19 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
     expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "cargo-deny", ruleId: "RUSTSEC-2021-0003", filePath: "Cargo.lock", lineStart: 6, lineEnd: 7 }));
   }, 300_000);
 
+  // osv-scanner (through osv.dev) and cargo-deny (through the RustSec
+  // database) both report RUSTSEC-2021-0003 on smallvec's Cargo.lock entry.
+  // The report keeps one candidate, the higher severity, and names the other
+  // scanner on it.
+  it("osv-scanner and cargo-deny on one RustSec advisory leave one candidate that names the other", async () => {
+    if (offline() || !primeCargo(RUST_PROJECT)) return;
+    const result = await scan({ scanner: "osv-scanner", also: ["cargo-deny"], rule: "", files: RUST_PROJECT, anchor: "" });
+    for (const row of result.scan.scanners) expect(row.status, `${row.scanner}: ${row.reason ?? ""}`).toBe("ran");
+    const advisory = result.scan.candidates.filter((c) => c.ruleId === "RUSTSEC-2021-0003");
+    expect(advisory).toHaveLength(1);
+    expect(advisory[0]).toMatchObject({ source: "osv-scanner", filePath: "Cargo.lock", lineStart: 6, lineEnd: 7, alsoReportedBy: ["cargo-deny:RUSTSEC-2021-0003"] });
+  }, 300_000);
+
   // The project can name a rustc or a rustc wrapper and a source replacement
   // (.cargo/config.toml), a toolchain to install (rust-toolchain.toml), and
   // advisory database URLs, a database folder and ignores (deny.toml). None
