@@ -204,11 +204,12 @@ export function runFrameworks(input: StageInput): FrameworkData {
       const capped = capPerApp(plugin.id, result.entities, [...keep(result.edges), ...deriveTestCalls(plugin.id, roles, index)], unknowns);
       const edges = capped.edges;
       if (apps.length === 0 && roles.length === 0 && capped.entities.length === 0 && edges.length === 0) run.status = "not-detected";
-      data.apps.push(...apps.map((a) => ({ ...a, plugin: plugin.id })));
-      data.roles.push(...roles.map((r) => ({ ...r, plugin: plugin.id })));
-      data.entities.push(...capped.entities);
-      data.edges.push(...edges);
-      data.unknowns.push(...unknowns);
+      // One push per item: a spread of a large list as arguments overflows the stack.
+      for (const a of apps) data.apps.push({ ...a, plugin: plugin.id });
+      for (const r of roles) data.roles.push({ ...r, plugin: plugin.id });
+      for (const e of capped.entities) data.entities.push(e);
+      for (const e of edges) data.edges.push(e);
+      for (const u of unknowns) data.unknowns.push(u);
       if (run.invalid > 0) run.reason = `${run.invalid} evidence records failed the check and were left out`;
     } catch (error) {
       // A plugin that fails contributes nothing to this build.

@@ -57,6 +57,22 @@ describe("the framework stage", () => {
     expect(data.roles).toEqual([]);
   }, 60_000);
 
+  it("keeps a plugin's output of 150,000 roles, so appending a large output never overflows the stack and fails the plugin", async () => {
+    const root = makeRepo({ "requirements.txt": "Django==5.0\n", "app/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "app.urls"\n' });
+    commitAll(root);
+    const graph = await buildGraph({ repoRoot: root, store: null });
+    const evidence = { kind: "role-path" as const, tier: "certain" as const, site: { file: "app/settings.py", line: 1, column: 1 }, via: null, premises: [], rule: { id: "many", version: 1 }, note: null };
+    const many: FrameworkPlugin = {
+      ...(PLUGINS.find((p) => p.id === "django") as FrameworkPlugin),
+      id: "many",
+      detect: () => [],
+      resolve: () => ({ roles: Array.from({ length: 150_000 }, (_, i) => ({ target: `app/f${i}.py`, role: "config" as const, detail: null, app: null, evidence })), entities: [], edges: [], unknowns: [] }),
+    };
+    const data = runFrameworks({ files: [], paths: [], nodes: graph.nodes, defsByFile: graph.defsByFile, edges: graph.edges, world: {} as never, model: graph.model, projectOf: graph.projectOf, plugins: [many] });
+    expect(data.plugins[0]?.status).toBe("ok");
+    expect(data.roles.length).toBe(150_000);
+  }, 60_000);
+
   it("publishes only evidence that passes the check, so no certain framework edge rests on a convention", async () => {
     const root = makeRepo({
       "requirements.txt": "Django==5.0\n",

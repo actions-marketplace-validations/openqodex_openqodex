@@ -500,7 +500,7 @@ export function expandRoutes(world: RailsWorld, budget: Budget): Expansion {
         for (const a of f.args) {
           const t = text(a);
           if (t !== null) names.push(t);
-          else if (a.t === "list") names.push(...a.v);
+          else if (a.t === "list") for (const v of a.v) names.push(v);
           else gap(f, "dynamic", `a computed ${f.call} name: its routes are not listed`);
         }
         if (o.concerns !== undefined) gap(f, "unsupported-rule", "routes added through concerns are not expanded", null);
