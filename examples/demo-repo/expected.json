@@ -114,7 +114,7 @@
       "id": "workflow-injection",
       "class": "script injection in a GitHub workflow",
       "file": ".github/workflows/ci.yml",
-      "lines": [15, 15],
+      "lines": [17, 17],
       "detectors": [
         { "scanner": "actionlint", "rule_id": "expression" },
         { "scanner": "semgrep", "rule_id": "yaml.github-actions.security.run-shell-injection.run-shell-injection" },
@@ -146,7 +146,9 @@
       "lines": [42, 43],
       "detectors": [
         { "scanner": "checkov", "rule_id": "CKV_K8S_16" },
-        { "scanner": "checkov", "rule_id": "CKV_K8S_20" }
+        { "scanner": "checkov", "rule_id": "CKV_K8S_20" },
+        { "scanner": "kube-linter", "rule_id": "privileged-container" },
+        { "scanner": "kube-linter", "rule_id": "privilege-escalation-container" }
       ]
     },
     {

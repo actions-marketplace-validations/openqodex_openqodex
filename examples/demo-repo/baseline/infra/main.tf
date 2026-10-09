@@ -35,3 +35,14 @@ resource "aws_security_group" "api" {
     cidr_blocks = ["10.0.0.0/16"]
   }
 }
+
+variable "subnet_id" {
+  type        = string
+  description = "The private subnet the shop API hosts run in."
+}
+
+resource "aws_network_interface" "api" {
+  description     = "The shop API host's interface"
+  subnet_id       = var.subnet_id
+  security_groups = [aws_security_group.api.id]
+}

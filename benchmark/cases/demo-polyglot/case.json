@@ -298,11 +298,11 @@
       "id": "workflow-injection",
       "file": ".github/workflows/ci.yml",
       "lines": [
-        14,
-        15
+        16,
+        17
       ],
       "anchor": {
-        "line": 15,
+        "line": 17,
         "text": "github.event.pull_request.title"
       },
       "mentions": [
@@ -404,6 +404,7 @@
       "severity": "critical",
       "found_by": [
         "checkov",
+        "kube-linter",
         "reasoning"
       ],
       "truth": "privileged: true gives the API container every capability and the node's devices, so a flaw in the app becomes root on the node; allowPrivilegeEscalation: true lets its processes gain more privileges than they started with. A raw-socket health check needs only the NET_RAW capability, so the fix is to drop privileged, keep allowPrivilegeEscalation false and add NET_RAW alone."

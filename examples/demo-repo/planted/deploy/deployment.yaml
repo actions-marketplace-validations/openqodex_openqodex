@@ -33,7 +33,7 @@ spec:
                     app: shop-api
       containers:
         - name: api
-          image: ghcr.io/example/shop-api:1.4.2
+          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/shop-api:1.4.2@sha256:9b1d3c5e7f2a4b6c8d0e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c
           imagePullPolicy: Always
           ports:
             - containerPort: 5000
@@ -59,3 +59,20 @@ spec:
             httpGet:
               path: /items
               port: 5000
+---
+# Only port 5000 of the API pods takes traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shop-api
+  namespace: shop
+spec:
+  podSelector:
+    matchLabels:
+      app: shop-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 5000
