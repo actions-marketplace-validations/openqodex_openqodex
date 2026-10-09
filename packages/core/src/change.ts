@@ -16,6 +16,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { createCoverageParser, unquoteDiffPath } from "./diff.js";
 import { matchesGlob } from "./glob.js";
 import { STATE_DIR } from "./report-files.js";
+import { safeGit } from "./safe-git.js";
 import type { Change, ChangedFile, ChangeScope, DeletionPoint } from "./types.js";
 import { OpenQodexError } from "./types.js";
 
@@ -449,6 +450,83 @@ export async function getTreeChange(args: {
   exclude: string[];
 }): Promise<Change> {
   return diffChange({ ...args, range: [args.baseSha, args.headSha], newSide: `${args.headSha}:`, env: process.env });
+}
+
+// A path a checkout may write: no empty, "." or ".." part and no ".git"
+// part in any case, as git itself refuses to check out.
+function checkoutSafe(path: string): boolean {
+  return path.split("/").every((part) => part !== "" && part !== "." && part !== ".." && part.toLowerCase() !== ".git");
+}
+
+// One commit's tree with only the admitted paths, written into the temporary
+// object folder `objects` through a temporary index: git's own listing of the
+// commit, filtered, read back as an index and written as a tree. A missing
+// file object (a partial clone) is no obstacle here; the diff names it.
+async function admittedTree(repoRoot: string, sha: string, admit: (path: string) => boolean, tmp: string, objects: string, alternates: string): Promise<{ tree: string; refused: number }> {
+  const listed = await safeGit(repoRoot, ["ls-tree", "-r", "-z", "--full-tree", sha]);
+  if (listed.code !== 0) throw failure(["ls-tree"], listed.code, listed.stderr);
+  const keep: string[] = [];
+  let refused = 0;
+  // Each record is "<mode> <type> <id>\t<path>", the form --index-info reads.
+  for (const record of splitNul(listed.stdout)) {
+    const path = record.slice(record.indexOf("\t") + 1);
+    if (!checkoutSafe(path)) {
+      throw new OpenQodexError(`the commit ${sha.slice(0, 12)} holds a path no checkout may write (${JSON.stringify(path.slice(0, 200))}); the review stops`);
+    }
+    if (admit(path)) keep.push(record);
+    else refused++;
+  }
+  const env = { GIT_INDEX_FILE: join(tmp, `index-${sha}`), GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(alternates) };
+  const filled = await safeGit(repoRoot, ["update-index", "-z", "--index-info"], keep.map((r) => `${r}\0`).join(""), env);
+  if (filled.code !== 0) throw failure(["update-index"], filled.code, filled.stderr);
+  const written = await safeGit(repoRoot, ["write-tree", "--missing-ok"], undefined, env);
+  if (written.code !== 0) throw failure(["write-tree"], written.code, written.stderr);
+  return { tree: written.stdout.toString("utf8").trim(), refused };
+}
+
+// The change between two commits over the admitted paths only (the server
+// review's folder scopes and review.paths.exclude, decided by `admit`). Both
+// commits' trees are rebuilt with only the admitted paths, in a temporary
+// index and object folder (the clone is never written), and diffed as
+// getTreeChange diffs two commits. So a refused file is in no part of the
+// change, and a file renamed into the admitted paths from a refused one is a
+// new file: its earlier version is never read. `renamedIn` names each such
+// file. With every path admitted it is the change getTreeChange gives. A
+// commit holding a path no checkout may write is refused, as a checkout
+// would refuse it.
+export async function getAdmittedTreeChange(args: {
+  repoRoot: string;
+  baseRef: string;
+  baseSha: string;
+  headSha: string;
+  exclude: string[];
+  admit: (path: string) => boolean;
+}): Promise<{ change: Change; renamedIn: string[] }> {
+  const { repoRoot, admit } = args;
+  const objectsPath = (await gitOk(repoRoot, ["rev-parse", "--git-path", "objects"])).toString("utf8").trim();
+  const alternates = isAbsolute(objectsPath) ? objectsPath : resolve(repoRoot, objectsPath);
+  const tmp = await mkdtemp(join(tmpdir(), "openqodex-scope-"));
+  try {
+    const objects = join(tmp, "objects");
+    await mkdir(objects);
+    const base = await admittedTree(repoRoot, args.baseSha, admit, tmp, objects, alternates);
+    const head = await admittedTree(repoRoot, args.headSha, admit, tmp, objects, alternates);
+    const env = { ...process.env, GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(alternates) };
+    const change = await diffChange({ repoRoot, baseRef: args.baseRef, baseSha: args.baseSha, exclude: args.exclude, range: [base.tree, head.tree], newSide: `${head.tree}:`, env });
+    // A rename across the line, from the commits themselves: only needed
+    // when the admission refused a path of either side.
+    const renamedIn: string[] = [];
+    if (base.refused + head.refused > 0) {
+      const named = await gitOk(repoRoot, ["diff", ...DIFF_FLAGS, "--name-status", "-z", args.baseSha, args.headSha, "--", STATE_PATHSPEC]);
+      const kept = new Set(change.files.map((f) => f.path));
+      for (const f of parseNameStatus(named)) {
+        if (f.status === "renamed" && f.oldPath !== null && admit(f.path) && !admit(f.oldPath) && kept.has(f.path)) renamedIn.push(f.path);
+      }
+    }
+    return { change, renamedIn };
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
 }
 
 // The line count of each named blob ("<rev>:<path>" or ":<path>"), from one
