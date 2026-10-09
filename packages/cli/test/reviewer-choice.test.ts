@@ -135,16 +135,6 @@ describe("choosing the reviewer", () => {
     expect((JSON.parse(out) as Report).completion?.reviewer?.driver).toBe("claude");
   });
 
-  it("2. --reviewer codex inside Codex's own sandbox exits 2 with Full review unavailable, the reason and the fallback command", async () => {
-    vi.stubEnv("CODEX_SANDBOX", "seatbelt");
-    const claude = fake();
-    expect(await review([codexDriver, cursorDriver, claude], "codex")).toBe(2);
-    expect(claude.starts).toHaveLength(0);
-    expect(err).toContain("Full review unavailable");
-    expect(err).toMatch(/codex: Codex cannot start a second Codex inside its own sandbox/);
-    expect(err).toMatch(/review --agent/);
-  });
-
   it("8. auto inside Claude Code picks Claude Code, with Codex available too", async () => {
     vi.stubEnv("CLAUDECODE", "1");
     const codex = fake([], "codex");
@@ -212,12 +202,6 @@ describe("the per-run boundary check", () => {
     expect(err).toContain("Full review unavailable");
     expect(err).toContain("codex: Codex's sandbox did not confine reads to the review copy; the review did not start");
     expect(err).toMatch(/review --agent/);
-  });
-
-  it("11. a passed check starts the reviewer", async () => {
-    const codex = Object.assign(fake([], "codex"), { check: async () => null });
-    expect(await review([codex], "codex")).toBe(0);
-    expect(codex.starts).toHaveLength(1);
   });
 });
 

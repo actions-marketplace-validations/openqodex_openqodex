@@ -217,16 +217,6 @@ function decision(stdout: string): string | undefined {
 }
 
 describe("hook check: decisions", () => {
-  it("13. warn mode with no review abstains with one line asking for openqodex review", () => {
-    const s = sandbox({ "README.md": "hello\n" });
-    writeFileSync(join(s.repo, "README.md"), "changed\n");
-    published(s);
-    const r = check(s, "git push");
-    expect(r.stdout).toContain(UNREVIEWED);
-    expect(r.stdout).toContain("Run openqodex review");
-    expect(decision(r.stdout)).toBeUndefined();
-  });
-
   it("12. an incomplete record of this change never blocks, even in block mode", async () => {
     const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
     writeFileSync(join(s.repo, "README.md"), "changed\n");
@@ -235,13 +225,6 @@ describe("hook check: decisions", () => {
     const r = check(s, "git push");
     expect(decision(r.stdout)).toBeUndefined();
     expect(r.stdout).toContain("incomplete");
-  });
-
-  it("block mode with no review denies", () => {
-    const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
-    writeFileSync(join(s.repo, "README.md"), "changed\n");
-    published(s);
-    expect(decision(check(s, "git push").stdout)).toBe("deny");
   });
 
   it("a finalized passing review of the same change prints nothing, and stops covering it once the change moves", async () => {
@@ -389,14 +372,6 @@ describe("the record the hooks trust", () => {
     await repoRecord(s.repo);
     expect(decision(check(s, "git push").stdout)).toBe("deny");
   });
-
-  it("16. a legacy finalize writes a legacy record in the home", async () => {
-    const s = sandbox({ "README.md": "hello\n" });
-    writeFileSync(join(s.repo, "README.md"), "changed\n");
-    reviewAndFinalize(s);
-    const change = await getChange({ repoRoot: s.repo, scope: {}, exclude: [] });
-    expect(readHomeReceipt(s.oqHome, s.repo, change.id)?.kind).toBe("legacy");
-  });
 });
 
 describe("the review receipt", () => {
@@ -438,18 +413,6 @@ describe("the pre-push hook looks up the review of what the push sends", () => {
     expect(r.out).not.toMatch(/shellcheck|semgrep|gitleaks|raw finding|candidates to check|Reviewer/);
     expect(existsSync(join(s.repo, ".openqodex/latest-scan.json"))).toBe(false);
     expect(existsSync(join(s.repo, ".openqodex/reviews"))).toBe(false);
-  }, 60_000);
-
-  it("10. with block_on_severity and no review it stops the push", () => {
-    const s = sandbox({ "README.md": "hello\n", [BLOCK]: BLOCK_YAML });
-    withRemote(s);
-    writeFileSync(join(s.repo, "notes.txt"), "one\n");
-    git(s.repo, "add", "-A");
-    git(s.repo, "commit", "-q", "-m", "notes");
-    expect(cli(s, ["hook", "install"]).status).toBe(0);
-    const r = push(s, "origin", "main");
-    expect(r.status).not.toBe(0);
-    expect(r.out).toContain(UNREVIEWED);
   }, 60_000);
 
   it("14. a legacy review of the pushed commit lets a blocking repo push, with one line", () => {

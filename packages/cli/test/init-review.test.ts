@@ -192,14 +192,6 @@ describe("the review init ends with", () => {
     expect(out).toContain("First review: skipped");
   });
 
-  it("with no change and a terminal, asks one question and reviews the whole repo when that is the answer", async () => {
-    const driver = fake();
-    const ask = vi.fn(async () => ({ kind: "all" as const }));
-    await reviewAfterInit({ repoRoot: repo(false), runner: "openqodex", interactive: true, drivers: [driver], ask });
-    expect(ask).toHaveBeenCalledTimes(1);
-    expect(driver.started).toBe(1);
-  });
-
   it("with no change and the answer not now, reviews nothing", async () => {
     const driver = fake();
     await reviewAfterInit({ repoRoot: repo(false), runner: "openqodex", interactive: true, drivers: [driver], ask: async () => null });

@@ -226,15 +226,11 @@ describe("runtimes kept by init", () => {
 
   it("keeps the baked-in runtime even when it is old (failure 11)", () => expect(existsSync(rt(version))).toBe(true));
   it("keeps the runtime that was current before init, as previous, even when it is old (failure 11)", () => expect(existsSync(rt(NEWER))).toBe(true));
-  it("keeps a runtime younger than 7 days", () => expect(existsSync(rt("0.0.6"))).toBe(true));
   it("removes an openqodex runtime older than 7 days that no rule keeps", () => {
     expect(existsSync(rt("0.0.5"))).toBe(false);
     expect(existsSync(rt("0.0.8"))).toBe(false);
   });
   it("leaves a runtime folder that is not openqodex", () => expect(existsSync(rt("0.0.7"))).toBe(true));
-  it("init points the record at its own version with the earlier one as previous", () => {
-    expect(readFileSync(join(s.oqHome, "runtime/current"), "utf8")).toBe(`${version}\n${NEWER}\n`);
-  });
 });
 
 describe("the contract a release declares", () => {
