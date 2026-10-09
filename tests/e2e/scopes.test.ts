@@ -1,8 +1,11 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { demo, git, report, run } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // Half the planted files committed but not pushed, half left uncommitted, plus
 // one gitignored and one untracked copy of the secret file.

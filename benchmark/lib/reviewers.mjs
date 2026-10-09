@@ -15,7 +15,7 @@
 // 5. The Codex model is guessed, or taken from a variable Codex never reads:
 //    it is read from the header Codex prints, or recorded as unknown.
 import { execFile, spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -123,7 +123,7 @@ export async function probeCodex({ env = process.env, timeoutMs = 120_000 } = {}
   }
   const dir = mkdtempSync(join(tmpdir(), "oq-bench-codex-"));
   const args = ["exec", "--color", "never", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "-C", dir, "-c", 'approval_policy="never"', "-s", "read-only", "-"];
-  const r = await withInput("codex", args, "Reply with the single word ok.", e, timeoutMs);
+  const r = await withInput("codex", args, "Reply with the single word ok.", e, timeoutMs).finally(() => rmSync(dir, { recursive: true, force: true }));
   const ok = r.code === 0 && /\bok\b/i.test(r.stdout);
   const model = codexModelFrom(r.stderr);
   return { ok, blocked: !ok && BLOCKED.test(`${r.stderr} ${r.stdout}`), version, model, text: ok ? "ok" : `${r.error ?? `exit ${r.code}`}: ${r.stderr.trim().split("\n").slice(-3).join(" | ")}` };

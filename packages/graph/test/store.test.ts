@@ -100,9 +100,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, chownSync, copyFileSync, cpSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, cpSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildGraph, factsKey } from "../src/build.js";
@@ -113,6 +112,9 @@ import { openStore } from "../src/store/store.js";
 import { buildIdTime, type GraphStore, type PublishResult } from "../src/store/types.js";
 import { factsOf, keyOf, publishInput } from "./fixtures/store/input.js";
 import { callSites, commitAll, git, makeRepo, symbol } from "./helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const HOUR = 3600_000;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -121,7 +123,7 @@ let bundle = "";
 // OpenQodex's home for every store here, the child processes' included:
 // the record of the builds each store published lives there, never in the
 // developer's own ~/.openqodex.
-const HOME = mkdtempSync(join(tmpdir(), "oq-store-home-"));
+const HOME = tempDir("oq-store-home-");
 cleanup.push(HOME);
 
 // store-child.ts bundled with esbuild (the bundler tsup uses) into one .mjs
@@ -130,7 +132,7 @@ beforeAll(async () => {
   const require = createRequire(import.meta.url);
   const tsup = dirname(require.resolve("tsup/package.json"));
   const esbuild = createRequire(join(tsup, "package.json"))("esbuild") as { build: (options: Record<string, unknown>) => Promise<unknown> };
-  const dir = mkdtempSync(join(tmpdir(), "oq-store-child-"));
+  const dir = tempDir("oq-store-child-");
   cleanup.push(dir);
   bundle = join(dir, "child.mjs");
   await esbuild.build({
@@ -186,7 +188,7 @@ function repo(): string {
 }
 
 function outside(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-store-out-"));
+  const dir = tempDir("oq-store-out-");
   cleanup.push(dir);
   return dir;
 }

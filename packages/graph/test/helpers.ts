@@ -1,19 +1,19 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Graph } from "../src/index.js";
+import { tempDir } from "../../../tests/temp-dirs.mjs";
 
 // OpenQodex's home for the stores a test file opens: a temp folder, so the
 // record of builds (src/store/trust.ts) never lands in the developer's own
 // ~/.openqodex.
 export function makeHome(): string {
-  return mkdtempSync(join(tmpdir(), "oq-graph-home-"));
+  return tempDir("oq-graph-home-");
 }
 
 // A real git repo in a temp folder holding `files`.
 export function makeRepo(files: Record<string, string>): string {
-  const root = mkdtempSync(join(tmpdir(), "oq-graph-"));
+  const root = tempDir("oq-graph-");
   writeFiles(root, files);
   git(root, "init", "-q");
   git(root, "config", "user.email", "test@example.com");

@@ -35,12 +35,12 @@
 //     for the same sample it gives another element, class, id, link, line
 //     number or text, or other code in a diff cell.
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { getChange } from "../change.js";
 import { makeChange, makeScan } from "../test-fixtures.js";
 import type { Change, CompletionRecord, Report, ReportFinding } from "../types.js";
@@ -65,9 +65,15 @@ function git(cwd: string, ...args: string[]): string {
   return r.stdout;
 }
 
+const roots: string[] = [];
+afterAll(() => {
+  for (const d of roots) rmSync(d, { recursive: true, force: true });
+});
+
 // A real repository whose one change goes from `before` to `after` in each file.
 async function changeOf(files: Record<string, [string, string]>): Promise<Change> {
   const dir = mkdtempSync(join(tmpdir(), "oq-html-"));
+  roots.push(dir);
   git(dir, "init", "-q", "-b", "main");
   for (const [path, [before]] of Object.entries(files)) writeFileSync(join(dir, path), before);
   git(dir, "add", "-A");

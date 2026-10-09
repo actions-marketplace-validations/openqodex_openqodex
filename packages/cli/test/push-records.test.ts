@@ -31,11 +31,10 @@
 //  7. The agent hook lets `git push origin unreviewed:main` pass on the
 //     review of the current work.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getChange } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
 import { runReview } from "../src/review-run.js";
@@ -44,6 +43,9 @@ import { runMatches } from "../src/commands/review.js";
 import { DEPTH_ENV } from "../src/reviewers/driver.js";
 import type { ReviewerDriver, ReviewerSession, Turn } from "../src/reviewers/driver.js";
 import { cli, sandbox, type Sandbox } from "./init-helpers.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -97,7 +99,7 @@ const sh = (...a: string[]) => {
 };
 // The start commit on a bare remote as the branch's upstream.
 function published(): void {
-  const remote = mkdtempSync(join(tmpdir(), "oq-remote-"));
+  const remote = tempDir("oq-remote-");
   spawnSync("git", ["init", "-q", "--bare", remote]);
   sh("remote", "add", "origin", remote);
   sh("push", "-q", "-u", "origin", sh("symbolic-ref", "--short", "HEAD"));
@@ -172,7 +174,7 @@ describe("5. the legacy two-step protocol", () => {
 
   it("finalize of a run this home never scanned writes no record and says so in one line", () => {
     const { changeId } = agentRun();
-    const other = mkdtempSync(join(tmpdir(), "oq-other-home-"));
+    const other = tempDir("oq-other-home-");
     const r = cli(s, ["review", "--finalize"], { env: { OPENQODEX_HOME: other } });
     expect(r.status).toBe(0);
     expect(readHomeReceipt(other, s.repo, changeId)).toBeNull();
@@ -232,7 +234,7 @@ describe("the pushed range", () => {
   };
   // A bare remote holding main.
   function withRemote(): void {
-    const remote = mkdtempSync(join(tmpdir(), "oq-remote-"));
+    const remote = tempDir("oq-remote-");
     spawnSync("git", ["init", "-q", "--bare", remote]);
     g("remote", "add", "origin", remote);
     g("push", "-q", "-u", "origin", "main");
@@ -296,7 +298,7 @@ describe("9, 10. every form of push", () => {
   // main on a bare remote and reviewed with its uncommitted edit; a branch
   // `unreviewed` with a commit no review saw.
   async function setUp(threshold: boolean): Promise<string> {
-    const remote = mkdtempSync(join(tmpdir(), "oq-remote-"));
+    const remote = tempDir("oq-remote-");
     spawnSync("git", ["init", "-q", "--bare", remote]);
     g("remote", "add", "origin", remote);
     g("push", "-q", "-u", "origin", "main");

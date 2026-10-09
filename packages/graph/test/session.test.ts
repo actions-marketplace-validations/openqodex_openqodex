@@ -23,6 +23,9 @@ import { buildGraph, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { graphOf } from "../src/session.js";
 import { commitAll, makeHome, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const home = makeHome();
 const repos: string[] = [home];

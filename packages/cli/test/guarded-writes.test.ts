@@ -25,16 +25,18 @@
 //     they can open (0755, with 0644 files in it) stays open to them
 //     (core/test/private-modes.test.ts covers the repo's own .openqodex files).
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, rmSync, statSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { cli, sandbox } from "./init-helpers.js";
 import { pruneRuntimes } from "../src/launcher.js";
 import { pruneHomeReceipts, readHomeLastReview, writeHomeLastReview, writeHomeReceipt, writeHomeRun } from "../src/receipts.js";
 import { writeActive } from "../src/launcher.js";
 import { unpackRelease } from "../src/update/worker.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 (globalThis as Record<string, unknown>).__OPENQODEX_VERSION__ = "0.0.0-test";
 
@@ -73,7 +75,7 @@ describe("1 and 3. the checked primitive is the only writer", () => {
 describe("2. cleanup never follows a link for a delete", () => {
   const longAgo = new Date(Date.now() - 90 * 24 * 3600_000);
   function box(): { home: string; outside: string } {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-guard-")));
+    const root = realpathSync(tempDir("oq-guard-"));
     const home = join(root, "oq home");
     const outside = join(root, "outside");
     mkdirSync(home);
@@ -106,7 +108,7 @@ describe("2. cleanup never follows a link for a delete", () => {
 
 describe("3. the worker, the receipts and the repo files land only where they were checked", () => {
   function box(): { home: string; outside: string; root: string } {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-guard-")));
+    const root = realpathSync(tempDir("oq-guard-"));
     const home = join(root, "oq home");
     const outside = join(root, "outside");
     mkdirSync(home);
@@ -139,7 +141,7 @@ describe("3. the worker, the receipts and the repo files land only where they we
 
 describe("4. a receipt is readable by the developer only", () => {
   it("is created 0600 in folders made 0700, and an existing receipts folder other users could read is closed and named", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-guard-")));
+    const root = realpathSync(tempDir("oq-guard-"));
     const home = join(root, "oq home");
     mkdirSync(join(home, "receipts"), { recursive: true });
     chmodSync(join(home, "receipts"), 0o755);
@@ -198,7 +200,7 @@ describe("4. a report written where the developer names is readable by them only
 
 describe("5. no link at all under receipts, runs, last-review and runtime", () => {
   function home(): { root: string; home: string } {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "oq-guard-")));
+    const root = realpathSync(tempDir("oq-guard-"));
     const home = join(root, "oq home");
     mkdirSync(home);
     writeFileSync(join(home, "config.yaml"), "update: off\n");

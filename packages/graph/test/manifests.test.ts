@@ -36,6 +36,9 @@ import {
 import { query } from "../src/query/engine.js";
 import { RepoReader } from "../src/safe-fs.js";
 import { makeRepo } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const MiB = 1024 * 1024;
 const repos: string[] = [];

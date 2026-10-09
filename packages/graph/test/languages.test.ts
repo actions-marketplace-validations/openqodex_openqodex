@@ -13,6 +13,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
 import { at, callSites, makeRepo, symbol } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

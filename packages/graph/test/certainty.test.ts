@@ -30,6 +30,9 @@ import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, floorReasons, renderImpactBlock } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { commitAll, makeRepo, symbol } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

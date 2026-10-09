@@ -48,6 +48,9 @@ import type { ImpactSummary, ImpactSymbol } from "@openqodex/core";
 import { buildGraph, detectImpact, renderImpactBlock } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { at, callSites, commitAll, git, makeRepo, symbol, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 afterAll(() => {

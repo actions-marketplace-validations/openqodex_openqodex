@@ -26,8 +26,7 @@
 //     and info findings after the upgrade to the minor default.
 // 17. The default config text that init writes reads back to something
 //     other than DEFAULT_CONFIG, warns, or misses a key the schema reads.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
@@ -41,6 +40,9 @@ import {
   schemaKeys,
 } from "../src/config.js";
 import { OpenQodexError } from "../src/types.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -49,7 +51,7 @@ afterAll(() => {
 
 // `yaml` goes to the 0.1.0 root file; `folder` to .openqodex/config.yaml.
 function repoWith(yaml: string | null, folder: string | null = null): string {
-  const d = mkdtempSync(join(tmpdir(), "oq-config-test-"));
+  const d = tempDir("oq-config-test-");
   dirs.push(d);
   if (yaml !== null) writeFileSync(join(d, ".openqodex.yaml"), yaml);
   if (folder !== null) {

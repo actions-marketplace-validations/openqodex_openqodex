@@ -21,6 +21,9 @@ import { edgeId, query } from "../src/query/engine.js";
 import type { Item, Session } from "../src/query/engine.js";
 import { PACKET_DIR, writePacket } from "../src/review/packet.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

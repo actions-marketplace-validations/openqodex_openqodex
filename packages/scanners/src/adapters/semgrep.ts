@@ -7,7 +7,11 @@
 // The rule packs are fetched from the Semgrep registry at run time onto the
 // developer's machine and never bundled. Semgrep keeps its settings and logs
 // under ~/.semgrep, outside the repo, and writes nothing into the working tree.
+// Its temp files go to a folder of its own, removed after the scan.
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { AdapterResult, ResolvedTool, StaticFinding } from "@openqodex/core";
 import { describeFailure, execTool, runInChunks, isOffline, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
@@ -72,12 +76,24 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
     ...files,
   ];
 
+  // Semgrep writes each rule pack to its temp folder as semgrep-*.rules and
+  // never removes them, about 2.7 MB a scan. It gets a folder of its own,
+  // which mkdtemp makes readable by this user only, removed after the scan
+  // whatever the exit.
+  let tmp: string;
+  try {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openqodex-semgrep-"));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { findings: [], error: `mkdtemp: ${message.slice(0, 200)}` };
+  }
+
   // One process per chunk of files, so a whole-repo file list stays under
   // the argument limit; the findings of every chunk are merged.
   const tool = args.tool;
   try {
     const findings = await runInChunks("semgrep", targets, SEMGREP_TIMEOUT_MS, async (chunk, left) => {
-      const stdout = await execSemgrep(tool, cliArgs(chunk), args.repoDir, left);
+      const stdout = await execSemgrep(tool, cliArgs(chunk), args.repoDir, left, tmp);
       try {
         return parseSemgrepJson(stdout);
       } catch (err) {
@@ -89,17 +105,19 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-async function execSemgrep(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number): Promise<string> {
+async function execSemgrep(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number, tmp: string): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
     timeoutMs,
     // Semgrep prints findings as a single JSON blob on stdout; on
     // a large change with many matches the buffer must accommodate it.
     maxBytes: SEMGREP_OUTPUT_MAX_BYTES,
-    env: { ...tool.env, ...SEMGREP_ENV },
+    env: { ...tool.env, ...SEMGREP_ENV, TMPDIR: tmp },
   });
   const failed = describeFailure("semgrep", result, SEMGREP_TIMEOUT_MS);
   if (failed) throw new Error(failed);

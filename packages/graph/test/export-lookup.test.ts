@@ -19,6 +19,9 @@ import { buildGraph } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { EXPORT_LOOKUP_STEPS } from "../src/resolve.js";
 import { makeRepo, symbol } from "./helpers.js";
+import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const repos: string[] = [];
 afterAll(() => {

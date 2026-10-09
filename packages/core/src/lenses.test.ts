@@ -11,10 +11,10 @@
 // 7. A lens a scanner rule covers is still handed to the reviewer though the
 //    rule ran on every changed file the lens matches; or it stands down when
 //    the rule ran on only some of them, or not at all.
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   defaultLensDir,
   extractChangedLineText,
@@ -178,7 +178,15 @@ describe("a lens a scanner rule covers (7)", () => {
 });
 
 describe("pickLensDirFromCandidates", () => {
-  const root = () => mkdtempSync(join(tmpdir(), "openqodex-lenses-test-"));
+  const roots: string[] = [];
+  afterAll(() => {
+    for (const d of roots) rmSync(d, { recursive: true, force: true });
+  });
+  const root = () => {
+    const dir = mkdtempSync(join(tmpdir(), "openqodex-lenses-test-"));
+    roots.push(dir);
+    return dir;
+  };
 
   it("skips a candidate that exists but has no .md files", () => {
     const r = root();

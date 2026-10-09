@@ -19,19 +19,21 @@
 //    `rule.id` or `ruleIndex`.
 // 10. The message is empty when the result has no message text, and the
 //     reference ignores the rule's helpUri.
-import { cpSync, mkdtempSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { parseSarif } from "../src/formats/sarif.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const read = (name: string): string => readFileSync(join(fixtures, "sarif", name), "utf8");
 
 // A temp copy of the sample repo, named by its symlinked path (case 5).
 function sampleRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-sarif-"));
+  const dir = tempDir("oq-sarif-");
   cpSync(join(fixtures, "sample"), dir, { recursive: true });
   return dir;
 }
@@ -67,7 +69,7 @@ describe("parseSarif", () => {
     // The parser is given a symlink to the repo while the report names the real
     // path. The test makes its own symlink: only macOS temp folders are links.
     const realRepo = realpathSync(sampleRepo());
-    const repoDir = join(realpathSync(mkdtempSync(join(tmpdir(), "oq-sarif-link-"))), "repo");
+    const repoDir = join(realpathSync(tempDir("oq-sarif-link-")), "repo");
     symlinkSync(realRepo, repoDir);
     const realBase = pathToFileURL(realRepo).href + "/";
     expect(realpathSync(repoDir)).not.toBe(repoDir);

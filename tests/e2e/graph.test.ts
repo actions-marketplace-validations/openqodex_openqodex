@@ -11,12 +11,14 @@
 // 2. The brief's blast radius block does not name a caller's call line on a
 //    cross-file change (TypeScript and Python), run through the built CLI.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { buildGraph, openStore } from "../../packages/graph/src/index.js";
 import { git, run } from "./support.js";
+import { cacheFolder, removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 type Target = { file: string; symbol: string; grep: string[]; calls: string[]; gaps?: string[] };
 type Repo = { name: string; url: string; sha: string; targets: Target[] };
@@ -276,7 +278,7 @@ const REPOS: Repo[] = [
   },
 ];
 
-const CLONES = join(tmpdir(), "openqodex-graph-acceptance");
+const CLONES = cacheFolder("openqodex-graph-acceptance");
 
 // A shallow clone of exactly `sha`, reused when it is already there.
 function clone(repo: Repo): string {
@@ -312,7 +314,7 @@ describe.skipIf(process.env.OPENQODEX_E2E_OFFLINE === "1")("graph acceptance on 
       const dir = clone(repo);
       // The graph folder of the clone itself, as a review keeps it; the
       // record of its builds in a temporary OpenQodex home.
-      const opened = await openStore(dir, { home: mkdtempSync(join(tmpdir(), "oq-e2e-graph-home-")) });
+      const opened = await openStore(dir, { home: tempDir("oq-e2e-graph-home-") });
       if (!opened.ok) throw new Error(opened.reason);
       const cold = await buildGraph({ repoRoot: dir, store: opened.store, budgetMs: 120_000, maxFiles: 100_000 });
       const warm = await buildGraph({ repoRoot: dir, store: opened.store, budgetMs: 120_000, maxFiles: 100_000 });
@@ -353,7 +355,7 @@ describe.skipIf(process.env.OPENQODEX_E2E_OFFLINE === "1")("graph acceptance on 
 
 // A cross-file change: `price` changes, `checkout` in another file calls it.
 function plantedRepo(files: Record<string, string>, change: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), "oq-graph-planted-"));
+  const dir = tempDir("oq-graph-planted-");
   const write = (set: Record<string, string>) => {
     for (const [path, content] of Object.entries(set)) {
       mkdirSync(join(dir, path, ".."), { recursive: true });

@@ -1,7 +1,10 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { baseline, report, run } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 describe("clean repository", () => {
   it("with no change says there is nothing to review and exits 0", () => {

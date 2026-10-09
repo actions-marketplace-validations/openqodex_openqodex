@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { baseline, git, inventory, run } from "./support.js";
+import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // `hook pre-push` looks up the review of a pushed commit from the run state
 // in .openqodex/. A pushed commit or the work tree can carry symbolic links
@@ -27,7 +29,7 @@ function repoWithPushedCommit(plant: (dir: string) => void): { dir: string; sha:
 }
 
 function outsideFolder(): string {
-  const outside = mkdtempSync(join(tmpdir(), "oq-hook-outside-"));
+  const outside = tempDir("oq-hook-outside-");
   writeFileSync(join(outside, "config.yaml"), "outside config\n");
   writeFileSync(join(outside, "custom-instructions.md"), "outside instructions\n");
   writeFileSync(join(outside, ".gitignore"), "outside gitignore\n");

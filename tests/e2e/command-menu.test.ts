@@ -1,6 +1,9 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import { bin, demo, noReviewerEnv, root, run, writeConfig } from "./support.js";
+import { removeTempDirs } from "../temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 // Four visible commands; `scan` stays as a hidden alias that behaves exactly
 // as it did, because released hooks, pre-commit and the Action call it.
