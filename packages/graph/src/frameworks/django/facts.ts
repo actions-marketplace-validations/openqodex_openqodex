@@ -28,7 +28,12 @@ export type DjangoFact = At &
     | { kind: "urllist"; name: string; literal: boolean; seq: number; op: "replace" | "extend"; cond: boolean }
     | { kind: "urlrouter"; name: string; router: Ref }
     | { kind: "app_name"; value: Lit }
-    | { kind: "assigned"; names: string[] } // the names top-level assignments bind: module-level values
+    | { kind: "assigned"; names: string[]; complete: boolean } // the names top-level assignments bind: module-level values
+    // Something the facts saw and could not read: a URL list item that is
+    // not a call, a list built by a call, a statement nested too deep, a cap.
+    // `list` names the URL list it belongs to (null: the module), and `join`
+    // a list of this module joined into it, which resolve follows.
+    | { kind: "unread"; list: string | null; seq: number; cond: boolean; what: string; cause: "dynamic" | "unsupported-rule" | "fan-out-capped"; join?: string }
     | { kind: "router"; name: string; ctor: Ref; slash: "yes" | "no" | "dynamic" } // trailing_slash as written
     | { kind: "register"; router: string; prefix: Lit; view: Ref | null; basename: Lit }
     | { kind: "render"; fn: Ref; template: Lit }
@@ -102,12 +107,13 @@ const CLAUSES = new Set(["elif_clause", "else_clause", "except_clause", "finally
 // an `except` or a try's `else`); a `try` body, a `finally` and a `with`
 // body run.
 type Statement = { node: Node; cond: boolean };
-function topStatements(root: Node): Statement[] {
+function topStatements(root: Node, deep: (node: Node) => void): Statement[] {
   const out: Statement[] = [];
   const body = (block: Node, cond: boolean, depth: number) => {
     for (const s of block.namedChildren) {
       if (COMPOUND.has(s.type)) {
         if (depth < 4) compound(s, cond, depth + 1);
+        else deep(s);
         continue;
       }
       out.push({ node: s, cond });
@@ -139,7 +145,7 @@ const CALL_WORDS = /render|get_template|select_template|TemplateResponse|\.conne
 export function djangoFacts(root: Node): DjangoFact[] {
   const out: DjangoFact[] = [];
   const text = root.text;
-  const statements = topStatements(root);
+  const statements = topStatements(root, (node) => out.push({ kind: "unread", ...lineOf(node), list: null, seq: 0, cond: true, what: "module-level statements nested deeper than four blocks are not read", cause: "fan-out-capped" }));
   const aliases = aliasesOf(statements);
   // A dotted name with its head read through the file's imports.
   const named = (ref: Ref | null): Ref | null => {
@@ -178,12 +184,19 @@ export function djangoFacts(root: Node): DjangoFact[] {
     const ref = dotted(node);
     return { view: ref ? { t: "ref", ref } : { t: "other" }, ns: null };
   };
+  const unread = (node: Node, list: string, seq: number, what: string, cause: "dynamic" | "unsupported-rule", join?: string) => out.push({ kind: "unread", ...lineOf(node), list, seq, cond: cur.cond, what, cause, ...(join !== undefined ? { join } : {}) });
   const urlEntry = (call: Node, list: string, parent: number, seq: number) => {
     const fn = calleeOf(call);
-    if (!fn) return;
+    if (!fn) {
+      unread(call, list, seq, "a URL entry whose function is not a name the graph reads", "unsupported-rule");
+      return;
+    }
     const { positional, keyword } = pyArgs(call);
     const routeNode = positional[0] ?? keyword.get("route");
-    if (!routeNode) return;
+    if (!routeNode) {
+      unread(call, list, seq, `${fn.join(".")} with no route argument the graph reads`, "dynamic");
+      return;
+    }
     const at = lineOf(call);
     const fact = { kind: "url", ...at, list, parent, seq, fn, route: pyString(routeNode), view: { t: "other" }, name: keyword.has("name") ? pyString(keyword.get("name")) : null, ns: null } as DjangoFact & { kind: "url" };
     out.push(fact);
@@ -196,14 +209,21 @@ export function djangoFacts(root: Node): DjangoFact[] {
     const calls = list.namedChildren.filter((c) => c.type === "call");
     // A list counts when it is `urlpatterns`, or when its items call path, re_path or url.
     if (!force && !calls.some((c) => URL_FUNCTIONS.has(tailOf(calleeOf(c)) ?? ""))) return false;
-    for (const c of calls) urlEntry(c, name, -1, seq);
+    for (const c of list.namedChildren) {
+      if (c.type === "call") urlEntry(c, name, -1, seq);
+      else if (c.type !== "comment") unread(c, name, seq, "an item of the URL list that is not a call (a name, a spread or a comprehension)", "dynamic");
+    }
     return true;
   };
+  let cur: Statement = { node: root, cond: false };
 
   let settings = 0;
   const assigned = new Set<string>();
+  let assignedComplete = true;
   let seq = 0;
-  for (const { node: stmt, cond } of statements) {
+  for (const st of statements) {
+    const { node: stmt, cond } = st;
+    cur = st;
     seq++;
     const asg = assignmentOf(stmt);
     if (asg) {
@@ -211,6 +231,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const right = asg.childForFieldName("right");
       const name = left?.type === "identifier" ? left.text : null;
       if (name && assigned.size < MAX_ASSIGNED) assigned.add(name);
+      else if (name && !assigned.has(name)) assignedComplete = false;
       if (!name || !right) continue;
       const at = lineOf(asg);
       const augmented = asg.type === "augmented_assignment";
@@ -222,6 +243,16 @@ export function djangoFacts(root: Node): DjangoFact[] {
         if (part?.type === "list") sawList = urlItems(part, name, name === "urlpatterns", seq) || sawList;
         const ref = dotted(part);
         if (ref && ref.length >= 2 && last(ref) === "urls" && name === "urlpatterns") out.push({ kind: "urlrouter", ...at, name, router: ref.slice(0, -1) });
+      }
+      // The parts of a URL list's right side the facts do not read as entries:
+      // another list of the module joined in (resolve follows it), or a call.
+      if (name === "urlpatterns" || sawList) {
+        for (const part of parts) {
+          if (!part || part.type === "list") continue;
+          const ref = dotted(part);
+          if (ref && ref.length === 1 && ref[0] !== name) unread(part, name, seq, `the list ${ref[0]} joined into ${name}`, "dynamic", ref[0]);
+          else if (!(ref && ((ref.length === 1 && ref[0] === name) || (ref.length >= 2 && last(ref) === "urls")))) unread(part, name, seq, `a part of ${name} built by code the graph does not run`, "dynamic");
+        }
       }
       // `urlpatterns = urlpatterns + [...]` extends; any other `=` replaces.
       const extend = augmented || parts.some((p) => p?.type === "identifier" && p.text === name);
@@ -236,6 +267,10 @@ export function djangoFacts(root: Node): DjangoFact[] {
         }
         if (fn && tail === "Library") out.push({ kind: "tag_library", ...at, name, ctor: fn });
         if (fn && tail === "Signal") out.push({ kind: "signal_def", ...at, name, ctor: fn });
+      }
+      if (SETTING.test(name) && !augmented && settings === MAX_SETTINGS) {
+        settings++;
+        out.push({ kind: "unread", ...at, list: null, seq, cond, what: `settings past the first ${MAX_SETTINGS} of the module are not read`, cause: "fan-out-capped" });
       }
       if (SETTING.test(name) && !augmented && settings < MAX_SETTINGS) {
         settings++;
@@ -253,12 +288,14 @@ export function djangoFacts(root: Node): DjangoFact[] {
         const arg = pyArgs(call).positional[0];
         if (arg?.type === "call") urlEntry(arg, "urlpatterns", -1, seq);
         else if (arg?.type === "list") urlItems(arg, "urlpatterns", true, seq);
+        else if (arg) unread(arg, "urlpatterns", seq, `urlpatterns.${fn[1]} of a value the graph does not read`, "dynamic");
         out.push({ kind: "urllist", ...lineOf(call), name: "urlpatterns", literal: true, seq, op: "extend", cond });
       }
     }
   }
 
-  if (assigned.size > 0) out.push({ kind: "assigned", line: 1, column: 0, names: [...assigned] });
+  if (assigned.size > 0) out.push({ kind: "assigned", line: 1, column: 0, names: [...assigned], complete: assignedComplete });
+  if (!assignedComplete) out.push({ kind: "unread", line: 1, column: 0, list: null, seq: 0, cond: false, what: `the module assigns more than ${MAX_ASSIGNED} names, so none of its imports is taken as proof of Django's API`, cause: "fan-out-capped" });
 
   // One walk of the tree for every node kind the reads below need: each
   // walk of a large file costs as much as the next, whatever it finds.
@@ -297,12 +334,16 @@ export function djangoFacts(root: Node): DjangoFact[] {
         out.push({ kind: "template_attr", ...at, owner: name, template: pyString(right) });
         continue;
       }
+      if (migration && left.text === "operations" && right.type !== "list") out.push({ kind: "unread", ...at, list: null, seq: 0, cond: false, what: "the migration's operations are built by code the graph does not run", cause: "dynamic" });
       if (migration && left.text === "operations" && right.type === "list") {
         for (const op of right.namedChildren) {
-          if (op.type !== "call") continue;
-          const fn = calleeOf(op);
+          if (op.type === "comment") continue;
+          const fn = op.type === "call" ? calleeOf(op) : null;
           const opName = last(fn);
-          if (!opName) continue;
+          if (!opName) {
+            out.push({ kind: "unread", ...lineOf(op), list: null, seq: 0, cond: false, what: "a migration operation that is not a call of a named operation", cause: "dynamic" });
+            continue;
+          }
           const { positional, keyword } = pyArgs(op);
           const lit = (kw: string, pos: number): Lit => (keyword.has(kw) ? pyString(keyword.get(kw)) : positional[pos] ? pyString(positional[pos]) : null);
           let model: Lit = null;
@@ -405,7 +446,8 @@ export function djangoFacts(root: Node): DjangoFact[] {
       const { positional, keyword } = pyArgs(call);
       const pos = RENDER_FUNCTIONS[tail] as number;
       const node = keyword.get(tail === "TemplateResponse" || tail === "SimpleTemplateResponse" ? "template" : "template_name") ?? positional[pos];
-      let template: Lit = null;
+      // No template argument the facts read (a spread, a keyword they do not know): computed.
+      let template: Lit = DYNAMIC;
       if (node && (node.type === "list" || node.type === "tuple")) {
         const items = pyStrings(node);
         template = items && items.length > 0 ? (items[0] as string) : DYNAMIC;
@@ -421,8 +463,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
     if (tail === "register" && fn.length === 2) {
       const { positional, keyword } = pyArgs(call);
       const prefix = positional[0] ?? keyword.get("prefix");
-      if (!prefix) continue;
-      out.push({ kind: "register", ...at, router: fn[0] as string, prefix: pyString(prefix), view: dotted(positional[1] ?? keyword.get("viewset")), basename: keyword.has("basename") ? pyString(keyword.get("basename")) : keyword.has("base_name") ? pyString(keyword.get("base_name")) : null });
+      out.push({ kind: "register", ...at, router: fn[0] as string, prefix: prefix ? pyString(prefix) : DYNAMIC, view: dotted(positional[1] ?? keyword.get("viewset")), basename: keyword.has("basename") ? pyString(keyword.get("basename")) : keyword.has("base_name") ? pyString(keyword.get("base_name")) : null });
       continue;
     }
     if (tail === "reverse" || tail === "reverse_lazy" || tail === "resolve_url") {
@@ -503,7 +544,9 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
     case "urlrouter":
       return isStr(f.name) && isRef(f.router);
     case "assigned":
-      return Array.isArray(f.names) && f.names.length <= MAX_ASSIGNED && f.names.every(isStr);
+      return Array.isArray(f.names) && f.names.length <= MAX_ASSIGNED && f.names.every(isStr) && typeof f.complete === "boolean";
+    case "unread":
+      return (f.list === null || isStr(f.list)) && Number.isInteger(f.seq) && typeof f.cond === "boolean" && isStr(f.what) && (f.cause === "dynamic" || f.cause === "unsupported-rule" || f.cause === "fan-out-capped") && (f.join === undefined || isStr(f.join));
     case "app_name":
     case "settings_module":
       return isLit(f.value);

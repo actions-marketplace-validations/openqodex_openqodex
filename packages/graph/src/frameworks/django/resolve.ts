@@ -143,8 +143,14 @@ function headsOf(index: Index, file: string): Heads | null {
   const facts = index.languageFacts(file);
   let heads: Heads | null = null;
   if (facts) {
-    // A name assigned at module level no longer proves its import.
-    const assigned = new Set(index.factsOf(file).flatMap((f) => (f.kind === "assigned" ? f.names : [])));
+    // A name assigned at module level no longer proves its import; past the
+    // cap on names read, no import of the module proves anything.
+    const assignedFacts = index.factsOf(file).filter((f): f is Of<"assigned"> => f.kind === "assigned");
+    if (assignedFacts.some((f) => !f.complete)) {
+      byFile.set(file, null);
+      return null;
+    }
+    const assigned = new Set(assignedFacts.flatMap((f) => f.names));
     heads = { defined: new Set(facts.defs.filter((d) => d.topLevel).map((d) => d.name)), assigned, imported: new Map() };
     for (const imp of facts.imports) {
       if (imp.scoped || imp.reexport || imp.spec.startsWith(".")) continue;
@@ -593,6 +599,16 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
       live = new Set(steps.filter((l) => l.seq >= from).map((l) => l.seq));
       const branchy = steps.find((l) => l.seq >= from && l.op === "replace" && l.cond);
       if (branchy) out.gap({ site: siteOf(file, branchy), scope, affects: ["handles", "mounts"], cause: "dynamic", name: list, note: `${list} is assigned in a branch, so which routes Django serves depends on how the code runs; the routes of every branch are listed` });
+      // What the facts could not read in this list: a gap each, and a list
+      // of the module joined in is walked as part of it.
+      for (const u of factsOf(file, "unread")) {
+        if (u.list !== list || (live.size > 0 && !live.has(u.seq))) continue;
+        if (u.join !== undefined && entriesOf(file, u.join, -1).length > 0 && depth < MAX_INCLUDE_DEPTH && !stack.includes(`${file}#${u.join}`)) {
+          walk(app, file, u.join, -1, prefix, via, namespaces, depth + 1, [...stack, `${file}#${u.join}`]);
+          continue;
+        }
+        out.gap({ site: siteOf(file, u), scope, affects: ["handles", "mounts"], cause: u.cause, name: list, note: `${u.what}; its routes may be missing` });
+      }
     }
     if (parent === -1 && list === "urlpatterns") {
       visited.add(file);
@@ -730,6 +746,13 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     if (!entries.some((f) => URL_FUNCTIONS.has(canonical(index, file, f.fn, { line: f.line }) ?? ""))) continue;
     out.role(file, "route_table", null, null, ev("route-table", "certain", siteOf(file, entries[0] as Of<"url">), RULES.urls, null));
     walk(null, file, "urlpatterns", -1, [], [], [], 0, [file]);
+  }
+
+  // What the facts could not read outside URL lists: a statement nested too
+  // deep, a cap, migration operations built by code.
+  for (const file of index.factFiles()) {
+    if (!enabled(file)) continue;
+    for (const u of factsOf(file, "unread")) if (u.list === null) out.gap({ site: siteOf(file, u), scope: { file }, affects: ["handles", "mounts", "changes_schema", "reads_config"], cause: u.cause, name: null, note: u.what });
   }
 
   // ---------- templates ----------
@@ -999,7 +1022,10 @@ export function resolveDjango(index: Index, apps: readonly Detection[]): PluginO
     }
     for (const c of factsOf(file, "connect")) {
       const site = siteOf(file, c);
-      if (!c.handler) continue;
+      if (!c.handler) {
+        if (canonical(index, file, c.signal) !== null || factsOf(file, "signal_def").some((d) => d.name === c.signal[0])) out.gap({ site, scope: { file }, affects: ["schedules"], cause: "dynamic", name: show(c.signal), note: `${show(c.signal)}.connect() of a receiver that is not a name the graph binds` });
+        continue;
+      }
       const name = canonical(index, file, c.signal, { line: c.line, callee: [...c.signal, "connect"] });
       const inRepo = !name && (factsOf(file, "signal_def").some((s) => s.name === c.signal[0] && c.signal.length === 1) || index.lookup(file, c.signal).kind === "miss");
       if (!(name !== null && DJANGO_SIGNAL_MODULES.some((m) => name.startsWith(m))) && !inRepo) continue;
