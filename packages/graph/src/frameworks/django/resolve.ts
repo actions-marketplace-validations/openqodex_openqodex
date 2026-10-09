@@ -359,7 +359,7 @@ export function detectDjango(index: Index): Detection[] {
       site: siteOf(file, marker),
       evidence,
       version: null,
-      data: { settings: file, rootUrlconf: urlconf ? urlconf.value : null, rootUrlconfLine: urlconf?.line ?? null, installedApps: installed?.items ?? null },
+      data: { settings: file, rootUrlconf: urlconf ? urlconf.value : null, rootUrlconfLine: urlconf?.line ?? null },
     });
   }
   return apps.sort((a, b) => a.id.localeCompare(b.id));

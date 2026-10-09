@@ -6,6 +6,7 @@
 // Django's own API.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkEdgeKind } from "../plugin.js";
+import { dottedText, requestTarget, routeText } from "../shared/kept.js";
 import { DYNAMIC, dotted, isLit, lineOf, pyArgs, pyString, pyStrings } from "../shared/literals.js";
 import type { Lit } from "../shared/literals.js";
 
@@ -43,14 +44,14 @@ export type DjangoFact = At &
     | { kind: "field"; owner: string; name: string; ctor: Ref; related: Ref | string | null }
     | { kind: "db_table"; owner: string; table: Lit }
     | { kind: "mig_op"; owner: string; op: string; model: Lit; field: Lit; to: Lit; fn: Ref | null }
-    | { kind: "mig_dep"; owner: string; app: string; name: string }
     | { kind: "tag_library"; name: string; ctor: Ref }
-    | { kind: "tag"; lib: string; decorator: string; fn: string; name: Lit; template: Lit }
+    | { kind: "tag"; lib: string; decorator: string; fn: string; template: Lit }
     | { kind: "receiver"; dec: Ref; signals: Ref[]; sender: Ref | null; fn: string }
     | { kind: "connect"; signal: Ref; handler: Ref | null; sender: Ref | null }
     | { kind: "signal_def"; name: string; ctor: Ref }
-    | { kind: "setting"; name: string; value: Lit; items: string[] | null }
-    | { kind: "settings_module"; value: Lit }
+    // A setting's value is kept for ROOT_URLCONF alone, the one setting
+    // resolve reads; every other setting is a name with no value.
+    | { kind: "setting"; name: string; value: Lit }
     | { kind: "setting_read"; base: Ref; key: string }
     | { kind: "client"; recv: Ref; method: string; path: Lit }
     | { kind: "reverse"; fn: Ref; name: Lit }
@@ -74,6 +75,9 @@ export function wantsDjango(source: string): boolean {
 }
 
 const last = (r: Ref | null): string | null => (r && r.length > 0 ? (r[r.length - 1] as string) : null);
+// A literal resolve reads as a dotted name (a module path, a model or a
+// field): kept when it is one, computed otherwise.
+const moduleLit = (v: Lit): Lit => (typeof v === "string" ? (dottedText(v) ?? DYNAMIC) : v);
 const calleeOf = (call: Node): Ref | null => dotted(call.childForFieldName("function"));
 
 // The names the file's own imports bind, to what they import: `show` to
@@ -218,7 +222,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
           }
           return { view: { t: "include", fn, module: null, ref: null, inline: true }, ns };
         }
-        if (arg?.type === "string" || arg?.type === "concatenated_string" || arg?.type === "binary_operator") return { view: { t: "include", fn, module: pyString(arg), ref: null, inline: false }, ns };
+        if (arg?.type === "string" || arg?.type === "concatenated_string" || arg?.type === "binary_operator") return { view: { t: "include", fn, module: moduleLit(pyString(arg)), ref: null, inline: false }, ns };
         const ref = dotted(arg);
         if (ref) return { view: { t: "include", fn, module: null, ref, inline: false }, ns };
         return { view: { t: "include", fn, module: DYNAMIC, ref: null, inline: false }, ns };
@@ -332,9 +336,8 @@ export function djangoFacts(root: Node): DjangoFact[] {
       }
       if (SETTING.test(name) && !augmented && settings < MAX_SETTINGS) {
         settings++;
-        const items = pyStrings(right);
-        const value = right.type === "string" || right.type === "concatenated_string" ? pyString(right) : null;
-        out.push({ kind: "setting", ...at, name, value, items });
+        const value = name === "ROOT_URLCONF" ? (right.type === "string" || right.type === "concatenated_string" ? moduleLit(pyString(right)) : DYNAMIC) : null;
+        out.push({ kind: "setting", ...at, name, value });
       }
       continue;
     }
@@ -425,7 +428,8 @@ export function djangoFacts(root: Node): DjangoFact[] {
             continue;
           }
           const { positional, keyword } = pyArgs(op);
-          const lit = (kw: string, pos: number): Lit => (keyword.has(kw) ? pyString(keyword.get(kw)) : positional[pos] ? pyString(positional[pos]) : null);
+          // Model and field names: a dotted name, or computed.
+          const lit = (kw: string, pos: number): Lit => moduleLit(keyword.has(kw) ? pyString(keyword.get(kw)) : positional[pos] ? pyString(positional[pos]) : null);
           let model: Lit = null;
           let field: Lit = null;
           let to: Lit = null;
@@ -446,13 +450,6 @@ export function djangoFacts(root: Node): DjangoFact[] {
         }
         continue;
       }
-      if (migration && left.text === "dependencies" && right.type === "list") {
-        for (const dep of right.namedChildren) {
-          const pair = pyStrings(dep);
-          if (pair && pair.length === 2) out.push({ kind: "mig_dep", ...lineOf(dep), owner: name, app: pair[0] as string, name: pair[1] as string });
-        }
-        continue;
-      }
       // Every class attribute built by a call of a named constructor, in a
       // class with a base: resolve proves by the constructor's class which
       // ones are fields, never by its name.
@@ -465,7 +462,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
           let related: Ref | string | null = null;
           if (target) {
             const s = pyString(target);
-            related = typeof s === "string" ? s : dotted(target);
+            related = typeof s === "string" ? dottedText(s) : dotted(target);
           }
           out.push({ kind: "field", ...at, owner: name, name: left.text, ctor, related });
         }
@@ -491,8 +488,7 @@ export function djangoFacts(root: Node): DjangoFact[] {
       if (ref.length === 2 && (tail === "simple_tag" || tail === "filter" || tail === "inclusion_tag" || tail === "tag")) {
         const args = call ? pyArgs(call) : { positional: [] as Node[], keyword: new Map<string, Node>() };
         const template = tail === "inclusion_tag" ? (args.keyword.has("filename") ? pyString(args.keyword.get("filename")) : args.positional[0] ? pyString(args.positional[0]) : null) : null;
-        const named = args.keyword.has("name") ? pyString(args.keyword.get("name")) : tail !== "inclusion_tag" && args.positional[0] ? pyString(args.positional[0]) : null;
-        out.push({ kind: "tag", ...at, lib: ref[0] as string, decorator: tail, fn: fnName, name: named, template });
+        out.push({ kind: "tag", ...at, lib: ref[0] as string, decorator: tail, fn: fnName, template });
       }
       if (tail === "receiver" && call) {
         const { positional, keyword } = pyArgs(call);
@@ -551,18 +547,14 @@ export function djangoFacts(root: Node): DjangoFact[] {
     if (tail === "register" && fn.length === 2) {
       const { positional, keyword } = pyArgs(call);
       const prefix = positional[0] ?? keyword.get("prefix");
-      out.push({ kind: "register", ...at, router: fn[0] as string, prefix: prefix ? pyString(prefix) : DYNAMIC, view: dotted(positional[1] ?? keyword.get("viewset")), basename: keyword.has("basename") ? pyString(keyword.get("basename")) : keyword.has("base_name") ? pyString(keyword.get("base_name")) : null });
+      const p = prefix ? pyString(prefix) : DYNAMIC;
+      out.push({ kind: "register", ...at, router: fn[0] as string, prefix: typeof p === "string" ? routeText(p) : p, view: dotted(positional[1] ?? keyword.get("viewset")), basename: keyword.has("basename") ? pyString(keyword.get("basename")) : keyword.has("base_name") ? pyString(keyword.get("base_name")) : null });
       continue;
     }
     if (tail === "reverse" || tail === "reverse_lazy" || tail === "resolve_url") {
       const { positional, keyword } = pyArgs(call);
       const node = positional[0] ?? keyword.get("viewname") ?? keyword.get("to");
       if (node) out.push({ kind: "reverse", ...at, fn, name: pyString(node) });
-      continue;
-    }
-    if (tail === "setdefault" && fn.length >= 2 && last(fn.slice(0, -1)) === "environ") {
-      const { positional } = pyArgs(call);
-      if (pyString(positional[0]) === "DJANGO_SETTINGS_MODULE") out.push({ kind: "settings_module", ...at, value: pyString(positional[1]) });
       continue;
     }
     if (tail === "getattr" && fn.length === 1) {
@@ -583,7 +575,8 @@ export function djangoFacts(root: Node): DjangoFact[] {
       // A path from reverse() is linked by the route's name; any other
       // value that is not a literal is computed.
       const fromReverse = node.type === "call" && REVERSE_NAMES.has(tailOf(calleeOf(node)) ?? "");
-      const path = fromReverse ? null : pyString(node);
+      const lit = fromReverse ? null : pyString(node);
+      const path = typeof lit === "string" ? requestTarget(lit) : lit;
       out.push({ kind: "client", ...at, recv, method: tail, path });
     }
   }
@@ -640,7 +633,6 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
     case "unread":
       return (f.list === null || isStr(f.list)) && Number.isInteger(f.seq) && typeof f.cond === "boolean" && isStr(f.what) && (f.cause === "dynamic" || f.cause === "unsupported-rule" || f.cause === "fan-out-capped") && (f.join === undefined || isStr(f.join)) && (f.affects === undefined || (Array.isArray(f.affects) && f.affects.length <= UNREAD_AFFECTS.size && f.affects.every((a) => typeof a === "string" && UNREAD_AFFECTS.has(a))));
     case "app_name":
-    case "settings_module":
       return isLit(f.value);
     case "router":
       return isStr(f.name) && isRef(f.ctor) && (f.slash === "yes" || f.slash === "no" || f.slash === "dynamic");
@@ -659,16 +651,14 @@ export function isDjangoFact(v: unknown): v is DjangoFact {
       return isStr(f.owner) && isLit(f.table);
     case "mig_op":
       return isStr(f.owner) && isStr(f.op) && isLit(f.model) && isLit(f.field) && isLit(f.to) && optRef(f.fn);
-    case "mig_dep":
-      return isStr(f.owner) && isStr(f.app) && isStr(f.name);
     case "tag":
-      return isStr(f.lib) && isStr(f.decorator) && isStr(f.fn) && isLit(f.name) && isLit(f.template);
+      return isStr(f.lib) && isStr(f.decorator) && isStr(f.fn) && isLit(f.template);
     case "receiver":
       return isRef(f.dec) && Array.isArray(f.signals) && f.signals.every(isRef) && optRef(f.sender) && isStr(f.fn);
     case "connect":
       return isRef(f.signal) && optRef(f.handler) && optRef(f.sender);
     case "setting":
-      return isStr(f.name) && isLit(f.value) && (f.items === null || (Array.isArray(f.items) && f.items.every(isStr)));
+      return isStr(f.name) && isLit(f.value);
     case "setting_read":
       return isRef(f.base) && isStr(f.key);
     case "client":

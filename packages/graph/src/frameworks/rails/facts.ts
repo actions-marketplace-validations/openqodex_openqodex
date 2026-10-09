@@ -16,9 +16,13 @@
 //   requests (`get "/posts"`, `visit "/x"`) and route helper names
 //   (`posts_path`, `post_url`).
 // Literal values only: a computed value is recorded as computed, never
-// guessed. Values of config keys and ENV entries are never recorded.
+// guessed. Values of config keys and ENV entries are never recorded. A
+// route keeps only the options the resolve step reads, and a string only
+// in the form it reads it (no query string, no URL user); a test request
+// keeps its path alone.
 import type { Node } from "web-tree-sitter";
 import type { FrameworkFactBase } from "../plugin.js";
+import { requestTarget, routeText } from "../shared/kept.js";
 
 // A literal argument or option value as written.
 export type Lit =
@@ -52,6 +56,21 @@ export type RouteFact = FrameworkFactBase & {
   pair: [Lit, Lit] | null;
   block: boolean;
 };
+
+// The route options the resolve step reads, and the keys of `defaults:` it
+// reads. Any other option (`constraints:`, `format:`, a `defaults:` value
+// of another key) is not kept.
+const ROUTE_OPTIONS = new Set(["action", "as", "at", "concerns", "controller", "defaults", "except", "module", "on", "only", "param", "path", "shallow", "shallow_path", "shallow_prefix", "to", "via"]);
+const DEFAULT_KEYS = new Set(["controller", "action"]);
+
+// A route argument or option as the resolve step reads it: a string as a
+// route path, with no query string or URL user; a hash (`defaults:`) with
+// only the keys it reads; anything else as it is.
+function routeLit(x: Lit): Lit {
+  if (x.t === "str") return { t: "str", v: routeText(x.v) };
+  if (x.t === "hash") return { t: "hash", v: Object.fromEntries(Object.entries(x.v).filter(([k]) => DEFAULT_KEYS.has(k)).map(([k, v]) => [k, routeLit(v)])) };
+  return x;
+}
 
 // Route blocks nested deeper than MAX_ROUTE_DEPTH are not read.
 export type RouteCapFact = FrameworkFactBase & { kind: "route-cap"; draw: number; parent: number };
@@ -425,9 +444,9 @@ export function railsFacts(root: Node): RailsFact[] {
           draw,
           parent,
           call: m.text,
-          args: args.map(litOf),
-          opts: Object.fromEntries([...opts].map(([k, v]) => [k, litOf(v)])),
-          pair: pair ? [litOf(pair[0]), litOf(pair[1])] : null,
+          args: args.map((a) => routeLit(litOf(a))),
+          opts: Object.fromEntries([...opts].filter(([k]) => ROUTE_OPTIONS.has(k)).map(([k, v]) => [k, routeLit(litOf(v))])),
+          pair: pair ? [routeLit(litOf(pair[0])), routeLit(litOf(pair[1]))] : null,
           block: block !== null,
         };
         const index = routeFacts.length;
@@ -589,7 +608,8 @@ export function railsFacts(root: Node): RailsFact[] {
         const first = argsOf(n).args[0];
         if (first) {
           const helper = (first.type === "identifier" || (first.type === "call" && !first.childForFieldName("receiver"))) && helperName(first.type === "identifier" ? first.text : (first.childForFieldName("method")?.text ?? "")) !== null;
-          if (!helper) out.push({ kind: "request", line: line(n), column: col(n), verb: name === "visit" ? "GET" : name.toUpperCase(), path: litOf(first) });
+          const path = litOf(first);
+          if (!helper) out.push({ kind: "request", line: line(n), column: col(n), verb: name === "visit" ? "GET" : name.toUpperCase(), path: path.t === "str" ? { t: "str", v: requestTarget(path.v) } : path });
         }
       }
       if (name === "describe" || name === "context") {
