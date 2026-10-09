@@ -416,6 +416,43 @@ def test_long():
 def test_odd():
     client.get("/files/a.txt")
 `;
+  // A route path and a request path named by a module constant that a
+  // parameter or a local of the function around the use shadows.
+  const SCOPED_PATH = `from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+app = FastAPI()
+client = TestClient(app)
+PATH = "/module-path"
+
+
+def by_param(PATH):
+    @app.get(PATH)
+    def param_path():
+        return 1
+
+
+def by_local():
+    PATH = make_path()
+
+    @app.get(PATH)
+    def local_path():
+        return 2
+
+
+@app.get(PATH)
+def module_path():
+    return 3
+
+
+def test_local_request():
+    PATH = "/elsewhere"
+    client.get(PATH)
+
+
+def test_module_request():
+    client.get(PATH)
+`;
   const REBOUND = `from fastapi import FastAPI
 
 app = FastAPI()
@@ -431,7 +468,7 @@ FastAPI = object
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-fool-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED, "app/unbound.py": UNBOUND, "app/order/__init__.py": "", "app/order/routes.py": ORDER_ROUTES, "app/order/main.py": ORDER_MAIN, "app/order/extra.py": ORDER_EXTRA, "app/test_matcher.py": MATCHER });
+    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED, "app/unbound.py": UNBOUND, "app/order/__init__.py": "", "app/order/routes.py": ORDER_ROUTES, "app/order/main.py": ORDER_MAIN, "app/order/extra.py": ORDER_EXTRA, "app/test_matcher.py": MATCHER, "app/scoped_path.py": SCOPED_PATH });
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null });
   });
@@ -480,6 +517,16 @@ FastAPI = object
     expect(models).not.toContain("Local");
     const requests = (graph.frameworks?.edges ?? []).filter((e) => e.plugin === "fastapi" && e.kind === "tests" && e.evidence.site.file === "app/shadow.py");
     expect(requests).toEqual([]);
+  });
+
+  it("takes no path from a module constant that a parameter or a local of the function around the use shadows: the route or request is a dynamic unknown", () => {
+    const regs = fastapiRegs(graph).filter((r) => r.site.file === "app/scoped_path.py");
+    expect(regs.map((r) => `${r.handler.written} ${r.pattern}`)).toEqual(["module_path /module-path"]);
+    const gaps = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "fastapi" && u.site?.file === "app/scoped_path.py");
+    for (const fn of ["param_path", "local_path"]) expect(gaps.find((u) => u.name === fn)?.cause).toBe("dynamic");
+    const tests = (graph.frameworks?.edges ?? []).filter((e) => e.plugin === "fastapi" && e.kind === "tests" && e.evidence.site.file === "app/scoped_path.py");
+    expect(tests.map((e) => graph.nodes.get(e.from)?.name)).toEqual(["test_module_request"]);
+    expect(gaps.some((u) => u.cause === "dynamic" && u.affects.includes("tests") && u.site?.line === 30)).toBe(true);
   });
 
   it("binds no handler when another decorator wraps the function before the route decorator registers it, and names the wrapper in an unknown", () => {

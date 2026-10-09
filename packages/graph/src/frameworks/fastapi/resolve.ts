@@ -368,10 +368,15 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     return valueIn(target.file, [target.name], 0, Number.MAX_SAFE_INTEGER, depth + 1);
   };
 
-  // A module-level string constant of the file: a name every module-level
-  // assignment gives the same literal string.
-  const constant = (file: string) => (path: string[]): string | null => {
+  // A module-level string constant of the file, read at a use in scope
+  // `scope`: a name every module-level assignment gives the same literal
+  // string, and that no function or class around the use binds itself (a
+  // parameter or a local of the same name holds what the code passes or
+  // computes there).
+  const constant = (file: string, scope: number) => (path: string[]): string | null => {
     if (path.length !== 1) return null;
+    const b = binder(file, scope, path[0] as string);
+    if (b && b.line !== 0) return null;
     let v: string | null = null;
     for (const d of factsIn(file).values.get(path[0] as string) ?? []) {
       if (d.scope !== 0) continue;
@@ -445,19 +450,19 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   const routesOf = new Map<string, RouteEvent[]>();
   const includesOf = new Map<string, IncludeEvent[]>();
   const vals = new Map<string, Known>();
-  const requests: { file: string; site: Site; method: string; path: Expr | undefined; client: Extract<Val, { kind: "client" }> }[] = [];
+  const requests: { file: string; site: Site; scope: number; method: string; path: Expr | undefined; client: Extract<Val, { kind: "client" }> }[] = [];
   const push = <T>(m: Map<string, T[]>, k: string, v: T) => {
     const list = m.get(k);
     if (list) list.push(v);
     else m.set(k, [v]);
   };
 
-  const methodsOf = (file: string, e: Expr | undefined, fallback: string[]): string[] | null => {
+  const methodsOf = (file: string, scope: number, e: Expr | undefined, fallback: string[]): string[] | null => {
     if (e === undefined) return fallback;
     if (e.t !== "list" || e.omitted > 0) return null;
     const out: string[] = [];
     for (const item of e.items) {
-      const v = evaluate(item, constant(file));
+      const v = evaluate(item, constant(file, scope));
       if (v === null) return null;
       out.push(v.toUpperCase());
     }
@@ -476,7 +481,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   // A route whose own path is computed is no registration: an unknown
   // naming the handler, at the decorator or call site.
   const addRoute = (base: Known, e: Omit<RouteEvent, "written">, path: Expr | undefined | null) => {
-    const written = path ? evaluate(path, constant(e.file)) : null;
+    const written = path ? evaluate(path, constant(e.file, e.scope)) : null;
     const handler = e.handler.kind === "def" ? e.handler.fn : show(e.handler.expr);
     if (written === null) {
       siteGap(e.site, "dynamic", ["handles"], handler, `the route path ${path ? show(path) : "(none)"} of ${handler} is computed at run time, so the route is not listed`);
@@ -519,7 +524,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       const site: Site = { file, line: r.line, column: r.column };
       const ws = r.method === "websocket";
       const methodsHidden = r.method === "api_route" && hidden(r.kw, r.cut, "methods", site, ["handles"], "the route is listed as taking any method");
-      const methods = ws ? ["GET"] : r.method === "api_route" ? (methodsHidden ? null : methodsOf(file, kwOf(r, "methods"), ["GET"])) : METHODS.has(r.method) ? [r.method.toUpperCase()] : null;
+      const methods = ws ? ["GET"] : r.method === "api_route" ? (methodsHidden ? null : methodsOf(file, r.scope, kwOf(r, "methods"), ["GET"])) : METHODS.has(r.method) ? [r.method.toUpperCase()] : null;
       const name = literalName(kwOf(r, "name")) ?? (ws ? "websocket" : null);
       hidden(r.kw, r.cut, "dependencies", site, ["applies_middleware"], "the dependencies it declares are not listed");
       const wrap = r.below.find((d) => !d.route || !baseAt.has(d.line));
@@ -532,10 +537,10 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       const base = c.recv.t === "ref" ? valueIn(file, c.recv.path, c.scope, c.line) : c.recv.t === "call" ? classify(file, { name: "", value: c.recv, scope: c.scope, line: c.line, column: c.column }) : null;
       if (!base) continue;
       if (base.kind === "client") {
-        if (REQUEST_METHODS.has(c.prop)) requests.push({ file, site, method: c.prop.toUpperCase(), path: c.args[0] ?? kwOf(c, "url"), client: base });
+        if (REQUEST_METHODS.has(c.prop)) requests.push({ file, site, scope: c.scope, method: c.prop.toUpperCase(), path: c.args[0] ?? kwOf(c, "url"), client: base });
         else if (c.prop === "request") {
           const m = literalName(c.args[0] ?? kwOf(c, "method"));
-          if (m !== null) requests.push({ file, site, method: m.toUpperCase(), path: c.args[1] ?? kwOf(c, "url"), client: base });
+          if (m !== null) requests.push({ file, site, scope: c.scope, method: m.toUpperCase(), path: c.args[1] ?? kwOf(c, "url"), client: base });
         }
         continue;
       }
@@ -549,7 +554,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
           if (!hidden(c.kw, c.cut, "endpoint", site, ["handles"], "the route is not listed")) siteGap(site, "unsupported-rule", ["handles"], null, `${c.prop} names no endpoint the plugin can read, so the route is not listed`);
           continue;
         }
-        const methods = ws ? ["GET"] : hidden(c.kw, c.cut, "methods", site, ["handles"], "the route is listed as taking any method") ? null : methodsOf(file, kwOf(c, "methods"), ["GET"]);
+        const methods = ws ? ["GET"] : hidden(c.kw, c.cut, "methods", site, ["handles"], "the route is listed as taking any method") ? null : methodsOf(file, c.scope, kwOf(c, "methods"), ["GET"]);
         const name = literalName(kwOf(c, "name")) ?? (ws ? "websocket" : null);
         hidden(c.kw, c.cut, "dependencies", site, ["applies_middleware"], "the dependencies it declares are not listed");
         addRoute(base, { file, site, methods, name, handler: { kind: "ref", expr: endpoint }, deps: kwOf(c, "dependencies"), params: [], paramsOmitted: 0, scope: c.scope }, c.args[0] ?? kwOf(c, "path"));
@@ -633,9 +638,9 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   };
 
   // ---------- composition: every route each application serves ----------
-  const prefixOf = (file: string, e: Expr | undefined, site: Site, what: string): string | null => {
+  const prefixOf = (file: string, scope: number, e: Expr | undefined, site: Site, what: string): string | null => {
     if (e === undefined) return "";
-    const v = evaluate(e, constant(file));
+    const v = evaluate(e, constant(file, scope));
     if (v === null) siteGap(site, "dynamic", ["mounts", "handles"], show(e), `the ${what} prefix ${show(e)} is computed at run time, so the routes under it have no known pattern`);
     return v;
   };
@@ -666,7 +671,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     // The router's own prefix and dependencies, or the application's dependencies.
     const at: Site = { file: val.file, line: val.line, column: val.column };
     const prefixHidden = val.kind === "router" && hidden(val.call.kw, val.call.omitted, "prefix", at, ["mounts", "handles"], "the routes under it have no known pattern");
-    const own = val.kind === "router" ? (prefixHidden ? null : prefixOf(val.file, kwOf(val.call, "prefix"), at, "router")) : "";
+    const own = val.kind === "router" ? (prefixHidden ? null : prefixOf(val.file, val.scope, kwOf(val.call, "prefix"), at, "router")) : "";
     const base = prefix === null || own === null ? null : prefix + own;
     hidden(val.call.kw, val.call.omitted, "dependencies", at, ["applies_middleware"], "the dependencies it declares are not listed");
     const ownDeps = depsOfList(val.file, kwOf(val.call, "dependencies"), val.scope);
@@ -756,7 +761,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         caps.mounts.exact = false; // what the skipped routers hold is not counted
         continue;
       }
-      const inc = hidden(e.kw, e.cut, "prefix", e.site, ["mounts", "handles"], "the routes under it have no known pattern") ? null : prefixOf(e.file, e.prefix, e.site, "include");
+      const inc = hidden(e.kw, e.cut, "prefix", e.site, ["mounts", "handles"], "the routes under it have no known pattern") ? null : prefixOf(e.file, e.scope, e.prefix, e.site, "include");
       hidden(e.kw, e.cut, "dependencies", e.site, ["applies_middleware"], "the dependencies it declares are not listed");
       emit({ from: val.id, to: target.id, kind: "mounts", plugin: PLUGIN, app, evidence: { kind: "mount", tier: "certain", site: e.site, via: null, premises: [], rule: rule("fastapi-include"), note: null } });
       const incDeps = depsOfList(e.file, e.deps, e.scope);
@@ -836,7 +841,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     if (r.client.target?.t !== "ref") continue;
     const app = valueIn(r.client.file, r.client.target.path, r.client.scope, r.client.line);
     if (!app || app.kind !== "app") continue;
-    const raw = r.path ? evaluate(r.path, constant(r.file)) : null;
+    const raw = r.path ? evaluate(r.path, constant(r.file, r.scope)) : null;
     if (raw === null) {
       siteGap(r.site, "dynamic", ["tests"], r.path ? show(r.path) : null, `the test requests a computed path (${r.path ? show(r.path) : "none"}), so the route it reaches is not known`);
       continue;
