@@ -201,7 +201,7 @@ export function floorReasons(graph: Graph, seed: { id: string; name: string; fil
   const possible = (graph.in.get(seed.id) ?? []).filter((e) => e.tier === "possible" && e.from !== seed.id).reduce((k, e) => k + e.sites.length, 0);
   if (possible > 0) reasons.push(`${possible} ${possible === 1 ? "call" : "calls"} may reach it through an interface, a base type or a function value, and none is proved to`);
   const named = graph.unknownNames.get(seed.name) ?? 0;
-  if (named > 0) reasons.push(`${named} ${named === 1 ? "call" : "calls"} named \`${seed.name}\` in the repository could not be bound`);
+  if (named > 0) reasons.push(`${named} ${named === 1 ? "call" : "calls"} named \`${seed.name}\` in the repository could not be bound to one definition`);
   const project = graph.projectOf(seed.file);
   const values = graph.valueCalls.get(project) ?? 0;
   if (values > 0) reasons.push(`${values} ${values === 1 ? "call goes" : "calls go"} through a value (a callback or a computed member) in ${project === "" ? "the repository root project" : project}, and could reach it`);

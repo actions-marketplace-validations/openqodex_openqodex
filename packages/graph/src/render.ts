@@ -259,7 +259,7 @@ export function renderImpactBlock(impact: ImpactSummary, opts: { overflow?: stri
     const byCause = Object.entries(impact.unknown.causes)
       .filter(([, v]) => v !== null && v > 0)
       .map(([k, v]) => `${v} ${k}`);
-    if (byCause.length > 0) out.push(`- In the changed files and their callers' files, ${n(impact.unknown.nearTotal, "call site")} could not be bound (${byCause.join(", ")}):`);
+    if (byCause.length > 0) out.push(`- In the changed files and their callers' files, ${n(impact.unknown.nearTotal, "call site")} could not be bound to one definition (${byCause.join(", ")}):`);
     for (const u of near.slice(0, MAX_NEAR)) {
       const at = u.file && u.line ? `${u.file}:${u.line}` : (u.file ?? "the repository");
       out.push(`  - ${at}${u.name ? ` \`${u.name}\`` : ""}: ${u.cause}${u.note ? `, ${u.note}` : ""}`);
