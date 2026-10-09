@@ -355,7 +355,6 @@ spec:
     ["main.tf", ["trivy:AWS-0086", "trivy:AWS-0087", "trivy:AWS-0091", "trivy:AWS-0093", "checkov:CKV2_AWS_6"]],
     ["main.tf", ["trivy:AWS-0090", "checkov:CKV_AWS_21"]],
     ["main.tf", ["trivy:AWS-0089", "checkov:CKV_AWS_18"]],
-    ["main.tf", ["trivy:AWS-0132", "checkov:CKV_AWS_145"]],
     ["main.tf", ["trivy:AWS-0180", "checkov:CKV_AWS_17"]],
     ["main.tf", ["trivy:AWS-0176", "checkov:CKV_AWS_161"]],
     ["pod.yaml", ["trivy:KSV-0011", "checkov:CKV_K8S_11"]],
@@ -375,6 +374,14 @@ spec:
       return { file, sources: new Set(kept.map((c) => c.source)).size, named: kept.flatMap((c) => [c.token, ...(c.alsoReportedBy ?? [])]).sort() };
     });
     expect(seen).toEqual(groups.map(([file, tokens]) => ({ file, sources: 1, named: [...tokens].sort() })));
+    // Two requirements that look alike stay apart: Checkov's CKV_AWS_145
+    // wants KMS, which an AWS-managed key satisfies; trivy's AWS-0132 wants
+    // a key the customer manages.
+    const apart = result.scan.candidates.filter((c) => c.token === "trivy:AWS-0132" || c.token === "checkov:CKV_AWS_145");
+    expect(apart.map((c) => [c.token, c.alsoReportedBy ?? []]).sort()).toEqual([
+      ["checkov:CKV_AWS_145", []],
+      ["trivy:AWS-0132", []],
+    ]);
   }, 300_000);
 });
 
