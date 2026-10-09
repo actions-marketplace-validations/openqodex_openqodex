@@ -805,21 +805,33 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   for (const [router, set] of lateBy) compose(router, null, "", [], 0, [], [router.id], 0, null, set);
 
   // ---------- test requests ----------
+  // The registrations of each application by the first segment of their
+  // pattern, and apart, the ones whose pattern the matcher cannot read
+  // (past its segment cap, or a shape it does not read), so a request that
+  // may reach one is never reported as reaching nothing.
   type Candidate = { reg: Registration; segs: Seg[] };
-  const byApp = new Map<string, { buckets: Map<string, Candidate[]>; wild: Candidate[] }>();
+  type Unread = { reg: Registration; why: "cap" | "shape" };
+  type AppRoutes = { buckets: Map<string, Candidate[]>; wild: Candidate[]; unread: Map<string, Unread[]>; unreadWild: Unread[] };
+  const byApp = new Map<string, AppRoutes>();
   for (const reg of registrations) {
     if (reg.app === null || reg.pattern === null) continue;
-    const segs = parsePattern(reg.pattern);
-    if (!segs) continue;
     let a = byApp.get(reg.app);
     if (!a) {
-      a = { buckets: new Map(), wild: [] };
+      a = { buckets: new Map(), wild: [], unread: new Map(), unreadWild: [] };
       byApp.set(reg.app, a);
     }
-    const first = segs[1];
-    if (first && first.kind === "lit") push(a.buckets, first.text, { reg, segs });
-    else a.wild.push({ reg, segs });
+    const read = readPattern(reg.pattern);
+    if ("why" in read) {
+      const first = reg.pattern.split("/", 3)[1] ?? "";
+      if (first.includes("{")) a.unreadWild.push({ reg, why: read.why });
+      else push(a.unread, first, { reg, why: read.why });
+      continue;
+    }
+    const first = read.segs[1];
+    if (first && first.kind === "lit") push(a.buckets, first.text, { reg, segs: read.segs });
+    else a.wild.push({ reg, segs: read.segs });
   }
+  const takes = (reg: Registration, method: string) => reg.methods.includes("*") || reg.methods.includes(method);
   for (const r of requests) {
     if (r.client.target?.t !== "ref") continue;
     const app = valueIn(r.client.file, r.client.target.path, r.client.scope, r.client.line);
@@ -831,19 +843,32 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     }
     if (matchStopped || !spend(caps.requests, r.site)) continue;
     const path = requestPath(raw);
-    const asked = path.split("/");
     const a = byApp.get(app.id);
-    if (!a || asked.length > MAX_PATTERN_SEGMENTS + 1) continue;
+    if (!a) continue;
+    // Too long to match: say so once for the request, never "no route".
+    const cut = (what: string) => siteGap(r.site, "fan-out-capped", ["tests"], null, `the matcher reads at most ${MAX_PATTERN_SEGMENTS} segments of ${MAX_SEGMENT_CHARS} characters, and ${what}, so the routes ${r.method} ${path.slice(0, 80)} may reach are not known`);
+    const asked = path.split("/", MAX_PATTERN_SEGMENTS + 2);
+    if (asked.length > MAX_PATTERN_SEGMENTS + 1) {
+      cut("the request path is longer");
+      continue;
+    }
     const from = index.enclosing(r.file, r.site.line)?.id ?? r.file;
     const toggled = toggleSlash(path).split("/");
+    let capped = false;
     for (const { reg, segs } of [...(a.buckets.get(asked[1] ?? "") ?? []), ...a.wild]) {
-      if (!reg.methods.includes("*") && !reg.methods.includes(r.method)) continue;
-      if (!matchSegs(segs, asked, matchWork) && !matchSegs(segs, toggled, matchWork)) {
+      if (!takes(reg, r.method)) continue;
+      const m = matchSegs(segs, asked, matchWork);
+      const hit = m === true || matchSegs(segs, toggled, matchWork) === true;
+      if (!hit) {
+        if (m === "capped") capped = true;
         if (matchWork.left <= 0) break;
         continue;
       }
       if (!emit({ from, to: reg.id, kind: "tests", plugin: PLUGIN, app: app.id, category: "route-request", evidence: { kind: "test-route-request", tier: "likely", site: r.site, via: null, premises: [reg.id], rule: rule("fastapi-test-request"), note: `the test client requests ${r.method} ${path} from ${app.name}, which this route's pattern ${reg.pattern} matches` } })) break;
     }
+    const unread = [...(a.unread.get(asked[1] ?? "") ?? []), ...a.unreadWild].filter((u) => takes(u.reg, r.method));
+    if (capped || unread.some((u) => u.why === "cap")) cut(capped ? "a segment of the request is longer" : "a route it may reach has a longer pattern");
+    else if (unread.length > 0) siteGap(r.site, "unsupported-rule", ["tests"], null, `the request may reach ${unread[0]?.reg.pattern ?? "a route"}, whose pattern the matcher does not read, so whether it does is not known`);
     if (matchWork.left <= 0) matchStopped = r.site;
   }
 
@@ -1007,12 +1032,19 @@ function readParam(body: string): { conv: string } | null {
 // or a shape the matcher does not read (text after a path parameter in its
 // segment, a parameter before one).
 export function parsePattern(pattern: string): Seg[] | null {
-  if (pattern.length > (MAX_PATTERN_SEGMENTS + 1) * (MAX_SEGMENT_CHARS + 1)) return null;
-  const raw = pattern.split("/");
-  if (raw.length > MAX_PATTERN_SEGMENTS + 1) return null;
+  const read = readPattern(pattern);
+  return "segs" in read ? read.segs : null;
+}
+
+// The segments of a pattern, or why the matcher cannot read it: "cap" past
+// its segment or character caps, "shape" for a form it does not read.
+export function readPattern(pattern: string): { segs: Seg[] } | { why: "cap" | "shape" } {
+  if (pattern.length > (MAX_PATTERN_SEGMENTS + 1) * (MAX_SEGMENT_CHARS + 1)) return { why: "cap" };
+  const raw = pattern.split("/", MAX_PATTERN_SEGMENTS + 2);
+  if (raw.length > MAX_PATTERN_SEGMENTS + 1) return { why: "cap" };
   const out: Seg[] = [];
   for (const s of raw) {
-    if (s.length > MAX_SEGMENT_CHARS) return null;
+    if (s.length > MAX_SEGMENT_CHARS) return { why: "cap" };
     if (!s.includes("{")) {
       out.push({ kind: "lit", text: s });
       continue;
@@ -1021,7 +1053,7 @@ export function parsePattern(pattern: string): Seg[] | null {
     let lit = "";
     let pathParam = false;
     for (let i = 0; i < s.length; ) {
-      if (pathParam) return null;
+      if (pathParam) return { why: "shape" };
       if (s[i] === "{") {
         const close = s.indexOf("}", i + 1);
         const param = close < 0 ? null : readParam(s.slice(i + 1, close));
@@ -1038,14 +1070,14 @@ export function parsePattern(pattern: string): Seg[] | null {
       i++;
     }
     if (pathParam) {
-      if (pieces.some((p) => "conv" in p)) return null;
+      if (pieces.some((p) => "conv" in p)) return { why: "shape" };
       out.push({ kind: "path", prefix: pieces.map((p) => ("lit" in p ? p.lit : "")).join("") });
       continue;
     }
     if (lit !== "") pieces.push({ lit });
     out.push({ kind: "tpl", pieces });
   }
-  return out;
+  return { segs: out };
 }
 
 function inClass(conv: Conv, c: number): boolean {
@@ -1063,8 +1095,9 @@ function inClass(conv: Conv, c: number): boolean {
 
 // One path segment against a template: a pass over the characters per
 // piece, keeping the positions reachable after each piece.
-function matchTemplate(pieces: Piece[], text: string, work: { left: number }): boolean {
-  if (text.length > MAX_SEGMENT_CHARS) return false;
+// "capped" when the segment is longer than the matcher reads.
+function matchTemplate(pieces: Piece[], text: string, work: { left: number }): boolean | "capped" {
+  if (text.length > MAX_SEGMENT_CHARS) return "capped";
   let cur = new Uint8Array(text.length + 1);
   cur[0] = 1;
   for (const p of pieces) {
@@ -1089,8 +1122,11 @@ function matchTemplate(pieces: Piece[], text: string, work: { left: number }): b
 
 // The pattern's segments against the path's, as a table of the path
 // segments each pattern segment can end on: one pass per pattern segment.
-export function matchSegs(segs: Seg[], asked: string[], work: { left: number }): boolean {
-  if (asked.length > MAX_PATTERN_SEGMENTS + 1 || segs.length > MAX_PATTERN_SEGMENTS + 1) return false;
+// "capped" when there is no match and some comparison was past the
+// matcher's caps, so "no match" is not proved.
+export function matchSegs(segs: Seg[], asked: string[], work: { left: number }): boolean | "capped" {
+  if (asked.length > MAX_PATTERN_SEGMENTS + 1 || segs.length > MAX_PATTERN_SEGMENTS + 1) return "capped";
+  let capped = false;
   const n = asked.length;
   let reach = new Uint8Array(n + 1);
   reach[0] = 1;
@@ -1108,12 +1144,14 @@ export function matchSegs(segs: Seg[], asked: string[], work: { left: number }):
       for (let j = 0; j < n; j++) {
         if (!reach[j]) continue;
         const text = asked[j] as string;
-        if (seg.kind === "lit" ? text === seg.text : matchTemplate(seg.pieces, text, work)) next[j + 1] = 1;
+        const m = seg.kind === "lit" ? text === seg.text : matchTemplate(seg.pieces, text, work);
+        if (m === "capped") capped = true;
+        else if (m) next[j + 1] = 1;
       }
     }
     reach = next;
   }
-  return reach[n] === 1;
+  return reach[n] === 1 ? true : capped ? "capped" : false;
 }
 
 // Whether a request path matches a FastAPI pattern: `{name}` is one
@@ -1125,7 +1163,7 @@ export function matches(pattern: string, path: string): boolean {
   if (!segs) return false;
   const work = { left: MAX_MATCH_WORK };
   const clean = requestPath(path);
-  const asked = clean.split("/");
+  const asked = clean.split("/", MAX_PATTERN_SEGMENTS + 2);
   if (asked.length > MAX_PATTERN_SEGMENTS + 1) return false;
-  return matchSegs(segs, asked, work) || matchSegs(segs, toggleSlash(clean).split("/"), work);
+  return matchSegs(segs, asked, work) === true || matchSegs(segs, toggleSlash(clean).split("/", MAX_PATTERN_SEGMENTS + 2), work) === true;
 }

@@ -389,6 +389,33 @@ def main_late():
 def third():
     return 4
 `;
+  // A literal route and request longer than the matcher reads, and a
+  // pattern it cannot read, each requested by a test.
+  const LONG = `/${"s/".repeat(69)}s`;
+  const MATCHER = `from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+app = FastAPI()
+client = TestClient(app)
+
+
+@app.get("${LONG}")
+def long_route():
+    return 1
+
+
+@app.get("/files/{p:path}.txt")
+def odd_route():
+    return 2
+
+
+def test_long():
+    client.get("${LONG}")
+
+
+def test_odd():
+    client.get("/files/a.txt")
+`;
   const REBOUND = `from fastapi import FastAPI
 
 app = FastAPI()
@@ -404,7 +431,7 @@ FastAPI = object
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-fool-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED, "app/unbound.py": UNBOUND, "app/order/__init__.py": "", "app/order/routes.py": ORDER_ROUTES, "app/order/main.py": ORDER_MAIN, "app/order/extra.py": ORDER_EXTRA });
+    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED, "app/unbound.py": UNBOUND, "app/order/__init__.py": "", "app/order/routes.py": ORDER_ROUTES, "app/order/main.py": ORDER_MAIN, "app/order/extra.py": ORDER_EXTRA, "app/test_matcher.py": MATCHER });
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null });
   });
@@ -498,6 +525,12 @@ FastAPI = object
     expect(under("/third")).toEqual([app]);
     const third = fastapiRegs(graph).find((r) => r.written === "/third") as Registration;
     expect(graph.frameworks?.unknowns.some((u) => u.plugin === "fastapi" && u.site?.file === "app/order/extra.py" && u.site.line === third.site.line && u.note.includes("order"))).toBe(true);
+  });
+
+  it("says when a test request could not be matched because the path or the pattern is past what the matcher reads, rather than reporting no link", () => {
+    const gaps = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "fastapi" && u.site?.file === "app/test_matcher.py" && u.affects.includes("tests"));
+    expect(gaps.filter((u) => u.site?.line === 19).map((u) => u.cause)).toEqual(["fan-out-capped"]);
+    expect(gaps.filter((u) => u.site?.line === 23).map((u) => u.cause)).toEqual(["unsupported-rule"]);
   });
 
   it("reads no decorator inside a broken region of a file, keeps the routes before it, and says the file has a syntax error", () => {
