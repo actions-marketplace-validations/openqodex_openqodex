@@ -21,12 +21,14 @@ OpenQodex and the built-in scanners send no code anywhere. They use the network 
 - Scanner downloads on first use, into `~/.openqodex/tools/`. GitHub release files are checked against sha256 sums pinned in the package. semgrep and bandit come from PyPI through uv, with a Python 3.11 that uv downloads. oxlint comes from npm. brakeman and rubocop come from RubyGems. These package installs are pinned by version.
 - Semgrep rule packs. semgrep fetches `p/default`, `p/security-audit` and `p/secrets` from the Semgrep registry on each run.
 - The dependency check. When the change holds a lockfile, osv-scanner sends the names and versions of the dependencies in it to osv.dev. It never sends code.
+- Kubernetes schemas. When the change holds a Kubernetes manifest, kubeconform downloads the JSON schema of each kind it meets from raw.githubusercontent.com, at one commit pinned in the package, so the requests name the kinds you use. It never sends a manifest. Each schema is cached and fetched once.
+- The RustSec advisory database. When the change holds a `Cargo.lock`, cargo-deny fetches the database from github.com with git into `~/.openqodex/cache/cargo-deny/`. Nothing about your code or your crates is sent. Cargo itself runs offline.
 - Custom scanners. `openqodex trust` reads the scanner's release from the GitHub API and downloads the asset.
 - The problem report, only when you choose it. When OpenQodex fails, a scanner breaks, or you run `openqodex report`, it prints the GitHub issue it would create and two choices. Nothing is sent unless you press 1 or run `openqodex report --send-last`. The issue holds the OpenQodex version, the command and its arguments with paths and secrets taken out, the part that failed, a scrubbed error line, the scanner statuses and your platform. It never holds code, file names, paths, repository names, config or secrets.
 - The daily version check, for an install made with `init`. It sends GET requests to `registry.npmjs.org` only, with nothing about you, your code or your repository. `security` describes what it checks before it installs a release.
 - A review of a branch or a pull request. git fetches it from your own remote with git's own credentials, and the GitHub CLI, when it is installed and signed in, is asked for the pull request's base. OpenQodex reads no token.
 
-`--offline` skips osv-scanner and semgrep and turns scanner downloads and the version check off.
+`--offline` skips osv-scanner, semgrep, kubeconform and cargo-deny and turns scanner downloads and the version check off.
 
 The plugins, the GitHub Action and the pre-commit hook fetch the `openqodex` package from npm to run it. In its review mode the Action also installs Claude Code from npm, unless the runner already has the pinned version.
 
