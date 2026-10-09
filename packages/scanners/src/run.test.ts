@@ -193,7 +193,7 @@ describe("runScanners", () => {
     });
     // semgrep and gitleaks look at every change; shellcheck at .sh files.
     expect(asked.sort()).toEqual(["gitleaks", "semgrep", "shellcheck"]);
-    expect(scan.scanners).toHaveLength(16);
+    expect(scan.scanners).toHaveLength(19);
     expect(scan.scanners.find((s) => s.scanner === "shellcheck")).toMatchObject({
       status: "not_installed",
       reason: "shellcheck is not installed",
@@ -435,7 +435,7 @@ describe("runScanners", () => {
       onProgress: (line) => progress.push(line),
     });
     expect(progress).toHaveLength(1);
-    expect(progress[0]).toMatch(/^Scanners: 1 ran, 11 had nothing to check, 4 not installed, \d+ candidates? to check$/);
+    expect(progress[0]).toMatch(/^Scanners: 1 ran, 14 had nothing to check, 4 not installed, \d+ candidates? to check$/);
     expect(progress.join("\n")).not.toContain("raw finding");
   });
 });

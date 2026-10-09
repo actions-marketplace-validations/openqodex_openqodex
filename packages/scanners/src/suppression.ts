@@ -153,6 +153,48 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
       { name: "-- noqa", pattern: /^[ \t]*(?<at>noqa)/dg },
     ],
   },
+  // trivy reads every line of a Terraform file (.tf and .tf.json) and of a
+  // CloudFormation YAML template as raw text, a string included: a word of
+  // the line (split at blanks) that, once its leading #, / and * are cut,
+  // starts with trivy: or tfsec: and holds an ignore: section
+  // (pkg/iac/ignore/parse.go). trivy 0.75.0 obeys none in Kubernetes YAML or
+  // CloudFormation JSON, where this still counts one.
+  trivy: {
+    family: "line",
+    markers: [{ name: "{kw}:ignore", pattern: /(?:^|[ \t])[#/*]*(?<at>(?<kw>trivy|tfsec):[^ \t]*?ignore:[^ \t])/dg }],
+  },
+  // checkov reads the lines of a Terraform resource and of a CloudFormation
+  // resource as raw text, a comment of any style or a string alike, for
+  // checkov:skip=, bridgecrew:skip= or cortex:skip=
+  // (checkov/common/comment/enum.py, COMMENT_REGEX). It reads a Kubernetes
+  // object's annotation keys that hold checkov.io/skip, bridgecrew.io/skip or
+  // cortex.io/skip (checkov/kubernetes/kubernetes_utils.py), and a
+  // CloudFormation resource's Metadata keys checkov and bridgecrew with a skip
+  // list (checkov/cloudformation/context_parser.py), both as keys of YAML or
+  // JSON. The Metadata key counts wherever a key is checkov or bridgecrew.
+  checkov: {
+    family: "line",
+    markers: [
+      { name: "{kw}:skip=", pattern: /(?<at>(?<kw>checkov|bridgecrew|cortex):skip=)/dg },
+      { name: "{kw}.io/skip annotation", pattern: /(?<at>(?<kw>checkov|bridgecrew|cortex)\.io\/skip)/dg, family: "yaml-keys" },
+      // In a file the parser cannot read (Terraform), the raw lines: a skip
+      // comment there is already counted by the first marker.
+      { name: "Metadata {kw} key", pattern: /(?<![\w./-])(?<at>(?<kw>checkov|bridgecrew))(?![\w./-]|:skip=)/dg, family: "yaml-keys" },
+    ],
+  },
+  // tflint: `tflint-ignore: ` or `tflint-ignore-file: ` then a rule list, in
+  // an HCL comment (tflint/annotation.go, lineAnnotationPattern and
+  // fileAnnotationPattern). tflint obeys the file form only at the very start
+  // of a file, and in a .tf.json file only as the start of the root "//"
+  // key's value; it counts here anywhere in a comment or at the start of any
+  // string.
+  tflint: {
+    family: "hcl",
+    markers: [
+      { name: "tflint-ignore{kw}:", pattern: /(?<at>tflint-ignore(?<kw>-file)?: )[^\n*/#]/dg },
+      { name: 'tflint-ignore-file: in a JSON "//" value', pattern: /"(?<at>tflint-ignore-file: )[^\n*/#"]/dg, family: "line" },
+    ],
+  },
 };
 
 export type MarkerHit = { scanner: BuiltinScanner; line: number; name: string };

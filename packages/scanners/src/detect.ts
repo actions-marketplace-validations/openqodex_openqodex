@@ -2,7 +2,7 @@
 // belongs to (the nearest folder, up to the repo root, that holds a
 // manifest) and that project's frameworks, read from its dependency lists;
 // and, for a file whose name says nothing, what its first bytes say (a shell
-// shebang, a Kubernetes object).
+// shebang, a Kubernetes object, a CloudFormation template).
 //
 // Offline and bounded. Nothing in the repo is run, loaded or evaluated: a
 // Gemfile or a pyproject.toml is read as text, never as Ruby or TOML code.
@@ -34,9 +34,10 @@ export type Project = {
 };
 
 // A file whose name does not say what it is: an extensionless script with an
-// sh, bash, dash or ksh shebang (the shells shellcheck reads), or YAML with a
-// top-level apiVersion and kind (a Kubernetes object).
-export type ContentKind = "shell" | "kubernetes";
+// sh, bash, dash or ksh shebang (the shells shellcheck reads), YAML with a
+// top-level apiVersion and kind (a Kubernetes object), or a CloudFormation
+// template in YAML or JSON (`.yaml`, `.yml`, `.json`, `.template`).
+export type ContentKind = "shell" | "kubernetes" | "cloudformation";
 
 export type RepoFacts = {
   // The nearest project holding this repo-relative path, or null.
@@ -174,10 +175,18 @@ export function repoFacts(repoDir: string): RepoFacts {
       const ext = path.posix.extname(base).toLowerCase();
       let kind: ContentKind | null = null;
       const yaml = ext === ".yaml" || ext === ".yml";
-      if ((ext === "" || yaml) && contentReads < MAX_CONTENT_READS) {
+      const data = yaml || ext === ".json" || ext === ".template";
+      if ((ext === "" || data) && contentReads < MAX_CONTENT_READS) {
         contentReads += 1;
-        const text = read(rel, yaml ? YAML_BYTES : SHEBANG_BYTES, false);
-        if (text !== null) kind = yaml ? (isKubernetes(text) ? "kubernetes" : null) : isShellScript(text) ? "shell" : null;
+        const text = read(rel, data ? YAML_BYTES : SHEBANG_BYTES, false);
+        if (text !== null) {
+          if (!data) kind = isShellScript(text) ? "shell" : null;
+          else if (yaml && isKubernetes(text)) kind = "kubernetes";
+          // A .template file is JSON when its first character that is not a
+          // blank opens an object, and YAML otherwise.
+          else if (ext === ".json" || (ext === ".template" && text.trimStart().startsWith("{"))) kind = isCloudFormationJson(text) ? "cloudformation" : null;
+          else kind = isCloudFormationYaml(text) ? "cloudformation" : null;
+        }
       }
       contents.set(rel, kind);
       return kind;
@@ -220,6 +229,119 @@ function isKubernetes(text: string): boolean {
     if (hasValue(line, "apiVersion:")) api = true;
     if (hasValue(line, "kind:")) kind = true;
     if (api && kind) return true;
+  }
+  return false;
+}
+
+// The key a YAML line holds at the top level (no indentation), quoted or not,
+// or null: `Resources:` is "Resources", `"Resources": {}` is "Resources".
+function topLevelKey(line: string): string | null {
+  const quote = line[0] === '"' || line[0] === "'" ? line[0] : "";
+  let end: number;
+  if (quote !== "") {
+    end = line.indexOf(quote, 1);
+    if (end < 0) return null;
+  } else {
+    if (line === "" || line[0] === " " || line[0] === "\t" || line[0] === "#" || line[0] === "-") return null;
+    end = line.indexOf(":");
+    if (end < 0) return null;
+  }
+  const key = quote === "" ? line.slice(0, end).trimEnd() : line.slice(1, end);
+  let k = end + (quote === "" ? 0 : 1);
+  while (line[k] === " " || line[k] === "\t") k++;
+  if (line[k] !== ":") return null;
+  const after = line[k + 1];
+  return after === undefined || after === " " || after === "\t" || after === "\r" ? key : null;
+}
+
+const unquote = (value: string): string => {
+  const v = value.trim();
+  return v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.endsWith(v[0]) ? v.slice(1, -1) : v;
+};
+
+// A YAML CloudFormation template: a top-level AWSTemplateFormatVersion, or a
+// top-level Resources whose entries (indented under it) have a `Type:` that
+// starts with AWS::, in any of the documents read. One pass over the lines.
+function isCloudFormationYaml(text: string): boolean {
+  let resources = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line.startsWith("---")) {
+      resources = false;
+      continue;
+    }
+    const key = topLevelKey(line);
+    if (key !== null) {
+      if (key === "AWSTemplateFormatVersion") return true;
+      resources = key === "Resources";
+      continue;
+    }
+    if (!resources || !(line.startsWith(" ") || line.startsWith("\t"))) continue;
+    const t = line.trimStart();
+    if (t.startsWith("Type:") && unquote(t.slice("Type:".length)).startsWith("AWS::")) return true;
+  }
+  return false;
+}
+
+// A JSON CloudFormation template: a key AWSTemplateFormatVersion in the
+// top-level object, or a key Type, with a string value that starts with
+// AWS::, in an entry of the top-level Resources object. One pass over the
+// characters, strings skipped with their escapes; a key or value in a nested
+// object, an array or a string does not count.
+function isCloudFormationJson(text: string): boolean {
+  // For each open container: "{" or "[".
+  const stack: string[] = [];
+  // The top-level key whose value the reader is in.
+  let topKey = "";
+  // The last string read and where it was read, and the key a value follows.
+  let lastString: string | null = null;
+  let keyAt = -1;
+  let key: string | null = null;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i] as string;
+    if (c === '"') {
+      let j = i + 1;
+      let out = "";
+      while (j < text.length && text[j] !== '"') {
+        const step = text[j] === "\\" ? 2 : 1;
+        // A key or value longer than this is neither of the ones looked for,
+        // so the rest of it is skipped, not kept.
+        if (out.length <= 64) out += step === 2 ? (text[j + 1] ?? "") : text[j];
+        j += step;
+      }
+      if (j >= text.length) return false;
+      if (key !== null && keyAt === stack.length) {
+        // A string value: Type under Resources, two objects down.
+        if (key === "Type" && topKey === "Resources" && stack.length === 3 && stack.every((s) => s === "{") && out.startsWith("AWS::")) return true;
+        key = null;
+      } else {
+        lastString = out;
+      }
+      i = j + 1;
+      continue;
+    }
+    if (c === ":") {
+      key = lastString;
+      keyAt = stack.length;
+      lastString = null;
+      if (key !== null && stack.length === 1 && stack[0] === "{") {
+        if (key === "AWSTemplateFormatVersion") return true;
+        topKey = key;
+      }
+    } else if (c === "{" || c === "[") {
+      stack.push(c);
+      key = null;
+      lastString = null;
+    } else if (c === "}" || c === "]") {
+      stack.pop();
+      key = null;
+      lastString = null;
+    } else if (c === ",") {
+      key = null;
+      lastString = null;
+    }
+    i++;
   }
   return false;
 }

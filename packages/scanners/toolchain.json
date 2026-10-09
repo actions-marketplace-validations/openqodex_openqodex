@@ -452,6 +452,87 @@
       "package": "sqlfluff",
       "python": "3.11",
       "binary": "sqlfluff"
+    },
+    "trivy": {
+      "version": "0.75.0",
+      "method": "github-release",
+      "repo": "aquasecurity/trivy",
+      "tag": "v0.75.0",
+      "binary": "trivy",
+      "assets": {
+        "darwin-arm64": {
+          "name": "trivy_0.75.0_macOS-ARM64.tar.gz",
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_macOS-ARM64.tar.gz",
+          "sha256": "4a77108cccf8e55c8d6823e1e759939a622277e66cd0daa3c1fc621ed69e4568",
+          "archive": "tar.gz",
+          "binaryPath": "trivy"
+        },
+        "darwin-x64": {
+          "name": "trivy_0.75.0_macOS-64bit.tar.gz",
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_macOS-64bit.tar.gz",
+          "sha256": "291edaa9778acbe4693d067b5ad60ee11570e5ac68296e85595417528ca641e4",
+          "archive": "tar.gz",
+          "binaryPath": "trivy"
+        },
+        "linux-x64": {
+          "name": "trivy_0.75.0_Linux-64bit.tar.gz",
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-64bit.tar.gz",
+          "sha256": "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f",
+          "archive": "tar.gz",
+          "binaryPath": "trivy"
+        },
+        "linux-arm64": {
+          "name": "trivy_0.75.0_Linux-ARM64.tar.gz",
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-ARM64.tar.gz",
+          "sha256": "a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3",
+          "archive": "tar.gz",
+          "binaryPath": "trivy"
+        }
+      }
+    },
+    "tflint": {
+      "version": "0.64.0",
+      "method": "github-release",
+      "repo": "terraform-linters/tflint",
+      "tag": "v0.64.0",
+      "binary": "tflint",
+      "assets": {
+        "darwin-arm64": {
+          "name": "tflint_darwin_arm64.zip",
+          "url": "https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_darwin_arm64.zip",
+          "sha256": "2496e9cb3d24992d553b45e7c87a0fdc9449ca975233876247a9bfeda857e6c0",
+          "archive": "zip",
+          "binaryPath": "tflint"
+        },
+        "darwin-x64": {
+          "name": "tflint_darwin_amd64.zip",
+          "url": "https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_darwin_amd64.zip",
+          "sha256": "0f3a9fd17526014646a2dfc3f9122f7b4161abe3d6b0f0f03f9014483ddf4d19",
+          "archive": "zip",
+          "binaryPath": "tflint"
+        },
+        "linux-x64": {
+          "name": "tflint_linux_amd64.zip",
+          "url": "https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_linux_amd64.zip",
+          "sha256": "cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537",
+          "archive": "zip",
+          "binaryPath": "tflint"
+        },
+        "linux-arm64": {
+          "name": "tflint_linux_arm64.zip",
+          "url": "https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_linux_arm64.zip",
+          "sha256": "560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e783a5ea8eb",
+          "archive": "zip",
+          "binaryPath": "tflint"
+        }
+      }
+    },
+    "checkov": {
+      "version": "3.3.22",
+      "method": "uv",
+      "package": "checkov",
+      "python": "3.11",
+      "binary": "checkov"
     }
   }
 }
