@@ -62,6 +62,8 @@
     ],
     "removed": [],
     "callers": [],
+    "possible": [],
+    "references": [],
     "callees": [
       {
         "seed": "app/server.py#list_items@20:5",
@@ -194,7 +196,35 @@
       "inline": false,
       "omittedSites": null
     },
-    "packet": ".openqodex-review/graph/"
+    "packet": ".openqodex-review/graph/",
+    "frameworks": {
+      "plugins": [],
+      "routes": [],
+      "routesTotal": 0,
+      "renders": [],
+      "renderedBy": [],
+      "models": [],
+      "migrations": [],
+      "tests": [],
+      "testsTotal": 0,
+      "roles": [],
+      "unknown": [],
+      "unknownTotal": 0,
+      "changedFiles": [
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "app/config.py",
+        "app/search.py",
+        "app/server.py",
+        "db/migrations/002_index_item_names.sql",
+        "deploy/deployment.yaml",
+        "infra/main.tf",
+        "package-lock.json",
+        "package.json",
+        "scripts/deploy.sh"
+      ],
+      "routeIds": []
+    }
   },
   "change_id": "597352237e5136f4462a792835c483d3224a4216fa84bbfbf2a9761a490605de",
   "base": {
@@ -729,8 +759,8 @@
     "snapshot": {
       "change_id": "597352237e5136f4462a792835c483d3224a4216fa84bbfbf2a9761a490605de",
       "tree": "1690bb6c15728e79e3a0d53f0aaf2fbeb0facfa6",
-      "before": "5518c09e48273338866bf9971df32e7addcfd41fa4678c8d612dd06dd41e4914",
-      "after": "5518c09e48273338866bf9971df32e7addcfd41fa4678c8d612dd06dd41e4914"
+      "before": "993713b284d5b2855038759cdf4cef5aec0849491c5f06553c9a7ed448e0c48c",
+      "after": "993713b284d5b2855038759cdf4cef5aec0849491c5f06553c9a7ed448e0c48c"
     },
     "candidates": {
       "total": 24,

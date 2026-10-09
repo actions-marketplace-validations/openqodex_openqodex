@@ -59,6 +59,8 @@
   ],
   "removed": [],
   "callers": [],
+  "possible": [],
+  "references": [],
   "callees": [
     {
       "seed": "app/server.py#list_items@20:5",
@@ -191,5 +193,33 @@
     "inline": false,
     "omittedSites": null
   },
-  "packet": ".openqodex-review/graph/"
+  "packet": ".openqodex-review/graph/",
+  "frameworks": {
+    "plugins": [],
+    "routes": [],
+    "routesTotal": 0,
+    "renders": [],
+    "renderedBy": [],
+    "models": [],
+    "migrations": [],
+    "tests": [],
+    "testsTotal": 0,
+    "roles": [],
+    "unknown": [],
+    "unknownTotal": 0,
+    "changedFiles": [
+      ".github/workflows/ci.yml",
+      "Dockerfile",
+      "app/config.py",
+      "app/search.py",
+      "app/server.py",
+      "db/migrations/002_index_item_names.sql",
+      "deploy/deployment.yaml",
+      "infra/main.tf",
+      "package-lock.json",
+      "package.json",
+      "scripts/deploy.sh"
+    ],
+    "routeIds": []
+  }
 }
