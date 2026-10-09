@@ -3,7 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     // benchmark/test: the review benchmark's generator and scorer (no reviewer runs there).
-    include: ["packages/*/src/**/*.test.ts", "packages/*/test/**/*.test.ts", "benchmark/test/**/*.test.mjs"],
+    // tests/*.test.ts: the shared test helpers in tests/.
+    include: ["packages/*/src/**/*.test.ts", "packages/*/test/**/*.test.ts", "benchmark/test/**/*.test.mjs", "tests/*.test.ts"],
     // The real-binary adapter checks need every scanner installed; the
     // end-to-end config runs them.
     exclude: ["**/node_modules/**", "packages/scanners/test/adapters.subprocess.test.ts"],
