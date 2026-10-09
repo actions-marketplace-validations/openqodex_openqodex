@@ -146,12 +146,22 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
   // starts one in ansi and mysql, not in postgres, and strings differ too.
   // So the marker counts anywhere on the line after `--`, `#` or `/*`, and
   // at the start of a line, for a block comment whose `noqa` is on the line
-  // after its opener: wider than SQLFluff in every dialect.
+  // after its opener: wider than SQLFluff in every dialect. A line that
+  // starts with `-- sqlfluff` or `--sqlfluff` sets SQLFluff's settings for
+  // the file (core/config/fluffconfig.py, process_raw_file_for_config):
+  // `ignore:linting`, `exclude_rules`, `rules`, `warnings` or the dialect can
+  // hide or downgrade what it reports, so each one counts. SQLFluff splits
+  // lines as Python's splitlines does: a carriage return, a vertical tab, a
+  // form feed, \x1c to \x1e, \x85 and the Unicode line and paragraph
+  // separators start a line too.
   sqlfluff: {
     family: "line",
     markers: [
       { name: "-- noqa", pattern: /(?:--|#|\/\*)[ \t]*(?<at>noqa)/dg },
       { name: "-- noqa", pattern: /^[ \t]*(?<at>noqa)/dg },
+      // The control characters are Python's line breaks, matched on purpose.
+      // oxlint-disable-next-line no-control-regex
+      { name: "-- sqlfluff:", pattern: /(?:^|[\r\v\f\x1c-\x1e\x85\u2028\u2029])(?<at>--[ \t]*sqlfluff)/dg },
     ],
   },
   // trivy reads every line of a Terraform file (.tf and .tf.json) and of a

@@ -1003,6 +1003,33 @@ describe("SQLFluff, noqa anywhere on the line", () => {
   it("raises nothing for the forms SQLFluff rejects (F2)", () => {
     expect(at(src("SELECT 1; -- this noqa", "SELECT 1; -- NOQA", "SELECT 1; -- no qa"))).toEqual([]);
   });
+
+  // F3. An inline setting is missed. A line that starts with `-- sqlfluff`
+  // or `--sqlfluff` (core/config/fluffconfig.py, process_raw_file_for_config)
+  // sets SQLFluff's settings for the file: `ignore:linting`, `exclude_rules`,
+  // `rules`, `warnings` or the dialect hide or downgrade what it reports.
+  // Lines are split as Python's splitlines splits them, so a carriage
+  // return, a form feed and the Unicode line separators start one too.
+  it("finds an inline setting at the start of a line, as SQLFluff reads it (F3)", () => {
+    const text = src(
+      "-- sqlfluff:ignore:linting",
+      "--sqlfluff:exclude_rules:CV05",
+      "-- sqlfluff:rules:AL04",
+      "-- sqlfluff:warnings:CV05",
+      "SELECT 1; -- sqlfluff:rules:AL04",
+      "  -- sqlfluff:rules:AL04",
+      "SELECT 1;\r-- sqlfluff:dialect:mysql",
+      "SELECT 1;\u2028--sqlfluff:rules:AL04",
+    );
+    expect(findMarkers(text, ["sqlfluff"]).map((m) => [m.line, m.name])).toEqual([
+      [1, "-- sqlfluff:"],
+      [2, "-- sqlfluff:"],
+      [3, "-- sqlfluff:"],
+      [4, "-- sqlfluff:"],
+      [7, "-- sqlfluff:"],
+      [8, "-- sqlfluff:"],
+    ]);
+  });
 });
 
 describe("linear time on hostile SQL (S7)", () => {

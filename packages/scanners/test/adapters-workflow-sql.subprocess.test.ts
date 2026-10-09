@@ -7,7 +7,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { parseConfig } from "@openqodex/core";
+import { parseConfig, SUPPRESSION_RULE } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { runScanners } from "@openqodex/scanners";
 import { afterAll, describe, expect, it } from "vitest";
@@ -263,6 +263,29 @@ describe("workflow and SQL scanner subprocesses", () => {
     const result = await scanAt(repo, "sqlfluff", { "reports/active.sql": NULL_COMPARISON }, ["reports/active.sql"]);
     expect(result.scan.scanners[0]).toMatchObject({ status: "ran", reason: null });
     expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "sqlfluff", ruleId: "CV05", filePath: "reports/active.sql" }));
+  }, 300_000);
+
+  // A line that starts with `-- sqlfluff:` sets SQLFluff's settings for the
+  // file: each of these hides or downgrades CV05 there. An added one is a
+  // suppression candidate, as an added `-- noqa` is.
+  it("sqlfluff obeys an inline setting, and an added one is raised as a suppression", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-inline-"));
+    const files = {
+      "a.sql": `-- sqlfluff:ignore:linting\n${NULL_COMPARISON}`,
+      "b.sql": `--sqlfluff:exclude_rules:CV05\n${NULL_COMPARISON}`,
+      "c.sql": `-- sqlfluff:rules:AL04\n${NULL_COMPARISON}`,
+      "d.sql": `-- sqlfluff:warnings:CV05\n${NULL_COMPARISON}`,
+    };
+    const result = await scanAt(repo, "sqlfluff", files, Object.keys(files));
+    expect(result.scan.scanners[0]).toMatchObject({ status: "ran", reason: null });
+    const found = result.scan.candidates.filter((c) => c.source === "sqlfluff").map((c) => `${c.filePath}:${c.lineStart}:${c.ruleId}:${c.severity}`).sort();
+    expect(found).toEqual([
+      `a.sql:1:${SUPPRESSION_RULE}:medium`,
+      `b.sql:1:${SUPPRESSION_RULE}:medium`,
+      `c.sql:1:${SUPPRESSION_RULE}:medium`,
+      "d.sql:2:CV05:info",
+      `d.sql:1:${SUPPRESSION_RULE}:medium`,
+    ].sort());
   }, 300_000);
 
   // A review runs it on every changed .sql file; a slow start would stall it.
