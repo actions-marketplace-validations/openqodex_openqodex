@@ -457,6 +457,35 @@ describe("the net/http plugin on small repositories", () => {
     expect(at(9)).toEqual(["fan-out-capped"]);
     expect(at(13)).toEqual(["fan-out-capped", "unsupported-rule"]);
   });
+
+  it("never reads a list cut short by a read limit as complete: a long pattern, a long wrapper chain, a server whose handler lies past the budget", async () => {
+    const longPath = `/${"x".repeat(2100)}`;
+    const eater = `d(${Array.from({ length: 20 }, () => `d(${Array.from({ length: 20 }, (_, i) => i).join(", ")})`).join(", ")})`;
+    const main = [
+      "package main", // 1
+      "", // 2
+      'import "net/http"', // 3
+      "", // 4
+      "func h(w http.ResponseWriter, r *http.Request) {}", // 5
+      "func wrap(next http.Handler) http.Handler { return next }", // 6
+      "func d(xs ...int) int { return 0 }", // 7
+      "func main() {", // 8
+      "\tmux := http.NewServeMux()", // 9
+      `\tmux.HandleFunc(${JSON.stringify(longPath)}, h)`, // 10
+      `\tmux.Handle("/deep", ${"wrap(".repeat(80)}http.HandlerFunc(h)${")".repeat(80)})`, // 11
+      `\tsrv := &http.Server{ReadTimeout: ${eater}, Handler: mux}`, // 12
+      "\tsrv.ListenAndServe()", // 13
+      "}", // 14
+    ].join("\n");
+    const test = `package main\n\nimport (\n\t"net/http/httptest"\n\t"testing"\n)\n\nfunc TestLong(t *testing.T) {\n\thttptest.NewRequest("GET", ${JSON.stringify(longPath)}, nil)\n}\n`;
+    const g = await graphOf({ "main.go": main, "main_test.go": test });
+    const at = (file: string, line: number) => goUnknowns(g).filter((u) => u.site?.file === file && u.site.line === line);
+    expect(at("main.go", 10).map((u) => u.cause)).toEqual(["fan-out-capped"]);
+    const chain = at("main.go", 11).filter((u) => u.cause === "fan-out-capped");
+    expect(chain.map((u) => [u.count, u.exact])).toEqual([[16, true]]);
+    expect(at("main.go", 12).map((u) => u.cause)).toEqual(["fan-out-capped"]);
+    expect(at("main_test.go", 9).map((u) => u.cause)).toEqual(["fan-out-capped"]);
+  });
 });
 
 const goUnknowns = (g: Graph) => (g.frameworks?.unknowns ?? []).filter((u) => u.plugin === "go-http");

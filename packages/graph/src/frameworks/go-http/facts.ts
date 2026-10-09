@@ -43,7 +43,9 @@ function pos(node: Node): Pos {
 // naming that declaration (see `Decl` below); `call` a
 // call or a conversion; `lit` a composite literal (`T{}`, `&pkg.T{X: y}`)
 // with its keyed fields; `fn` a function literal; `nil`; `other` anything
-// else, or what lay past a read limit.
+// else. A read limit never passes for a complete read: what lay past it is
+// `other` with `cut` set, and a call or a literal whose list was cut short
+// says how many arguments or fields it left out (`omitted`).
 export type Part = { s: string } | { ref: string[]; local: boolean };
 // A local declaration's key: the line and column of the name it declares
 // ("12:2"). A use carries the key of the one declaration it names at that
@@ -54,16 +56,22 @@ export type Expr =
   | ({ t: "str"; v: string } & Pos)
   | ({ t: "dyn"; parts: Part[] | null } & Pos)
   | ({ t: "ref"; path: string[]; local: boolean; decl: Decl | null } & Pos)
-  | ({ t: "call"; fn: Expr; args: Expr[] } & Pos)
-  | ({ t: "lit"; type: string[] | null; addr: boolean; fields: { key: string; value: Expr }[] } & Pos)
+  | ({ t: "call"; fn: Expr; args: Expr[]; omitted?: number } & Pos)
+  | ({ t: "lit"; type: string[] | null; addr: boolean; fields: { key: string; value: Expr }[]; omitted?: number } & Pos)
   | ({ t: "fn" } & Pos)
   | ({ t: "nil" } & Pos)
-  | ({ t: "other" } & Pos);
+  | ({ t: "other"; cut?: boolean } & Pos);
+
+// Whether an expression is what lay past a read limit.
+export function isCut(e: Expr): boolean {
+  return e.t === "other" && e.cut === true;
+}
 
 export type GoHttpFact =
   // A watched selector call: `recv.prop(args)`. `scopes` holds the lines of
   // the enclosing functions, innermost first; empty at package level.
-  | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; scopes: number[] })
+  // `omitted`: the arguments past MAX_ARGS, not read.
+  | (FrameworkFactBase & { kind: "call"; recv: Expr; prop: string; args: Expr[]; scopes: number[]; omitted?: number })
   // A name bound to a value: `mux := http.NewServeMux()`, `var h = T{}`,
   // `mux = other`. Empty `scopes`: declared at package level. `decl` is the
   // local declaration the name is (its own key for `:=` and `var`, the one
@@ -169,13 +177,16 @@ export function stringValue(node: Node | null): string | null {
   return fromUtf8.decode(new Uint8Array(bytes));
 }
 
-// A name chain `a.b.c`, or null when a part is not a plain name or the chain
-// is longer than MAX_NAME_PARTS. Walks down the operand side in a loop.
-function namePath(node: Node): string[] | null {
+// Whether a node is a string literal longer than MAX_STRING: its value is not read.
+const tooLong = (n: Node): boolean => (n.type === "interpreted_string_literal" || n.type === "raw_string_literal") && n.endIndex - n.startIndex > MAX_STRING + 2;
+
+// A name chain `a.b.c`; null when a part is not a plain name, "cut" when
+// the chain is longer than MAX_NAME_PARTS. Walks down the operand side in a loop.
+function namePath(node: Node): string[] | null | "cut" {
   const parts: string[] = [];
   let cur: Node | null = node;
   while (cur && cur.type === "selector_expression") {
-    if (parts.length >= MAX_NAME_PARTS) return null;
+    if (parts.length >= MAX_NAME_PARTS) return "cut";
     const field = cur.childForFieldName("field");
     if (!field) return null;
     parts.push(field.text);
@@ -212,13 +223,14 @@ function paramType(node: Node | null): { path: string[]; pointer: boolean; func:
 }
 
 // The pieces of a `+` chain, left to right, with an explicit stack; null
-// when a piece is neither a string literal nor a name, or past MAX_PARTS.
-function stringParts(node: Node, b: Budget, declHere: DeclHere): Part[] | null {
+// when a piece is neither a string literal nor a name, "cut" past a read
+// limit (the budget, MAX_PARTS, a string or a name chain too long).
+function stringParts(node: Node, b: Budget, declHere: DeclHere): Part[] | null | "cut" {
   const out: Part[] = [];
   const stack: Node[] = [node];
   while (stack.length > 0) {
     const n = stack.pop() as Node;
-    if (b.left-- <= 0 || out.length >= MAX_PARTS) return null;
+    if (b.left-- <= 0 || out.length >= MAX_PARTS || tooLong(n)) return "cut";
     if (n.type === "parenthesized_expression" && n.firstNamedChild) {
       stack.push(n.firstNamedChild);
       continue;
@@ -236,6 +248,7 @@ function stringParts(node: Node, b: Budget, declHere: DeclHere): Part[] | null {
       continue;
     }
     const path = n.type === "identifier" ? [n.text] : n.type === "selector_expression" ? namePath(n) : null;
+    if (path === "cut") return "cut";
     if (!path) return null;
     out.push({ ref: path, local: declHere(path[0] as string) !== null });
   }
@@ -243,40 +256,53 @@ function stringParts(node: Node, b: Budget, declHere: DeclHere): Part[] | null {
 }
 
 const ref = (path: string[], decl: Decl | null, p: Pos): Expr => ({ t: "ref", path, local: decl !== null, decl, ...p });
+const cut = (p: Pos): Expr => ({ t: "other", cut: true, ...p });
+
+// The arguments of a call, at most MAX_ARGS, and how many past it were left out.
+function readArgs(list: Node | null, b: Budget, depth: number, declHere: DeclHere): { args: Expr[]; omitted: number } {
+  const args: Expr[] = [];
+  let omitted = 0;
+  for (let i = 0; list && i < list.namedChildCount; i++) {
+    const a = list.namedChild(i);
+    if (!a || a.type === "comment") continue;
+    if (args.length < MAX_ARGS) args.push(read(a, b, depth, declHere));
+    else omitted++;
+  }
+  return { args, omitted };
+}
 
 function read(node: Node | null, b: Budget, depth: number, declHere: DeclHere): Expr {
   if (!node) return { t: "other", line: 0, column: 0 };
   const p = pos(node);
-  if (b.left <= 0 || depth > MAX_EXPR_DEPTH) return { t: "other", ...p };
+  if (b.left <= 0 || depth > MAX_EXPR_DEPTH) return cut(p);
   b.left--;
   switch (node.type) {
     case "parenthesized_expression":
       return read(node.firstNamedChild, b, depth + 1, declHere);
     case "interpreted_string_literal":
     case "raw_string_literal": {
+      if (tooLong(node)) return cut(p);
       const v = stringValue(node);
       return v === null ? { t: "other", ...p } : { t: "str", v, ...p };
     }
-    case "binary_expression":
+    case "binary_expression": {
       if (node.childForFieldName("operator")?.text !== "+") return { t: "other", ...p };
-      return { t: "dyn", parts: stringParts(node, b, declHere), ...p };
+      const parts = stringParts(node, b, declHere);
+      return parts === "cut" ? cut(p) : { t: "dyn", parts, ...p };
+    }
     case "identifier":
       return ref([node.text], declHere(node.text), p);
     case "nil":
       return { t: "nil", ...p };
     case "selector_expression": {
       const path = namePath(node);
+      if (path === "cut") return cut(p);
       return path ? ref(path, declHere(path[0] as string), p) : { t: "other", ...p };
     }
     case "call_expression": {
       const fn = read(node.childForFieldName("function"), b, depth + 1, declHere);
-      const list = node.childForFieldName("arguments");
-      const args: Expr[] = [];
-      for (let i = 0; list && i < list.namedChildCount && args.length < MAX_ARGS; i++) {
-        const a = list.namedChild(i);
-        if (a && a.type !== "comment") args.push(read(a, b, depth + 1, declHere));
-      }
-      return { t: "call", fn, args, ...p };
+      const { args, omitted } = readArgs(node.childForFieldName("arguments"), b, depth + 1, declHere);
+      return omitted > 0 ? { t: "call", fn, args, omitted, ...p } : { t: "call", fn, args, ...p };
     }
     case "unary_expression": {
       const operand = node.childForFieldName("operand");
@@ -286,17 +312,23 @@ function read(node: Node | null, b: Budget, depth: number, declHere: DeclHere): 
     }
     case "composite_literal": {
       const fields: { key: string; value: Expr }[] = [];
+      let omitted = 0;
       const body = node.childForFieldName("body");
-      for (let i = 0; body && i < body.namedChildCount && fields.length < MAX_ARGS; i++) {
+      for (let i = 0; body && i < body.namedChildCount; i++) {
         const el = body.namedChild(i);
         if (el?.type !== "keyed_element") continue;
+        if (fields.length >= MAX_ARGS) {
+          omitted++;
+          continue;
+        }
         const keyNode = el.childForFieldName("key") ?? el.namedChild(0);
         const valueNode = el.childForFieldName("value") ?? el.namedChild(1);
         const key = keyNode?.type === "literal_element" ? keyNode.firstNamedChild : keyNode;
         const value = valueNode?.type === "literal_element" ? valueNode.firstNamedChild : valueNode;
         if (key?.type === "identifier" || key?.type === "field_identifier") fields.push({ key: key.text, value: read(value, b, depth + 1, declHere) });
       }
-      return { t: "lit", type: typePath(node.childForFieldName("type")), addr: false, fields, ...p };
+      const type = typePath(node.childForFieldName("type"));
+      return omitted > 0 ? { t: "lit", type, addr: false, fields, omitted, ...p } : { t: "lit", type, addr: false, fields, ...p };
     }
     case "func_literal":
       return { t: "fn", ...p };
@@ -528,20 +560,18 @@ export function readFacts(root: Node): GoHttpFact[] {
         if (!prop || !WATCHED.has(prop) || node.hasError) return;
         const b: Budget = { left: MAX_EXPR_NODES };
         const recv = read(callee.childForFieldName("operand"), b, 0, declHere);
-        const args: Expr[] = [];
-        const list = node.childForFieldName("arguments");
-        for (let i = 0; list && i < list.namedChildCount && args.length < MAX_ARGS; i++) {
-          const a = list.namedChild(i);
-          if (a && a.type !== "comment") args.push(read(a, b, 0, declHere));
-        }
-        out.push({ kind: "call", ...pos(node), recv, prop, args, scopes: fns() });
+        const { args, omitted } = readArgs(node.childForFieldName("arguments"), b, 0, declHere);
+        out.push(omitted > 0 ? { kind: "call", ...pos(node), recv, prop, args, scopes: fns(), omitted } : { kind: "call", ...pos(node), recv, prop, args, scopes: fns() });
         return;
       }
       case "composite_literal": {
         const type = typePath(node.childForFieldName("type"));
         if (!type || type.length !== 2 || type[1] !== "Server" || node.hasError) return;
         const lit = expr(node);
-        const handler = lit.t === "lit" ? (lit.fields.find((f) => f.key === "Handler")?.value ?? null) : null;
+        // No Handler among the fields read means the default mux, but only
+        // when no field was left out: else the handler is not known.
+        const set = lit.t === "lit" ? lit.fields.find((f) => f.key === "Handler")?.value : undefined;
+        const handler = set ?? (lit.t === "lit" && !lit.omitted ? null : cut(pos(node)));
         out.push({ kind: "server", ...pos(node), type, handler, scopes: fns() });
         return;
       }
@@ -607,7 +637,7 @@ export function show(e: Expr): string {
     case "nil":
       return "nil";
     case "other":
-      return "an expression";
+      return e.cut ? "an expression past the plugin's read limit" : "an expression";
   }
 }
 
@@ -627,13 +657,14 @@ export function isExpr(v: unknown, depth = 0): v is Expr {
     case "ref":
       return strings(e.path) && e.path.length > 0 && typeof e.local === "boolean" && (e.decl === null || typeof e.decl === "string") && e.local === (e.decl !== null);
     case "call":
-      return isExpr(e.fn, depth + 1) && Array.isArray(e.args) && e.args.every((a) => isExpr(a, depth + 1));
+      return isExpr(e.fn, depth + 1) && Array.isArray(e.args) && e.args.every((a) => isExpr(a, depth + 1)) && (e.omitted === undefined || Number.isInteger(e.omitted));
     case "lit":
-      return (e.type === null || strings(e.type)) && typeof e.addr === "boolean" && Array.isArray(e.fields) && e.fields.every((f) => typeof f === "object" && f !== null && typeof (f as { key?: unknown }).key === "string" && isExpr((f as { value?: unknown }).value, depth + 1));
+      return (e.type === null || strings(e.type)) && typeof e.addr === "boolean" && Array.isArray(e.fields) && e.fields.every((f) => typeof f === "object" && f !== null && typeof (f as { key?: unknown }).key === "string" && isExpr((f as { value?: unknown }).value, depth + 1)) && (e.omitted === undefined || Number.isInteger(e.omitted));
     case "fn":
     case "nil":
-    case "other":
       return true;
+    case "other":
+      return e.cut === undefined || typeof e.cut === "boolean";
     default:
       return false;
   }
@@ -645,7 +676,7 @@ export function isGoHttpFact(v: unknown): v is GoHttpFact {
   if (!Number.isInteger(f.line) || !Number.isInteger(f.column)) return false;
   switch (f.kind) {
     case "call":
-      return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && ints(f.scopes);
+      return isExpr(f.recv) && typeof f.prop === "string" && Array.isArray(f.args) && f.args.every((a) => isExpr(a)) && ints(f.scopes) && (f.omitted === undefined || Number.isInteger(f.omitted));
     case "value":
       return typeof f.name === "string" && isExpr(f.value) && ints(f.scopes) && (f.decl === null || typeof f.decl === "string");
     case "param":

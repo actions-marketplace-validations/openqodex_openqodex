@@ -32,7 +32,7 @@ import type { GraphNode } from "../../types.js";
 import type { Detection, FrameworkEdge, FrameworkEdgeKind, FrameworkEvidence, FrameworkUnknown, HandlerStatus, Lookup, PluginIndex, PluginOutput, Registration, RoleAssignment, Site } from "../plugin.js";
 import { appId, entityId } from "../plugin.js";
 import type { Expr, GoHttpFact } from "./facts.js";
-import { evaluate, MAX_EXPR_DEPTH, MAX_SOURCE_BYTES, show } from "./facts.js";
+import { evaluate, isCut, MAX_ARGS, MAX_EXPR_DEPTH, MAX_SOURCE_BYTES, show } from "./facts.js";
 
 export const PLUGIN = "go-http";
 export const RULE_VERSION = 1;
@@ -74,7 +74,9 @@ type Bound = {
   note: string | null;
   why: Why | null;
   wrappers: Wrapper[]; // outermost first
-  wrapCut: boolean; // more wrappers than MAX_MIDDLEWARE_CHAIN
+  // More wrappers than MAX_MIDDLEWARE_CHAIN: how many past it were left out,
+  // exact unless the chain itself ran past a read limit.
+  wrapCut: { count: number; exact: boolean } | null;
   mount: { mux: Mux; strip: string | null | undefined } | null; // strip: undefined none, null computed
 };
 
@@ -317,11 +319,15 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       if (f.prop !== "Handle" && f.prop !== "HandleFunc") continue;
       const pattern = f.args[0];
       const handler = f.args[1];
-      if (!pattern || !handler || f.args.length !== 2) continue;
       const site: Site = { file, line: f.line, column: f.column };
-      const event: Event = { file, site, prop: f.prop, pattern, handler };
-      const target = isPkg(file, f.recv, "http", null) ? defaultMux(index.projectOf(file), site) : muxOfRef(file, f.recv, f.line, false, site, 0);
+      if (!f.omitted && (!pattern || !handler || f.args.length !== 2)) continue;
+      const target = isPkg(file, f.recv, "http", null) ? defaultMux(index.projectOf(file), f.omitted ? null : site) : muxOfRef(file, f.recv, f.line, false, f.omitted ? null : site, 0);
       if (!target) continue;
+      if (f.omitted || !pattern || !handler) {
+        gap({ plugin: PLUGIN, site, scope: { file }, affects: ["handles"], cause: "fan-out-capped", name: null, note: `the call has more than ${MAX_ARGS} arguments; the ${f.omitted ?? 0} past that were not read, so it is not listed as a registration`, count: f.omitted ?? null, exact: f.omitted !== undefined });
+        continue;
+      }
+      const event: Event = { file, site, prop: f.prop, pattern, handler };
       if (target.kind === "param") {
         paramEvents.push({ param: target, event });
         continue;
@@ -335,7 +341,11 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
   const serve = (file: string, e: Expr, site: Site) => {
     let cur = e;
     // `ListenAndServe(addr, logging(mux))` still serves mux.
-    for (let i = 0; i < MAX_MOUNT_DEPTH && cur.t === "call"; i++) cur = cur.args.find((a) => a.t === "ref" || a.t === "call") ?? cur.args[0] ?? cur;
+    for (let i = 0; i < MAX_MOUNT_DEPTH && cur.t === "call"; i++) cur = cur.args.find((a) => a.t === "ref" || a.t === "call" || isCut(a)) ?? cur.args[0] ?? cur;
+    if (isCut(cur)) {
+      gap({ plugin: PLUGIN, site, scope: { file }, affects: [], cause: "fan-out-capped", name: null, note: "the handler this server is given lies past the plugin's read limit, so which mux it serves is not known", count: null, exact: false });
+      return;
+    }
     const m = cur.t === "nil" ? defaultMux(index.projectOf(file), null) : muxOfRef(file, cur, site.line, false, null, 0);
     if (m && m.kind === "mux" && !m.served.some((s) => siteKey(s) === siteKey(site))) m.served.push(site);
   };
@@ -479,11 +489,12 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
 
   const bind = (file: string, e: Expr, line: number, isFunc: boolean, steps: number): Bound => {
     const wrappers: Wrapper[] = [];
-    let wrapCut = false;
+    let left = 0; // wrappers past MAX_MIDDLEWARE_CHAIN
     let strip: string | null | undefined;
     let cur = e;
     let fnValue = isFunc;
-    const done = (r: Res, mount: Bound["mount"] = null): Bound => ({ ...r, wrappers, wrapCut, mount });
+    const wrapCut = (): Bound["wrapCut"] => (left > 0 ? { count: left, exact: !isCut(cur) } : null);
+    const done = (r: Res, mount: Bound["mount"] = null): Bound => ({ ...r, wrappers, wrapCut: wrapCut(), mount });
     for (let guard = 0; cur.t === "call" && guard <= MAX_EXPR_DEPTH; guard++) {
       const call: Extract<Expr, { t: "call" }> = cur;
       const fn = call.fn;
@@ -515,8 +526,9 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
         );
       }
       if (wrappers.length < MAX_MIDDLEWARE_CHAIN) wrappers.push({ targets: w.res.targets, tier: w.res.tier, via: w.res.via, note: w.res.note });
-      else wrapCut = true;
-      cur = call.args[w.arg] ?? { t: "other", line: call.line, column: call.column };
+      else left++;
+      // The handler argument past the arguments read is not known: a read limit.
+      cur = call.args[w.arg] ?? { t: "other", cut: call.omitted !== undefined, line: call.line, column: call.column };
       fnValue = w.func;
     }
     if (wrappers.length > 0) {
@@ -538,11 +550,14 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
         if ("follow" in r) {
           const d = r.follow as Extract<Decl, { kind: "value" }>;
           const inner = bind(d.file, d.fact.value, d.fact.line, fnValue, steps + 1);
-          return { ...inner, wrappers: [...wrappers, ...inner.wrappers], wrapCut: wrapCut || inner.wrapCut };
+          const outer = wrapCut();
+          const both = outer && inner.wrapCut ? { count: outer.count + inner.wrapCut.count, exact: outer.exact && inner.wrapCut.exact } : (outer ?? inner.wrapCut);
+          return { ...inner, wrappers: [...wrappers, ...inner.wrappers], wrapCut: both };
         }
         return done(r);
       }
       default:
+        if (isCut(cur)) return done(fail("unresolved", "fan-out-capped", "the handler expression is longer than the plugin reads, so the handler is not known", null, cur));
         return done(fail("dynamic", "dynamic", `the handler is computed (${show(cur)})`, null, cur));
     }
   };
@@ -573,19 +588,14 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
     return true;
   };
 
-  // A route that is not a registration: its own pattern is computed.
+  // A route that is not a registration: its own pattern is computed, or is
+  // longer than the plugin reads (that is a read limit, never "computed").
   const computedPattern = (e: Event) =>
-    gap({
-      plugin: PLUGIN,
-      site: e.site,
-      scope: { file: e.file },
-      affects: ["handles"],
-      cause: "dynamic",
-      name: show(e.handler),
-      note: `the route pattern ${show(e.pattern)} is computed at run time, so this call is not listed as a registration; its handler is ${show(e.handler)}`,
-      count: null,
-      exact: false,
-    });
+    gap(
+      isCut(e.pattern)
+        ? { plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles"], cause: "fan-out-capped", name: show(e.handler), note: `the route pattern is longer than the plugin reads, so this call is not listed as a registration; its handler is ${show(e.handler)}`, count: null, exact: false }
+        : { plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["handles"], cause: "dynamic", name: show(e.handler), note: `the route pattern ${show(e.pattern)} is computed at run time, so this call is not listed as a registration; its handler is ${show(e.handler)}`, count: null, exact: false },
+    );
 
   // The handles edge, the handler's unknown and the middleware chain of one registration.
   const attach = (reg: Registration, e: Event, b: Bound) => {
@@ -608,7 +618,8 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       }
     });
     if (b.wrapCut) {
-      gap({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["applies_middleware"], cause: "fan-out-capped", name: show(e.handler), note: `the handler is wrapped in more than ${MAX_MIDDLEWARE_CHAIN} middleware calls; the middleware past the first ${MAX_MIDDLEWARE_CHAIN} is not listed`, count: null, exact: false });
+      const { count, exact } = b.wrapCut;
+      gap({ plugin: PLUGIN, site: e.site, scope: { file: e.file }, affects: ["applies_middleware"], cause: "fan-out-capped", name: show(e.handler), note: `the handler is wrapped in more than ${MAX_MIDDLEWARE_CHAIN} middleware calls; the ${exact ? "" : "at least "}${count} past the first ${MAX_MIDDLEWARE_CHAIN} are not listed`, count, exact });
     }
   };
 
@@ -771,7 +782,13 @@ function run(index: PluginIndex<GoHttpFact>): Analysis {
       const method = mArg.t === "ref" && !mArg.local && mArg.path.length === 2 && identity(file).http.has(mArg.path[0] as string) ? (METHOD_CONSTANTS[mArg.path[1] as string] ?? null) : evaluate(mArg, constantOf(file));
       const target = evaluate(tArg, constantOf(file));
       if (method === null || target === null) {
-        gap({ plugin: PLUGIN, site, scope: { file }, affects: ["tests"], cause: "dynamic", name: show(method === null ? mArg : tArg), note: `the test builds a request with a computed ${method === null ? "method" : "path"} (${show(method === null ? mArg : tArg)}), so the route it reaches is not known`, count: null, exact: false });
+        const arg = method === null ? mArg : tArg;
+        const what = method === null ? "method" : "path";
+        gap(
+          isCut(arg)
+            ? { plugin: PLUGIN, site, scope: { file }, affects: ["tests"], cause: "fan-out-capped", name: null, note: `the request's ${what} is longer than the plugin reads, so the route it reaches is not known`, count: null, exact: false }
+            : { plugin: PLUGIN, site, scope: { file }, affects: ["tests"], cause: "dynamic", name: show(arg), note: `the test builds a request with a computed ${what} (${show(arg)}), so the route it reaches is not known`, count: null, exact: false },
+        );
         continue;
       }
       const req = requestTarget(target);
