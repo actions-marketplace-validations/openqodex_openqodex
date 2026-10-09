@@ -346,6 +346,49 @@ def ext():
 
 app.include_router(secrets.router)
 `;
+  // include_router copies the routes a router has at that moment.
+  const ORDER_ROUTES = `from fastapi import APIRouter
+
+router = APIRouter()
+
+
+@router.get("/early")
+def early():
+    return 1
+`;
+  const ORDER_MAIN = `from fastapi import APIRouter, FastAPI
+
+from app.order.routes import router
+
+app = FastAPI()
+local = APIRouter()
+
+
+@local.get("/before")
+def before():
+    return 1
+
+
+app.include_router(local)
+app.include_router(router)
+
+
+@local.get("/after")
+def after():
+    return 2
+
+
+@router.get("/main-late")
+def main_late():
+    return 3
+`;
+  const ORDER_EXTRA = `from app.order.routes import router
+
+
+@router.get("/third")
+def third():
+    return 4
+`;
   const REBOUND = `from fastapi import FastAPI
 
 app = FastAPI()
@@ -361,7 +404,7 @@ FastAPI = object
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-fool-"));
-    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED, "app/unbound.py": UNBOUND });
+    writeTree(root, { "pyproject.toml": '[project]\nname = "fool"\nversion = "0.1.0"\ndependencies = ["fastapi>=0.115"]\n', "app/__init__.py": "", "app/main.py": MAIN, "app/broken.py": BROKEN, "app/shadow.py": SHADOW, "app/rebound.py": REBOUND, "app/wrapped.py": WRAPPED, "app/truncated.py": TRUNCATED, "app/unbound.py": UNBOUND, "app/order/__init__.py": "", "app/order/routes.py": ORDER_ROUTES, "app/order/main.py": ORDER_MAIN, "app/order/extra.py": ORDER_EXTRA });
     commitAll(root);
     graph = await buildGraph({ repoRoot: root, store: null });
   });
@@ -442,6 +485,21 @@ FastAPI = object
     expect(gaps.some((u) => u.affects.includes("mounts") && u.site?.line === 21 && u.cause === "external")).toBe(true);
   });
 
+  it("serves only the routes a router holds when it is included, keeps a later one apart from the application, and says when the order is not known", () => {
+    const app = "fw:fastapi:app:app/order/main.py:5";
+    const under = (w: string) =>
+      fastapiRegs(graph)
+        .filter((r) => r.written === w)
+        .map((r) => r.app);
+    expect(under("/before")).toEqual([app]);
+    expect(under("/early")).toEqual([app]);
+    expect(under("/after")).toEqual([null]);
+    expect(under("/main-late")).toEqual([null]);
+    expect(under("/third")).toEqual([app]);
+    const third = fastapiRegs(graph).find((r) => r.written === "/third") as Registration;
+    expect(graph.frameworks?.unknowns.some((u) => u.plugin === "fastapi" && u.site?.file === "app/order/extra.py" && u.site.line === third.site.line && u.note.includes("order"))).toBe(true);
+  });
+
   it("reads no decorator inside a broken region of a file, keeps the routes before it, and says the file has a syntax error", () => {
     expect(
       fastapiRegs(graph)
@@ -479,20 +537,24 @@ describe("the FastAPI plugin on a hostile repository", () => {
 
   const HEAD = "from fastapi import APIRouter, Depends, FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom hostile.h import h\n\n";
 
-  // A chain of routers each including the next, the last including the first.
+  // A chain of routers each including the next, the last including the
+  // first. include_router copies what a router holds at that moment, so the
+  // includes run from the deepest up, as code that nests routers must.
   function chain(n: number): string {
-    const lines = [HEAD, "capp = FastAPI()", 'c0 = APIRouter(prefix="/c")', "capp.include_router(c0)"];
-    for (let i = 1; i < n; i++) lines.push(`c${i} = APIRouter(prefix="/c")`, `c${i - 1}.include_router(c${i})`);
-    lines.push(`c${n - 1}.include_router(c0)`, `@c${n - 1}.get("/end")`, "def end():", "    return 1");
+    const lines = [HEAD, "capp = FastAPI()"];
+    for (let i = 0; i < n; i++) lines.push(`c${i} = APIRouter(prefix="/c")`);
+    lines.push(`@c${n - 1}.get("/end")`, "def end():", "    return 1", `c${n - 1}.include_router(c0)`);
+    for (let i = n - 1; i > 0; i--) lines.push(`c${i - 1}.include_router(c${i})`);
+    lines.push("capp.include_router(c0)");
     return lines.join("\n");
   }
   // A diamond: every router includes the next one twice, so routes double per level.
   function diamond(levels: number): string {
     const lines = [HEAD, "dapp = FastAPI()"];
     for (let i = 0; i <= levels; i++) lines.push(`d${i} = APIRouter()`);
-    for (let i = 0; i < levels; i++) lines.push(`d${i}.include_router(d${i + 1}, prefix="/p")`, `d${i}.include_router(d${i + 1}, prefix="/q")`);
-    lines.push("dapp.include_router(d0)");
     for (let i = 0; i < 20; i++) lines.push(`@d${levels}.get("/r${i}")`, `def r${i}():`, "    return 1");
+    for (let i = levels - 1; i >= 0; i--) lines.push(`d${i}.include_router(d${i + 1}, prefix="/p")`, `d${i}.include_router(d${i + 1}, prefix="/q")`);
+    lines.push("dapp.include_router(d0)");
     return lines.join("\n");
   }
   // Thousands of routes on one router, in two files, included twice, and a dependency list hundreds long.

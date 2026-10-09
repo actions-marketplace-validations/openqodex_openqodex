@@ -640,8 +640,28 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     return v;
   };
 
+  // Whether a route or an include on a router is on it when `gate`
+  // includes the router: include_router copies what the router holds at
+  // that moment. In the include's own scope, what comes before it; from the
+  // router's own module, at module level, everything (that module ran when
+  // it was imported); anything else depends on import order the plugin
+  // does not follow.
+  const order = (ev: { file: string; site: Site; scope: number }, gate: IncludeEvent | null, routerFile: string): "yes" | "no" | "unknown" => {
+    if (!gate) return "yes";
+    if (ev.file === gate.file) {
+      if (ev.scope === gate.scope) return ev.site.line < gate.site.line ? "yes" : "no";
+      return "unknown";
+    }
+    return ev.file === routerFile && ev.scope === 0 ? "yes" : "unknown";
+  };
+  const orderNote = (what: string, router: Known, gate: IncludeEvent) => `whether this ${what} is on ${router.name} when ${gate.file}:${gate.site.line} includes it depends on the order the code runs in, which the plugin does not follow`;
+  // Routes added after every include of their router: kept, apart from
+  // any application, once the walks are done.
+  const late = new Map<RouteEvent, Known>();
+  const registered = new Set<RouteEvent>();
+
   const reached = new Set<string>();
-  const compose = (val: Known, app: string | null, prefix: string | null, inherited: Dep[], inheritedOmitted: number, via: Site[], stack: string[], depth: number) => {
+  const compose = (val: Known, app: string | null, prefix: string | null, inherited: Dep[], inheritedOmitted: number, via: Site[], stack: string[], depth: number, gate: IncludeEvent | null = null, only: ReadonlySet<RouteEvent> | null = null) => {
     reached.add(val.id);
     // The router's own prefix and dependencies, or the application's dependencies.
     const at: Site = { file: val.file, line: val.line, column: val.column };
@@ -656,6 +676,13 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
     const routes = routesOf.get(val.id) ?? [];
     for (let i = 0; i < routes.length; i++) {
       const e = routes[i] as RouteEvent;
+      if (only && !only.has(e)) continue;
+      const seen = order(e, gate, val.file);
+      if (seen === "no") {
+        if (!late.has(e)) late.set(e, val);
+        continue;
+      }
+      if (seen === "unknown" && gate) siteGap(e.site, "dynamic", ["handles"], val.name, orderNote("route", val, gate));
       if (!spend(caps.regs, e.site)) {
         // Past the build's cap: count what this router still holds and stop.
         caps.regs.left += routes.length - i - 1;
@@ -693,6 +720,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
         handler: { written: handlerWritten, status: bound.status, targets: bound.targets },
       };
       registrations.push(reg);
+      registered.add(e);
       if (e.methods === null) siteGap(e.site, "dynamic", ["handles"], handlerWritten, "the route's methods are computed at run time, so it is listed as taking any method");
       if (bound.why) siteGap(e.site, bound.why.cause, ["handles"], bound.why.name, bound.why.note);
       for (const t of bound.targets) {
@@ -703,7 +731,11 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       applyDeps(reg, [...deps, ...decorator.deps, ...e.params.map((p) => ({ call: p.call, file: e.file, type: p.type, scope: e.scope, list: false }))], omitted + decorator.omitted + e.paramsOmitted, app);
     }
 
+    if (only) return;
     for (const e of includesOf.get(val.id) ?? []) {
+      const seen = order(e, gate, val.file);
+      if (seen === "no") continue;
+      if (seen === "unknown" && gate) siteGap(e.site, "dynamic", ["mounts", "handles"], val.name, orderNote("include", val, gate));
       const target = e.router?.t === "ref" ? valueIn(e.file, e.router.path, e.scope, e.site.line) : null;
       if (!target || target.kind !== "router") {
         // Why: a router from outside the repository, a gap the resolver
@@ -728,7 +760,7 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
       hidden(e.kw, e.cut, "dependencies", e.site, ["applies_middleware"], "the dependencies it declares are not listed");
       emit({ from: val.id, to: target.id, kind: "mounts", plugin: PLUGIN, app, evidence: { kind: "mount", tier: "certain", site: e.site, via: null, premises: [], rule: rule("fastapi-include"), note: null } });
       const incDeps = depsOfList(e.file, e.deps, e.scope);
-      compose(target, app, base === null || inc === null ? null : base + inc, [...deps, ...incDeps.deps], omitted + incDeps.omitted, [...via, e.site], [...stack, target.id], depth + 1);
+      compose(target, app, base === null || inc === null ? null : base + inc, [...deps, ...incDeps.deps], omitted + incDeps.omitted, [...via, e.site], [...stack, target.id], depth + 1, e);
     }
   };
 
@@ -761,6 +793,16 @@ function run(index: PluginIndex<FastApiFact>): Analysis {
   const appReached = new Set(reached);
   for (const v of sortedVals) if (v.kind === "router" && !appReached.has(v.id) && !includedBy.has(v.id)) compose(v, null, "", [], 0, [], [v.id], 0);
   for (const v of sortedVals) if (v.kind === "router" && !reached.has(v.id)) compose(v, null, "", [], 0, [], [v.id], 0);
+  // A route added to a router after every include of it is on the router
+  // but served by no application: kept, relative and not mounted.
+  const lateBy = new Map<Known, Set<RouteEvent>>();
+  for (const [e, router] of late) {
+    if (registered.has(e)) continue;
+    const set = lateBy.get(router);
+    if (set) set.add(e);
+    else lateBy.set(router, new Set([e]));
+  }
+  for (const [router, set] of lateBy) compose(router, null, "", [], 0, [], [router.id], 0, null, set);
 
   // ---------- test requests ----------
   type Candidate = { reg: Registration; segs: Seg[] };
