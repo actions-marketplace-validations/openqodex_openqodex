@@ -13,6 +13,7 @@
 // walk over a tree is one pass with no step back up the parents.
 import type { Node } from "web-tree-sitter";
 import { assembledText } from "../shared/kept.js";
+import type { TreeVisitor, Up } from "../shared/walk.js";
 
 // The largest file a JavaScript plugin reads, in bytes. A larger file gets
 // one fact of kind "too-large" and nothing else; resolve turns it into an
@@ -394,49 +395,36 @@ function read(node: Node | null, depth: number, budget: { left: number }): Expr 
   }
 }
 
-// One depth-first pass over the named nodes of a tree with a cursor, so a
-// deep tree never overflows the stack. `visit` gets each node, the line
-// of the innermost function around it (0 at module level), and `up`, which
-// gives the node's ancestors (`up(1)` its parent, `up(2)` the one above).
-// Both come from stacks the walk keeps as it enters and leaves nodes, never
-// from a node's `parent`, which tree-sitter finds by descending from the
-// root again: a lookup per node would make a deeply nested file quadratic.
-// `visit` returns false to skip the children of a node.
+// A reader of the one depth-first pass over a tree's named nodes that the
+// plugins share (shared/walk.ts). `visit` gets each node, the line of the
+// innermost function around it (0 at module level), `up`, which gives the
+// node's ancestors (`up(1)` its parent, `up(2)` the one above), and the
+// node's type, read once. The function lines come from a stack kept as the
+// walk enters and leaves nodes, never from a node's `parent`. `visit`
+// returns false to skip the children of a node.
 //
 // A region the parser could not read (an ERROR node) is never visited: the
 // language would not run such a file, so nothing in it is a fact. `broken`
 // is told the line of each such region.
-export type Up = (k: number) => Node | null;
+export type { Up } from "../shared/walk.js";
 
-export function walk(root: Node, visit: (node: Node, scope: number, up: Up) => boolean | void, broken?: (line: number) => void): void {
-  const cursor = root.walk();
+export type ScopedVisit = (node: Node, scope: number, up: Up, type: string) => boolean | void;
+
+// `visit` as one reader of a shared walk (shared/walk.ts).
+export function scopedVisitor(visit: ScopedVisit, broken?: (line: number) => void): TreeVisitor {
   const scopes: { depth: number; line: number }[] = [];
-  const path: Node[] = []; // the named node at each depth of the current path
-  let depth = 0;
-  const up: Up = (k) => (depth - k >= 0 ? (path[depth - k] ?? null) : null);
-  for (;;) {
-    let descend = true;
-    if (cursor.nodeType === "ERROR" || cursor.nodeIsMissing) {
-      descend = false;
-      broken?.(cursor.startPosition.row + 1);
-    } else if (cursor.nodeIsNamed) {
-      const node = cursor.currentNode;
-      path[depth] = node;
-      descend = visit(node, scopes.length > 0 ? (scopes[scopes.length - 1] as { line: number }).line : 0, up) !== false;
-      if (descend && SCOPE_TYPES.has(node.type)) scopes.push({ depth, line: node.startPosition.row + 1 });
-    }
-    if (descend && cursor.gotoFirstChild()) {
-      depth++;
-      continue;
-    }
-    for (;;) {
+  return {
+    enter(node, type, _field, depth, up) {
+      const descend = visit(node, scopes.length > 0 ? (scopes[scopes.length - 1] as { line: number }).line : 0, up, type) !== false;
+      if (descend && SCOPE_TYPES.has(type)) scopes.push({ depth, line: node.startPosition.row + 1 });
+      return descend;
+    },
+    leave(depth) {
       // Leaving this node: a function it opened is closed.
       while (scopes.length > 0 && (scopes[scopes.length - 1] as { depth: number }).depth >= depth) scopes.pop();
-      if (cursor.gotoNextSibling()) break;
-      if (!cursor.gotoParent()) return;
-      depth--;
-    }
-  }
+    },
+    broken,
+  };
 }
 
 const JS_EXTS = new Set(["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"]);

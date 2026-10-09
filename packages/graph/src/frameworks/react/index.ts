@@ -5,7 +5,7 @@
 // library. See resolve.ts for the rules.
 import type { CapabilityReport, FrameworkPlugin } from "../plugin.js";
 import type { ReactFact } from "./facts.js";
-import { isReactFact, readFacts, wants } from "./facts.js";
+import { isReactFact, readFacts, reader, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
 // 4: a cap counted across the build is a gap of the whole build.
@@ -24,6 +24,7 @@ export const react: FrameworkPlugin<ReactFact> = {
   inputs: { paths: [], dependencies: { npm: ["react"] } },
   wants: () => wants(),
   facts: (root) => readFacts(root),
+  reader: (root) => reader(root),
   isFact: (v): v is ReactFact => isReactFact(v),
   detect: (index) => analyse(index).apps,
   resolve: (index) => analyse(index).output,

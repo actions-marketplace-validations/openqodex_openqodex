@@ -6,7 +6,7 @@
 // server actions. See resolve.ts for the rules.
 import type { CapabilityReport, FrameworkPlugin } from "../plugin.js";
 import type { NextFact } from "./facts.js";
-import { isNextFact, readFacts, wants } from "./facts.js";
+import { isNextFact, readFacts, reader, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
 // 4: every kept string follows the one rule of shared/kept.ts.
@@ -27,6 +27,7 @@ export const nextjs: FrameworkPlugin<NextFact> = {
   inputs: { paths: [/(^|\/)(src\/)?(app|pages)\//, /(^|\/)(src\/)?middleware\.[jt]s$/], dependencies: { npm: ["next"] } },
   wants: () => wants(),
   facts: (root) => readFacts(root),
+  reader: (root) => reader(root),
   isFact: (v): v is NextFact => isNextFact(v),
   detect: (index) => analyse(index).apps,
   resolve: (index) => analyse(index).output,

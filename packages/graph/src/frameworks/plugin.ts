@@ -49,9 +49,11 @@ import type { Node } from "web-tree-sitter";
 import type { ProjectModel } from "../discovery/projects.js";
 import type { Cause, Tier } from "../model/records.js";
 import type { FileFacts, GraphEdge, GraphNode, Lang } from "../types.js";
+import type { TreeVisitor } from "./shared/walk.js";
 
 // 2: Registration.partial (appended).
-export const PLUGIN_API_VERSION = 2;
+// 3: FrameworkPlugin.reader (appended).
+export const PLUGIN_API_VERSION = 3;
 
 // ---------- the facts a plugin reads from one file ----------
 
@@ -73,6 +75,12 @@ export const RESERVED_FACT_KINDS: ReadonlySet<string> = new Set(["overflow", "er
 // facts (FileFacts.frameworks): plugin id to its facts. A plugin that found
 // nothing in the file has no entry.
 export type FrameworkFileFacts = Record<string, FrameworkFactBase[]>;
+
+// A plugin's fact reader for one file, as one reader of a shared walk:
+// `visitor` is shown the tree's nodes (null when the reader needs no walk,
+// such as a file over its size cap), and `finish`, called once the walk is
+// done, returns exactly the facts `facts` returns for the same tree.
+export type FactReader<F extends FrameworkFactBase = FrameworkFactBase> = { visitor: TreeVisitor | null; finish(): F[] };
 
 // ---------- what a plugin's output depends on ----------
 
@@ -466,6 +474,11 @@ export interface FrameworkPlugin<F extends FrameworkFactBase = FrameworkFactBase
   // The context-free facts of one file, from its parse tree's root node.
   // Never reads another file, the file's path or the environment.
   facts(root: Node, lang: Lang): F[];
+
+  // The same facts, read as one reader of a walk the plugins share
+  // (shared/walk.ts), so a file is walked once for all of them. Optional:
+  // a plugin without it is called through `facts`.
+  reader?(root: Node, lang: Lang): FactReader<F>;
 
   // A shape check for one cached fact: facts are read back from disk and
   // checked before they are used. A fact that fails it is dropped and the

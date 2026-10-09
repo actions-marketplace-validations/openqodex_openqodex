@@ -5,9 +5,10 @@
 // runs for). A file's routes come from its path, which facts never read;
 // its exports come from the language facts.
 import type { Node } from "web-tree-sitter";
-import type { FrameworkFactBase } from "../plugin.js";
+import type { FactReader, FrameworkFactBase } from "../plugin.js";
 import { keptText } from "../shared/kept.js";
-import { identifierName, MAX_SOURCE_BYTES, pos, readExpr, stringValue, walk } from "../express/js.js";
+import { identifierName, MAX_SOURCE_BYTES, pos, readExpr, scopedVisitor, stringValue } from "../express/js.js";
+import { readAlone } from "../shared/walk.js";
 
 export type NextFact =
   // A directive of the file's prologue.
@@ -49,16 +50,20 @@ function prologue(list: Node | null): { value: string; node: Node }[] {
 }
 
 export function readFacts(root: Node): NextFact[] {
-  if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
+  return readAlone(root, reader(root));
+}
+
+// The facts of one file as one reader of a shared walk (shared/walk.ts).
+export function reader(root: Node): FactReader<NextFact> {
+  if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: NextFact[] = [];
   // Only the directives the plugin reads are kept: a prologue string is any literal (shared/kept.ts).
   for (const d of prologue(root)) if (DIRECTIVES.has(d.value)) out.push({ kind: "directive", ...pos(d.node), value: d.value });
   let broken = 0;
   let firstBroken = 0;
-  walk(
-    root,
-    (node, _scope, up) => {
-      switch (node.type) {
+  const visitor = scopedVisitor(
+    (node, _scope, up, type) => {
+      switch (type) {
         case "function_declaration":
         case "arrow_function":
         case "function_expression":
@@ -68,12 +73,12 @@ export function readFacts(root: Node): NextFact[] {
           if (!prologue(body).some((d) => d.value === "use server")) return;
           let name: string | null = null;
           const own = node.childForFieldName("name");
-          if (node.type === "function_declaration" && own) name = identifierName(own.text);
+          if (type === "function_declaration" && own) name = identifierName(own.text);
           else if (up(1)?.type === "variable_declarator" && up(1)?.childForFieldName("value")?.id === node.id) {
             const n = up(1)?.childForFieldName("name");
             if (n?.type === "identifier") name = identifierName(n.text);
           }
-          if (name !== null) out.push({ kind: "action", ...pos(node.type === "function_declaration" ? node : (up(1) as Node)), name });
+          if (name !== null) out.push({ kind: "action", ...pos(type === "function_declaration" ? node : (up(1) as Node)), name });
           return;
         }
         case "variable_declarator": {
@@ -104,8 +109,11 @@ export function readFacts(root: Node): NextFact[] {
       if (broken++ === 0) firstBroken = line;
     },
   );
-  if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
-  return out;
+  const finish = (): NextFact[] => {
+    if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
+    return out;
+  };
+  return { visitor, finish };
 }
 
 export function isNextFact(v: unknown): v is NextFact {

@@ -8,7 +8,9 @@
 // return positions), kept by depth as the walk enters and leaves them; no
 // step climbs the parents, so a deeply nested file stays linear.
 import type { Node } from "web-tree-sitter";
-import type { FrameworkFactBase } from "../plugin.js";
+import type { FactReader, FrameworkFactBase } from "../plugin.js";
+import { readAlone } from "../shared/walk.js";
+import type { TreeVisitor } from "../shared/walk.js";
 import { exported, identifierName, MAX_SOURCE_BYTES, namePath, pos } from "../express/js.js";
 
 export type ReactFact =
@@ -99,7 +101,12 @@ function patternNames(node: Node | null, out: string[], budget = { left: 64 }): 
 }
 
 export function readFacts(root: Node): ReactFact[] {
-  if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
+  return readAlone(root, reader(root));
+}
+
+// The facts of one file as one reader of a shared walk (shared/walk.ts).
+export function reader(root: Node): FactReader<ReactFact> {
+  if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: ReactFact[] = [];
   const frames: Frame[] = [];
   // The function frames alone, so the innermost one is found in one step.
@@ -130,31 +137,17 @@ export function readFacts(root: Node): ReactFact[] {
     locals.set(name, (locals.get(name) ?? 0) + 1);
   };
 
-  const cursor = root.walk();
-  let depth = 0;
   let broken = 0;
   let firstBroken = 0;
-  // The named node at each depth of the current path: a node's parent is
-  // read from here, never from `node.parent`, which tree-sitter finds by
-  // descending from the root again (quadratic on a deeply nested file).
-  const path: Node[] = [];
-  const up = (k: number): Node | null => (depth - k >= 0 ? (path[depth - k] ?? null) : null);
-  for (;;) {
-    let descend = true;
-    // A region the parser could not read is never visited: the language
-    // would not run such a file, so nothing in it is a fact.
-    if (cursor.nodeType === "ERROR" || cursor.nodeIsMissing) {
-      descend = false;
-      if (broken++ === 0) firstBroken = cursor.startPosition.row + 1;
-    } else if (cursor.nodeIsNamed) {
-      const node = cursor.currentNode;
-      const type = node.type;
-      const field = cursor.currentFieldName;
-      path[depth] = node;
+  // A region the parser could not read is never entered (shared/walk.ts):
+  // the language would not run such a file, so nothing in it is a fact.
+  const visitor: TreeVisitor = {
+    enter(node, type, field, depth, up, upType) {
+      const parentType = upType(1);
       const parent = up(1);
       // A return position: a return statement, or an arrow function's expression body.
       const top = frames[frames.length - 1];
-      if (type === "return_statement" || (parent?.type === "arrow_function" && type !== "statement_block" && field === "body")) {
+      if (type === "return_statement" || (parentType === "arrow_function" && type !== "statement_block" && field() === "body")) {
         frames.push({ t: "return", depth, owner: topFn() });
       } else if (type === "parenthesized_expression" || type === "ternary_expression" || type === "binary_expression") {
         // `return (<X />)`, `cond ? <A /> : <B />`, `ok && <X />` keep the position.
@@ -176,12 +169,12 @@ export function readFacts(root: Node): ReactFact[] {
           if (name !== null) declare(name);
         } else if (type === "method_definition") {
           name = null;
-        } else if (parent?.type === "variable_declarator" && field === "value") {
-          const n = parent.childForFieldName("name");
+        } else if (parentType === "variable_declarator" && field() === "value") {
+          const n = (parent as Node).childForFieldName("name");
           if (n?.type === "identifier") {
             name = identifierName(n.text);
-            line = parent.startPosition.row + 1;
-            column = parent.startPosition.column + 1;
+            line = (parent as Node).startPosition.row + 1;
+            column = (parent as Node).startPosition.column + 1;
             isExported = exported((k) => up(k + 1));
           }
         }
@@ -238,7 +231,7 @@ export function readFacts(root: Node): ReactFact[] {
         if (name && !node.hasError && (name.length > 1 || isComponentName(name[0] as string))) {
           let render: string[] | null = null;
           const call = up(2);
-          if (parent?.type === "arguments" && parent.firstNamedChild?.id === node.id && call?.type === "call_expression") render = namePath(call.childForFieldName("function"));
+          if (parentType === "arguments" && parent?.firstNamedChild?.id === node.id && call?.type === "call_expression") render = namePath(call.childForFieldName("function"));
           out.push({ kind: "element", ...pos(node), name, local: (locals.get(name[0] as string) ?? 0) > 0, render });
         }
       } else if (type === "jsx_fragment" || (type === "jsx_opening_element" && node.childForFieldName("name") === null)) {
@@ -254,21 +247,17 @@ export function readFacts(root: Node): ReactFact[] {
         // A test block is counted, never named: its title may hold any literal, and the cached facts keep none they do not read.
         if (callee && callee.length === 1 && TEST_FNS.has(last as string)) out.push({ kind: "test-block", ...pos(node), fn: last as string, name: null });
       }
-    }
-    if (descend && cursor.gotoFirstChild()) {
-      depth++;
-      continue;
-    }
-    for (;;) {
-      pop(depth);
-      if (cursor.gotoNextSibling()) break;
-      if (!cursor.gotoParent()) {
-        if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
-        return out;
-      }
-      depth--;
-    }
-  }
+    },
+    leave: (depth) => pop(depth),
+    broken(line) {
+      if (broken++ === 0) firstBroken = line;
+    },
+  };
+  const finish = (): ReactFact[] => {
+    if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
+    return out;
+  };
+  return { visitor, finish };
 }
 
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 16 && v.every((s) => typeof s === "string");

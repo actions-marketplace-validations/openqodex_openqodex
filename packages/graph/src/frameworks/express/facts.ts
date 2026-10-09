@@ -8,11 +8,12 @@
 // knows which name is Express: that is decided in resolve, from the file's
 // imports, so a fact never claims what only another file can prove.
 import type { Node } from "web-tree-sitter";
-import type { FrameworkFactBase } from "../plugin.js";
+import type { FactReader, FrameworkFactBase } from "../plugin.js";
 import { eitherPathText, eitherSegmentText, keepParts, ledForm } from "../shared/kept.js";
 import type { Expr } from "./js.js";
-import type { Up } from "./js.js";
-import { exported, FN_TYPES, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, patternNames, pos, readExpr, stringValue, walk } from "./js.js";
+import type { ScopedVisit } from "./js.js";
+import { exported, FN_TYPES, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, patternNames, pos, readExpr, scopedVisitor, stringValue } from "./js.js";
+import { readAlone } from "../shared/walk.js";
 
 // The member calls watched: the routing methods of an application and a
 // router, `use`, `route`, `listen`, and the requests of a test agent.
@@ -64,7 +65,12 @@ export function wants(): boolean {
 const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
 
 export function readFacts(root: Node): ExpressFact[] {
-  if (root.endIndex > MAX_SOURCE_BYTES) return [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }];
+  return readAlone(root, reader(root));
+}
+
+// The facts of one file as one reader of a shared walk (shared/walk.ts).
+export function reader(root: Node): FactReader<ExpressFact> {
+  if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: ExpressFact[] = [];
   let firstBroken = 0;
   let broken = 0;
@@ -79,12 +85,12 @@ export function readFacts(root: Node): ExpressFact[] {
       else s.names.add(n);
     }
   };
-  const visit = (node: Node, scope: number, up: Up): void => {
-    if (FN_TYPES.has(node.type) || node.type === "function_declaration" || node.type === "generator_function_declaration" || node.type === "method_definition") {
+  const visit: ScopedVisit = (node, scope, up, type): void => {
+    if (FN_TYPES.has(type) || type === "function_declaration" || type === "generator_function_declaration" || type === "method_definition") {
       const own = node.startPosition.row + 1;
       if (!scopes.has(own)) scopes.set(own, { parent: scope, names: new Set(), all: false });
       // The function's own name lives in the scope around it; its parameters in its own.
-      const name = node.type === "function_declaration" || node.type === "generator_function_declaration" ? node.childForFieldName("name") : null;
+      const name = type === "function_declaration" || type === "generator_function_declaration" ? node.childForFieldName("name") : null;
       if (name) {
         const id = identifierName(name.text);
         if (id !== null) declare(scope, [id]);
@@ -94,16 +100,16 @@ export function readFacts(root: Node): ExpressFact[] {
       if (params?.type === "identifier") patternNames(params, names);
       else for (const p of params?.namedChildren ?? []) patternNames(p, names);
       declare(own, names);
-    } else if (node.type === "class_declaration") {
+    } else if (type === "class_declaration") {
       const name = node.childForFieldName("name");
       const id = name ? identifierName(name.text) : null;
       if (id !== null) declare(scope, [id]);
-    } else if (node.type === "catch_clause") {
+    } else if (type === "catch_clause") {
       const names: string[] = [];
       patternNames(node.childForFieldName("parameter"), names);
       declare(scope, names);
     }
-    switch (node.type) {
+    switch (type) {
       case "call_expression": {
         // A call the parser had to repair (a missing parenthesis) is no fact.
         if (node.hasError) return;
@@ -161,10 +167,10 @@ export function readFacts(root: Node): ExpressFact[] {
         const ann = node.childForFieldName("type")?.firstNamedChild ?? null;
         const id = pattern?.type === "identifier" ? identifierName(pattern.text) : null;
         if (id === null || !ann) return;
-        const type = typeName(ann);
+        const named = typeName(ann);
         // The parameter list's owner, two steps up: the function the scope is named by.
         const owner = up(2);
-        if (type) out.push({ kind: "param", ...pos(node), name: id, type, scope: owner ? owner.startPosition.row + 1 : 0 });
+        if (named) out.push({ kind: "param", ...pos(node), name: id, type: named, scope: owner ? owner.startPosition.row + 1 : 0 });
         return;
       }
       case "function_declaration": {
@@ -175,15 +181,18 @@ export function readFacts(root: Node): ExpressFact[] {
       }
     }
   };
-  walk(root, visit, (line) => {
+  const visitor = scopedVisitor(visit, (line) => {
     if (broken++ === 0) firstBroken = line;
   });
-  if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
-  // First, so the core's per-file fact cap drops calls and values before
-  // it drops a scope: a name read in a function whose scope is missing would
-  // otherwise bind to the module.
-  const scopeFacts: ExpressFact[] = [...scopes].map(([line, s]) => ({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all }));
-  return keepRead([...scopeFacts, ...out]);
+  const finish = (): ExpressFact[] => {
+    if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
+    // First, so the core's per-file fact cap drops calls and values before
+    // it drops a scope: a name read in a function whose scope is missing would
+    // otherwise bind to the module.
+    const scopeFacts: ExpressFact[] = [...scopes].map(([line, s]) => ({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all }));
+    return keepRead([...scopeFacts, ...out]);
+  };
+  return { visitor, finish };
 }
 
 // ---------- the literals the facts keep ----------

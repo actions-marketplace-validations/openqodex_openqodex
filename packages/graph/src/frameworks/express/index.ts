@@ -7,7 +7,7 @@
 // reach each route. See resolve.ts for the rules.
 import type { CapabilityReport, FrameworkPlugin } from "../plugin.js";
 import type { ExpressFact } from "./facts.js";
-import { isExpressFact, readFacts, wants } from "./facts.js";
+import { isExpressFact, readFacts, reader, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
 // 5: every kept string follows the one rule of shared/kept.ts.
@@ -23,6 +23,7 @@ export const express: FrameworkPlugin<ExpressFact> = {
   inputs: { paths: [], dependencies: { npm: ["express", "supertest"] } },
   wants: () => wants(),
   facts: (root) => readFacts(root),
+  reader: (root) => reader(root),
   isFact: (v): v is ExpressFact => isExpressFact(v),
   detect: (index) => analyse(index).apps,
   resolve: (index) => analyse(index).output,
