@@ -166,5 +166,5 @@ A release note, a README line, a post or a reply that states anything about revi
 What it showed:
 
 - No benchmark line moved. The plugins put their routes, middleware and test links on the graph, but nothing in the brief reads them yet: the brief lines that show a changed handler's route come with phase 4a's interface work, so this phase's effect on reviews can be measured only once those are merged.
-- The reviewer found the new `express-route-param` bug from the files alone: the route file sits beside the handler in so small a repository.
+- The reviewer found the new `express-route-param` bug by reading the route file, which the brief lists as a file that imports the changed handler; the brief does not yet say which route the handler serves.
 - The three misses are minor: two Dockerfile issues in the demo repository the reviewer dropped as harmless (as in the first run), and the list items without keys in the Next.js case, a candidate the reviewer dropped.
