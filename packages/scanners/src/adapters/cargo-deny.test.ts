@@ -19,12 +19,24 @@
 //   7. The owned config lets a repository's deny.toml in, keeps the advisory
 //      database outside the OpenQodex home, or checks yanked crates through
 //      the developer's index cache.
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { cargoDenyConfig, cargoPathProblem, metadataFailure, parseCargoDenyOutput } from "./cargo-deny.js";
+
+// The temp folders this file made, removed when it ends: a source-package
+// test cannot import tests/temp-dirs.mjs, so it keeps its own list.
+const made: string[] = [];
+const tempDir = (prefix: string): string => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+};
+afterAll(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const fixture = (name: string) => readFileSync(fileURLToPath(new URL(`../../test/fixtures/cargo-deny/${name}`, import.meta.url)), "utf8");
 const CHECK = fixture("check.jsonl");
@@ -121,7 +133,7 @@ describe("cargoDenyConfig", () => {
 //  13. A project whose manifests stay inside is refused.
 describe("cargoPathProblem", () => {
   const plant = (files: Record<string, string>): { parent: string; repo: string } => {
-    const parent = mkdtempSync(join(tmpdir(), "oq-cargo-paths-"));
+    const parent = tempDir("oq-cargo-paths-");
     const repo = join(parent, "repo");
     mkdirSync(repo);
     for (const [name, body] of Object.entries(files)) {
@@ -131,7 +143,7 @@ describe("cargoPathProblem", () => {
     return { parent, repo };
   };
   const pkg = (name: string, extra = "") => `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2021"\n${extra}`;
-  const outside = mkdtempSync(join(tmpdir(), "oq-cargo-outside-"));
+  const outside = tempDir("oq-cargo-outside-");
   writeFileSync(join(outside, "Cargo.toml"), pkg("outside"));
 
   it("refuses a dependency, member, workspace, patch or replace path outside the repository (8)", async () => {

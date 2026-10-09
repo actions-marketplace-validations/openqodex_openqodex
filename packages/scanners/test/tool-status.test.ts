@@ -5,12 +5,13 @@
 // 2. The resolver answers such a scanner as if it ran inside OpenQodex.
 // 3. The scanner that does run inside OpenQodex (sqllint) is reported as
 //    anything but built in and ready.
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createToolResolver, toolStatuses } from "../src/toolchain/index.js";
 import { loadToolchain } from "../src/toolchain/table.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+// Removes the temp folders this file made.
+afterAll(removeTempDirs);
 
 const NO_RECIPE = "no install recipe; this build cannot run it";
 
@@ -21,7 +22,7 @@ describe("a scanner with no install recipe", () => {
   // A build that lacks zizmor's recipe, in an empty home.
   beforeEach(() => {
     delete table.tools.zizmor;
-    process.env.OPENQODEX_HOME = mkdtempSync(join(tmpdir(), "oq-tool-status-"));
+    process.env.OPENQODEX_HOME = tempDir("oq-tool-status-");
   });
   afterEach(() => {
     if (saved) table.tools.zizmor = saved;

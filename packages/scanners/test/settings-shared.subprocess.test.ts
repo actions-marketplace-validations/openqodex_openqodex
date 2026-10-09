@@ -4,14 +4,17 @@
 // form, and the runner to raise its settings-file note, or, where the
 // scanner ignores the form, to raise none. Run by the end-to-end config, not
 // the unit config.
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { runScanners } from "@openqodex/scanners";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { installedOnly } from "./subprocess-support.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+// Removes the temp folders this file made.
+afterAll(removeTempDirs);
 
 // The lines of `head` that a line diff from `base` marks as added: those
 // outside a longest common run of lines.
@@ -44,7 +47,7 @@ function addedLines(base: string, head: string): Set<number> {
 // no such file), every line of `code` new. Returns the rule ids the scanner
 // reported on `code` and the settings-file notes, as "<scanner>:<file>".
 async function run(scanner: BuiltinScanner, code: Record<string, string>, settings: string, base: string | null, head: string) {
-  const repo = mkdtempSync(join(tmpdir(), `oq-shared-${scanner}-`));
+  const repo = tempDir(`oq-shared-${scanner}-`);
   for (const [name, body] of Object.entries({ ...code, [settings]: head })) {
     mkdirSync(dirname(join(repo, name)), { recursive: true });
     writeFileSync(join(repo, name), body);

@@ -7,14 +7,17 @@
 // can read, so a scanner that followed it fails with a permission error,
 // and asserts the scanner neither failed on it nor reported anything there.
 // Run by the end-to-end config (tests/e2e/adapters.test.ts).
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { runScanners } from "@openqodex/scanners";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { installedOnly } from "./subprocess-support.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+// Removes the temp folders this file made.
+afterAll(removeTempDirs);
 
 // The name each scanner checks, and a body with a problem it reports, so a
 // scanner that could read the sentinel would have something to say.
@@ -40,11 +43,11 @@ const LINKS: [BuiltinScanner, string, string][] = [
 describe("a changed file that is a link out of the repository", () => {
   for (const [scanner, name, body] of LINKS) {
     it(`${scanner} never reads ${name} when it links outside the repository`, async () => {
-      const outside = mkdtempSync(join(tmpdir(), "oq-outside-"));
+      const outside = tempDir("oq-outside-");
       const sentinel = join(outside, "sentinel");
       writeFileSync(sentinel, body);
       chmodSync(sentinel, 0o000);
-      const repo = mkdtempSync(join(tmpdir(), `oq-link-${scanner}-`));
+      const repo = tempDir(`oq-link-${scanner}-`);
       mkdirSync(dirname(join(repo, name)), { recursive: true });
       symlinkSync(sentinel, join(repo, name));
       const coverage = new Map([[name, new Set(body.split("\n").map((_, i) => i + 1))]]);

@@ -4,8 +4,7 @@
 // cases guard that a scanner opens no connection; the settings cases guard
 // what each one reads from the repository and that it writes nothing there.
 // Run by the end-to-end config, not the unit config.
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { parseConfig, SUPPRESSION_RULE } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
@@ -13,6 +12,7 @@ import { runScanners } from "@openqodex/scanners";
 import { afterAll, describe, expect, it } from "vitest";
 import { installedOnly, resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
 import type { Case } from "./subprocess-support.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 // A pull request title pasted into a script: template injection.
 const INJECTED_WORKFLOW = `on: pull_request
@@ -79,6 +79,9 @@ afterAll(() => {
   process.stdout.write(`${ran} ran, ${skipped} skipped\n`);
   if (process.env.CI) expect(skipped, "a builtin scanner was skipped under CI").toBe(0);
 });
+// Removes the temp folders this file made. Registered after any other
+// after-all hook, so it runs first and a failed check still cleans up.
+afterAll(removeTempDirs);
 
 describe("workflow and SQL scanner subprocesses", () => {
   for (const spec of cases) it(`${spec.scanner} reports ${spec.rule} on a changed line of ${spec.anchor}`, async () => {
@@ -108,7 +111,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // read, a change to it is a settings-file candidate, and zizmor writes
   // nothing into the repository.
   it("zizmor reads the root zizmor.yml, raises the changed settings file and writes nothing", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-zizmor-config-"));
+    const repo = tempDir("oq-adapter-zizmor-config-");
     const files = {
       ".github/workflows/greet.yml": INJECTED_WORKFLOW,
       ".github/zizmor.yml": "rules:\n  template-injection:\n    disable: true\n",
@@ -124,7 +127,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // walk up to the filesystem root for a zizmor.yml. One above the
   // repository is never read.
   it("zizmor never reads a zizmor.yml above the repository", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "oq-adapter-zizmor-parent-"));
+    const parent = tempDir("oq-adapter-zizmor-parent-");
     writeFileSync(join(parent, "zizmor.yml"), "rules:\n  template-injection:\n    disable: true\n");
     const repo = join(parent, "repo");
     mkdirSync(repo);
@@ -143,7 +146,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // read, a change to it is a settings-file candidate, and squawk writes
   // nothing; a file its settings leave out is nothing to check, not a failure.
   it("squawk reads the root .squawk.toml, raises the changed settings file and writes nothing", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-squawk-config-"));
+    const repo = tempDir("oq-adapter-squawk-config-");
     const files = {
       "db/0002_orders.sql": BLOCKING_INDEX,
       "db/seed/0001_seed.sql": BLOCKING_INDEX,
@@ -160,7 +163,7 @@ describe("workflow and SQL scanner subprocesses", () => {
 
   // squawk itself looks for .squawk.toml up to the filesystem root.
   it("squawk never reads a .squawk.toml above the repository", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "oq-adapter-squawk-parent-"));
+    const parent = tempDir("oq-adapter-squawk-parent-");
     writeFileSync(join(parent, ".squawk.toml"), 'excluded_rules = ["require-concurrent-index-creation"]\n');
     const repo = join(parent, "repo");
     mkdirSync(repo);
@@ -171,7 +174,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // squawk reads each path as a glob; unescaped, `[1]x.sql` would match
   // `1x.sql` and the changed file would go unchecked.
   it("squawk checks a changed file whose name holds glob characters, and only that file", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-squawk-glob-"));
+    const repo = tempDir("oq-adapter-squawk-glob-");
     const result = await scanAt(repo, "squawk", { "db/[1]x.sql": BLOCKING_INDEX, "db/1x.sql": "SELECT 1;\n" }, ["db/[1]x.sql"]);
     expect(result.scan.candidates).toContainEqual(expect.objectContaining({ source: "squawk", ruleId: "require-concurrent-index-creation", filePath: "db/[1]x.sql" }));
   }, 300_000);
@@ -187,8 +190,8 @@ describe("workflow and SQL scanner subprocesses", () => {
   // library_path makes it import the library's Python files: this one would
   // write a marker outside the repo and leave bytecode inside it.
   it("sqlfluff never runs a library a repo's settings name, and writes nothing", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-config-"));
-    const marker = join(mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-marker-")), "ran");
+    const repo = tempDir("oq-adapter-sqlfluff-config-");
+    const marker = join(tempDir("oq-adapter-sqlfluff-marker-"), "ran");
     const plant = `import pathlib\npathlib.Path(${JSON.stringify(marker)}).write_text("ran")\n`;
     const files = {
       ".sqlfluff": "[sqlfluff]\ntemplater = jinja\ndialect = postgres\n\n[sqlfluff:templater:jinja]\nlibrary_path = lib\n",
@@ -207,7 +210,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // The dialect comes from the repo's settings where they name one, and is
   // postgres elsewhere; a file it cannot parse gives no parse-error flood.
   it("sqlfluff reads the dialect a folder's settings name, uses postgres elsewhere, and drops parse errors", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-dialect-"));
+    const repo = tempDir("oq-adapter-sqlfluff-dialect-");
     const mysql = "SELECT `id` FROM `users` WHERE `deleted_at` = NULL;\nSELECT `name` FROM `users`;\n";
     const files = {
       "mysql/.sqlfluff": "[sqlfluff]\ndialect = mysql\n",
@@ -225,7 +228,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // left out there is left out of the run, so a change to such a section is
   // a settings-file candidate; the other folders still get the rule.
   it("sqlfluff reads its sections of setup.cfg, tox.ini, pep8.ini and pyproject.toml, and raises a changed one", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-shared-"));
+    const repo = tempDir("oq-adapter-sqlfluff-shared-");
     const ini = "[metadata]\nname = app\n\n[sqlfluff]\nexclude_rules = CV05\n";
     const files = {
       "a/setup.cfg": ini,
@@ -255,7 +258,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // repository could leave a rule out. It runs on a copy of the repository's
   // SQL and settings files whose HOME sits beside the copy.
   it("sqlfluff never reads settings above the repository", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-parent-"));
+    const parent = tempDir("oq-adapter-sqlfluff-parent-");
     writeFileSync(join(parent, ".sqlfluff"), "[sqlfluff]\nexclude_rules = CV05\n");
     writeFileSync(join(parent, "setup.cfg"), "[sqlfluff]\nexclude_rules = CV05\n");
     const repo = join(parent, "repo");
@@ -269,7 +272,7 @@ describe("workflow and SQL scanner subprocesses", () => {
   // file: each of these hides or downgrades CV05 there. An added one is a
   // suppression candidate, as an added `-- noqa` is.
   it("sqlfluff obeys an inline setting, and an added one is raised as a suppression", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-inline-"));
+    const repo = tempDir("oq-adapter-sqlfluff-inline-");
     const files = {
       "a.sql": `-- sqlfluff:ignore:linting\n${NULL_COMPARISON}`,
       "b.sql": `--sqlfluff:exclude_rules:CV05\n${NULL_COMPARISON}`,

@@ -8,14 +8,14 @@
 // The tools are installed beforehand with `openqodex doctor --install` (the
 // end-to-end setup does it); these cases never install one themselves, and
 // a tool that is missing fails its case with the reason.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig, SETTINGS_RULE, SUPPRESSION_RULE } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { createToolResolver, runScanners } from "@openqodex/scanners";
 import { withLoggingProxy } from "./subprocess-support.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 // An SSH port open to every address.
 const SG = `resource "aws_security_group" "web" {
@@ -82,7 +82,7 @@ module "sg" {
 // line of a file not named there), scanned by `scanner` and any `also` in
 // one scan. The tools must already be installed.
 async function scanLines(scanner: BuiltinScanner, files: Record<string, string>, changed: Record<string, number[]> = {}, also: BuiltinScanner[] = []) {
-  const repo = mkdtempSync(join(tmpdir(), `oq-iac-${scanner}-`));
+  const repo = tempDir(`oq-iac-${scanner}-`);
   for (const [name, body] of Object.entries(files)) {
     mkdirSync(dirname(join(repo, name)), { recursive: true });
     writeFileSync(join(repo, name), body);
@@ -106,6 +106,9 @@ afterAll(() => {
   process.stdout.write(`${ran} ran, ${skipped} skipped\n`);
   if (process.env.CI) expect(skipped, "an infrastructure scanner was skipped under CI").toBe(0);
 });
+// Removes the temp folders this file made. Registered after any other
+// after-all hook, so it runs first and a failed check still cleans up.
+afterAll(removeTempDirs);
 
 const cases: [BuiltinScanner, string, Record<string, string>, string][] = [
   ["trivy", "AWS-0107", { "infra/main.tf": SG }, "infra/main.tf"],
@@ -179,7 +182,7 @@ describe("trivy config", () => {
   // of them reach any folder on the machine: such a folder is held back
   // like one with a module to download, and trivy reads nothing outside.
   it("is not handed a folder whose local module path leaves the staging copy, and reads nothing there", async () => {
-    const outside = mkdtempSync(join(tmpdir(), "oq-trivy-outside-"));
+    const outside = tempDir("oq-trivy-outside-");
     writeFileSync(join(outside, "main.tf"), SG);
     const escape = `${"../".repeat(64)}${outside.slice(1)}`;
     const { status } = await scanLines("trivy", { "infra/main.tf": `module "outside" {\n  source = "${escape}"\n}\n\n${UNUSED}` });
@@ -252,7 +255,7 @@ describe("checkov", () => {
   }, 300_000);
 
   it("never loads a .checkov.yaml from the repository or the home, so their external Python checks never run", async () => {
-    const marker = join(mkdtempSync(join(tmpdir(), "oq-checkov-marker-")), "ran");
+    const marker = join(tempDir("oq-checkov-marker-"), "ran");
     const check = `open(${JSON.stringify(marker)}, "w").write("ran")\n`;
     const home = process.env.HOME!;
     mkdirSync(join(home, "checks"), { recursive: true });
@@ -291,7 +294,7 @@ describe("checkov", () => {
 // the file count. The folder must be withheld, so neither scanner reads the
 // module outside.
 describe("the module gate withholds a folder it cannot read for certain", () => {
-  const outside = mkdtempSync(join(tmpdir(), "oq-iac-gate-outside-"));
+  const outside = tempDir("oq-iac-gate-outside-");
   writeFileSync(join(outside, "main.tf"), SG);
   const escape = `${"../".repeat(64)}${outside.slice(1)}`;
   const hclEscaped = escape.replaceAll(".", "\\u002e");
@@ -392,7 +395,7 @@ spec:
 // report. Each scanner runs on the planted folder with one ordinary finding,
 // which proves it ran.
 describe("a file a Terraform expression reads never reaches the report", () => {
-  const outside = mkdtempSync(join(tmpdir(), "oq-iac-outside-"));
+  const outside = tempDir("oq-iac-outside-");
   const secretPath = join(outside, "credentials");
   const sentence = "planted sentence 7f3a9c from outside the stage";
   writeFileSync(secretPath, `${sentence}\n`);
@@ -433,7 +436,7 @@ describe("tflint", () => {
   }, 300_000);
 
   it("never loads the repository's .tflint.hcl or a plugin from the repository or the home", async () => {
-    const marker = join(mkdtempSync(join(tmpdir(), "oq-tflint-marker-")), "ran");
+    const marker = join(tempDir("oq-tflint-marker-"), "ran");
     const plugin = `#!/bin/sh\necho ran > ${JSON.stringify(marker)}\n`;
     const home = process.env.HOME!;
     mkdirSync(join(home, ".tflint.d", "plugins"), { recursive: true });

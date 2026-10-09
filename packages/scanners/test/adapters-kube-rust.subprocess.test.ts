@@ -5,7 +5,7 @@
 // promises in docs/scanners.md. Run by the end-to-end config.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import type { BuiltinScanner } from "@openqodex/core";
 import { runScanners } from "@openqodex/scanners";
 import { installedOnly, resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
 import type { Case } from "./subprocess-support.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -63,7 +64,7 @@ const RUST_PROJECT: Record<string, string> = {
 // Puts the project's crates in the Cargo cache with the developer's cargo,
 // in a copy outside any scan; false when this machine has no cargo.
 function primeCargo(files: Record<string, string>): boolean {
-  const dir = mkdtempSync(join(tmpdir(), "oq-cargo-prime-"));
+  const dir = tempDir("oq-cargo-prime-");
   for (const [name, body] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, name)), { recursive: true });
     writeFileSync(join(dir, name), body);
@@ -82,7 +83,7 @@ const cases: Case[] = [
 // The planted files, with only the `changed` lines of each counted as
 // changed, as a change to an existing manifest has them.
 async function scanChanged(scanner: BuiltinScanner, files: Record<string, string>, changed: Record<string, number[]>) {
-  const repo = mkdtempSync(join(tmpdir(), `oq-kube-changed-${scanner}-`));
+  const repo = tempDir(`oq-kube-changed-${scanner}-`);
   for (const [name, body] of Object.entries(files)) {
     mkdirSync(dirname(join(repo, name)), { recursive: true });
     writeFileSync(join(repo, name), body);
@@ -98,6 +99,9 @@ afterAll(() => {
   process.stdout.write(`${ran} ran, ${skipped} skipped\n`);
   if (process.env.CI) expect(skipped, "a builtin scanner was skipped under CI").toBe(0);
 });
+// Removes the temp folders this file made. Registered after any other
+// after-all hook, so it runs first and a failed check still cleans up.
+afterAll(removeTempDirs);
 
 const offline = () => process.env.OPENQODEX_E2E_OFFLINE === "1";
 
@@ -272,7 +276,7 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
   it("cargo-deny opens github.com only and obeys nothing the project's cargo, toolchain or deny files name", async () => {
     if (offline() || !primeCargo(RUST_PROJECT)) return;
     await resolveFirst("cargo-deny");
-    const scratch = mkdtempSync(join(tmpdir(), "oq-cargo-planted-"));
+    const scratch = tempDir("oq-cargo-planted-");
     const marker = join(scratch, "ran");
     const wrapper = join(scratch, "wrapper.sh");
     writeFileSync(wrapper, `#!/bin/sh\ntouch '${marker}'\nexec "$@"\n`);
@@ -300,7 +304,7 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
   // starts, so the manifest outside, unreadable to all, is never opened.
   it("cargo-deny holds back a project whose path dependency leaves the repository, and reads nothing there", async () => {
     if (offline() || !primeCargo(RUST_PROJECT)) return;
-    const outside = mkdtempSync(join(tmpdir(), "oq-cargo-outside-"));
+    const outside = tempDir("oq-cargo-outside-");
     writeFileSync(join(outside, "Cargo.toml"), '[package]\nname = "outside"\nversion = "0.1.0"\n');
     chmodSync(join(outside, "Cargo.toml"), 0o000);
     const files = { ...RUST_PROJECT, "Cargo.toml": `${RUST_PROJECT["Cargo.toml"]}\n[dependencies.outside]\npath = ${JSON.stringify(outside)}\n` };
