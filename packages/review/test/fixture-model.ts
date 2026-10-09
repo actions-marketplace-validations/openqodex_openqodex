@@ -31,6 +31,10 @@ export type FixtureOptions = {
   firstAnswer?: string;
   // The call number (1 for the first) whose transport throws.
   throwOn?: number;
+  // The model's name, in place of "fixture-model" (a second reviewer).
+  model?: string;
+  // Raise every candidate the brief names in a finding instead of dropping it.
+  raise?: boolean;
 };
 
 export type Fixture = ModelReviewer & { requests: ModelRequest[] };
@@ -38,12 +42,16 @@ export type Fixture = ModelReviewer & { requests: ModelRequest[] };
 const USAGE = { model: "fixture-model", servedModel: "fixture-model-2026-10-01", outputTokens: 120, cacheReadTokens: 40, costUsd: 0.002 };
 
 // The recorded submission, for the change and candidates the brief names:
-// every candidate dropped with the same reason.
-export function recorded(brief: string, findings: Finding[] = []): string {
+// every candidate dropped with the same reason, or with `raise` raised in a
+// finding of its own.
+export function recorded(brief: string, findings: Finding[] = [], raise = false): string {
   const id = /`change_id`: `([0-9a-f]{12})`/.exec(brief)?.[1] ?? "missing";
-  const lines = [...brief.matchAll(/^- (c\d+) \[[^\]]+\] ([^:\s]+):(\d+) /gm)];
-  const dropped = lines.map((m) => ({ candidate: m[1], reason: "The function is internal and never exposed.", file_path: m[2], line_number: Number(m[3]) }));
-  return JSON.stringify({ version: 2, change_id: id, summary: "Changes the sum and adds an SQL function.", findings, dropped });
+  const lines = [...brief.matchAll(/^- (c\d+) \[([^\]]+)\] ([^:\s]+):(\d+) /gm)];
+  const dropped = raise ? [] : lines.map((m) => ({ candidate: m[1], reason: "The function is internal and never exposed.", file_path: m[3], line_number: Number(m[4]) }));
+  const raised: Finding[] = raise
+    ? lines.map((m) => ({ severity: "major", category: "security", confidence: 0.9, file_path: m[3]!, line_number: Number(m[4]), title: "Function open to every caller", problem: "The function runs with the owner's rights.", consequence: "Any caller reads data it should not.", fix: "Revoke execute from public.", source: m[2]!, candidate: m[1]! }))
+    : [];
+  return JSON.stringify({ version: 2, change_id: id, summary: "Changes the sum and adds an SQL function.", findings: [...findings, ...raised], dropped });
 }
 
 export function fixtureModel(opts: FixtureOptions = {}): Fixture {
@@ -54,11 +62,11 @@ export function fixtureModel(opts: FixtureOptions = {}): Fixture {
   let calls = 0;
   const reply = (text: string, toolCalls: ToolCallRequest[], request: ModelRequest): ModelResponse => ({
     message: { text, toolCalls },
-    usage: { ...USAGE, inputTokens: 1000 + request.messages.length },
+    usage: { ...USAGE, ...(opts.model ? { model: opts.model } : {}), inputTokens: 1000 + request.messages.length },
   });
   return {
     kind: "model",
-    model: "fixture-model",
+    model: opts.model ?? "fixture-model",
     maxOutputTokens: 4096,
     requests,
     async complete(request) {
@@ -83,7 +91,7 @@ export function fixtureModel(opts: FixtureOptions = {}): Fixture {
         return reply("", [{ id: `read-${calls}`, name: "read_file", args: r.next === 1 ? { path: r.path } : { path: r.path, start: r.next } }], request);
       }
       answered++;
-      const text = answered === 1 && opts.firstAnswer !== undefined ? opts.firstAnswer : recorded(brief, opts.findings);
+      const text = answered === 1 && opts.firstAnswer !== undefined ? opts.firstAnswer : recorded(brief, opts.findings, opts.raise);
       return reply(text, [], request);
     },
   };

@@ -102,6 +102,10 @@ export type {
   SelectedLens,
   // the graph's view of a change
   ImpactSummary,
+  // what a host gives a review besides the change, and two reviewers' disagreements
+  ContextItem,
+  ContextKind,
+  Disagreement,
 } from "@openqodex/core";
 export type { RunScannersResult, Recipe, Toolchain } from "@openqodex/scanners";
 export type { BuildArgs, FileFacts, Graph, Lang } from "@openqodex/graph";

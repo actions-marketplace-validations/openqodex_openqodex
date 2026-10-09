@@ -288,7 +288,7 @@ describe("a model reviewer through reviewChange", () => {
     const r = await run({ floor: 0.5, fixture: { findings: [SUBTRACTION] } });
     expect(r.model.requests[0]!.messages[1]!.text).toContain("with confidence 0.5 or higher");
     expect(r.result.findings).toEqual([
-      expect.objectContaining({ file: "src/math.ts", lineStart: 2, lineEnd: 2, title: "Subtraction in add", confidence: 0.75, foundBy: ["primary"], source: null, candidate: null }),
+      expect.objectContaining({ file: "src/math.ts", lineStart: 2, lineEnd: 2, title: "Subtraction in add", confidence: 0.75, foundBy: ["fixture-model"], source: null, candidate: null }),
     ]);
     // major is under the default block threshold, so the review does not block.
     expect(r.result.status).toBe("complete");
@@ -320,13 +320,15 @@ describe("what reviewChange refuses", () => {
     const opts = { ...base, workDir, installRoot: workDir };
     const input = { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head };
     const model = fixtureModel();
-    for (const extra of [{ previousReviewedSha: repo.base }, { fullReviewRequested: true }, { scopes: ["src"] }, { context: [{ kind: "note", text: "x", source: "y" }] }]) {
+    for (const extra of [{ previousReviewedSha: repo.base }, { fullReviewRequested: true }, { scopes: ["src"] }]) {
       await expect(reviewChange({ ...input, ...extra }, model, opts), JSON.stringify(extra)).rejects.toThrow(/not supported yet/);
     }
     for (const bad of [{ profile: "laptop" }, { tools: { web: true, shell: false } }, { tools: { web: false, shell: true } }, { scanners: "download" }, { confidenceFloor: 1.5 }]) {
       await expect(reviewChange(input, model, { ...opts, ...bad } as unknown as ReviewChangeOptions), JSON.stringify(bad)).rejects.toThrow();
     }
-    await expect(reviewChange(input, { kind: "agent", name: "claude", traced: true, pid: null, send: async () => { throw new Error("no"); }, close: async () => {} }, opts)).rejects.toThrow(/model reviewer/);
+    const agent = { kind: "agent" as const, name: "claude", traced: true, pid: null, send: async () => { throw new Error("no"); }, close: async () => {} };
+    await expect(reviewChange(input, agent, opts)).rejects.toThrow(/model reviewer/);
+    await expect(reviewChange(input, model, { ...opts, secondReviewer: agent })).rejects.toThrow(/model second reviewer/);
     expect(model.requests).toEqual([]);
   });
 });

@@ -551,8 +551,18 @@ export type ModelCompletionRecord = {
   tool_log: ModelToolEntry[];
   attempts: ModelAttempt[];
   second?: ModelCompletionRecord;
+  // With a second reviewer: each candidate one reviewer raised and the
+  // other dropped, and the second reviewer's failures that leave the review
+  // complete (a budget refusal is in `missing` instead).
+  disagreements?: Disagreement[];
+  notes?: string[];
   trace_complete: true;
 };
+
+// A scanner candidate two reviewers disposed of differently: one raised it
+// in a finding, the other dropped it. `raisedBy` and `droppedBy` name the
+// reviewers (the model's or the driver's name); `reason` is the drop's.
+export type Disagreement = { candidate: string; token: string; raisedBy: string; droppedBy: string; reason: string | null };
 
 // Either record: an agent review's or a model review's.
 export type AnyCompletionRecord = CompletionRecord | ModelCompletionRecord;

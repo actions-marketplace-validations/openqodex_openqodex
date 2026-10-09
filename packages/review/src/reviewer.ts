@@ -11,7 +11,7 @@
 //          of every response.
 // Nothing a reviewer says about itself is proof: what was read, what was
 // shown and what was used come from the brain's own records.
-import type { Category, Config, Coverage, ModelCompletionRecord, Severity } from "@openqodex/core";
+import type { Category, Config, ContextItem, Coverage, Disagreement, ModelCompletionRecord, RunManifest, Severity } from "@openqodex/core";
 import type { ReviewerDriver, Turn } from "./agents/driver.js";
 import type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
 
@@ -139,8 +139,11 @@ export type Budget = { authorize(call: AuthorizeRequest): Promise<boolean>; dead
 // branch's tip); the library proves both are commits in the clone and that
 // the merge base is an ancestor of the head, and computes the change itself.
 // `config`: the parsed config in force (the defaults when left out).
-// `previousReviewedSha`, `fullReviewRequested`, `scopes` and `context` are
-// the next step's; given now, the call throws and says so.
+// `context`: lessons, comments, summaries, notes and earlier findings the
+// brief quotes as data (context.ts); an item over 32 KB, items over 128 KB
+// together, or a malformed item make the call throw, never cut.
+// `previousReviewedSha`, `fullReviewRequested` and `scopes` are the next
+// step's; given now, the call throws and says so.
 export type ReviewChangeInput = {
   clonePath: string;
   mergeBaseSha: string;
@@ -149,7 +152,7 @@ export type ReviewChangeInput = {
   previousReviewedSha?: string;
   fullReviewRequested?: boolean;
   scopes?: string[];
-  context?: unknown[];
+  context?: ContextItem[];
 };
 
 // `workDir`: the only folder the review writes in (the snapshot and its
@@ -157,6 +160,8 @@ export type ReviewChangeInput = {
 // from; nothing is installed. `confidenceFloor`: the lowest confidence a
 // finding may have, in the brief and in the check (0.7 when left out); a
 // lens's own higher floor still wins. `onProgress`: each progress line.
+// `secondReviewer`: a model that reviews the change again after the
+// primary, on the same brief and tools, under the same budget (second.ts).
 export type ReviewChangeOptions = {
   profile: "server";
   workDir: string;
@@ -165,13 +170,14 @@ export type ReviewChangeOptions = {
   confidenceFloor?: number;
   tools: { web: false; shell: false };
   scanners: "preinstalled";
+  secondReviewer?: Reviewer;
   onProgress?: (line: string) => void;
 };
 
 export type ReviewStatus = "complete" | "complete_blocking" | "incomplete";
 
-// A finding that passed every check. `foundBy`: the reviewers that raised
-// it ("primary"; the second reviewer joins in step 4). `source`: null for
+// A finding that passed every check. `foundBy`: the names of the reviewers
+// that raised it (the model's name), the primary first. `source`: null for
 // the reviewer's own finding, a candidate's token, or `lens:<name>`.
 export type ResultFinding = {
   file: string;
@@ -212,7 +218,10 @@ export type Disposition = {
 // to review). `evidence`: what the model completion record is built from.
 // `scannerVersions`: each scanner that ran and its version. `completion`:
 // the model completion record built from `evidence` (model-record.ts), null
-// when `evidence` is.
+// when `evidence` is. `notes`: the second reviewer's failures that leave the
+// review complete. `disagreements`: the candidates one reviewer raised and
+// the other dropped. `context`: every context item given, in order, as the
+// run manifest lists it, with why the brief left one out.
 export type ReviewResult = {
   status: ReviewStatus;
   reason?: string;
@@ -225,5 +234,8 @@ export type ReviewResult = {
   usage: { calls: CallRecord[]; totals: UsageTotals };
   evidence: ModelReviewEvidence | null;
   completion: ModelCompletionRecord | null;
+  notes: string[];
+  disagreements: Disagreement[];
+  context: NonNullable<RunManifest["context"]>;
   render: { markdown(): string; sarif(): string; json(): string };
 };

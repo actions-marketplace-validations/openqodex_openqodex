@@ -100,7 +100,9 @@ function readMessage(response: unknown): ModelResponse["message"] | string {
   return { text: m.text, toolCalls };
 }
 
-export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; budget?: Budget; now: () => number; tools?: ToolDefinition[] }): ModelCaller {
+// `earlier`: the calls of the review made before this caller's (the
+// primary's, for the second reviewer), counted in the usage the budget sees.
+export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; budget?: Budget; now: () => number; tools?: ToolDefinition[]; earlier?: readonly CallRecord[] }): ModelCaller {
   const { reviewer, role, budget, now } = args;
   const tools = args.tools ?? TOOL_DEFINITIONS;
   const attempts: CallRecord[] = [];
@@ -125,7 +127,7 @@ export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; b
         // A budget check that throws refuses, as a "no" does.
         let yes = false;
         try {
-          yes = (await budget.authorize({ callId, attempt: 1, reviewer: role, purpose, model: reviewer.model, maxOutputTokens: reviewer.maxOutputTokens, usageSoFar: usageTotals(attempts) })) === true;
+          yes = (await budget.authorize({ callId, attempt: 1, reviewer: role, purpose, model: reviewer.model, maxOutputTokens: reviewer.maxOutputTokens, usageSoFar: usageTotals([...(args.earlier ?? []), ...attempts]) })) === true;
         } catch {
           yes = false;
         }
@@ -202,8 +204,8 @@ function runningUsage(attempts: CallRecord[]): ReviewerUsage {
   return { turns: t.invoked, input_tokens: t.inputTokens, output_tokens: t.outputTokens, cost_usd: t.costUsd };
 }
 
-export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole; box: ToolBox; budget?: Budget; now: () => number }): ModelSession {
-  const caller = callModel({ reviewer: args.reviewer, role: args.role, budget: args.budget, now: args.now });
+export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole; box: ToolBox; budget?: Budget; now: () => number; earlier?: readonly CallRecord[] }): ModelSession {
+  const caller = callModel({ reviewer: args.reviewer, role: args.role, budget: args.budget, now: args.now, earlier: args.earlier });
   const log: ToolLogEntry[] = [];
   const transcript: Message[] = [freeze({ role: "system", text: MODEL_SYSTEM })];
   // Results served and not yet carried by an invoked request.

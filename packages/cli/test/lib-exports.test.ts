@@ -124,6 +124,9 @@ const TYPES = [
   "ReviewerRole",
   "ToolLogEntry",
   "ModelReviewEvidence",
+  "ContextItem",
+  "ContextKind",
+  "Disagreement",
 ];
 
 // What each namespace holds: the same functions as the named exports.
