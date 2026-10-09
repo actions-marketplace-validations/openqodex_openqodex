@@ -1,6 +1,8 @@
 import { resolve } from "node:path";
 import { Command, CommanderError } from "commander";
 import { OpenQodexError } from "@openqodex/core";
+import { setInstallWorkerEntry } from "@openqodex/scanners";
+import { assetPath } from "./assets.js";
 import { EXIT_TOOL_FAILED } from "./exit-codes.js";
 import { noteInternalError, offer, takePending } from "./feedback.js";
 
@@ -59,6 +61,10 @@ function reportError(error: unknown, command: string, args: string[]): number {
 }
 
 export async function main(argv: string[]): Promise<void> {
+  // A scanner install runs as `<this bin> __install <tool>` in a detached
+  // process. The toolchain is told that file here and never guesses it.
+  setInstallWorkerEntry(assetPath("dist", "bin.js"));
+
   const program = new Command("openqodex")
     .description("Open source AI code review for Claude Code and Codex, before you push.")
     .version(__OPENQODEX_VERSION__, "-v, --version", "Print the version")

@@ -2,9 +2,9 @@
 // ~/.openqodex/tools/<tool>/<version>/. A builtin scanner is never taken from
 // PATH, so two machines report the same findings.
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { BuiltinScanner, ResolveTool, ToolResolution, ToolStatus } from "@openqodex/core";
 import { InstallError } from "./fetch.js";
 import {
@@ -14,12 +14,13 @@ import {
   lastInstallError,
   missingRuntime,
   resolvedTool,
+  runInstall,
   unsupportedReason,
 } from "./install.js";
 import { loadToolchain, openqodexHome, type Recipe } from "./table.js";
 
 export { downloadVerified, extractArchive, InstallError } from "./fetch.js";
-export { installTool, runInstallWorker } from "./install.js";
+export { installTool } from "./install.js";
 export { openqodexHome, toolchainHash } from "./table.js";
 export type { Recipe, ReleaseAsset, Toolchain } from "./table.js";
 
@@ -46,33 +47,59 @@ const ALL_SCANNERS = Object.keys(builtins) as BuiltinScanner[];
 // The hidden CLI command that runs one install: `openqodex __install <tool>`.
 export const INSTALL_WORKER_COMMAND = "__install";
 
-let workerOverride: string | null = null;
+// Set in the environment of every install process. A process that has it
+// never starts another install process.
+const WORKER_MARKER = "OPENQODEX_INSTALL_WORKER";
 
-// For tests: the program to start as the install process.
+let workerEntry: string | null = null;
+
+// The program that answers `__install <tool>`: the openqodex CLI names its own
+// bin when it starts. Never the running script (process.argv[1]): a script
+// that imports the resolver would be started again as its own worker, and
+// each copy would start another, without end.
 export function setInstallWorkerEntry(path: string): void {
-  workerOverride = path;
+  workerEntry = resolve(path);
 }
 
-// The running program itself. In the published package that is the one
-// bundled CLI file, whose hidden `__install <tool>` command runs runInstallWorker.
-function workerEntry(): string {
-  if (workerOverride) return workerOverride;
-  return process.argv[1] ? resolve(process.argv[1]) : fileURLToPath(import.meta.url);
+// A path as the file system names it, so a link to the bin counts as the bin.
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
-// The arguments after the node executable for one install process.
-export function installWorkerArgv(tool: string): string[] {
-  return [workerEntry(), INSTALL_WORKER_COMMAND, tool];
+// The body of `openqodex __install <tool>`. It installs only in the program
+// named by setInstallWorkerEntry: any other entry, such as a script that
+// imports this package and calls it, gets one line and exit code 1, and
+// nothing is installed. Returns 0 installed, 1 failed.
+export async function runInstallWorker(tool: string): Promise<number> {
+  const entry = process.argv[1];
+  if (workerEntry === null || entry === undefined || realPath(entry) !== realPath(workerEntry)) {
+    process.stderr.write(`openqodex: a scanner install runs only as \`openqodex ${INSTALL_WORKER_COMMAND} <tool>\`\n`);
+    return 1;
+  }
+  // Whatever runs in this process from here on starts no install process.
+  process.env[WORKER_MARKER] = "1";
+  return runInstall(tool);
+}
+
+// The program this process starts as an install process, or why it starts none.
+function workerProgram(): { entry: string } | { refusal: string } {
+  if (process.env[WORKER_MARKER]) return { refusal: "an install process does not start another install" };
+  if (workerEntry === null) return { refusal: "no install program is set: run `npx openqodex doctor --install`" };
+  return { entry: workerEntry };
 }
 
 // The worker runs in another folder, so it gets this process's absolute home:
 // a relative OPENQODEX_HOME would otherwise name a different place there.
-function startWorker(tool: string) {
-  return spawn(process.execPath, installWorkerArgv(tool), {
+function startWorker(entry: string, tool: string) {
+  return spawn(process.execPath, [entry, INSTALL_WORKER_COMMAND, tool], {
     cwd: homedir(),
     detached: true,
     stdio: "ignore",
-    env: { ...process.env, OPENQODEX_HOME: openqodexHome() },
+    env: { ...process.env, OPENQODEX_HOME: openqodexHome(), [WORKER_MARKER]: "1" },
   });
 }
 
@@ -107,10 +134,10 @@ function failedResolution(home: string, tool: string): ToolResolution {
 
 // Starts the install in a detached process, so it keeps going if this process
 // exits, and waits for it until `deadline` (null: no limit).
-function installDetached(tool: string, recipe: Recipe, home: string, deadline: number | null): Promise<ToolResolution> {
+function installDetached(entry: string, tool: string, recipe: Recipe, home: string, deadline: number | null): Promise<ToolResolution> {
   return new Promise((done) => {
     let timer: NodeJS.Timeout | undefined;
-    const child = startWorker(tool);
+    const child = startWorker(entry, tool);
     child.once("error", (error) => {
       clearTimeout(timer);
       done({ ok: false, status: "failed", reason: `could not start the install: ${error.message}` });
@@ -162,8 +189,12 @@ async function resolveOne(scanner: BuiltinScanner, opts: ResolverOptions): Promi
     if (isInstalled(home, scanner, recipe)) return installedResolution(home, scanner, recipe);
     if (lastInstallError(home, scanner)) return failedResolution(home, scanner);
   }
+  // Only starting an install needs a program to start; waiting on another
+  // process's install above does not.
+  const worker = workerProgram();
+  if ("refusal" in worker) return { ok: false, status: "not_installed", reason: worker.refusal };
   opts.onProgress?.(`installing ${scanner} ${recipe.version} (first run only)`);
-  return installDetached(scanner, recipe, home, deadline);
+  return installDetached(worker.entry, scanner, recipe, home, deadline);
 }
 
 // installBudgetMs null means wait for every install to finish.
@@ -214,13 +245,15 @@ export async function installTools(
 
 // Starts the same install in a detached process and returns at once.
 export function installToolsDetached(scanners: BuiltinScanner[] | null): void {
+  const worker = workerProgram();
+  if ("refusal" in worker) return;
   const table = loadToolchain();
   const home = openqodexHome();
   for (const scanner of scanners ?? ALL_SCANNERS) {
     const recipe = table.tools[scanner];
     if (!recipe || isInstalled(home, scanner, recipe) || isLocked(home, scanner) || unsupportedReason(table, recipe)) continue;
     // The install process checks the runtime itself and records why it stopped.
-    const child = startWorker(scanner);
+    const child = startWorker(worker.entry, scanner);
     child.once("error", () => undefined);
     child.unref();
   }

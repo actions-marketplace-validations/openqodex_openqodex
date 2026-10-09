@@ -1,7 +1,8 @@
 // The toolchain installs pinned scanners into the OpenQodex home folder.
 // These tests download real releases from GitHub and run the real binaries.
-// They import the built package (dist), because the install runs in a separate
-// detached process that cannot load TypeScript; run `pnpm build` first.
+// They import the built package (dist) and install through the built CLI,
+// because the install runs in a separate detached process that cannot load
+// TypeScript; run `pnpm build` first.
 //
 // Ways the toolchain could fail, written before the code:
 // 1. The first install of a real tool does not leave a working binary at
@@ -27,8 +28,8 @@
 // 13. The developer's environment (npm_config_*, UV_*, TAR_OPTIONS,
 //     GEM_SPEC_CACHE) redirects where an installer reads or writes.
 // 14. Two processes both take a stale lock, or a live holder loses its lock.
-// 15. With no override, the install process started is not a program that
-//     installs anything.
+// 15. The install process started is not a program that installs anything
+//     (install-worker-start.test.ts covers which program it is).
 // 16. A child that ignores SIGTERM hangs a probe or an install for ever.
 // 17. A download that trickles data never ends, or one that never stops
 //     growing fills the disk.
@@ -64,7 +65,9 @@ afterAll(removeTempDirs);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist", "index.js");
-const worker = join(here, "install-worker.mjs");
+// The program each install runs as, as in the published package.
+const bin = join(here, "..", "..", "cli", "dist", "bin.js");
+const caller = join(here, "resolve-caller.mjs");
 const table = JSON.parse(readFileSync(join(here, "..", "toolchain.json"), "utf8"));
 const actionlintVersion: string = table.tools.actionlint.version;
 
@@ -72,9 +75,9 @@ type Toolchain = typeof import("../src/toolchain/index.js");
 let tc: Toolchain;
 
 beforeAll(async () => {
-  if (!existsSync(dist)) throw new Error("run pnpm build before these tests");
+  if (!existsSync(dist) || !existsSync(bin)) throw new Error("run pnpm build before these tests");
   tc = (await import(dist)) as Toolchain;
-  tc.setInstallWorkerEntry(worker);
+  tc.setInstallWorkerEntry(bin);
 });
 
 const savedHome = process.env.OPENQODEX_HOME;
@@ -154,10 +157,9 @@ describe("toolchain", () => {
   it("returns installing past the budget and finishes after the caller exits", async () => {
     const home = freshHome();
     // A separate caller process: resolves with a 1 ms budget, prints the result,
-    // exits. It sets no worker entry, so the default (the running program,
-    // which answers __install like the CLI does) starts the install.
+    // exits. The install runs on in the built CLI it named.
     const started = Date.now();
-    const out = execFileSync(process.execPath, [worker, "resolve", "actionlint", "1"], {
+    const out = execFileSync(process.execPath, [caller, "resolve", "actionlint", "1"], {
       encoding: "utf8",
       env: { ...process.env, OPENQODEX_HOME: home },
       timeout: 15_000,
@@ -302,7 +304,7 @@ describe("toolchain", () => {
 
   it("a relative OPENQODEX_HOME installs where the caller looks", () => {
     const cwd = realpathSync(tempDir("oq-relinstall-"));
-    const out = execFileSync(process.execPath, [worker, "resolve", "actionlint", "null"], {
+    const out = execFileSync(process.execPath, [caller, "resolve", "actionlint", "null"], {
       encoding: "utf8",
       cwd,
       env: { ...process.env, OPENQODEX_HOME: "rel-home" },

@@ -1,0 +1,6 @@
+---
+"openqodex": patch
+---
+
+- A scanner install now always runs as the openqodex program itself with its hidden install command, never as whatever script loaded the installer. Before, a script that imported the scanner installer started itself again as its install process, and each copy did the same, without end. An install process now never starts another one, and the install step stops with one line when any other program runs it.
+- The test suite now removes every temp folder it makes, and a test run fails when one is left behind. Before, each init test left a copy of the openqodex runtime, about 9 MB, in the system temp folder.
