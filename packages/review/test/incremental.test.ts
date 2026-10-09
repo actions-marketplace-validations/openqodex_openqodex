@@ -7,61 +7,33 @@
 //
 // Ways it could fail, written before the code:
 //  1. With the previous commit an ancestor, the obligation holds lines that
-//     were reviewed before, or misses a line changed since; or the whole
-//     change (what findings anchor on) is narrowed too.
-//  2. A shallow clone that cannot show the ancestry is reported as diverged,
-//     or narrows the review anyway.
-//  3. A rewritten branch (the previous commit is not an ancestor) narrows
-//     the review, or is reported as unknown history.
-//  4. A full review the host asked for is narrowed.
-//  5. No previous commit given, and the reason says nothing.
-//  6. Lines a merge of the base branch brought in after the previous review
+//     were reviewed before or misses one changed since, its brief diff
+//     carries a hunk reviewed before, its id differs from the change's (the
+//     brief and the check then disagree), or the whole change is narrowed
+//     too; the previous commit equal to the head leaves an obligation; the
+//     merge base is not recorded as the host's.
+//  2. Lines a merge of the base branch brought in after the previous review
 //     become part of the obligation.
-//  7. A previous commit the clone does not hold throws or passes as diverged.
-//  8. A previous id that is not a commit (a tree, a blob, a short or made up
-//     id) narrows the review.
-//  9. A merge base that fails a proof (the target branch's tip given, a cut
-//     history, a missing commit, not a commit, no repository) does not end
-//     the review as incomplete with the proof's own reason.
-//  10. The merge base is not recorded as the host's.
-//  11. The previous commit equal to the head leaves an obligation.
-//  12. The brief's diff of the obligation carries hunks with no line changed
-//     since the previous review, or loses one that has.
-//  13. The obligation's change id differs from the whole change's, so the
-//     brief and the check disagree on which change this is.
+//  3. A full review the host asked for, or one with no previous commit, is
+//     narrowed or gives no reason.
+//  4. A rewritten branch (the previous commit is not an ancestor) narrows
+//     the review, or is reported as unknown history.
+//  5. A shallow clone that cannot show the ancestry is reported as
+//     diverged, or narrows the review.
+//  6. A previous commit the clone does not hold, or an id that is not a
+//     commit, narrows the review or throws.
+//  7. A merge base that fails a proof (the target branch's tip given, a
+//     missing commit, not a commit, no repository) does not end the review
+//     as incomplete with the proof's own reason.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { decideIncremental, reviewChanges } from "../src/incremental.js";
 import { admitted } from "../src/scopes.js";
-import { git, write } from "./scope-fixture.js";
+import { commit, git, history, lines, write } from "./scope-fixture.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
-
-const lines = (n: number, edit: Record<number, string> = {}) => Array.from({ length: n }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join("\n") + "\n";
-const commit = (dir: string, message: string) => {
-  git(dir, "add", "-A");
-  git(dir, "commit", "-qm", message);
-  return git(dir, "rev-parse", "HEAD");
-};
-
-// main: B. feature: P1 (a.ts line 5, adds c.ts), then P2 (a.ts line 25, b.ts line 3).
-function history() {
-  const dir = tempDir("oq-inc-");
-  git(dir, "init", "-q", "-b", "main");
-  write(dir, "s/a.ts", lines(40));
-  write(dir, "s/b.ts", lines(10));
-  const base = commit(dir, "B");
-  git(dir, "checkout", "-q", "-b", "feature");
-  write(dir, "s/a.ts", lines(40, { 5: "changed before the previous review" }));
-  write(dir, "s/c.ts", "export const c = 1;\n");
-  const previous = commit(dir, "P1");
-  write(dir, "s/a.ts", lines(40, { 5: "changed before the previous review", 25: "changed since the previous review" }));
-  write(dir, "s/b.ts", lines(10, { 3: "changed since too" }));
-  const head = commit(dir, "P2");
-  return { dir, base, previous, head };
-}
 
 const all = admitted(undefined, []);
 
@@ -75,7 +47,7 @@ async function changes(dir: string, mergeBaseSha: string, headSha: string, previ
 const sorted = (s: Set<number> | undefined) => [...(s ?? [])].sort((a, b) => a - b);
 
 describe("the obligation of an incremental review", () => {
-  it("1, 12 and 13. with the previous commit an ancestor, only what changed since, inside the whole change", async () => {
+  it("1. with the previous commit an ancestor, only what changed since, inside the whole change", async () => {
     const h = history();
     const r = await changes(h.dir, h.base, h.head, h.previous);
     expect(r.decision.scope).toEqual({ kind: "delta", reason: `delta: only what changed since the previously reviewed commit ${h.previous.slice(0, 12)} is reviewed; findings are anchored on the whole change` });
@@ -95,17 +67,14 @@ describe("the obligation of an incremental review", () => {
     expect(r.obligation.diff).toContain("+changed since too");
     expect(r.obligation.diffs?.map((d) => d.path).sort()).toEqual(["s/a.ts", "s/b.ts"]);
     expect(r.obligation.stats).toEqual({ files: 2, additions: 2, deletions: 2 });
+    expect(r.decision).toMatchObject({ mergeBase: { sha: h.base, suppliedBy: "host" } });
+    // Nothing changed since: nothing to review.
+    const same = await changes(h.dir, h.base, h.head, h.head);
+    expect(same.obligation.files).toEqual([]);
+    expect(same.full.files.length).toBe(3);
   });
 
-  it("11. the previous commit equal to the head leaves nothing to review", async () => {
-    const h = history();
-    const r = await changes(h.dir, h.base, h.head, h.head);
-    expect(r.decision.scope.kind).toBe("delta");
-    expect(r.obligation.files).toEqual([]);
-    expect(r.full.files.length).toBe(3);
-  });
-
-  it("6. lines a merge of the base branch brought in after the previous review are not part of it", async () => {
+  it("2. lines a merge of the base branch brought in after the previous review are not part of it", async () => {
     const h = history();
     git(h.dir, "checkout", "-q", "main");
     write(h.dir, "s/a.ts", lines(40, { 38: "changed on main" }));
@@ -126,21 +95,17 @@ describe("the obligation of an incremental review", () => {
 });
 
 describe("an explicit full review, with its reason", () => {
-  it("4. the host asked for one", async () => {
+  it("3. the host asked for one, or there is no previous review", async () => {
     const h = history();
-    const r = await changes(h.dir, h.base, h.head, h.previous, true);
-    expect(r.decision.scope).toEqual({ kind: "full", reason: "requested: the host asked for a full review" });
-    expect(r.obligation).toBe(r.full);
+    const asked = await changes(h.dir, h.base, h.head, h.previous, true);
+    expect(asked.decision.scope).toEqual({ kind: "full", reason: "requested: the host asked for a full review" });
+    expect(asked.obligation).toBe(asked.full);
+    const none = await changes(h.dir, h.base, h.head);
+    expect(none.decision.scope).toEqual({ kind: "full", reason: "no previous review: the whole change is reviewed" });
+    expect(none.obligation).toBe(none.full);
   });
 
-  it("5. no previous review", async () => {
-    const h = history();
-    const r = await changes(h.dir, h.base, h.head);
-    expect(r.decision.scope).toEqual({ kind: "full", reason: "no previous review: the whole change is reviewed" });
-    expect(r.obligation).toBe(r.full);
-  });
-
-  it("3. the branch was rewritten: diverged", async () => {
+  it("4. the branch was rewritten: diverged", async () => {
     const h = history();
     git(h.dir, "reset", "-q", "--hard", h.base);
     write(h.dir, "s/a.ts", lines(40, { 7: "rewritten" }));
@@ -150,7 +115,7 @@ describe("an explicit full review, with its reason", () => {
     expect(r.decision.scope.reason).toMatch(/^diverged: the previously reviewed commit [0-9a-f]{12} is not an ancestor of the head [0-9a-f]{12}/);
   });
 
-  it("2. a shallow clone that cannot show the ancestry: history unknown, not diverged", async () => {
+  it("5. a shallow clone that cannot show the ancestry: history unknown, not diverged", async () => {
     const h = history();
     git(h.dir, "config", "uploadpack.allowAnySHA1InWant", "true");
     const clone = join(tempDir("oq-inc-shallow-"), "clone");
@@ -164,21 +129,16 @@ describe("an explicit full review, with its reason", () => {
     expect(d.ok && d.scope.reason).toMatch(/^history unknown: the clone's history is cut \(a shallow clone\), so it cannot show that the previously reviewed commit [0-9a-f]{12} is an ancestor of the head [0-9a-f]{12}; fetch the history between them/);
   });
 
-  it("7. a previous commit the clone does not hold: history unknown, naming the fetch", async () => {
+  it("6. a previous commit the clone does not hold is unknown history naming the fetch; an id that is not a commit says so", async () => {
     const h = history();
     const missing = "1".repeat(40);
     const r = await changes(h.dir, h.base, h.head, missing);
-    expect(r.decision.scope.kind).toBe("full");
-    expect(r.decision.scope.reason).toBe(`history unknown: the previously reviewed commit ${missing.slice(0, 12)} is not in the clone (a force push removes it from the branch); fetch it (git fetch origin ${missing}) to review only what changed since; the whole change is reviewed`);
-  });
-
-  it("8. a previous id that is not a commit", async () => {
-    const h = history();
+    expect(r.decision.scope).toEqual({ kind: "full", reason: `history unknown: the previously reviewed commit ${missing.slice(0, 12)} is not in the clone (a force push removes it from the branch); fetch it (git fetch origin ${missing}) to review only what changed since; the whole change is reviewed` });
     const tree = git(h.dir, "rev-parse", `${h.previous}^{tree}`);
     for (const id of [tree, "abc123", "not an id"]) {
-      const r = await changes(h.dir, h.base, h.head, id);
-      expect(r.decision.scope.kind, id).toBe("full");
-      expect(r.decision.scope.reason, id).toMatch(/^not a commit: the previously reviewed commit .* the whole change is reviewed$/);
+      const n = await changes(h.dir, h.base, h.head, id);
+      expect(n.decision.scope.kind, id).toBe("full");
+      expect(n.decision.scope.reason, id).toMatch(/^not a commit: the previously reviewed commit .* the whole change is reviewed$/);
     }
   });
 });
@@ -190,7 +150,7 @@ describe("the merge base proofs", () => {
     return d.reason;
   }
 
-  it("9. each failed proof ends the review as incomplete with its own reason", async () => {
+  it("7. each failed proof ends the review as incomplete with its own reason", async () => {
     const h = history();
     git(h.dir, "checkout", "-q", "main");
     writeFileSync(join(h.dir, "later.txt"), "later on main\n");
@@ -202,11 +162,5 @@ describe("the merge base proofs", () => {
     expect(await refused(h.dir, tree, h.head)).toBe(`not a commit: the merge base ${tree.slice(0, 12)} is a tree`);
     expect(await refused(h.dir, h.base, "head")).toBe('not a commit: the head "head" is not a full commit id');
     expect(await refused(tempDir("oq-inc-norepo-"), h.base, h.head)).toMatch(/^git failed: /);
-  });
-
-  it("10. a proved merge base is recorded as the host's", async () => {
-    const h = history();
-    const d = await decideIncremental({ clonePath: h.dir, mergeBaseSha: h.base, headSha: h.head });
-    expect(d).toMatchObject({ ok: true, mergeBase: { sha: h.base, suppliedBy: "host" } });
   });
 });

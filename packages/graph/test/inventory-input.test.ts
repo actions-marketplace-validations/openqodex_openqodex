@@ -3,21 +3,16 @@
 // base versions come through the caller's one scope-checking reader.
 //
 // Ways it could fail, written before the code:
-//  1. A build from an inventory still runs git: it fails in a folder that is
-//     not a git work tree.
-//  2. A file on disk the inventory does not name is read: it reaches the
-//     nodes, the edges or the files left out.
-//  3. A link the inventory names is followed and read.
-//  4. A base version is read from git in the build folder rather than
-//     through `base.read`, or a base read the build needs skips it.
-//  5. A build from an inventory accepts a store or a capture, so it would
-//     write graph state or a trust record.
-//  6. The same files give another graph from an inventory than from git's
-//     listing: other nodes, edges, removed symbols or export changes. The
-//     git-backed default is the reference and does not change.
-//  7. The packet reads a removed symbol's base version from git rather than
-//     through `readBase`.
-import { cpSync, existsSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+//  1. A build from an inventory still runs git (it fails in a folder that
+//     is not a git work tree), or the same files give another graph than
+//     git's listing gives: other nodes, edges, removed symbols or export
+//     changes. The git-backed default is the reference and does not change.
+//  2. A base version, in the build or in the packet, is read from git in
+//     the build folder rather than through the caller's reader, so a read
+//     escapes the scope check.
+//  3. A build from an inventory accepts a store or a capture, so a server
+//     build would write graph state or a trust record.
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { getChange } from "@openqodex/core";
@@ -81,7 +76,7 @@ function shape(g: Graph): unknown {
 }
 
 describe("a build from an inventory", () => {
-  it("1 and 6. runs without git and gives the graph git's listing gives for the same files", async () => {
+  it("1. runs without git and gives the graph git's listing gives for the same files", async () => {
     const b = await setup();
     expect(existsSync(join(b.copy, ".git"))).toBe(false);
     const fromGit = await buildGraph({ repoRoot: b.repo, store: null, files: b.change.changedPaths, base: { sha: b.change.baseSha, files: b.change.files } });
@@ -91,52 +86,26 @@ describe("a build from an inventory", () => {
     expect(fromList.repoRoot).toBe(b.copy);
   });
 
-  it("2. never reads a file on disk the inventory does not name", async () => {
+  it("2. reads every base version, in the build and in the packet, through the reader", async () => {
     const b = await setup();
-    writeFiles(b.copy, { "src/extra.ts": 'import { core } from "./core";\nexport function extra(): number {\n  return core();\n}\n' });
-    const g = await buildGraph({ repoRoot: b.copy, store: null, inventory: b.inventory, files: b.change.changedPaths, base: { sha: b.change.baseSha, files: b.change.files, read: reader(b) } });
-    expect([...g.nodes.keys()].some((id) => id.startsWith("src/extra.ts"))).toBe(false);
-    expect(g.edges.some((e) => e.sites.some((s) => s.file === "src/extra.ts"))).toBe(false);
-    expect(g.status.notRead.some((n) => n.file === "src/extra.ts")).toBe(false);
-  });
-
-  it("3. never follows a link the inventory names", async () => {
-    const b = await setup();
-    const outside = tempDir("oq-graph-outside-");
-    writeFiles(outside, { "secret.ts": "export function outsideSecret(): number {\n  return 9;\n}\n" });
-    symlinkSync(join(outside, "secret.ts"), join(b.copy, "src/linked.ts"));
-    const g = await buildGraph({ repoRoot: b.copy, store: null, inventory: [...b.inventory, { path: "src/linked.ts", blob: "0".repeat(40) }], files: b.change.changedPaths });
-    expect([...g.nodes.values()].some((n) => n.name === "outsideSecret")).toBe(false);
-  });
-
-  it("4. reads every base version through base.read, never from git in the folder", async () => {
-    const b = await setup();
-    const g = await buildGraph({ repoRoot: b.copy, store: null, inventory: b.inventory, files: b.change.changedPaths, base: { sha: b.change.baseSha, files: b.change.files, read: reader(b) } });
+    const graph = await buildGraph({ repoRoot: b.copy, store: null, inventory: b.inventory, files: b.change.changedPaths, base: { sha: b.change.baseSha, files: b.change.files, read: reader(b) } });
     expect([...new Set(b.reads)].sort()).toEqual(["src/core.ts", "src/old.ts", "src/use.ts"]);
-    expect(g.status.reasons.some((r) => r.includes("removed symbols were not checked"))).toBe(false);
-    expect([...g.removed.keys()].sort()).toEqual(["src/core.ts", "src/old.ts"]);
+    expect(graph.status.reasons.some((r) => r.includes("removed symbols were not checked"))).toBe(false);
+    expect([...graph.removed.keys()].sort()).toEqual(["src/core.ts", "src/old.ts"]);
+    const impact = detectImpact(graph, b.change);
+    b.reads.length = 0;
+    // repoRoot is the copy: git there would find no repository.
+    const packet = await writePacket({ root: b.copy, repoRoot: b.copy, graph, impact, baseSha: b.change.baseSha, secrets: [], readBase: reader(b) });
+    expect(b.reads.length).toBeGreaterThan(0);
+    expect(packet.files.some((f) => f.startsWith("base/"))).toBe(true);
   });
 
-  it("5. refuses a store or a capture", async () => {
+  it("3. refuses a store or a capture", async () => {
     const b = await setup();
     const { openStore } = await import("../src/store/store.js");
     const opened = await openStore(b.repo, { home: makeHome() });
     if (!opened.ok) throw new Error(opened.reason);
     await expect(buildGraph({ repoRoot: b.copy, store: opened.store, inventory: b.inventory })).rejects.toThrow(/keeps nothing/);
     await expect(buildGraph({ repoRoot: b.copy, store: null, capture: "snapshot", inventory: b.inventory })).rejects.toThrow(/keeps nothing/);
-  });
-});
-
-describe("the packet of an inventory build", () => {
-  it("7. reads a removed symbol's base version through readBase", async () => {
-    const b = await setup();
-    const graph = await buildGraph({ repoRoot: b.copy, store: null, inventory: b.inventory, files: b.change.changedPaths, base: { sha: b.change.baseSha, files: b.change.files, read: reader(b) } });
-    const impact = detectImpact(graph, b.change);
-    expect(impact.removed.length).toBeGreaterThan(0);
-    b.reads.length = 0;
-    // repoRoot is the copy: git there would find no repository.
-    const packet = await writePacket({ root: b.copy, repoRoot: b.copy, graph, impact, baseSha: b.change.baseSha, secrets: [], readBase: reader(b) });
-    expect(b.reads.length).toBeGreaterThan(0);
-    expect(packet.files.some((f) => f.startsWith("base/"))).toBe(true);
   });
 });

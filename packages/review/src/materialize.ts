@@ -168,7 +168,7 @@ export async function materialize(args: { clonePath: string; headSha: string; wo
         chmodSync(full, mode);
       }
     }
-    return { folder, tree, files: files.map(({ id: _, ...f }) => f), skipped };
+    return { folder, tree, files: files.map((f) => ({ path: f.path, mode: f.mode, blob: f.blob })), skipped };
   } catch (error) {
     rmSync(folder, { recursive: true, force: true });
     throw error;

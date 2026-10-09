@@ -41,7 +41,9 @@ export const SQL = "CREATE OR REPLACE FUNCTION public.admin_get_hygiene()\nRETUR
 // packet, the tools, the citations or the outputs.
 export const CANARIES = ["ROOT-CANARY-7f3a", "ROOT-CALLER-CANARY-2b81", "ROOT-SQL-CANARY-5d0c", "EXCLUDED-CANARY-91be", "OLD-ONLY-CANARY-4c2d"];
 // Paths that must not be named there either.
-export const OUTSIDE_PATHS = ["canary.txt", "root-caller.ts", "db/root.sql", "services/api/generated/client.sql", "legacy/util.ts", "legacy/"];
+// (The base version of handler.ts imports "../../legacy/util": that line is
+// the admitted file's own, so the old path is named with its extension.)
+export const OUTSIDE_PATHS = ["canary.txt", "root-caller.ts", "db/root.sql", "services/api/generated/client.sql", "legacy/util.ts"];
 
 export const SCOPES = ["services/api"];
 export const EXCLUDE = ["**/generated/**"];
@@ -98,4 +100,29 @@ export function decisiveFixture(): Fixture {
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "head");
   return { dir, base, head: git(dir, "rev-parse", "HEAD") };
+}
+
+// The incremental history. main: B. feature: P1 (a.ts line 5, adds c.ts),
+// then P2 (a.ts line 25, b.ts line 3); the previously reviewed commit is P1.
+export const lines = (n: number, edit: Record<number, string> = {}) => Array.from({ length: n }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join("\n") + "\n";
+export const commit = (dir: string, message: string) => {
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", message);
+  return git(dir, "rev-parse", "HEAD");
+};
+
+export function history() {
+  const dir = tempDir("oq-inc-");
+  git(dir, "init", "-q", "-b", "main");
+  write(dir, "s/a.ts", lines(40));
+  write(dir, "s/b.ts", lines(10));
+  const base = commit(dir, "B");
+  git(dir, "checkout", "-q", "-b", "feature");
+  write(dir, "s/a.ts", lines(40, { 5: "changed before the previous review" }));
+  write(dir, "s/c.ts", "export const c = 1;\n");
+  const previous = commit(dir, "P1");
+  write(dir, "s/a.ts", lines(40, { 5: "changed before the previous review", 25: "changed since the previous review" }));
+  write(dir, "s/b.ts", lines(10, { 3: "changed since too" }));
+  const head = commit(dir, "P2");
+  return { dir, base, previous, head };
 }
