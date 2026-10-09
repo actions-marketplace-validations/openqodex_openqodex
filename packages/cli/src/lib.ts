@@ -7,7 +7,7 @@
 // Importing this file runs nothing: no command starts, nothing is printed,
 // no environment variable is written, no signal handler is added and no
 // update check starts. Every function does its work only when called.
-import { createToolResolver, loadToolchain, runScanners, toolchainHash } from "@openqodex/scanners";
+import { createToolResolver, loadToolchain, preinstallScanners, runScanners, toolchainHash } from "@openqodex/scanners";
 import { buildGraph, detectImpact, extractFacts, PacketCollision, PacketLeak, writePacket } from "@openqodex/graph";
 import {
   defaultLensDir,
@@ -28,6 +28,7 @@ export {
   createToolResolver,
   loadToolchain,
   toolchainHash,
+  preinstallScanners,
   // the code graph
   buildGraph,
   detectImpact,
@@ -51,7 +52,7 @@ export {
 };
 
 // The same functions grouped by what they belong to.
-export const scanners = { runScanners, createToolResolver, loadToolchain, toolchainHash };
+export const scanners = { runScanners, createToolResolver, loadToolchain, toolchainHash, preinstallScanners };
 export const graph = { buildGraph, detectImpact, extractFacts, writePacket, PacketCollision, PacketLeak };
 export const lenses = { loadLensCatalog, selectLenses, selectLensesForDiff, defaultLensDir };
 export const render = { renderMarkdown, renderSarif, renderJson, renderReview };
@@ -86,5 +87,5 @@ export type {
   // the graph's view of a change
   ImpactSummary,
 } from "@openqodex/core";
-export type { RunScannersResult, Recipe, Toolchain } from "@openqodex/scanners";
+export type { RunScannersResult, Recipe, Toolchain, PreinstallOptions, PreinstallResult, PreinstallTool } from "@openqodex/scanners";
 export type { BuildArgs, FileFacts, Graph, Lang } from "@openqodex/graph";

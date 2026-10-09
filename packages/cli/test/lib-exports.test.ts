@@ -52,6 +52,7 @@ const VALUES = [
   "PacketCollision",
   "PacketLeak",
   "parseConfig",
+  "preinstallScanners",
   "render",
   "renderJson",
   "renderMarkdown",
@@ -83,6 +84,9 @@ const TYPES = [
   "Lens",
   "LoadedConfig",
   "ParseOptions",
+  "PreinstallOptions",
+  "PreinstallResult",
+  "PreinstallTool",
   "Recipe",
   "Report",
   "ReportFinding",
@@ -102,7 +106,7 @@ const TYPES = [
 
 // What each namespace holds: the same functions as the named exports.
 const NAMESPACES: Record<string, string[]> = {
-  scanners: ["createToolResolver", "loadToolchain", "runScanners", "toolchainHash"],
+  scanners: ["createToolResolver", "loadToolchain", "preinstallScanners", "runScanners", "toolchainHash"],
   graph: ["buildGraph", "detectImpact", "extractFacts", "PacketCollision", "PacketLeak", "writePacket"],
   lenses: ["defaultLensDir", "loadLensCatalog", "selectLenses", "selectLensesForDiff"],
   render: ["renderJson", "renderMarkdown", "renderReview", "renderSarif"],
