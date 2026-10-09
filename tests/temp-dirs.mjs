@@ -38,6 +38,16 @@ export function tempDir(prefix) {
 }
 
 /**
+ * A folder a test caused to exist without tempDir(), such as one the CLI
+ * makes under another spelling of a temp folder's name; removeTempDirs()
+ * removes it with the others.
+ * @param {string} dir
+ */
+export function adoptTempDir(dir) {
+  made.push(dir);
+}
+
+/**
  * Removes every folder tempDir() made so far in this test file. A scanner
  * install or update the CLI started in the background outlives the command
  * that started it, and would write into its home after the home is gone, so

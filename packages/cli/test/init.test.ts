@@ -97,7 +97,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BIN, cli, env, git, inTerminal, promptsAsked, sandbox, snapshot, status, type Sandbox } from "./init-helpers.js";
-import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+import { adoptTempDir, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
@@ -998,6 +998,9 @@ describe("28. writes decide by filesystem identity, through checked handles", ()
     // Only the sandbox root above the repo has letters to flip; its own name
     // only, so the other spelling can be made where the volume keeps case.
     const root = join(dirname(s.root), flipCase(basename(s.root)));
+    // Where the volume keeps case, init makes this other spelling as a new
+    // folder beside the sandbox.
+    adoptTempDir(root);
     const folds = sameFolder(repo, join(root, "123"));
     const spelled = join(root, "123", ".claude");
     const r = cli(s, ["init", "--yes", "--agent", "claude-code"], { cwd: repo, env: { CLAUDE_CONFIG_DIR: spelled } });
