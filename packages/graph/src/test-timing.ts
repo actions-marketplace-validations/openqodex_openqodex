@@ -15,9 +15,14 @@ import type { Graph, Lang } from "./types.js";
 export const MAX_GROWTH = 8;
 // The larger input takes less CPU time than this, in milliseconds.
 export const LOOSE_BOUND_MS = 4000;
-// A smaller run under this many milliseconds is counted as this long, so the
-// noise of a near-zero reading never decides the ratio.
-const FLOOR_MS = 20;
+// Below this many milliseconds of CPU time a run's time is the compiler's
+// and the garbage collector's as much as the work's. No ratio is taken on a
+// smaller run under it: the runs are repeated until the smaller passes it
+// (expectLinearRepeated), and a run that is not repeated is counted as this
+// long, which leaves the larger run a bound of eight times it.
+export const NOISE_MS = 50;
+// The most times expectLinearRepeated repeats a run, by default.
+const MAX_REPEATS = 1024;
 
 function cpuNow(): number {
   const used = process.cpuUsage();
@@ -96,9 +101,37 @@ export async function readerCpuMs(lang: Lang, sources: readonly string[], read: 
   }
 }
 
-// `small` is the CPU time at the smaller input, `large` at four times it.
+// `small` is the CPU time at the smaller input, `large` at four times it:
+// for inputs that cannot grow (a product cap stops them at the larger one).
 export function expectLinear(what: string, small: number, large: number): void {
   const said = `${what}: ${small.toFixed(1)} ms of CPU time at the smaller input, ${large.toFixed(1)} ms at four times it`;
-  expect(large / Math.max(small, FLOOR_MS), said).toBeLessThan(MAX_GROWTH);
+  expect(large / Math.max(small, NOISE_MS), said).toBeLessThan(MAX_GROWTH);
   expect(large, said).toBeLessThan(LOOSE_BOUND_MS);
 }
+
+// `smallAt(repeats)` and `largeAt(repeats)` are the CPU times of a run on
+// the smaller input and on four times it, each repeated `repeats` times:
+// for inputs a product cap keeps small (a manifest is read up to 1 MiB),
+// where a larger input would leave the range the product reads. The count
+// doubles until the smaller input's runs pass NOISE_MS, and both inputs are
+// run as many times, so a step inside that range (a cost per byte that
+// jumps between 256 KiB and 1 MiB) is still seen.
+export async function expectLinearRepeated(what: string, smallAt: (repeats: number) => number | Promise<number>, largeAt: (repeats: number) => number | Promise<number>, opts: { maxRepeats?: number } = {}): Promise<void> {
+  const maxRepeats = opts.maxRepeats ?? MAX_REPEATS;
+  let repeats = 1;
+  let small = await smallAt(repeats);
+  while (small < NOISE_MS && repeats * 2 <= maxRepeats) {
+    repeats *= 2;
+    small = await smallAt(repeats);
+  }
+  const large = await largeAt(repeats);
+  const said = `${what}: ${small.toFixed(1)} ms of CPU time for ${repeats} runs on the smaller input, ${large.toFixed(1)} ms for as many on four times it`;
+  expect(large / Math.max(small, NOISE_MS), said).toBeLessThan(MAX_GROWTH);
+  expect(large / repeats, said).toBeLessThan(LOOSE_BOUND_MS);
+}
+
+// `run` repeated `repeats` times, as a CPU time for expectLinearRepeated.
+export const repeatedCpuMs = (run: () => unknown) => (repeats: number): Promise<number> =>
+  cpuMs(() => {
+    for (let i = 0; i < repeats; i++) run();
+  });
