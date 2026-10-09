@@ -34,18 +34,12 @@ import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const dirs: string[] = [];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
-
 const hasObject = (repo: string, id: string) => spawnSync("git", ["cat-file", "-e", id], { cwd: repo }).status === 0;
 
 // A snapshot made the way the review makes one: a linked work tree of the
 // repository at HEAD.
 function snapshotOf(repo: string): string {
   const parent = tempDir("oq-snap-");
-  dirs.push(parent);
   const snap = join(parent, "tree");
   git(repo, "worktree", "add", "--no-checkout", "--detach", snap, "HEAD");
   git(snap, "read-tree", "--reset", "-u", "HEAD");
@@ -54,7 +48,6 @@ function snapshotOf(repo: string): string {
 
 function outsideSecret(): { path: string; text: string } {
   const dir = tempDir("oq-home-");
-  dirs.push(dir);
   mkdirSync(join(dir, ".ssh"));
   const text = `-----BEGIN OPENSSH PRIVATE KEY----- ${Math.random()} -----END-----\n`;
   const path = join(dir, ".ssh", "id_rsa");
@@ -66,7 +59,6 @@ describe("the capture", () => {
   it("stores a link in the work tree as a link and never the file it points at (1)", async () => {
     const secret = outsideSecret();
     const repo = makeRepo({ "a.ts": "export function a() {}\n", "leak": "placeholder\n" });
-    dirs.push(repo);
     commitAll(repo);
     const snap = snapshotOf(repo);
     // In the work tree: a new link. In the snapshot: a tracked file replaced by a link.
@@ -85,12 +77,10 @@ describe("the capture", () => {
 
   it("never reads a file outside the repository through a path with a line break and `../` (2)", async () => {
     const parent = tempDir("oq-outside-");
-    dirs.push(parent);
     const outside = `outside secret ${Math.random()}\n`;
     writeFileSync(join(parent, "outside.txt"), outside);
     const crafted = "x\n../outside.txt";
     const repo = makeRepo({ "a.ts": "export function a() {}\n", [crafted]: "tracked\n" });
-    dirs.push(repo);
     commitAll(repo);
     // The snapshot sits right beside outside.txt, so `../outside.txt` from it names that file.
     const snap = join(parent, "tree");
@@ -105,7 +95,6 @@ describe("the capture", () => {
   it("treats files named like options as names, in the capture and in base reads (3)", async () => {
     const files = { "--output=x.ts": "export function f() {\n  return 1;\n}\n", "-c.ts": "export function g() {\n  return 1;\n}\n", "a.ts": "export function a() {}\n" };
     const repo = makeRepo(files);
-    dirs.push(repo);
     commitAll(repo);
     writeFiles(repo, { "--output=x.ts": "export function f() {\n  return 2;\n}\n", "-c.ts": "export function h() {\n  return 3;\n}\n" });
     const before = readdirSync(repo).sort();
@@ -123,11 +112,9 @@ describe("the capture", () => {
 
   it("stores nothing found through a folder the snapshot holds as a link, not even the text of a link outside (5)", async () => {
     const outside = tempDir("oq-outside-");
-    dirs.push(outside);
     const text = `/outside/only/${Math.random()}`;
     symlinkSync(text, join(outside, "x.ts"));
     const repo = makeRepo({ "a.ts": "export function a() {}\n", "dir/x.ts": "export function x() {}\n" });
-    dirs.push(repo);
     commitAll(repo);
     const snap = snapshotOf(repo);
     rmSync(join(snap, "dir"), { recursive: true });
@@ -144,7 +131,6 @@ describe("the capture", () => {
     for (const good of ["a.ts", "src/b.ts", "-c.ts", "dir/--x"]) expect(isSafeRepoPath(good), good).toBe(true);
     for (const bad of ["", "/etc/passwd", "../x", "a/../../x", "a\0b", "a\nb", "./a"]) expect(isSafeRepoPath(bad), JSON.stringify(bad)).toBe(false);
     const repo = makeRepo({ "a.ts": "export function a() {}\n" });
-    dirs.push(repo);
     const sha = commitAll(repo);
     expect((await showBlob(repo, sha, "a.ts", 1024))?.toString("utf8")).toBe("export function a() {}\n");
     expect(await showBlob(repo, "--output=x", "a.ts", 1024)).toBeNull();

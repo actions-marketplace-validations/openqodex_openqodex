@@ -8,7 +8,6 @@
 // 3. A walk stopped by its step budget drops the names past the stop with
 //    nothing said.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact } from "../src/index.js";
 import { EXPORT_WALK_STEPS } from "../src/resolve.js";
@@ -17,14 +16,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function change(before: Record<string, string>, after: Record<string, string>) {
   const root = makeRepo(before);
-  repos.push(root);
   commitAll(root);
   writeFiles(root, after);
   const c = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });

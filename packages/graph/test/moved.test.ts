@@ -52,11 +52,6 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const dirs: string[] = [];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
-
 // The repo with `base` committed, then `change` written (null deletes a file)
 // and `steps` run, reviewed as an uncommitted change.
 async function review(
@@ -65,7 +60,6 @@ async function review(
   steps: (root: string) => void = () => {},
 ): Promise<{ root: string; g: Graph; impact: ImpactSummary; block: string }> {
   const root = makeRepo(base);
-  dirs.push(root);
   commitAll(root);
   steps(root);
   for (const [path, text] of Object.entries(change)) {

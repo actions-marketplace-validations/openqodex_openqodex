@@ -48,9 +48,8 @@
 //     member, `explain` cannot read their edges back, and `impact` drops
 //     the possible callers and the uses the review's brief shows.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,16 +63,12 @@ import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { findCases, matches } from "../corpus/score.js";
 import type { Expected } from "../corpus/score.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
-import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 // Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
 afterAll(removeTempDirs);
 
 const corpusRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "corpus");
-const dirs: string[] = [];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
@@ -82,8 +77,7 @@ function git(root: string, ...args: string[]): string {
 // A corpus case as the scorer builds it: the base committed, the change
 // written over it and left uncommitted.
 function caseRepo(dir: string): string {
-  const root = mkdtempSync(join(tmpdir(), "oq-query-case-"));
-  dirs.push(root);
+  const root = tempDir("oq-query-case-");
   cpSync(join(dir, "base"), root, { recursive: true });
   git(root, "init", "-q");
   git(root, "config", "user.email", "corpus@example.com");
@@ -389,7 +383,6 @@ describe("questions the corpus holds nothing for", () => {
   };
   beforeAll(async () => {
     repo = makeRepo(files);
-    dirs.push(repo);
     const graph = await buildGraph({ repoRoot: repo, store: null });
     s = { graph, generation: "q-build", treeSha: null, builtAt: null, laterEditsKnown: false };
   });
@@ -463,7 +456,6 @@ describe("implementers at the edge of what the graph reads", () => {
   };
   beforeAll(async () => {
     const repo = makeRepo(files);
-    dirs.push(repo);
     const graph = await buildGraph({ repoRoot: repo, store: null });
     s = { graph, generation: "edge-build", treeSha: null, builtAt: null, laterEditsKnown: false };
   });
@@ -504,7 +496,6 @@ describe("impact of a public name used in more places than the summary keeps", (
       "src/pricing.ts": "function computeTotal(items: number[]): number {\n  return items.length;\n}\n\nexport { computeTotal as total };\nexport { computeTotal };\n",
       "src/cart.ts": `import { total } from "./pricing";\n${uses}\n`,
     });
-    dirs.push(repo);
     commitAll(repo);
     writeFiles(repo, { "src/pricing.ts": "function computeTotal(items: number[]): number {\n  return items.length;\n}\n\nexport { computeTotal };\n" });
     const change = await getChange({ repoRoot: repo, scope: { uncommitted: true }, exclude: [] });
@@ -544,7 +535,6 @@ describe("the relations the resolver keeps apart from calls", () => {
   };
   beforeAll(async () => {
     const repo = makeRepo(files);
-    dirs.push(repo);
     const graph = await buildGraph({ repoRoot: repo, store: null });
     s = { graph, generation: "refs-build", treeSha: null, builtAt: null, laterEditsKnown: false };
   });
@@ -584,7 +574,6 @@ describe("the relations the resolver keeps apart from calls", () => {
 describe("a base written as an expression in Python and Ruby (15)", () => {
   const build = async (files: Record<string, string>): Promise<Session> => {
     const repo = makeRepo(files);
-    dirs.push(repo);
     const graph = await buildGraph({ repoRoot: repo, store: null });
     return { graph, generation: "bases-build", treeSha: null, builtAt: null, laterEditsKnown: false };
   };

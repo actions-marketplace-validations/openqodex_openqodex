@@ -63,13 +63,8 @@ import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 const home = makeHome();
-const repos: string[] = [home];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
 function repo(files: Record<string, string>): string {
   const root = makeRepo(files);
-  repos.push(root);
   return root;
 }
 
@@ -134,7 +129,6 @@ describe("file: dependencies bind by where their path leads", () => {
 
   it("takes .. in a file: path by its spelling, as npm and pnpm do, so a link that .. climbs back out of changes nothing (11)", async () => {
     const outside = tempDir("oq-outside-");
-    repos.push(outside);
     // Through the link, packages/pivot/.. is `outside`, which holds a package of the same name.
     writeFiles(outside, { "deep/.keep": "", "shared/package.json": json({ name: "shared", main: "index.ts" }), "shared/index.ts": "export function helper() {\n  return 2;\n}\n" });
     const files = {
@@ -323,7 +317,6 @@ describe("a manifest or tsconfig the graph cannot read is said, never dropped", 
       const root = repo(files);
       commitAll(root);
       const outside = tempDir("oq-outside-");
-      repos.push(outside);
       writeFiles(outside, there);
       rmSync(join(root, "packages/core"), { recursive: true });
       symlinkSync(outside, join(root, "packages/core"));

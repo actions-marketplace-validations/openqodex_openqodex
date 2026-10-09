@@ -13,7 +13,7 @@
 // 6. One file whose parse runs away (tree-sitter on an unclosed comment)
 //    holds the build past every budget.
 import { afterAll, describe, expect, it } from "vitest";
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, openStore } from "../src/index.js";
@@ -23,13 +23,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 const home = makeHome();
-const repos: string[] = [home];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
 function repo(files: Record<string, string>): string {
   const root = makeRepo(files);
-  repos.push(root);
   return root;
 }
 const many = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`src/f${i}.ts`, `export function f${i}() {\n  return ${i};\n}\n`]));

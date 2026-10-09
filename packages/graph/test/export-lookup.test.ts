@@ -14,7 +14,6 @@
 //    Python binds the last one, and a later star the graph cannot follow
 //    leaves the earlier binding certain.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { EXPORT_LOOKUP_STEPS } from "../src/resolve.js";
@@ -23,14 +22,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function graphOf(files: Record<string, string>): Promise<Graph> {
   const root = makeRepo(files);
-  repos.push(root);
   return buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
 }
 

@@ -14,7 +14,7 @@
 //    unclosed comments.
 // 7. An edge id with many separators makes `explain` backtrack.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph } from "../src/index.js";
 import { discoverProjects } from "../src/discovery/projects.js";
@@ -41,10 +41,6 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 const MiB = 1024 * 1024;
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
 
 // Runs `read` on each input and returns the slowest time in milliseconds.
 function slowest(inputs: string[], read: (text: string) => unknown): number {
@@ -102,7 +98,6 @@ describe("the byte caps (2)", () => {
     expect(MANIFEST_BYTES).toBe(MiB);
     expect(LOCKFILE_BYTES).toBe(16 * MiB);
     const root = makeRepo({ "pnpm-workspace.yaml": "packages:\n  - packages/*\n", "packages/a/package.json": '{ "name": "a" }\n' });
-    repos.push(root);
     // A pnpm-workspace.yaml just over the cap is not read: no member is found.
     writeFileSync(join(root, "pnpm-workspace.yaml"), pad("packages:\n  - packages/*\n", "#", "\n") + "x".repeat(64));
     const model = discoverProjects(["pnpm-workspace.yaml", "packages/a/package.json"], new RepoReader(root));
@@ -172,7 +167,6 @@ describe("the extractor's body hash (6)", () => {
   it("hashes a definition holding many comment openers quickly", async () => {
     const body = "/* x ".repeat(100_000);
     const root = makeRepo({ "a.ts": `export function f() {\n  return \`${body}\`;\n}\n`, "b.py": `def f():\n    return 1 ${"# x ".repeat(100_000)}\n` });
-    repos.push(root);
     const t0 = performance.now();
     const g = await buildGraph({ repoRoot: root, store: null, maxFileBytes: 2 * MiB });
     expect(g.status.filesParsed).toBe(2);
@@ -183,7 +177,6 @@ describe("the extractor's body hash (6)", () => {
 describe("edge ids (7)", () => {
   it("refuses a hostile edge id quickly", async () => {
     const root = makeRepo({ "a.ts": "export function f() {\n  return 1;\n}\n" });
-    repos.push(root);
     const graph = await buildGraph({ repoRoot: root, store: null });
     const id = `calls:${"->@:1".repeat(200_000)}`;
     const t0 = performance.now();

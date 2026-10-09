@@ -12,8 +12,19 @@ import { buildGraph } from "../../index.js";
 import type { FrameworkEdge, Graph, Registration } from "../../index.js";
 import { MAX_MATCH_WORK, MAX_PATTERN_SEGMENTS, MAX_REGISTRATIONS } from "./resolve.js";
 
+// Every repository a test here makes, removed once all of them have run.
+// Each git command a test starts has ended when execFileSync returns, and a
+// build awaits each git command it runs to its end; these builds keep no
+// store, so no capture writes into a repository. The retries are the ones
+// the run's own temp folder check uses (tests/temp-dirs.mjs).
+const roots: string[] = [];
+afterAll(() => {
+  for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+});
+
 function repo(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "oq-next-review-"));
+  roots.push(root);
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), content);
@@ -57,7 +68,6 @@ describe("the Next.js plugin on matchers and middleware it cannot read whole", (
     });
     graph = await buildGraph({ repoRoot: root, store: null });
   }, 120_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   it("never reads a cut matcher list as whole: a route only a later entry could select is possible, and the cut is an unknown", () => {
     const edges = middlewareEdges(graph, "cut");
@@ -108,7 +118,6 @@ describe("the Next.js plugin when the matching budget runs out", () => {
     root = repo(files);
     graph = await buildGraph({ repoRoot: root, store: null });
   }, 600_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   it("stops matching when the budget runs out and says so with one budget unknown, never blaming the matcher's syntax", () => {
     const gap = graph.frameworks?.unknowns.filter((u) => u.plugin === "nextjs" && u.cause === "budget" && u.note.includes(String(MAX_MATCH_WORK)));
@@ -132,15 +141,11 @@ describe("the Next.js plugin on files of thousands of server actions", () => {
       files[`app/actions${f}.ts`] = `${[...plain, ...actions].join("\n")}\n`;
     }
     const root = repo(files);
-    try {
-      const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
-      const run = graph.frameworks?.plugins.find((p) => p.id === "nextjs");
-      const actions = (graph.frameworks?.entities ?? []).filter((e): e is Registration => e.kind === "registration" && e.plugin === "nextjs" && e.site.file.startsWith("app/actions"));
-      // The actions fill the build's MAX_REGISTRATIONS routes, the page among them.
-      expect(actions.length).toBe(MAX_REGISTRATIONS - 1);
-      expect(run?.ms ?? Infinity).toBeLessThan(500);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
+    const run = graph.frameworks?.plugins.find((p) => p.id === "nextjs");
+    const actions = (graph.frameworks?.entities ?? []).filter((e): e is Registration => e.kind === "registration" && e.plugin === "nextjs" && e.site.file.startsWith("app/actions"));
+    // The actions fill the build's MAX_REGISTRATIONS routes, the page among them.
+    expect(actions.length).toBe(MAX_REGISTRATIONS - 1);
+    expect(run?.ms ?? Infinity).toBeLessThan(500);
   }, 600_000);
 });

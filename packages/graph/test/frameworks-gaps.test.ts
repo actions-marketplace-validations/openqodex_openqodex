@@ -22,7 +22,6 @@ import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import type { Change, ImpactSummary } from "@openqodex/core";
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
 import { buildGraph, detectImpact } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { query } from "../src/query/engine.js";
@@ -34,15 +33,9 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 // Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
 afterAll(removeTempDirs);
 
-const dirs: string[] = [];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
-
 // A repository committed, then changed: its graph, change and summary.
 async function changed(base: Record<string, string>, edits: Record<string, string>): Promise<{ root: string; graph: Graph; change: Change; impact: ImpactSummary }> {
   const root = makeRepo(base);
-  dirs.push(root);
   commitAll(root);
   writeFiles(root, edits);
   const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
@@ -56,7 +49,6 @@ describe("the gaps of the framework layer", () => {
   it("answers routes as a floor when a file's facts passed the per-file cap (1)", async () => {
     const lines = Array.from({ length: 2100 }, (_, i) => `app.get("/r${i}", h);`).join("\n");
     const root = makeRepo({ "package.json": EXPRESS_PKG, "src/server.js": `import express from "express";\nexport const app = express();\nfunction h(req, res) {\n  res.end();\n}\n${lines}\n` });
-    dirs.push(root);
     const graph = await buildGraph({ repoRoot: root, store: null });
     expect((graph.frameworks?.unknowns ?? []).some((u) => u.plugin === "express" && u.cause === "fan-out-capped" && u.scope && "file" in u.scope)).toBe(true);
     const a = query({ graph, generation: "g", treeSha: null, builtAt: null, laterEditsKnown: false }, { apiVersion: 1, kind: "routes", limit: 5 } as Request);
@@ -133,7 +125,6 @@ describe("the gaps of the framework layer", () => {
     // 201 functions, each using handler as a value once: 201 distinct uses.
     const uses = Array.from({ length: 201 }, (_, i) => `export function u${i}(): unknown[] {\n  return [handler];\n}`).join("\n");
     const root = makeRepo({ "src/h.ts": "export function handler(): number {\n  return 1;\n}\n", "src/uses.ts": `import { handler } from "./h";\n${uses}\n` });
-    dirs.push(root);
     const graph = await buildGraph({ repoRoot: root, store: null });
     const a = query({ graph, generation: "g", treeSha: null, builtAt: null, laterEditsKnown: false }, { apiVersion: 1, kind: "impact", target: { name: "handler" }, limit: 500 } as Request);
     expect(a.error).toBeNull();
@@ -155,7 +146,6 @@ describe("the gaps of the framework layer", () => {
       "mysite/models.py": `from django.db import models\n\n\n${chain}\n\nclass Thing(models.Model):\n    value = F8()\n`,
       "mysite/tests.py": 'from django.test import TestCase\n\n\nclass T(TestCase):\n    def test_it(self):\n        self.client.get("/5/")\n',
     });
-    dirs.push(root);
     const graph = await buildGraph({ repoRoot: root, store: null });
     const gaps = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "django");
     expect(gaps.some((u) => u.cause === "fan-out-capped" && u.affects.includes("declares_field") && u.site?.file === "mysite/models.py")).toBe(true);
@@ -180,7 +170,6 @@ describe("the gaps of the framework layer", () => {
       "mysite/tests.py": `from django.test import TestCase\n\n\nclass T(TestCase):\n    def test_it(self):\n        self.client.get("/${"a".repeat(400)}!")\n`,
       ...modules,
     });
-    dirs.push(root);
     const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
     const gaps = (graph.frameworks?.unknowns ?? []).filter((u) => u.plugin === "django" && u.cause === "budget");
     expect(gaps.length).toBeGreaterThan(0);

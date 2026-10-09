@@ -21,7 +21,6 @@
 import { performance } from "node:perf_hooks";
 import { getChange } from "@openqodex/core";
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
 import { buildGraph, detectImpact, renderImpactBlock } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
@@ -30,13 +29,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 // Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
 afterAll(removeTempDirs);
 
-const dirs: string[] = [];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
 async function built(files: Record<string, string>): Promise<Graph> {
   const root = makeRepo(files);
-  dirs.push(root);
   return buildGraph({ repoRoot: root, store: null, budgetMs: 60_000 });
 }
 const regs = (g: Graph, plugin: string): Registration[] => (g.frameworks?.entities ?? []).filter((e): e is Registration => e.kind === "registration" && e.plugin === plugin);
@@ -75,7 +69,6 @@ describe("what the graph states as certain or served", () => {
       "src/server.js": 'import express from "express";\nimport { h } from "./h.js";\n\nexport const app = express();\n',
       "src/h.js": "export function h(req, res) {\n  res.end();\n}\n",
     });
-    dirs.push(root);
     commitAll(root);
     writeFiles(root, { "src/server.js": 'import express from "express";\nimport { h } from "./h.js";\nimport { asyncHandler } from "./wrap.js";\n\nexport const app = express();\napp.get("/x", asyncHandler(h));\n', "src/wrap.js": "export function asyncHandler(f) {\n  return f;\n}\n" });
     const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });

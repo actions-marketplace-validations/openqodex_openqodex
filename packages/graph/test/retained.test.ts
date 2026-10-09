@@ -23,7 +23,7 @@
 //    dependency changes, and the old index is loaded, because no listed
 //    file changed.
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdirSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, rmdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph, openStore } from "../src/index.js";
 import type { Graph } from "../src/index.js";
@@ -33,10 +33,6 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 const home = makeHome();
-const repos: string[] = [home];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
 
 async function storeOf(root: string) {
   const opened = await openStore(root, { home });
@@ -55,7 +51,6 @@ const aliasFiles = {
 describe("the retained index", () => {
   it("is not loaded after a tsconfig paths alias changes (1)", async () => {
     const root = makeRepo({ ...aliasFiles, "tsconfig.json": '{ "compilerOptions": { "baseUrl": ".", "paths": { "@lib/*": ["lib/*"] } } }\n' });
-    repos.push(root);
     commitAll(root);
     const st = await storeOf(root);
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
@@ -73,7 +68,6 @@ describe("the retained index", () => {
       "tsconfig.json": '{ "extends": "./configs/base.json" }\n',
       "configs/base.json": '{ "compilerOptions": { "baseUrl": "..", "paths": { "@lib/*": ["lib/*"] } } }\n',
     });
-    repos.push(root);
     const st = await storeOf(root);
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(callSites(first, symbol(first, "lib/x.ts", "f"))).toEqual(["src/use.ts:3"]);
@@ -93,7 +87,6 @@ describe("the retained index", () => {
       "packages/b/package.json": '{ "name": "b", "dependencies": { "a": "workspace:*" } }\n',
       "packages/b/src/use.ts": 'import { f } from "a";\nexport function use() {\n  return f();\n}\n',
     });
-    repos.push(root);
     const st = await storeOf(root);
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(callSites(first, symbol(first, "packages/a/src/one.ts", "f"))).toEqual(["packages/b/src/use.ts:3"]);
@@ -105,7 +98,6 @@ describe("the retained index", () => {
 
   it("is not loaded after the lockfile changes (4)", async () => {
     const root = makeRepo({ ...aliasFiles, "package.json": '{ "name": "root" }\n', "package-lock.json": '{ "lockfileVersion": 3, "packages": {} }\n' });
-    repos.push(root);
     const st = await storeOf(root);
     await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     writeFiles(root, { "package-lock.json": '{ "lockfileVersion": 3, "packages": { "node_modules/left-pad": { "version": "1.3.0" } } }\n' });
@@ -115,7 +107,6 @@ describe("the retained index", () => {
 
   it("is not loaded after a file over the size cap is added (5)", async () => {
     const root = makeRepo(aliasFiles);
-    repos.push(root);
     const st = await storeOf(root);
     await buildGraph({ repoRoot: root, store: st, mode: "retained", maxFileBytes: 1024 });
     writeFiles(root, { "src/big.ts": `export const big = "${"x".repeat(4096)}";\n` });
@@ -126,7 +117,6 @@ describe("the retained index", () => {
 
   it("is loaded when nothing changed (6)", async () => {
     const root = makeRepo({ ...aliasFiles, "tsconfig.json": '{ "compilerOptions": { "baseUrl": ".", "paths": { "@lib/*": ["lib/*"] } } }\n' });
-    repos.push(root);
     const st = await storeOf(root);
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     const second = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
@@ -137,7 +127,6 @@ describe("the retained index", () => {
   it("is not loaded after an extensionless config a tsconfig extends changes (7)", async () => {
     const base = (to: string) => `{ "compilerOptions": { "baseUrl": "..", "paths": { "@lib/*": ["${to}/*"] } } }\n`;
     const root = makeRepo({ ...aliasFiles, "tsconfig.json": '{ "extends": "./configs/base" }\n', "configs/base": base("lib") });
-    repos.push(root);
     const st = await storeOf(root);
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(callSites(first, symbol(first, "lib/x.ts", "f"))).toEqual(["src/use.ts:3"]);
@@ -150,7 +139,6 @@ describe("the retained index", () => {
   it("is not loaded after a config the model looked for and did not find appears (8)", async () => {
     const base = (to: string) => `{ "compilerOptions": { "baseUrl": "..", "paths": { "@lib/*": ["${to}/*"] } } }\n`;
     const root = makeRepo({ ...aliasFiles, "tsconfig.json": '{ "extends": "./configs/base" }\n', "configs/base.json": base("lib") });
-    repos.push(root);
     const st = await storeOf(root);
     const first = await buildGraph({ repoRoot: root, store: st, mode: "retained" });
     expect(callSites(first, symbol(first, "lib/x.ts", "f"))).toEqual(["src/use.ts:3"]);
@@ -169,7 +157,6 @@ describe("the retained index", () => {
       "packages/b/package.json": '{ "name": "b", "dependencies": { "shared": "file:../pivot" } }\n',
       "packages/b/src/use.ts": 'import { helper } from "shared";\nexport function run() {\n  return helper();\n}\n',
     });
-    repos.push(root);
     mkdirSync(join(root, "packages/pivot"));
     const st = await storeOf(root);
     const noteAt = (g: Graph) => g.unknowns.find((u) => u.file === "packages/b/src/use.ts" && u.name === "helper")?.note ?? "";

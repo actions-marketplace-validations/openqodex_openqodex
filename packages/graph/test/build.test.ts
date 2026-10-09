@@ -18,7 +18,7 @@
 //     of its depth (each call kept a copy of every scope around it).
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getChange } from "@openqodex/core";
@@ -29,13 +29,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 afterAll(removeTempDirs);
 
 const home = makeHome();
-const repos: string[] = [home];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
 function repo(files: Record<string, string>): string {
   const root = makeRepo(files);
-  repos.push(root);
   return root;
 }
 async function storeOf(root: string) {

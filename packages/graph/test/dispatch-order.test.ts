@@ -29,7 +29,6 @@
 //     both calls start at one place, so `h()` reads as calling a function
 //     pick returns, which never runs there.
 import { afterAll, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
 import { buildGraph } from "../src/index.js";
 import type { Graph } from "../src/index.js";
 import { makeRepo } from "./helpers.js";
@@ -38,14 +37,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 // Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function graphOf(files: Record<string, string>): Promise<Graph> {
   const root = makeRepo(files);
-  repos.push(root);
   return buildGraph({ repoRoot: root, store: null });
 }
 

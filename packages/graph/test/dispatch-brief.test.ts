@@ -19,7 +19,7 @@
 //    brief tells the reviewer to read: the importers' page of a changed
 //    file and the base version of a symbol it lost name the file.
 import { afterAll, describe, expect, it } from "vitest";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getChange } from "@openqodex/core";
 import { buildGraph, detectImpact, renderImpactBlock, symbolKey } from "../src/index.js";
@@ -30,14 +30,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 // Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 async function reviewed(before: Record<string, string>, after: Record<string, string>) {
   const root = makeRepo(before);
-  repos.push(root);
   commitAll(root);
   writeFiles(root, after);
   const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });

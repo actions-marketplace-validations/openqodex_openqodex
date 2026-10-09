@@ -10,7 +10,7 @@
 // 3. The time budget is checked only between files, so one file that
 //    holds such work runs past the budget with nothing recorded.
 import { afterAll, describe, expect, it } from "vitest";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph } from "../src/index.js";
 import { discoverProjects } from "../src/discovery/projects.js";
@@ -24,14 +24,8 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 // Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
 afterAll(removeTempDirs);
 
-const repos: string[] = [];
-afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-});
-
 function repo(files: Record<string, string>): string {
   const root = makeRepo(files);
-  repos.push(root);
   return root;
 }
 

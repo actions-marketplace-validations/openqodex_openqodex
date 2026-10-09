@@ -27,7 +27,7 @@
 //     one file, or expanding one point with thousands of edges in a path
 //     search, runs past the budget and cannot be cancelled.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraph, laterEdits, pinWorkTree } from "../src/index.js";
 import { query, querySliced } from "../src/query/engine.js";
@@ -38,11 +38,6 @@ import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
 // Every folder the shared helpers made for this file goes when it ends (tests/temp-guard.ts).
 afterAll(removeTempDirs);
-
-const dirs: string[] = [];
-afterAll(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
 
 // A hub with 300 callers, each called by two more, and a project of two packages.
 function hubRepo(): Record<string, string> {
@@ -56,7 +51,6 @@ function hubRepo(): Record<string, string> {
 let s: Session;
 beforeAll(async () => {
   const root = makeRepo(hubRepo());
-  dirs.push(root);
   const graph = await buildGraph({ repoRoot: root, store: null });
   s = { graph, generation: "budget-build", treeSha: null, builtAt: null, laterEditsKnown: false };
 }, 120_000);
@@ -172,7 +166,6 @@ describe("the floor of a walk", () => {
       "src/a.ts": 'import { b } from "./b";\nexport function a(): number {\n  return b();\n}\n',
       "src/b.ts": "const table: Record<string, () => number> = {};\nexport function b(): number {\n  return table.x ? 1 : table[String(Date.now())]();\n}\n",
     });
-    dirs.push(root);
     const graph = await buildGraph({ repoRoot: root, store: null });
     const t: Session = { graph, generation: null, treeSha: null, builtAt: null, laterEditsKnown: false };
     const one = query(t, { apiVersion: 1, kind: "callees", target: { name: "a" }, depth: 1 });
@@ -211,7 +204,6 @@ describe("edits since the held build", () => {
 
   it("are known for a changed tsconfig alias and a changed manifest, and not for a file the graph never reads (6)", async () => {
     const root = makeRepo(files);
-    dirs.push(root);
     commitAll(root);
     const pinned = await pinWorkTree({ repoRoot: root, store: null, settings, purpose: "cli" });
     try {
@@ -270,7 +262,6 @@ describe("work with a budget check inside each element (10)", () => {
       "src/fan.ts": `${fns.join("\n")}\nexport function fan(): number {\n  return ${calls};\n}\n`,
       "src/far.ts": "export function far(): number {\n  return 0;\n}\n",
     });
-    dirs.push(root);
     // A long build budget: a busy machine must not leave the wide files out.
     const graph = await buildGraph({ repoRoot: root, store: null, budgetMs: 120_000 });
     expect(graph.status.notRead).toEqual([]);
