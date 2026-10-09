@@ -1512,20 +1512,13 @@ function pyTypeNames(node: Node | null, out: TypeRef[] = [], depth = 0): TypeRef
   return out;
 }
 
-// A method without a body that runs: @abstractmethod, or a body that
-// (after a docstring) is only `raise NotImplementedError` or `...`.
+// A method Python never runs on an instance of a concrete class: one
+// marked @abstractmethod (a class with one cannot be instantiated). A body
+// that only raises NotImplementedError, or is `...`, still runs when it is
+// called, so it is no proof of anything.
 function pyAbstract(fn: Node): boolean {
   const decorators = fn.parent?.type === "decorated_definition" ? fn.parent.namedChildren.filter((c) => c.type === "decorator") : [];
-  if (decorators.some((d) => /(^|\.)abstractmethod$/.test(d.namedChildren[0]?.text ?? ""))) return true;
-  let body = (fn.childForFieldName("body")?.namedChildren ?? []).filter((c) => c.type !== "comment");
-  if (body[0]?.type === "expression_statement" && body[0].firstNamedChild?.type === "string") body = body.slice(1);
-  if (body.length !== 1) return false;
-  const only = body[0] as Node;
-  if (only.type === "expression_statement") return only.firstNamedChild?.type === "ellipsis" && only.namedChildCount === 1;
-  if (only.type !== "raise_statement") return false;
-  const raised = only.firstNamedChild;
-  const name = raised?.type === "call" ? raised.childForFieldName("function")?.text : raised?.text;
-  return name === "NotImplementedError";
+  return decorators.some((d) => /(^|\.)abstractmethod$/.test(d.namedChildren[0]?.text ?? ""));
 }
 
 function pyStatic(fn: Node): boolean {

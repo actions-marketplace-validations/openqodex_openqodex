@@ -57,9 +57,8 @@ export type DefFact = {
   alias?: TypeRef;
   // A member declared without a body that runs: a TypeScript interface
   // member or `abstract` method, a Go interface method, a Python method
-  // marked @abstractmethod or whose body (after a docstring) is only
-  // `raise NotImplementedError` or `...`. Calls bind to it as the declared
-  // member; it is never a dispatch target.
+  // marked @abstractmethod. Calls bind to it as the declared member; it is
+  // never a dispatch target.
   abstract?: boolean;
   iface?: boolean; // a TypeScript interface or a Go interface type
   pointer?: boolean; // a Go method with a pointer receiver

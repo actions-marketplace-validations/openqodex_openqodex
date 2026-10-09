@@ -122,12 +122,12 @@ describe("lookup orders and value rules", () => {
     expect((g.refsIn.get(handler) ?? []).map((e) => e.kind)).toEqual(["uses_value"]);
   });
 
-  it.skip("keeps a Python override that only raises NotImplementedError, or is `...`, among the implementations a call may run (11)", async () => {
+  it("keeps a Python override that only raises NotImplementedError, or is `...`, among the implementations a call may run (11)", async () => {
     const g = await graphOf({
       "m.py": "class Base:\n    def find(self):\n        return 1\n\n\nclass Raises(Base):\n    def find(self):\n        raise NotImplementedError\n\n\nclass Dots(Base):\n    def find(self):\n        ...\n\n\ndef use(x: Base):\n    return x.find()\n",
     });
-    expect(into(g, idOf(g, "m.py", "Raises.find"))).toEqual(["m.py:18 dispatches_to possible"]);
-    expect(into(g, idOf(g, "m.py", "Dots.find"))).toEqual(["m.py:18 dispatches_to possible"]);
+    expect(into(g, idOf(g, "m.py", "Raises.find"))).toEqual(["m.py:17 dispatches_to possible"]);
+    expect(into(g, idOf(g, "m.py", "Dots.find"))).toEqual(["m.py:17 dispatches_to possible"]);
   });
 
   it.skip("records a type use for every type an annotation names, past sixteen (12)", async () => {
