@@ -15,9 +15,16 @@ import type { Graph, Lang } from "./types.js";
 export const MAX_GROWTH = 8;
 // The larger input takes less CPU time than this, in milliseconds.
 export const LOOSE_BOUND_MS = 4000;
-// A smaller run under this many milliseconds is counted as this long, so the
-// noise of a near-zero reading never decides the ratio.
-const FLOOR_MS = 20;
+// Below this many milliseconds of CPU time a run's time is the compiler's
+// and the garbage collector's, not the work's: a linear reader measured 19
+// ms at 256 KiB and 248 ms at 1 MiB on a Linux runner. No ratio is taken on
+// a smaller run under it: the input is grown until its run passes it
+// (expectLinearScaled), and a run that cannot grow is counted as this long,
+// which leaves the larger run a bound of eight times it.
+export const NOISE_MS = 50;
+// The largest scale expectLinearScaled asks for, by default: the smaller
+// input grows to 64 times its first size at most.
+const MAX_SCALE = 256;
 
 function cpuNow(): number {
   const used = process.cpuUsage();
@@ -96,9 +103,28 @@ export async function readerCpuMs(lang: Lang, sources: readonly string[], read: 
   }
 }
 
-// `small` is the CPU time at the smaller input, `large` at four times it.
+// `small` is the CPU time at the smaller input, `large` at four times it:
+// for inputs that cannot grow (a product cap stops them at the larger one).
 export function expectLinear(what: string, small: number, large: number): void {
   const said = `${what}: ${small.toFixed(1)} ms of CPU time at the smaller input, ${large.toFixed(1)} ms at four times it`;
-  expect(large / Math.max(small, FLOOR_MS), said).toBeLessThan(MAX_GROWTH);
+  expect(large / Math.max(small, NOISE_MS), said).toBeLessThan(MAX_GROWTH);
+  expect(large, said).toBeLessThan(LOOSE_BOUND_MS);
+}
+
+// `cpuAt(scale)` is the CPU time of the work on `scale` times its first
+// input. The smaller input doubles until its time reaches NOISE_MS, and the
+// larger is four times the smaller; `maxScale` is the largest scale ever
+// asked for (an input past it would cross a cap the test must stay under).
+export async function expectLinearScaled(what: string, cpuAt: (scale: number) => number | Promise<number>, opts: { maxScale?: number } = {}): Promise<void> {
+  const maxScale = opts.maxScale ?? MAX_SCALE;
+  let scale = 1;
+  let small = await cpuAt(scale);
+  while (small < NOISE_MS && scale * 8 <= maxScale) {
+    scale *= 2;
+    small = await cpuAt(scale);
+  }
+  const large = await cpuAt(scale * 4);
+  const said = `${what}: ${small.toFixed(1)} ms of CPU time at ${scale} times the first input, ${large.toFixed(1)} ms at four times that`;
+  expect(large / Math.max(small, NOISE_MS), said).toBeLessThan(MAX_GROWTH);
   expect(large, said).toBeLessThan(LOOSE_BOUND_MS);
 }

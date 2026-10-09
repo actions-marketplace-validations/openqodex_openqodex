@@ -4,7 +4,8 @@
 // the graph. Ways they could fail, one test each:
 // 1. A pattern whose repetitions overlap backtracks on a long hostile line,
 //    so one reader takes seconds or never ends: every reader must read a
-//    1 MiB hostile input in about four times the CPU time of 256 KiB.
+//    hostile input four times as large in about four times the CPU time,
+//    from 256 KiB and from no less than a run above the noise.
 // 2. A manifest or a lockfile over its byte cap is read anyway.
 // 3. A linear reader stops reading what it must (the positive controls).
 // 4. Stripping a trailing comma or a comment from a tsconfig changes the
@@ -35,7 +36,7 @@ import {
 } from "../src/discovery/manifests.js";
 import { query } from "../src/query/engine.js";
 import { RepoReader } from "../src/safe-fs.js";
-import { cpuMs, expectLinear } from "../src/test-timing.js";
+import { cpuMs, expectLinear, expectLinearScaled } from "../src/test-timing.js";
 import { makeRepo } from "./helpers.js";
 import { removeTempDirs } from "../../../tests/temp-dirs.mjs";
 
@@ -47,14 +48,22 @@ const MiB = 1024 * 1024;
 const shape = (head: string, unit: string, tail = "") => (size: number) => head + unit.repeat(Math.ceil((size - head.length - tail.length) / unit.length)) + tail;
 const pad = (head: string, unit: string, tail = "") => shape(head, unit, tail)(MiB);
 
-// Runs `read` on each shape at 256 KiB and at 1 MiB: its CPU time grows
-// about four times, never sixteen.
+// Runs `read` on each shape from 256 KiB, the input doubled until a run is
+// above the noise (src/test-timing.ts), and at four times that: its CPU time
+// grows about four times, never sixteen. A reader is a plain function, so
+// its input may pass the 1 MiB cap the build reads manifests under; it grows
+// to 4 MiB at most.
 async function linear(shapes: ((size: number) => string)[], read: (text: string) => unknown): Promise<void> {
   for (const [i, make] of shapes.entries()) {
-    const small = make(MiB / 4);
-    const large = make(MiB);
-    expect(large.length).toBeGreaterThanOrEqual(MiB - 64);
-    expectLinear(`input ${i + 1} at 256 KiB and at 1 MiB`, await cpuMs(() => read(small)), await cpuMs(() => read(large)));
+    expect(make(MiB).length).toBeGreaterThanOrEqual(MiB - 64);
+    await expectLinearScaled(
+      `input ${i + 1} from 256 KiB`,
+      (scale) => {
+        const text = make((MiB / 4) * scale);
+        return cpuMs(() => read(text));
+      },
+      { maxScale: 16 },
+    );
   }
 }
 
