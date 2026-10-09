@@ -27,6 +27,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - `custom-scanners`: add any scanner by its GitHub link.
 - `agents`: what `init` writes for each coding agent.
 - `github-action`: run the scan on pull requests.
+- `library`: import the scanners, the code graph, the lenses, the config parser and the renderers into a Node program.
 - `security`: what runs, what is sent where, and where files go.
 - `telemetry`: there is none.
 - `privacy`: the privacy policy: what OpenQodex collects (nothing) and every network call it makes.
