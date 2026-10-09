@@ -22,3 +22,6 @@ export { PLUGINS, pluginsKey } from "./frameworks/registry.js";
 export { frameworkLayer, REACH_DEPTH } from "./frameworks/layer.js";
 export type { FrameworkLayer, RouteReach, TestLink } from "./frameworks/layer.js";
 export type { FrameworkData, PluginRun } from "./frameworks/stage.js";
+export { blobId } from "./capture/inventory.js";
+export type { ListedFile } from "./capture/inventory.js";
+export { showBlob } from "./capture/git.js";
