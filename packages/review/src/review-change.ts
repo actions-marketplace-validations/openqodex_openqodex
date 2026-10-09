@@ -167,7 +167,9 @@ export type ReviewDeps = {
   // removes the snapshot. A host's signal handler calls it before it exits.
   // After the run it does nothing.
   onStop?: (stop: () => void) => void;
-  // The clock, epoch milliseconds. The deadline is on it.
+  // The clock, epoch milliseconds; the deadline is on it. The drivers in
+  // agents/ time their own stop on the system clock, so a host that uses
+  // them passes Date.now.
   now: () => number;
 };
 
