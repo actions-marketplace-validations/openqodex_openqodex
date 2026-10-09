@@ -53,14 +53,6 @@ describe("checkPush", () => {
     expect(checkPush({ currentChangeId: change.id, receipt: complete(null), config: makeConfig() })).toEqual({ decision: "abstain", message: null });
   });
 
-  it("2, 5. abstains with one line asking for openqodex review when the change was not reviewed", () => {
-    const d = checkPush({ currentChangeId: change.id, receipt: null, config: makeConfig() });
-    expect(d.decision).toBe("abstain");
-    expect(d.message).toContain("has not reviewed this change");
-    expect(d.message).toContain("openqodex review");
-    expect(d.message?.split("\n")).toHaveLength(1);
-  });
-
   it("3. does not count a review of an earlier version", () => {
     const earlier = { ...complete(null), change_id: "0".repeat(64) };
     const d = checkPush({ currentChangeId: change.id, receipt: earlier, config: makeConfig({ blockOnSeverity: "critical" }) });

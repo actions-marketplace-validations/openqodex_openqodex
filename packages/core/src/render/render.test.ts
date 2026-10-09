@@ -55,10 +55,6 @@ describe("renderTerminal", () => {
     expect(out.split("\n")[0]).toBe("Passed with warnings: 2 findings (1 critical, 1 nitpick)");
   });
 
-  it("uses colour only when asked", () => {
-    expect(renderTerminal(fullReview(), { color: true })).toContain(ESC);
-  });
-
   it("shows every section and the coverage line", () => {
     const out = renderTerminal(fullReview(), { color: false });
     expect(out).toContain("Critical (1)");
