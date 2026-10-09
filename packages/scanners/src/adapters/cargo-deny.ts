@@ -7,6 +7,9 @@
 //    clones or updates the RustSec advisory database
 //    (github.com/rustsec/advisory-db) with the developer's git, into the
 //    OpenQodex home. The only network use.
+// Before any step, every path the project's manifests name, and the search
+// for its workspace, must stay inside the repository (cargoPathProblem);
+// a project that fails is held back with the reason.
 // 2. `cargo metadata --format-version 1 --frozen --manifest-path <...>`
 //    with the developer's toolchain named by its real files (the Cargo probe
 //    in toolchain/install.ts). Cargo reads its settings from the folder it
@@ -39,7 +42,7 @@
 // All errors are captured into the result; the runner never throws on a
 // scanner failure.
 
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { homeGuard } from "@openqodex/core";
@@ -48,7 +51,8 @@ import { describeFailure, execTool, isOffline, type ExecResult } from "../exec.j
 import { openqodexHome } from "../toolchain/table.js";
 import type { Adapter } from "./index.js";
 import { withOwnedConfig } from "./owned-config.js";
-import { readRepoFile, repoFileOrReason } from "./read.js";
+import { parse as parseToml } from "smol-toml";
+import { readRepoFile, repoFileOrReason, scannerInput } from "./read.js";
 import { suchAs } from "./words.js";
 
 // One deadline for every step of one run: the first clone of the database
@@ -130,6 +134,9 @@ export async function runCargoDeny(args: { repoDir: string; changedPaths: string
   if (!cargo) return { findings: [], error: "needs Cargo (Rust)" };
 
   const notes: string[] = [];
+  // Projects held back because a manifest names a path outside the
+  // repository: a note, not a failure, as trivy's held folders are.
+  const held: string[] = [];
   const projects: Project[] = [];
   for (const lock of locks) {
     const folder = path.posix.dirname(lock) === "." ? "" : path.posix.dirname(lock);
@@ -139,9 +146,14 @@ export async function runCargoDeny(args: { repoDir: string; changedPaths: string
       notes.push(`no Cargo.toml beside ${lock}`);
       continue;
     }
+    const problem = await cargoPathProblem(args.repoDir, folder);
+    if (problem !== null) {
+      held.push(`not run on ${lock}: ${problem}`);
+      continue;
+    }
     projects.push({ lock, folder, manifest: checked.path });
   }
-  if (projects.length === 0) return { findings: [], error: notes.join("; ") };
+  if (projects.length === 0) return notes.length > 0 ? { findings: [], error: [...notes, ...held].join("; ").slice(0, 300) } : { findings: [], error: null, skipped: held.join("; ").slice(0, 300) };
 
   let dbRoot: string;
   try {
@@ -196,7 +208,7 @@ export async function runCargoDeny(args: { repoDir: string; changedPaths: string
       }
       return out;
     });
-    return { findings, error: notes.length > 0 ? notes.join("; ").slice(0, 300) : null };
+    return notes.length > 0 ? { findings, error: [...notes, ...held].join("; ").slice(0, 300) } : { findings, error: null, note: held.length > 0 ? held.join("; ").slice(0, 300) : null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
@@ -337,3 +349,213 @@ function trimMessage(m: string): string {
   return collapsed.length > 500 ? collapsed.slice(0, 497) + "..." : collapsed;
 }
 
+
+// ---------- the paths a project's manifests name ----------
+
+// Cargo reads every manifest the project's manifests name, and lists the
+// folders their targets live in: path dependencies (in every dependency
+// table, a target's, the workspace's), workspace members and the workspace
+// root (`package.workspace`), patches and replaces, target, build script and
+// readme paths, and the Cargo.toml of each folder above the project until one
+// holds a [workspace]. Starting Cargo outside the repository and with
+// --frozen constrains none of that, so before Cargo starts every such path
+// must stay inside the repository, through no link, and the search for a
+// workspace must end inside it. Null when it does, else the first problem.
+const CARGO_MANIFEST_MAX_BYTES = 1024 * 1024;
+const MAX_CARGO_MANIFESTS = 1000;
+const DEPENDENCY_TABLES = ["dependencies", "dev-dependencies", "dev_dependencies", "build-dependencies", "build_dependencies"];
+const TARGET_TABLES = ["lib", "bin", "example", "test", "bench"];
+// The folders and files Cargo looks in for targets it finds on its own.
+const DISCOVERED = ["src", "src/bin", "src/main.rs", "src/lib.rs", "examples", "tests", "benches", "build.rs"];
+
+const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date);
+
+// `value`, a path a manifest in `folder` names, repo-relative and normalised,
+// or null when it leaves the repository.
+function insidePath(folder: string, value: string): string | null {
+  if (value === "" || value.startsWith("/") || value.startsWith("~") || value.startsWith("\\") || /^[A-Za-z]:/.test(value)) return null;
+  const resolved = path.posix.normalize(path.posix.join(folder === "" ? "." : folder, value.replace(/\\/g, "/")));
+  if (resolved === ".." || resolved.startsWith("../")) return null;
+  return resolved === "." ? "" : resolved.replace(/\/$/, "");
+}
+
+// Null when no part of `rel` that is there is a link; else the reason.
+function linkOnTheWay(repoDir: string, rel: string): string | null {
+  let at = repoDir;
+  for (const part of rel === "" ? [] : rel.split("/")) {
+    at = path.join(at, part);
+    const stat = lstatSync(at, { throwIfNoEntry: false });
+    if (stat === undefined) return null;
+    if (stat.isSymbolicLink()) return "reached through a link";
+  }
+  return null;
+}
+
+// A member pattern's folders: each `*`, `?` or `[...]` segment matched
+// against the real folders (never a link) of the one above. A `**` is not
+// expanded: null.
+function memberFolders(repoDir: string, pattern: string): string[] | null {
+  let found = [""];
+  for (const segment of pattern === "" ? [] : pattern.split("/")) {
+    if (segment === "**") return null;
+    if (!/[*?[]/.test(segment)) {
+      found = found.map((f) => (f === "" ? segment : `${f}/${segment}`));
+      continue;
+    }
+    const source = segment.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
+    let match: RegExp;
+    try {
+      match = new RegExp(`^${source}$`);
+    } catch {
+      return null;
+    }
+    const next: string[] = [];
+    for (const f of found) {
+      let entries;
+      try {
+        entries = readdirSync(path.join(repoDir, f), { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of entries) if (e.isDirectory() && match.test(e.name)) next.push(f === "" ? e.name : `${f}/${e.name}`);
+    }
+    found = next;
+  }
+  return found;
+}
+
+export async function cargoPathProblem(repoDir: string, folder: string): Promise<string | null> {
+  let realRepo: string;
+  try {
+    realRepo = realpathSync(repoDir);
+  } catch {
+    return "the repository cannot be read";
+  }
+  const queue: string[] = [];
+  const seen = new Set<string>();
+  const manifestOf = (dir: string): string => (dir === "" ? "Cargo.toml" : `${dir}/Cargo.toml`);
+  const visit = (dir: string): void => {
+    const rel = manifestOf(dir);
+    if (!seen.has(rel)) {
+      seen.add(rel);
+      queue.push(rel);
+    }
+  };
+  // The project, and each folder above it inside the repository: Cargo reads
+  // their manifests looking for the workspace.
+  const parts = folder === "" ? [] : folder.split("/");
+  for (let depth = parts.length; depth >= 0; depth--) visit(parts.slice(0, depth).join("/"));
+  const chain = new Set(seen);
+  let workspaceInside = false;
+
+  while (queue.length > 0) {
+    if (seen.size > MAX_CARGO_MANIFESTS) return "more Cargo manifests than OpenQodex reads";
+    const rel = queue.shift() as string;
+    const verdict = scannerInput(realRepo, repoDir, rel);
+    if (!verdict.ok) {
+      if (verdict.reason === null) continue;
+      return `${rel}: ${verdict.reason}`;
+    }
+    let doc: Record<string, unknown>;
+    try {
+      doc = parseToml(await readRepoFile(repoDir, rel, CARGO_MANIFEST_MAX_BYTES)) as Record<string, unknown>;
+    } catch {
+      return `${rel} cannot be read as a Cargo manifest`;
+    }
+    const dir = path.posix.dirname(rel) === "." ? "" : path.posix.dirname(rel);
+    const problem = (what: string) => `${rel}: ${what} outside the repo`;
+    // A path to a folder whose manifest Cargo reads.
+    const folderPath = (value: unknown, what: string): string | null => {
+      if (typeof value !== "string") return null;
+      const inside = insidePath(dir, value);
+      if (inside === null) return problem(what);
+      const linked = linkOnTheWay(repoDir, inside);
+      if (linked !== null) return `${rel}: ${what} ${linked}`;
+      visit(inside);
+      return null;
+    };
+    // A path to a file Cargo looks at.
+    const filePath = (value: unknown, what: string): string | null => {
+      if (typeof value !== "string") return null;
+      const inside = insidePath(dir, value);
+      if (inside === null) return problem(what);
+      const linked = linkOnTheWay(repoDir, inside);
+      return linked === null ? null : `${rel}: ${what} ${linked}`;
+    };
+    const dependencies = (table: unknown): string | null => {
+      if (!isTable(table)) return null;
+      for (const spec of Object.values(table)) {
+        if (isTable(spec)) {
+          const found = folderPath(spec.path, "a path dependency");
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    const checks: (() => string | null)[] = [];
+    for (const name of DEPENDENCY_TABLES) checks.push(() => dependencies(doc[name]));
+    if (isTable(doc.target)) {
+      for (const target of Object.values(doc.target)) {
+        if (isTable(target)) for (const name of DEPENDENCY_TABLES) checks.push(() => dependencies(target[name]));
+      }
+    }
+    if (isTable(doc.patch)) for (const registry of Object.values(doc.patch)) checks.push(() => dependencies(registry));
+    checks.push(() => dependencies(doc.replace));
+    const pkg = isTable(doc.package) ? doc.package : null;
+    if (pkg) {
+      checks.push(() => folderPath(pkg.workspace, "the workspace root"));
+      checks.push(() => filePath(pkg.build, "the build script"));
+      checks.push(() => filePath(pkg.readme, "the readme"));
+      checks.push(() => filePath(pkg["license-file"], "the licence file"));
+      for (const found of DISCOVERED) checks.push(() => filePath(found, "a target folder"));
+      if (chain.has(rel) && typeof pkg.workspace === "string") workspaceInside = true;
+    }
+    for (const name of TARGET_TABLES) {
+      const targets = doc[name];
+      for (const target of Array.isArray(targets) ? targets : [targets]) {
+        if (isTable(target)) checks.push(() => filePath(target.path, "a target path"));
+      }
+    }
+    if (isTable(doc.workspace)) {
+      if (chain.has(rel)) workspaceInside = true;
+      const ws = doc.workspace;
+      checks.push(() => dependencies(ws.dependencies));
+      for (const list of [ws.members, ws["default-members"]]) {
+        if (!Array.isArray(list)) continue;
+        for (const member of list) {
+          if (typeof member !== "string") continue;
+          checks.push(() => {
+            const inside = insidePath(dir, member);
+            if (inside === null) return problem("a workspace member");
+            if (!/[*?[]/.test(member)) return folderPath(member, "a workspace member");
+            const folders = memberFolders(repoDir, inside);
+            if (folders === null) return `${rel}: a workspace member pattern OpenQodex does not expand`;
+            for (const f of folders) {
+              const linked = linkOnTheWay(repoDir, f);
+              if (linked !== null) return `${rel}: a workspace member ${linked}`;
+              visit(f);
+            }
+            return null;
+          });
+        }
+      }
+    }
+    for (const check of checks) {
+      const found = check();
+      if (found !== null) return found;
+    }
+  }
+  // With no [workspace] from the project up to the repository root, Cargo
+  // reads the Cargo.toml of each folder above the repository in turn.
+  if (!workspaceInside) {
+    for (const start of new Set([path.resolve(repoDir), realRepo])) {
+      for (let at = path.dirname(start); ; at = path.dirname(at)) {
+        if (lstatSync(path.join(at, "Cargo.toml"), { throwIfNoEntry: false }) !== undefined) {
+          return "a Cargo.toml in a folder above the repository, which Cargo would read looking for the workspace";
+        }
+        if (path.dirname(at) === at) break;
+      }
+    }
+  }
+  return null;
+}

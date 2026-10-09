@@ -19,10 +19,12 @@
 //   7. The owned config lets a repository's deny.toml in, keeps the advisory
 //      database outside the OpenQodex home, or checks yanked crates through
 //      the developer's index cache.
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { cargoDenyConfig, metadataFailure, parseCargoDenyOutput } from "./cargo-deny.js";
+import { cargoDenyConfig, cargoPathProblem, metadataFailure, parseCargoDenyOutput } from "./cargo-deny.js";
 
 const fixture = (name: string) => readFileSync(fileURLToPath(new URL(`../../test/fixtures/cargo-deny/${name}`, import.meta.url)), "utf8");
 const CHECK = fixture("check.jsonl");
@@ -99,5 +101,102 @@ describe("cargoDenyConfig", () => {
     expect(config).not.toMatch(/\[licenses\]|\[bans\]/);
     // A path with a quote or a backslash stays one TOML string.
     expect(cargoDenyConfig('/a"b\\c')).toContain('db-path = "/a\\"b\\\\c"');
+  });
+});
+
+// Cargo reads every manifest a project's manifests name: path dependencies,
+// workspace members and the workspace root, patches, and the Cargo.toml of
+// each folder above the project until one holds a [workspace]. Any of them
+// can point outside the repository, so each is checked before Cargo starts.
+// Failure list, written before the code:
+//   8. A path dependency, a workspace member, `package.workspace`, a patch
+//      or a replace path names a folder outside the repository, by an
+//      absolute path or by `../`, and Cargo reads its manifest.
+//   9. The same path stays inside the repository but runs through a link
+//      that leaves it, or the manifest itself is such a link.
+//  10. The escape sits in a manifest the project's manifest names in turn.
+//  11. No manifest from the project up to the repository root holds a
+//      [workspace], so Cargo walks on to a Cargo.toml above the repository.
+//  12. A target path (lib, bin, build script, readme) names a file outside.
+//  13. A project whose manifests stay inside is refused.
+describe("cargoPathProblem", () => {
+  const plant = (files: Record<string, string>): { parent: string; repo: string } => {
+    const parent = mkdtempSync(join(tmpdir(), "oq-cargo-paths-"));
+    const repo = join(parent, "repo");
+    mkdirSync(repo);
+    for (const [name, body] of Object.entries(files)) {
+      mkdirSync(dirname(join(repo, name)), { recursive: true });
+      writeFileSync(join(repo, name), body);
+    }
+    return { parent, repo };
+  };
+  const pkg = (name: string, extra = "") => `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2021"\n${extra}`;
+  const outside = mkdtempSync(join(tmpdir(), "oq-cargo-outside-"));
+  writeFileSync(join(outside, "Cargo.toml"), pkg("outside"));
+
+  it("refuses a dependency, member, workspace, patch or replace path outside the repository (8)", async () => {
+    const escapes = [
+      `${pkg("app")}\n[dependencies]\nout = { path = "${outside}" }\n`,
+      `${pkg("app")}\n[dev-dependencies]\nout = { path = "../../${"../".repeat(20)}${outside.slice(1)}" }\n`,
+      `${pkg("app")}\n[target.'cfg(unix)'.build-dependencies]\nout = { path = "${outside}" }\n`,
+      `[workspace]\nmembers = ["${outside}"]\n`,
+      `[workspace]\nmembers = ["crates/*", "../out"]\n`,
+      `${pkg("app", `workspace = "${outside}"\n`)}`,
+      `${pkg("app")}\n[patch.crates-io]\nserde = { path = "${outside}" }\n`,
+      `${pkg("app")}\n[replace]\n"serde:1.0.0" = { path = "${outside}" }\n`,
+      `[workspace]\nmembers = []\n\n[workspace.dependencies]\nout = { path = "${outside}" }\n`,
+    ];
+    for (const manifest of escapes) {
+      const { repo } = plant({ "Cargo.toml": manifest, "src/main.rs": "fn main() {}\n" });
+      expect(await cargoPathProblem(repo, ""), manifest).toMatch(/outside the repo/);
+    }
+  });
+
+  it("refuses a path or a manifest reached through a link that leaves the repository (9)", async () => {
+    const { repo } = plant({ "Cargo.toml": `${pkg("app")}\n[dependencies]\nlib = { path = "vendor/lib" }\n` });
+    symlinkSync(outside, join(repo, "vendor"));
+    expect(await cargoPathProblem(repo, "")).toMatch(/outside the repo|link/);
+    const linked = plant({});
+    symlinkSync(join(outside, "Cargo.toml"), join(linked.repo, "Cargo.toml"));
+    expect(await cargoPathProblem(linked.repo, "")).toMatch(/not a regular file|link|outside the repo/);
+  });
+
+  it("follows the manifests a manifest names, and refuses an escape there (10)", async () => {
+    const { repo } = plant({
+      "Cargo.toml": `${pkg("app")}\n[dependencies]\na = { path = "crates/a" }\n`,
+      "crates/a/Cargo.toml": `${pkg("a")}\n[dependencies]\nout = { path = "${outside}" }\n`,
+    });
+    expect(await cargoPathProblem(repo, "")).toMatch(/crates\/a\/Cargo\.toml.*outside the repo/);
+  });
+
+  it("refuses a project whose workspace search would reach a Cargo.toml above the repository (11)", async () => {
+    const { parent, repo } = plant({ "crates/a/Cargo.toml": pkg("a"), "crates/a/src/lib.rs": "" });
+    writeFileSync(join(parent, "Cargo.toml"), `[workspace]\nmembers = ["repo/crates/a", "${outside}"]\n`);
+    expect(await cargoPathProblem(repo, "crates/a")).toMatch(/above the repository/);
+    // A [workspace] inside the repository ends the search there.
+    writeFileSync(join(repo, "Cargo.toml"), '[workspace]\nmembers = ["crates/*"]\n');
+    expect(await cargoPathProblem(repo, "crates/a")).toBeNull();
+  });
+
+  it("refuses a target, build script or readme path outside the repository (12)", async () => {
+    for (const extra of [`\n[lib]\npath = "${outside}/lib.rs"\n`, `\n[[bin]]\nname = "x"\npath = "../../x.rs"\n`]) {
+      const { repo } = plant({ "Cargo.toml": `${pkg("app")}${extra}` });
+      expect(await cargoPathProblem(repo, ""), extra).toMatch(/outside the repo/);
+    }
+    const { repo } = plant({ "Cargo.toml": pkg("app", `build = "${outside}/build.rs"\nreadme = "../README.md"\n`) });
+    expect(await cargoPathProblem(repo, "")).toMatch(/outside the repo/);
+  });
+
+  it("accepts a workspace whose members, path dependencies and patches stay inside (13)", async () => {
+    const { repo } = plant({
+      "Cargo.toml": `[workspace]\nmembers = ["crates/*"]\n\n[workspace.dependencies]\nshared = { path = "crates/shared" }\n\n[patch.crates-io]\nserde = { path = "vendor/serde" }\n`,
+      "crates/app/Cargo.toml": `${pkg("app")}\n[dependencies]\nshared = { workspace = true }\nlocal = { path = "../local" }\n`,
+      "crates/app/src/main.rs": "fn main() {}\n",
+      "crates/local/Cargo.toml": pkg("local"),
+      "crates/shared/Cargo.toml": pkg("shared", 'readme = "README.md"\n'),
+      "vendor/serde/Cargo.toml": pkg("serde"),
+    });
+    expect(await cargoPathProblem(repo, "")).toBeNull();
+    expect(await cargoPathProblem(repo, "crates/app")).toBeNull();
   });
 });

@@ -245,6 +245,22 @@ describe("Kubernetes and Rust scanner subprocesses", () => {
     expect(toolchains()).toEqual(before);
   }, 300_000);
 
+  // A path dependency outside the repository: Cargo would read its manifest
+  // wherever it lies. The project is held back with the reason before Cargo
+  // starts, so the manifest outside, unreadable to all, is never opened.
+  it("cargo-deny holds back a project whose path dependency leaves the repository, and reads nothing there", async () => {
+    if (offline() || !primeCargo(RUST_PROJECT)) return;
+    const outside = mkdtempSync(join(tmpdir(), "oq-cargo-outside-"));
+    writeFileSync(join(outside, "Cargo.toml"), '[package]\nname = "outside"\nversion = "0.1.0"\n');
+    chmodSync(join(outside, "Cargo.toml"), 0o000);
+    const files = { ...RUST_PROJECT, "Cargo.toml": `${RUST_PROJECT["Cargo.toml"]}\n[dependencies.outside]\npath = ${JSON.stringify(outside)}\n` };
+    const result = await scan({ scanner: "cargo-deny", rule: "", files, anchor: "" });
+    const status = result.scan.scanners[0]!;
+    expect(status.status, status.reason ?? "").toBe("disabled");
+    expect(status.reason).toContain("not run on Cargo.lock: Cargo.toml: a path dependency outside the repo");
+    expect(status.reason).not.toMatch(/permission|denied/i);
+  }, 300_000);
+
   it("cargo-deny names crates missing from the Cargo cache and downloads none of them", async () => {
     if (offline() || !primeCargo(RUST_PROJECT)) return;
     await resolveFirst("cargo-deny");
