@@ -1,0 +1,267 @@
+// The conversation with the reviewer: the brief, then at most two
+// correction rounds, each answer read and checked by script. Also the two
+// things that keep secrets away from the reviewer: the snapshot's own
+// redaction, and the check on every changed range the tool sends itself.
+import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { OpenQodexError, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
+import type { Hunk, Report, TraceEntry } from "@openqodex/core";
+import type { ReviewerSession, Turn } from "./agents/driver.js";
+import { classify } from "./agents/trace.js";
+import { MAX_FILE_BYTES, snapshotFiles } from "./snapshot.js";
+
+const MAX_CORRECTIONS = 2;
+const HEARTBEAT_MS = 15_000;
+// An answer bigger than this is not read.
+const MAX_ANSWER_BYTES = 2 * 1024 * 1024;
+// Snapshot files bigger than this cannot be checked for secrets and are removed from it.
+const MAX_REDACT_BYTES = 64 * 1024 * 1024;
+
+// Replaces every copy of a secret the scanners found, in every file of the
+// snapshot, so the reviewer never reads one. The snapshot is the tool's own
+// copy; the developer's files are never touched.
+// Every file is checked, whatever the diff shows. Text gets "[redacted]" on
+// each line the secret held, its line breaks kept, so scanner locations and
+// citations still name the same lines; a file that is not UTF-8 text gets
+// each secret's bytes overwritten in place. A file too large to check is removed from the snapshot, so the
+// reviewer cannot read it. A file that still holds a secret afterwards, or
+// cannot be read or written, stops the run: nothing unredacted is shown.
+// `named`: how many snapshot paths hold a secret in a file or folder name.
+// Names are not rewritten (the paths must match the change); the run refuses
+// to start the reviewer instead, since a listing would show the secret.
+export function redactSnapshot(dir: string, secrets: string[]): { redacted: number; removed: string[]; named: number } {
+  // Each secret and each line of a multi-line one, as every redaction looks for them.
+  const usable = secretTexts(secrets).map((s) => Buffer.from(s, "utf8"));
+  const out = { redacted: 0, removed: [] as string[], named: 0 };
+  if (usable.length === 0) return out;
+  for (const path of snapshotFiles(dir)) {
+    if (usable.some((s) => Buffer.from(path, "utf8").includes(s))) out.named++;
+    const full = join(dir, path);
+    try {
+      if (lstatSync(full).size > MAX_REDACT_BYTES) {
+        rmSync(full, { force: true });
+        out.removed.push(path);
+        continue;
+      }
+      const buf = readFileSync(full);
+      if (!usable.some((s) => buf.includes(s))) continue;
+      const text = buf.toString("utf8");
+      let next: Buffer;
+      if (Buffer.from(text, "utf8").equals(buf) && !buf.includes(0)) {
+        next = Buffer.from(redactSecretsKeepingLines(text, secrets), "utf8");
+      } else {
+        next = Buffer.from(buf);
+        for (const s of usable) for (let at = next.indexOf(s); at !== -1; at = next.indexOf(s, at + 1)) next.fill(0x78, at, at + s.length);
+      }
+      writeFileSync(full, next);
+      if (usable.some((s) => readFileSync(full).includes(s))) throw new Error("a secret is still there");
+      out.redacted++;
+    } catch (error) {
+      throw new OpenQodexError(`could not redact secrets in the snapshot copy of ${path} (${(error as Error).message.split("\n")[0]}); the review stops so the reviewer never reads it`);
+    }
+  }
+  return out;
+}
+
+// The answer's JSON object: the whole text, a fenced block, or the outermost braces.
+export function parseAnswer(text: string): { value: unknown } | { error: string } {
+  if (Buffer.byteLength(text, "utf8") > MAX_ANSWER_BYTES) return { error: "the answer is over 2 MB" };
+  const fenced = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1];
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  for (const candidate of [text.trim(), fenced, start !== -1 && end > start ? text.slice(start, end + 1) : undefined]) {
+    if (candidate === undefined) continue;
+    try {
+      return { value: JSON.parse(candidate) as unknown };
+    } catch {
+      // try the next form
+    }
+  }
+  return { error: "the answer is not one JSON object; answer with the JSON object only" };
+}
+
+// The most lines and bytes a correction round carries of changed ranges the
+// reviewer was not given, context included; a range holding a line longer
+// than MAX_DELIVER_LINE_CHARS is never carried.
+export const DELIVER_LINES = 4000;
+const DELIVER_BYTES = 512 * 1024;
+const MAX_DELIVER_LINE_CHARS = 2000;
+const CONTEXT = 3;
+
+// The parts of `h` no earlier delivery covered.
+function gaps(h: Hunk, earlier: Hunk[]): [number, number][] {
+  const out: [number, number][] = [];
+  let at = h.start;
+  for (const d of earlier.filter((e) => e.path === h.path && !e.deletion).sort((x, y) => x.start - y.start)) {
+    if (d.end < at) continue;
+    if (d.start > h.end) break;
+    if (d.start > at) out.push([at, d.start - 1]);
+    at = Math.max(at, d.end + 1);
+  }
+  if (at <= h.end) out.push([at, h.end]);
+  return out;
+}
+
+// Changed ranges put in front of the reviewer by the tool itself, read from
+// the redacted snapshot only (never the developer's folder or git objects),
+// numbered as the snapshot holds them, with a few lines of context. Up to
+// DELIVER_LINES lines and DELIVER_BYTES bytes; a range split at the bound
+// continues next round. Never carried, so left unread: a deletion (its lines
+// exist only in git objects), a file the snapshot dropped, a binary file, a
+// range with a very long line. The text then goes through the brief's
+// redaction once more; if a found secret is still in it, nothing is sent and
+// `leak` is set, which makes the run incomplete.
+export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earlier?: Hunk[]; secrets: string[] }): { text: string; delivered: Hunk[]; left: Hunk[]; leak: boolean } {
+  let room = DELIVER_LINES;
+  let bytes = DELIVER_BYTES;
+  const out: string[] = [];
+  const delivered: Hunk[] = [];
+  const left: Hunk[] = [];
+  const files = new Map<string, string[] | null>();
+  const fileLines = (path: string): string[] | null => {
+    if (!files.has(path)) {
+      let lines: string[] | null = null;
+      try {
+        const full = join(args.snapshotDir, path);
+        const st = lstatSync(full);
+        if (st.isFile() && st.size <= MAX_FILE_BYTES) {
+          const buf = readFileSync(full);
+          if (!buf.includes(0) && Buffer.from(buf.toString("utf8"), "utf8").equals(buf)) lines = buf.toString("utf8").split("\n");
+        }
+      } catch {
+        lines = null;
+      }
+      files.set(path, lines);
+    }
+    return files.get(path) ?? null;
+  };
+  for (const h of args.unread) {
+    const lines = h.deletion ? null : fileLines(h.path);
+    if (lines === null || h.end < h.start) {
+      left.push(h);
+      continue;
+    }
+    for (const [first, last] of gaps(h, args.earlier ?? [])) {
+      let at = first;
+      while (at <= last && room > 2 * CONTEXT + 2) {
+        const n = Math.min(last - at + 1, room - 2 * CONTEXT - 1);
+        const from = Math.max(1, at - CONTEXT);
+        const to = Math.min(lines.length, at + n - 1 + CONTEXT);
+        const block = [`${h.path} lines ${at} to ${at + n - 1} (with context ${from} to ${to}):`];
+        for (let i = from; i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+        const size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
+        if (block.some((l) => l.length > MAX_DELIVER_LINE_CHARS) || size > bytes) break;
+        out.push(...block, "");
+        room -= block.length + 1;
+        bytes -= size;
+        delivered.push({ path: h.path, start: at, end: at + n - 1, deletion: false });
+        at += n;
+      }
+      if (at <= last) left.push({ ...h, start: at, end: last });
+    }
+  }
+  const text = redactSecrets(out.join("\n").trimEnd(), args.secrets);
+  const usable = secretTexts(args.secrets);
+  if (usable.some((x) => text.includes(x)) || text !== out.join("\n").trimEnd()) return { text: "", delivered: [], left: args.unread, leak: true };
+  return { text, delivered, left, leak: false };
+}
+
+// How much of one untraced call's input trace.json keeps.
+const MAX_DETAIL_CHARS = 2000;
+
+const renumber = (errors: string[]) => errors.map((e, i) => `${i + 1}. ${e.replace(/^\d+\.\s+/, "")}`);
+
+export type Conversation = {
+  rounds: number;
+  trace: TraceEntry[];
+  usage: Turn["usage"];
+  report: Report | null;
+  errors: string[];
+  required: number;
+  disposed: number;
+  failure: string | null;
+  submission: unknown;
+  // Changed ranges the tool put in front of the reviewer in a correction.
+  delivered: Hunk[];
+  startedAt: number;
+  endedAt: number;
+};
+
+// The brief, then at most two correction rounds. A
+// round goes back when the answer failed a check or when changed ranges are
+// still unread: the tool then puts those ranges in the message itself
+// (deliverRanges), so coverage never depends on the model choosing to open a
+// file. The message is never printed or saved. A read outside the snapshot
+// ends the conversation when the driver's trace is complete.
+export async function converse(args: {
+  session: ReviewerSession;
+  snapshotDir: string;
+  brief: string;
+  deadline: number;
+  // The driver's trace shows every tool call: a read outside the snapshot
+  // in it ends the conversation. Without that, the trace is diagnostic only.
+  traced: boolean;
+  check: (submission: unknown, trace: TraceEntry[], delivered: Hunk[]) => { report: Report | null; errors: string[]; unread: Hunk[]; required: number; disposed: number };
+  deliver: (unread: Hunk[], earlier: Hunk[]) => { text: string; delivered: Hunk[]; left: Hunk[]; leak: boolean };
+  say: (line: string) => void;
+  // The run's clock, epoch milliseconds; `deadline` is on it.
+  now: () => number;
+}): Promise<Conversation> {
+  const startedAt = args.now();
+  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], startedAt, endedAt: startedAt };
+  const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
+  heartbeat.unref();
+  try {
+    let text = args.brief;
+    for (;;) {
+      c.rounds++;
+      let timer: NodeJS.Timeout | undefined;
+      const late = new Promise<Turn>((done) => {
+        timer = setTimeout(() => done({ finalText: "", calls: [], usage: c.usage, sessionId: null, failure: "the reviewer timed out and was stopped" }), Math.max(0, args.deadline - args.now()));
+      });
+      let turn: Turn;
+      try {
+        turn = await Promise.race([args.session.send(text), late]);
+      } catch (error) {
+        turn = { finalText: "", calls: [], usage: c.usage, sessionId: null, failure: `the reviewer failed: ${(error as Error).message}` };
+      } finally {
+        clearTimeout(timer);
+      }
+      c.trace.push(...turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) })));
+      c.usage = turn.usage;
+      if (turn.failure !== null) {
+        c.failure = turn.failure;
+        break;
+      }
+      // An attempt outside the snapshot ends the review: it never completes.
+      if (args.traced && c.trace.some((t) => t.inside !== true)) break;
+      const parsed = parseAnswer(turn.finalText);
+      const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [] as Hunk[], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace, c.delivered);
+      if ("value" in parsed) c.submission = parsed.value;
+      c.report = result.report;
+      c.errors = result.errors;
+      c.required = result.required;
+      c.disposed = result.disposed;
+      const problems = renumber(result.errors);
+      if ((problems.length === 0 && result.unread.length === 0) || c.rounds > MAX_CORRECTIONS) break;
+      const given = args.deliver(result.unread, c.delivered);
+      if (given.leak) {
+        c.failure = "a secret the scanners found was still in the changed lines to send, so they were not sent";
+        break;
+      }
+      if (problems.length === 0 && given.delivered.length === 0) break;
+      c.delivered.push(...given.delivered);
+      args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
+      text = [
+        ...(problems.length > 0 ? ["Your answer failed these checks. Fix every one.", "", ...problems, ""] : []),
+        ...(given.text !== "" ? ["These changed lines were not in front of you yet. Check them now, as part of the change.", "", given.text, ""] : []),
+        ...(given.left.length > 0 ? [`${given.left.length} more changed ${given.left.length === 1 ? "range follows" : "ranges follow"} in the next round, if one is left.`, ""] : []),
+        "Then answer again with the whole JSON object and nothing else.",
+      ].join("\n");
+    }
+  } finally {
+    clearInterval(heartbeat);
+    c.endedAt = args.now();
+  }
+  return c;
+}

@@ -9,12 +9,13 @@
 // included), no submodule. It carries a marker file beside the tree that
 // names the repository, so a later review can tell an abandoned one of its
 // own from anything else.
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { OpenQodexError, quoteAlternate, readRepoFile, safeGit } from "@openqodex/core";
 import { checkoutsDir } from "@openqodex/review";
+import type { SnapshotMaker } from "@openqodex/review";
 
 const execFileAsync = promisify(execFile);
 
@@ -95,6 +96,13 @@ export async function addTargetCheckout(
 export async function removeCheckout(repoRoot: string, folder: string): Promise<void> {
   await gitOut(repoRoot, ["worktree", "remove", "--force", join(folder, "tree")]);
   rmSync(folder, { recursive: true, force: true });
+}
+
+// The same at once and synchronously, for a signal handler that exits right
+// after it: the folder goes, then git forgets the work tree.
+export function removeCheckoutNow(repoRoot: string, checkout: Checkout): void {
+  rmSync(checkout.folder, { recursive: true, force: true });
+  spawnSync("git", ["worktree", "prune"], { cwd: repoRoot, stdio: "ignore", timeout: 5_000 });
 }
 
 // The marker of a target checkout folder, or null when it is not one of
@@ -182,3 +190,15 @@ export function placeSettings(repoRoot: string, tree: string, rootConfig: boolea
     if (text !== null) writeFileSync(join(tree, rel), text, { flag: "wx" });
   }
 }
+
+// The review's snapshots, as the review core makes and removes them: a
+// detached work tree under <home>/checkouts/ (the working state, or a
+// target's head with the developer's settings files placed over the
+// commit's).
+export const laptopSnapshots: SnapshotMaker = {
+  make: addTargetCheckout,
+  placeSettings: (repoRoot, tree) => placeSettings(repoRoot, tree, false),
+  lfsPaths,
+  remove: (repoRoot, snapshot) => removeTargetCheckout(repoRoot, snapshot.tree),
+  removeNow: removeCheckoutNow,
+};
