@@ -12,8 +12,6 @@ import type { BuiltinScanner } from "@openqodex/core";
 import { createToolResolver, runScanners } from "@openqodex/scanners";
 import { cacheFolder, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
-afterAll(removeTempDirs);
-
 const scannerHome = process.env.OPENQODEX_E2E_HOME ?? cacheFolder("openqodex-e2e-home");
 process.env.OPENQODEX_HOME = scannerHome;
 process.env.HOME = tempDir("oq-adapter-user-");
@@ -73,6 +71,10 @@ afterAll(() => {
   process.stdout.write(`${ran} ran, ${skipped} skipped\n`);
   if (process.env.CI) expect(skipped, "a builtin scanner was skipped under CI").toBe(0);
 });
+// Vitest runs the last registered after-all hook first, and a hook that
+// throws stops the rest: registered here, the cleanup runs before the check
+// above, so a failed check still removes this file's temp folders.
+afterAll(removeTempDirs);
 describe("builtin scanner subprocesses", () => {
   for (const spec of cases) it(`${spec.scanner} reports ${spec.rule} on a changed line`, async () => {
     if (spec.network && process.env.OPENQODEX_E2E_OFFLINE === "1") {
