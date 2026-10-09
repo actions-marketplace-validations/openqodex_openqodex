@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
-import { createToolResolver, runScanners } from "@openqodex/scanners";
+import { runScanners } from "@openqodex/scanners";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
+import { installedOnly, resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
 import type { Case } from "./subprocess-support.js";
 
 // A pull request title pasted into a script: template injection.
@@ -70,7 +70,7 @@ async function scanAt(repoDir: string, scanner: BuiltinScanner, files: Record<st
     writeFileSync(join(repoDir, name), body);
   }
   const coverage = new Map(changed.map((p) => [p, new Set(readFileSync(join(repoDir, p), "utf8").split("\n").map((_, i) => i + 1))]));
-  return runScanners({ repoDir, changedPaths: changed, coverage, config: parseConfig("").config, resolveTool: createToolResolver({ allowInstall: true, installBudgetMs: null }), only: [scanner] });
+  return runScanners({ repoDir, changedPaths: changed, coverage, config: parseConfig("").config, resolveTool: installedOnly(), only: [scanner] });
 }
 
 let ran = 0;
@@ -219,6 +219,35 @@ describe("workflow and SQL scanner subprocesses", () => {
     expect(result.scan.scanners[0]).toMatchObject({ status: "ran", reason: null });
     const found = result.scan.candidates.filter((c) => c.source === "sqlfluff").map((c) => `${c.filePath}:${c.ruleId}`).sort();
     expect(found).toEqual(["mysql/active.sql:CV05", "pg/active.sql:CV05"]);
+  }, 300_000);
+
+  // SQLFluff also reads its own sections of files other tools share. A rule
+  // left out there is left out of the run, so a change to such a section is
+  // a settings-file candidate; the other folders still get the rule.
+  it("sqlfluff reads its sections of setup.cfg, tox.ini, pep8.ini and pyproject.toml, and raises a changed one", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "oq-adapter-sqlfluff-shared-"));
+    const ini = "[metadata]\nname = app\n\n[sqlfluff]\nexclude_rules = CV05\n";
+    const files = {
+      "a/setup.cfg": ini,
+      "a/active.sql": NULL_COMPARISON,
+      "b/tox.ini": ini,
+      "b/active.sql": NULL_COMPARISON,
+      "c/pep8.ini": ini,
+      "c/active.sql": NULL_COMPARISON,
+      "d/pyproject.toml": '[project]\nname = "app"\n\n[tool.sqlfluff.core]\nexclude_rules = "CV05"\n',
+      "d/active.sql": NULL_COMPARISON,
+      "e/active.sql": NULL_COMPARISON,
+    };
+    const result = await scanAt(repo, "sqlfluff", files, Object.keys(files));
+    expect(result.scan.scanners[0]).toMatchObject({ status: "ran", reason: null });
+    const found = result.scan.candidates.filter((c) => c.source === "sqlfluff").map((c) => `${c.filePath}:${c.ruleId}`).sort();
+    expect(found).toEqual([
+      "a/setup.cfg:settings-file",
+      "b/tox.ini:settings-file",
+      "c/pep8.ini:settings-file",
+      "d/pyproject.toml:settings-file",
+      "e/active.sql:CV05",
+    ]);
   }, 300_000);
 
   // A review runs it on every changed .sql file; a slow start would stall it.

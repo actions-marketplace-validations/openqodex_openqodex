@@ -44,7 +44,7 @@ import { sameProblemClass } from "./same-problem.js";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import { repoFacts, type RepoFacts } from "./detect.js";
 import { DISABLED_REASON, selectScanners, type ScannerChoice } from "./select.js";
-import type { SettingsFile } from "./adapters/index.js";
+import type { SettingsFile, SettingsTable } from "./adapters/index.js";
 import { readRepoFile, repoFileOrReason } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
 import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
@@ -223,8 +223,9 @@ function projectsOf(paths: string[], facts: RepoFacts): { root: string; framewor
   return [...seen].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, frameworks]) => ({ root, frameworks }));
 }
 
-// The line ranges (1-based, inclusive) of every `[tool.ruff...]` table.
-function ruffTables(text: string): [number, number][] {
+// The line ranges (1-based, inclusive) of every TOML table or INI section
+// whose header `table` names.
+function tableRanges(text: string, table: SettingsTable): [number, number][] {
   const lines = text.split(/\r?\n/);
   const out: [number, number][] = [];
   let start: number | null = null;
@@ -234,7 +235,7 @@ function ruffTables(text: string): [number, number][] {
     if (start !== null) out.push([start, i]);
     // TOML lets a key be quoted and spaced: [tool."ruff".lint], [ tool . ruff ].
     const name = (header[1] as string).replace(/["'\s]/g, "");
-    start = /^tool\.ruff(\.|$)/.test(name) ? i + 1 : null;
+    start = table.header.test(name) ? i + 1 : null;
   });
   if (start !== null) out.push([start, lines.length]);
   return out;
@@ -242,14 +243,15 @@ function ruffTables(text: string): [number, number][] {
 
 const SETTINGS_MAX_BYTES = 1024 * 1024;
 
-const mentionsRuff = (text: string): number => text.match(/ruff/gi)?.length ?? 0;
+const mentions = (text: string, table: SettingsTable): number => text.match(table.word)?.length ?? 0;
 
-// True when the change may touch ruff's settings in this pyproject.toml. It
-// does not parse TOML, so it errs towards yes: a changed line or a deletion
-// inside a ruff table, a changed line that names ruff in any form (a dotted
-// key under [tool], an inline table), a different count of the word between
-// the base and the head, or a file that cannot be read.
-async function touchesRuffTable(args: SettingsArgs, filePath: string): Promise<boolean> {
+// True when the change may touch the tool's settings in this shared file
+// (ruff or SQLFluff in pyproject.toml, SQLFluff in setup.cfg). It does not
+// parse TOML or INI, so it errs towards yes: a changed line or a deletion
+// inside the tool's section, a changed line that names the tool in any form
+// (a dotted key under [tool], an inline table), a different count of the
+// word between the base and the head, or a file that cannot be read.
+async function touchesTable(args: SettingsArgs, filePath: string, table: SettingsTable): Promise<boolean> {
   let head: string | null;
   try {
     head = await readRepoFile(args.repoDir, filePath, SETTINGS_MAX_BYTES);
@@ -260,18 +262,18 @@ async function touchesRuffTable(args: SettingsArgs, filePath: string): Promise<b
   if (head === null) {
     if (args.baseText === undefined) return true;
     const gone = await args.baseText(filePath).catch(() => undefined);
-    return gone === undefined || mentionsRuff(gone ?? "") > 0;
+    return gone === undefined || mentions(gone ?? "", table) > 0;
   }
-  const tables = ruffTables(head);
+  const tables = tableRanges(head, table);
   const inside = (n: number) => tables.some(([a, b]) => a <= n && n <= b);
   const lines = head.split(/\r?\n/);
   const changed = [...(args.coverage.get(filePath) ?? [])];
-  if (changed.some((n) => inside(n) || mentionsRuff(lines[n - 1] ?? "") > 0)) return true;
+  if (changed.some((n) => inside(n) || mentions(lines[n - 1] ?? "", table) > 0)) return true;
   if ((args.deletionPoints?.get(filePath) ?? []).some((p) => p.anchors.some(inside))) return true;
   if (args.baseText === undefined) return false;
   const base = await args.baseText(filePath).catch(() => undefined);
   if (base === undefined) return true;
-  return mentionsRuff(base ?? "") !== mentionsRuff(head);
+  return mentions(base ?? "", table) !== mentions(head, table);
 }
 
 type SettingsArgs = {
@@ -296,7 +298,7 @@ async function settingsFindings(args: SettingsArgs): Promise<StaticFinding[]> {
       const name = filePath.slice(filePath.lastIndexOf("/") + 1);
       const entry = files.find((f) => (f.anyFolder ? f.path === name : f.path === filePath));
       if (entry === undefined) continue;
-      if (entry.ruffTable && !(await touchesRuffTable(args, filePath))) continue;
+      if (entry.table && !(await touchesTable(args, filePath, entry.table))) continue;
       // A loop, not Math.min(...lines): a file can have more changed lines
       // than a call can take as arguments.
       let line = Infinity;

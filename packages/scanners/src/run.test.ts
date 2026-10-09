@@ -193,7 +193,7 @@ describe("runScanners", () => {
     });
     // semgrep and gitleaks look at every change; shellcheck at .sh files.
     expect(asked.sort()).toEqual(["gitleaks", "semgrep", "shellcheck"]);
-    expect(scan.scanners).toHaveLength(13);
+    expect(scan.scanners).toHaveLength(16);
     expect(scan.scanners.find((s) => s.scanner === "shellcheck")).toMatchObject({
       status: "not_installed",
       reason: "shellcheck is not installed",
@@ -435,7 +435,7 @@ describe("runScanners", () => {
       onProgress: (line) => progress.push(line),
     });
     expect(progress).toHaveLength(1);
-    expect(progress[0]).toMatch(/^Scanners: 1 ran, 10 had nothing to check, 2 not installed, \d+ candidates? to check$/);
+    expect(progress[0]).toMatch(/^Scanners: 1 ran, 11 had nothing to check, 4 not installed, \d+ candidates? to check$/);
     expect(progress.join("\n")).not.toContain("raw finding");
   });
 });
@@ -875,5 +875,41 @@ describe("toRunDirRelative", () => {
     fs.symlinkSync(real, link);
     const printed = path.join(fs.realpathSync(real), "app", "main.py");
     expect(toRunDirRelative([ruffFinding(printed)], link)[0].filePath).toBe("app/main.py");
+  });
+});
+
+// SQLFluff also reads its settings from a [sqlfluff] section of setup.cfg,
+// tox.ini and pep8.ini, and from [tool.sqlfluff] in pyproject.toml, from each
+// SQL file's folder upwards. A change there can hide its findings; a change
+// to another section of the same file cannot.
+describe("SQLFluff settings in shared config files", () => {
+  const scanOf = async (files: Record<string, string>, changed: string, at: number) => {
+    const dir = repo({ "db/report.sql": "SELECT 1;\n", ...files });
+    const { scan } = await runScanners({
+      repoDir: dir,
+      changedPaths: ["db/report.sql", changed],
+      coverage: new Map([
+        ["db/report.sql", lines(1)],
+        [changed, lines(at)],
+      ]),
+      config: config(),
+      resolveTool: notInstalled(),
+    });
+    return scan.candidates.filter((c) => c.ruleId === "settings-file").map((c) => `${c.token} ${c.filePath}:${c.lineStart}`);
+  };
+
+  it("raises the note for a change inside a [sqlfluff] section of setup.cfg, tox.ini or pep8.ini", async () => {
+    for (const name of ["setup.cfg", "tox.ini", "db/pep8.ini"]) {
+      expect(await scanOf({ [name]: "[metadata]\nname = app\n\n[sqlfluff:rules]\nexclude_rules = CV05\n" }, name, 5)).toEqual([`sqlfluff:settings-file ${name}:5`]);
+    }
+  });
+
+  it("raises the note for a change inside [tool.sqlfluff] of pyproject.toml", async () => {
+    expect(await scanOf({ "pyproject.toml": "[project]\nname = \"app\"\n\n[tool.sqlfluff.core]\nexclude_rules = \"CV05\"\n" }, "pyproject.toml", 5)).toEqual(["sqlfluff:settings-file pyproject.toml:5"]);
+  });
+
+  it("raises nothing for a change outside those sections", async () => {
+    expect(await scanOf({ "setup.cfg": "[metadata]\nname = app\n\n[sqlfluff]\ndialect = postgres\n" }, "setup.cfg", 2)).toEqual([]);
+    expect(await scanOf({ "pyproject.toml": "[project]\nname = \"app\"\n\n[tool.sqlfluff.core]\ndialect = \"postgres\"\n" }, "pyproject.toml", 2)).toEqual([]);
   });
 });
