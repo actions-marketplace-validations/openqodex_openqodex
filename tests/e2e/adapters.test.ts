@@ -12,6 +12,6 @@ import "../../packages/scanners/test/settings-shared.subprocess.test.js";
 // crate or settings file outside it.
 import "../../packages/scanners/test/inputs-boundary.subprocess.test.js";
 // Two server runs at once, each in its own scratch root, reading one
-// install root; and strict preinstall of every scanner with its check case.
+// install root; the strict check and the server's resolver on a
+// preinstalled root.
 import "../../packages/scanners/test/server-roots.subprocess.test.js";
-import "../../packages/scanners/test/preinstall.subprocess.test.js";

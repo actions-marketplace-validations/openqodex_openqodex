@@ -1,6 +1,7 @@
 // Two server runs of the scanners at once, through the real binaries: each
 // with its own scratch root, both reading one install root with installs
-// off. Run by the end-to-end config (tests/e2e/adapters.test.ts), after the
+// off; and the strict check and the server's resolver on a preinstalled
+// root. Run by the end-to-end config (tests/e2e/adapters.test.ts), after the
 // end-to-end setup filled the install root with `doctor --install`.
 //
 // Ways it could fail, written before the code:
@@ -19,16 +20,22 @@
 // the OpenQodex home and the repository are read-only while the runs go, so
 // a scanner that writes there fails its run. The install root stays
 // writable, and is compared entry by entry before and after.
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+// 5. On a preinstalled root, a scanner that cannot be ready (a tool that
+//    does not run, a custom scanner, a name that is no scanner) passes the
+//    strict check silently or takes other than one line; after a tool is
+//    removed, the server's resolver installs it again, opens a connection
+//    or reads it from elsewhere; or a resolver with installs on takes a
+//    root other than the OpenQodex home's tools folder.
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
-import { ADAPTERS, CHECK_CASES, IN_PROCESS, checkCase, createToolResolver, runScanners } from "@openqodex/scanners";
+import { ADAPTERS, CHECK_CASES, IN_PROCESS, checkCase, createToolResolver, loadToolchain, preinstallScanners, runScanners } from "@openqodex/scanners";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 // Points OPENQODEX_HOME at the end-to-end setup's home, whose tools folder
 // is the install root here.
-import "./subprocess-support.js";
+import { withLoggingProxy } from "./subprocess-support.js";
 
 afterAll(removeTempDirs);
 
@@ -144,4 +151,75 @@ describe("server runs of the scanners", () => {
     const ids = new Set([...a!.values()].map((v) => v.id).filter((id) => id !== null));
     expect([...b!.values()].filter((v) => v.id !== null && ids.has(v.id))).toEqual([]);
   }, 600_000);
+
+  it("on a preinstalled root, a scanner that cannot be ready fails the strict check with one line, and the server's resolver never installs a removed tool (failure 5)", async () => {
+    // A root of its own holding copies of two tools the end-to-end setup
+    // installed, so the shared root is never changed.
+    const table = loadToolchain();
+    const root = join(tempDir("oq-server-preinstalled-"), "tools");
+    for (const tool of ["actionlint", "hadolint"]) {
+      mkdirSync(join(root, tool), { recursive: true });
+      cpSync(join(installRoot, tool, table.tools[tool]!.version), join(root, tool, table.tools[tool]!.version), { recursive: true });
+    }
+
+    // hadolint's binary replaced by a program that reports nothing; the
+    // folder and its marker still say installed.
+    const hadolint = join(root, "hadolint", table.tools.hadolint!.version, "bin", "hadolint");
+    rmSync(hadolint);
+    writeFileSync(hadolint, "#!/bin/sh\nexit 0\n");
+    chmodSync(hadolint, 0o755);
+    const strict = await countFetches(() => preinstallScanners({ installRoot: root, require: ["hadolint", "custom:mine", "no-such-scanner" as BuiltinScanner] }));
+    expect(strict.result.ok).toBe(false);
+    expect(strict.result.missing).toHaveLength(3);
+    expect(strict.result.missing[0]).toMatch(/^hadolint: its check case did not report DL3007 on Dockerfile \(/);
+    expect(strict.result.missing[1]).toMatch(/^custom:mine: /);
+    expect(strict.result.missing[2]).toBe("no-such-scanner: not a built-in scanner");
+    expect(strict.fetches).toBe(0);
+
+    // actionlint removed: the resolver with installs off says so, and a
+    // server run of the scanners reports it, installing nothing.
+    rmSync(join(root, "actionlint"), { recursive: true });
+    const before = shape(root);
+    const resolve = createToolResolver({ allowInstall: false, installRoot: root });
+    const { result: proxied, hosts } = await withLoggingProxy(() => countFetches(() => resolve("actionlint")));
+    expect(proxied.result).toEqual({ ok: false, status: "not_installed", reason: "not installed (installs are off)" });
+    expect(proxied.fetches).toBe(0);
+    expect(hosts).toEqual([]);
+    const repo = tempDir("oq-server-preinstalled-repo-");
+    mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
+    writeFileSync(join(repo, ".github", "workflows", "ci.yml"), "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n");
+    const scan = await countFetches(() =>
+      runScanners({
+        repoDir: repo,
+        changedPaths: [".github/workflows/ci.yml"],
+        coverage: new Map([[".github/workflows/ci.yml", new Set([1, 2, 3, 4, 5, 6])]]),
+        config: parseConfig("").config,
+        resolveTool: createToolResolver({ allowInstall: false, installRoot: root }),
+        only: ["actionlint"],
+        scratchRoot: join(tempDir("oq-server-preinstalled-scratch-"), "run"),
+      }),
+    );
+    expect(scan.result.scan.scanners).toEqual([expect.objectContaining({ scanner: "actionlint", status: "not_installed", reason: "not installed (installs are off)" })]);
+    expect(scan.fetches).toBe(0);
+    expect(shape(root)).toEqual(before);
+
+    // Installs on demand never go into a root other than the home's tools folder.
+    expect(() => createToolResolver({ allowInstall: true, installRoot: root })).toThrow(/preinstallScanners/);
+  }, 300_000);
 });
+
+// Calls to the global fetch, which the installer downloads with, counted
+// and passed through.
+async function countFetches<T>(fn: () => Promise<T>): Promise<{ result: T; fetches: number }> {
+  let fetches = 0;
+  const real = globalThis.fetch;
+  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+    fetches += 1;
+    return real(...args);
+  }) as typeof fetch;
+  try {
+    return { result: await fn(), fetches };
+  } finally {
+    globalThis.fetch = real;
+  }
+}
