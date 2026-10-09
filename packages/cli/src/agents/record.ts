@@ -34,11 +34,26 @@ export type InstallRecord = {
   // Claude Code permission rules we added to a settings file's
   // permissions.allow; a rule that was there before is not listed.
   allowRules: { path: string; rule: string }[];
+  // The code graph's MCP server registrations init added (src/agents/mcp.ts).
+  mcp: McpRecord[];
+  // Where the developer said --no-mcp: `repo` null for user scope (this
+  // machine), else the repository of a project-scope init. --mcp, or an
+  // uninstall there, takes the entry out; no entry means the default, on.
+  mcpOff: { repo: string | null }[];
   // The agentContract (src/contract.ts) of the init that last wrote files;
   // absent in a record from before contracts. A version that reads it keeps
   // it, and so does an older one, since every field is kept on load.
   agentContract?: number;
 };
+
+// One MCP server registration. In a JSON file (`json`): the entry under
+// mcpServers.openqodex exactly as written, and whether init created the file
+// and the mcpServers object. In Codex's config.toml (`toml`): the marked
+// block exactly as appended, whether init created the file, and whether it
+// added the newline the file lacked before the block.
+export type McpRecord =
+  | { kind: "json"; path: string; entry: unknown; createdFile: boolean; createdKey: boolean; usesLauncher: boolean }
+  | { kind: "toml"; path: string; block: string; createdFile: boolean; newline: boolean; usesLauncher: boolean };
 
 export function emptyRecord(): InstallRecord {
   return {
@@ -54,6 +69,8 @@ export function emptyRecord(): InstallRecord {
     pointers: [],
     teamChoices: [],
     allowRules: [],
+    mcp: [],
+    mcpOff: [],
   };
 }
 
@@ -85,7 +102,9 @@ export function isEmpty(record: InstallRecord): boolean {
       record.migrations.length +
       record.pointers.length +
       record.teamChoices.length +
-      record.allowRules.length ===
+      record.allowRules.length +
+      record.mcp.length +
+      record.mcpOff.length ===
     0
   );
 }

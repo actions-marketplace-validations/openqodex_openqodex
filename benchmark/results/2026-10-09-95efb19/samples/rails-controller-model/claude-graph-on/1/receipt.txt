@@ -1,0 +1,10 @@
+Passed with warnings: 5 findings (3 critical, 1 major, 1 minor)
+Change 4dd55d237fe9 against HEAD, 3 files, +25 -3
+Summary: Adds email search to the users index, a self-service profile update, a destroy action, and a welcome email callback on User.
+1. Critical security: SQL injection in email search (app/controllers/users_controller.rb:6)
+2. Critical security: Destroy skips the admin check (app/controllers/users_controller.rb:2)
+3. Critical security: Profile update permits every attribute (app/controllers/users_controller.rb:16)
+4. Major bug: Welcome email sent on every save (app/models/user.rb:4)
+5. Minor maintainability: New actions have no tests (app/controllers/users_controller.rb:15-23)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

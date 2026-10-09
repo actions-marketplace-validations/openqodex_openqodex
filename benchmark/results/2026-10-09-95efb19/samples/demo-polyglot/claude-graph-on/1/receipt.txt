@@ -1,0 +1,15 @@
+Passed with warnings: 10 findings (3 critical, 4 major, 3 minor)
+Change 10985528b336 against HEAD, 8 files, +38 -14
+Summary: Adds a /search endpoint, a payment config module, a PR-title CI step, and reworks the Dockerfile, deploy script and lodash pin.
+1. Critical security: SQL injection in search query (app/search.py:14)
+2. Critical security: Pull request title injected into shell step (.github/workflows/ci.yml:15)
+3. Critical security: Stripe key committed in source (app/config.py:2)
+4. Major bug: Pagination skips the first page (app/server.py:23)
+5. Major security: lodash downgraded to a version with known vulnerabilities (package-lock.json:11)
+6. Major security: Container now runs as root (Dockerfile:10)
+7. Major bug: apt-get install without -y aborts the build (Dockerfile:3)
+8. Minor maintainability: Base image unpinned (Dockerfile:1)
+9. Minor bug: Unquoted path in rm -rf (scripts/deploy.sh:7)
+10. Minor maintainability: Changed pagination and new search have no tests (app/server.py:23)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md

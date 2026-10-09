@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "change_id": "4dd55d237fe9",
+  "summary": "Adds an email search filter to the users index, a self-service profile update, and a destroy action. It also adds a welcome email sent after each User save.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "SQL injection in email search",
+      "problem": "The index action interpolates params[:q] directly into the where SQL string. Any authenticated caller controls the query text.",
+      "consequence": "An authenticated user can read any column of any table, including api_token values. That user can then impersonate admins.",
+      "fix": "Pass params[:q] as a bound parameter and escape LIKE wildcards with sanitize_sql_like.",
+      "suggested_change": "    users = users.where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\") if params[:q].present?",
+      "source": "semgrep:ruby.rails.security.injection.tainted-sql-string.tainted-sql-string",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 2,
+      "line_end": 2,
+      "title": "Destroy action exempted from admin check",
+      "problem": "The change adds destroy to the except list of require_admin. The destroy action then deletes any user by id without an ownership check.",
+      "consequence": "Any authenticated user can delete every account, including admin accounts.",
+      "fix": "Remove destroy from the except list so only admins can delete users.",
+      "suggested_change": "  before_action :require_admin, except: [:index, :show, :profile]",
+      "source": "semgrep:ruby.rails.security.brakeman.check-unscoped-find.check-unscoped-find",
+      "candidate": "c2"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 16,
+      "line_end": 16,
+      "title": "Mass assignment in profile update",
+      "problem": "The profile action permits every user attribute from the request without a filter list. A caller can set admin or api_token on their own record.",
+      "consequence": "Any authenticated user can make themselves an admin. That user then gains every admin-only action.",
+      "fix": "Permit only the editable profile fields, such as email.",
+      "suggested_change": "    @current_user.update!(params.require(:user).permit(:email))",
+      "source": null
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 0.85,
+      "file_path": "app/models/user.rb",
+      "line_number": 4,
+      "line_end": 4,
+      "title": "Welcome email sent on every save",
+      "problem": "The after_save callback runs on every create and every update. Each profile update sends another welcome email.",
+      "consequence": "Users receive repeated welcome emails whenever their record changes.",
+      "fix": "Use after_create_commit so the email goes out once, after the record is committed.",
+      "suggested_change": "  after_create_commit :send_welcome_email",
+      "source": null
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.75,
+      "file_path": "app/controllers/users_controller.rb",
+      "line_number": 15,
+      "line_end": 23,
+      "title": "New controller behaviour has no covering test",
+      "problem": "The change adds search, profile and destroy behaviour but no test. The repository contains no test files covering these actions.",
+      "consequence": "Regressions in authorization and filtering can ship unnoticed.",
+      "fix": "Add request tests for search, profile updates and destroy authorization.",
+      "suggested_change": null,
+      "source": null
+    }
+  ],
+  "dropped": []
+}

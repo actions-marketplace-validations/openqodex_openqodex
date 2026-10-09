@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "change_id": "eab11e18f84221226f4ce5843d6ea575229c250001f8772e88b45876b1772879",
+  "config_hash": "bb5a14e29e83019aee75407355284dc4e41382c99ceb8724b852c108e08210d3",
+  "created_at": "2026-10-09T04:58:21.121Z",
+  "lenses": [
+    {
+      "name": "async-floating-promise",
+      "confidenceFloor": 0.7
+    },
+    {
+      "name": "path-traversal-in-fs-access",
+      "confidenceFloor": 0.7
+    }
+  ],
+  "instructions_hash": null,
+  "runtime_version": "0.10.0"
+}

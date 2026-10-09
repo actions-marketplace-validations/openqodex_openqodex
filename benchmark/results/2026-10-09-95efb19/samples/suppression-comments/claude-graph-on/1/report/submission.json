@@ -1,0 +1,78 @@
+{
+  "version": 2,
+  "change_id": "0d314adcfe16",
+  "summary": "Adds a thumbnail helper that shells out to ImageMagick convert, a /calc Express route that evaluates a query expression, and a docs URL constant.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "tools/thumbs.py",
+      "line_number": 8,
+      "line_end": 9,
+      "title": "Shell command built from the uploaded file name",
+      "problem": "make_thumbnail interpolates upload_name into a shell string and runs it with shell=True. The docstring says the name comes from the upload form, so the user controls it.",
+      "consequence": "An uploader can name a file with a semicolon or backticks and run any command on the server. A name with ../ also writes outside the thumbs directory.",
+      "fix": "Validate upload_name as a bare file name, then call subprocess.run with an argument list and no shell.",
+      "suggested_change": "subprocess.run([\"convert\", f\"{UPLOAD_DIR}/{upload_name}\", \"-resize\", \"128x128\", f\"{THUMB_DIR}/{upload_name}\"], check=True)",
+      "source": "semgrep:python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+      "candidate": "c1"
+    },
+    {
+      "severity": "critical",
+      "category": "security",
+      "confidence": 0.95,
+      "file_path": "web/server.js",
+      "line_number": 12,
+      "line_end": 12,
+      "title": "eval over the expr query parameter",
+      "problem": "The /calc handler passes req.query.expr straight to eval. The added suppression comment hides this from the scanner rather than fixing it.",
+      "consequence": "Anyone who can reach /calc runs arbitrary JavaScript in the server process, including file and network access.",
+      "fix": "Parse the expression with a restricted arithmetic evaluator such as expr-eval. Otherwise reject anything but digits and operators and compute it without eval.",
+      "suggested_change": null,
+      "source": "semgrep:openqodex.suppression-added",
+      "candidate": "c5"
+    },
+    {
+      "severity": "minor",
+      "category": "maintainability",
+      "confidence": 0.8,
+      "file_path": "tools/thumbs.py",
+      "line_number": 6,
+      "line_end": 6,
+      "title": "New behaviour has no covering test",
+      "problem": "This change adds make_thumbnail and the /calc route but no test file. Nothing exercises either new code path.",
+      "consequence": "Regressions in the thumbnail command or the calc response shape will reach users unnoticed.",
+      "fix": "Add a test that calls make_thumbnail with a mocked subprocess.run. Add a test that requests /calc and checks the value key.",
+      "suggested_change": null,
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "dropped": [
+    {
+      "candidate": "c2",
+      "reason": "The noqa covers only line length on a URL constant that cannot be wrapped, so it hides no real problem.",
+      "file_path": "tools/settings.py",
+      "line_number": 4
+    },
+    {
+      "candidate": "c3",
+      "reason": "The nosec hides the same shell injection already raised under c1, and one finding covers that problem.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 9
+    },
+    {
+      "candidate": "c4",
+      "reason": "The eslint-disable covers the same eval on user input already raised under c5, and one finding covers that problem.",
+      "file_path": "web/server.js",
+      "line_number": 11
+    },
+    {
+      "candidate": "c6",
+      "reason": "Importing subprocess is not itself a problem; the dangerous call on line 9 is raised under c1.",
+      "file_path": "tools/thumbs.py",
+      "line_number": 1
+    }
+  ]
+}

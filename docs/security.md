@@ -7,6 +7,7 @@ This page says what OpenQodex runs, what it sends where, and what it writes. Rep
 - The `openqodex` CLI, on your Node.
 - The built-in scanners that fit the change, from `~/.openqodex/tools/`. Each is pinned to one version. A built-in scanner is never taken from your `PATH`.
 - Custom scanners from `.openqodex/config.yaml` that you approved with `openqodex trust`.
+- `openqodex mcp`, the code graph's tool server, when an agent you registered it with starts it (see "The code graph's MCP server" below).
 - git, from your `PATH`.
 
 OpenQodex starts every program with an argument list, never through a shell. Scanners get a small set of environment variables: `PATH`, `HOME`, `TMPDIR`, `LANG`, the `LC_` variables, the proxy variables, and what the scanner itself needs. Your other variables, such as API keys, are not passed on.
@@ -27,7 +28,7 @@ npx openqodex trust
 
 The stored sha256 is checked against the project's checksum file when the project publishes one. Otherwise it is the hash of your first download. `custom-scanners` explains the difference.
 
-Agents that follow the OpenQodex skill are told never to run `openqodex trust` without asking you. In user scope, `init` adds rules so Claude Code runs exactly `review` and `review --all` (each also with ` --offline`), `guide` and `guide <topic>` through the launcher without asking. It removes the rules for the older two-step lines (`review --agent`, `review --finalize`) that an earlier `init` added. A review of a branch or a pull request names its target, so Claude Code asks before each one. An `ask` or `deny` rule in your own or your organisation's managed Claude Code settings still wins over these. Any other flag, any other command (`scan`, `doctor`, `trust`, `update`, `init`, `report`) and `init --project` grant nothing.
+Agents that follow the OpenQodex skill are told never to run `openqodex trust` without asking you. In user scope, `init` adds rules so Claude Code runs exactly `review` and `review --all` (each also with ` --offline`), `guide` and `guide <topic>` through the launcher without asking, and `findings` with any numbers and `graph` with any arguments (`graph` reads the repository and writes only its `.openqodex/graph/` folder and the local refs `refs/openqodex/graph/<tree>`). No rule covers the tools of the code graph's MCP server: a rule names a server only by its name, and a repository's `.mcp.json` or a local-scope entry can give that name to another server, so Claude Code asks before the server's tools run. `init` removes the rules for the older two-step lines (`review --agent`, `review --finalize`) that an earlier `init` added. A review of a branch or a pull request names its target, so Claude Code asks before each one. An `ask` or `deny` rule in your own or your organisation's managed Claude Code settings still wins over these. Any other flag, any other command (`scan`, `doctor`, `trust`, `update`, `init`, `report`) and `init --project` grant nothing.
 
 ## What is sent where
 
@@ -110,6 +111,14 @@ There is no alarm for Codex. Its event stream does not show every command it run
 Codex runs with `--ephemeral`: after real runs with codex-cli 0.160.0, no session file was written for the snapshot folder. Codex's own logs follow its own settings.
 
 The run folder of a review holds the brief, the scan, the reviewer's answer and the list of its tool calls: paths and line ranges for Claude Code, and the command lines Codex showed for Codex, never their output. Each file is created readable by you only, and secrets are redacted in all of them.
+
+## The code graph's MCP server
+
+`openqodex mcp` serves the code graph to the agent that starts it, over that process's standard input and output only. It opens no network port and accepts no other connection: no other program, local or remote, can ask it anything.
+
+It reads the graph of the repository it was started in, and nothing else: the files of that repository's work tree that git lists (tracked and untracked, never ignored ones), which the graph is built from, for a comparison with the base the base version of each changed file from the repository's git objects, the repository's config, its `.openqodex/graph/` folder, and the graph's record for that repository in `~/.openqodex/graph/`. A question that names another repository, a path outside the repository (absolute, or with a `..` part) or a build id that is not one is refused before anything is read for it. No tool returns the contents of a file or searches text, and nothing from the repository is run. It writes only what `openqodex graph` writes: builds and facts in `.openqodex/graph/`, its lease file there, and the local ref `refs/openqodex/graph/<tree>` of each kept capture.
+
+Its answers hold names, paths, line numbers and notes about your code, never its source lines. They go to the agent that asked, which sends them to its model with the rest of what it reads, as it does with your files.
 
 ## Secrets
 

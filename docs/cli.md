@@ -1,6 +1,6 @@
 # Commands
 
-Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the four commands below: `init`, `review`, `update` and `trust`. The commands that hooks, the skill and the Action call (`scan`, `doctor`, `hook`, `guide`, `findings`, `demo`, `report`, `config`) still work; `plumbing` describes them.
+Run every command with `npx openqodex <command>`, or `openqodex <command>` when the package is installed. `openqodex --help` lists the five commands below: `init`, `review`, `update`, `trust` and `graph`. The commands that hooks, the skill, the Action and the agents call (`scan`, `doctor`, `hook`, `guide`, `findings`, `demo`, `report`, `config`, `mcp`) still work; `plumbing` describes them.
 
 ## Exit codes
 
@@ -26,7 +26,7 @@ A repository with no commits checks every file with `scan`; `review` needs a fir
 
 ## Shared flags
 
-`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `init`, `hook` and `update` accept none of them.
+`scan`, `review`, `doctor`, `trust` and `guide` accept these flags. `demo` accepts only `--no-color`, `--quiet`, `--verbose`, `--no-install` and `--offline`. `graph` accepts only `--cwd`, `--config` and `--quiet`. `init`, `hook`, `update` and `mcp` accept none of them.
 
 - `--cwd <dir>`: find the repository from `<dir>`. A relative `--output` path still resolves from the folder you ran the command in.
 - `--config <path>`: read this config file instead of the repo's `.openqodex/config.yaml`.
@@ -131,7 +131,7 @@ The brief includes `.openqodex/custom-instructions.md` when the repo has one; a 
 ## init
 
 ```
-openqodex init [--agent <name>]... [--project] [--hook <pre-push|none>] [--no-repo] [--no-review] [--yes] [--uninstall] [--dry-run]
+openqodex init [--agent <name>]... [--project] [--hook <pre-push|none>] [--no-repo] [--mcp | --no-mcp] [--no-review] [--yes] [--uninstall] [--dry-run]
 ```
 
 Installs OpenQodex into your coding agents, then reviews. After the install, it checks every reviewer at once (is Claude Code or Codex installed and logged in) and prints the one a review would start, or each one's reason and fix and the `review --agent` command for the agent you are in. Then, inside a repository and when a reviewer can start: when there is a change, it runs `review` and prints its receipt; when there is none, it asks what to review (the whole repository, a pull request, a branch, or not now). With `--yes` or without a terminal it prints the three commands instead of asking. It then prints one line, `First review: finished`, `incomplete`, `skipped` (with the reason) or `unavailable`. This review waits up to two minutes for a scanner its change needs that is still downloading (`init` starts those downloads just before), names any still downloading after that, and never changes the exit code of `init`, which is about the install.
@@ -140,7 +140,8 @@ Installs OpenQodex into your coding agents, then reviews. After the install, it 
 - `--project`: write the files into the repository for a team to commit. The default writes them in your home folder.
 - `--hook <pre-push|none>`: the git pre-push hook is in the plan by default; `--hook none` leaves it out and `--hook pre-push` puts it back. The choice is recorded per repository, and a later `init` without the flag keeps it.
 - `--no-repo`: leave the team review section out of the repository's `CLAUDE.md` and `AGENTS.md`. Without it, `init` without `--project` puts the section in the plan, unless this repository chose `--no-repo` before; the choice is recorded per repository. A file the repository's git ignore rules hide is left alone, with one line saying why, since it could not be committed.
-- `--yes`, `-y`: write the plan without asking. It takes the defaults only for what this repository never answered: a recorded `--no-repo` or `--hook none` stays.
+- `--no-mcp`: leave the code graph's MCP server out of the plan for every agent, and remove the registrations an earlier `init` recorded. The choice is recorded, for this machine in user scope and for the repository in project scope, and a later `init` without the flag keeps it. `--mcp` puts the server back in the plan. Without either, the plan holds it. `agents` lists each agent's file.
+- `--yes`, `-y`: write the plan without asking. It takes the defaults only for what was never answered: a recorded `--no-repo`, `--hook none` or `--no-mcp` stays.
 
 `init` prints the plan, every file under "For you, on this machine" or "For the team, in this repo", and asks one question: "Write these files?". After writing, it lists what it wrote for you, with the command that undoes it, and what it wrote for the team, and names `init --project`, which puts the agent files inside the repository instead; the scanners, the record of what `init` wrote and the launcher a git hook calls stay in `~/.openqodex` on your machine. Its last line is the command to run next. Each command it prints starts with the launcher's full path (in project scope, the pinned `npx -y openqodex@<version>`), because an npx install puts no `openqodex` on your `PATH`; `init` never edits a shell profile. Without a terminal it does not ask: inside Claude Code, Codex or Cursor (`CLAUDECODE`, `CODEX_THREAD_ID` or `CURSOR_AGENT` is set) it writes the plan; anywhere else it prints the plan and the flags that change it, writes nothing and exits 2 unless `--yes` is given. When there is nothing to write, such a run exits 0 but records no choice and runs no review.
 - `--no-review`: end after the install, with no review and no question.
@@ -182,6 +183,14 @@ The daily check installs only a release that keeps the agent contract and the co
 Each release is checked before anything of it runs: its sha512 must match the registry's, and its npm provenance must be signed by this repository's release workflow on `main` (see `security`). A release that fails is skipped, recorded, and not downloaded again for 7 days. An update writes no agent file and never writes inside a repository. The user-scope skill and rules ask the launcher for the procedure with `guide skill`, so that part follows the active version; the files themselves, and the Claude Code permission rules, stay as `init` wrote them until `init` runs again. A foreground `update`, `--rollback`, `--off` and `--on` wait up to 60 seconds while another `init`, uninstall or update runs, then exit 2 with one line. `update`, and the background check right after it switches versions, remove runtime copies older than 7 days, except the one `init` installed, the current one and the previous one.
 
 After an update the next command prints on stderr, once: `openqodex updated to X (was Y). Roll back: openqodex update --rollback`. Below it come the notices of every release after Y up to X, one line each: a release has one only when it changes what leaves your machine, what blocks a push or who reviews. Last, when files OpenQodex wrote for your agents are from an older version, it says how many and that `<launcher> init` refreshes them; init keeps every file you edited. The agent push hook does not print any of it. `update --status` and `doctor` print the notices of the last update and that count (`agent files`).
+
+## graph
+
+```
+openqodex graph <question> [<target>] [--json] [--limit <n>] [--cursor <c>] [--tokens <n>] [--budget-ms <ms>] [--generation <build id>] [--cwd <dir>]
+```
+
+Asks the code graph of the repository a question: `callers`, `callees`, `implementers`, `references`, `routes`, `tests`, `path`, `impact`, `importers`, `outline`, `packages`, `cycles`, `changes`, `unknowns`, `explain`, `search`, `symbol`, `status` and `capabilities`, and `build` builds or updates the graph. `openqodex graph help` lists them with their flags; `graph` explains each answer. Each question captures your work tree and builds or reuses the graph in `.openqodex/graph/`, or reads a kept build with `--generation`. It prints one fact per line, or the whole answer as JSON with `--json`. It exits 0 for any answer, a floor or a partial graph included, and 2 when the question could not be answered; never 1. The same questions reach an agent as MCP tools through `openqodex mcp`, which `init` registers (`agents`).
 
 ## Environment variables
 

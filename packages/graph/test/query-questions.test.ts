@@ -1,0 +1,489 @@
+// The typed questions of the query layer (PLAN.md 3.3, phase 3), asked of
+// the phase 1 corpus repositories and of small repositories built for the
+// questions the corpus holds nothing for. Ways it could fail, written
+// before the code:
+//  1. An answer item carries no evidence: no tier, no evidence kind, or an
+//     edge id that `explain` cannot read back.
+//  2. A zero on a floor reads as "none": callers, callees, implementers,
+//     a path or tests with a gap in scope must say floor true, and why.
+//  3. A question this build cannot answer (references with no value
+//     relations, routes with no framework layer) returns an empty success
+//     instead of a capability boundary.
+//  4. A walk stopped by its budget or a cancellation claims a count of what
+//     lies past its frontier, or offers a cursor that pages through a list
+//     it never finished instead of going on with the work.
+//  5. A token budget cuts the counts, or returns no item and never moves.
+//  6. A path hop has no edge, or "no path" is said where an unbound call in
+//     the visited code could hold one, with no floor.
+//  7. Calls from files named like tests are counted as tests, or called
+//     coverage, while no test runner was read.
+//  8. An import cycle is missed, or a chain without a cycle is listed.
+//  9. `impact` through the query layer differs from the review's walk for
+//     the same change.
+// 10. An outline of a folder lists symbols of a folder that only shares
+//     its name prefix.
+// 11. `packages` says one project depends on another with no import
+//     between them, or misses one that has.
+// 12. An override is said to be certain when only a method name ties it to
+//     the base method, or a subclass two levels down is missed.
+// 13. Every question, asked of every corpus repository, breaks the answer
+//     shape: no graph block, no unknown block, a count that is neither a
+//     number nor null, an error with items, or a zero worded as "unused".
+// 14. Overrides derived from the inheritance stop at the depth asked and
+//     say nothing of the subclasses past it.
+// 15. A class whose base is written as an expression (a call, a mixin) is
+//     not tied to the base, and `implementers` of the base says nothing of
+//     what it could not read: a short list with no floor.
+// 16. `impact` gives the summary's list of places that used a changed
+//     public name, which keeps the first 200, as if it were whole: no
+//     floor, no cut, and no page holds the rest.
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { getChange } from "@openqodex/core";
+import type { Change } from "@openqodex/core";
+import { buildGraph, detectImpact } from "../src/index.js";
+import type { Graph } from "../src/index.js";
+import { OPERATIONS, query } from "../src/query/engine.js";
+import type { Answer, Item, Request, Session } from "../src/query/engine.js";
+import { findCases, matches } from "../corpus/score.js";
+import type { Expected } from "../corpus/score.js";
+import { commitAll, makeRepo, writeFiles } from "./helpers.js";
+
+const corpusRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "corpus");
+const dirs: string[] = [];
+afterAll(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+});
+
+function git(root: string, ...args: string[]): string {
+  return execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
+}
+
+// A corpus case as the scorer builds it: the base committed, the change
+// written over it and left uncommitted.
+function caseRepo(dir: string): string {
+  const root = mkdtempSync(join(tmpdir(), "oq-query-case-"));
+  dirs.push(root);
+  cpSync(join(dir, "base"), root, { recursive: true });
+  git(root, "init", "-q");
+  git(root, "config", "user.email", "corpus@example.com");
+  git(root, "config", "user.name", "corpus");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "base");
+  if (existsSync(join(dir, "change"))) cpSync(join(dir, "change"), root, { recursive: true, force: true });
+  const del = join(dir, "delete.txt");
+  if (existsSync(del)) for (const line of readFileSync(del, "utf8").split("\n")) if (line.trim() !== "") rmSync(join(root, line.trim()));
+  return root;
+}
+
+type Built = { root: string; graph: Graph; change: Change; expected: Expected; s: Session; changes: { exports: Graph["exportChanges"]; removed: ReturnType<typeof detectImpact>["symbols"]; moved: ReturnType<typeof detectImpact>["symbols"] } };
+
+const built = new Map<string, Built>();
+async function build(name: string): Promise<Built> {
+  const dir = join(corpusRoot, name);
+  const expected = JSON.parse(readFileSync(join(dir, "expected.json"), "utf8")) as Expected;
+  const root = caseRepo(dir);
+  const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
+  const graph = await buildGraph({
+    repoRoot: root,
+    store: null,
+    files: change.changedPaths,
+    base: { sha: change.baseSha, files: change.files },
+    ...(expected.build?.maxFileBytes !== undefined ? { maxFileBytes: expected.build.maxFileBytes } : {}),
+  });
+  const impact = detectImpact(graph, change);
+  const removed = impact.symbols.filter((x) => impact.removed.includes(x.id));
+  const b: Built = {
+    root,
+    graph,
+    change,
+    expected,
+    s: { graph, generation: "test-build", treeSha: null, builtAt: null, laterEditsKnown: false },
+    changes: { exports: graph.exportChanges, removed: removed.filter((x) => !x.movedTo), moved: removed.filter((x) => x.movedTo) },
+  };
+  built.set(name, b);
+  return b;
+}
+
+const cases = findCases(corpusRoot).map((d) => relative(corpusRoot, d));
+
+beforeAll(async () => {
+  for (const c of cases) await build(c);
+}, 180_000);
+
+const ask = (b: Built, req: Omit<Request, "apiVersion">, extra: Parameters<typeof query>[2] = {}): Answer => query(b.s, { apiVersion: 1, ...req } as Request, { changes: b.changes, ...extra });
+const idOf = (g: Graph, spec: string): string => {
+  const hits = [...g.nodes.keys()].filter((id) => matches(spec, id));
+  if (hits.length !== 1) throw new Error(`${hits.length} symbols match ${spec}`);
+  return hits[0] as string;
+};
+const where = (i: Item) => `${i.site.file}:${i.site.line}`;
+const get = (name: string): Built => {
+  const b = built.get(name);
+  if (!b) throw new Error(`${name} was not built`);
+  return b;
+};
+
+describe("every question, against every corpus repository (13)", () => {
+  it("keeps the answer shape on every operation, with a capability boundary where this build cannot answer", () => {
+    for (const name of cases) {
+      const b = get(name);
+      const first = b.expected.callers?.[0]?.to ?? null;
+      const target = first ? { id: idOf(b.graph, first) } : { file: b.change.changedPaths[0] };
+      for (const kind of OPERATIONS) {
+        const a = ask(b, { kind, target, to: target, text: "a" });
+        const label = `${name} ${kind}`;
+        expect(a.apiVersion, label).toBe(1);
+        expect(a.kind, label).toBe(kind);
+        expect(a.graph.status, label).toMatch(/^(ok|partial)$/);
+        expect(typeof a.unknown.floor, label).toBe("boolean");
+        for (const v of Object.values(a.counts)) expect(v === null || Number.isInteger(v), label).toBe(true);
+        // A zero is never worded as "unused": the floor says what may be missing.
+        expect(JSON.stringify(a), label).not.toMatch(/\bunused\b/i);
+        if (a.error) {
+          expect(a.items, label).toEqual([]);
+          expect(["ambiguous", "not-found", "bad-request", "generation-unavailable", "unsupported", "refused"], label).toContain(a.error.code);
+        }
+        for (const raw of a.items) {
+          const i = raw as Partial<Item>;
+          if (!i.site || !i.edge) continue;
+          expect(["certain", "likely", "possible"], label).toContain(i.site.tier);
+          expect(typeof i.site.evidence, label).toBe("string");
+        }
+      }
+      // A build with no value relations and no framework layer cannot say
+      // who uses a symbol as a value or which route maps to it (3).
+      expect(ask(b, { kind: "references", target }).error?.code, name).toBe("unsupported");
+      expect(ask(b, { kind: "routes", target }).error?.code, name).toBe("unsupported");
+    }
+  });
+
+  it("finds every caller the corpus expects at its tier, each with an edge `explain` reads back (1)", () => {
+    let checked = 0;
+    for (const name of cases) {
+      const b = get(name);
+      if (b.expected.knownFailure) continue;
+      for (const c of b.expected.callers ?? []) {
+        const id = idOf(b.graph, c.to);
+        const a = ask(b, { kind: "callers", target: { id }, depth: 1, limit: 500 });
+        expect(a.error, `${name} ${c.to}`).toBeNull();
+        const hit = (a.items as Item[]).find((i) => where(i) === c.site);
+        expect(hit, `${name}: ${c.site} calls ${c.to}`).toBeDefined();
+        expect(hit?.site.tier, `${name}: ${c.site}`).toBe(c.tier);
+        if (c.note) expect(hit?.site.note ?? "", `${name}: ${c.site}`).toContain(c.note);
+        const why = ask(b, { kind: "explain", target: { id: hit?.edge } });
+        expect(why.error, `${name}: explain ${c.site}`).toBeNull();
+        expect(why.items[0], `${name}: explain ${c.site}`).toMatchObject({ edge: hit?.edge, site: { tier: c.tier } });
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(50);
+  });
+
+  it("lists every unknown the corpus expects, and says floor false only where the corpus does (2)", () => {
+    for (const name of cases) {
+      const b = get(name);
+      for (const u of b.expected.unknowns ?? []) {
+        const a = ask(b, { kind: "unknowns", target: { file: u.file }, limit: 500 });
+        expect((a.items as { line: number | null; cause: string }[]).some((x) => x.line === u.line && x.cause === u.cause), `${name}: ${u.file}:${u.line} ${u.cause}`).toBe(true);
+      }
+      for (const [spec, floor] of Object.entries(b.expected.floor ?? {})) {
+        if (floor) continue;
+        const a = ask(b, { kind: "callers", target: { id: idOf(b.graph, spec) } });
+        expect(a.unknown.floor, `${name}: ${spec}`).toBe(false);
+      }
+    }
+  });
+});
+
+describe("callers, callees and their gaps", () => {
+  it("binds the workspace caller as likely through the dist entry, with the note (1)", () => {
+    const b = get("typescript/workspace/workspace-package");
+    const a = ask(b, { kind: "callers", target: { name: "greet" } });
+    expect(a.items.map((i) => where(i as Item))).toEqual(["packages/app/src/main.ts:4"]);
+    expect((a.items[0] as Item).site).toMatchObject({ tier: "likely", evidence: "workspace-package" });
+    expect((a.items[0] as Item).site.note).toContain("packages/core/dist/index.js");
+    expect(a.counts).toEqual({ certain: 0, likely: 1, possible: 0 });
+    expect(a.unknown.floor).toBe(false);
+  });
+
+  it("says a floor with the value-call reason when a computed member call could reach the symbol (2)", () => {
+    const b = get("typescript/gaps/computed-member-call");
+    const a = ask(b, { kind: "callers", target: { name: "onSave" } });
+    expect(a.items).toEqual([]);
+    expect(a.counts.certain).toBe(0);
+    expect(a.unknown.floor).toBe(true);
+    expect(a.unknown.reasons.join(" ")).toMatch(/through a value/);
+    // What does `dispatch` call: the computed call is a gap of the answer, not a callee.
+    const out = ask(b, { kind: "callees", target: { name: "dispatch" } });
+    expect(out.items).toEqual([]);
+    expect(out.unknown.floor).toBe(true);
+    expect(out.unknown.causes.dynamic).toBe(1);
+  });
+
+  it("says a floor when a file of the project was not read (2)", () => {
+    const b = get("typescript/cuts/file-not-read");
+    const a = ask(b, { kind: "callers", target: { name: "toCents" } });
+    expect(a.items.map((i) => where(i as Item))).toEqual(["src/checkout.ts:4"]);
+    expect(a.unknown.floor).toBe(true);
+    expect(a.unknown.reasons.join(" ")).toMatch(/not read/);
+    const u = ask(b, { kind: "unknowns", target: { file: "src/generated/prices.ts" } });
+    expect(u.items).toContainEqual(expect.objectContaining({ file: "src/generated/prices.ts", cause: "file-not-parsed" }));
+  });
+
+  it("binds the Ruby autoload caller as likely, never certain (1)", () => {
+    const b = get("ruby/modules/ruby-autoload");
+    const a = ask(b, { kind: "callers", target: { name: "format_cents" } });
+    expect((a.items as Item[]).map((i) => [where(i), i.site.tier, i.site.evidence])).toEqual([["app/checkout.rb:3", "likely", "autoload"]]);
+  });
+
+  it("stops at the depth asked and names the frontier, without a count past it (4)", () => {
+    const b = get("typescript/cuts/thirty-second-hop");
+    const one = ask(b, { kind: "callers", target: { name: "baseRate" }, depth: 1 });
+    expect(one.items.map((i) => where(i as Item))).toEqual(["src/quote.ts:4"]);
+    expect(one.truncated).toMatchObject({ by: "depth", omitted: null, omittedExact: false, cursor: null });
+    expect(one.truncated.frontier?.some((id) => id.includes("#quote@"))).toBe(true);
+    const two = ask(b, { kind: "callers", target: { name: "baseRate" }, depth: 2, limit: 500 });
+    expect((two.items as Item[]).filter((i) => i.depth === 2).length).toBeGreaterThanOrEqual(30);
+  });
+
+  it("stops a cancelled walk at once, with null counts and a cursor that goes on with the work (4)", () => {
+    const b = get("typescript/cuts/thirty-second-hop");
+    const abort = new AbortController();
+    abort.abort();
+    const req = { kind: "callers" as const, target: { name: "baseRate" }, depth: 3, limit: 500 };
+    const a = ask(b, req, { signal: abort.signal });
+    expect(a.error).toBeNull();
+    expect(a.items).toEqual([]);
+    expect(a.counts).toEqual({ certain: null, likely: null, possible: null });
+    expect(a.truncated).toMatchObject({ by: "budget", omitted: null, omittedExact: false });
+    expect(a.unknown.floor).toBe(true);
+    // The cursor runs the stopped work on, to the answer a whole run gives.
+    const rest = ask(b, { ...req, cursor: a.truncated.cursor as string });
+    const whole = ask(b, req);
+    expect(rest.truncated.by).toBe(whole.truncated.by);
+    expect(rest.items).toEqual(whole.items);
+    expect(rest.counts).toEqual(whole.counts);
+  });
+
+  it("pages a hub's 45 callers by cursor and cuts by tokens without touching the counts (5)", () => {
+    const b = get("typescript/cuts/hub");
+    const p1 = ask(b, { kind: "callers", target: { name: "logEvent" }, limit: 20 });
+    expect(p1.items).toHaveLength(20);
+    expect(p1.counts.certain).toBe(45);
+    expect(p1.truncated).toMatchObject({ by: "limit", omitted: 25, omittedExact: true });
+    const p2 = ask(b, { kind: "callers", target: { name: "logEvent" }, limit: 20, cursor: p1.truncated.cursor as string });
+    const p3 = ask(b, { kind: "callers", target: { name: "logEvent" }, limit: 20, cursor: p2.truncated.cursor as string });
+    expect(p3.items).toHaveLength(5);
+    expect(p3.truncated.by).toBeNull();
+    const all = new Set([...p1.items, ...p2.items, ...p3.items].map((i) => where(i as Item)));
+    expect(all.size).toBe(45);
+    const tiny = ask(b, { kind: "callers", target: { name: "logEvent" }, budget: { tokens: 1 } });
+    expect(tiny.items).toHaveLength(1);
+    expect(tiny.counts.certain).toBe(45);
+    expect(tiny.truncated).toMatchObject({ by: "budget", omitted: 44, omittedExact: true });
+    const next = ask(b, { kind: "callers", target: { name: "logEvent" }, budget: { tokens: 1 }, cursor: tiny.truncated.cursor as string });
+    expect(next.items).toHaveLength(1);
+    expect(where(next.items[0] as Item)).not.toBe(where(tiny.items[0] as Item));
+  });
+});
+
+describe("changes, impact, path, outline and packages", () => {
+  it("lists the removed export alias with both broken consumers", () => {
+    const b = get("typescript/exports/export-alias-removed");
+    const a = ask(b, { kind: "changes" });
+    const e = a.items.find((x) => (x as { type: string }).type === "export") as { name: string; change: string; consumers: { file: string; line: number; now: string }[] };
+    expect(e).toMatchObject({ name: "total", change: "removed" });
+    expect(e.consumers.map((c) => `${c.file}:${c.line}:${c.now}`).sort()).toEqual(["src/cart.ts:1:broken", "src/cart.ts:4:broken"]);
+  });
+
+  it("gives the review's own walk for the diff, and for one symbol (9)", () => {
+    const b = get("typescript/cuts/thirty-second-hop");
+    const summary = detectImpact(b.graph, b.change);
+    const a = ask(b, { kind: "impact", limit: 500 }, { change: b.change });
+    const callers = a.items.filter((x) => (x as { type: string }).type === "caller") as { seed: string; hops: Item[] }[];
+    expect(callers.length).toBe(summary.callers.length);
+    expect(callers.map((c) => c.hops.map(where).join(">")).sort()).toEqual(summary.callers.map((p) => p.edges.map((e) => `${e.sites[0]?.file}:${e.sites[0]?.line}`).join(">")).sort());
+    expect(a.unknown.floor).toBe(summary.unknown.floor);
+    for (const c of callers) for (const h of c.hops) expect(ask(b, { kind: "explain", target: { id: h.edge } }).error).toBeNull();
+    const one = ask(b, { kind: "impact", target: { name: "baseRate" }, limit: 500 });
+    expect(one.error).toBeNull();
+    expect((one.items as { type: string; hops?: Item[] }[]).filter((x) => x.type === "caller").map((x) => where((x.hops as Item[])[0] as Item))).toContain("src/quote.ts:4");
+  });
+
+  it("explains every hop of a path, and says a floor when no path is found past an unbound call (6)", () => {
+    const ws = get("typescript/workspace/workspace-package");
+    const p = ask(ws, { kind: "path", target: { name: "start" }, to: { name: "greet" } });
+    expect(p.error).toBeNull();
+    expect(p.items.map((i) => [(i as Item).kind, where(i as Item)])).toEqual([["calls", "packages/app/src/main.ts:4"]]);
+    expect(ask(ws, { kind: "explain", target: { id: (p.items[0] as Item).edge } }).error).toBeNull();
+    const gap = get("typescript/gaps/computed-member-call");
+    const none = ask(gap, { kind: "path", target: { name: "dispatch" }, to: { name: "onSave" } });
+    expect(none.error).toBeNull();
+    expect(none.items).toEqual([]);
+    expect(none.unknown.floor).toBe(true);
+    expect(none.unknown.reasons.join(" ")).toMatch(/could not be bound/);
+  });
+
+  it("names which packages depend on a package by their import lines, and no other (11)", () => {
+    const b = get("typescript/workspace/workspace-package");
+    const a = ask(b, { kind: "packages", target: { project: "packages/core" } });
+    expect(a.error).toBeNull();
+    expect(a.items).toEqual([expect.objectContaining({ project: "packages/app", sites: ["packages/app/src/main.ts:1"] })]);
+    const app = ask(b, { kind: "packages", target: { project: "packages/app" } });
+    expect(app.items).toEqual([]);
+  });
+});
+
+describe("questions the corpus holds nothing for", () => {
+  let repo: string;
+  let s: Session;
+  const files: Record<string, string> = {
+    "src/shapes.ts": [
+      "export class Base {",
+      "  run(): number {",
+      "    return 1;",
+      "  }",
+      "}",
+      "export class Mid extends Base {",
+      "  run(): number {",
+      "    return 2;",
+      "  }",
+      "}",
+      "export class Leaf extends Mid {}",
+      "",
+    ].join("\n"),
+    "src/a.ts": 'import { b } from "./b";\nexport function a(): number {\n  return b();\n}\n',
+    "src/b.ts": 'import { c } from "./c";\nexport function b(): number {\n  return c();\n}\n',
+    "src/c.ts": 'import { a } from "./a";\nexport function c(): number {\n  return a.length;\n}\n',
+    "src/d.ts": 'import { a } from "./a";\nexport function d(): number {\n  return a();\n}\n',
+    "srcx/other.ts": "export function other(): number {\n  return 0;\n}\n",
+    "test/b.test.ts": 'import { b } from "../src/b";\nexport function checksB(): boolean {\n  return b() === 1;\n}\n',
+  };
+  beforeAll(async () => {
+    repo = makeRepo(files);
+    dirs.push(repo);
+    const graph = await buildGraph({ repoRoot: repo, store: null });
+    s = { graph, generation: "q-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+  });
+  const q = (req: Omit<Request, "apiVersion">) => query(s, { apiVersion: 1, ...req } as Request);
+
+  it("lists subclasses two levels down, and an override by name only as likely with its premise (12)", () => {
+    const a = q({ kind: "implementers", target: { name: "Base" } });
+    expect(a.error).toBeNull();
+    expect((a.items as Item[]).map((i) => [i.fromName, i.kind, i.depth, i.site.tier])).toEqual([
+      ["Mid", "inherits", 1, "certain"],
+      ["Leaf", "inherits", 2, "certain"],
+    ]);
+    const m = q({ kind: "implementers", target: { name: "Base.run" } });
+    expect(m.error).toBeNull();
+    const o = m.items as (Item & { premises: string[] })[];
+    expect(o.map((i) => [i.from.includes("#Mid.run@"), i.kind, i.site.tier])).toEqual([[true, "overrides", "likely"]]);
+    expect(o[0]?.site.note).toMatch(/same name/);
+    expect(o[0]?.premises).toHaveLength(1);
+    expect(q({ kind: "explain", target: { id: o[0]?.premises[0] } }).error).toBeNull();
+    // Calls through an interface or a base type are not resolved in this build: a floor.
+    expect(m.unknown.floor).toBe(true);
+    expect(q({ kind: "implementers", target: { name: "other" } }).error?.code).toBe("bad-request");
+  });
+
+  it("finds the import cycle among a, b and c and nothing else (8)", () => {
+    const a = q({ kind: "cycles", level: "files" });
+    expect(a.error).toBeNull();
+    expect(a.items).toEqual([expect.objectContaining({ members: ["src/a.ts", "src/b.ts", "src/c.ts"] })]);
+    const edges = (a.items[0] as { edges: Item[] }).edges;
+    expect(edges.map(where).sort()).toEqual(["src/a.ts:1", "src/b.ts:1", "src/c.ts:1"]);
+  });
+
+  it("names tests by their path as leads only, never counted and never coverage, with the floor (7)", () => {
+    const a = q({ kind: "tests", target: { name: "b" } });
+    expect(a.error).toBeNull();
+    expect(a.items).toEqual([]);
+    expect(a.counts).toEqual({ certain: null, likely: null, possible: null });
+    expect(a.leads.map((l) => l.file)).toEqual(["test/b.test.ts"]);
+    expect(a.unknown.floor).toBe(true);
+    expect(JSON.stringify(a)).not.toMatch(/coverage|covered/i);
+  });
+
+  it("outlines a folder without a folder that shares its name prefix (10)", () => {
+    const a = q({ kind: "outline", target: { file: "src" } });
+    expect(a.error).toBeNull();
+    const fileList = [...new Set((a.items as { file: string }[]).map((i) => i.file))].sort();
+    expect(fileList).toEqual(["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/shapes.ts"]);
+  });
+
+  it("finds a path through two calls and back the other way when only that direction holds (6)", () => {
+    const fwd = q({ kind: "path", target: { name: "d" }, to: { name: "c" } });
+    expect(fwd.items.map((i) => (i as Item).toName)).toEqual(["a", "b", "c"]);
+    const back = q({ kind: "path", target: { name: "c" }, to: { name: "d" } });
+    expect(back.items.map((i) => (i as Item).toName)).toEqual(["a", "b", "c"]);
+    expect((back.items as (Item & { direction?: string })[])[0]?.direction).toBe("reverse");
+  });
+});
+
+describe("implementers at the edge of what the graph reads", () => {
+  let s: Session;
+  const files: Record<string, string> = {
+    "src/base.ts": "export class Base {\n  run(): number {\n    return 0;\n  }\n}\n",
+    "src/l1.ts": 'import { Base } from "./base";\nexport class L1 extends Base {}\n',
+    "src/l2.ts": 'import { L1 } from "./l1";\nexport class L2 extends L1 {}\n',
+    "src/l3.ts": 'import { L2 } from "./l2";\nexport class L3 extends L2 {}\n',
+    "src/l4.ts": 'import { L3 } from "./l3";\nexport class L4 extends L3 {\n  run(): number {\n    return 4;\n  }\n}\n',
+    "src/mixed.ts": 'import { Base } from "./base";\nfunction identity<T>(x: T): T {\n  return x;\n}\nexport class Child extends identity(Base) {}\n',
+  };
+  beforeAll(async () => {
+    const repo = makeRepo(files);
+    dirs.push(repo);
+    const graph = await buildGraph({ repoRoot: repo, store: null });
+    s = { graph, generation: "edge-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+  });
+  const q = (req: Omit<Request, "apiVersion">) => query(s, { apiVersion: 1, ...req } as Request);
+
+  it("says the depth stopped a derived override search, and names the subclass past it (14)", () => {
+    const three = q({ kind: "implementers", target: { name: "Base.run" } });
+    expect(three.error).toBeNull();
+    expect(three.items).toEqual([]);
+    expect(three.truncated.by).toBe("depth");
+    expect(three.truncated.frontier?.some((id) => id.includes("#L3@"))).toBe(true);
+    const four = q({ kind: "implementers", target: { name: "Base.run" }, depth: 4 });
+    expect((four.items as Item[]).map((i) => i.fromName)).toEqual(["run"]);
+    expect((four.items as Item[])[0]?.from).toMatch(/#L4\.run@/);
+    expect(four.truncated.by).toBeNull();
+  });
+
+  it("says a floor for a base written as an expression, which this build does not read (15)", () => {
+    const a = q({ kind: "implementers", target: { name: "Base" } });
+    expect(a.error).toBeNull();
+    expect((a.items as Item[]).map((i) => i.fromName)).toEqual(["L1", "L2", "L3"]);
+    expect(a.unknown.floor).toBe(true);
+    expect(a.unknown.reasons.join(" ")).toMatch(/base written as an expression/);
+    // The same boundary holds for the overrides derived from the inheritance.
+    expect(q({ kind: "implementers", target: { name: "Base.run" } }).unknown.reasons.join(" ")).toMatch(/base written as an expression/);
+  });
+});
+
+describe("impact of a public name used in more places than the summary keeps", () => {
+  it("lists every place that used the removed alias, past the summary's 200 (16)", async () => {
+    const uses = Array.from({ length: 200 }, (_, i) => `export const v${i} = total([${i}]);`).join("\n");
+    const repo = makeRepo({
+      "src/pricing.ts": "function computeTotal(items: number[]): number {\n  return items.length;\n}\n\nexport { computeTotal as total };\nexport { computeTotal };\n",
+      "src/cart.ts": `import { total } from "./pricing";\n${uses}\n`,
+    });
+    dirs.push(repo);
+    commitAll(repo);
+    writeFiles(repo, { "src/pricing.ts": "function computeTotal(items: number[]): number {\n  return items.length;\n}\n\nexport { computeTotal };\n" });
+    const change = await getChange({ repoRoot: repo, scope: { uncommitted: true }, exclude: [] });
+    const graph = await buildGraph({ repoRoot: repo, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
+    const t: Session = { graph, generation: "consumers-build", treeSha: null, builtAt: null, laterEditsKnown: false };
+    const a = query(t, { apiVersion: 1, kind: "impact", limit: 500 }, { change });
+    expect(a.error).toBeNull();
+    const e = a.items.find((x) => (x as { type: string }).type === "export") as { name: string; consumers: unknown[] } | undefined;
+    expect(e?.name).toBe("total");
+    expect(e?.consumers).toHaveLength(201);
+  });
+});

@@ -4,8 +4,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { assetPath } from "../assets.js";
-import type { AgentId } from "./detect.js";
-import { claudeHome, codexHome } from "./homes.js";
+import { AGENT_NAMES, type AgentId } from "./detect.js";
+import { claudeHome, claudeStateFile, codexHome } from "./homes.js";
+import { MCP_SERVER, tomlBlock } from "./mcp.js";
 import shippedSkills from "./shipped-skills.json";
 
 export type Scope = "user" | "project";
@@ -21,7 +22,14 @@ export type Target =
   // is found exactly as written, recorded or not.
   | { kind: "md-section"; agent: AgentId; label: string; path: string; section: string; inRepo: boolean; replaces?: string[] }
   // Rules merged into permissions.allow of a Claude Code settings file.
-  | { kind: "allow-rules"; agent: AgentId; label: string; path: string; rules: string[]; inRepo: boolean };
+  | { kind: "allow-rules"; agent: AgentId; label: string; path: string; rules: string[]; inRepo: boolean }
+  // The code graph's MCP server under mcpServers.openqodex of a JSON file
+  // (src/agents/mcp.ts). `hint`: what the agent asks before it uses it.
+  | { kind: "mcp-json"; agent: AgentId; label: string; path: string; entry: Record<string, unknown>; inRepo: boolean; usesLauncher: boolean; hint?: string }
+  // The same server as a marked block at the end of Codex's config.toml.
+  | { kind: "mcp-toml"; agent: AgentId; label: string; path: string; block: string; inRepo: boolean; usesLauncher: boolean; hint?: string };
+
+export type McpJsonTarget = Extract<Target, { kind: "mcp-json" }>;
 
 export type HookHandler = { type: string; command: string; [key: string]: unknown };
 export type HookGroup = { matcher: string; hooks: HookHandler[]; [key: string]: unknown };
@@ -167,8 +175,21 @@ function userRule(file: string, launcher: string): string {
 // `findings *` is the other wildcard: its argument is whichever numbers the
 // developer named, which no exact line can list, and findings only reads the
 // last review's report and prints it (it takes no flag but --cwd).
+// `graph *` is the third: its arguments are a question about the code (a
+// name, a file and line), which no exact line can list. graph only reads the
+// repository and writes nothing but that repository's own `.openqodex/graph/`
+// folder and its local refs `refs/openqodex/graph/<tree>`; it takes no
+// output path. Like `findings *` it accepts --cwd, and it accepts --config,
+// which names the config file it reads.
+// No rule for the MCP server's tools. A rule such as `mcp__openqodex`
+// matches every tool of any server of that name (permissions page, "MCP":
+// "`mcp__puppeteer` matches any tool provided by the `puppeteer` server"),
+// and a project's `.mcp.json` or a local-scope entry, which take precedence
+// over the user-scope server init registers, can name another server so.
+// Claude Code asks before the server's tools run. A rule an earlier build
+// recorded is removed by the next init.
 const REVIEW_LINES = ["review", "review --all"];
-const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *", "findings *"];
+const ALLOWED_LINES = [...REVIEW_LINES, ...REVIEW_LINES.map((l) => `${l} --offline`), "guide", "guide *", "findings *", "graph *"];
 
 export function allowRules(runner: string): string[] {
   return ALLOWED_LINES.map((l) => `Bash(${runner} ${l})`);
@@ -200,6 +221,13 @@ export function teamTargets(repoRoot: string, version: string): Target[] {
   ];
 }
 
+// The Cline CLI's own folder for its data and settings, where its MCP file
+// lives. `init` never makes it (the skill goes to ~/.cline/skills), so it
+// tells the CLI apart from the VS Code extension, which reads another file.
+export function clineCliData(home: string): string {
+  return join(home, ".cline", "data");
+}
+
 export function targetsFor(args: {
   agent: AgentId;
   scope: Scope;
@@ -208,14 +236,21 @@ export function targetsFor(args: {
   version: string;
   // The quoted launcher, or `npx -y openqodex@<version>` for project files.
   runner: string;
-}): { targets: Target[]; skipped: string[] } {
-  const { agent, scope, home, repoRoot, version, runner } = args;
+  // The launcher's absolute path, unquoted: an MCP entry's command runs
+  // with no shell.
+  launcher: string;
+  // Whether the Cline CLI's data folder (clineCliData) is there.
+  clineCli: boolean;
+}): { targets: Target[]; skipped: string[]; mcpNotes: string[] } {
+  const { agent, scope, home, repoRoot, version, runner, launcher, clineCli } = args;
   const targets: Target[] = [];
   const skipped: string[] = [];
+  // What the developer adds by hand where init writes no MCP file.
+  const mcpNotes: string[] = [];
   const user = scope === "user";
   // Project scope always needs the repo; user scope needs it only for the Cursor rule.
   const base = user ? home : repoRoot;
-  if (base === null) return { targets, skipped: [`${agent}: run init --project inside a git repository`] };
+  if (base === null) return { targets, skipped: [`${agent}: run init --project inside a git repository`], mcpNotes };
   const at = (...p: string[]): string => join(base, ...p);
   // In user scope, Claude Code's and Codex's own folders, as homes.ts finds
   // them, joined without folding `..`: the write check resolves the path the
@@ -225,6 +260,11 @@ export function targetsFor(args: {
   const skillText = user ? skillStub(runner) : fill(renderSkill(runner), version);
   // A user-scope skill calls the launcher, so the launcher stays while it is installed.
   const skillTarget = (label: string, path: string): Target => ({ kind: "file", agent, label, path, content: skillText, inRepo: !user, usesLauncher: user, skillRunner: runner });
+  // The code graph's MCP server, stdio only: the launcher in user scope, the
+  // pinned npx form in project scope, which a teammate's machine can run.
+  const server = user ? { command: launcher, args: ["mcp"] } : { command: "npx", args: ["-y", `openqodex@${version}`, "mcp"] };
+  const mcpLabel = `${AGENT_NAMES[agent]} MCP server for the code graph`;
+  const mcpJson = (path: string, entry: Record<string, unknown>, hint?: string): McpJsonTarget => ({ kind: "mcp-json", agent, label: mcpLabel, path, entry, inRepo: !user, usesLauncher: user, ...(hint ? { hint } : {}) });
 
   switch (agent) {
     case "claude-code":
@@ -246,16 +286,25 @@ export function targetsFor(args: {
       if (user && hasRuleWildcard(runner)) {
         skipped.push(`Claude Code permission rules: not written, because the launcher path ${runner} holds *, which Claude Code reads as a wildcard; Claude Code will ask before each review command`);
       }
+      // https://code.claude.com/docs/en/mcp: user scope in the top-level
+      // mcpServers of .claude.json (homes.ts), project scope in .mcp.json at
+      // the repository root; an entry with type "stdio" runs a local command.
+      targets.push(
+        user
+          ? mcpJson(claudeStateFile(home), { type: "stdio", ...server })
+          : mcpJson(at(".mcp.json"), { type: "stdio", ...server }, "Claude Code asks you to approve a project server before it uses it"),
+      );
       // Rules in user scope only: a committed settings file would grant them
       // on every teammate's machine. Project scope gets the target with no
       // rules, so rules an earlier build recorded there are still removed.
       // After the hook: both change settings.json.
+      const granted = user && !hasRuleWildcard(runner);
       targets.push({
         kind: "allow-rules",
         agent,
         label: "Claude Code permission rules",
         path: claude("settings.json"),
-        rules: user && !hasRuleWildcard(runner) ? allowRules(runner) : [],
+        rules: granted ? allowRules(runner) : [],
         inRepo: !user,
       });
       break;
@@ -275,6 +324,20 @@ export function targetsFor(args: {
         inRepo: !user,
         usesLauncher: user,
       });
+      // https://learn.chatgpt.com/docs/extend/mcp?surface=cli, "Configure
+      // with config.toml" and "STDIO servers": a [mcp_servers.<name>] table
+      // with command and args, in $CODEX_HOME/config.toml or, for trusted
+      // projects only, .codex/config.toml in the repository.
+      targets.push({
+        kind: "mcp-toml",
+        agent,
+        label: mcpLabel,
+        path: codex("config.toml"),
+        block: tomlBlock(server.command, server.args),
+        inRepo: !user,
+        usesLauncher: user,
+        ...(user ? {} : { hint: "Codex reads a project's .codex/config.toml only in a trusted project" }),
+      });
       break;
     case "cursor": {
       targets.push(skillTarget("Cursor skill", user ? at(".cursor", "skills", "openqodex", "SKILL.md") : at(".agents", "skills", "openqodex", "SKILL.md")));
@@ -283,6 +346,10 @@ export function targetsFor(args: {
       if (repoRoot === null) skipped.push("Cursor rule: run openqodex init inside a git repository to add it there");
       // A user-scope rule calls the launcher, so the launcher stays while it is installed.
       else targets.push(fileTarget(agent, "Cursor rule", join(repoRoot, ".cursor", "rules", "openqodex.mdc"), rule, true, user));
+      // https://cursor.com/docs/context/mcp, "Configuration locations" and
+      // the STDIO server table: ~/.cursor/mcp.json, or .cursor/mcp.json in
+      // the project, with type "stdio".
+      targets.push(mcpJson(at(".cursor", "mcp.json"), { type: "stdio", ...server }));
       break;
     }
     case "cline":
@@ -297,7 +364,16 @@ export function targetsFor(args: {
           user,
         ),
       );
+      // https://docs.cline.bot/mcp/configuring-mcp-servers names the CLI's
+      // file, ~/.cline/data/settings/cline_mcp_settings.json, and no project
+      // file; the VS Code extension's file is not documented there, so the
+      // developer adds the server there by hand.
+      if (user && clineCli) targets.push(mcpJson(at(".cline", "data", "settings", "cline_mcp_settings.json"), { ...server }));
+      else {
+        const why = user ? "not written: init writes only the Cline CLI's file, and ~/.cline/data is not here" : "not written: Cline documents no project MCP file";
+        mcpNotes.push(`${mcpLabel}: ${why}. Add it in Cline's "Configure MCP Servers": "${MCP_SERVER}": ${JSON.stringify(server)}`);
+      }
       break;
   }
-  return { targets, skipped };
+  return { targets, skipped, mcpNotes };
 }

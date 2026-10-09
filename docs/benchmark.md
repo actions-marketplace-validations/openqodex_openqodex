@@ -93,6 +93,14 @@ The comparison first lists anything that differs besides the build: every review
 
 `score.mjs` exits 0 when it scored, 1 when the comparison shows a regression, and 2 when a folder cannot be scored. The exit code is information. Do not gate a release on it alone: a person reads the regression and the reviews behind it.
 
+`--against` reads the older run's specs from that run's own `cases/` folder. The scorer refuses specs that lack the words each plant now needs, so `--against` cannot compare a run made before the words existed, such as `2026-10-08-752b77f`. Score such a run alone with the newer run's specs, then read the two summaries side by side:
+
+```
+node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>/cases
+```
+
+This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` into the old run's folder and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
+
 ## The wording pass
 
 ```
@@ -167,6 +175,32 @@ What it showed:
 - On the 14 cases both runs hold, the review found 32 of 37 plants: every critical and major one. The five misses are minor: three Dockerfile issues and a shell loop in the demo repository that the scanners raised and the reviewer dropped, as in the first run, and the list items without keys in the Next.js case.
 - No finding was false. Three findings matched side issues the cases list as real but not planted: the Next.js search form the change drops (listed since the first run, where it counted false 5 times), the Next.js search failure that is never caught, and the race between two redemptions in the Django case.
 - The mean time rests on one demo review of 98 s, 82 s of it the reviewer's; the first run's three demo reviews with the graph on took 47 s, 83 s and 50 s. The median review took 28 s.
+
+## Code graph phase 3: the graph command and the MCP server
+
+`benchmark/results/2026-10-09-95efb19`: build `95efb19` of the phase 3 branch (openqodex 0.10.0), Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 14 reviews, all complete, none failed. `benchmark/results/2026-10-08-588a38c` is an earlier build of the same branch, run the same way. The first run is scored against this run's specs (`score-cases.json` in its folder), so every column uses the same rules and words. Its Rails numbers do not compare, since that case's code changed after it ran.
+
+| Measure | First run, graph on (`752b77f`, 3 repeats) | Phase 3, earlier build (`588a38c`) | Phase 3 (`95efb19`) |
+|---|---|---|---|
+| Planted bugs found | 100/111 (90%) | 33/37 (89%) | 34/37 (92%) |
+| critical | 33/36 | 12/12 | 12/12 |
+| major | 57/57 | 19/19 | 19/19 |
+| minor | 10/18 | 2/6 | 3/6 |
+| Findings that are planted bugs | 100/100 (100%) | 33/33 (100%) | 34/36 (94%) |
+| False findings | 0 | 0 | 2 |
+| Clean changes with no finding | 6/6 | 2/2 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 5/5 | 5/5 |
+| Graph gaps disclosed in the brief | 3/6 | 1/2 | 1/2 |
+| Time per review, mean | 25 s | 29 s | 52 s |
+| Reviewer turns per review, mean | 3.9 | 4.4 | 5.9 |
+| Cost per review, mean | $0.11 | $0.12 | $0.37 |
+
+What it showed:
+
+- Phase 3 changes nothing the reviewer sees. The brief of every case in `95efb19` is the same as in `588a38c` and in the first run, apart from the line that gives the graph's build time and the Rails case, whose code changed. No line of bugs found, clean controls or graph disclosure moved by more than one review's spread.
+- The two false findings are real issues the specs do not list: the Go search handler never checks `rows.Err()` after its loop, and the Next.js search page lets a late response overwrite newer results.
+- Time, turns and cost per review doubled against `588a38c` with the same briefs and the same Claude Code version. The reviewer asked for more correction rounds (1.71 per review against 1.36). The cause is on the reviewer's side, not in the build: the input did not change. Which part (the account the run used, or the model's own variation between runs) was not tested.
+- The graph-off configuration was not run: phase 3 does not change it.
 
 ## Claims cite a run
 

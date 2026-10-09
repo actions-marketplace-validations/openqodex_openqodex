@@ -74,7 +74,7 @@ for (const copy of ["plugins/claude-code/assets/avatar-1024.png", "plugins/codex
     else console.log(`ok: ${copy} matches ${icon}`);
   }
 }
-for (const rel of [skill, ...pluginSkills, "plugins/claude-code/hooks/hooks.json", ".pre-commit-hooks.yaml", "README.md", "docs/quickstart.md"]) {
+for (const rel of [skill, ...pluginSkills, "plugins/claude-code/hooks/hooks.json", "plugins/claude-code/.mcp.json", ".pre-commit-hooks.yaml", "README.md", "docs/quickstart.md"]) {
   if (!existsSync(join(root, rel))) continue;
   const pins = readFileSync(join(root, rel), "utf8").match(/openqodex@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g) ?? [];
   const wrong = [...new Set(pins)].filter((pin) => pin !== `openqodex@${version}`);

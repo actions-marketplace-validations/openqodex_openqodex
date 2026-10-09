@@ -23,7 +23,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - `cli`: every command, flag and exit code.
 - `config`: every key of `.openqodex/config.yaml`.
 - `scanners`: the thirteen built-in scanners.
-- `graph`: the code graph: what it answers, what it cannot see, its folder and its commands.
+- `graph`: the code graph: what it answers, what it cannot see, its folder, its commands and its MCP server for agents.
 - `custom-scanners`: add any scanner by its GitHub link.
 - `agents`: what `init` writes for each coding agent.
 - `github-action`: run the scan on pull requests.

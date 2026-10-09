@@ -8,9 +8,11 @@ export type { Cause, Cut, Evidence, EvidenceKind, Tier, Unknown } from "./model/
 export { stableKey } from "./resolve.js";
 export { openStore } from "./store/store.js";
 export type { GraphStore, GenerationManifest, Lease, OpenGeneration } from "./store/types.js";
-export { DEFAULT_MAX_CACHE_MB } from "./store/types.js";
+export { BUILD_ID_PATTERN, DEFAULT_MAX_CACHE_MB } from "./store/types.js";
 export { FIVE_SECONDS_MS, DEFAULT_RATES } from "./runtime/predict.js";
-export { query, OPERATIONS, resolveTarget, edgeId } from "./query/engine.js";
-export type { Answer, Candidate, Item, Operation, Request, Session, Target } from "./query/engine.js";
+export { query, querySliced, OPERATIONS, parseTarget, resolveTarget, edgeId } from "./query/engine.js";
+export type { Answer, Candidate, ChangesExtra, ErrorCode, Extra, Item, Operation, Request, Session, Target } from "./query/engine.js";
 export { graphOf } from "./session.js";
+export { BUILD_ALL_MS, laterEdits, pinGeneration, pinWorkTree } from "./query/open.js";
+export type { GraphSettings, PinArgs, Pinned, PinnedOrError, Reference } from "./query/open.js";
 export { writePacket, PACKET_DIR, PACKET_ROOT, PacketCollision, PacketLeak } from "./review/packet.js";
