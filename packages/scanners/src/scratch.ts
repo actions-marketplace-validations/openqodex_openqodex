@@ -21,9 +21,10 @@ import { openqodexHome } from "./toolchain/table.js";
 
 export type Scratch = {
   // Caches live in <root>/cache, and a cache folder is made through
-  // `guard`, which refuses a link anywhere under the root.
+  // `guard()`, which refuses a link anywhere under the root. The guard is
+  // made the first time a cache folder is.
   root: string;
-  guard: Guard;
+  guard(): Guard;
   // Where temporary folders are made.
   temp: string;
   // Variables every scanner process gets on top of its own.
@@ -33,7 +34,7 @@ export type Scratch = {
 // The laptop's places, read when a run starts.
 export function laptopScratch(): Scratch {
   const home = openqodexHome();
-  return { root: home, guard: homeGuard(home, true), temp: tmpdir(), env: {} };
+  return { root: home, guard: () => homeGuard(home, true), temp: tmpdir(), env: {} };
 }
 
 // A run's own places under `root`, made now, readable by this user only.
@@ -42,9 +43,10 @@ export function scratchAt(root: string): Scratch {
   const temp = join(base, "tmp");
   const home = join(base, "home");
   for (const dir of [base, temp, home]) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  let guard: Guard | undefined;
   return {
     root: base,
-    guard: new Guard({ repoRoot: null, gitFolders: [], roots: [base], noLinks: true }),
+    guard: () => (guard ??= new Guard({ repoRoot: null, gitFolders: [], roots: [base], noLinks: true })),
     temp,
     env: { HOME: home, TMPDIR: temp, GOCACHE: join(base, "cache", "go-build"), PYTHONDONTWRITEBYTECODE: "1" },
   };

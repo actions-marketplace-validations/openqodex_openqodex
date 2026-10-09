@@ -98,7 +98,7 @@ function cacheFolder(scratch: Scratch, pin: SchemaPin): string {
   }
   if (!there) {
     try {
-      scratch.guard.makeFolder(dir);
+      scratch.guard().makeFolder(dir);
     } catch (err) {
       // Another run made it in between.
       if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw err;

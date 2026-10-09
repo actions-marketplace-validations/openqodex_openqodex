@@ -111,7 +111,7 @@ function databaseRoot(scratch: Scratch): string {
   const dir = path.join(scratch.root, "cache", "cargo-deny", "advisory-dbs");
   if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
     try {
-      scratch.guard.makeFolder(dir);
+      scratch.guard().makeFolder(dir);
     } catch (err) {
       // Another run made it in between.
       if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw err;
