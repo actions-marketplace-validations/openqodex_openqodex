@@ -115,6 +115,23 @@ Codex runs with `--ephemeral`: after real runs with codex-cli 0.160.0, no sessio
 
 The run folder of a review holds the brief, the scan, the reviewer's answer and the list of its tool calls: paths and line ranges for Claude Code, and the command lines Codex showed for Codex, never their output. Each file is created readable by you only, and secrets are redacted in all of them.
 
+### A model reviewer (the library)
+
+A program that imports OpenQodex as a library (`library`) reviews a change with its own model through `reviewChange`. That reviewer is not a process: OpenQodex builds every request, the program's own client sends it to the program's model, and OpenQodex runs every tool call the model asks for itself. OpenQodex sends nothing to any model by itself.
+
+What the model can read:
+
+- the review brief: the change's diff, the scanner candidates, the code graph's view of the change and the lenses, with the secrets the scanners found redacted;
+- through five tools, and nothing else: the lines of a file, a search of the files by regular expression, the list of files, the diff of one changed file, and the callers of a symbol from the code graph. They read a snapshot of the head commit made under the program's work folder, never the program's clone or any other folder. A link in the commit is a small plain file in the snapshot that holds the link's target text. Every reply is at most 32 KB and has the scanners' secrets redacted, and a search never answers on a line that holds one.
+
+What the model cannot read or do:
+
+- anything outside the snapshot: the clone's `.git` folder, another folder of the machine, the program's environment or files. A path outside is refused, and the refusal is logged with the review.
+- the web, or a shell: it has no tool for either, and no tool starts a program.
+- change a rule of the review: context the program adds (earlier comments, lessons) is shown as quoted data, never as an instruction, and never grants a tool.
+
+What the model says it read is never used as proof. The completion record counts only what OpenQodex carried in a request the program's client sent, and each tool result is marked as sent or not. The scanners of such a review run from the program's preinstalled install root with installs off, and write only under the review's work folder, with their `HOME` and `TMPDIR` there.
+
 ## Secrets
 
 When gitleaks finds a secret in the change, OpenQodex removes it from the brief, every report file and the terminal. Each line of a secret that spans several lines, such as a private key, counts as the secret too, wherever it appears alone. It keeps the length and sha256 of each secret and of each such line, to redact any text the agent quotes. Every output of a review (`report.html`, `report.md`, `report.json`, `report.sarif`, the receipt and the paths it prints) is drawn from one redacted copy of the report.
