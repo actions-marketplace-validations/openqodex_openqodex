@@ -775,10 +775,15 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     }
   }
   const testFiles = new Set<string>();
-  let unmatched = 0; // requests the budget left unmatched
+  let requestsCut = 0; // requests past the build's request cap
+  let stepsCut = 0; // requests the pattern-step budget left unmatched
   for (const r of requests) {
-    if (exhausted("matchWork") || !take("requests")) {
-      unmatched++;
+    if (exhausted("matchWork")) {
+      stepsCut++;
+      continue;
+    }
+    if (!take("requests")) {
+      requestsCut++;
       continue;
     }
     const target = r.agent.target;
@@ -806,7 +811,7 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
     for (const { reg, pattern } of byApp.get(app.id) ?? []) {
       if (!methodFits(reg)) continue;
       if (!take("matchWork", (pattern.length + 1) * (asked.length + 1))) {
-        unmatched++;
+        stepsCut++;
         break;
       }
       if (!matchSegments(pattern, asked) || !take("testLinks")) continue;
@@ -835,7 +840,8 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   if (refused.testLinks > 0) cut(["tests"], "fan-out-capped", refused.testLinks, `${refused.testLinks} test links were left out: the Express plugin keeps at most ${MAX_TEST_LINKS} in one build`);
   if (refused.apps > 0) cut(["handles", "mounts", "applies_middleware", "tests"], "fan-out-capped", refused.apps, `${refused.apps} applications and their routes were left out: the Express plugin keeps at most ${MAX_APPS} applications in one build`);
   if (refused.roles > 0) cut(["handles", "applies_middleware", "tests"], "fan-out-capped", refused.roles, `${refused.roles} roles were left out: the Express plugin gives at most ${MAX_ROLES} roles in one build`);
-  if (unmatched > 0) cut(["tests"], "budget", unmatched, `${unmatched} test requests were not matched to routes: the Express plugin matches at most ${MAX_TEST_REQUESTS} requests and ${MAX_MATCH_WORK} pattern steps in one build`);
+  if (requestsCut > 0) cut(["tests"], "fan-out-capped", requestsCut, `${requestsCut} test requests were not matched to routes: the Express plugin matches at most ${MAX_TEST_REQUESTS} requests in one build`);
+  if (stepsCut > 0) cut(["tests"], "budget", stepsCut, `${stepsCut} test requests were not matched to routes: matching stopped after ${MAX_MATCH_WORK} pattern steps in this build`);
   if (unknownsLeftOut > 0) unknowns.push({ plugin: PLUGIN, site: null, scope: whole, affects: ["handles", "mounts", "applies_middleware", "tests"], cause: "fan-out-capped", name: null, note: `${unknownsLeftOut} more unknowns past the first ${MAX_UNKNOWNS} were left out`, count: unknownsLeftOut, exact: true });
   const entities: Entity[] = registrations;
   return { apps, output: { roles, entities, edges, unknowns } };

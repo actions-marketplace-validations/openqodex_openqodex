@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildGraph } from "../../index.js";
 import type { FrameworkUnknown, Graph, Registration } from "../../index.js";
-import { MAX_APPS } from "./resolve.js";
+import { MAX_APPS, MAX_MATCH_WORK, MAX_TEST_REQUESTS } from "./resolve.js";
 
 const H = 'import { h } from "./h.js";';
 const many = (n: number) => Array.from({ length: n }, () => "h").join(", ");
@@ -108,6 +108,54 @@ describe("the Express plugin on what a review found", () => {
     } finally {
       rmSync(at, { recursive: true, force: true });
     }
+  }, 120_000);
+
+  // A repository of its own for each budget, so one cap's unknown cannot be
+  // mistaken for the other's.
+  async function buildRepo(prefix: string, own: Record<string, string>): Promise<Graph> {
+    const at = mkdtempSync(join(tmpdir(), prefix));
+    try {
+      for (const [path, content] of Object.entries({ "package.json": files["package.json"] as string, "src/h.ts": files["src/h.ts"] as string, ...own })) {
+        mkdirSync(dirname(join(at, path)), { recursive: true });
+        writeFileSync(join(at, path), content);
+      }
+      const run = (...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: at, encoding: "utf8" });
+      run("init", "-q");
+      run("config", "user.email", "test@example.com");
+      run("config", "user.name", "test");
+      run("add", "-A");
+      run("commit", "-q", "-m", "budget");
+      return await buildGraph({ repoRoot: at, store: null });
+    } finally {
+      rmSync(at, { recursive: true, force: true });
+    }
+  }
+  const testFile = (requests: string[]) => ['import request from "supertest";', 'import { it } from "vitest";', 'import { app } from "./app.js";', 'it("requests", async () => {', ...requests.map((p) => `  await request(app).get("${p}");`), "});"].join("\n");
+  const unmatched = (g: Graph) => (g.frameworks?.unknowns ?? []).filter((u) => u.plugin === "express" && u.affects.includes("tests") && u.site === null);
+
+  it("names the pattern-step budget, not the request cap, when matching runs out of steps", async () => {
+    // 100 routes and requests of 60 segments: each request costs about 370,000 steps.
+    const params = Array.from({ length: 60 }, (_, i) => `:p${i}`).join("/");
+    const path = `/${Array.from({ length: 60 }, (_, i) => `v${i}`).join("/")}`;
+    const app = ['import express from "express";', H, "export const app = express();", ...Array.from({ length: 100 }, (_, i) => `app.get("/${params}", h); // ${i}`)].join("\n");
+    const g = await buildRepo("oq-express-steps-", { "src/app.ts": app, "src/app.test.ts": testFile(Array.from({ length: 30 }, () => path)) });
+    const cut = unmatched(g);
+    expect(cut.map((u) => u.cause)).toEqual(["budget"]);
+    expect(cut[0]?.note).toContain(String(MAX_MATCH_WORK));
+    expect(cut[0]?.note).not.toContain(String(MAX_TEST_REQUESTS));
+    expect(cut[0]?.count).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("names the request cap, not the pattern-step budget, when a build has more test requests than it matches", async () => {
+    const app = ['import express from "express";', H, "export const app = express();", 'app.get("/x", h);'].join("\n");
+    // Spread over three files, each under the facts the stage keeps per file.
+    const tests: Record<string, string> = {};
+    for (let f = 0; f < 3; f++) tests[`src/app${f}.test.ts`] = testFile(Array.from({ length: (MAX_TEST_REQUESTS + 100) / 3 }, () => "/x"));
+    const g = await buildRepo("oq-express-requests-", { "src/app.ts": app, ...tests });
+    const cut = unmatched(g);
+    expect(cut.map((u) => u.count)).toEqual([100]);
+    expect(cut[0]?.note).toContain(String(MAX_TEST_REQUESTS));
+    expect(cut[0]?.note).not.toContain(String(MAX_MATCH_WORK));
   }, 120_000);
 
   it("says when a test request could not be matched because the route or the request is beyond what the matcher reads", () => {
