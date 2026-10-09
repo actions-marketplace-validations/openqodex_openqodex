@@ -489,6 +489,74 @@ export type CompletionRecord = {
   trace_complete: boolean;
 };
 
+// One tool call a model reviewer asked for, as the brain handled it. `path`
+// is relative to the snapshot when `inside`; `range` is the first and last
+// line the result carried (after the size bound). `inside` is null for a
+// call to a tool the brain did not define. `in_scope` is null while the
+// review has no scopes. `served`: the brain put a result (a refusal
+// included) in the transcript; `delivered`: a request that carried it was
+// sent to the model. `reason`: why the call was refused or its result cut,
+// else null.
+export type ModelToolEntry = {
+  tool: string;
+  path: string | null;
+  range: [number, number] | null;
+  inside: boolean | null;
+  in_scope: boolean | null;
+  ok: boolean;
+  served: boolean;
+  delivered: boolean;
+  reason: string | null;
+};
+
+// What the transport reported for one model response: the model asked for,
+// the one that answered when the provider named it, the tokens (null when
+// not reported) and the cost when the host knows it.
+export type ModelCallUsage = {
+  model: string;
+  servedModel?: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number | null;
+};
+
+// One model attempt: one call of the transport, or one the budget refused
+// before it was made. `usage` is null when no response came back.
+export type ModelAttempt = {
+  callId: string;
+  purpose: string;
+  attempt: number;
+  authorized: boolean;
+  outcome: "ok" | "failed" | "refused";
+  usage: ModelCallUsage | null;
+  durationMs: number;
+};
+
+// The completion record of a review by a model reviewer: the brain built
+// every request and served every tool call itself, so its proof is the
+// brain's own log, never the reviewer's word. "complete" under the same
+// conditions as the agent record, with coverage counted from what the
+// requests that were sent carried. `second`: the second reviewer's own
+// record, when one ran.
+export type ModelCompletionRecord = {
+  contract: "openqodex-model-review-1";
+  status: "complete" | "incomplete";
+  missing: string[];
+  reviewer: { kind: "model"; model: string; servedModels: string[]; calls: number };
+  snapshot: { change_id: string; tree: string | null; before: string; after: string | null };
+  candidates: { total: number; disposed: number };
+  coverage: CompletionRecord["coverage"];
+  tool_log: ModelToolEntry[];
+  attempts: ModelAttempt[];
+  second?: ModelCompletionRecord;
+  trace_complete: true;
+};
+
+// Either record: an agent review's or a model review's.
+export type AnyCompletionRecord = CompletionRecord | ModelCompletionRecord;
+
 export type ReportFinding = {
   origin: "agent" | "scanner";
   severity: Severity;
@@ -545,9 +613,10 @@ export type Report = {
   impact: ImpactSummary | null;
   not_reviewed_paths: string[]; // Change.notReviewed
   stats: { files: number; additions: number; deletions: number };
-  // A review run by `review` itself: its completion record. Absent in a scan
-  // and in a review from the two-step protocol (a legacy review).
-  completion?: CompletionRecord;
+  // A review run by `review` itself: its completion record (a model
+  // reviewer's has its own contract). Absent in a scan and in a review from
+  // the two-step protocol (a legacy review).
+  completion?: AnyCompletionRecord;
   // A legacy review only: the line naming the coding agent as the
   // reviewer (SAME_AGENT_REVIEW). Every renderer prints it.
   reviewed_by?: string;
@@ -590,7 +659,8 @@ export type RunManifest = {
 };
 
 // Where the base of a target review came from, in the order they are tried.
-export type BaseSource = "--base" | "the pull request" | "review.default_base" | "the remote's default branch";
+// "the host": the merge base a host gave reviewChange, proved in its clone.
+export type BaseSource = "--base" | "the pull request" | "review.default_base" | "the remote's default branch" | "the host";
 
 export type RunTarget = {
   spec: string; // as the developer wrote it: a branch, #<n> or a pull request URL

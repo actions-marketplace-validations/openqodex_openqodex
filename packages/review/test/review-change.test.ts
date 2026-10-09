@@ -1,0 +1,339 @@
+// reviewChange with a model reviewer, in the server profile, on a real git
+// clone: the brain owns the loop, runs the five tools over the snapshot,
+// asks the budget before every model call and records every attempt. The
+// model provider is the only stand-in (fixture-model.ts).
+//
+// Ways it could fail, written before the code:
+//  1. A model reviewer that was shown or read every changed line and gave a
+//     passing answer does not end complete.
+//  2. Usage is not one record per attempt, a record lacks its purpose, or the
+//     totals do not add the records up.
+//  3. A tool result served after the last request the transport got (the
+//     next call was refused) counts as delivered, so its lines count as
+//     shown.
+//  4. A read cut at 32 KB counts its whole range, or records no range.
+//  5. A tool call outside the snapshot is run, or is not logged with its
+//     reason, or the review still completes.
+//  6. A budget refusal leaves the review complete, sends the call anyway,
+//     drops the usage of the calls before it, or is retried.
+//  7. The brain retries a call that failed in transport (a hidden second
+//     attempt), or a request carries an attempt other than 1.
+//  8. A correction round is not sent as its own call with its purpose.
+//  9. The server floor reaches only the brief or only the check.
+// 10. The step-4 inputs or a laptop-only option are silently ignored.
+// 11. The server run prints, registers a signal handler, writes
+//     process.env, or leaves its snapshot or a work tree behind.
+// 12. The changed ranges a correction round carries are credited although
+//     the request carrying them was refused and never sent.
+// 13. The result's completion record is missing, of the agent's kind, or
+//     holds fields beyond the record's own, or the renderers leave it out.
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { reviewChange } from "../src/review-change.js";
+import type { AuthorizeRequest, ReviewChangeOptions, ReviewResult } from "../src/reviewer.js";
+import { fixtureModel, recorded } from "./fixture-model.js";
+import type { Finding, Fixture, FixtureOptions } from "./fixture-model.js";
+import { changeRepo } from "./repos.js";
+import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
+
+let written: string[] = [];
+beforeEach(() => {
+  written = [];
+  vi.spyOn(process.stdout, "write").mockImplementation((s) => (written.push(`stdout: ${String(s)}`), true));
+  vi.spyOn(process.stderr, "write").mockImplementation((s) => (written.push(`stderr: ${String(s)}`), true));
+});
+afterEach(() => vi.restoreAllMocks());
+
+const SUBTRACTION: Finding = {
+  severity: "major",
+  category: "bug",
+  confidence: 0.75,
+  file_path: "src/math.ts",
+  line_number: 2,
+  title: "Subtraction in add",
+  problem: "The add function subtracts its second argument.",
+  consequence: "Every caller gets a wrong sum.",
+  fix: "Return a plus b.",
+  source: null,
+  candidate: null,
+};
+
+type Run = { result: ReviewResult; model: Fixture; asked: AuthorizeRequest[]; workDir: string; clone: string; lines: string[] };
+
+async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: number; floor?: number } = {}): Promise<Run> {
+  const repo = changeRepo({ big: opts.big });
+  const workDir = tempDir("oq-rc-work-");
+  const installRoot = tempDir("oq-rc-install-");
+  const model = fixtureModel(opts.fixture);
+  const asked: AuthorizeRequest[] = [];
+  const lines: string[] = [];
+  const options: ReviewChangeOptions = {
+    profile: "server",
+    workDir,
+    installRoot,
+    tools: { web: false, shell: false },
+    scanners: "preinstalled",
+    onProgress: (line) => lines.push(line),
+    ...(opts.floor !== undefined ? { confidenceFloor: opts.floor } : {}),
+    budget: {
+      deadlineMs: 120_000,
+      authorize: async (call) => {
+        asked.push(structuredClone(call));
+        return opts.refuseAt !== asked.length;
+      },
+    },
+  };
+  const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, model, options);
+  return { result, model, asked, workDir, clone: repo.dir, lines };
+}
+
+describe("a model reviewer through reviewChange", () => {
+  it("1. completes when the brief and its reads put every changed line in front of the model", async () => {
+    const r = await run({ big: true, fixture: { reads: ["b/second.txt"] } });
+    expect(r.result.reason).toBeUndefined();
+    expect(r.result.status).toBe("complete");
+    expect(r.result.coverage?.unread).toEqual([]);
+    expect(r.result.evidence).toMatchObject({ reviewer: "primary", model: "fixture-model", briefSent: true, failure: null, submissionErrors: [] });
+    expect(r.result.evidence?.candidates.total).toBeGreaterThan(0);
+    expect(r.result.evidence?.candidates.disposed).toBe(r.result.evidence?.candidates.total);
+    expect(r.result.evidence?.snapshot.after).toBe(r.result.evidence?.snapshot.before);
+    // The brief left the second file's diff out; the reads carried it.
+    const reads = r.result.trace.filter((t) => t.tool === "read_file");
+    expect(reads.map((t) => t.path)).toEqual(["b/second.txt", "b/second.txt"]);
+    expect(reads.every((t) => t.delivered && t.served && t.ok && t.inside === true)).toBe(true);
+    expect(r.result.coverage?.files_read).toEqual(["b/second.txt"]);
+    expect(r.result.dispositions.map((d) => d.outcome)).toEqual(r.result.dispositions.map(() => "dropped"));
+    expect(r.result.scannerVersions).toHaveProperty("sqllint");
+    expect(r.result.render.json()).toContain('"kind": "review"');
+    expect(r.result.render.markdown().length).toBeGreaterThan(0);
+    expect(r.result.render.sarif()).toContain('"version": "2.1.0"');
+  });
+
+  it("13. carries a valid model completion record, in the result and in every rendering", async () => {
+    const r = await run({ big: true, fixture: { reads: ["b/second.txt"] } });
+    const c = r.result.completion!;
+    expect(c).toMatchObject({ contract: "openqodex-model-review-1", status: "complete", missing: [], trace_complete: true });
+    expect(c.reviewer).toEqual({ kind: "model", model: "fixture-model", servedModels: ["fixture-model-2026-10-01"], calls: 3 });
+    expect(c.attempts.map((a) => [a.callId, a.purpose, a.authorized, a.outcome])).toEqual([
+      ["primary-1", "brief", true, "ok"],
+      ["primary-2", "brief", true, "ok"],
+      ["primary-3", "brief", true, "ok"],
+    ]);
+    expect(c.tool_log.map((t) => Object.keys(t).sort())).toEqual(c.tool_log.map(() => ["delivered", "in_scope", "inside", "ok", "path", "range", "reason", "served", "tool"]));
+    expect(c.snapshot.change_id).toBe(r.result.evidence?.changeId);
+    expect(JSON.parse(r.result.render.json()).completion.contract).toBe("openqodex-model-review-1");
+    expect(JSON.parse(r.result.render.sarif()).runs[0].properties.completion.contract).toBe("openqodex-model-review-1");
+    expect(r.result.render.markdown()).toMatch(/model reviewer/i);
+  });
+
+  it("12. ranges a correction round carries count only once the request carrying them was sent", async () => {
+    // The brief leaves the second file's diff out and the fixture reads
+    // nothing: the brain carries those lines in a correction round.
+    const sent = await run({ big: true });
+    expect(sent.result.status).toBe("complete");
+    expect(sent.result.usage.calls.map((c) => c.purpose)).toEqual(["brief", "correction"]);
+    expect(sent.model.requests[1]!.messages.at(-1)!.text).toContain("b/second.txt lines 1 to 1000");
+    // The same, with the correction call refused: the lines were never sent.
+    const refused = await run({ big: true, refuseAt: 2 });
+    expect(refused.model.requests).toHaveLength(1);
+    expect(refused.result.status).toBe("incomplete");
+    expect(refused.result.coverage?.unread).toEqual([{ path: "b/second.txt", start: 1, end: 1000, deletion: false }]);
+    expect(refused.result.completion?.missing).toEqual(["budget refused before correction call 2", "1 changed range was not sent to the reviewer: b/second.txt:1-1000"]);
+  });
+
+  it("2. records one usage entry per attempt, each with its purpose, and totals that add them up", async () => {
+    const r = await run({ big: true, fixture: { reads: ["b/second.txt"] } });
+    const calls = r.result.usage.calls;
+    // The brief, the two reads it answered with, then the answer.
+    expect(calls).toHaveLength(3);
+    expect(calls.map((c) => [c.callId, c.purpose, c.attempt, c.outcome])).toEqual([
+      ["primary-1", "brief", 1, "ok"],
+      ["primary-2", "brief", 1, "ok"],
+      ["primary-3", "brief", 1, "ok"],
+    ]);
+    for (const c of calls) {
+      expect(c).toMatchObject({ reviewer: "primary", model: "fixture-model", servedModel: "fixture-model-2026-10-01", outputTokens: 120, cacheReadTokens: 40, costUsd: 0.002 });
+      expect(c.durationMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(r.result.usage.totals).toMatchObject({ attempts: 3, invoked: 3, failed: 0, refused: 0, outputTokens: 360, cacheReadTokens: 120 });
+    expect(r.result.usage.totals.inputTokens).toBe(calls.reduce((n, c) => n + (c.inputTokens ?? 0), 0));
+    expect(r.result.usage.totals.costUsd).toBeCloseTo(0.006, 10);
+    // The budget was asked before each, with the usage so far.
+    expect(r.asked.map((a) => [a.callId, a.purpose, a.reviewer, a.model, a.maxOutputTokens, a.usageSoFar.invoked])).toEqual([
+      ["primary-1", "brief", "primary", "fixture-model", 4096, 0],
+      ["primary-2", "brief", "primary", "fixture-model", 4096, 1],
+      ["primary-3", "brief", "primary", "fixture-model", 4096, 2],
+    ]);
+  });
+
+  it("3. a tool result served after the last invoked request is served, never delivered, and its lines stay unread", async () => {
+    // Call 3 would carry the second read's result; the budget refuses it.
+    const r = await run({ big: true, fixture: { reads: ["b/second.txt"] }, refuseAt: 3 });
+    expect(r.model.requests).toHaveLength(2);
+    const reads = r.result.trace.filter((t) => t.tool === "read_file");
+    expect(reads.map((t) => [t.served, t.delivered])).toEqual([
+      [true, true],
+      [true, false],
+    ]);
+    // The first read was sent and the second was not, so the changed range
+    // is not covered: coverage names the whole range, as it does for an agent.
+    expect(reads[1]!.range).toEqual([reads[0]!.range![1] + 1, 1000]);
+    expect(r.result.coverage?.unread).toEqual([{ path: "b/second.txt", start: 1, end: 1000, deletion: false }]);
+    expect(r.result.completion?.missing).toContain("1 changed range was not sent to the reviewer: b/second.txt:1-1000");
+    expect(r.result.status).toBe("incomplete");
+    expect(r.result.reason).toContain("budget refused before brief call 3");
+  });
+
+  it("4. a read cut at 32 KB records the lines it carried, and the next read starts after them", async () => {
+    const r = await run({ big: true, fixture: { reads: ["b/second.txt"] } });
+    const [a, b] = r.result.trace.filter((t) => t.tool === "read_file");
+    expect(a!.range![0]).toBe(1);
+    expect(a!.range![1]).toBeLessThan(1000);
+    expect(a!.reason).toMatch(/^cut at 32 KB: lines 1 to \d+ of 1000 sent/);
+    expect(a!.bytes).toBeLessThanOrEqual(32 * 1024);
+    expect(b!.range).toEqual([a!.range![1] + 1, 1000]);
+    expect(b!.reason).toBeNull();
+  });
+
+  it("5. a tool call outside the snapshot is refused, logged with its reason, and ends the review incomplete", async () => {
+    const r = await run({ fixture: { probes: [{ name: "read_file", args: { path: "../../etc/passwd" } }, { name: "list_files", args: { glob: "src/*" } }] } });
+    const [outside, listed] = r.result.trace;
+    expect(outside).toMatchObject({ tool: "read_file", path: "../../etc/passwd", inside: false, ok: false, served: true });
+    expect(outside!.reason).toMatch(/outside/);
+    expect(listed).toMatchObject({ tool: "list_files", inside: true, ok: true });
+    expect(r.result.status).toBe("incomplete");
+    expect(r.result.reason).toMatch(/outside the snapshot: \.\.\/\.\.\/etc\/passwd/);
+    // The conversation ended at once: no further call carried the refusal.
+    expect(r.model.requests).toHaveLength(1);
+  });
+
+  it("6. a budget refusal on the second authorize ends the review with one transport call and its usage kept", async () => {
+    const r = await run({ fixture: { probes: [{ name: "read_file", args: { path: "src/use.ts" } }] }, refuseAt: 2 });
+    expect(r.model.requests).toHaveLength(1);
+    expect(r.asked).toHaveLength(2);
+    expect(r.asked[1]!.usageSoFar).toMatchObject({ invoked: 1, outputTokens: 120 });
+    expect(r.result.status).toBe("incomplete");
+    expect(r.result.reason).toContain("budget refused before brief call 2");
+    expect(r.result.evidence?.failure).toBe("budget refused before brief call 2");
+    expect(r.result.usage.calls.map((c) => [c.callId, c.outcome, c.outputTokens])).toEqual([
+      ["primary-1", "ok", 120],
+      ["primary-2", "refused", null],
+    ]);
+    expect(r.result.usage.totals).toMatchObject({ attempts: 2, invoked: 1, refused: 1, outputTokens: 120 });
+  });
+
+  it("6. a budget refusal before a correction round ends the review the same way", async () => {
+    const r = await run({ fixture: { firstAnswer: "not json" }, refuseAt: 2 });
+    expect(r.model.requests).toHaveLength(1);
+    expect(r.result.status).toBe("incomplete");
+    expect(r.result.evidence?.failure).toBe("budget refused before correction call 2");
+    expect(r.result.usage.calls.map((c) => [c.purpose, c.outcome])).toEqual([
+      ["brief", "ok"],
+      ["correction", "refused"],
+    ]);
+  });
+
+  it("7. a call that fails in transport is recorded once, with its time, and never retried", async () => {
+    const r = await run({ fixture: { throwOn: 1 } });
+    expect(r.model.requests).toHaveLength(1);
+    expect(r.result.status).toBe("incomplete");
+    expect(r.result.reason).toContain("the model call failed: connection reset by the provider");
+    expect(r.result.usage.calls).toEqual([expect.objectContaining({ callId: "primary-1", outcome: "failed", inputTokens: null, outputTokens: null })]);
+    expect(r.result.usage.calls[0]!.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("7. every request carries attempt 1: the contract allows one transport attempt per call, so a hidden retry is the host's to never make", async () => {
+    // A retry inside the host's client cannot be seen from here; what the
+    // brain controls is that it asks once per call id and says attempt 1.
+    const r = await run({ big: true, fixture: { reads: ["b/second.txt"] } });
+    expect(r.model.requests.map((q) => q.attempt)).toEqual([1, 1, 1]);
+    expect(new Set(r.model.requests.map((q) => q.callId)).size).toBe(r.model.requests.length);
+    expect(r.model.requests.map((q) => q.callId)).toEqual(r.result.usage.calls.map((c) => c.callId));
+  });
+
+  it("8. a failed check goes back as a correction round, its own call with its purpose, and the review completes", async () => {
+    const r = await run({ fixture: { firstAnswer: "not json" } });
+    expect(r.result.status).toBe("complete");
+    expect(r.result.usage.calls.map((c) => c.purpose)).toEqual(["brief", "correction"]);
+    const second = r.model.requests[1]!;
+    expect(second.purpose).toBe("correction");
+    expect(second.messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(second.messages[3]).toMatchObject({ role: "user", text: expect.stringContaining("Your answer failed these checks") });
+  });
+
+  it("the transcript starts with the system rules and the brief, and offers the five tools", async () => {
+    const r = await run();
+    const first = r.model.requests[0]!;
+    expect(first.messages.map((m) => m.role)).toEqual(["system", "user"]);
+    expect(first.messages[0]!.text).toMatch(/read_file/);
+    expect(first.messages[1]!.text).toMatch(/^# OpenQodex review brief/);
+    expect(first.tools.map((t) => t.name)).toEqual(["read_file", "search_code", "list_files", "read_diff_for_file", "find_callers"]);
+    expect(first.maxOutputTokens).toBe(4096);
+    expect(r.result.status).toBe("complete");
+  });
+
+  it("9. a server floor above 0.7 reaches the brief and the check", async () => {
+    const r = await run({ floor: 0.8, fixture: { findings: [SUBTRACTION] } });
+    const brief = r.model.requests[0]!.messages[1]!.text;
+    expect(brief).toContain("with confidence 0.8 or higher");
+    expect(brief).toContain("Findings under 0.8, or under a cited lens's floor, are not counted.");
+    expect(r.result.status).toBe("complete");
+    expect(r.result.findings).toEqual([]);
+  });
+
+  it("9. a server floor below 0.7 keeps a finding the default would drop", async () => {
+    const r = await run({ floor: 0.5, fixture: { findings: [SUBTRACTION] } });
+    expect(r.model.requests[0]!.messages[1]!.text).toContain("with confidence 0.5 or higher");
+    expect(r.result.findings).toEqual([
+      expect.objectContaining({ file: "src/math.ts", lineStart: 2, lineEnd: 2, title: "Subtraction in add", confidence: 0.75, foundBy: ["primary"], source: null, candidate: null }),
+    ]);
+    // major is under the default block threshold, so the review does not block.
+    expect(r.result.status).toBe("complete");
+  });
+
+  it("11. prints nothing, adds no signal handler, writes no environment, and leaves no snapshot or work tree", async () => {
+    const sigint = process.listenerCount("SIGINT");
+    const sigterm = process.listenerCount("SIGTERM");
+    const env = { ...process.env };
+    const r = await run();
+    expect(r.result.status).toBe("complete");
+    expect(written).toEqual([]);
+    expect(r.lines.length).toBeGreaterThan(0);
+    expect(process.listenerCount("SIGINT")).toBe(sigint);
+    expect(process.listenerCount("SIGTERM")).toBe(sigterm);
+    expect({ ...process.env }).toEqual(env);
+    expect(readdirSync(r.workDir)).toEqual([]);
+    const worktrees = join(r.clone, ".git", "worktrees");
+    expect(existsSync(worktrees) ? readdirSync(worktrees) : []).toEqual([]);
+  });
+});
+
+describe("what reviewChange refuses", () => {
+  const base = { profile: "server" as const, tools: { web: false as const, shell: false as const }, scanners: "preinstalled" as const };
+
+  it("10. refuses the next step's inputs and the laptop's options with a clear error", async () => {
+    const repo = changeRepo();
+    const workDir = tempDir("oq-rc-work-");
+    const opts = { ...base, workDir, installRoot: workDir };
+    const input = { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head };
+    const model = fixtureModel();
+    for (const extra of [{ previousReviewedSha: repo.base }, { fullReviewRequested: true }, { scopes: ["src"] }, { context: [{ kind: "note", text: "x", source: "y" }] }]) {
+      await expect(reviewChange({ ...input, ...extra }, model, opts), JSON.stringify(extra)).rejects.toThrow(/not supported yet/);
+    }
+    for (const bad of [{ profile: "laptop" }, { tools: { web: true, shell: false } }, { tools: { web: false, shell: true } }, { scanners: "download" }, { confidenceFloor: 1.5 }]) {
+      await expect(reviewChange(input, model, { ...opts, ...bad } as unknown as ReviewChangeOptions), JSON.stringify(bad)).rejects.toThrow();
+    }
+    await expect(reviewChange(input, { kind: "agent", name: "claude", traced: true, pid: null, send: async () => { throw new Error("no"); }, close: async () => {} }, opts)).rejects.toThrow(/model reviewer/);
+    expect(model.requests).toEqual([]);
+  });
+});
+
+describe("the recorded submission", () => {
+  it("is filled from the brief it answers", () => {
+    const text = recorded("`change_id`: `0123456789ab`\n- c1 [sqllint:x] db/x.sql:1 (minor) m\n");
+    expect(JSON.parse(text)).toMatchObject({ change_id: "0123456789ab", dropped: [{ candidate: "c1", file_path: "db/x.sql", line_number: 1 }] });
+  });
+});
