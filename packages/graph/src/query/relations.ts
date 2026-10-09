@@ -372,7 +372,13 @@ export function outline(s: Session, req: Request): Job | Answer {
   if (!scanning) files.push(at);
   let left = g.defsByFile.size;
   const all: unknown[] = [];
-  let built = false;
+  // Where the listing stands, kept across runs: the files sorted, the file
+  // being read, its definitions sorted, the next one of them.
+  let sorted = false;
+  let file = 0;
+  let defs: GraphNode[] | null = null;
+  let defsSorted = false;
+  let def = 0;
   const sites = (list: GraphEdge[] | undefined) => (list ?? []).reduce((k, e) => k + e.sites.length, 0);
   return (budget) => {
     const base = empty(s, "outline");
@@ -387,14 +393,28 @@ export function outline(s: Session, req: Request): Job | Answer {
       if (r.value.startsWith(`${at}/`)) files.push(r.value);
     }
     if (files.length === 0) return fail(s, "outline", "not-found", `no file of the graph is ${at} or under it`);
-    if (!built) {
-      if (!sortWithin(files, (x, y) => (x < y ? -1 : x > y ? 1 : 0), budget)) return stoppedAt(base, [], [], null);
-      for (const f of files) {
-        if (spent(budget)) return stoppedAt(base, [], [], null);
-        const defs = (g.defsByFile.get(f) ?? []).slice().sort((x, y) => x.startLine - y.startLine);
-        for (const d of defs) all.push({ id: d.id, name: d.name, qualified: qualified(d), kind: d.kind, file: d.file, line: d.startLine, endLine: d.endLine, exported: d.exported, callerSites: sites(g.in.get(d.id)), calleeSites: sites(g.out.get(d.id)) });
+    if (!sorted) {
+      if (!sortWithin(files, byText, budget)) return stoppedAt(base, all, [], files.length - file);
+      sorted = true;
+    }
+    while (file < files.length) {
+      if (defs === null) {
+        if (spent(budget)) return stoppedAt(base, all, [], files.length - file);
+        defs = (g.defsByFile.get(files[file] as string) ?? []).slice();
+        defsSorted = false;
+        def = 0;
       }
-      built = true;
+      if (!defsSorted) {
+        if (!sortWithin(defs, (x, y) => x.startLine - y.startLine, budget)) return stoppedAt(base, all, [], files.length - file);
+        defsSorted = true;
+      }
+      while (def < defs.length) {
+        if (spent(budget)) return stoppedAt(base, all, [], files.length - file);
+        const d = defs[def++] as GraphNode;
+        all.push({ id: d.id, name: d.name, qualified: qualified(d), kind: d.kind, file: d.file, line: d.startLine, endLine: d.endLine, exported: d.exported, callerSites: sites(g.in.get(d.id)), calleeSites: sites(g.out.get(d.id)) });
+      }
+      defs = null;
+      file++;
     }
     const notRead = g.status.notRead.filter((n) => n.file === at || n.file.startsWith(`${at}/`));
     const reasons = notRead.length > 0 ? [`${notRead.length} ${notRead.length === 1 ? "file" : "files"} here ${notRead.length === 1 ? "was" : "were"} not read: ${notRead.slice(0, 5).map((n) => `${n.file} (${n.reason})`).join(", ")}`] : [];

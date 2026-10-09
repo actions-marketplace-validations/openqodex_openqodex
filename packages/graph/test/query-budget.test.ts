@@ -19,6 +19,9 @@
 //  8. A page read from a kept list carries the graph block of the moment
 //     the list was made, so edits the session has learned of since are
 //     not said.
+//  9. Work that a slice of the MCP server stops starts again from its first
+//     element instead of where it stopped (outline of a large folder), so
+//     slices never finish and pile up duplicates until the deadline.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -218,5 +221,23 @@ describe("edits since the held build", () => {
     } finally {
       pinned.release();
     }
+  });
+});
+
+describe("work that resumes where a slice stopped it", () => {
+  it("outlines a folder of 301 files in slices of 100 checks, each symbol once, well inside its budget (9)", async () => {
+    const req: Request = { apiVersion: 1, kind: "outline", target: { file: "src" }, limit: 500, budget: { ms: 10_000 } };
+    const started = performance.now();
+    const sliced = await querySliced(s, req, {}, 100);
+    const ms = performance.now() - started;
+    const whole = ask({ kind: "outline", target: { file: "src" }, limit: 500 });
+    expect(whole.truncated.by).toBe("limit");
+    expect(sliced.truncated.by).toBe("limit");
+    const ids = (a: Answer) => (a.items as { id: string }[]).map((i) => i.id);
+    expect(new Set(ids(sliced)).size).toBe(ids(sliced).length);
+    expect(ids(sliced)).toEqual(ids(whole));
+    expect(sliced.truncated.omitted).toBe(whole.truncated.omitted);
+    // A slice that started over would run to the ten-second deadline.
+    expect(ms).toBeLessThan(3000);
   });
 });
