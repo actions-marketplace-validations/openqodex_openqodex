@@ -67,7 +67,7 @@ describe("the limits of dispatch and function values", () => {
     expect((g.in.get(base?.id ?? "") ?? []).flatMap((e) => e.sites.map((s) => `${s.file}:${s.line} ${s.tier}`))).toEqual(["src/use.ts:3 certain"]);
   });
 
-  it.skip("keeps at most 32 entries of a large table per call, says how many it left out, and stays fast (2)", async () => {
+  it("keeps at most 32 entries of a large table per call, says how many it left out, and stays fast (2)", async () => {
     const n = 4_000;
     const root = repo({ "src/table.ts": bigTable(n) });
     const started = performance.now();

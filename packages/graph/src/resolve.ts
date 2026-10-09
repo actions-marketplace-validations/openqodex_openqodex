@@ -1703,13 +1703,17 @@ export function createWorld(input: ResolveInput): World {
     perFile[i] = out;
     return out;
   };
-  // The functions a function returns by name.
+  // The functions a function returns by name, made once per function.
+  const returnsMemo = new Map<string, string[]>();
   const returnsOf = (id: string): string[] => {
+    const kept = returnsMemo.get(id);
+    if (kept) return kept;
     const d = defById.get(id);
-    if (!d?.returns) return [];
     const out = new Set<string>();
-    for (const r of d.returns) for (const x of valueOf(d.file, r)?.ids ?? []) out.add(x);
-    return [...out];
+    for (const r of d?.returns ?? []) for (const x of valueOf(d?.file ?? "", r)?.ids ?? []) out.add(x);
+    const list = [...out];
+    returnsMemo.set(id, list);
+    return list;
   };
 
   // The build's time budget, checked inside a file as well as between
@@ -1792,6 +1796,14 @@ export function createWorld(input: ResolveInput): World {
       const family = familyOf(f.lang);
       const defIds = f.defs.map((d) => symbolId(path, d));
       const callerOf = (i: number): string => (i >= 0 ? (defIds[i] as string) : path);
+      // The functions each literal table holds, made once per table: a
+      // table called from many places is read once, not once per call.
+      const tableIdsMemo = new Map<number, string[]>();
+      const tableIds = (index: number): string[] => {
+        let ids = tableIdsMemo.get(index);
+        if (!ids) tableIdsMemo.set(index, (ids = [...new Set((f.tables[index]?.values ?? []).flatMap((i) => valueOf(path, i)?.ids ?? []))]));
+        return ids;
+      };
       // The value references passed to each call, by the call's index.
       const argsOf = new Map<number, number[]>();
       f.values.forEach((v, i) => {
@@ -1817,20 +1829,27 @@ export function createWorld(input: ResolveInput): World {
           const inner = f.calls[call.result];
           const got = inner ? resolveCall(path, family, inner, inner.caller >= 0 ? defById.get(callerOf(inner.caller)) : undefined) : "ignore";
           const callees = typeof got === "object" && "ids" in got ? got.ids : [];
-          const targets = [...new Set(callees.flatMap(returnsOf))];
+          const targets = callees.length === 1 ? returnsOf(callees[0] as string) : [...new Set(callees.flatMap(returnsOf))];
           if (targets.length > 0) {
             const by = defById.get(callees[0] as string)?.name ?? "the callee";
             const ev: Ev = { kind: "returned-value", tier: "possible", via: null, note: `${by} returns it by name, and what ${by} returns is called here.`, rule: "returned-value" };
-            for (const t of targets) addEdge(callerId, t, "may_invoke", siteOf(path, call.line, call.column, ev));
+            const site = siteOf(path, call.line, call.column, ev);
+            for (const t of targets.slice(0, DISPATCH_CAP)) addEdge(callerId, t, "may_invoke", site);
+            if (targets.length > DISPATCH_CAP) {
+              unknowns.push({ file: path, line: call.line, column: call.column, name: "", cause: "fan-out-capped", shape, caller: callerId, scope: "file", note: `${by} returns ${targets.length.toLocaleString("en-US")} functions by name; the ${(targets.length - DISPATCH_CAP).toLocaleString("en-US")} past the first ${DISPATCH_CAP} are not listed as possible targets of this call` });
+            }
             continue;
           }
         }
-        // A computed call on a literal table may call any of its entries.
+        // A computed call on a literal table may call any of its entries;
+        // at most DISPATCH_CAP of them are listed, and the gap says how many are not.
         const table = call.table !== undefined ? f.tables[call.table] : undefined;
-        const tableIds = table ? [...new Set(table.values.flatMap((i) => valueOf(path, i)?.ids ?? []))] : [];
-        if (table && tableIds.length > 0) {
+        const entries = table && call.table !== undefined ? tableIds(call.table) : [];
+        const listed = entries.length > DISPATCH_CAP ? entries.slice(0, DISPATCH_CAP) : entries;
+        if (table && listed.length > 0) {
           const ev: Ev = { kind: "value-table", tier: "possible", via: null, note: `${table.name}[...] may call it: it is an entry of the table at line ${table.line}.`, rule: "value-table" };
-          for (const t of tableIds) addEdge(callerId, t, "may_invoke", siteOf(path, call.line, call.column, ev));
+          const site = siteOf(path, call.line, call.column, ev);
+          for (const t of listed) addEdge(callerId, t, "may_invoke", site);
         }
         const out = resolveCall(path, family, call, caller);
         if (out === "ignore") continue;
@@ -1845,10 +1864,13 @@ export function createWorld(input: ResolveInput): World {
           if (out.note) u.note = out.note;
           if (out.candidates) u.candidates = out.candidates;
           // A known table narrows the gap to its entries (or a key it does not hold).
-          if (table && tableIds.length > 0) {
+          if (table && listed.length > 0) {
             u.scope = "file";
-            u.candidates = tableIds;
-            u.note = `a computed member of the table ${table.name} (line ${table.line}): one of its entries, listed as possible targets, or a key the table does not hold`;
+            u.candidates = listed;
+            u.note =
+              entries.length > listed.length
+                ? `a computed member of the table ${table.name} (line ${table.line}): one of its ${entries.length.toLocaleString("en-US")} entries, of which the first ${listed.length} are listed as possible targets and ${(entries.length - listed.length).toLocaleString("en-US")} are not, or a key the table does not hold`
+                : `a computed member of the table ${table.name} (line ${table.line}): one of its entries, listed as possible targets, or a key the table does not hold`;
           }
           unknowns.push(u);
           continue;
