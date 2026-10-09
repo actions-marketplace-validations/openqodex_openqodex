@@ -23,6 +23,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@openqodex/core": "workspace:*"
+    "@openqodex/core": "workspace:*",
+    "yaml": "^2.9.1"
   }
 }

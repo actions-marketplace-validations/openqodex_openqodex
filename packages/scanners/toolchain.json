@@ -372,6 +372,87 @@
       "needs": "ruby>=2.7",
       "binary": "rubocop"
     },
+    "zizmor": {
+      "version": "1.30.1",
+      "method": "github-release",
+      "repo": "zizmorcore/zizmor",
+      "tag": "v1.30.1",
+      "binary": "zizmor",
+      "assets": {
+        "darwin-arm64": {
+          "name": "zizmor-aarch64-apple-darwin.tar.gz",
+          "url": "https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-aarch64-apple-darwin.tar.gz",
+          "sha256": "e28d22b087f9ebb8d99da6e740d348c930f559961c7c3f12badda54f882195a2",
+          "archive": "tar.gz",
+          "binaryPath": "zizmor"
+        },
+        "darwin-x64": {
+          "name": "zizmor-x86_64-apple-darwin.tar.gz",
+          "url": "https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-apple-darwin.tar.gz",
+          "sha256": "10e6b18b11ea07e515a16f0f0518c7b07527bc9977c1fd5698181ce7f3554202",
+          "archive": "tar.gz",
+          "binaryPath": "zizmor"
+        },
+        "linux-x64": {
+          "name": "zizmor-x86_64-unknown-linux-gnu.tar.gz",
+          "url": "https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz",
+          "sha256": "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a",
+          "archive": "tar.gz",
+          "binaryPath": "zizmor"
+        },
+        "linux-arm64": {
+          "name": "zizmor-aarch64-unknown-linux-gnu.tar.gz",
+          "url": "https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-aarch64-unknown-linux-gnu.tar.gz",
+          "sha256": "7ff1dce33bdd18fd2a4affe63bdd47efcccca97b2cec1c1863ec26e9e2647540",
+          "archive": "tar.gz",
+          "binaryPath": "zizmor"
+        }
+      }
+    },
+    "squawk": {
+      "version": "2.66.0",
+      "method": "github-release",
+      "repo": "sbdchd/squawk",
+      "tag": "v2.66.0",
+      "binary": "squawk",
+      "assets": {
+        "darwin-arm64": {
+          "name": "squawk-darwin-arm64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-darwin-arm64",
+          "sha256": "d273f3a234b81b8d540b2cdf1b07ed84f719a3ab11b47d6f3efe96baaf21b40b",
+          "archive": "none",
+          "binaryPath": "squawk-darwin-arm64"
+        },
+        "darwin-x64": {
+          "name": "squawk-darwin-x64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-darwin-x64",
+          "sha256": "e361365762a6bf11abbef746d29ff46ac0b4feba43df2f0570595f06c67d7daf",
+          "archive": "none",
+          "binaryPath": "squawk-darwin-x64"
+        },
+        "linux-x64": {
+          "name": "squawk-linux-x64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-linux-x64",
+          "sha256": "e7965f8146b53cfa7a4625ceecfea5c6aeb35add39132210aa60b11ae180b9f4",
+          "archive": "none",
+          "binaryPath": "squawk-linux-x64"
+        },
+        "linux-arm64": {
+          "name": "squawk-linux-arm64",
+          "url": "https://github.com/sbdchd/squawk/releases/download/v2.66.0/squawk-linux-arm64",
+          "sha256": "04455267bb895de1568dc24e52eb062b311096ad614c3e15a77cf8a7b3483c2a",
+          "archive": "none",
+          "binaryPath": "squawk-linux-arm64"
+        }
+      }
+    },
+    "sqlfluff": {
+      "version": "4.3.0",
+      "method": "uv",
+      "package": "sqlfluff",
+      "python": "3.11",
+      "binary": "sqlfluff"
+    },
     "kube-linter": {
       "version": "0.8.3",
       "method": "github-release",

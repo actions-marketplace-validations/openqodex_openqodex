@@ -16,7 +16,7 @@
 // - Nesting deeper than MAX_DEPTH ($( ) in $( ), f-string fields, Ruby #{ })
 //   is read as plain code instead of recursing.
 
-export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go" | "yaml";
+export type Family = "python" | "shell" | "dockerfile" | "ruby" | "js" | "go" | "yaml" | "sql";
 
 // `start` is the offset of the comment's opener in the file; `text` runs from
 // the opener to the end of the comment (the line end for a line comment,
@@ -44,6 +44,9 @@ export function comments(text: string, family: Family): Comment[] {
       break;
     case "yaml":
       yamlComments(r);
+      break;
+    case "sql":
+      sqlComments(r);
       break;
   }
   return r.out;
@@ -785,18 +788,10 @@ function rubyComments(r: Reader): void {
 // block scalar (`|` or `>` with its chomping and indentation indicators,
 // where a scalar starts) holds every following line that is blank or
 // indented deeper than the key or `-` that holds it.
-//
-// `masked`, when given, collects the spans that are not YAML code, in file
-// order: comments, the inside of a quoted value (a quoted key is code), and
-// block scalar bodies.
-function yamlComments(r: Reader, masked?: [number, number][]): void {
+function yamlComments(r: Reader): void {
   const s = r.s;
   const blankOrEnd = (k: number): boolean => k >= s.length || s[k] === " " || s[k] === "\t" || s[k] === "\n" || s[k] === "\r";
-  const comment = (k: number): number => {
-    const end = r.lineComment(k);
-    masked?.push([k, end]);
-    return end;
-  };
+  const comment = (k: number): number => r.lineComment(k);
   let flow = 0;
   let i = 0;
   while (i < s.length) {
@@ -838,10 +833,6 @@ function yamlComments(r: Reader, masked?: [number, number][]): void {
           i++;
           continue;
         }
-        let k = end;
-        while (s[k] === " " || s[k] === "\t") k++;
-        const key = s[k] === ":" && (blankOrEnd(k + 1) || (flow > 0 && ",]}".includes(s[k + 1] as string)));
-        if (!key) masked?.push([from + 1, end - 1]);
         i = end;
       } else if (start && flow === 0 && (c === "|" || c === ">")) {
         const header = blockHeader(s, i);
@@ -855,7 +846,6 @@ function yamlComments(r: Reader, masked?: [number, number][]): void {
         if (s[k] === "#") k = comment(k);
         const parent = keyed ? keyColumn : entry;
         next = skipBlockBody(s, lineEnd(s, k) + 1, parent);
-        masked?.push([Math.min(lineEnd(s, k) + 1, s.length), next]);
         break;
       } else if (start && (c === "&" || c === "!")) {
         // An anchor or a tag: the scalar starts after it.
@@ -936,32 +926,132 @@ function skipBlockBody(s: string, i: number, parent: number): number {
   return s.length;
 }
 
-// Each line of a YAML file as a Comment unit (its start, and its text
-// without a carriage return), with everything that is not YAML code turned
-// into blanks: comments, the inside of quoted values, block scalar bodies.
-// A suppression marker that a scanner obeys as a YAML key (kube-linter's
-// `ignore-check.kube-linter.io/<check>` annotation) is matched on these, so
-// the same text in a comment or a string is not.
-export function yamlCode(text: string): Comment[] {
-  const masked: [number, number][] = [];
-  yamlComments(new Reader(text), masked);
-  const parts: string[] = [];
-  let at = 0;
-  for (const [from, to] of masked) {
-    if (to <= at) continue;
-    const begin = Math.max(from, at);
-    parts.push(text.slice(at, begin), text.slice(begin, to).replace(/[^\n]/g, " "));
-    at = to;
+// A character of a SQL identifier after its first: a letter, a digit, `_`,
+// `$` or any character past ASCII (Postgres scan.l, ident_cont).
+const SQL_IDENT_CONT = /[A-Za-z0-9_$\u0080-￿]/;
+const SQL_IDENT_START = /[A-Za-z_\u0080-￿]/;
+const sqlIdentCont = (c: string | undefined): boolean => c !== undefined && SQL_IDENT_CONT.test(c);
+
+// The `$tag$` (or `$$`) that opens a dollar quote at `i`, or null. The tag is
+// a word that does not start with a digit and holds no `$` ($1 is a
+// parameter). The scan stops at the next `$`, so the scans from all `$`
+// signs of a file cover it once.
+function sqlDollarTag(s: string, i: number): string | null {
+  if (s[i + 1] === "$") return "$$";
+  if (!SQL_IDENT_START.test(s[i + 1] ?? "")) return null;
+  let k = i + 2;
+  while (k < s.length && s[k] !== "$" && k - i <= MAX_WORD) {
+    if (!SQL_IDENT_CONT.test(s[k] as string)) return null;
+    k++;
   }
-  parts.push(text.slice(at));
-  const code = parts.join("");
-  const out: Comment[] = [];
-  let start = 0;
-  for (;;) {
-    const end = code.indexOf("\n", start);
-    const line = code.slice(start, end < 0 ? code.length : end);
-    out.push({ start, text: line.endsWith("\r") ? line.slice(0, -1) : line });
-    if (end < 0) return out;
-    start = end + 1;
+  return s[k] === "$" ? s.slice(i, k + 1) : null;
+}
+
+// The offset past a SQL string or quoted identifier whose body starts at `i`
+// and ends with `close`: a doubled `close` stands for one, and with
+// `backslash` a backslash hides the next character. -1 with no closer.
+function skipSqlQuoted(s: string, i: number, close: string, backslash: boolean): number {
+  while (i < s.length) {
+    const c = s[i];
+    if (backslash && c === "\\") {
+      i += 2;
+    } else if (c === close) {
+      if (s[i + 1] !== close) return i + 1;
+      i += 2;
+    } else {
+      i++;
+    }
+  }
+  return -1;
+}
+
+// The offset past a block comment that opens at `i`, counting the `/*` and
+// `*/` inside it, as Postgres nests them; -1 with no closer.
+function skipSqlBlock(s: string, i: number): number {
+  let depth = 1;
+  i += 2;
+  while (i < s.length) {
+    if (s[i] === "/" && s[i + 1] === "*") {
+      depth++;
+      i += 2;
+    } else if (s[i] === "*" && s[i + 1] === "/") {
+      depth--;
+      i += 2;
+      if (depth === 0) return i;
+    } else {
+      i++;
+    }
+  }
+  return -1;
+}
+
+// SQL as Postgres (and squawk's lexer, crates/squawk_lexer) reads it: `--`
+// comments to the line end, and `/* */` comments, which nest. Strings:
+// '...' with '' for a quote and a backslash taken as a character; E'...',
+// where an E that starts a word also makes a backslash hide the next
+// character; "quoted identifiers" with "" for a quote; and dollar quotes
+// $$...$$ and $tag$...$tag$, whose `$` opens one only at the start of a word
+// (a$b$ is an identifier).
+function sqlComments(r: Reader): void {
+  const s = r.s;
+  // Every offset each `$tag$` text starts at, built once: the closer of a
+  // dollar quote is the first one at or after its body.
+  let dollars: Map<string, number[]> | null = null;
+  const closerOf = (tag: string, from: number): number => {
+    if (dollars === null) {
+      dollars = new Map();
+      for (let k = s.indexOf("$"); k >= 0; k = s.indexOf("$", k + 1)) {
+        const t = sqlDollarTag(s, k);
+        if (t === null) continue;
+        const list = dollars.get(t);
+        if (list) list.push(k);
+        else dollars.set(t, [k]);
+      }
+    }
+    const at = dollars.get(tag) ?? [];
+    let lo = 0;
+    let hi = at.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((at[mid] as number) < from) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < at.length ? (at[lo] as number) + tag.length : -1;
+  };
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i] as string;
+    if (c === "-" && s[i + 1] === "-") {
+      i = r.lineComment(i);
+    } else if (c === "/" && s[i + 1] === "*") {
+      const from = i;
+      const end = r.open("/*", from, () => skipSqlBlock(s, from));
+      if (end < 0) {
+        i += 2;
+      } else {
+        r.out.push({ start: from, text: s.slice(from, end) });
+        i = end;
+      }
+    } else if (c === "'") {
+      const from = i;
+      const escape = (s[i - 1] === "e" || s[i - 1] === "E") && !sqlIdentCont(s[i - 2]);
+      const end = r.open(escape ? "E'" : "'", from, () => skipSqlQuoted(s, from + 1, "'", escape));
+      i = end < 0 ? i + 1 : end;
+    } else if (c === '"') {
+      const from = i;
+      const end = r.open('"', from, () => skipSqlQuoted(s, from + 1, '"', false));
+      i = end < 0 ? i + 1 : end;
+    } else if (c === "$" && !sqlIdentCont(s[i - 1])) {
+      const tag = sqlDollarTag(s, i);
+      const from = i;
+      const end = tag === null ? -1 : r.open(tag, from, () => closerOf(tag, from + tag.length));
+      i = end < 0 ? i + 1 : end;
+    } else if (sqlIdentCont(c)) {
+      // A word, so a `$` inside it never opens a dollar quote.
+      i++;
+      while (i < s.length && sqlIdentCont(s[i])) i++;
+    } else {
+      i++;
+    }
   }
 }

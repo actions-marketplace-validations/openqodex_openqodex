@@ -1,6 +1,6 @@
-// The YAML comment reader (comments.ts, family "yaml") and the code-only
-// YAML lines (yamlCode) that the suppression table reads for markers a
-// scanner obeys as YAML keys, such as kube-linter's annotations.
+// The YAML comment reader (comments.ts, family "yaml"). Markers a scanner
+// obeys as YAML keys (kube-linter's annotations) are read by a YAML parser
+// instead (yaml-keys.ts and its tests).
 //
 // Failure list, written before the code:
 //   1. A `#` inside a quoted scalar ('...' with '' escapes, "..." with
@@ -20,13 +20,10 @@
 //      a comment.
 //   8. Flow collections: a `#` in a quoted item is read as a comment, or
 //      the comment after the collection is missed.
-//   9. Code-only lines: a key in the code is masked, or the same text in a
-//      comment, a quoted value or a block scalar body is not; a quoted key
-//      is masked.
-//  10. Linear time on hostile input: many unclosed quotes, many block
+//   9. Linear time on hostile input: many unclosed quotes, many block
 //      scalar indicators, one very long line.
 import { describe, expect, it } from "vitest";
-import { comments, yamlCode } from "./comments.js";
+import { comments } from "./comments.js";
 
 const yaml = (...rows: string[]): string => `${rows.join("\n")}\n`;
 const texts = (text: string): string[] => comments(text, "yaml").map((c) => c.text);
@@ -102,46 +99,11 @@ describe("YAML comments", () => {
   });
 });
 
-describe("YAML code-only lines (9)", () => {
-  const code = (text: string): string[] => yamlCode(text).map((u) => u.text);
-
-  it("keeps keys and plain values, masks comments", () => {
-    const text = yaml("metadata:", "  annotations:", "    ignore-check.kube-linter.io/x: \"ok\" # ignore-check.kube-linter.io/y: in a comment");
-    const lines = code(text);
-    expect(lines[2]).toContain("ignore-check.kube-linter.io/x:");
-    expect(lines[2]).not.toContain("ignore-check.kube-linter.io/y");
-  });
-
-  it("keeps a quoted key, masks a quoted value", () => {
-    const text = yaml(`"ignore-check.kube-linter.io/a": yes`, `'ignore-check.kube-linter.io/b' : yes`, `note: "ignore-check.kube-linter.io/c: no"`, `other: 'ignore-check.kube-linter.io/d: no'`);
-    const joined = code(text).join("\n");
-    expect(joined).toContain("ignore-check.kube-linter.io/a");
-    expect(joined).toContain("ignore-check.kube-linter.io/b");
-    expect(joined).not.toContain("ignore-check.kube-linter.io/c");
-    expect(joined).not.toContain("ignore-check.kube-linter.io/d");
-  });
-
-  it("masks a block scalar's body and the lines of a quoted value that spans lines", () => {
-    const text = yaml("script: |", "  ignore-check.kube-linter.io/x: in a script", 'text: "first', "  ignore-check.kube-linter.io/y: in a string\"", "after: 1");
-    const lines = code(text);
-    expect(lines.join("\n")).not.toContain("ignore-check");
-    expect(lines[4]).toBe("after: 1");
-  });
-
-  it("gives one unit per line, each starting at its line's offset", () => {
-    const text = yaml("a: 1", "b: 2 # c", "d: 3");
-    const units = yamlCode(text);
-    expect(units.map((u) => u.start)).toEqual([0, 5, 14, 19]);
-    expect(units.map((u) => u.text.length)).toEqual([4, 8, 4, 0]);
-  });
-});
-
-describe("YAML reading takes linear time (10)", () => {
+describe("YAML reading takes linear time (9)", () => {
   const N = 100_000;
   const fast = (text: string) => {
     const started = performance.now();
     comments(text, "yaml");
-    yamlCode(text);
     return performance.now() - started;
   };
   const cases: [string, string][] = [

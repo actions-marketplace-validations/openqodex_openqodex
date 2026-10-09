@@ -1,0 +1,74 @@
+{
+  "id": "workflow-untrusted-checkout",
+  "guards": "a pull_request_target workflow that checks out and runs a pull request's code with a secret, gated by a spoofable Dependabot actor check, is reported; actionlint and semgrep find neither, zizmor finds both",
+  "language": "yaml",
+  "framework": "github-actions",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "pull-request-code-with-secrets",
+      "file": ".github/workflows/visual-tests.yml",
+      "lines": [
+        5,
+        7
+      ],
+      "also": [
+        {
+          "file": ".github/workflows/visual-tests.yml",
+          "lines": [
+            20,
+            32
+          ]
+        }
+      ],
+      "anchor": {
+        "line": 6,
+        "text": "pull_request_target:"
+      },
+      "mentions": [
+        "pull_request_target",
+        "untrusted",
+        "fork",
+        "attacker",
+        "secret",
+        "PERCY_TOKEN"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "critical",
+      "found_by": [
+        "zizmor",
+        "reasoning"
+      ],
+      "truth": "The workflow runs on pull_request_target, which gets the repository's secrets, then checks out the pull request's own head and runs npm ci and its test scripts with PERCY_TOKEN set, so a pull request that passes the job's condition runs its own code with the secret. The fix is to run the visual tests on pull_request, or to keep pull_request_target for trusted code only and never check out the pull request's head there."
+    },
+    {
+      "id": "spoofable-dependabot-check",
+      "file": ".github/workflows/visual-tests.yml",
+      "lines": [
+        14,
+        14
+      ],
+      "anchor": {
+        "line": 14,
+        "text": "github.actor == 'dependabot[bot]'"
+      },
+      "mentions": [
+        "actor",
+        "spoof",
+        "user.login",
+        "dependabot"
+      ],
+      "kind": [
+        "security"
+      ],
+      "severity": "major",
+      "found_by": [
+        "zizmor",
+        "reasoning"
+      ],
+      "truth": "github.actor is whoever caused the latest event, not the pull request's author: Dependabot updating a branch of an attacker's fork makes the actor dependabot[bot], so the check lets the attacker's pull request through. The fix is to check github.event.pull_request.user.login, and still not to run the pull request's code with a secret."
+    }
+  ]
+}

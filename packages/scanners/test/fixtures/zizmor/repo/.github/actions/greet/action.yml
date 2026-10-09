@@ -1,0 +1,7 @@
+name: greet
+description: greet the author
+runs:
+  using: composite
+  steps:
+    - run: echo "hello ${{ github.event.issue.title }}"
+      shell: bash

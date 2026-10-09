@@ -11,7 +11,8 @@
 // its osv-scanner.toml, and sqllint has none.
 
 import type { BuiltinScanner } from "@openqodex/core";
-import { comments, yamlCode } from "./comments.js";
+import { comments } from "./comments.js";
+import { yamlKeys } from "./yaml-keys.js";
 import type { Comment, Family } from "./comments.js";
 
 type Marker = {
@@ -34,11 +35,15 @@ type Marker = {
 };
 
 // "line": the scanner obeys the marker anywhere on the line, in a comment,
-// a string or code alike. "yaml-code": the scanner obeys it as YAML, such
-// as a key of an object's annotations, so it counts on each line's YAML code
-// (comments.ts, yamlCode) and never in a comment, a quoted value or a block
-// scalar's body.
-type Unit = Family | "line" | "yaml-code";
+// a string or code alike. "yaml-keys": the scanner obeys it as a key of a
+// YAML or JSON mapping, such as an object's annotations, in any style
+// (yaml-keys.ts): the pattern is tested on each key as the scanner decodes
+// it, and a hit counts on the key's line, or on the line of an alias that
+// brings the key in. A file the parser cannot read, or one too large, is
+// tested line by line instead, so the reading is never narrower than the
+// scanner's. A "yaml-keys" pattern must not be anchored to the start: in
+// that fallback a unit is a whole line.
+type Unit = Family | "line" | "yaml-keys";
 type Entry = { family: Unit; markers: Marker[] };
 
 export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
@@ -114,17 +119,50 @@ export const SUPPRESSION_MARKERS: Partial<Record<BuiltinScanner, Entry>> = {
     family: "js",
     markers: [{ name: "{kw}", pattern: /^\/[/*]\s*(?<at>(?<kw>(?:eslint|oxlint)-disable(?:-next-line|-line)?))(?=\s|\*\/|$)/dg }],
   },
-  // An object annotation whose key is ignore-check.kube-linter.io/<check> or
-  // kube-linter.io/ignore-all (pkg/ignore/ignore.go): a YAML key, so it counts
-  // at a key position (after the indentation and any `- `, or after `{` or
-  // `,` in a flow map, quoted or not) and never in a comment or a value.
-  // kube-linter reads only the object's own metadata.annotations; a key
-  // anywhere else counts here too.
-  "kube-linter": {
-    family: "yaml-code",
+  // `# zizmor: ignore[` with one blank after the `#` and the colon
+  // (IGNORE_EXPR in crates/zizmor/src/finding/location.rs). Anywhere on the
+  // line: for the audits that locate a finding by its raw span
+  // (unredacted-secrets, obfuscation and four more), zizmor reads each line
+  // from its first `#`, so 1.30.1 obeys the marker inside a `run: |` body and
+  // a quoted value too. The closing `]` and what follows it are not checked,
+  // so this is wider than zizmor, never narrower.
+  zizmor: { family: "line", markers: [{ name: "# zizmor: ignore[...]", pattern: /(?<at># zizmor: ignore\[)/dg }] },
+  // A `--` or `/* */` comment whose text starts, after blanks, with
+  // squawk-ignore or squawk-ignore-file (crates/squawk_linter/src/ignore.rs,
+  // ignore_rule_info), or with squawk-disable-assume-in-transaction, which
+  // changes what squawk reports for the whole file. Case-sensitive. A bare
+  // `squawk-ignore` with no rule silences nothing in 2.66.0; it still counts.
+  squawk: {
+    family: "sql",
     markers: [
-      { name: "ignore-check.kube-linter.io annotation", pattern: /(?:^[ \t]*(?:-[ \t]+)*|[{,][ \t]*)["']?(?<at>ignore-check\.kube-linter\.io\/[^\s:"']+)["']?[ \t]*:(?=[ \t]|$)/dg },
-      { name: "kube-linter.io/ignore-all annotation", pattern: /(?:^[ \t]*(?:-[ \t]+)*|[{,][ \t]*)["']?(?<at>kube-linter\.io\/ignore-all)["']?[ \t]*:(?=[ \t]|$)/dg },
+      { name: "-- {kw}", pattern: /^(?:--|\/\*)\s*(?<at>(?<kw>squawk-ignore(?:-file)?))/dg },
+      { name: "-- squawk-disable-assume-in-transaction", pattern: /^(?:--|\/\*)\s*(?<at>squawk-disable-assume-in-transaction)/dg },
+    ],
+  },
+  // SQLFluff reads `noqa` at the start of a comment, or after the comment's
+  // last `--` (sqlfluff/core/rules/noqa.py, _parse_noqa), lower case only.
+  // Which text is a comment depends on the dialect the repo names: `#`
+  // starts one in ansi and mysql, not in postgres, and strings differ too.
+  // So the marker counts anywhere on the line after `--`, `#` or `/*`, and
+  // at the start of a line, for a block comment whose `noqa` is on the line
+  // after its opener: wider than SQLFluff in every dialect.
+  sqlfluff: {
+    family: "line",
+    markers: [
+      { name: "-- noqa", pattern: /(?:--|#|\/\*)[ \t]*(?<at>noqa)/dg },
+      { name: "-- noqa", pattern: /^[ \t]*(?<at>noqa)/dg },
+    ],
+  },
+  // An object annotation whose key is ignore-check.kube-linter.io/<check> or
+  // kube-linter.io/ignore-all (pkg/ignore/ignore.go, read from the object's
+  // metadata.annotations as the Kubernetes YAML decoder gives them, aliases
+  // and merge keys resolved). Any key holding the text counts, at any depth:
+  // wider than kube-linter, never narrower.
+  "kube-linter": {
+    family: "yaml-keys",
+    markers: [
+      { name: "ignore-check.kube-linter.io annotation", pattern: /(?<at>ignore-check\.kube-linter\.io\/)/dg },
+      { name: "kube-linter.io/ignore-all annotation", pattern: /(?<at>kube-linter\.io\/ignore-all)/dg },
     ],
   },
 };
@@ -147,10 +185,21 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
     return lo + 1;
   };
   const units = new Map<Unit, Comment[]>();
+  // True when the "yaml-keys" units are keys, so a hit counts on the key's
+  // line whatever the key's escapes made of its offsets.
+  let keyUnits = false;
   const unitsOf = (family: Unit): Comment[] => {
     let found = units.get(family);
     if (found === undefined) {
-      found = family === "line" ? starts.map((start) => lineAt(text, start)) : family === "yaml-code" ? yamlCode(text) : comments(text, family);
+      if (family === "line") {
+        found = starts.map((start) => lineAt(text, start));
+      } else if (family === "yaml-keys") {
+        const read = yamlKeys(text);
+        found = read.units;
+        keyUnits = read.keys;
+      } else {
+        found = comments(text, family);
+      }
       units.set(family, found);
     }
     return found;
@@ -184,12 +233,13 @@ export function findMarkers(text: string, scanners: readonly BuiltinScanner[]): 
     const entry = SUPPRESSION_MARKERS[scanner];
     if (entry === undefined) continue;
     for (const marker of entry.markers) {
-      for (const unit of unitsOf(marker.family ?? entry.family)) {
+      const family = marker.family ?? entry.family;
+      for (const unit of unitsOf(family)) {
         if (marker.ownLine && text.slice(starts[lineOf(unit.start) - 1], unit.start).trim() !== "") continue;
         if (marker.header && pastHeader(unit)) continue;
         for (const m of unit.text.matchAll(marker.pattern)) {
           const at = m.indices?.groups?.at?.[0] ?? m.index;
-          const line = lineOf(unit.start + at);
+          const line = family === "yaml-keys" && keyUnits ? lineOf(unit.start) : lineOf(unit.start + at);
           const name = marker.name.replace("{kw}", (m.groups?.kw ?? "").replace(/\s+/g, " "));
           const key = `${scanner}\0${line}\0${name}`;
           if (seen.has(key)) continue;

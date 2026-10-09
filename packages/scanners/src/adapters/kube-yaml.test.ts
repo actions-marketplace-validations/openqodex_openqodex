@@ -15,10 +15,10 @@
 //   6. A quoted name or a quoted key is not read.
 //   7. A container is looked for in `containers` only, not `initContainers`,
 //      or in the wrong pod template for a CronJob.
-//   8. A field inside a flow mapping is not anchored on the line that holds
-//      the mapping.
-//   9. A hostile file (many documents, a deep path) takes time beyond its
-//      length.
+//   8. A field inside a flow mapping, or in a JSON manifest, is not found,
+//      or a path through an alias anchors outside the object's own text.
+//   9. A hostile file (many documents, nesting deeper than the parser holds)
+//      takes time beyond its length or throws.
 //  10. A value the finding names (a port, an environment variable, a host
 //      path, a `*` in a flow list) is looked for outside the field it
 //      belongs to, or the first copy of a duplicate is taken for the second.
@@ -143,11 +143,18 @@ describe("kube-yaml", () => {
     expect(containerLine(cron, "run")).toBe(11);
   });
 
-  it("a field inside a flow mapping anchors on the line that holds the mapping (8)", () => {
+  it("a field in a flow mapping or a JSON manifest is found, and an alias ends a path on its own line (8)", () => {
     const text = yaml("apiVersion: v1", "kind: Pod", "metadata: {name: p}", "spec:", "  containers:", "    - name: a", "      resources: {limits: {memory: 1Gi}, bogus: 1}");
     const [pod] = kubeDocuments(text);
-    expect(pod!.name).toBeNull();
-    expect(pathLine(pod!, ["spec", "containers", "0", "resources", "bogus"])).toEqual({ line: 7, found: false });
+    expect(pod!.name).toBe("p");
+    expect(pathLine(pod!, ["spec", "containers", "0", "resources", "bogus"])).toEqual({ line: 7, found: true });
+    expect(pathLine(pod!, ["spec", "containers", "0", "resources", "limits", "cpu"])).toEqual({ line: 7, found: false });
+    const json = '{"apiVersion": "v1", "kind": "Service",\n "metadata": {"name": "s\\u0031"},\n "spec": {"ports": [{"port": 80},\n   {"port": 81, "bogus": true}]}}\n';
+    const [service] = kubeDocuments(json);
+    expect(service).toMatchObject({ kind: "Service", name: "s1", first: 1 });
+    expect(pathLine(service!, ["spec", "ports", "1", "bogus"])).toEqual({ line: 4, found: true });
+    const aliased = yaml("apiVersion: v1", "kind: Pod", "metadata:", "  name: q", "  labels: &l {app: x}", "spec:", "  nodeSelector: *l");
+    expect(pathLine(kubeDocuments(aliased)[0]!, ["spec", "nodeSelector", "app"])).toEqual({ line: 7, found: false });
   });
 
   it("a value the finding names is found inside its own field only, the last copy when asked (10)", () => {
@@ -188,7 +195,7 @@ describe("kube-yaml", () => {
     expect(anchorLine(role!, { base: "object", paths: [["rules"]], value: { text: "*", key: "apiGroups" } }, null)).toEqual({ line: 21, found: true });
   });
 
-  it("many documents and a deep path take time in proportion to the file (9)", () => {
+  it("many documents and nesting deeper than the parser holds take time in proportion to the file (9)", () => {
     const doc = yaml("apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: c", "data:", "  a: b");
     const text = `${doc}---\n`.repeat(20_000);
     const deep = `apiVersion: v1\nkind: X\n${Array.from({ length: 2_000 }, (_, i) => `${" ".repeat(i)}k${i}:`).join("\n")}\n`;
@@ -196,8 +203,11 @@ describe("kube-yaml", () => {
     const docs = kubeDocuments(text);
     expect(docs).toHaveLength(20_000);
     expect(pathLine(docs[19_999]!, ["data", "a"]).found).toBe(true);
+    // The parser stops a few hundred levels down; the part it read is kept.
     const [d] = kubeDocuments(deep);
-    expect(pathLine(d!, Array.from({ length: 2_000 }, (_, i) => `k${i}`)).found).toBe(true);
+    expect(d!.kind).toBe("X");
+    expect(pathLine(d!, Array.from({ length: 200 }, (_, i) => `k${i}`))).toEqual({ line: 202, found: true });
+    expect(pathLine(d!, Array.from({ length: 2_000 }, (_, i) => `k${i}`)).line).toBeGreaterThan(202);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 });

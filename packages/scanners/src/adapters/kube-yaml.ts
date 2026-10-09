@@ -1,143 +1,92 @@
-// Where a field of a Kubernetes object sits in its manifest, read as text.
-// kube-linter reports an object (kind, name, namespace) and kubeconform an
-// object and a field path such as /spec/replicas; neither reports a line. A
-// finding is kept only when its line is one the change touched, so each one
-// is anchored to the line of the field it is about.
+// Where a field of a Kubernetes object sits in its manifest. kube-linter
+// reports an object (kind, name, namespace) and kubeconform an object and a
+// field path such as /spec/replicas; neither reports a line. A finding is
+// kept only when its line is one the change touched, so each one is anchored
+// to the line of the field it is about.
 //
-// Block-style YAML only, the way manifests are written: each line's key, its
-// indentation and its leading `- ` are read once, from the code-only lines of
-// comments.ts (yamlCode), so a comment, a quoted value or a block scalar body
-// is never read as a key or a document separator. Nothing is evaluated: no
-// anchor, alias, tag or merge key is followed. A path that leaves block style
-// (a flow mapping such as `{limits: {memory: 1Gi}}`) or names a field the
-// object does not have ends at the deepest line found, and says so.
+// The manifest is read by a YAML parser (the `yaml` library: it builds a
+// syntax tree and runs nothing), the way both scanners decode it, so block
+// and flow style, quoted keys with escapes, and JSON manifests all resolve.
+// A comment or a block scalar body is never read as a key or a document
+// separator. An alias is not followed: a path that reaches one ends on the
+// alias's line, where the change may have added it. A path that names a
+// field the object does not have ends at the deepest field found, and says
+// so. A file nested past what the parser can hold keeps the part it read.
 //
-// Linear: one pass over the file, and a lookup walks only the lines of the
-// node it descends into, stopping at the first line past that node.
+// A lookup walks only the keys along its path; the value search walks only
+// the field it searches.
 
-import { yamlCode } from "../comments.js";
-
-type Line = {
-  // 1-based.
-  no: number;
-  // Column of the first character that is not a blank; -1 for a line with
-  // no code.
-  indent: number;
-  // Column of the first leading `- ` (a sequence entry starts here), or -1.
-  dash: number;
-  // Column of the key after the indentation and any leading `- `, or -1.
-  keyCol: number;
-  key: string | null;
-  // The scalar after `key:` on this line, or after the `- ` of an entry
-  // with no key, quotes taken off; "" when none.
-  value: string;
-};
+import { isMap, isScalar, isSeq, parseAllDocuments } from "yaml";
 
 export type KubeDoc = {
-  // First and last line of the object, 1-based.
+  // First line of the object, 1-based.
   first: number;
-  last: number;
   kind: string | null;
   name: string | null;
   namespace: string | null;
-  lines: Line[];
+  // The object's root node, and the line of an offset in its file.
+  root: unknown;
+  lineAt: (offset: number) => number;
 };
 
-// A place in a document: a key's line, a sequence entry's line, or the
-// document itself (`at` -1).
-type Node = { at: number; col: number; entry: boolean };
+// A place in a document: a field's value node, the line of the field (its
+// key, or a sequence entry's start), and the key that owns it (an entry
+// belongs to the key of its sequence).
+type Place = { node: unknown; line: number; owner: string | null };
 
-const ROOT: Node = { at: -1, col: -1, entry: false };
+const OPTIONS = { prettyErrors: false, uniqueKeys: false, strict: false } as const;
 
-export function kubeDocuments(text: string): KubeDoc[] {
-  const raw = text.split("\n");
-  const docs: KubeDoc[] = [];
-  let lines: Line[] = [];
-  const close = () => {
-    const code = lines.filter((l) => l.indent >= 0);
-    if (code.length > 0) docs.push(describe(lines, code[0]!.no, code[code.length - 1]!.no));
-    lines = [];
-  };
-  // yamlCode returns one unit per line, in order.
-  yamlCode(text).forEach((unit, i) => {
-    const code = unit.text;
-    if ((code.startsWith("---") || code.startsWith("...")) && (code.length === 3 || code[3] === " " || code[3] === "\t")) {
-      close();
-      return;
+// The text of a scalar as written, after quotes and escapes; null for
+// anything else and for an empty value.
+function text(node: unknown): string | null {
+  if (!isScalar(node) || node.value === null) return null;
+  return typeof node.source === "string" ? node.source : String(node.value);
+}
+
+function startOf(node: unknown): number | null {
+  const range = (node as { range?: [number, number, number] } | null)?.range;
+  return range ? range[0] : null;
+}
+
+export function kubeDocuments(source: string): KubeDoc[] {
+  const starts = [0];
+  for (let i = source.indexOf("\n"); i >= 0; i = source.indexOf("\n", i + 1)) starts.push(i + 1);
+  const lineAt = (offset: number): number => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if ((starts[mid] as number) <= offset) lo = mid;
+      else hi = mid - 1;
     }
-    lines.push(readLine(i + 1, code, (raw[i] ?? "").replace(/\r$/, "")));
-  });
-  close();
+    return lo + 1;
+  };
+  let parsed: ReturnType<typeof parseAllDocuments>;
+  try {
+    parsed = parseAllDocuments(source, OPTIONS);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const docs: KubeDoc[] = [];
+  for (const doc of parsed) {
+    const root = doc.contents;
+    const at = startOf(root);
+    // An empty document (after a closing `---`) holds a null scalar.
+    if (root === null || at === null || (isScalar(root) && root.value === null)) continue;
+    const kube: KubeDoc = { first: lineAt(at), kind: null, name: null, namespace: null, root, lineAt };
+    kube.kind = text(field(kube, rootPlace(kube), "kind")?.node);
+    const metadata = field(kube, rootPlace(kube), "metadata");
+    if (metadata) {
+      kube.name = text(field(kube, metadata, "name")?.node);
+      kube.namespace = text(field(kube, metadata, "namespace")?.node);
+    }
+    docs.push(kube);
+  }
   return docs;
 }
 
-function readLine(no: number, code: string, raw: string): Line {
-  let j = 0;
-  while (code[j] === " " || code[j] === "\t") j++;
-  if (j >= code.length || code.slice(j).trim() === "") return { no, indent: -1, dash: -1, keyCol: -1, key: null, value: "" };
-  const indent = j;
-  let dash = -1;
-  while (code[j] === "-" && (j + 1 === code.length || code[j + 1] === " " || code[j + 1] === "\t")) {
-    if (dash < 0) dash = j;
-    j++;
-    while (code[j] === " " || code[j] === "\t") j++;
-  }
-  const keyCol = j;
-  let key: string | null = null;
-  let after = -1;
-  const q = code[j];
-  if (q === '"' || q === "'") {
-    const end = code.indexOf(q, j + 1);
-    if (end > j) {
-      let k = end + 1;
-      while (code[k] === " " || code[k] === "\t") k++;
-      if (code[k] === ":" && (k + 1 >= code.length || code[k + 1] === " " || code[k + 1] === "\t")) {
-        key = code.slice(j + 1, end);
-        after = k + 1;
-      }
-    }
-  } else if (q !== undefined && q !== "{" && q !== "[" && q !== "#" && q !== "?") {
-    for (let k = j; k < code.length; k++) {
-      if (code[k] === ":" && (k + 1 >= code.length || code[k + 1] === " " || code[k + 1] === "\t")) {
-        key = code.slice(j, k).trimEnd();
-        after = k + 1;
-        break;
-      }
-    }
-  }
-  // A sequence entry with no key holds a scalar from its `- ` on.
-  if (after < 0 && dash >= 0) after = keyCol;
-  let value = "";
-  if (after >= 0) {
-    // The code line has comments and the inside of quoted values blanked,
-    // at the same offsets: the value runs to its last character of code.
-    let end = code.length;
-    while (end > after && (code[end - 1] === " " || code[end - 1] === "\t")) end--;
-    value = unquote(raw.slice(after, end).trim());
-  }
-  return { no, indent, dash, keyCol: key === null ? -1 : keyCol, key, value };
-}
-
-function unquote(v: string): string {
-  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) return v.slice(1, -1);
-  return v;
-}
-
-function describe(lines: Line[], first: number, last: number): KubeDoc {
-  const doc: KubeDoc = { first, last, kind: null, name: null, namespace: null, lines };
-  const top = (key: string) => lines.findIndex((l) => l.indent === 0 && l.dash < 0 && l.key === key);
-  const kind = top("kind");
-  if (kind >= 0) doc.kind = lines[kind]!.value || null;
-  const metadata = top("metadata");
-  if (metadata >= 0) {
-    const node: Node = { at: metadata, col: 0, entry: false };
-    const name = childKey(doc, node, "name");
-    const namespace = childKey(doc, node, "namespace");
-    if (name) doc.name = lines[name.at]!.value || null;
-    if (namespace) doc.namespace = lines[namespace.at]!.value || null;
-  }
-  return doc;
-}
+const rootPlace = (doc: KubeDoc): Place => ({ node: doc.root, line: doc.first, owner: null });
 
 // The document a scanner's object names: same kind and name, and the same
 // namespace when several match. Null when none does.
@@ -146,81 +95,47 @@ export function findDocument(docs: KubeDoc[], object: { kind: string; name: stri
   return same.find((d) => (d.namespace ?? "") === object.namespace) ?? same[0] ?? null;
 }
 
-// The next line after `at` that holds code.
-function nextCode(doc: KubeDoc, at: number): number {
-  for (let i = at + 1; i < doc.lines.length; i++) if (doc.lines[i]!.indent >= 0) return i;
-  return -1;
-}
-
-// True while line `i` is still inside `node`'s block. A key's block holds
-// the lines indented deeper than its key, and an indentless sequence
-// (`- ` at the key's own column); an entry's block holds the lines indented
-// deeper than its `-`.
-function inside(doc: KubeDoc, node: Node, i: number, indentless: boolean): boolean {
-  if (node.at < 0) return true;
-  const l = doc.lines[i]!;
-  if (l.indent < 0) return true;
-  if (node.entry) return l.indent > node.col;
-  return l.indent > node.col || (indentless && l.indent === node.col && l.dash === node.col);
-}
-
-function childKey(doc: KubeDoc, node: Node, name: string): Node | null {
-  const lines = doc.lines;
-  // An entry's first key sits on the entry's own line.
-  if (node.entry) {
-    const own = lines[node.at]!;
-    if (own.key === name) return { at: node.at, col: own.keyCol, entry: false };
-  }
-  const level = node.at < 0 ? 0 : node.entry ? lines[node.at]!.keyCol : -1;
-  const start = node.at < 0 ? -1 : node.at;
-  const first = nextCode(doc, start);
-  if (first < 0) return null;
-  const want = level >= 0 ? level : lines[first]!.indent;
-  // A key whose value is a sequence has no keys of its own.
-  if (!node.entry && node.at >= 0 && lines[first]!.dash === lines[first]!.indent) return null;
-  for (let i = first; i < lines.length && inside(doc, node, i, false); i++) {
-    const l = lines[i]!;
-    if (l.indent === want && l.dash < 0 && l.key === name) return { at: i, col: l.keyCol, entry: false };
+// The key `name` of a mapping, on the line of its key.
+function field(doc: KubeDoc, place: Place, name: string): Place | null {
+  if (!isMap(place.node)) return null;
+  for (const pair of place.node.items) {
+    if (!isScalar(pair.key) || String(pair.key.value) !== name) continue;
+    const at = startOf(pair.key);
+    return { node: pair.value, line: at === null ? place.line : doc.lineAt(at), owner: name };
   }
   return null;
 }
 
-// The entries of a key whose value is a block sequence, in order.
-function entries(doc: KubeDoc, node: Node): Node[] {
-  if (node.at < 0 || node.entry) return [];
-  const first = nextCode(doc, node.at);
-  if (first < 0) return [];
-  const head = doc.lines[first]!;
-  if (head.dash < 0 || head.dash !== head.indent || !inside(doc, node, first, true)) return [];
-  const out: Node[] = [];
-  for (let i = first; i < doc.lines.length && inside(doc, node, i, true); i++) {
-    const l = doc.lines[i]!;
-    if (l.indent === head.dash && l.dash === head.dash) out.push({ at: i, col: l.dash, entry: true });
-  }
-  return out;
+// Entry `index` of a sequence, on the line it starts.
+function entry(doc: KubeDoc, place: Place, index: number): Place | null {
+  if (!isSeq(place.node)) return null;
+  const item = place.node.items[index];
+  if (item === undefined) return null;
+  const at = startOf(item);
+  return { node: item, line: at === null ? place.line : doc.lineAt(at), owner: place.owner };
 }
 
-function childEntry(doc: KubeDoc, node: Node, index: number): Node | null {
-  return entries(doc, node)[index] ?? null;
+function entries(doc: KubeDoc, place: Place): Place[] {
+  if (!isSeq(place.node)) return [];
+  return place.node.items.map((_, i) => entry(doc, place, i)!);
 }
 
-function walk(doc: KubeDoc, from: Node, path: readonly string[]): { node: Node; found: boolean } {
-  let node = from;
+function walk(doc: KubeDoc, from: Place, path: readonly string[]): { place: Place; found: boolean } {
+  let place = from;
   for (const segment of path) {
-    const next = /^\d+$/.test(segment) ? (childEntry(doc, node, Number(segment)) ?? childKey(doc, node, segment)) : childKey(doc, node, segment);
-    if (next === null) return { node, found: false };
-    node = next;
+    // An alias is neither a mapping nor a sequence, so a path ends on it.
+    const next = (/^\d+$/.test(segment) ? entry(doc, place, Number(segment)) : null) ?? field(doc, place, segment);
+    if (next === null) return { place, found: false };
+    place = next;
   }
-  return { node, found: true };
+  return { place, found: true };
 }
-
-const lineOf = (doc: KubeDoc, node: Node): number => (node.at < 0 ? doc.first : doc.lines[node.at]!.no);
 
 // The line of the field at `path` (keys and sequence indexes), or of its
 // nearest ancestor the object has, with whether the field itself was found.
-export function pathLine(doc: KubeDoc, path: readonly string[], from: Node = ROOT): { line: number; found: boolean } {
-  const { node, found } = walk(doc, from, path);
-  return { line: lineOf(doc, node), found };
+export function pathLine(doc: KubeDoc, path: readonly string[]): { line: number; found: boolean } {
+  const { place, found } = walk(doc, rootPlace(doc), path);
+  return { line: place.line, found };
 }
 
 // Where the pod spec of a workload is, by its kind: a Pod's own spec, a
@@ -230,66 +145,69 @@ const POD_SPEC_PATHS: readonly (readonly string[])[] = [
   ["spec", "jobTemplate", "spec", "template", "spec"],
 ];
 
-function podSpec(doc: KubeDoc): Node | null {
+function podSpec(doc: KubeDoc): Place | null {
   if (doc.kind === "Pod") {
-    const spec = walk(doc, ROOT, ["spec"]);
-    return spec.found ? spec.node : null;
+    const spec = walk(doc, rootPlace(doc), ["spec"]);
+    return spec.found ? spec.place : null;
   }
   for (const path of POD_SPEC_PATHS) {
-    const spec = walk(doc, ROOT, path);
-    if (spec.found) return spec.node;
+    const spec = walk(doc, rootPlace(doc), path);
+    if (spec.found) return spec.place;
   }
   return null;
 }
 
 export function podSpecLine(doc: KubeDoc): number | null {
-  const node = podSpec(doc);
-  return node === null ? null : lineOf(doc, node);
+  return podSpec(doc)?.line ?? null;
 }
 
 const CONTAINER_LISTS = ["containers", "initContainers", "ephemeralContainers"];
 
-function container(doc: KubeDoc, name: string): Node | null {
+function container(doc: KubeDoc, name: string): Place | null {
   const spec = podSpec(doc);
   if (spec === null) return null;
   for (const list of CONTAINER_LISTS) {
-    const key = childKey(doc, spec, list);
+    const key = field(doc, spec, list);
     if (key === null) continue;
-    for (const entry of entries(doc, key)) {
-      const named = childKey(doc, entry, "name");
-      if (named !== null && doc.lines[named.at]!.value === name) return entry;
+    for (const item of entries(doc, key)) {
+      if (text(field(doc, item, "name")?.node) === name) return item;
     }
   }
   return null;
 }
 
-// The line of the container named `name` (its `- ` entry), or null.
+// The line of the container named `name` (its sequence entry), or null.
 export function containerLine(doc: KubeDoc, name: string): number | null {
-  const node = container(doc, name);
-  return node === null ? null : lineOf(doc, node);
+  return container(doc, name)?.line ?? null;
 }
 
-// The lines of `node`'s block, its own line first.
-function* blockLines(doc: KubeDoc, node: Node): Generator<Line> {
-  if (node.at >= 0) yield doc.lines[node.at]!;
-  for (let i = node.at + 1; i < doc.lines.length && inside(doc, node, i, true); i++) yield doc.lines[i]!;
-}
-
-// A scalar equal to `text`, or a flow sequence (`["*"]`) holding it.
-function holds(value: string, text: string): boolean {
-  if (value === text) return true;
-  if (!value.startsWith("[") || !value.endsWith("]")) return false;
-  return value
-    .slice(1, -1)
-    .split(",")
-    .some((item) => unquote(item.trim()) === text);
+// The scalars under `place`, in document order, each with the key that owns
+// it: a mapping value's own key, or for a sequence entry the key of its
+// sequence. Keys themselves are not values.
+function* values(doc: KubeDoc, place: Place): Generator<{ text: string; line: number; owner: string | null }> {
+  const stack: { node: unknown; owner: string | null }[] = [{ node: place.node, owner: place.owner }];
+  while (stack.length > 0) {
+    const { node, owner } = stack.pop()!;
+    if (isMap(node)) {
+      for (let i = node.items.length - 1; i >= 0; i--) {
+        const pair = node.items[i]!;
+        stack.push({ node: pair.value, owner: isScalar(pair.key) ? String(pair.key.value) : null });
+      }
+    } else if (isSeq(node)) {
+      for (let i = node.items.length - 1; i >= 0; i--) stack.push({ node: node.items[i], owner });
+    } else {
+      const value = text(node);
+      const at = startOf(node);
+      if (value !== null && at !== null) yield { text: value, line: doc.lineAt(at), owner };
+    }
+  }
 }
 
 // How a finding is placed in its object: from a base (the object, its pod
 // spec, or the container the finding names), the first of `paths` the
-// object has; then, when `value` is given, the line in that field's block
-// that holds the value the finding names (under `key` when given; the last
-// such line with `last`).
+// object has; then, when `value` is given, the line in that field that
+// holds the value the finding names (under `key` when given; the last such
+// line with `last`).
 export type Anchor = {
   base: "object" | "pod" | "container";
   paths: readonly (readonly string[])[];
@@ -300,34 +218,25 @@ export type Anchor = {
 // A field the object lacks anchors on its nearest ancestor that it has; a
 // base it lacks falls back to the one above (container, pod spec, object).
 export function anchorLine(doc: KubeDoc, anchor: Anchor, containerName: string | null): { line: number; found: boolean } {
-  let from: Node | null = null;
+  let from: Place | null = null;
   if (anchor.base === "container" && containerName !== null) from = container(doc, containerName);
   if (from === null && anchor.base !== "object") from = podSpec(doc);
-  const base = from ?? ROOT;
-  let at: { node: Node; found: boolean } = { node: base, found: anchor.paths.length === 0 };
+  const base = from ?? rootPlace(doc);
+  let at: { place: Place; found: boolean } = { place: base, found: anchor.paths.length === 0 };
   for (const [n, path] of anchor.paths.entries()) {
     const tried = walk(doc, base, path);
     if (tried.found || n === 0) at = tried;
     if (tried.found) break;
   }
   if (anchor.value !== undefined && at.found) {
-    let hit: Line | null = null;
-    // The keys above the current line: an entry with no key of its own
-    // (`- "*"` under `verbs:`) belongs to the nearest one at or left of
-    // its `-`.
-    const keys: Line[] = [];
-    for (const l of blockLines(doc, at.node)) {
-      if (l.indent < 0) continue;
-      const col = l.key !== null ? l.keyCol : l.dash;
-      while (keys.length > 0 && (keys[keys.length - 1]!.keyCol > col || (l.key !== null && keys[keys.length - 1]!.keyCol === col))) keys.pop();
-      const owner = l.key ?? (l.dash >= 0 ? (keys[keys.length - 1]?.key ?? null) : null);
-      if (l.key !== null) keys.push(l);
-      if (anchor.value.key !== undefined && owner !== anchor.value.key) continue;
-      if (!holds(l.value, anchor.value.text)) continue;
-      hit = l;
+    let hit: number | null = null;
+    for (const v of values(doc, at.place)) {
+      if (anchor.value.key !== undefined && v.owner !== anchor.value.key) continue;
+      if (v.text !== anchor.value.text) continue;
+      hit = v.line;
       if (!anchor.value.last) break;
     }
-    if (hit !== null) return { line: hit.no, found: true };
+    if (hit !== null) return { line: hit, found: true };
   }
-  return { line: lineOf(doc, at.node), found: at.found };
+  return { line: at.place.line, found: at.found };
 }
