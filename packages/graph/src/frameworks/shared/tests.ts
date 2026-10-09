@@ -13,14 +13,32 @@ export function deriveTestCalls(plugin: string, roles: readonly RoleAssignment[]
   const testIds = new Set(tests.map((r) => r.target));
   const testFiles = new Set(tests.filter((r) => !r.target.includes("#")).map((r) => r.target));
   const callers = new Map<string, string | null>(); // caller id to its application
+  // The symbols of a file by each owner path their id starts with
+  // (`file#Owner.` for `file#Owner.method@...` and `file#Owner.Inner.m@...`),
+  // built once per file, so a file of many test classes reads its symbols once.
+  const byOwner = new Map<string, Map<string, string[]>>();
+  const membersOf = (file: string, owner: string): string[] => {
+    let m = byOwner.get(file);
+    if (!m) {
+      m = new Map();
+      for (const s of index.symbols(file)) {
+        const hash = s.id.indexOf("#");
+        const at = s.id.lastIndexOf("@");
+        const inner = s.id.slice(hash + 1, at > hash ? at : undefined);
+        for (let dot = inner.indexOf("."); dot !== -1; dot = inner.indexOf(".", dot + 1)) {
+          const key = inner.slice(0, dot);
+          (m.get(key) ?? m.set(key, []).get(key))?.push(s.id);
+        }
+      }
+      byOwner.set(file, m);
+    }
+    return m.get(owner) ?? [];
+  };
   for (const r of tests) {
     callers.set(r.target, r.app);
     const node = index.node(r.target);
     // A test class: its methods are the callers.
-    if (node && node.kind === "class") {
-      const prefix = `${node.file}#${node.name}.`;
-      for (const s of index.symbols(node.file)) if (s.id.startsWith(prefix) && !callers.has(s.id)) callers.set(s.id, r.app);
-    }
+    if (node && node.kind === "class") for (const id of membersOf(node.file, node.name)) if (!callers.has(id)) callers.set(id, r.app);
   }
   const out: FrameworkEdge[] = [];
   const seen = new Set<string>();

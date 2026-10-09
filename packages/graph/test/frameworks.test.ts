@@ -73,6 +73,38 @@ describe("the framework stage", () => {
     expect(data.roles.length).toBe(150_000);
   }, 60_000);
 
+  it("reads a file's symbols once for all its test classes, so a file of many test classes never costs classes times symbols", async () => {
+    const CLASSES = 40;
+    const tests = Array.from({ length: CLASSES }, (_, i) => `class TestCase${i}:\n    def test_it(self):\n        return work()\n`).join("\n\n");
+    const root = makeRepo({ "app/__init__.py": "", "app/core.py": "def work():\n    return 1\n", "tests/__init__.py": "", "tests/test_many.py": `from app.core import work\n\n\n${tests}` });
+    commitAll(root);
+    const graph = await buildGraph({ repoRoot: root, store: null });
+    const evidence = { kind: "role-path" as const, tier: "certain" as const, site: { file: "tests/test_many.py", line: 1, column: 1 }, via: null, premises: [], rule: { id: "probe", version: 1 }, note: null };
+    const classes = (graph.defsByFile.get("tests/test_many.py") ?? []).filter((d) => d.kind === "class");
+    expect(classes).toHaveLength(CLASSES);
+    // The stage hands the shared test mapper the same index the plugin
+    // resolves through; the probe counts how often the mapper reads a file's symbols.
+    let reads = 0;
+    const probe: FrameworkPlugin = {
+      ...(PLUGINS.find((p) => p.id === "django") as FrameworkPlugin),
+      id: "probe",
+      detect: () => [],
+      resolve: (index) => {
+        const symbols = index.symbols.bind(index);
+        index.symbols = (file: string) => {
+          reads++;
+          return symbols(file);
+        };
+        return { roles: classes.map((c) => ({ target: c.id, role: "test" as const, detail: null, app: null, evidence })), entities: [], edges: [], unknowns: [] };
+      },
+    };
+    const files = [...graph.defsByFile.keys()].map((path) => ({ path, facts: { lang: "python" as const, defs: [], calls: [], values: [], types: [], tables: [], imports: [], exportsLocal: [], defaultExport: null, goPackage: null } }));
+    const data = runFrameworks({ files, paths: [...graph.defsByFile.keys()], nodes: graph.nodes, defsByFile: graph.defsByFile, edges: graph.edges, world: { lookup: () => ({ kind: "none" }), moduleLookup: () => ({ kind: "none" }), node: () => null } as never, model: graph.model, projectOf: graph.projectOf, plugins: [probe] });
+    // Every test method's call to work() is a direct-call test link.
+    expect(data.edges.filter((e) => e.kind === "tests" && e.to.includes("#work@"))).toHaveLength(CLASSES);
+    expect(reads).toBe(1);
+  }, 60_000);
+
   it("publishes only evidence that passes the check, so no certain framework edge rests on a convention", async () => {
     const root = makeRepo({
       "requirements.txt": "Django==5.0\n",
