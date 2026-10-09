@@ -31,6 +31,9 @@
 //     number nor null, an error with items, or a zero worded as "unused".
 // 14. Overrides derived from the inheritance stop at the depth asked and
 //     say nothing of the subclasses past it.
+// 15. A class whose base is written as an expression (a call, a mixin) is
+//     not tied to the base, and `implementers` of the base says nothing of
+//     what it could not read: a short list with no floor.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -428,6 +431,7 @@ describe("implementers at the edge of what the graph reads", () => {
     "src/l2.ts": 'import { L1 } from "./l1";\nexport class L2 extends L1 {}\n',
     "src/l3.ts": 'import { L2 } from "./l2";\nexport class L3 extends L2 {}\n',
     "src/l4.ts": 'import { L3 } from "./l3";\nexport class L4 extends L3 {\n  run(): number {\n    return 4;\n  }\n}\n',
+    "src/mixed.ts": 'import { Base } from "./base";\nfunction identity<T>(x: T): T {\n  return x;\n}\nexport class Child extends identity(Base) {}\n',
   };
   beforeAll(async () => {
     const repo = makeRepo(files);
@@ -447,5 +451,15 @@ describe("implementers at the edge of what the graph reads", () => {
     expect((four.items as Item[]).map((i) => i.fromName)).toEqual(["run"]);
     expect((four.items as Item[])[0]?.from).toMatch(/#L4\.run@/);
     expect(four.truncated.by).toBeNull();
+  });
+
+  it("says a floor for a base written as an expression, which this build does not read (15)", () => {
+    const a = q({ kind: "implementers", target: { name: "Base" } });
+    expect(a.error).toBeNull();
+    expect((a.items as Item[]).map((i) => i.fromName)).toEqual(["L1", "L2", "L3"]);
+    expect(a.unknown.floor).toBe(true);
+    expect(a.unknown.reasons.join(" ")).toMatch(/base written as an expression/);
+    // The same boundary holds for the overrides derived from the inheritance.
+    expect(q({ kind: "implementers", target: { name: "Base.run" } }).unknown.reasons.join(" ")).toMatch(/base written as an expression/);
   });
 });

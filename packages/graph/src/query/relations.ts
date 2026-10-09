@@ -12,7 +12,8 @@
 import { detectImpact, toImpactUnknown } from "../impact.js";
 import type { Tier } from "../model/records.js";
 import { weakest } from "../model/records.js";
-import type { Graph, GraphEdge, GraphNode, GraphSite } from "../types.js";
+import { familyOf } from "../types.js";
+import type { Family, Graph, GraphEdge, GraphNode, GraphSite } from "../types.js";
 import { candidate, counts, empty, fail, isAnswer, listing, Point, qualified, stoppedAt } from "./answer.js";
 import type { Answer, Extra, Job, Request, Session } from "./answer.js";
 import { edgeId } from "./ids.js";
@@ -145,6 +146,11 @@ export class Overrides {
   }
 }
 
+// Languages where a class may name its base with an expression (a call such
+// as a mixin, a conditional): the facts keep a base only when it is a name,
+// so a class declared that way is tied to no base, and no gap records it.
+const EXPRESSION_BASES = new Set<Family>(["js", "python", "ruby"]);
+
 export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>): Job {
   const g = s.graph;
   const point = new Point(g, req.target);
@@ -183,6 +189,10 @@ export function implementers(s: Session, req: Request, tiers: ReadonlySet<Tier>)
     }
     if (n.kind === "method" && !rel.has("dispatches_to")) {
       reasons.push("calls through an interface or a base type are not resolved in this build, so a method that implements an interface method is not listed here");
+      causes["unsupported-rule"] = null;
+    }
+    if (n.kind !== "type" && n.lang !== null && EXPRESSION_BASES.has(familyOf(n.lang))) {
+      reasons.push("this build does not read a base written as an expression (a call such as a mixin, or a conditional), so a class declared that way is not listed");
       causes["unsupported-rule"] = null;
     }
     if (n.kind === "type" && !rel.has("implements")) {
