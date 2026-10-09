@@ -8,4 +8,4 @@
 - The brief lists possible callers apart from certain and likely ones, at most 20 inline, and never counts them as callers; a possible caller makes the list a floor. It also lists where the touched code is used as a value or named as a type, and what implements or overrides it.
 - A call through an interface keeps at most 32 possible implementations, and says how many it left out. A call through a TypeScript interface says that an object of the same shape may answer it without declaring `implements`.
 - The review's packet gives each caller its level and counts per level, and adds `implementers/` and `references/` pages for each touched symbol.
-- Text from the repository in the brief's graph block, such as a file name with a line break in it, stays on its own line and opens no markdown: names are code spans, paths and notes are escaped (#71).
+- Text from the repository in the brief's graph block and in the packet's `index.md`, such as a file name with a line break in it, stays on its own line and opens no markdown: names are code spans, paths and notes are escaped (#71).

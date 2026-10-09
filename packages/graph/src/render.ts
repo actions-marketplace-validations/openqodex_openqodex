@@ -33,12 +33,13 @@ function bounded(text: string, max: number): string {
 }
 
 // A name from the repository: one line, bounded, a code span that cannot be closed from inside.
-function code(text: string): string {
+// The packet's index.md uses it too.
+export function code(text: string): string {
   return `\`${bounded(text, MAX_NAME).replaceAll("`", "'")}\``;
 }
 
 // A path from the repository: one line, markdown escaped, never cut (the reviewer opens it).
-function path(text: string): string {
+export function path(text: string): string {
   return escapeMarkdown(display(text).trim());
 }
 

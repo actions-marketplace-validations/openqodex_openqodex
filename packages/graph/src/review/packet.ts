@@ -18,12 +18,12 @@
 // checked after it is written; a secret found there stops the review.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { redactSecrets } from "@openqodex/core";
+import { display, redactSecrets } from "@openqodex/core";
 import type { ImpactSummary } from "@openqodex/core";
 import { showBlob } from "../capture/git.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION, POSSIBLE_KINDS } from "../model/records.js";
 import { callersOfRemoved, isTestPath, toImpactUnknown } from "../impact.js";
-import { symbolKey } from "../render.js";
+import { code, path as escapedPath, symbolKey } from "../render.js";
 import type { Graph, GraphEdge } from "../types.js";
 
 export const PACKET_ROOT = ".openqodex-review";
@@ -138,7 +138,7 @@ export async function writePacket(args: {
   for (const seed of seeds) {
     const f = floorOf.get(seed);
     const base = `callers/${symbolKey(seed)}`;
-    const about = `every caller of \`${nameOf(seed) ?? seed}\``;
+    const about = `every caller of ${code(nameOf(seed) ?? seed)}`;
     const head = { symbol: seed, name: nameOf(seed), floor: f?.floor ?? true, reasons: f?.reasons ?? [] };
     const held = removedEdges.get(seed) ?? (graph.nodes.has(seed) ? (graph.in.get(seed) ?? []) : null);
     if (held !== null) {
@@ -165,14 +165,14 @@ export async function writePacket(args: {
     const fanOut = graph.dispatch.filter((d) => d.declared.includes(seed) || d.candidates.includes(seed));
     if (below.length === 0 && fanOut.length === 0) continue;
     const items = toItems(below, "from");
-    pages(`implementers/${symbolKey(seed)}`, `what implements, overrides or extends \`${nameOf(seed) ?? seed}\`, and the calls through it that may run another implementation`, { symbol: seed, name: nameOf(seed), counts: tiers(items), dispatch: fanOut.map((d) => ({ ...d, omitted: d.total - d.candidates.length })) }, items);
+    pages(`implementers/${symbolKey(seed)}`, `what implements, overrides or extends ${code(nameOf(seed) ?? seed)}, and the calls through it that may run another implementation`, { symbol: seed, name: nameOf(seed), counts: tiers(items), dispatch: fanOut.map((d) => ({ ...d, omitted: d.total - d.candidates.length })) }, items);
   }
   // Where each touched and removed symbol is used as a value or named as a type.
   for (const seed of seeds) {
     const uses = (graph.refsIn.get(seed) ?? []).filter((e) => (e.kind === "uses_value" || e.kind === "uses_type") && e.from !== seed);
     if (uses.length === 0) continue;
     const items = toItems(uses, "from");
-    pages(`references/${symbolKey(seed)}`, `where \`${nameOf(seed) ?? seed}\` is used as a value or named as a type`, { symbol: seed, name: nameOf(seed), counts: tiers(items) }, items);
+    pages(`references/${symbolKey(seed)}`, `where ${code(nameOf(seed) ?? seed)} is used as a value or named as a type`, { symbol: seed, name: nameOf(seed), counts: tiers(items) }, items);
   }
   // Every caller of each first-hop caller: the second hop past its cut.
   const firstHop = new Set([...impact.callers, ...(impact.possible ?? [])].filter((p) => p.edges.length >= 1).map((p) => p.edges[0].from));
@@ -181,17 +181,17 @@ export async function writePacket(args: {
     const incoming = (graph.in.get(caller) ?? []).filter((e) => e.from !== caller);
     if (incoming.length === 0) continue;
     const items = toItems(incoming, "from");
-    pages(`second-hop/${symbolKey(caller)}`, `every caller of \`${nameOf(caller) ?? caller}\`, a caller of the change`, { symbol: caller, name: nameOf(caller), counts: tiers(items) }, items);
+    pages(`second-hop/${symbolKey(caller)}`, `every caller of ${code(nameOf(caller) ?? caller)}, a caller of the change`, { symbol: caller, name: nameOf(caller), counts: tiers(items) }, items);
   }
   for (const seed of impact.touched) {
     const out = graph.out.get(seed) ?? [];
-    if (out.length > 0) pages(`callees/${symbolKey(seed)}`, `everything \`${nameOf(seed) ?? seed}\` calls`, { symbol: seed, name: nameOf(seed) }, toItems(out, "to"));
+    if (out.length > 0) pages(`callees/${symbolKey(seed)}`, `everything ${code(nameOf(seed) ?? seed)} calls`, { symbol: seed, name: nameOf(seed) }, toItems(out, "to"));
   }
   const changed = new Set(impact.touched.map((id) => graph.nodes.get(id)?.file).filter((f): f is string => !!f));
   for (const e of impact.importers) changed.add(e.to);
   for (const file of changed) {
     const importers = graph.importers.get(file) ?? [];
-    if (importers.length > 0) pages(`importers/${symbolKey(file)}`, `every file that imports ${file}`, { file }, importers.map((e) => ({ from: e.from, site: e.sites[0] })));
+    if (importers.length > 0) pages(`importers/${symbolKey(file)}`, `every file that imports ${escapedPath(file)}`, { file }, importers.map((e) => ({ from: e.from, site: e.sites[0] })));
   }
 
   // What the graph could not see: in the changed files, their callers' files,
@@ -227,10 +227,12 @@ export async function writePacket(args: {
       const bytes = await showBlob(args.repoRoot, args.baseSha, s.file, MAX_BASE_BYTES);
       if (bytes === null) continue;
       const lines = bytes.toString("utf8").split("\n").slice(s.startLine - 1, Math.min(s.endLine, s.startLine - 1 + MAX_BASE_LINES));
-      write(`base/${symbolKey(s.id)}.txt`, `the base version of \`${s.name}\` (${s.file}:${s.startLine}), from before the change`, `# base version of ${s.name}, ${s.file}:${s.startLine}-${s.endLine}; this is not the code under review\n${lines.join("\n")}\n`);
+      write(`base/${symbolKey(s.id)}.txt`, `the base version of ${code(s.name)} (${escapedPath(s.file)}:${s.startLine}), from before the change`, `# base version of ${display(s.name)}, ${display(s.file)}:${s.startLine}-${s.endLine}; this is not the code under review\n${lines.join("\n")}\n`);
     }
   }
 
+  // Each line's words name repository text through the brief's own helpers
+  // (render.ts): a name as a code span, a path escaped, on one line (#71).
   const index = [
     "# The code graph's files for this review",
     "",
