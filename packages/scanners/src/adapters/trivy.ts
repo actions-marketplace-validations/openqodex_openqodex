@@ -98,7 +98,7 @@ export async function runTrivy(args: {
         throw new Error(`parse: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
       }
       const findings = await anchorCauses(args.repoDir, raw);
-      return { findings, error: heldNote };
+      return { findings, error: null, note: heldNote };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

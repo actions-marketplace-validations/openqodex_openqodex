@@ -433,8 +433,9 @@ function skippedOutcome(
 
 // A scanner that ran. An error with no findings is a failure; an error next
 // to findings (one Go module of several failed, one .sql file unreadable)
-// keeps the findings and the note. An adapter that chose not to run is
-// disabled, with its reason.
+// keeps the findings and the note. A note (a folder held back) is the reason
+// of a scanner that ran. An adapter that chose not to run is disabled, with
+// its reason.
 function ranOutcome(
   scanner: ScannerSource,
   result: AdapterResult,
@@ -451,7 +452,7 @@ function ranOutcome(
       rawCount: result.findings.length,
       keptCount: 0,
       durationMs: Date.now() - started,
-      reason: result.error,
+      reason: result.error ?? result.note ?? null,
     },
     findings: result.findings,
     secrets: result.secrets ?? [],

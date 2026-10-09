@@ -102,7 +102,7 @@ export async function runCheckov(args: {
       } catch (err) {
         throw new Error(`parse: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
       }
-      return { findings: await anchorKeys(args.repoDir, raw), error: heldNote };
+      return { findings: await anchorKeys(args.repoDir, raw), error: null, note: heldNote };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

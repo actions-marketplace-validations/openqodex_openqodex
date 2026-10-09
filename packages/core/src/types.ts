@@ -106,6 +106,10 @@ export type AdapterResult = {
   // Set when the adapter chose not to run (for example dependency lookups
   // while offline). The runner records status "disabled" with this reason.
   skipped?: string | null;
+  // What the run left out that is not a failure, such as a folder held back
+  // from a scanner that would download from it. The scanner still ran; the
+  // runner keeps this as its reason.
+  note?: string | null;
   // Rules this run checked, as "<source>:<ruleId>" tokens, with the files it
   // checked them on. A review pattern (lens) one of them covers stands down
   // for those files.

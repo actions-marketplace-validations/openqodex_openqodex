@@ -174,6 +174,13 @@ describe("trivy config", () => {
     expect(hosts).toEqual([]);
   }, 300_000);
 
+  // A folder held back is a note, not a failure: the scanner ran on the rest.
+  it("still ran, with the held folder named, when it held one folder back and found nothing in another", async () => {
+    const { status } = await scanLines("trivy", { "infra/main.tf": `${REMOTE}${SG}`, "clean/main.tf": UNUSED });
+    expect(status.status).toBe("ran");
+    expect(status.reason).toContain("not run on infra/: a module from outside the repository");
+  }, 300_000);
+
   it("opens no connection on a local module, Kubernetes and CloudFormation files", async () => {
     const files = {
       "infra/main.tf": `module "net" {\n  source = "./modules/net"\n}\n\n${SG}`,
@@ -235,6 +242,12 @@ describe("checkov", () => {
     expect(rules(result.result, "checkov").map(([rule]) => rule)).toContain("CKV_AWS_24");
     expect(hosts).toEqual([]);
     process.stdout.write(`checkov ran in ${result.status.durationMs} ms\n`);
+  }, 300_000);
+
+  it("still ran, with the held folder named, when it held one folder back and found nothing in another", async () => {
+    const { status } = await scanLines("checkov", { "infra/main.tf": `module "outside" {\n  source = "../../outside"\n}\n\n${SG}`, "clean/main.tf": UNUSED });
+    expect(status.status).toBe("ran");
+    expect(status.reason).toContain("not run on infra/: a module path that leaves the repository");
   }, 300_000);
 });
 
