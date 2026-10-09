@@ -1,0 +1,43 @@
+{
+  "id": "ts-workspace-caller-break",
+  "guards": "a changed return shape in one workspace package is reported with the callers it breaks in another package, which import it by package name",
+  "language": "typescript",
+  "framework": "pnpm-workspace",
+  "clean": false,
+  "graph": {
+    "callers": [
+      "packages/cli/src/status.ts:5",
+      "packages/cli/src/branch.ts:6"
+    ]
+  },
+  "bugs": [
+    {
+      "id": "safegit-return-shape",
+      "file": "packages/core/src/safe-git.ts",
+      "lines": [
+        6,
+        18
+      ],
+      "anchor": {
+        "line": 10,
+        "text": "Promise<GitResult>"
+      },
+      "mentions": [
+        "status.ts",
+        "branch.ts",
+        "packages/cli",
+        "changedFiles",
+        "currentBranch"
+      ],
+      "kind": [
+        "bug"
+      ],
+      "severity": "major",
+      "found_by": [
+        "reasoning",
+        "graph"
+      ],
+      "truth": "safeGit now returns an object and no longer throws, but its callers in packages/cli still treat the result as a string (out.split, name.trim) and rely on the throw to detect a failure, so both break at run time. The fix is to update changedFiles and currentBranch to read stdout and check code, or keep the old function beside the new one."
+    }
+  ]
+}

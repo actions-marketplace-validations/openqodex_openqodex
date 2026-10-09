@@ -143,3 +143,28 @@ What it showed:
 ## Claims cite a run
 
 A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a saved benchmark run: the results folder, the score file it quotes (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no saved run backs is not written.
+
+## Code graph phase 4b: the framework plugins
+
+`benchmark/results/2026-10-09-881318b`: build `881318b` (openqodex 0.10.0, the Express, React, Next.js, FastAPI and Go net/http plugins), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, graph on, one repeat of the 15 cases: 15 reviews, all complete. It is compared with the graph-on reviews of the first run, scored against this run's specs (`baseline-752b77f-score-cases.json` in this run's folder). Eight cases were edited after the first run, so for those the first run reviewed other files than its score assumes: its Rails `permit!` plant sat behind the admin check, and 0 of 3 of its reviews found it.
+
+| Measure | 752b77f, graph on, 3 repeats, 14 cases | 881318b, graph on, 1 repeat, 15 cases |
+|---|---|---|
+| Planted bugs found | 100/111 (90%) | 35/38 (92%) |
+| critical | 33/36 | 12/12 |
+| major | 57/57 | 20/20 |
+| minor | 10/18 | 3/6 |
+| Findings that are planted bugs | 100/100 | 35/35 |
+| False findings | 0 | 0 |
+| Clean changes with no finding | 6/6 | 2/2 |
+| Callers the change breaks, listed in the brief | 15/15 | 5/5 |
+| Graph gaps disclosed in the brief | 3/6 | 1/2 |
+| `express-route-param` (new: a handler reading a parameter its route does not declare) | not in the run | 1/1 |
+| Time per review, mean | 25 s | 27 s |
+| Cost per review, mean | $0.11 | $0.12 |
+
+What it showed:
+
+- No benchmark line moved. The plugins put their routes, middleware and test links on the graph, but nothing in the brief reads them yet: the brief lines that show a changed handler's route come with phase 4a's interface work, so this phase's effect on reviews can be measured only once those are merged.
+- The reviewer found the new `express-route-param` bug from the files alone: the route file sits beside the handler in so small a repository.
+- The three misses are minor: two Dockerfile issues in the demo repository the reviewer dropped as harmless (as in the first run), and the list items without keys in the Next.js case, a candidate the reviewer dropped.

@@ -1,0 +1,16 @@
+Passed with warnings: 11 findings (2 critical, 5 major, 4 minor)
+Change 10985528b336 against HEAD, 8 files, +38 -14
+Summary: Adds a Flask search endpoint and a hardcoded payment key, changes item pagination, downgrades lodash, and loosens the Dockerfile, CI workflow and deploy script.
+1. Critical security: Search query built from request input (app/search.py:14)
+2. Critical security: Payment API key committed in source (app/config.py:2)
+3. Major bug: Pagination offset skips the first page (app/server.py:23)
+4. Major security: Pull request title interpolated into shell (.github/workflows/ci.yml:15)
+5. Major security: Lodash downgraded to a vulnerable release (package-lock.json:11)
+6. Major security: Container now runs as root (Dockerfile:9-10)
+7. Major bug: Unguarded recursive delete of deploy directory (scripts/deploy.sh:7)
+8. Minor bug: Deploy loop parses ls output (scripts/deploy.sh:11)
+9. Minor maintainability: Base image tag unpinned (Dockerfile:1)
+10. Minor bug: Non-interactive apt install without -y (Dockerfile:3)
+11. Minor maintainability: Changed endpoints have no tests (app/search.py:9-17)
+Report: <sample>/report/report.html
+Markdown: <sample>/report/report.md
