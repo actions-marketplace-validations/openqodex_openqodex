@@ -86,9 +86,12 @@ export type Session = {
 // What some questions need beyond the graph: the change compared with its
 // base (`changes`), the diff the review walks (`impact`), the caller's
 // cancellation, and a budget made by the caller (the MCP server's slices)
-// in place of the request's `budget.ms`.
+// in place of the request's `budget.ms`. `scope`: what the answer rests on
+// besides the build, a comparison's resolved base and the capture it was
+// built from; a cursor is bound to it, so a cursor made against one base
+// is refused against another.
 export type ChangesExtra = { exports: ImpactExportChange[]; removed: ImpactSymbol[]; moved: ImpactSymbol[] };
-export type Extra = { changes?: ChangesExtra; change?: Pick<Change, "files" | "coverage">; signal?: AbortSignal; budget?: Budget };
+export type Extra = { changes?: ChangesExtra; change?: Pick<Change, "files" | "coverage">; signal?: AbortSignal; budget?: Budget; scope?: string };
 
 export function graphBlock(s: Session): Answer["graph"] {
   const st = s.graph.status;

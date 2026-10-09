@@ -32,9 +32,11 @@ export type Reference = { digest: string };
 export type Pinned = {
   session: Session;
   lease: Lease | null;
-  // Set when the pin compared the work tree with a base.
+  // Set when the pin compared the work tree with a base: the comparison,
+  // and its scope (the resolved base and the capture digest) for cursors.
   changes?: ChangesExtra;
   change?: Change;
+  scope?: string;
   reference: Reference | null;
   release(): void;
 };
@@ -108,7 +110,8 @@ export async function pinWorkTree(args: PinArgs): Promise<Pinned> {
     changes = { exports: graph.exportChanges, removed: removed.filter((s) => !s.movedTo), moved: removed.filter((s) => s.movedTo) };
   }
   const lease = await leaseOf(store, graph, args.purpose);
-  return { session: sessionOf(store, graph), lease, changes, change, reference, release: () => lease?.release() };
+  const scope = change ? `${change.baseSha}:${reference.digest}` : undefined;
+  return { session: sessionOf(store, graph), lease, changes, change, scope, reference, release: () => lease?.release() };
 }
 
 export type PinnedOrError = Pinned | { error: "generation-unavailable" | "unreadable"; message: string };

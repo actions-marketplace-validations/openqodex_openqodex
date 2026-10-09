@@ -197,7 +197,7 @@ export async function run(args: string[]): Promise<number> {
       cursor: values.get("--cursor"),
       ...(tokens !== undefined || ms !== undefined ? { budget: { ...(tokens !== undefined ? { tokens } : {}), ...(ms !== undefined ? { ms } : {}) } } : {}),
     };
-    const answer = query(session, request, { changes: pinned.changes, change: pinned.change });
+    const answer = query(session, request, { changes: pinned.changes, change: pinned.change, scope: pinned.scope });
     if (json) out(JSON.stringify(answer));
     else printText(answer, kind);
     return exitOf(answer);

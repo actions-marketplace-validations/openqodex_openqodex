@@ -22,6 +22,11 @@
 //     without `graph_refresh`.
 // 10. Many questions that each need a build start as many builds at once,
 //     with no bound on how many wait.
+// 11. The next page of a comparison builds the comparison again: a build
+//     that is not complete gets a new id, and the server refuses its own
+//     cursor.
+// 12. A comparison's cursor is accepted for a comparison with another
+//     base, and pages a list it was not made from.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -235,11 +240,13 @@ describe("the builds a server starts", () => {
     const { client } = await connect(root);
     const first = await ask(client, "graph_changes", {});
     expect(first.answer.error).toBeNull();
+    // Two leases: the session's build, and the comparison kept for its
+    // cursors (one build of the same capture may serve both).
     const held = leases(root).filter((l) => l.purpose === "mcp").map((l) => l.id);
-    expect(held).toHaveLength(1);
+    expect(held).toHaveLength(2);
     write(root, { "src/late.ts": 'import { core } from "./core";\nexport function late(): number {\n  return core();\n}\n' });
     const later = await ask(client, "graph_callers", { symbol: "core" });
-    expect(later.answer.graph.generation).toBe(held[0]);
+    expect(held).toContain(later.answer.graph.generation);
     expect(later.answer.counts.certain).toBe(12);
   }, 180_000);
 
@@ -257,5 +264,47 @@ describe("the builds a server starts", () => {
     // The server goes on answering.
     const { answer } = await ask(client, "graph_status");
     expect(answer.error).toBeNull();
+  }, 180_000);
+});
+
+describe("a comparison's cursor", () => {
+  const exports = (names: string[]) => names.map((n) => `export function ${n}(): number {\n  return 1;\n}\n`).join("");
+  const gitIn = (root: string, ...args: string[]) => execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" }).trim();
+
+  it("pages the comparison it was made on, even from a build that is not complete (11)", async () => {
+    // A tsconfig that does not parse can hide an import: no build of this
+    // repository is complete, so each one is saved under its own id.
+    const root = repo({ ...files, "tsconfig.json": '{ "compilerOptions": ', "src/core.ts": exports(["core", "alpha", "beta", "gamma"]) });
+    write(root, { "src/core.ts": exports(["core"]) });
+    const { client } = await connect(root);
+    const first = await ask(client, "graph_changes", { limit: 1 });
+    expect(first.answer.error).toBeNull();
+    expect(first.answer.graph.status).toBe("partial");
+    expect(first.answer.truncated.cursor).not.toBeNull();
+    const second = await ask(client, "graph_changes", { limit: 1, cursor: first.answer.truncated.cursor });
+    expect(second.answer.error).toBeNull();
+    expect(second.answer.graph.generation).toBe(first.answer.graph.generation);
+    expect(second.answer.items).toHaveLength(1);
+    expect(second.answer.items).not.toEqual(first.answer.items);
+  }, 180_000);
+
+  it("is refused for a comparison with another base (12)", async () => {
+    const root = repo({ ...files, "src/core.ts": exports(["core", "alpha", "beta", "gamma"]) });
+    const base1 = gitIn(root, "rev-parse", "HEAD");
+    write(root, { "src/core.ts": exports(["core", "alpha", "beta"]) });
+    gitIn(root, "commit", "-qam", "drop gamma");
+    const base2 = gitIn(root, "rev-parse", "HEAD");
+    write(root, { "src/core.ts": exports(["core"]) });
+    const { client } = await connect(root);
+    const first = await ask(client, "graph_changes", { base: base1, limit: 1 });
+    expect(first.answer.error).toBeNull();
+    expect(first.answer.truncated.cursor).not.toBeNull();
+    const other = await ask(client, "graph_changes", { base: base2, limit: 1, cursor: first.answer.truncated.cursor });
+    expect(other.isError).toBe(true);
+    expect(other.answer.error?.code).toBe("generation-unavailable");
+    // The same base pages on.
+    const same = await ask(client, "graph_changes", { base: base1, limit: 1, cursor: first.answer.truncated.cursor });
+    expect(same.answer.error).toBeNull();
+    expect(same.answer.items).not.toEqual(first.answer.items);
   }, 180_000);
 });

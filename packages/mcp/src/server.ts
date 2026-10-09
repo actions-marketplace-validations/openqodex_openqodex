@@ -17,6 +17,12 @@
 // own comparison. The lease goes when the agent disconnects, and a crash
 // leaves one the collector drops by its process check.
 //
+// The last comparison stays held too, so a cursor of `changes` or `impact`
+// pages the comparison it was made on instead of a new one, which may be a
+// new build with another id; a question without a cursor compares again.
+// A cursor is bound to the comparison's base and capture, so one made
+// against another base is refused.
+//
 // Builds run one at a time, whoever asks: the held build, a refresh, a
 // comparison. A few wait behind the running one; a question that needs a
 // build past that is refused as busy, and one cancelled while it waits
@@ -61,6 +67,9 @@ export type ServerOptions = {
 };
 
 type Settings = { budgetMs: number; maxFiles: number; maxFileBytes: number; maxHeapMb: number };
+// A comparison kept for its cursors: the base it was asked with, how many
+// questions read it now, and whether a newer one replaced it.
+type Compared = { base: string | undefined; pinned: Pinned; uses: number; dropped: boolean };
 type Ready = { root: string; real: string; store: GraphStore | null; storeRefused?: string; settings: Settings; exclude: string[]; defaultBase: string | null };
 
 // A repository-relative path that stays inside the repository: no absolute
@@ -111,6 +120,7 @@ export class GraphServer {
   private readonly builds = new BuildQueue(MAX_WAITING_BUILDS);
   private checkedAt = 0;
   private closed = false;
+  private compared: Compared | null = null;
 
   constructor(private readonly opts: ServerOptions) {
     this.server = new Server({ name: SERVER_NAME, version: opts.version }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
@@ -220,17 +230,31 @@ export class GraphServer {
     // comparison, held only while it answers; the held build stays.
     const compares = tool.op === "changes" || (tool.op === "impact" && args.symbol === undefined && args.id === undefined);
     if (compares) {
-      const build = this.builds.run(
-        () => pinWorkTree({ repoRoot: ready.root, store: ready.store, storeRefused: ready.storeRefused, settings: ready.settings, purpose: "mcp", compare: { base: typeof args.base === "string" ? args.base : undefined, exclude: ready.exclude, defaultBase: ready.defaultBase }, onProgress: progress }),
-        signal,
-      );
-      if (!build) return busy(tool.op);
-      const cmp = await build;
+      const base = typeof args.base === "string" ? args.base : undefined;
+      let c = this.compared;
+      if (args.cursor === undefined || c === null || c.base !== base) {
+        const build = this.builds.run(
+          () => pinWorkTree({ repoRoot: ready.root, store: ready.store, storeRefused: ready.storeRefused, settings: ready.settings, purpose: "mcp", compare: { base, exclude: ready.exclude, defaultBase: ready.defaultBase }, onProgress: progress }),
+          signal,
+        );
+        if (!build) return busy(tool.op);
+        const pinned = await build;
+        if (this.closed) {
+          pinned.release();
+          return refusal(tool.op, "the server is shutting down");
+        }
+        c = { base, pinned, uses: 0, dropped: false };
+        const old = this.compared;
+        this.compared = c;
+        if (old) this.drop(old);
+      }
+      c.uses++;
       try {
-        const a = await querySliced(cmp.session, requestOf(tool, args), { changes: cmp.changes, change: cmp.change, signal });
+        const a = await querySliced(c.pinned.session, requestOf(tool, args), { changes: c.pinned.changes, change: c.pinned.change, scope: c.pinned.scope, signal });
         return text(a, isError(a));
       } finally {
-        cmp.release();
+        c.uses--;
+        if (c.dropped && c.uses === 0) c.pinned.release();
       }
     }
 
@@ -248,11 +272,20 @@ export class GraphServer {
     await this.server.connect(transport);
   }
 
-  // Releases the held build. Safe to call twice.
+  // A comparison a newer one replaced: released once no question reads it.
+  private drop(c: Compared): void {
+    if (c.dropped) return;
+    c.dropped = true;
+    if (c.uses === 0) c.pinned.release();
+  }
+
+  // Releases the held build and the kept comparison. Safe to call twice.
   close(): void {
     this.closed = true;
     this.pinned?.release();
     this.pinned = null;
+    if (this.compared) this.drop(this.compared);
+    this.compared = null;
   }
 }
 

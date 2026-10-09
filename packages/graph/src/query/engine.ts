@@ -349,7 +349,14 @@ function start(s: Session, req: Request, extra: Extra): { job: Job; budget: Budg
   return { job, budget, offset: c.offset };
 }
 
-export function query(s: Session, req: Request, extra: Extra = {}): Answer {
+// The request as a cursor and a kept list are bound to it: with the
+// scope of a comparison, when there is one.
+function bound(req: Request, extra: { scope?: string }): Request {
+  return extra.scope === undefined ? req : ({ ...req, scope: extra.scope } as Request);
+}
+
+export function query(s: Session, asked: Request, extra: Extra = {}): Answer {
+  const req = bound(asked, extra);
   const st = start(s, req, extra);
   if (isAnswer(st)) return st;
   return settle(s, req, st.job, st.job(st.budget), st.offset);
@@ -363,7 +370,8 @@ export const SLICE_CHECKS = 2048;
 // while the work runs is seen and stops it (the MCP server). The question's
 // own budget is its time and its cancellation; a budget counted in checks
 // is for `query`.
-export async function querySliced(s: Session, req: Request, extra: Omit<Extra, "budget"> = {}, slice = SLICE_CHECKS): Promise<Answer> {
+export async function querySliced(s: Session, asked: Request, extra: Omit<Extra, "budget"> = {}, slice = SLICE_CHECKS): Promise<Answer> {
+  const req = bound(asked, extra);
   const st = start(s, req, extra);
   if (isAnswer(st)) return st;
   const { job, budget, offset } = st;
