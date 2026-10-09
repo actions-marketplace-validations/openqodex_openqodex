@@ -557,6 +557,38 @@ describe("a heredoc ends only on a line that is its word", () => {
     const text = src("x = <<~EPBVIVKP", "  ELXSADHD", "  # rubocop:disable all", "  EPBVIVKP", "y = 1 # rubocop:disable Lint/Foo");
     expect(findMarkers(text, ["rubocop"]).map((m) => m.line)).toEqual([5]);
   });
+
+  // However many lines share the word's hash before its real end, the
+  // heredoc ends there, as the scanner ends it. Read as left open, its body
+  // would be read as code: the quote in "it's" would open a string that runs
+  // past the end and hides the real comment after it.
+  it("ends at the real end after any number of lines that share its hash, and hides no marker after it", () => {
+    const text = src("cat <<EPBVIVKP", ...Array(200).fill("ELXSADHD"), "it's", "EPBVIVKP", "echo $1 # shellcheck disable=SC2086", "echo 'x'");
+    expect(findMarkers(text, ["shellcheck"]).map((m) => m.line)).toEqual([204]);
+  });
+
+  // Lines that all share one hash cost each lookup no rescan: a file of
+  // them with a heredoc on every other line grows linearly. CPU time of the
+  // fastest of three runs after one untimed run, at 1 MB and four times that.
+  it("stays linear on a file of lines that all share the word's hash", () => {
+    const MB = 1024 * 1024;
+    const timed = (size: number) => {
+      const text = Buffer.from("cat <<EPBVIVKP\nELXSADHD\n".repeat(Math.ceil(size / 24)), "utf8").toString("utf8");
+      findMarkers(text, ["shellcheck"]);
+      const runs: number[] = [];
+      for (let r = 0; r < 3; r++) {
+        const before = process.cpuUsage();
+        findMarkers(text, ["shellcheck"]);
+        const used = process.cpuUsage(before);
+        runs.push((used.user + used.system) / 1000);
+      }
+      return Math.min(...runs);
+    };
+    const small = timed(MB);
+    const large = timed(4 * MB - 64 * 1024);
+    expect(large / Math.max(small, 20), `${small.toFixed(0)} ms for 1 MB, ${large.toFixed(0)} ms for 3.94 MB`).toBeLessThan(8);
+    expect(small).toBeLessThan(4000);
+  }, 180_000);
 });
 
 describe("linear time on generated input, per reader family (16)", () => {

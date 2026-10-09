@@ -57,10 +57,6 @@ export function comments(text: string, family: Family): Comment[] {
 
 const MAX_DEPTH = 64;
 
-// The most lines a heredoc end lookup passes over whose key only shares its
-// hash with the word.
-const MAX_COLLISIONS = 64;
-
 // A 32-bit FNV-1a hash of s[from, to), by UTF-16 code unit.
 function keyHash(s: string, from: number, to: number): number {
   let h = 0x811c9dc5;
@@ -86,6 +82,11 @@ class Reader {
   // a map of hundreds of thousands of distinct strings costs more per line
   // as it grows, and a file of distinct heredoc words made one.
   private readonly lines = new Map<string, Map<number, number | number[]>>();
+  // For each list of starts that share a hash, the words looked up in it:
+  // the list index a lookup started from, and the index of the first line
+  // at or after it that is the word (-1: none to the end). The reader moves
+  // forward, so each line of a list is compared with a word once.
+  private readonly scanned = new Map<number[], { word: string; from: number; match: number }[]>();
   constructor(readonly s: string) {}
 
   private lineStarts(): number[] {
@@ -135,10 +136,12 @@ class Reader {
   // The offset past the first line at or after `from` that reads `word` once
   // `h.indent` is removed (and, with `h.trailing`, trailing blanks), or -1
   // with none. The lines are indexed once per rule, by the hash of their
-  // key, so each heredoc costs one lookup; a line whose key only shares the
-  // hash is passed over. Past MAX_COLLISIONS of those the heredoc counts as
-  // having no end, so its body is read as code: that can add a candidate,
-  // never hide one.
+  // key; a line found by the hash is the end only when its key has the
+  // word's length and text, and a line whose key only shares the hash is
+  // passed over, however many there are, as the scanner passes over them.
+  // Each line that shares a hash is compared with a given word once in a
+  // forward read (scanned), so a file of lines crafted to share one hash
+  // costs time in proportion to its size.
   closer(h: Heredoc, from: number): number {
     const word = h.word;
     if (word.length > MAX_WORD) return -1;
@@ -159,15 +162,39 @@ class Reader {
     }
     const found = index.get(keyHash(word, 0, word.length));
     if (found === undefined) return -1;
-    const at = typeof found === "number" ? [found] : found;
-    let passed = 0;
-    for (let k = this.firstAtOrAfter(at, from); k < at.length; k++) {
-      const start = at[k] as number;
+    const isWord = (start: number): boolean => {
       const [a, b] = this.keyOf(start, h.indent, h.trailing);
-      if (b - a === word.length && this.s.startsWith(word, a)) return this.eol(start) + 1;
-      if (++passed > MAX_COLLISIONS) return -1;
+      return b - a === word.length && this.s.startsWith(word, a);
+    };
+    if (typeof found === "number") return found >= from && isWord(found) ? this.eol(found) + 1 : -1;
+    const k = this.firstAtOrAfter(found, from);
+    let memos = this.scanned.get(found);
+    if (memos === undefined) {
+      memos = [];
+      this.scanned.set(found, memos);
     }
-    return -1;
+    let memo = memos.find((m) => m.word === word);
+    // What an earlier lookup from no later a line already knows: no line of
+    // the word in [memo.from, memo.match), and the word at memo.match.
+    if (memo !== undefined && memo.from <= k && (memo.match < 0 || memo.match >= k)) {
+      memo.from = k;
+      return memo.match < 0 ? -1 : this.eol(found[memo.match] as number) + 1;
+    }
+    let match = -1;
+    for (let j = k; j < found.length; j++) {
+      if (isWord(found[j] as number)) {
+        match = j;
+        break;
+      }
+    }
+    if (memo === undefined) {
+      memo = { word, from: k, match };
+      memos.push(memo);
+    } else {
+      memo.from = k;
+      memo.match = match;
+    }
+    return match < 0 ? -1 : this.eol(found[match] as number) + 1;
   }
 
   // Runs `find` (a search for a closer from `from`, returning the offset past
