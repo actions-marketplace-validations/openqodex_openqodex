@@ -22,8 +22,10 @@ export type ReactFact =
   // first argument of this call (`render(<X />)` in a test).
   | (FrameworkFactBase & { kind: "element"; name: string[]; local: boolean; render: string[] | null })
   // A call of a hook: `useState(...)`, `React.useEffect(...)`, `useUser(id)`.
-  // `scope` is the line of the function it is called in (0 at module level).
-  | (FrameworkFactBase & { kind: "hook-call"; name: string[]; scope: number })
+  // `scope` is the line of the function it is called in (0 at module level);
+  // `local`: the callee's first name is a parameter or a local of a function
+  // around the call, so it is not the import or the module's definition.
+  | (FrameworkFactBase & { kind: "hook-call"; name: string[]; scope: number; local: boolean })
   // `const ThemeContext = createContext(...)`.
   | (FrameworkFactBase & { kind: "context"; name: string; callee: string[] })
   // A test block: `describe(...)`, `it(...)`, `test(...)`.
@@ -170,6 +172,8 @@ export function readFacts(root: Node): ReactFact[] {
           const n = node.childForFieldName("name");
           name = n ? identifierName(n.text) : null;
           isExported = exported(up);
+          // A nested function's name is a local of the function around it.
+          if (name !== null) declare(name);
         } else if (type === "method_definition") {
           name = null;
         } else if (parent?.type === "variable_declarator" && field === "value") {
@@ -246,7 +250,7 @@ export function readFacts(root: Node): ReactFact[] {
       } else if (type === "call_expression" && !node.hasError) {
         const callee = namePath(node.childForFieldName("function"));
         const last = callee ? (callee[callee.length - 1] as string) : null;
-        if (callee && last && isHookName(last) && callee.length <= 2) out.push({ kind: "hook-call", ...pos(node), name: callee, scope: topFn()?.line ?? 0 });
+        if (callee && last && isHookName(last) && callee.length <= 2) out.push({ kind: "hook-call", ...pos(node), name: callee, scope: topFn()?.line ?? 0, local: (locals.get(callee[0] as string) ?? 0) > 0 });
         if (callee && callee.length === 1 && TEST_FNS.has(last as string)) out.push({ kind: "test-block", ...pos(node), fn: last as string, name: stringValue(node.childForFieldName("arguments")?.firstNamedChild ?? null) });
       }
     }
@@ -278,7 +282,7 @@ export function isReactFact(v: unknown): v is ReactFact {
     case "element":
       return strings(f.name) && typeof f.local === "boolean" && (f.render === null || strings(f.render));
     case "hook-call":
-      return strings(f.name) && Number.isInteger(f.scope);
+      return strings(f.name) && Number.isInteger(f.scope) && typeof f.local === "boolean";
     case "context":
       return typeof f.name === "string" && strings(f.callee);
     case "test-block":

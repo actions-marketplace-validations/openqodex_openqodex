@@ -8,7 +8,7 @@ import type { ReactFact } from "./facts.js";
 import { isReactFact, readFacts, wants } from "./facts.js";
 import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
-export const VERSION = 1;
+export const VERSION = 2;
 const SUPPORTED = "React 16.8 to 19";
 
 const app = "react-app";

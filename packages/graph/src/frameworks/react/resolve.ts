@@ -36,10 +36,11 @@ export const MAX_FACTS_READ = 400_000; // facts of every file together
 export const MAX_LOOKUPS = 200_000; // names looked up through the index
 export const MAX_RENDER_EDGES = 40_000; // renders edges made
 export const MAX_TEST_LINKS = 10_000; // tests edges made
+export const MAX_ROLES = 20_000; // roles given
 export const MAX_UNKNOWNS = 5000; // unknowns kept; past it one more says how many were left out
 
-type Spend = "facts" | "lookups" | "renders" | "tests";
-const LIMIT: Record<Spend, number> = { facts: MAX_FACTS_READ, lookups: MAX_LOOKUPS, renders: MAX_RENDER_EDGES, tests: MAX_TEST_LINKS };
+type Spend = "facts" | "lookups" | "renders" | "tests" | "roles";
+const LIMIT: Record<Spend, number> = { facts: MAX_FACTS_READ, lookups: MAX_LOOKUPS, renders: MAX_RENDER_EDGES, tests: MAX_TEST_LINKS, roles: MAX_ROLES };
 
 type Fact<K extends ReactFact["kind"]> = Extract<ReactFact, { kind: K }>;
 
@@ -88,8 +89,8 @@ function run(index: PluginIndex<ReactFact>): Analysis {
   const apps: Detection[] = [];
 
   // ---------- the build's budgets ----------
-  const refused: Record<Spend, number> = { facts: 0, lookups: 0, renders: 0, tests: 0 };
-  const spent: Record<Spend, number> = { facts: 0, lookups: 0, renders: 0, tests: 0 };
+  const refused: Record<Spend, number> = { facts: 0, lookups: 0, renders: 0, tests: 0, roles: 0 };
+  const spent: Record<Spend, number> = { facts: 0, lookups: 0, renders: 0, tests: 0, roles: 0 };
   const take = (k: Spend, n = 1): boolean => {
     if (spent[k] + n > LIMIT[k]) {
       refused[k] += n;
@@ -214,6 +215,7 @@ function run(index: PluginIndex<ReactFact>): Analysis {
     const k = `${target}\0${role}`;
     if (roleSeen.has(k)) return;
     roleSeen.add(k);
+    if (!take("roles")) return;
     const project = index.projectOf(file);
     if (!projectApp.has(project)) projectApp.set(project, appId(PLUGIN, manifestOf(project), 1));
     roles.push({ target, role, detail, app: appOf(file), evidence });
@@ -222,8 +224,22 @@ function run(index: PluginIndex<ReactFact>): Analysis {
 
   // The symbol a component or hook fact names: the definition of that name
   // on that line, else the only one of that name in the file.
+  // Each file's definitions by name, built once, so a file of thousands of
+  // components is not scanned once per component.
+  const byName = new Map<string, Map<string, { id: string; startLine: number }[]>>();
   const symbolOf = (file: string, name: string, line: number): string | null => {
-    const defs = index.symbols(file).filter((n) => n.name === name && n.kind !== "file");
+    let names = byName.get(file);
+    if (!names) {
+      names = new Map();
+      for (const n of index.symbols(file)) {
+        if (n.kind === "file") continue;
+        const list = names.get(n.name);
+        if (list) list.push(n);
+        else names.set(n.name, [n]);
+      }
+      byName.set(file, names);
+    }
+    const defs = names.get(name) ?? [];
     const exact = defs.find((n) => n.startLine === line);
     if (exact) return exact.id;
     return defs.length === 1 ? (defs[0] as { id: string }).id : null;
@@ -305,6 +321,8 @@ function run(index: PluginIndex<ReactFact>): Analysis {
     hookVerdict.set(id, null); // a cycle of hooks proves nothing
     let out: { tier: Tier; note: string | null; site: { file: string; line: number; column: number } } | null = null;
     for (const { file, call } of calls) {
+      // A parameter or local of that name is whatever the code passes: it proves no hook.
+      if (call.local) continue;
       const ident = identity(file);
       const site = { file, line: call.line, column: call.column };
       const head = call.name[0] as string;
@@ -408,6 +426,7 @@ function run(index: PluginIndex<ReactFact>): Analysis {
   if (refused.lookups > 0) cut(["renders", "tests"], "budget", refused.lookups, `${refused.lookups} names were not looked up: the React plugin makes at most ${MAX_LOOKUPS} lookups in one build`);
   if (refused.renders > 0) cut(["renders"], "fan-out-capped", refused.renders, `${refused.renders} renders edges were left out: the React plugin keeps at most ${MAX_RENDER_EDGES} in one build`);
   if (refused.tests > 0) cut(["tests"], "fan-out-capped", refused.tests, `${refused.tests} test links were left out: the React plugin keeps at most ${MAX_TEST_LINKS} in one build`);
+  if (refused.roles > 0) cut(["renders", "tests"], "fan-out-capped", refused.roles, `${refused.roles} roles were left out: the React plugin gives at most ${MAX_ROLES} roles in one build`);
   if (unknownsLeftOut > 0) cut(["renders", "tests"], "fan-out-capped", unknownsLeftOut, `${unknownsLeftOut} more unknowns past the first ${MAX_UNKNOWNS} were left out`);
 
   return { apps, output: { roles, entities: [], edges, unknowns } };
