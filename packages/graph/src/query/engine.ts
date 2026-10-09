@@ -20,7 +20,7 @@ import { floorReasons, toImpactUnknown } from "../impact.js";
 import { API_VERSION, CERTAIN_KINDS, MODEL_VERSION } from "../model/records.js";
 import type { Tier } from "../model/records.js";
 import type { Graph, GraphNode, GraphSite, UnknownSite } from "../types.js";
-import { BAD_CURSOR, candidate, counts, empty, fail, isAnswer, listing, OPERATIONS, Point, qualified, stoppedAt } from "./answer.js";
+import { BAD_CURSOR, candidate, counts, empty, fail, graphBlock, isAnswer, listing, OPERATIONS, Point, qualified, stoppedAt } from "./answer.js";
 import type { Answer, Candidate, Extra, Job, Listing, Request, Session } from "./answer.js";
 import { frameworkLayer, routes, tests } from "./frameworks.js";
 import { edgeId, readEdgeId } from "./ids.js";
@@ -340,7 +340,8 @@ function start(s: Session, req: Request, extra: Extra): { job: Job; budget: Budg
     if (job) return { job, budget, offset: c.offset };
   } else if (req.cursor) {
     const kept: Listing | null = keptList(s.graph, s.generation, req);
-    if (kept) return pageOf(s.generation, req, kept, c.offset);
+    // The list was made earlier; what the session knows of later edits is now.
+    if (kept) return { ...pageOf(s.generation, req, kept, c.offset), graph: graphBlock(s) };
   }
   const job = jobFor(s, req, extra, tiers);
   if (isAnswer(job)) return job;

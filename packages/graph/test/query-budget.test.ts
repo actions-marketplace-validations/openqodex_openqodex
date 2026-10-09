@@ -16,6 +16,9 @@
 //     says no edit is known.
 //  7. A cancellation that arrives while the work runs is not seen until
 //     the work ends: the whole walk runs in one turn of the event loop.
+//  8. A page read from a kept list carries the graph block of the moment
+//     the list was made, so edits the session has learned of since are
+//     not said.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -171,6 +174,21 @@ describe("the floor of a walk", () => {
 });
 
 describe("edits since the held build", () => {
+  it("are said on a page read from the kept list, not only on the first page (8)", () => {
+    const req = { kind: "callers" as const, target: { name: "hub" }, limit: 100 };
+    const p1 = ask(req);
+    expect(p1.truncated.by).toBe("limit");
+    expect(p1.graph.freshness.laterEditsKnown).toBe(false);
+    s.laterEditsKnown = true;
+    try {
+      const p2 = ask({ ...req, cursor: p1.truncated.cursor as string }, 1);
+      expect(p2.items).toHaveLength(100);
+      expect(p2.graph.freshness.laterEditsKnown).toBe(true);
+    } finally {
+      s.laterEditsKnown = false;
+    }
+  });
+
   const settings = { budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxHeapMb: 1536 };
   const files = {
     "package.json": '{ "name": "root", "private": true }\n',
