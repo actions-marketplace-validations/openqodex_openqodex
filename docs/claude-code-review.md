@@ -103,7 +103,6 @@ Add the key as a repository secret named `ANTHROPIC_API_KEY`, and set it on the 
 
 - The reviewer needs Claude Code or Codex, installed and logged in. Without either, `review` prints "Full review unavailable", says what is missing, saves the unchecked scanner findings to a file it names, and names the command with which the agent you are in reviews the change itself (`review --agent`).
 - No review on your own API key without Claude Code or Codex.
-- No tool server for agents (MCP).
 
 ## Where the report goes
 
