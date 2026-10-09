@@ -278,6 +278,22 @@ export function planTomlInstall(t: TomlTarget, ctx: Ctx, before: string | null):
   };
 }
 
+// Why removing the block would change a key that is not ours, or null. The
+// table the block opens, [mcp_servers.openqodex], runs on to the next
+// header, so a key the developer wrote after the end marker is in it, and
+// once the block goes it would sit under the table before the block. The
+// file must define no key under mcp_servers.openqodex that the block does
+// not; a file the reader cannot read is not judged.
+function tomlTableOutside(text: string, block: string): string | null {
+  const count = (t: string): number | null => {
+    const read = readTomlKeys(t);
+    return read.ok ? read.keys.filter((k) => k.path[0] === "mcp_servers" && k.path[1] === MCP_SERVER).length : null;
+  };
+  const all = count(text);
+  if (all === null) return "the file could not be read as TOML, so what belongs to the block's table cannot be told";
+  return all > (count(block) ?? 0) ? `a key after the block belongs to its [mcp_servers.${MCP_SERVER}] table, and would move to the table before the block if the block went` : null;
+}
+
 export function planTomlRemoval(t: TomlTarget, ctx: Ctx, before: string | null, recordedOnly: boolean): Action | null {
   const { record } = ctx;
   const base = { path: t.path, agent: t.agent, guard: { path: t.path, before } };
@@ -294,6 +310,11 @@ export function planTomlRemoval(t: TomlTarget, ctx: Ctx, before: string | null, 
   if (!ours) {
     forget(record, t.path);
     return recorded ? { ...base, verb: "keep", note: `${t.label} was edited; left in place` } : null;
+  }
+  const outside = tomlTableOutside(before, existing);
+  if (outside !== null) {
+    forget(record, t.path);
+    return { ...base, verb: "keep", note: `${t.label}: ${outside}; left in place` };
   }
   let head = before.slice(0, at.start);
   let tail = before.slice(at.end);

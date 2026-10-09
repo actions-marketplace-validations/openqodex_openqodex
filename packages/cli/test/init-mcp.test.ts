@@ -45,6 +45,9 @@
 //     appends a second one, which makes Codex refuse the whole file; or text
 //     inside a string is taken for a definition; or a file that is not TOML
 //     gets a block appended.
+// 15. A key the developer wrote after the block's end marker belongs, in
+//     TOML, to the [mcp_servers.openqodex] table the block opens; removing
+//     the block moves that key under the developer's table before it.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
@@ -474,4 +477,24 @@ describe("12. Claude Code writes ~/.claude.json while init runs", () => {
     expect(r.stdout).toContain("changed while init was running");
     expect(read(file)).toBe(changed);
   });
+});
+
+describe("15. a key after the block belongs to OpenQodex's table", () => {
+  it("15. --no-mcp and uninstall leave the block and the key, so no key moves to the developer's table", () => {
+    const s = sandbox();
+    const file = join(s.home, ".codex", "config.toml");
+    write(file, '[mcp_servers.db]\ncommand = "db-mcp"\n');
+    expect(cli(s, ["init", "--yes", "--agent", "codex", ...QUIET]).status).toBe(0);
+    const withKey = `${read(file)}enabled = false\n`;
+    write(file, withKey);
+    expect(parseToml(file)).toEqual({ mcp_servers: { db: { command: "db-mcp" }, openqodex: { command: launcher(s), args: ["mcp"], enabled: false } } });
+    const off = cli(s, ["init", "--yes", "--no-mcp", "--agent", "codex", ...QUIET]);
+    expect(off.status, off.stderr).toBe(0);
+    expect(off.stdout).toMatch(/keep .*config\.toml/);
+    expect(read(file)).toBe(withKey);
+    const un = cli(s, ["init", "--uninstall", "--yes"]);
+    expect(un.status, un.stderr).toBe(0);
+    expect(read(file)).toBe(withKey);
+    expect((parseToml(file) as { mcp_servers: { db: Record<string, unknown> } }).mcp_servers.db).toEqual({ command: "db-mcp" });
+  }, 120_000);
 });
