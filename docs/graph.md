@@ -39,9 +39,11 @@ A step through inheritance is part of the proof: a method found on a base class 
 | `tsconfig.json`, `jsconfig.json` | calls, inheritance and imports | the same |
 | `pnpm-workspace.yaml` | calls, inheritance and imports | the same |
 | `go.mod` | calls and imports | the same |
-| `pyproject.toml`, `setup.cfg`, `requirements*.txt` | nothing: imports of what it declares read as misses | the build stays complete |
+| `pyproject.toml`, `setup.cfg`, `requirements*.txt`, `requirements*.in`, the `.txt` and `.in` files of a `requirements/` folder, and the files any of them includes with `-r` or `-c` | nothing: imports of what it declares read as misses | the build stays complete |
 | `Gemfile` | nothing: requires of the gems it names read as misses | the build stays complete |
 | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock` | nothing: a binding through it is only less sure | the build stays complete |
+
+  An include is read relative to the file that includes it, only inside the repository, and at most 64 includes in all; one outside the repository, missing, or past that bound is said as a gap of the including file.
 
   A kept index is matched by every file the graph read or looked for while it worked out the projects, whatever its name (a tsconfig may extend `./configs/base`, with no extension), with its content, and by whether each file it looked for was there. It is never reused once one of them changes, appears or goes.
 

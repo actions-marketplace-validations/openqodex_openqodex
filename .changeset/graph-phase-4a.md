@@ -6,3 +6,4 @@ The review brief now lists the Django and Rails routes that reach the changed co
 A route stays listed when its view or action is deleted, and the brief says it has no handler now.
 Django and Rails are read only when a manifest declares them and the project has the framework's own settings or routes file; nothing from the repository is imported or run, and no regular expression from it is built.
 Every route path, route name and template name quoted in the brief is on one line, cut to 120 characters and set inside a table cell.
+Python dependencies declared in files that a requirements file includes with `-r` or `-c`, in a `requirements/` folder or in pip-tools `.in` files are now read, so Django is found in those layouts.
