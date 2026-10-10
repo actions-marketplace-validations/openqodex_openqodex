@@ -819,7 +819,7 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
         drivers: [],
         snapshots: scope.snapshots,
         scoped: scope.scoped,
-        resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, home: options.installRoot }),
+        resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, installRoot: options.installRoot }),
         resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
         instructions: () => ({ text: "", hash: null }),
         onEvent: (e) => {

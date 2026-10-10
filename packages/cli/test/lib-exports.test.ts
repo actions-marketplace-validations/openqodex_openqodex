@@ -19,6 +19,9 @@
 // 7. The toolchain table read through the library lacks a tool's version or
 //    checksum, or its hash leaves out the lock files.
 // 8. A renderer throws on a report, or writes SARIF that is not 2.1.0.
+// 9. A bundled program with openqodex external cannot run one review with
+//    a model reviewer: reviewChange is missing, or a file it needs (lenses,
+//    toolchain table, grammars) is looked for beside the bundle.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -52,6 +55,7 @@ const VALUES = [
   "PacketCollision",
   "PacketLeak",
   "parseConfig",
+  "preinstallScanners",
   "render",
   "renderJson",
   "renderMarkdown",
@@ -85,6 +89,9 @@ const TYPES = [
   "Lens",
   "LoadedConfig",
   "ParseOptions",
+  "PreinstallOptions",
+  "PreinstallResult",
+  "PreinstallTool",
   "Recipe",
   "Report",
   "ReportFinding",
@@ -131,7 +138,7 @@ const TYPES = [
 
 // What each namespace holds: the same functions as the named exports.
 const NAMESPACES: Record<string, string[]> = {
-  scanners: ["createToolResolver", "loadToolchain", "runScanners", "toolchainHash"],
+  scanners: ["createToolResolver", "loadToolchain", "preinstallScanners", "runScanners", "toolchainHash"],
   graph: ["buildGraph", "detectImpact", "extractFacts", "PacketCollision", "PacketLeak", "writePacket"],
   lenses: ["defaultLensDir", "loadLensCatalog", "selectLenses", "selectLensesForDiff"],
   render: ["renderJson", "renderMarkdown", "renderReview", "renderSarif"],
@@ -375,4 +382,70 @@ describe("a bundled program with openqodex external", () => {
     expect(parsed.version).toBe("2.1.0");
     expect(parsed.runs.flatMap((run) => run.results)).toHaveLength(1);
   });
+});
+
+// A server worker as the product would bundle one: reviewChange with a
+// model reviewer that answers from a fixed submission (it raises nothing
+// and reads the change id from the brief), a budget that allows every call,
+// an install root with no scanner in it, and a work folder of its own.
+const REVIEW_WORKER = `import { reviewChange } from "openqodex";
+const [clonePath, mergeBaseSha, headSha, workDir, installRoot] = process.argv.slice(2);
+const reviewer = {
+  kind: "model",
+  model: "fixture-model",
+  maxOutputTokens: 4096,
+  async complete(request) {
+    const text = request.messages.map((m) => ("text" in m ? m.text : "")).join("\\n");
+    const id = /change_id\\W+([0-9a-f]{6,})/.exec(text)?.[1] ?? "";
+    const answer = { version: 2, change_id: id, summary: "Reviewed the fixture change.", findings: [], dropped: [] };
+    return { message: { text: JSON.stringify(answer), toolCalls: [] }, usage: { model: "fixture-model", inputTokens: 100, outputTokens: 20, costUsd: null } };
+  },
+};
+const budget = { authorize: async () => true, deadlineMs: 120000 };
+const result = await reviewChange(
+  { clonePath, mergeBaseSha, headSha },
+  reviewer,
+  { profile: "server", workDir, installRoot, budget, tools: { web: false, shell: false }, scanners: "preinstalled" },
+);
+process.stdout.write(JSON.stringify({ status: result.status, reason: result.reason ?? null, contract: result.completion?.contract ?? null, calls: result.usage.calls.length }));
+`;
+
+describe("a bundled server worker with openqodex external", () => {
+  // Skipped until step 3's reviewChange is merged into the library branch
+  // and exported from the package; the integrator unskips it then.
+  it.skip("runs one review with a model reviewer and gets a complete review with a model completion record", async () => {
+    const tsup = dirname(require.resolve("tsup/package.json"));
+    const esbuild = createRequire(join(tsup, "package.json"))("esbuild") as { build: (options: Record<string, unknown>) => Promise<unknown> };
+    const source = join(project, "review-worker.mjs");
+    writeFileSync(source, REVIEW_WORKER);
+    const bundle = join(project, "dist", "review-worker.mjs");
+    await esbuild.build({ entryPoints: [source], bundle: true, platform: "node", format: "esm", target: "node22", outfile: bundle, external: ["openqodex"], logLevel: "silent" });
+
+    // The host's clone: a base commit and a head commit with a small change.
+    const clone = tempDir("oq-lib-review-clone-");
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...args], {
+        cwd: clone,
+        encoding: "utf8",
+        env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+      }).trim();
+    git("init", "-q");
+    writeFileSync(join(clone, "add.ts"), "export function add(a: number, b: number): number {\n  return a + b;\n}\n");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const base = git("rev-parse", "HEAD");
+    writeFileSync(join(clone, "add.ts"), "export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function double(a: number): number {\n  return add(a, a);\n}\n");
+    git("commit", "-qam", "head");
+    const head = git("rev-parse", "HEAD");
+
+    const workDir = tempDir("oq-lib-review-work-");
+    const installRoot = tempDir("oq-lib-review-tools-");
+    const r = spawnSync(process.execPath, [bundle, clone, base, head, workDir, installRoot], { cwd: tempDir("oq-lib-review-elsewhere-"), encoding: "utf8", timeout: 120_000 });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    const out = JSON.parse(r.stdout) as { status: string; reason: string | null; contract: string | null; calls: number };
+    expect(out.status, out.reason ?? "").toBe("complete");
+    expect(out.contract).toBe("openqodex-model-review-1");
+    expect(out.calls).toBeGreaterThan(0);
+  }, 180_000);
 });

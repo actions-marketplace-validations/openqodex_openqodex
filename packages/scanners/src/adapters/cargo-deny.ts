@@ -45,10 +45,9 @@
 import { lstatSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { homeGuard } from "@openqodex/core";
 import type { AdapterResult, ResolvedTool, ScannerSeverity, StaticFinding } from "@openqodex/core";
 import { describeFailure, execTool, isOffline, type ExecResult } from "../exec.js";
-import { openqodexHome } from "../toolchain/table.js";
+import type { Scratch } from "../scratch.js";
 import type { Adapter } from "./index.js";
 import { withOwnedConfig } from "./owned-config.js";
 import { parse as parseToml } from "smol-toml";
@@ -104,15 +103,15 @@ export function metadataFailure(stderr: string, folder: string): string {
   return `cargo metadata failed: ${(lines[0] ?? "no output").trim().slice(0, 240)}`;
 }
 
-// The OpenQodex folder that holds the advisory database, made through the
-// guarded writer when it is not there; its real path, since git compares
+// The folder that holds the advisory database, under the run's scratch root
+// (the OpenQodex home on the laptop), made through the scratch's guarded
+// writer when it is not there; its real path, since git compares
 // GIT_CEILING_DIRECTORIES with real paths.
-function databaseRoot(): string {
-  const home = openqodexHome();
-  const dir = path.join(home, "cache", "cargo-deny", "advisory-dbs");
+function databaseRoot(scratch: Scratch): string {
+  const dir = path.join(scratch.root, "cache", "cargo-deny", "advisory-dbs");
   if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
     try {
-      homeGuard(home, true).makeFolder(dir);
+      scratch.guard().makeFolder(dir);
     } catch (err) {
       // Another run made it in between.
       if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw err;
@@ -123,7 +122,7 @@ function databaseRoot(): string {
 
 type Project = { lock: string; folder: string; manifest: string };
 
-export async function runCargoDeny(args: { repoDir: string; changedPaths: string[]; tool: ResolvedTool | null }): Promise<AdapterResult> {
+export async function runCargoDeny(args: { repoDir: string; changedPaths: string[]; tool: ResolvedTool | null; scratch: Scratch }): Promise<AdapterResult> {
   const locks = args.changedPaths.filter(isCargoLock);
   if (locks.length === 0) return { findings: [], error: null };
   const skipped = offlineReason();
@@ -157,7 +156,7 @@ export async function runCargoDeny(args: { repoDir: string; changedPaths: string
 
   let dbRoot: string;
   try {
-    dbRoot = databaseRoot();
+    dbRoot = databaseRoot(args.scratch);
   } catch (err) {
     return { findings: [], error: `cannot make the advisory database folder: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) };
   }
@@ -170,7 +169,7 @@ export async function runCargoDeny(args: { repoDir: string; changedPaths: string
     execTool(file, argv, { cwd, timeoutMs: left(), maxBytes: OUTPUT_MAX_BYTES, env });
 
   try {
-    const findings = await withOwnedConfig("deny.toml", cargoDenyConfig(dbRoot), async (configPath, work) => {
+    const findings = await withOwnedConfig(args.scratch.temp, "deny.toml", cargoDenyConfig(dbRoot), async (configPath, work) => {
       const common = ["--format", "json", "--color", "never"];
       const fetched = await step(tool.path, [...common, "--manifest-path", projects[0]!.manifest, "--config", configPath, "fetch", "db"], work);
       const fetchFailed = describeFailure("cargo-deny", fetched, CARGO_DENY_TIMEOUT_MS) ?? logError(fetched.stderr) ?? (fetched.exitCode === 0 ? null : `exit ${fetched.exitCode}`);
