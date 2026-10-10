@@ -56,9 +56,13 @@
 //   model provider stand-in copies that snapshot when it starts.
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+// The version the package declares, the one every run file names.
+const PACKAGE_VERSION = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../packages/cli/package.json"), "utf8")).version;
+const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const CLOCK_KEYS = "created_at|generated_at|written_at|started_at|ended_at|createdAt|builtAt";
 const DURATION_KEYS = "durationMs|duration_ms|predictedMs";
@@ -76,9 +80,10 @@ export function normalize(name, raw, context) {
   }
   // The package's own version: a release bumps it and nothing else, and the
   // recording must hold across releases, or the version pull request's gate
-  // fails on every release.
-  text = text.replace(/("runtime_version"\s*:\s*)"[^"]+"/g, '$1"<VERSION>"');
-  text = text.replace(/(by openqodex )\d+\.\d+\.\d+(?:-[\w.]+)?/g, "$1<VERSION>");
+  // fails on every release. Only the exact version the package declares is
+  // masked, so a manifest that names a stale or unknown runtime still differs.
+  text = text.replace(new RegExp(String.raw`("runtime_version"\s*:\s*)"${escapeRe(PACKAGE_VERSION)}"`, "g"), '$1"<VERSION>"');
+  text = text.split(`by openqodex ${PACKAGE_VERSION}`).join("by openqodex <VERSION>");
   if (name.endsWith(".json") || name.endsWith(".sarif")) {
     text = text.replace(new RegExp(String.raw`("(?:${CLOCK_KEYS})"\s*:\s*)("\d{4}-\d{2}-\d{2}T[^"\n]+"|\d{13})`, "g"), '$1"<TIMESTAMP>"');
     text = text.replace(new RegExp(String.raw`("(?:${DURATION_KEYS})"\s*:\s*)\d+(?:\.\d+)?`, "g"), '$1"<DURATION_MS>"');
