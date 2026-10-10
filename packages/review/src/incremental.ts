@@ -154,12 +154,15 @@ export async function reviewChanges(args: {
   admit: Admit;
   exclude: string[];
   decision: Extract<IncrementalDecision, { ok: true }>;
+  // Where the change source makes its temporary folders.
+  tempRoot?: string;
 }): Promise<{ full: Change; obligation: Change; renamedIn: string[] }> {
   const { clonePath, admit, exclude } = args;
-  const { change: full, renamedIn } = await getAdmittedTreeChange({ repoRoot: clonePath, baseRef: args.baseRef, baseSha: args.mergeBaseSha, headSha: args.headSha, exclude, admit });
+  const temp = args.tempRoot !== undefined ? { tempRoot: args.tempRoot } : {};
+  const { change: full, renamedIn } = await getAdmittedTreeChange({ repoRoot: clonePath, baseRef: args.baseRef, baseSha: args.mergeBaseSha, headSha: args.headSha, exclude, admit, ...temp });
   const previous = args.decision.previousReviewedSha;
   if (args.decision.scope.kind === "full" || previous === null) return { full, obligation: full, renamedIn };
-  const { change: since } = await getAdmittedTreeChange({ repoRoot: clonePath, baseRef: "the previously reviewed commit", baseSha: previous, headSha: args.headSha, exclude, admit });
+  const { change: since } = await getAdmittedTreeChange({ repoRoot: clonePath, baseRef: "the previously reviewed commit", baseSha: previous, headSha: args.headSha, exclude, admit, ...temp });
   return { full, obligation: deltaChange(full, since), renamedIn };
 }
 

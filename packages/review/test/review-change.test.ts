@@ -22,7 +22,8 @@
 //  9. The server floor reaches only the brief or only the check.
 // 10. A malformed step-4 input or a laptop-only option is silently ignored.
 // 11. The server run prints, registers a signal handler, writes
-//     process.env, or leaves its snapshot or a work tree behind.
+//     process.env, leaves its snapshot, its scratch or a work tree behind,
+//     or writes in the system temp folder.
 // 12. The changed ranges a correction round carries are credited although
 //     the request carrying them was refused and never sent.
 // 13. The result's completion record is missing, of the agent's kind, or
@@ -33,7 +34,7 @@
 //     with a previously reviewed ancestor, the obligation is not the delta,
 //     a finding on a line of the whole change outside the delta is refused,
 //     or `result.scope` does not say which; the review writes in the clone.
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reviewChange } from "../src/review-change.js";
@@ -69,7 +70,9 @@ const SUBTRACTION: Finding = {
 
 type Run = { result: ReviewResult; model: Fixture; asked: AuthorizeRequest[]; workDir: string; clone: string; lines: string[] };
 
-async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: number; floor?: number } = {}): Promise<Run> {
+// `tmp`: a folder TMPDIR names while reviewChange runs, made read-only for
+// that time, so any write to the system temp folder fails the review.
+async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: number; floor?: number; tmp?: string } = {}): Promise<Run> {
   const repo = changeRepo({ big: opts.big });
   const workDir = tempDir("oq-rc-work-");
   const installRoot = tempDir("oq-rc-install-");
@@ -92,8 +95,17 @@ async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: n
       },
     },
   };
-  const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, model, options);
-  return { result, model, asked, workDir, clone: repo.dir, lines };
+  if (opts.tmp !== undefined) {
+    vi.stubEnv("TMPDIR", opts.tmp);
+    chmodSync(opts.tmp, 0o500);
+  }
+  try {
+    const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, model, options);
+    return { result, model, asked, workDir, clone: repo.dir, lines };
+  } finally {
+    if (opts.tmp !== undefined) chmodSync(opts.tmp, 0o700);
+    vi.unstubAllEnvs();
+  }
 }
 
 describe("a model reviewer through reviewChange", () => {
@@ -304,8 +316,10 @@ describe("a model reviewer through reviewChange", () => {
     const sigint = process.listenerCount("SIGINT");
     const sigterm = process.listenerCount("SIGTERM");
     const env = { ...process.env };
-    const r = await run();
+    const tmp = tempDir("oq-rc-tmp-");
+    const r = await run({ tmp });
     expect(r.result.status).toBe("complete");
+    expect(readdirSync(tmp)).toEqual([]);
     expect(written).toEqual([]);
     expect(r.lines.length).toBeGreaterThan(0);
     expect(process.listenerCount("SIGINT")).toBe(sigint);

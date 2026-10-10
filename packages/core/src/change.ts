@@ -493,7 +493,9 @@ async function admittedTree(repoRoot: string, sha: string, admit: (path: string)
 // new file: its earlier version is never read. `renamedIn` names each such
 // file. With every path admitted it is the change getTreeChange gives. A
 // commit holding a path no checkout may write is refused, as a checkout
-// would refuse it.
+// would refuse it. `tempRoot`: the folder the temporary index and objects
+// are made in (a server review's scratch); the system temp folder when left
+// out.
 export async function getAdmittedTreeChange(args: {
   repoRoot: string;
   baseRef: string;
@@ -501,11 +503,12 @@ export async function getAdmittedTreeChange(args: {
   headSha: string;
   exclude: string[];
   admit: (path: string) => boolean;
+  tempRoot?: string;
 }): Promise<{ change: Change; renamedIn: string[] }> {
   const { repoRoot, admit } = args;
   const objectsPath = (await gitOk(repoRoot, ["rev-parse", "--git-path", "objects"])).toString("utf8").trim();
   const alternates = isAbsolute(objectsPath) ? objectsPath : resolve(repoRoot, objectsPath);
-  const tmp = await mkdtemp(join(tmpdir(), "openqodex-scope-"));
+  const tmp = await mkdtemp(join(args.tempRoot ?? tmpdir(), "openqodex-scope-"));
   try {
     const objects = join(tmp, "objects");
     await mkdir(objects);

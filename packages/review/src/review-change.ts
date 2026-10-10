@@ -21,7 +21,8 @@
 // review-run.ts). What it makes on disk it makes through the host's parts:
 // the snapshot through the snapshot maker, scanner installs through the tool
 // resolver, the graph's kept build through the graph store.
-import { isAbsolute } from "node:path";
+import { mkdirSync, rmSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   DEFAULT_CONFIG,
   MANIFEST_VERSION,
@@ -87,7 +88,7 @@ import type { SecondRun } from "./second.js";
 import { buildGraphRun, buildHotSpots, nothingToReviewLine, ruleCoverage, scanChange, wholeRepoLenses } from "./pipeline.js";
 import type { GraphHost, PipelineResult, ScanHost } from "./pipeline.js";
 import { decideIncremental } from "./incremental.js";
-import type { ReviewScope } from "./incremental.js";
+import type { IncrementalDecision, ReviewScope } from "./incremental.js";
 import { MissingObjects } from "./materialize.js";
 import { redactStored } from "./redact.js";
 import { serverScope } from "./scoped.js";
@@ -220,6 +221,9 @@ export type ReviewDeps = {
   // review), base versions read through the scope check, and the graph's
   // inventory of the snapshot. Left out (the laptop), all is as before.
   scoped?: ScopedParts;
+  // Where the scanners write (pipeline.ts ScanHost): left out, the laptop's
+  // places; given, only under it.
+  scratchRoot?: string;
 };
 
 export type ReviewCoreResult =
@@ -424,7 +428,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     session?.kill?.();
     if (snapshot !== null) deps.snapshots.removeNow(repoRoot, snapshot as Snapshot);
   });
-  const scanHost: ScanHost = { resolveTool: deps.resolveTool, onProgress: say, onScan: (scan) => deps.onEvent({ type: "scan", scan }) };
+  const scanHost: ScanHost = { resolveTool: deps.resolveTool, onProgress: say, onScan: (scan) => deps.onEvent({ type: "scan", scan }), ...(deps.scratchRoot !== undefined ? { scratchRoot: deps.scratchRoot } : {}) };
   // The result goes to the host before the cleanup below.
   const finish = async (result: ReviewCoreResult): Promise<ReviewCoreResult> => {
     await deps.onResult?.(result);
@@ -798,7 +802,38 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   });
   if (!decision.ok) return stoppedResult("incomplete", decision.reason);
   const config = structuredClone(input.config ?? DEFAULT_CONFIG);
-  const scope = serverScope({ clonePath: input.clonePath, workDir: options.workDir, ...(input.scopes !== undefined ? { scopes: input.scopes } : {}), exclude: config.exclude, decision });
+  // Everything the review writes besides its snapshot: the change source's
+  // temporary folders and the scanners' caches, temporary folders, HOME and
+  // TMPDIR (scanners/src/scratch.ts). Removed when the review ends.
+  const scratch = join(options.workDir, "scratch");
+  mkdirSync(join(scratch, "tmp"), { recursive: true, mode: 0o700 });
+  try {
+    return await reviewInScope(input, model, options, runtimeVersion, decision, config, scratch, say);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+// The review once the merge base is proved, its decision made and its
+// scratch folder there.
+async function reviewInScope(
+  input: ReviewChangeInput,
+  model: ModelReviewer,
+  options: ReviewChangeOptions,
+  runtimeVersion: string,
+  decision: Extract<IncrementalDecision, { ok: true }>,
+  config: Config,
+  scratch: string,
+  say: (line: string) => void,
+): Promise<ReviewResult> {
+  const scope = serverScope({
+    clonePath: input.clonePath,
+    workDir: options.workDir,
+    ...(input.scopes !== undefined ? { scopes: input.scopes } : {}),
+    exclude: config.exclude,
+    decision,
+    tempRoot: join(scratch, "tmp"),
+  });
   let r: ReviewCoreResult;
   try {
     r = await runReviewCore(
@@ -819,6 +854,7 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
         drivers: [],
         snapshots: scope.snapshots,
         scoped: scope.scoped,
+        scratchRoot: scratch,
         resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, installRoot: options.installRoot }),
         resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
         instructions: () => ({ text: "", hash: null }),

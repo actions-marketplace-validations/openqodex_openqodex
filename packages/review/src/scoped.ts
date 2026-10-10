@@ -43,8 +43,9 @@ export type ServerScope = {
 // The scoped parts of one server review of `clonePath`. `scopes`: the
 // admitted folders (left out: the whole repository); `exclude`:
 // review.paths.exclude; `decision`: the proved merge base and the delta or
-// full decision (decideIncremental).
-export function serverScope(args: { clonePath: string; workDir: string; scopes?: string[]; exclude: string[]; decision: Extract<IncrementalDecision, { ok: true }> }): ServerScope {
+// full decision (decideIncremental); `tempRoot`: where the change source
+// makes its temporary folders (the review's scratch).
+export function serverScope(args: { clonePath: string; workDir: string; scopes?: string[]; exclude: string[]; decision: Extract<IncrementalDecision, { ok: true }>; tempRoot?: string }): ServerScope {
   const admit = admitted(args.scopes, args.exclude);
   const maker = materializedSnapshots(args.workDir, admit);
   const refused = new Set<string>();
@@ -65,7 +66,7 @@ export function serverScope(args: { clonePath: string; workDir: string; scopes?:
     snapshots,
     scoped: {
       async change(target) {
-        const got = await reviewChanges({ clonePath: target.repoRoot, baseRef: target.baseRef, mergeBaseSha: target.baseSha, headSha: target.headSha, admit, exclude: target.exclude, decision: args.decision });
+        const got = await reviewChanges({ clonePath: target.repoRoot, baseRef: target.baseRef, mergeBaseSha: target.baseSha, headSha: target.headSha, admit, exclude: target.exclude, decision: args.decision, ...(args.tempRoot !== undefined ? { tempRoot: args.tempRoot } : {}) });
         renamed.push(...got.renamedIn);
         return { full: got.full, obligation: got.obligation };
       },

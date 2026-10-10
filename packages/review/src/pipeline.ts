@@ -40,10 +40,12 @@ export function nothingToReviewLine(change: Change): string {
 }
 
 // What the host gives the scan: where each scanner's binary comes from (and
-// whether a missing one may install), where progress lines go, and what it
+// whether a missing one may install), where progress lines go, what it
 // does with the scan as the scanners left it (the CLI queues its feedback
-// offer for a scanner that failed).
-export type ScanHost = { resolveTool: ResolveTool; onProgress: (line: string) => void; onScan?: (scan: ScanResult) => void };
+// offer for a scanner that failed), and where the scanners write: the
+// laptop's places when `scratchRoot` is left out, else only under it
+// (a server review's scratch, which the host removes).
+export type ScanHost = { resolveTool: ResolveTool; onProgress: (line: string) => void; onScan?: (scan: ScanResult) => void; scratchRoot?: string };
 
 // The most of a base version a scanner is given through a base reader.
 const BASE_TEXT_BYTES = 64 * 1024 * 1024;
@@ -84,6 +86,7 @@ export async function scanChange<C extends Change>(args: {
     only: args.only,
     skip: args.skip,
     onProgress: host.onProgress,
+    ...(host.scratchRoot !== undefined ? { scratchRoot: host.scratchRoot } : {}),
   });
   host.onScan?.(scan);
   return { repoRoot, workDir, config, change, scan: redactStored(scan, secrets), secrets, checked };
