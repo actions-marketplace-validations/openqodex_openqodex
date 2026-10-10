@@ -389,7 +389,13 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
     stage("base");
 
     // ---------- projects and resolution ----------
-    const projectOf = (file: string) => projectFolder(model, goModules, file);
+    // Asked once per file by the resolver and by every framework plugin: kept per file.
+    const projects = new Map<string, string>();
+    const projectOf = (file: string): string => {
+      let p = projects.get(file);
+      if (p === undefined) projects.set(file, (p = projectFolder(model, goModules, file)));
+      return p;
+    };
     const world = createWorld({ files: inputs, known, model, goModules, stop: overBudget });
     const resolved = world.resolveAll();
     if (resolved.budgetFiles.length > 0) stoppedBy ??= "budget";
