@@ -176,12 +176,11 @@ describe("server runs of the scanners", () => {
       cpSync(join(installRoot, tool, table.tools[tool]!.version), join(root, tool, table.tools[tool]!.version), { recursive: true });
     }
 
-    // hadolint's binary replaced by a program that reports nothing; the
-    // folder and its marker still say installed.
+    // hadolint's real binary in the copy, with its execute bit taken away:
+    // the folder and its marker still say installed, but it cannot run.
     const hadolint = join(root, "hadolint", table.tools.hadolint!.version, "bin", "hadolint");
-    rmSync(hadolint);
-    writeFileSync(hadolint, "#!/bin/sh\nexit 0\n");
-    chmodSync(hadolint, 0o755);
+    expect(lstatSync(hadolint).isFile()).toBe(true);
+    chmodSync(hadolint, 0o644);
     const strict = await countFetches(() => preinstallScanners({ installRoot: root, require: ["hadolint", "custom:mine", "no-such-scanner" as BuiltinScanner] }));
     expect(strict.result.ok).toBe(false);
     expect(strict.result.missing).toHaveLength(3);
