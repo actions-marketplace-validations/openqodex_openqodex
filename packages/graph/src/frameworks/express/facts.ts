@@ -8,9 +8,10 @@
 // knows which name is Express: that is decided in resolve, from the file's
 // imports, so a fact never claims what only another file can prove.
 //
-// The values and the scopes are kept only for a file whose values resolve
-// can read (`valuesRead`): most files hold neither an application nor a
-// route, and their values were most of every kept facts file.
+// A value is kept only where resolve can read it (`namesRead`), and the
+// scopes only for a file that holds a watched call or keeps a value: most
+// files hold neither an application nor a route, and their values were
+// most of every kept facts file.
 import type { Node } from "web-tree-sitter";
 import type { FactReader, FrameworkFactBase } from "../plugin.js";
 import { eitherPathText, eitherSegmentText, keepParts, ledForm } from "../shared/kept.js";
@@ -81,25 +82,78 @@ const MODULES = new Set(["express", "supertest"]);
 // specifier: the string's text without its quotes (extract.ts).
 const specifier = (n: Node | null | undefined): string | null => (n?.type === "string" ? n.text.slice(1, -1) : null);
 
-// Whether resolve can read a file's values and scopes (resolve.ts reads
-// them for the receivers, paths and handlers of the file's own watched
-// calls, for the applications, routers and agents a file makes, and for a
-// value another file imports and follows): the file holds a watched call
-// or a createServer call, names express or supertest as a module (only
-// such a file makes an application, a router or an agent), or may give a
-// module-level name another name's value (`export const server = app`, an
-// alias that passes an imported application on: a declaration at module
-// level, or an assignment anywhere, which may write the module's name).
-// Any other file's values are never read: it has no call of its own to
-// resolve, none of its values is made by express, and a module-level value
-// resolve follows into it is not a name it can follow.
-function valuesRead(facts: readonly ExpressFact[], namesModule: boolean): boolean {
-  if (namesModule) return true;
+// How many functions out resolve follows a name's binding (resolve.ts).
+export const MAX_SCOPE_CHAIN = 64;
+
+// The names whose values resolve can read in a file that does not name
+// express or supertest (resolve.ts): such a file makes no application,
+// router or agent, so resolve reads its values only to follow a name
+// through them. It follows the names its own watched and createServer
+// calls read (a receiver, a handler, a path's constants), and, from
+// another file that imports one, a module-level name given another name's
+// value (`export const server = app`: a declaration at module level, or an
+// assignment that writes the module's name). A name's value that is
+// another name leads on to that name. Every write of a name read is kept,
+// because two writes prove no value.
+function namesRead(facts: readonly ExpressFact[], scopes: ReadonlyMap<number, { parent: number; names: ReadonlySet<string>; all: boolean }>): Set<string> {
+  const read = new Set<string>();
+  const heads = (e: Expr): void => {
+    switch (e.t) {
+      case "ref":
+        read.add(e.path[0] as string);
+        return;
+      case "dyn":
+        for (const p of e.parts ?? []) if ("ref" in p) read.add(p.ref[0] as string);
+        return;
+      case "call":
+        heads(e.fn);
+        for (const a of e.args) heads(a);
+        return;
+      case "member":
+        heads(e.obj);
+        return;
+      case "array":
+        for (const a of e.items) heads(a);
+        return;
+      case "object":
+        for (const p of e.props) heads(p.value);
+        return;
+    }
+  };
+  // Whether a name written at a scope is the module's own: no function out
+  // to the module declares it (resolve's bindingScope, to the same depth).
+  const module = (name: string, scope: number): boolean => {
+    let s = scope;
+    for (let steps = 0; s !== 0; steps++) {
+      const info = scopes.get(s);
+      if (steps >= MAX_SCOPE_CHAIN || !info || info.all || info.names.has(name)) return false;
+      s = info.parent;
+    }
+    return true;
+  };
+  const values: Extract<ExpressFact, { kind: "value" }>[] = [];
   for (const f of facts) {
-    if (f.kind === "call" || f.kind === "server") return true;
-    if (f.kind === "value" && f.value.t === "ref" && (f.scope === 0 || f.decl === "assign")) return true;
+    if (f.kind === "call") {
+      heads(f.recv);
+      for (const a of f.args) heads(a);
+    } else if (f.kind === "server") for (const a of f.args) heads(a);
+    else if (f.kind === "value") {
+      values.push(f);
+      if (f.value.t === "ref" && (f.decl === "assign" ? module(f.name, f.scope) : f.scope === 0)) read.add(f.name);
+    }
   }
-  return false;
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const v of values) {
+      if (v.value.t !== "ref" || !read.has(v.name)) continue;
+      const next = v.value.path[0] as string;
+      if (!read.has(next)) {
+        read.add(next);
+        grew = true;
+      }
+    }
+  }
+  return read;
 }
 
 export function readFacts(root: Node): ExpressFact[] {
@@ -246,7 +300,13 @@ export function reader(root: Node): FactReader<ExpressFact> {
     // otherwise bind to the module.
     const scopeFacts: ExpressFact[] = [...scopes].map(([line, s]) => ({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all }));
     const facts = keepRead([...scopeFacts, ...out]);
-    return valuesRead(out, namesModule) ? facts : facts.filter((f) => f.kind !== "value" && f.kind !== "scope");
+    if (namesModule) return facts;
+    // A file that holds a watched call keeps its scopes, which every name
+    // its calls read is bound through; one that keeps a value, too.
+    const read = namesRead(facts, scopes);
+    const calls = facts.some((f) => f.kind === "call" || f.kind === "server");
+    const kept = facts.filter((f) => f.kind !== "value" || read.has(f.name));
+    return calls || kept.some((f) => f.kind === "value") ? kept : kept.filter((f) => f.kind !== "scope");
   };
   return { visitor, finish };
 }

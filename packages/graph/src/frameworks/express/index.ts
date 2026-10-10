@@ -12,7 +12,8 @@ import { analyse, PLUGIN, RULE_VERSION } from "./resolve.js";
 
 // 5: every kept string follows the one rule of shared/kept.ts.
 // 6: values and scopes kept only for a file whose values resolve can read.
-export const VERSION = 6;
+// 7: a value kept only when resolve can read its name.
+export const VERSION = 7;
 
 const app = "express-app";
 
