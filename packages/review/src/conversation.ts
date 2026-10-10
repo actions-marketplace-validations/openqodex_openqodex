@@ -4,8 +4,8 @@
 // redaction, and the check on every changed range the tool sends itself.
 import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { OpenQodexError, redactSecrets, redactSecretsKeepingLines, secretTexts } from "@openqodex/core";
-import type { Hunk, Report, TraceEntry } from "@openqodex/core";
+import { OpenQodexError, outsideSnapshot, redactSecrets, redactSecretsKeepingLines, removedRuns, secretTexts } from "@openqodex/core";
+import type { Change, Hunk, Report, TraceEntry } from "@openqodex/core";
 import type { Turn } from "./agents/driver.js";
 import { classify } from "./agents/trace.js";
 import { MAX_FILE_BYTES, snapshotFiles } from "./snapshot.js";
@@ -103,17 +103,23 @@ function gaps(h: Hunk, earlier: Hunk[]): [number, number][] {
 }
 
 // Changed ranges put in front of the reviewer by the tool itself, read from
-// the redacted snapshot only (never the developer's folder or git objects),
-// numbered as the snapshot holds them, with a few lines of context. Up to
-// DELIVER_LINES lines and DELIVER_BYTES bytes; a range split at the bound
-// continues next round. Never carried, so left unread: a deletion (its lines
-// exist only in git objects), a file the snapshot dropped, a binary file, a
-// range with a very long line. The text then goes through the brief's
-// redaction once more; if a found secret is still in it, nothing is sent and
-// `leak` is set, which makes the run incomplete.
-export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earlier?: Hunk[]; secrets: string[] }): { text: string; delivered: Hunk[]; left: Hunk[]; leak: boolean } {
+// the redacted snapshot (never the developer's folder or git objects),
+// numbered as the snapshot holds them, with a few lines of context. A
+// deletion is shown as its removed lines between its anchors, taken from the
+// diff the change already holds (`change.diffs`, the text the brief carries),
+// with the anchors and context from the snapshot. Up to DELIVER_LINES lines
+// and DELIVER_BYTES bytes; a range split at the bound continues next round,
+// and a deletion goes whole or waits. Never carried, so left unread: a
+// deletion whose removed lines the change does not hold (its file was past
+// the diff cap), a file the snapshot dropped, a binary file, a range with a
+// very long line. `later`: how many of `left` may still come in a round.
+// The text then goes through the brief's redaction once more; if a found
+// secret is still in it, nothing is sent and `leak` is set, which makes the
+// run incomplete.
+export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earlier?: Hunk[]; secrets: string[]; change?: Pick<Change, "files" | "deletionPoints" | "diffs"> }): { text: string; delivered: Hunk[]; left: Hunk[]; later: number; leak: boolean } {
   let room = DELIVER_LINES;
   let bytes = DELIVER_BYTES;
+  let later = 0;
   const out: string[] = [];
   const delivered: Hunk[] = [];
   const left: Hunk[] = [];
@@ -135,35 +141,101 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
     }
     return files.get(path) ?? null;
   };
+  const runs = new Map<string, { after: number; lines: string[] }[]>();
+  // The lines that show deletion `h`, or null when the change does not hold
+  // what it removed. A deleted file has no snapshot copy, so no context.
+  const removedBlock = (h: Hunk): string[] | null => {
+    const points = (args.change?.deletionPoints.get(h.path) ?? []).filter((p) => Math.min(...p.anchors) === h.start && Math.max(...p.anchors) === h.end);
+    if (points.length === 0) return null;
+    const diff = args.change?.diffs?.find((d) => d.path === h.path);
+    if (diff !== undefined && !runs.has(h.path)) runs.set(h.path, removedRuns(diff.text));
+    const file = args.change?.files.find((f) => f.path === h.path);
+    const gone = file?.status === "deleted";
+    const lines = gone ? [] : fileLines(h.path);
+    if (lines === null) return null;
+    const count = lines.length > 0 && lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+    const block: string[] = [];
+    for (const p of points) {
+      // A deleted empty text file removed no line, and git shows it no hunk.
+      const run = p.lines === 0 && gone && !file.binary ? { after: p.after, lines: [] } : runs.get(h.path)?.find((r) => r.after === p.after && r.lines.length === p.lines);
+      if (run === undefined) return null;
+      const n = run.lines.length;
+      if (n === 0) {
+        block.push(`${h.path}: the file was deleted; it held no lines.`);
+        continue;
+      }
+      const from = Math.max(1, p.after - CONTEXT + 1);
+      const to = Math.min(count, p.after + CONTEXT);
+      const where = gone ? "with the file, which was deleted" : count === 0 ? "and the file is now empty" : p.after === 0 ? "above line 1" : p.after < count ? `between lines ${p.after} and ${p.after + 1}` : `below line ${p.after}`;
+      block.push(`${h.path}: ${n} ${n === 1 ? "line" : "lines"} removed ${where}${to >= from ? ` (with context ${from} to ${to})` : ""}:`);
+      for (let i = from; i <= Math.min(p.after, to); i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+      // Redacted as the brief redacts its diff: the snapshot never held these lines.
+      for (const r of redactSecretsKeepingLines(run.lines.join("\n"), args.secrets).split("\n")) block.push(`-\t${r}`);
+      for (let i = Math.max(from, p.after + 1); i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+    }
+    return block;
+  };
   for (const h of args.unread) {
-    const lines = h.deletion ? null : fileLines(h.path);
+    if (h.deletion) {
+      const block = removedBlock(h);
+      if (block === null) {
+        left.push(h);
+        continue;
+      }
+      const size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
+      const long = block.some((l) => l.length > MAX_DELIVER_LINE_CHARS);
+      if (!long && block.length + 1 <= room && size <= bytes) {
+        out.push(...block, "");
+        room -= block.length + 1;
+        bytes -= size;
+        delivered.push(h);
+      } else {
+        left.push(h);
+        if (!long && block.length + 1 <= DELIVER_LINES && size <= DELIVER_BYTES) later++;
+      }
+      continue;
+    }
+    const lines = fileLines(h.path);
     if (lines === null || h.end < h.start) {
       left.push(h);
       continue;
     }
     for (const [first, last] of gaps(h, args.earlier ?? [])) {
       let at = first;
+      let long = false;
       while (at <= last && room > 2 * CONTEXT + 2) {
-        const n = Math.min(last - at + 1, room - 2 * CONTEXT - 1);
-        const from = Math.max(1, at - CONTEXT);
-        const to = Math.min(lines.length, at + n - 1 + CONTEXT);
-        const block = [`${h.path} lines ${at} to ${at + n - 1} (with context ${from} to ${to}):`];
-        for (let i = from; i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
-        const size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
-        if (block.some((l) => l.length > MAX_DELIVER_LINE_CHARS) || size > bytes) break;
+        // Halved until it fits the bytes left, so a range of wide lines is
+        // sent in parts rather than promised for a round that cannot carry it.
+        let n = Math.min(last - at + 1, room - 2 * CONTEXT - 1);
+        let block: string[];
+        let size: number;
+        for (;;) {
+          const from = Math.max(1, at - CONTEXT);
+          const to = Math.min(lines.length, at + n - 1 + CONTEXT);
+          block = [`${h.path} lines ${at} to ${at + n - 1} (with context ${from} to ${to}):`];
+          for (let i = from; i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+          size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
+          long = block.some((l) => l.length > MAX_DELIVER_LINE_CHARS);
+          if (long || size <= bytes || n === 1) break;
+          n = Math.ceil(n / 2);
+        }
+        if (long || size > bytes) break;
         out.push(...block, "");
         room -= block.length + 1;
         bytes -= size;
         delivered.push({ path: h.path, start: at, end: at + n - 1, deletion: false });
         at += n;
       }
-      if (at <= last) left.push({ ...h, start: at, end: last });
+      if (at <= last) {
+        left.push({ ...h, start: at, end: last });
+        if (!long) later++;
+      }
     }
   }
   const text = redactSecrets(out.join("\n").trimEnd(), args.secrets);
   const usable = secretTexts(args.secrets);
-  if (usable.some((x) => text.includes(x)) || text !== out.join("\n").trimEnd()) return { text: "", delivered: [], left: args.unread, leak: true };
-  return { text, delivered, left, leak: false };
+  if (usable.some((x) => text.includes(x)) || text !== out.join("\n").trimEnd()) return { text: "", delivered: [], left: args.unread, later: 0, leak: true };
+  return { text, delivered, left, later, leak: false };
 }
 
 // How much of one untraced call's input trace.json keeps.
@@ -215,7 +287,7 @@ export async function converse(args: {
   // in it ends the conversation. Without that, the trace is diagnostic only.
   traced: boolean;
   check: (submission: unknown, trace: TraceEntry[], delivered: Hunk[]) => { report: Report | null; errors: string[]; unread: Hunk[]; required: number; disposed: number };
-  deliver: (unread: Hunk[], earlier: Hunk[]) => { text: string; delivered: Hunk[]; left: Hunk[]; leak: boolean };
+  deliver: (unread: Hunk[], earlier: Hunk[]) => { text: string; delivered: Hunk[]; left: Hunk[]; later: number; leak: boolean };
   say: (line: string) => void;
   // The run's clock, epoch milliseconds; `deadline` is on it.
   now: () => number;
@@ -241,14 +313,14 @@ export async function converse(args: {
         clearTimeout(timer);
       }
       // A model reviewer's turn carries the brain's own log, already checked.
-      c.trace.push(...(turn.brain?.trace ?? turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) }))));
+      c.trace.push(...(turn.brain?.trace ?? turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call, turn.own ?? null) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) }))));
       c.usage = turn.usage;
       if (turn.failure !== null) {
         c.failure = turn.failure;
         break;
       }
       // An attempt outside the snapshot ends the review: it never completes.
-      if (args.traced && c.trace.some((t) => t.inside !== true)) break;
+      if (args.traced && c.trace.some(outsideSnapshot)) break;
       const parsed = parseAnswer(turn.finalText);
       const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [] as Hunk[], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace, c.delivered);
       if ("value" in parsed) c.submission = parsed.value;
@@ -271,7 +343,7 @@ export async function converse(args: {
       text = [
         ...(problems.length > 0 ? ["Your answer failed these checks. Fix every one.", "", ...problems, ""] : []),
         ...(given.text !== "" ? ["These changed lines were not in front of you yet. Check them now, as part of the change.", "", given.text, ""] : []),
-        ...(given.left.length > 0 ? [`${given.left.length} more changed ${given.left.length === 1 ? "range follows" : "ranges follow"} in the next round, if one is left.`, ""] : []),
+        ...(given.later > 0 ? [`${given.later} more changed ${given.later === 1 ? "range follows" : "ranges follow"} in the next round, if one is left.`, ""] : []),
         "Then answer again with the whole JSON object and nothing else.",
       ].join("\n");
     }

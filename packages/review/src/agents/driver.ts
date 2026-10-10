@@ -15,7 +15,7 @@ import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "nod
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ReviewerUsage } from "@openqodex/core";
 import type { CallRecord, ToolLogEntry } from "../usage.js";
-import type { ToolCall } from "./trace.js";
+import type { OwnFiles, ToolCall } from "./trace.js";
 
 // Set in every reviewer's environment. A `review` that starts with it set
 // refuses: a review never starts another review.
@@ -30,6 +30,9 @@ export type Detected = { ok: true; version: string; bin: string } | { ok: false;
 // decides from them, by script, what was read and where.
 // `models`: the model names the agent itself reported with the answer
 // (Claude Code's modelUsage); absent when the driver cannot name one.
+// `own`: where the agent saves its own output for this session, so a call on
+// it is not taken for a read of the repository; left out when the driver
+// knows of no such place.
 // `brain`: set only on a model reviewer's turn (model-loop.ts), where the
 // brain ran every tool itself: `trace` is its own log of this turn's tool
 // calls, already checked, taken in place of `calls`; `attempts` are this
@@ -42,6 +45,7 @@ export type Turn = {
   sessionId: string | null;
   failure: string | null;
   models?: string[];
+  own?: OwnFiles | null;
   brain?: { trace: ToolLogEntry[]; attempts: CallRecord[]; sent: boolean };
 };
 

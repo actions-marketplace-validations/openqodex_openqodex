@@ -4,10 +4,12 @@
 // what its comment says with Claude Code 2.1.289; docs/internal-reviewer-drivers.md
 // records the runs.
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 import type { ReviewerUsage } from "@openqodex/core";
 import { REVIEWER_TOOLS, REVIEWER_WEB_TOOLS } from "@openqodex/core";
 import { checkoutsDir } from "../checkouts.js";
+import { claudeHome } from "./homes.js";
 import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
 import type { ToolCall } from "./trace.js";
@@ -123,7 +125,11 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 
 function start(opts: { snapshotDir: string; deadline: number; bin: string; web: boolean }): ReviewerSession {
   const allowed = opts.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS;
-  const child = spawnGroup(opts.bin, claudeArgs(opts.web), { cwd: opts.snapshotDir, env: reviewerEnv() });
+  const env = reviewerEnv();
+  const child = spawnGroup(opts.bin, claudeArgs(opts.web), { cwd: opts.snapshotDir, env });
+  // The configuration folder the agent uses, read from the environment it
+  // was given as init reads it; it saves its own output for the session there.
+  const configDir = claudeHome(env.HOME ?? homedir(), env);
   // Every tool call is kept from the moment the agent asks for it, whether or
   // not a result follows, and whichever turn or nesting it came from.
   const pending = new Map<string, ToolCall>();
@@ -140,7 +146,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
   const finish = (finalText: string, why: string | null): void => {
     const done = waiting;
     waiting = null;
-    const turn: Turn = { finalText, calls, usage, sessionId, failure: why, ...(models.length > 0 ? { models } : {}) };
+    const turn: Turn = { finalText, calls, usage, sessionId, failure: why, ...(models.length > 0 ? { models } : {}), own: sessionId === null ? null : { configDir, sessionId } };
     calls = [];
     traceChars = 0;
     done?.(turn);

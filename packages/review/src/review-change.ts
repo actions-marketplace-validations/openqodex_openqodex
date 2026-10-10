@@ -578,7 +578,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           : readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? trace : [], lineCount, delivered }).unread;
       return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
     };
-    const deliver: Parameters<typeof converse>[0]["deliver"] = (unread, earlier) => deliverRanges({ snapshotDir: prep.snapshot.tree, unread, earlier, secrets: p.secrets });
+    const deliver: Parameters<typeof converse>[0]["deliver"] = (unread, earlier) => deliverRanges({ snapshotDir: prep.snapshot.tree, unread, earlier, secrets: p.secrets, change });
     // The second reviewer, once the primary is done: on the same brief,
     // snapshot, tools, checks, deadline and budget. Not after a budget
     // refusal, which has ended the review, and not when the primary was not

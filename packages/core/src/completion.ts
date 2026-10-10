@@ -13,8 +13,16 @@ import type { Change, CompletionRecord, ModelAttempt, ModelCompletionRecord, Mod
 // `inside`, else as the agent named it. `range` is the first and last line a
 // read delivered. For a reviewer whose trace is not complete (Codex),
 // `inside` is null (not checked) and `detail` holds the call's input as
-// reported (a command, a search), kept as a diagnostic only.
-export type TraceEntry = { tool: string; path: string | null; inside: boolean | null; range: [number, number] | null; ok: boolean; detail?: string };
+// reported (a command, a search), kept as a diagnostic only. `own`: a call
+// outside the snapshot on the agent's own saved output of this session
+// (Claude Code's tool-results folder), which reads no repository file.
+export type TraceEntry = { tool: string; path: string | null; inside: boolean | null; range: [number, number] | null; ok: boolean; detail?: string; own?: true };
+
+// Whether a call left the snapshot: anything not shown inside it, except the
+// agent's own saved output of this session.
+export function outsideSnapshot(t: TraceEntry): boolean {
+  return t.inside !== true && t.own !== true;
+}
 
 export type Hunk = { path: string; start: number; end: number; deletion: boolean };
 
@@ -134,7 +142,7 @@ export function completionRecord(args: {
     missing.push("the snapshot changed while the reviewer read it");
   }
   // Fails closed: an attempt counts, whether or not the agent's own rules refused it.
-  const outside = traced ? [...new Set(args.trace.filter((t) => t.inside !== true).map((t) => t.path ?? "(no path)"))] : [];
+  const outside = traced ? [...new Set(args.trace.filter(outsideSnapshot).map((t) => t.path ?? "(no path)"))] : [];
   if (outside.length > 0) missing.push(`the reviewer tried to read outside the snapshot: ${listed(outside)}`);
   const given = args.tools ?? REVIEWER_TOOLS;
   const tools = traced ? [...new Set(args.trace.map((t) => t.tool).filter((t) => !given.includes(t)))] : [];

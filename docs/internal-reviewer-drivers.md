@@ -65,13 +65,14 @@ The boundary is Claude Code's own permission rules: `--tools Read,Grep,Glob` and
 - every tool call counts from the moment the agent asks for it, with or without a result; a tool name other than the three makes the review incomplete;
 - every path-bearing input (`file_path`, `path`, `notebook_path`, `cwd`, `directory`, and a `pattern` or `glob` that starts at `/`, `~`, a drive or `..`) is resolved against the snapshot, then through the real path of its deepest existing folder, and compared case-insensitively on macOS and Windows; a path with `$`, `%` or a NUL is refused, `~` is the home folder;
 - an input that is not an object, or a path field that is not text, makes the review incomplete;
-- any attempt outside the snapshot makes the review incomplete, even one the agent refused.
+- any attempt outside the snapshot makes the review incomplete, even one the agent refused;
+- one place outside the snapshot is the agent's own. Claude Code saves a tool result too large to hand the model at `<configuration folder>/projects/<its name for the working folder>/<session id>/tool-results/<tool call id>.txt` and tells the model to read it back. A call on the `tool-results` folder of this session (the session id from the `init` event; the configuration folder from `CLAUDE_CONFIG_DIR`, else `~/.claude`, as `init` reads it) is kept in `trace.json` with `own: true` and does not make the review incomplete: it holds only what this session's own calls returned, and each of those calls was checked. Any other path in the configuration folder (the login, another session's output, a transcript) stays outside. With Claude Code 2.1.296, `dontAsk` refused that read (2026-10-09).
 
 The snapshot holds no links (they are written as plain files) and secrets the scanners found are redacted in every file of it before the reviewer starts; a file too large to check is removed from it.
 
 ### What the agent stores
 
-With `--no-session-persistence` and auto memory off, real runs with Claude Code 2.1.289 left no transcript, no `history.jsonl` line and no project entry for a snapshot folder in the configuration folder (searched for the brief's text and the snapshot paths after the runs). An earlier run without `autoMemoryEnabled: false` left one empty `projects/<folder>/memory` folder; with the flag, none. The driver keeps the developer's configuration folder because a temporary one loses the login.
+With `--no-session-persistence` and auto memory off, real runs with Claude Code 2.1.289 left no transcript, no `history.jsonl` line and no project entry for a snapshot folder in the configuration folder (searched for the brief's text and the snapshot paths after the runs). A tool result too large to hand the model is the exception: Claude Code 2.1.296 saved it at `projects/<snapshot folder name>/<session id>/tool-results/` in the configuration folder, and it stays there after the run (2026-10-09). An earlier run without `autoMemoryEnabled: false` left one empty `projects/<folder>/memory` folder; with the flag, none. The driver keeps the developer's configuration folder because a temporary one loses the login.
 
 ### Not covered
 
