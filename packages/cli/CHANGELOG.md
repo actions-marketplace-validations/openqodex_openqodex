@@ -1,5 +1,36 @@
 # openqodex
 
+## 0.12.0
+
+### Minor Changes
+
+- [#90](https://github.com/openqodex/openqodex/pull/90) [`50c1654`](https://github.com/openqodex/openqodex/commit/50c1654c68202daeaedd71db8c2c4c0021e8850e) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - openqodex can be imported as a library: the scanners, the code graph, the lenses, the config parser and the renderers, with types.
+
+- [#90](https://github.com/openqodex/openqodex/pull/90) [`c5bdc17`](https://github.com/openqodex/openqodex/commit/c5bdc170a8771e66733c93b7db5d0e4f44691970) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - `preinstallScanners({ installRoot, require })` in the library installs the scanners a server image needs into a folder you name, then checks each one: installed at its pinned version, with its runtime, and reporting the finding of a tiny check input through the real tool. It returns one line per scanner that is not ready.
+
+  - `openqodex doctor --install --all-scanners --require-all` does the same check after its install, prints one line per missing scanner and exits 2 when any is missing.
+  - `createToolResolver` takes an `installRoot`, the folder the pinned scanners are read from, and `runScanners` takes a `scratchRoot`: a server run then writes only inside that folder, scanners included, and two runs at once share nothing. Without them, everything works as before.
+
+- [#90](https://github.com/openqodex/openqodex/pull/90) [`d7bd738`](https://github.com/openqodex/openqodex/commit/d7bd738c463dbfe17109e832bcc10dac2017b46e) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - `reviewChange(input, reviewer, options)` in the library reviews a change in a host's clone with the host's own model, in the server profile: OpenQodex proves the merge base, builds every request, runs the five read tools over a snapshot of the head commit, asks the host's budget before every model call and records each attempt's usage. The result holds the checked findings, what the reviewer did with each scanner candidate, the coverage, a model completion record (contract `openqodex-model-review-1`) and the report in markdown, SARIF and JSON.
+  - `previousReviewedSha` reviews only what changed since the last review, with findings still checked on the whole change; `scopes` keeps the change, the snapshot, the scanners, the graph, the tools and the context inside named folders; `context` gives the reviewer lessons, comments, summaries, notes and earlier findings as quoted data; `secondReviewer` runs a second model on the same brief and merges what both found.
+  - The host gives a budget, required: `authorize` is asked before every model call with the size of the request about to be sent (`requestChars`), and no call starts after `deadlineMs`. `instructions` takes the repository owners' rules, quoted as the laptop quotes its instructions file, and each finding carries the reviewer's `suggestedChange`.
+  - The library also exports `isFixturePath` and `ruleClassFor`, and a lens marked `security: true` carries `security` when loaded.
+  - The laptop's `openqodex review` is unchanged.
+
+### Patch Changes
+
+- [#90](https://github.com/openqodex/openqodex/pull/90) [`2568a62`](https://github.com/openqodex/openqodex/commit/2568a62079bea122c2f13d0ab9dc1d5b4519d15f) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - Scanner candidates now get the same ids on every run and every machine. They are ordered by severity, then scanner, file, line, rule and message, whatever order a scanner printed its findings in. Before, Checkov on Linux printed its Terraform, CloudFormation and Kubernetes results in the order they finished, so one change could number its candidates differently from run to run. The numbering of candidates with the same severity changes once with this release.
+
+- [#98](https://github.com/openqodex/openqodex/pull/98) [`6b65f88`](https://github.com/openqodex/openqodex/commit/6b65f889a578fe6cefde8d4ab026a4cb51148e26) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - The code graph builds faster: each JavaScript or TypeScript file's parse tree is walked once for the call graph and the Express, React and Next.js plugins (the Django, Rails, FastAPI and Go readers keep their own walk), a node of the tree is read only where a rule needs it, and each file's project and Rails application are looked up once per build. On this repository a build with no kept facts takes about 1.4 times as long as before the framework plugins (it took 1.7 times), and a build from kept facts about 1.4 times (it took 1.7 times).
+
+  - The kept facts in `.openqodex/graph/` are smaller: the Express plugin keeps a variable's value only where it can read it (16.4 MB on this repository, from 22.2 MB). The plugin interface is now version 4 and the Express plugin version 7, so the first build after the update parses every file again.
+
+- [#102](https://github.com/openqodex/openqodex/pull/102) [`4da0f61`](https://github.com/openqodex/openqodex/commit/4da0f611c157625aca8f8b2dcf27f2db3a55583e) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - The code graph reads a React file whose JSX elements nest deeply in time that grows with the depth, not its square: 20,000 nested elements took 1.6 seconds of CPU and now take a fraction of that. The reader asked every element how far up its return statement sat, climbing through every element above it; it now takes the answer from the nearest element above.
+
+- [#96](https://github.com/openqodex/openqodex/pull/96) [`52b9383`](https://github.com/openqodex/openqodex/commit/52b9383ee86a7502838370994d2f3f60cd2343cf) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - A large review no longer ends incomplete because Claude Code, as the reviewer, tried to read back a long search result it had saved in its own configuration folder. A read of the output saved for that review's session counts as the agent's own; a read of anything else in that folder still makes the review incomplete.
+  - A large review no longer ends incomplete because of a deletion the brief had no room for. The correction round now shows the removed lines between the two lines around the deletion, and the round no longer promises that ranges it can never send will follow.
+  - `review.paths.exclude` now applies to both paths of a renamed file. A file renamed out of an excluded folder is reviewed as a new file, without the excluded file's removed lines, and a file renamed into an excluded folder is reviewed as a deleted file.
+
 ## 0.11.0
 
 ### Minor Changes
