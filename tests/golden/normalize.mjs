@@ -74,6 +74,11 @@ export function normalize(name, raw, context) {
   for (const [value, token] of values) {
     if (value && token) text = text.split(value).join(token);
   }
+  // The package's own version: a release bumps it and nothing else, and the
+  // recording must hold across releases, or the version pull request's gate
+  // fails on every release.
+  text = text.replace(/("runtime_version"\s*:\s*)"[^"]+"/g, '$1"<VERSION>"');
+  text = text.replace(/(by openqodex )\d+\.\d+\.\d+(?:-[\w.]+)?/g, "$1<VERSION>");
   if (name.endsWith(".json") || name.endsWith(".sarif")) {
     text = text.replace(new RegExp(String.raw`("(?:${CLOCK_KEYS})"\s*:\s*)("\d{4}-\d{2}-\d{2}T[^"\n]+"|\d{13})`, "g"), '$1"<TIMESTAMP>"');
     text = text.replace(new RegExp(String.raw`("(?:${DURATION_KEYS})"\s*:\s*)\d+(?:\.\d+)?`, "g"), '$1"<DURATION_MS>"');
