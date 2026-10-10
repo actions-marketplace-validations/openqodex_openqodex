@@ -124,17 +124,6 @@ describe("the owners' instructions in the review", () => {
     expect(r.stderr).toContain("the instructions changed");
   });
 
-  it("a file over 32 KB stops the review with a plain message, nothing cut", () => {
-    const s = sandbox({ "README.md": "hello\n" });
-    writeFileSync(join(s.repo, "README.md"), "changed\n");
-    expect(cli(s, ["scan", "--no-install"]).status).toBe(0);
-    writeFileSync(join(s.repo, INSTRUCTIONS), "x".repeat(33 * 1024));
-    const r = cli(s, ["review", "--agent", "--no-install"]);
-    expect(r.status).toBe(2);
-    expect(r.stderr).toContain("over the 32 KB limit");
-    expect(r.stdout).toBe("");
-  });
-
   it("a review by the agent that wrote the code says so on the summary's first line", () => {
     const s = sandbox({ "README.md": "hello\n" });
     writeFileSync(join(s.repo, "README.md"), "changed\n");

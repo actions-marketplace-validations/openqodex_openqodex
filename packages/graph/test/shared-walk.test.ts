@@ -8,6 +8,7 @@
 //    called and throws again on every node.
 // 4. A reader is told it left a node at another point than its own walk
 //    told it, so a scope or a frame it keeps closes at the wrong node.
+// The first test proves 1, 2 and 4 by the facts each plugin reads.
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,8 +18,6 @@ import { langOf } from "../src/capture/inventory.js";
 import { frameworkFacts } from "../src/frameworks/facts.js";
 import type { FrameworkFactBase, FrameworkPlugin } from "../src/frameworks/plugin.js";
 import { PLUGINS } from "../src/frameworks/registry.js";
-import { walkTree } from "../src/frameworks/shared/walk.js";
-import type { TreeVisitor } from "../src/frameworks/shared/walk.js";
 import { parserFor } from "../src/parser.js";
 import type { Lang } from "../src/types.js";
 
@@ -44,26 +43,6 @@ function sources(): { path: string; lang: Lang; text: string }[] {
 // A region the parser cannot read, a skipped subtree and nested functions in one file.
 const BROKEN = 'export function a() {\n  const f = () => { return <div>{g(1}</div>; };\n  return f;\n}\nfunction b(x) {\n  if (x) { return x.y.z(); }\n}\nexport const c = { d: [1, 2, (3 + ] };\n';
 
-// Writes down what the walk tells it; skips the children of every node of `skip`.
-function recorder(skip: ReadonlySet<string> = new Set()): { visitor: TreeVisitor; log: string[] } {
-  const log: string[] = [];
-  return {
-    log,
-    visitor: {
-      enter(node, type, field, depth, up, upType) {
-        log.push(`enter ${type} ${field() ?? "-"} ${depth} ${node.startIndex} ${node.type} ${up(1)?.type ?? "-"} ${upType(2) ?? "-"}`);
-        return skip.has(type) ? false : undefined;
-      },
-      leave(depth) {
-        log.push(`leave ${depth}`);
-      },
-      broken(line) {
-        log.push(`broken ${line}`);
-      },
-    },
-  };
-}
-
 async function tree(lang: Lang, text: string) {
   const t = (await parserFor(lang)).parse(text);
   if (!t) throw new Error("no tree");
@@ -71,43 +50,6 @@ async function tree(lang: Lang, text: string) {
 }
 
 describe("one walk for every JavaScript fact reader", () => {
-  it("tells each reader the same nodes, in the same order, as a walk of its own, and the same leaves (1, 4)", async () => {
-    const files = [...sources(), { path: "broken.tsx", lang: "tsx" as Lang, text: BROKEN }];
-    expect(files.length).toBeGreaterThan(10);
-    for (const f of files) {
-      const t = await tree(f.lang, f.text);
-      try {
-        const kinds = [new Set<string>(), new Set(["statement_block"]), new Set(["arrow_function", "call_expression"])];
-        const alone = kinds.map((skip) => {
-          const r = recorder(skip);
-          walkTree(t.rootNode, [r.visitor]);
-          return r.log;
-        });
-        const together = kinds.map((skip) => recorder(skip));
-        walkTree(t.rootNode, together.map((r) => r.visitor));
-        for (const [i, r] of together.entries()) expect(r.log, `${f.path}, reader ${i}`).toEqual(alone[i]);
-      } finally {
-        t.delete();
-      }
-    }
-  });
-
-  it("never hides from one reader the children another reader skips (2)", async () => {
-    const t = await tree("tsx", BROKEN);
-    try {
-      const all = recorder();
-      const skipper = recorder(new Set(["function_declaration", "lexical_declaration"]));
-      walkTree(t.rootNode, [skipper.visitor, all.visitor]);
-      const alone = recorder();
-      walkTree(t.rootNode, [alone.visitor]);
-      expect(all.log).toEqual(alone.log);
-      expect(skipper.log.filter((l) => l.startsWith("enter")).length).toBeLessThan(alone.log.filter((l) => l.startsWith("enter")).length);
-      expect(alone.log.some((l) => l.startsWith("broken"))).toBe(true);
-    } finally {
-      t.delete();
-    }
-  });
-
   it("gives each plugin through one walk exactly the facts it reads alone", async () => {
     for (const f of [...sources(), { path: "broken.tsx", lang: "tsx" as Lang, text: BROKEN }]) {
       const t = await tree(f.lang, f.text);

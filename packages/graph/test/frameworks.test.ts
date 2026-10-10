@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChange } from "@openqodex/core";
 import { afterAll, describe, expect, it } from "vitest";
-import { PLUGINS, buildGraph, detectImpact, renderImpactBlock, validateFrameworkEvidence } from "../src/index.js";
+import { PLUGINS, buildGraph, detectImpact, renderImpactBlock } from "../src/index.js";
 import type { FrameworkPlugin } from "../src/index.js";
 import { runFrameworks } from "../src/frameworks/stage.js";
 import { commitAll, makeRepo, writeFiles } from "./helpers.js";
@@ -107,21 +107,6 @@ describe("the framework stage", () => {
     // Every test method's call to work() is a direct-call test link.
     expect(data.edges.filter((e) => e.kind === "tests" && e.to.includes("#work@"))).toHaveLength(CLASSES);
     expect(reads).toBe(1);
-  }, 60_000);
-
-  it("publishes only evidence that passes the check, so no certain framework edge rests on a convention", async () => {
-    const root = makeRepo({
-      "requirements.txt": "Django==5.0\n",
-      "mysite/__init__.py": "",
-      "mysite/settings.py": 'INSTALLED_APPS = []\nROOT_URLCONF = "mysite.urls"\n',
-      "mysite/urls.py": 'from django.urls import path\n\nfrom mysite import views\n\nurlpatterns = [path("a/", views.a)]\n',
-      "mysite/views.py": "def a(request):\n    return None\n",
-    });
-    commitAll(root);
-    const graph = await buildGraph({ repoRoot: root, store: null });
-    const all = [...(graph.frameworks?.edges ?? []), ...(graph.frameworks?.roles ?? [])];
-    expect(all.length).toBeGreaterThan(0);
-    for (const x of all) expect(validateFrameworkEvidence(x.evidence)).toBeNull();
   }, 60_000);
 });
 

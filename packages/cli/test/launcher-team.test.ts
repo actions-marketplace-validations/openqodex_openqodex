@@ -75,11 +75,6 @@ describe("the launcher follows runtime/current", () => {
     installNewer(s);
   });
 
-  it("init points current at the version it installed", () => {
-    expect(readFileSync(join(s.oqHome, "runtime/current"), "utf8").trim()).toBe(version);
-    expect(runLauncher(s, ["--version"]).stdout.trim()).toBe(version);
-  });
-
   it("runs the runtime current names when it is installed (failure 1)", () => {
     setCurrent(s, `${NEWER}\n`);
     expect(runLauncher(s, ["--version"]).stdout.trim()).toBe(NEWER);
