@@ -5,7 +5,9 @@
 // the snapshot, a pattern too large to check, or any path-bearing field that
 // leaves the snapshot marks the whole call as outside. The agent's own
 // permission rules are the boundary; this check is the alarm that fails the
-// run when the trace shows the boundary was not where it should be.
+// run when the trace shows the boundary was not where it should be. One
+// place outside is the agent's own: the output it saved for this session
+// (OwnFiles), which holds no repository file.
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -14,6 +16,16 @@ import type { TraceEntry } from "@openqodex/core";
 // What a driver saw for one tool call: its name, its input as the agent sent
 // it, whether it succeeded, and for a read what was delivered.
 export type ToolCall = { tool: string; input: unknown; ok: boolean; read: { path: string; start: number; lines: number } | null };
+
+// Where the reviewing agent saves its own output for one session. Claude Code
+// saves a tool result too large to hand the model at
+// <configuration folder>/projects/<its name for the working folder>/<session
+// id>/tool-results/<tool call id>.txt and tells the model to read it back
+// (seen with 2.1.296, which then refused that read under dontAsk). That
+// folder holds only the output of this session's own calls, each checked
+// here already. The rest of the configuration folder (the login, other
+// sessions' transcripts and output) stays outside.
+export type OwnFiles = { configDir: string; sessionId: string };
 
 // Input fields that name a path, and those that hold a file pattern. Grep's
 // `pattern` is the expression it searches for, not a path, so for Grep only
@@ -301,7 +313,20 @@ function named(snapshot: string, path: string): boolean {
   }
 }
 
-export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
+// A path in this session's own saved output, in every reading of it.
+function savedOutput(own: OwnFiles | null, snapshot: string, raw: string): boolean {
+  if (own === null || !/^[A-Za-z0-9_-]+$/.test(own.sessionId) || !named(snapshot, expanded(raw))) return false;
+  const base = realDeep(resolve(own.configDir));
+  return pathReadings(raw).every((r) => {
+    const real = place(snapshot, r);
+    if (real === null) return false;
+    const parts = relative(base, real).split(sep);
+    return parts.length >= 4 && parts[0] === "projects" && parts[2] === own.sessionId && parts[3] === "tool-results";
+  });
+}
+
+// `own`: where the agent saves its own output for this session, or null.
+export function classify(snapshotDir: string, call: ToolCall, own: OwnFiles | null = null): TraceEntry {
   let snapshot = snapshotDir;
   try {
     snapshot = realpathSync(snapshotDir);
@@ -319,6 +344,8 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
   // Path fields and the path a read delivered; the folders patterns are rooted in.
   const paths: string[] = [];
   const roots: string[] = [];
+  // A pattern rooted outside only in this session's saved output.
+  let ownPattern: string | null = null;
   for (const k of PATH_FIELDS) {
     if (fields[k] === undefined || fields[k] === null) continue;
     if (typeof fields[k] !== "string") return { tool: call.tool, path: `(a ${k} that is not text)`, inside: false, range: null, ok: true };
@@ -335,16 +362,21 @@ export function classify(snapshotDir: string, call: ToolCall): TraceEntry {
       found = ["/"];
     }
     // Named by the pattern itself in the trace, so the record says what was asked.
-    if (found.some((root) => rootReadings(root).some((r) => !inside(place(snapshot, r))))) return { tool: call.tool, path: fields[k] as string, inside: false, range: null, ok: call.ok };
-    roots.push(...found);
+    const out = found.flatMap((root) => rootReadings(root)).filter((r) => !inside(place(snapshot, r)));
+    if (out.length > 0 && !out.every((r) => savedOutput(own, snapshot, r))) return { tool: call.tool, path: fields[k] as string, inside: false, range: null, ok: call.ok };
+    if (out.length > 0) ownPattern ??= fields[k] as string;
+    else roots.push(...found);
   }
   if (call.read) paths.push(call.read.path);
   if (call.tool === "Read" && typeof fields.file_path !== "string") {
     return { tool: call.tool, path: "(a read with no file_path)", inside: false, range: null, ok: true };
   }
-  for (const raw of paths) {
-    if (pathReadings(raw).some((r) => !inside(place(snapshot, r))) || !named(snapshot, expanded(raw))) return { tool: call.tool, path: raw, inside: false, range, ok: call.ok };
+  const outside = paths.filter((raw) => pathReadings(raw).some((r) => !inside(place(snapshot, r))) || !named(snapshot, expanded(raw)));
+  if (outside.length > 0) {
+    const saved = outside.every((raw) => savedOutput(own, snapshot, raw));
+    return { tool: call.tool, path: outside[0]!, inside: false, range, ok: call.ok, ...(saved ? { own: true as const } : {}) };
   }
+  if (ownPattern !== null) return { tool: call.tool, path: ownPattern, inside: false, range, ok: call.ok, own: true };
   const first = paths[0] ?? roots[0] ?? null;
   const real = first === null ? null : place(snapshot, call.read?.path ?? first);
   const rel = real === null ? null : (fold ? relative(snapshot.toLowerCase(), real.toLowerCase()) : relative(snapshot, real)) === "" ? "." : real.slice(snapshot.length + 1);

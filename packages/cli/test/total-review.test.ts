@@ -81,10 +81,16 @@
 //     case is taken for the snapshot, or a link so named is taken as
 //     evidence that case is ignored; or on one that ignores case, the
 //     snapshot named in other case ends the review.
+// 35. A read of the output Claude Code saved for this session under its
+//     configuration folder (its tool-results folder) ends the review as a
+//     read outside the snapshot (issue 80); or a read of anything else in
+//     that folder (another session's output, a transcript, the login)
+//     completes.
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
@@ -534,6 +540,91 @@ describe("34. case in a path is compared as the snapshot's volume compares it", 
   });
 });
 
+describe("35. the reviewer's own saved tool output", () => {
+  // The stream of a real Claude Code 2.1.296 run with the driver's flags: a
+  // Grep whose output was too large, which Claude Code saved under its
+  // configuration folder and pointed the model to; the model's Read of that
+  // file, which dontAsk refused; the answer. Paths are __SNAPSHOT__,
+  // __CONFIG__ and __PROJECT__ (Claude Code's name for the working folder).
+  const recorded = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures/claude-stream-spool.jsonl"), "utf8");
+  const session = "6b257666-0130-4ba8-8bbb-292c3c846b2e";
+  // The model provider stand-in, started by the real driver: answers detect,
+  // then replays the recorded run with the answer replaced by a submission
+  // for this brief. `session` is the folder the Read names, as recorded or another.
+  function standIn(readSession: string): string {
+    const dir = tempDir("oq-spool-bin-");
+    const template = submission("`change_id`: `000000000000`");
+    writeFileSync(
+      join(dir, "claude"),
+      [
+        `#!${process.execPath}`,
+        "const { mkdirSync, realpathSync, writeFileSync } = require('node:fs');",
+        "const { join } = require('node:path');",
+        "const argv = process.argv.slice(2);",
+        "if (argv.includes('--version')) { console.log('2.1.296 (Claude Code)'); process.exit(0); }",
+        "if (argv[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }",
+        "const snapshot = realpathSync(process.cwd());",
+        "const config = process.env.CLAUDE_CONFIG_DIR;",
+        "const project = snapshot.replace(/[^A-Za-z0-9]/g, '-');",
+        `const saved = join(config, 'projects', project, ${JSON.stringify(session)}, 'tool-results');`,
+        "mkdirSync(saved, { recursive: true });",
+        "writeFileSync(join(saved, 'toolu_01ReGzL1ywcwshVJvEbzxZyr.txt'), 'line 0 needle\\n');",
+        "let buf = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buf += chunk;",
+        "  if (!buf.includes('\\n')) return;",
+        "  const brief = JSON.parse(buf.slice(0, buf.indexOf('\\n'))).message.content;",
+        "  buf = '';",
+        "  const id = /`change_id`: `([0-9a-f]{12})`/.exec(brief)[1];",
+        `  const text = ${JSON.stringify(recorded)}.split('__PROJECT__').join(project).split('__CONFIG__').join(config).split('__SNAPSHOT__').join(snapshot);`,
+        "  for (const line of text.split('\\n').filter((l) => l !== '')) {",
+        "    const e = JSON.parse(line);",
+        `    if (e.type === 'assistant') for (const c of e.message.content) if (c.type === 'tool_use' && c.input.file_path) c.input.file_path = c.input.file_path.split(${JSON.stringify(session)}).join(${JSON.stringify(readSession)});`,
+        `    if (e.type === 'result') e.result = ${JSON.stringify(template)}.split('000000000000').join(id);`,
+        "    process.stdout.write(JSON.stringify(e) + '\\n');",
+        "  }",
+        "});",
+        "process.stdin.on('end', () => process.exit(0));",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(join(dir, "claude"), 0o755);
+    return dir;
+  }
+  function claudeReview(readSession: string): Promise<number> {
+    vi.stubEnv("PATH", `${standIn(readSession)}:${process.env.PATH ?? ""}`);
+    const { global } = parseFlags(["--cwd", repo(), "--no-color", "--format", "json"], {});
+    return runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "claude", timeoutMs: 60_000, drivers: [claudeDriver] });
+  }
+
+  it("a read of the output Claude Code saved for this session keeps the run complete; one of another session's output, a transcript or the login does not", async () => {
+    const config = tempDir("oq-claude-config-");
+    vi.stubEnv("CLAUDE_CONFIG_DIR", config);
+    const code = await claudeReview(session);
+    const report = JSON.parse(out) as Report;
+    expect(report.completion?.missing).toEqual([]);
+    expect(report.completion?.outside_reads).toEqual([]);
+    expect(code).toBe(0);
+
+    out = "";
+    expect(await claudeReview("f0000000-0000-4000-8000-000000000000")).toBe(2);
+    const other = JSON.parse(out) as Report;
+    expect(other.completion?.outside_reads).toEqual([expect.stringMatching(/\/f0000000-0000-4000-8000-000000000000\/tool-results\/toolu_01ReGzL1ywcwshVJvEbzxZyr\.txt$/)]);
+
+    const snapshot = tempDir("oq-spool-snap-");
+    const own = { configDir: config, sessionId: session };
+    const saved = join(config, "projects", "-x", session);
+    for (const path of [join(saved, "..", `${session}.jsonl`), join(config, ".credentials.json"), `${saved}/tool-results/../../other/tool-results/t.txt`]) {
+      expect(classify(snapshot, readOf(path), own), path).toMatchObject({ inside: false });
+      expect(classify(snapshot, readOf(path), own).own, path).toBeUndefined();
+    }
+    // A listing of the saved output is the agent's own too; one that may reach another session's is not.
+    expect(classify(snapshot, glob(`${saved}/tool-results/*.txt`), own)).toMatchObject({ inside: false, own: true });
+    expect(classify(snapshot, glob(`${config}/projects/*/${session}/tool-results/*.txt`), own).own).toBeUndefined();
+  });
+});
+
 describe("what leaves the process", () => {
   it("14. the reviewer's environment holds no token of the developer's", () => {
     const env = reviewerEnv({ PATH: "/usr/bin", HOME: "/h", USER: "u", CLAUDE_CONFIG_DIR: "/c", ANTHROPIC_API_KEY: "k", GITHUB_TOKEN: "g", NPM_TOKEN: "n", AWS_SECRET_ACCESS_KEY: "a", OPENAI_API_KEY: "o", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s" });
@@ -632,9 +723,13 @@ describe("22, 23, 24. ranges the brief could not carry", () => {
     expect(report.completion?.coverage.unread).toEqual([]);
   });
 
-  it("22. a deletion outside the brief is never delivered (its lines live only in git objects): named as unread", async () => {
-    expect(await review(bigChange(3000, 5), fake([good]))).toBe(2);
-    expect((JSON.parse(out) as Report).completion?.missing.join("\n")).toMatch(/big\.txt:5-6/);
+  it("22. a deletion outside the brief reaches the reviewer in a correction round as its removed lines between its anchors, and counts as given (issue 77)", async () => {
+    const driver = fake([good]);
+    const code = await review(bigChange(3000, 5), driver);
+    expect((JSON.parse(out) as Report).completion?.missing).toEqual([]);
+    expect(code).toBe(0);
+    expect(driver.sent[1]).toContain("big.txt: 2 lines removed between lines 5 and 6 (with context 3 to 8):\n3\tkept line 3\n4\tkept line 4\n5\tkept line 5\n-\tkept line 6\n-\tkept line 7\n6\tkept line 8\n7\tkept line 9\n8\tkept line 10\n");
+    expect(driver.sent[1]).not.toMatch(/follow in the next round/);
   });
 
   it("22, 24. a change too large for the rounds ends incomplete, names what was left, keeps the checked findings and writes no receipt", async () => {
@@ -716,7 +811,7 @@ describe("25. what a correction message may carry", () => {
     expect(r.delivered).toEqual([]);
   });
 
-  it("never delivers a deletion (it would come from git objects), a dropped file, a binary file or a very long line", () => {
+  it("never delivers a deletion whose removed lines the change does not hold, a dropped file, a binary file or a very long line, and promises none for a later round", () => {
     const dir = snap();
     writeFileSync(join(dir, "bin.dat"), Buffer.from([0, 1, 2, 10, 3, 10]));
     writeFileSync(join(dir, "long.js"), `${"a".repeat(20_000)}\n`);
@@ -726,10 +821,52 @@ describe("25. what a correction message may carry", () => {
       { path: "long.js", start: 1, end: 1, deletion: false },
       { path: "bin.dat", start: 3, end: 4, deletion: true },
     ];
-    const r = deliverRanges({ snapshotDir: dir, unread, secrets: [] });
+    const r = deliverRanges({ snapshotDir: dir, unread, secrets: [], change: { files: [], deletionPoints: new Map([["bin.dat", [{ after: 3, lines: 1, anchors: [3, 4] }]]]), diffs: [] } });
     expect(r.delivered).toEqual([]);
     expect(r.left).toHaveLength(4);
+    expect(r.later).toBe(0);
     expect(r.text).toBe("");
+  });
+
+  it("a range whose lines pass the byte bound before the line bound is sent in a part that fits, not promised for a round that could never carry it", () => {
+    const dir = snap();
+    writeFileSync(join(dir, "wide.txt"), `${Array.from({ length: 1000 }, (_, i) => `${i} ${"w".repeat(1500)}`).join("\n")}\n`);
+    const r = deliverRanges({ snapshotDir: dir, unread: [{ path: "wide.txt", start: 1, end: 1000, deletion: false }], secrets: [] });
+    expect(r.delivered.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(r.text, "utf8")).toBeLessThanOrEqual(512 * 1024);
+    expect(r.left).toEqual([{ path: "wide.txt", start: r.delivered.at(-1)!.end + 1, end: 1000, deletion: false }]);
+    expect(r.later).toBe(1);
+  });
+
+  it("a deleted empty file, which git shows no hunk, is shown as deleted and counts as given; a deleted binary file is not", () => {
+    const dir = snap();
+    const empty = { path: "empty.txt", start: 1, end: 1, deletion: true };
+    const binary = { path: "img.bin", start: 1, end: 1, deletion: true };
+    const point = [{ after: 0, lines: 0, anchors: [1] }];
+    const change = {
+      files: [
+        { path: "empty.txt", status: "deleted" as const, oldPath: null, binary: false },
+        { path: "img.bin", status: "deleted" as const, oldPath: null, binary: true },
+      ],
+      deletionPoints: new Map([["empty.txt", point], ["img.bin", point]]),
+      diffs: [{ path: "empty.txt", text: "diff --git a/empty.txt b/empty.txt\ndeleted file mode 100644\nindex e69de29..0000000\n" }],
+    };
+    const r = deliverRanges({ snapshotDir: dir, unread: [empty, binary], secrets: [], change });
+    expect(r.delivered).toEqual([empty]);
+    expect(r.left).toEqual([binary]);
+    expect(r.text).toBe("empty.txt: the file was deleted; it held no lines.");
+  });
+
+  it("a secret the scanners found in a removed line reaches the reviewer redacted, as in the brief, and the deletion still goes", () => {
+    const dir = snap();
+    const secret = key();
+    writeFileSync(join(dir, "a.py"), "one\ntwo\n");
+    const diff = `diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,3 +1,2 @@\n one\n-KEY = "${secret}"\n two\n`;
+    const deletion = { path: "a.py", start: 1, end: 2, deletion: true };
+    const r = deliverRanges({ snapshotDir: dir, unread: [deletion], secrets: [secret], change: { files: [{ path: "a.py", status: "modified", oldPath: null, binary: false }], deletionPoints: new Map([["a.py", [{ after: 1, lines: 1, anchors: [1, 2] }]]]), diffs: [{ path: "a.py", text: diff }] } });
+    expect(r.leak).toBe(false);
+    expect(r.delivered).toEqual([deletion]);
+    expect(r.text).toBe('a.py: 1 line removed between lines 1 and 2 (with context 1 to 2):\n1\tone\n-\tKEY = "[redacted]"\n2\ttwo');
   });
 
   it("a planted secret in an unread range never reaches the correction the reviewer gets", async () => {

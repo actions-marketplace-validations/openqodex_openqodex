@@ -330,6 +330,43 @@ function excluded(path: string, exclude: string[]): boolean {
   return exclude.some((g) => matchesGlob(path, g));
 }
 
+// Diff flags and pathspecs that keep excluded paths out of rename pairing.
+type RenameSplit = { flags: string[]; specs: string[] };
+
+// Every path a listing names, both sides of a rename included.
+function listedPaths(files: Omit<ChangedFile, "binary">[]): string[] {
+  return files.flatMap((f) => (f.oldPath === null ? [f.path] : [f.path, f.oldPath]));
+}
+
+// The folders above every path: `a/b/c.ts` gives `a` and `a/b`. A pathspec
+// names a folder's files as well as a file of that name, and one path can be
+// a file on one side and a folder on the other (a file `cache` replaced by
+// `cache/new.ts`), so a path in this set is never left out by pathspec.
+function foldersOf(paths: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of paths) for (let i = p.indexOf("/"); i !== -1; i = p.indexOf("/", i + 1)) out.add(p.slice(0, i));
+  return out;
+}
+
+// The exclude list is judged on each side of a rename on its own. A file
+// renamed out of an excluded path is an addition, one renamed into an
+// excluded path is a deletion, so no line of an excluded file reaches the
+// change and no admitted file leaves it unseen. Git pairs a rename only
+// between paths its pathspec admits: when a rename crosses the exclude line,
+// every excluded path that can be a side of a rename (added, deleted or
+// renamed) is left out by pathspec, so git cannot pair it with another.
+// When a pathspec would also leave out a listed path below it, or past the
+// pathspec bound, renames are not paired at all, and the exclude list then
+// drops each excluded side as a file of its own. Null when no rename
+// crosses the line.
+function renameSplit(files: Omit<ChangedFile, "binary">[], exclude: string[]): RenameSplit | null {
+  if (!files.some((f) => f.oldPath !== null && excluded(f.oldPath, exclude) !== excluded(f.path, exclude))) return null;
+  const sides = listedPaths(files.filter((f) => f.status !== "modified")).filter((p) => excluded(p, exclude));
+  const folders = foldersOf(listedPaths(files));
+  const specs = sides.some((p) => folders.has(p)) ? null : boundedSpecs(sides);
+  return specs === null ? { flags: ["--no-renames"], specs: [] } : { flags: [], specs };
+}
+
 // git separates alternate object folders with ":", so a path is C-quoted to
 // survive a colon (or a leading quote) in it.
 export function quoteAlternate(path: string): string {
@@ -352,15 +389,23 @@ async function filtersOff(repoRoot: string): Promise<string[]> {
   return [...off];
 }
 
-// Pathspecs that keep git from producing patches for files left out anyway.
-// Only an optimisation: past this size the list is not passed and the
-// streamed lines for those files are dropped instead.
+// The most bytes of pathspecs passed to one git call.
 const MAX_SKIP_PATHSPEC_BYTES = 64 * 1024;
 
-function skipPathspecs(paths: string[]): string[] {
+// Pathspecs that leave `paths` out of a diff, or null past the bound.
+function boundedSpecs(paths: string[]): string[] | null {
   const specs = paths.map((p) => `:(top,literal,exclude)${p}`);
   const bytes = specs.reduce((n, s) => n + Buffer.byteLength(s) + 1, 0);
-  return bytes <= MAX_SKIP_PATHSPEC_BYTES ? specs : [];
+  return bytes <= MAX_SKIP_PATHSPEC_BYTES ? specs : null;
+}
+
+// Pathspecs that keep git from producing patches for files left out anyway.
+// Only an optimisation: past the bound the list is not passed and the
+// streamed lines for those files are dropped instead. A path with a listed
+// path below it is never passed (foldersOf).
+function skipPathspecs(paths: string[], listed: string[]): string[] {
+  const folders = foldersOf(listed);
+  return boundedSpecs(paths.filter((p) => !folders.has(p))) ?? [];
 }
 
 export async function getChange(args: {
@@ -525,26 +570,38 @@ async function diffChange(args: {
   exclude: string[];
 }): Promise<Change> {
   const { repoRoot, exclude, env } = args;
+  // Set when a rename crosses the exclude line (renameSplit), for every diff after the first listing.
+  let split: RenameSplit = { flags: [], specs: [] };
   const diffArgs = (extra: string[], skip: string[] = []): string[] => [
     "diff",
     ...DIFF_FLAGS,
+    ...split.flags,
     ...extra,
     ...args.range,
     "--",
     STATE_PATHSPEC,
+    ...split.specs,
     ...skip,
   ];
-  const [nameStatus, numstatBuf, raw] = await Promise.all([
+  let [nameStatus, numstatBuf, raw] = await Promise.all([
     gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }),
     gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env }),
     gitOk(repoRoot, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
   ]);
 
+  // The id stays the first listing's, excluded files included.
   const id = createHash("sha256").update(`${args.baseSha}\n`).update(raw).digest("hex");
+  const crossing = renameSplit(parseNameStatus(nameStatus), exclude);
+  if (crossing !== null) {
+    split = crossing;
+    [nameStatus, numstatBuf] = await Promise.all([gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }), gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env })]);
+  }
   const numstat = parseNumstat(numstatBuf);
 
   // Decide from the counts alone, before any patch is read, which files get
   // coverage and which may go into the brief.
+  const pairs = parseNameStatus(nameStatus);
+  const listed = listedPaths(pairs);
   const files: ChangedFile[] = [];
   const skipped: string[] = []; // excluded by the developer
   const covered = new Set<string>();
@@ -556,7 +613,7 @@ async function diffChange(args: {
   let deletions = 0;
   let coveredLines = 0;
   let briefLowerBound = 0;
-  for (const pair of parseNameStatus(nameStatus)) {
+  for (const pair of pairs) {
     if (excluded(pair.path, exclude)) {
       skipped.push(pair.path);
       continue;
@@ -594,7 +651,7 @@ async function diffChange(args: {
         repoRoot,
         // A file left out of the brief keeps its coverage: its changed lines
         // must then be read through the tools, or they count as unread.
-        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...uncoverable])),
+        diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...uncoverable], listed)),
         opts,
         COVERAGE_MAX_LINE_BYTES,
         onLine,
@@ -635,7 +692,7 @@ async function diffChange(args: {
     (onLine) =>
       gitLines(
         repoRoot,
-        diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
+        diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge], listed)),
         opts,
         DIFF_CAP_BYTES + 1,
         onLine,
