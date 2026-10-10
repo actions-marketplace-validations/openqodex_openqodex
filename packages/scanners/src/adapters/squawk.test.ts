@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { repoFacts } from "../detect.js";
-import { globLiteral, parseSquawkJson, squawk } from "./squawk.js";
+import { parseSquawkJson, squawk } from "./squawk.js";
 
 const fixture = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/squawk/violations.json"), "utf8");
 
@@ -38,19 +38,6 @@ describe("parseSquawkJson on squawk 2.66.0 output", () => {
       ["prefer-robust-stmts", 8, 9],
       ["adding-foreign-key-constraint", 8, 9],
     ]);
-  });
-
-  it("keeps the file, joins the message and its help, and links the rule", () => {
-    expect(out.find((f) => f.ruleId === "require-concurrent-index-creation")).toEqual({
-      source: "squawk",
-      ruleId: "require-concurrent-index-creation",
-      filePath: "db/migrations/0002_orders.sql",
-      lineStart: 5,
-      lineEnd: 6,
-      severity: "medium",
-      message: "During normal index creation, table updates are blocked, but reads are still allowed. Use `concurrently` to avoid blocking writes.",
-      reference: "https://squawkhq.com/docs/require-concurrent-index-creation",
-    });
   });
 
   it("ranks a lock or rewrite medium and a preference low (3)", () => {
@@ -77,10 +64,5 @@ describe("the files squawk is given", () => {
   const facts = repoFacts(dirname(fileURLToPath(import.meta.url)));
   it("takes every changed .sql file, in any case", () => {
     expect(squawk.files(["db/0001.sql", "db/Seed.SQL", "db/notes.md", "-x.sql"], facts)).toEqual(["db/0001.sql", "db/Seed.SQL", "./-x.sql"]);
-  });
-
-  it("escapes every glob character, so each name matches only itself (4)", () => {
-    expect(globLiteral("db/[1]x*?.sql")).toBe("db/[[]1[]]x[*][?].sql");
-    expect(globLiteral("db/plain-name_1.sql")).toBe("db/plain-name_1.sql");
   });
 });

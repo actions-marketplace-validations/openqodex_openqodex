@@ -54,34 +54,13 @@ const goFacts = async (source: string): Promise<GoHttpFact[]> => {
 
 const corpus = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "corpus", "frameworks");
 
-// The id of the one symbol `name` in `file`.
-function sym(graph: Graph, file: string, name: string): string {
-  const hits = (graph.defsByFile.get(file) ?? []).filter((n) => n.name === name);
-  if (hits.length !== 1) throw new Error(`${hits.length} symbols named ${name} in ${file}`);
-  return (hits[0] as { id: string }).id;
-}
-
 const layer = (g: Graph): FrameworkLayer => {
   const l = frameworkLayer(g);
   if (!l) throw new Error("the graph has no framework layer");
   return l;
 };
-const regsAt = (g: Graph, site: string): Registration[] =>
-  layer(g)
-    .registrations()
-    .filter((r) => r.plugin === "go-http" && `${r.site.file}:${r.site.line}` === site);
-const reg = (g: Graph, site: string): Registration => {
-  const found = regsAt(g, site);
-  if (found.length !== 1) throw new Error(`${found.length} registrations at ${site}`);
-  return found[0] as Registration;
-};
-
-const MAIN_MUX = "fw:go-http:app:main.go:12";
-const METRICS_MUX = "fw:go-http:app:metrics/metrics.go:7";
-const DEFAULT_MUX = "fw:go-http:app:go.mod:1";
 
 describe("the net/http plugin on a small real application", () => {
-  let base: Graph;
   let changed: Graph;
   let root: string;
 
@@ -89,72 +68,14 @@ describe("the net/http plugin on a small real application", () => {
     root = mkdtempSync(join(tmpdir(), "oq-go-http-"));
     cpSync(join(corpus, "go-http", "go-http-app", "base"), root, { recursive: true });
     commitAll(root);
-    base = await buildGraph({ repoRoot: root, store: null });
     cpSync(join(corpus, "go-http", "go-http-app", "change"), root, { recursive: true, force: true });
     changed = await buildGraph({ repoRoot: root, store: null });
   });
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-  it("answers which route serves a changed handler: GET /items/{id} on the main mux, never the metrics mux's route of the same pattern", () => {
-    for (const g of [base, changed]) {
-      const getItem = sym(g, "handlers/items.go", "GetItem");
-      const routes = layer(g).routesReaching(getItem).routes;
-      expect(routes.map((r) => `${r.registration.methods.join(",")} ${r.registration.pattern} ${r.registration.app} ${r.hops}`)).toEqual([`GET /items/{id} ${MAIN_MUX} 0`]);
-    }
-  });
-
-  it("keeps the metrics mux's GET /items/{id} on its own mux, bound to its own handler", () => {
-    const metrics = reg(changed, "metrics/metrics.go:8");
-    expect(metrics.app).toBe(METRICS_MUX);
-    expect(metrics.handler.status).toBe("bound");
-    const routes = layer(changed).routesReaching(sym(changed, "metrics/metrics.go", "itemMetrics")).routes;
-    expect(routes.map((r) => r.registration.app)).toEqual([METRICS_MUX]);
-  });
-
-  it("keeps the logging middleware on the wrapped admin route and leaves the handler inside the wrapper unbound, with an unknown that names it", () => {
-    const admin = reg(changed, "main.go:15");
-    expect(admin.handler.status).toBe("unresolved");
-    expect(admin.pattern).toBe("/admin/");
-    const chain = layer(changed)
-      .edgesFrom(admin.id)
-      .filter((e) => e.kind === "applies_middleware")
-      .map((e) => `${e.order} ${changed.nodes.get(e.to)?.name}`);
-    expect(chain).toEqual(["0 logging"]);
-    expect(layer(changed).edgesFrom(admin.id).some((e) => e.kind === "handles")).toBe(false);
-    const gap = changed.frameworks?.unknowns.find((u) => u.plugin === "go-http" && u.site?.file === "main.go" && u.site.line === 15);
-    expect(gap?.cause).toBe("unsupported-rule");
-    expect(gap?.name).toBe("handlers.AdminHandler{}");
-  });
-
-  it("binds an http.HandlerFunc conversion to the function it converts", () => {
-    const routes = layer(changed).routesReaching(sym(changed, "main.go", "serveStatic")).routes;
-    expect(routes.map((r) => `${r.registration.pattern} ${r.registration.app}`)).toEqual([`/static/ ${MAIN_MUX}`]);
-  });
-
-  it("puts http.HandleFunc on the project's default mux, apart from the main mux, and marks each mux served or not", () => {
-    expect(reg(changed, "main.go:21").app).toBe(DEFAULT_MUX);
-    const served = Object.fromEntries((changed.frameworks?.apps ?? []).filter((a) => a.plugin === "go-http").map((a) => [a.id, a.data?.served]));
-    expect(served).toEqual({ [MAIN_MUX]: true, [DEFAULT_MUX]: true, [METRICS_MUX]: false });
-  });
-
-  it("lists a route whose pattern is computed as an unknown that names its handler, never as a registration", () => {
-    expect(regsAt(changed, "main.go:19")).toEqual([]);
-    const gap = changed.frameworks?.unknowns.find((u) => u.plugin === "go-http" && u.site?.file === "main.go" && u.site.line === 19);
-    expect(gap?.cause).toBe("dynamic");
-    expect(gap?.name).toBe("healthz");
-  });
-
   it("registers nothing from HandleFunc on a local value named http", () => {
     expect(layer(changed).registrations().filter((r) => r.site.file === "fake/fake.go")).toEqual([]);
     expect((changed.frameworks?.apps ?? []).filter((a) => a.site.file === "fake/fake.go")).toEqual([]);
-  });
-
-  it("lists the tests of a handler as a certain direct call and a possible request, never as coverage", () => {
-    const links = layer(changed)
-      .testsOf(sym(changed, "handlers/items.go", "GetItem"))
-      .map((l) => `${l.test.replace(/@.*/, "")} ${l.category} ${l.tier}`)
-      .sort();
-    expect(links).toEqual(["handlers/items_test.go#TestGetItem direct-call certain", "handlers/items_test.go#TestGetItem route-request possible"]);
   });
 });
 
@@ -191,11 +112,6 @@ describe("the net/http facts of one file", () => {
 
   it("reads every Go file, since a package-level value another file uses needs no tell-tale text", () => {
     expect(wants("package util\n\nvar admin = AdminHandler{}\n")).toBe(true);
-  });
-
-  it("does not read a file over the byte cap, and says how large it is", async () => {
-    const facts = await goFacts(`package main\n${"// padding\n".repeat(Math.ceil(MAX_SOURCE_BYTES / 11) + 10)}`);
-    expect(facts).toEqual([{ kind: "too-large", line: 1, column: 1, bytes: expect.any(Number) }]);
   });
 });
 

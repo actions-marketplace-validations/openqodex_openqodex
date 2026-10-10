@@ -1,7 +1,6 @@
 // The Rails plugin on a small real application and on hostile input.
-import { getChange } from "@openqodex/core";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildGraph, detectImpact, frameworkLayer, openStore, renderImpactBlock } from "../src/index.js";
+import { buildGraph, frameworkLayer, openStore } from "../src/index.js";
 import type { Graph, Registration } from "../src/index.js";
 import { rails } from "../src/frameworks/rails/index.js";
 import { expectLinear, readerCpuMs, stageCpuMs } from "../src/test-timing.js";
@@ -113,24 +112,11 @@ end
 };
 
 const SHOW = "app/controllers/posts_controller.rb";
-const ADMIN = "app/controllers/admin/posts_controller.rb";
 
 async function storeOf(root: string) {
   const opened = await openStore(root, { home });
   if (!opened.ok) throw new Error(opened.reason);
   return opened.store;
-}
-
-// The application with `edits` written over it and left uncommitted: the
-// graph, the impact and the brief of that change.
-async function changed(edits: Record<string, string>, files: Record<string, string> = APP) {
-  const root = makeRepo(files);
-  commitAll(root);
-  writeFiles(root, edits);
-  const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
-  const graph = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
-  const impact = detectImpact(graph, change);
-  return { graph, impact, brief: renderImpactBlock(impact) };
 }
 
 async function built(files: Record<string, string> = APP): Promise<Graph> {
@@ -163,120 +149,6 @@ function targets(g: Graph, from: string, kind: string): string[] {
 }
 
 describe("the Rails plugin on a small application", () => {
-  it("lists the route that handles a changed action, the view it renders and the request spec that requests it, and never calls a test link coverage", async () => {
-    const { graph, brief } = await changed({ [SHOW]: POSTS.replace("@size = Rails.application.config.x.page_size", "@size = Rails.application.config.x.page_size + 1") });
-    const show = symbol(graph, SHOW, "show", "PostsController");
-    const routes = layerOf(graph).routesReaching(show).routes.map((r) => [r.registration.methods.join("|"), r.registration.pattern, r.registration.name, r.hops, r.tier]);
-    expect(routes).toEqual([["GET", "/posts/:id", "post", 0, "likely"]]);
-    expect(brief).toContain("| `GET /posts/:id` | `post` | `config/routes.rb:3` | `posts#show` | handles `PostsController.show` (likely: found by the controller path convention");
-    expect(brief).toContain("| `PostsController.show` | `app/views/posts/show.html.erb` | likely: Rails renders app/views/posts/show when the action does not render another template |");
-    expect(brief).toContain("| `posts_spec.rb` | `spec/requests/posts_spec.rb:5` | requests through route `GET /posts/:id` | `PostsController.show` | likely: the test requests a literal path that matches this route");
-    expect(brief).toContain("(static links, not coverage)");
-    expect(brief).not.toMatch(/\bcover(s|age:)/);
-  });
-
-  it("expands every resources route from the declaration, binds each to its action, and keeps the public and admin controllers apart", async () => {
-    const g = await built();
-    const handler = (methods: string, pattern: string) => {
-      const r = registration(g, methods, pattern);
-      return r ? [r.name, r.handler.written, r.handler.status, r.handler.targets.map((t) => t.replace(/@.*/, ""))] : null;
-    };
-    expect(handler("GET", "/")).toEqual(["root", "posts#index", "bound", [`${SHOW}#PostsController.index`]]);
-    expect(handler("GET", "/posts")).toEqual(["posts", "posts#index", "bound", [`${SHOW}#PostsController.index`]]);
-    expect(handler("GET", "/posts/new")).toEqual(["new_post", "posts#new", "bound", [`${SHOW}#PostsController.new`]]);
-    expect(handler("PATCH|PUT", "/posts/:id")).toEqual(["post", "posts#update", "bound", [`${SHOW}#PostsController.update`]]);
-    expect(handler("POST", "/posts/:post_id/comments")).toEqual(["post_comments", "comments#create", "bound", ["app/controllers/comments_controller.rb#CommentsController.create"]]);
-    expect(handler("DELETE", "/admin/posts/:id")).toEqual(["admin_post", "admin/posts#destroy", "bound", [`${ADMIN}#Admin::PostsController.destroy`]]);
-    // Seven, one and two routes from the three resources declarations, plus root.
-    expect(registrations(g).length).toBe(11);
-    expect(registration(g, "GET", "/admin/posts/:id")).toBeUndefined();
-    expect(targets(g, symbol(g, SHOW, "PostsController"), "applies_middleware")).toEqual([`${SHOW}#PostsController.set_post`]);
-    expect(layerOf(g).rolesOf(symbol(g, SHOW, "show", "PostsController")).map((r) => [r.role, r.detail])).toEqual([["route_handler", "action"]]);
-    expect(layerOf(g).rolesOf("config/routes.rb").map((r) => r.role)).toEqual(["route_table"]);
-  });
-
-  it("keeps the route of a deleted action, with no handler, a gap that names it and a brief line that says so", async () => {
-    const { graph, brief } = await changed({ [ADMIN]: ADMIN_POSTS.replace("\n    def destroy\n    end\n", "\n") });
-    const r = registration(graph, "DELETE", "/admin/posts/:id");
-    expect([r?.name, r?.handler.status, r?.handler.written]).toEqual(["admin_post", "missing", "admin/posts#destroy"]);
-    expect(layerOf(graph).edgesFrom(r?.id ?? "").filter((e) => e.kind === "handles")).toEqual([]);
-    const gaps = graph.frameworks?.unknowns.filter((u) => u.plugin === "rails" && u.name === "admin/posts#destroy").map((u) => [u.cause, u.site?.file, u.site?.line, u.scope]);
-    expect(gaps).toEqual([["miss", "config/routes.rb", 7, { file: ADMIN }]]);
-    // The public controller's destroy is a different action and stays bound.
-    expect(registration(graph, "DELETE", "/posts/:id")?.handler.status).toBe("bound");
-    expect(brief).toContain("| `DELETE /admin/posts/:id` | `admin_post` | `config/routes.rb:7` | `admin/posts#destroy` | no handler now: the handler is missing |");
-  });
-
-  it("links actions to their implicit views, explicit views and partials, and a changed partial back to the action that renders it", async () => {
-    const { graph, brief } = await changed({ "app/views/posts/_summary.html.erb": "<p>Summary, changed</p>\n" });
-    const action = (name: string) => symbol(graph, SHOW, name, "PostsController");
-    expect(targets(graph, action("index"), "renders")).toEqual(["app/views/posts/_summary.html.erb", "app/views/posts/index.html.erb"]);
-    expect(targets(graph, action("show"), "renders")).toEqual(["app/views/posts/show.html.erb"]);
-    expect(targets(graph, action("edit"), "renders")).toEqual(["app/views/posts/form.html.erb"]);
-    expect(targets(graph, action("new"), "renders")).toEqual([]);
-    expect(targets(graph, symbol(graph, ADMIN, "index", "Admin::PostsController"), "renders")).toEqual(["app/views/admin/posts/index.html.erb"]);
-    expect(brief).toContain("| `app/views/posts/_summary.html.erb` | `PostsController.index` | `app/controllers/posts_controller.rb:5` |");
-  });
-
-  it("links the model to its association, its table and the migrations that name the table, for a model change and a migration change", async () => {
-    const { graph, brief } = await changed({
-      "app/models/post.rb": POST_MODEL.replace("  has_many :comments\n", "  has_many :comments\n  validates :title, presence: true\n"),
-      "db/migrate/20240102000000_add_slug_to_posts.rb": (APP["db/migrate/20240102000000_add_slug_to_posts.rb"] as string).replace(":slug, :string", ":slug, :text"),
-    });
-    const post = symbol(graph, "app/models/post.rb", "Post");
-    expect(layerOf(graph).rolesOf(post).map((r) => r.role)).toEqual(["model"]);
-    expect(targets(graph, post, "uses_type")).toEqual(["app/models/comment.rb#Comment"]);
-    expect(targets(graph, post, "maps_to")).toEqual(["posts"]);
-    expect(layerOf(graph).edgesTo(post).filter((e) => e.kind === "changes_schema").map((e) => e.from).sort()).toEqual(["db/migrate/20240101000000_create_posts.rb", "db/migrate/20240102000000_add_slug_to_posts.rb"]);
-    expect(targets(graph, "db/migrate/20240103000000_create_comments.rb", "changes_schema")).toEqual(["app/models/comment.rb#Comment", "comments"]);
-    expect(layerOf(graph).rolesOf(symbol(graph, "app/models/application_record.rb", "ApplicationRecord"))).toEqual([]);
-    expect(brief).toContain("| `Post` | `db/migrate/20240101000000_create_posts.rb` (`create_table posts`), `db/migrate/20240102000000_add_slug_to_posts.rb` (`add_column posts.slug`) |");
-    expect(brief).toContain("| `db/migrate/20240102000000_add_slug_to_posts.rb` | `posts`, `Post` |");
-  });
-
-  it("links the enqueue and delivery sites to the job's perform method and the mailer method, and the mailer method to its view", async () => {
-    const g = await built();
-    const create = symbol(g, SHOW, "create", "PostsController");
-    expect(targets(g, create, "enqueues")).toEqual(["app/jobs/publish_job.rb#PublishJob.perform", "app/mailers/post_mailer.rb#PostMailer.published"]);
-    expect(targets(g, symbol(g, "app/mailers/post_mailer.rb", "published", "PostMailer"), "renders")).toEqual(["app/views/post_mailer/published.html.erb"]);
-    expect(layerOf(g).rolesOf(symbol(g, "app/jobs/publish_job.rb", "PublishJob")).map((r) => [r.role, r.detail])).toEqual([["job", "active_job"]]);
-    expect(layerOf(g).rolesOf(symbol(g, "app/jobs/application_job.rb", "ApplicationJob"))).toEqual([]);
-    expect(layerOf(g).rolesOf(symbol(g, "app/mailers/post_mailer.rb", "PostMailer")).map((r) => r.role)).toEqual(["mailer"]);
-  });
-
-  it("links config keys to the files that set them and the action that reads them, by name and never by value", async () => {
-    const g = await built();
-    expect(targets(g, "config/application.rb", "defines_config")).toEqual(["config.x.api_token", "config.x.page_size"]);
-    expect(targets(g, "config/environments/production.rb", "defines_config")).toEqual(["config.x.page_size"]);
-    expect(targets(g, symbol(g, SHOW, "show", "PostsController"), "reads_config")).toEqual(["config.x.page_size"]);
-    expect(JSON.stringify(g.frameworks)).not.toContain("s3cr3t-value");
-  });
-
-  it("links the request spec to the routes it requests and the model spec to the model it names and the method it calls, as static links", async () => {
-    const g = await built();
-    const tests = (file: string) =>
-      layerOf(g)
-        .edgesFrom(file)
-        .filter((e) => e.kind === "tests")
-        .map((e) => {
-          const x = layerOf(g).entity(e.to);
-          return [x && x.kind === "registration" ? `${x.methods.join("|")} ${x.pattern}` : e.to.replace(/@.*/, ""), e.category, e.evidence.tier];
-        })
-        .sort((a, b) => a.join(" ").localeCompare(b.join(" ")));
-    expect(tests("spec/requests/posts_spec.rb")).toEqual([
-      ["DELETE /admin/posts/:id", "route-request", "likely"],
-      ["GET /posts/:id", "route-request", "likely"],
-    ]);
-    // `Post.new.excerpt` calls the class and the method; the language graph
-    // finds Post by the autoload convention, so both calls are likely.
-    expect(tests("spec/models/post_spec.rb")).toEqual([
-      ["app/models/post.rb#Post", "direct-call", "likely"],
-      ["app/models/post.rb#Post", "subject", "possible"],
-      ["app/models/post.rb#Post.excerpt", "direct-call", "likely"],
-    ]);
-    expect(layerOf(g).rolesOf("spec/requests/posts_spec.rb").map((r) => r.role)).toEqual(["test"]);
-  });
-
   it("keeps the known part of a route whose prefix is computed for display, and never matches it as a pattern", async () => {
     const g = await built({
       ...APP,

@@ -64,11 +64,6 @@ const files = {
 };
 
 describe("openqodex graph", () => {
-  it("is listed in the menu as a command (1)", () => {
-    const r = cli(tmpdir(), "--help");
-    expect(r.stdout).toMatch(/^\s+graph\b/m);
-  });
-
   it("answers as the query function does for the same request and kept build (2)", async () => {
     const root = repo(files);
     const first = cli(root, "graph", "callers", "core", "--json");

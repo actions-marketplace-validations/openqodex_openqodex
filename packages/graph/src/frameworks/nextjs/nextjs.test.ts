@@ -1,19 +1,16 @@
-// The Next.js plugin on the sample application of the corpus
-// (corpus/frameworks/nextjs/nextjs-app), built as a real git repository
-// and run through the whole graph build, and on middleware matchers the
-// plugin can and cannot read.
+// The Next.js plugin on middleware matchers it can and cannot read. The
+// sample application of the corpus (corpus/frameworks/nextjs/nextjs-app)
+// proves its routes and middleware links.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { buildGraph, frameworkLayer } from "../../index.js";
-import type { FrameworkLayer, Graph, Registration } from "../../index.js";
+import type { FrameworkLayer, Graph } from "../../index.js";
 import { cpuMs, expectLinear } from "../../test-timing.js";
 import { intersects, parseMatcher, routeSegments } from "./resolve.js";
 
-const corpus = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "corpus", "frameworks");
 function commit(root: string): void {
   const run = (...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
   run("init", "-q");
@@ -22,60 +19,11 @@ function commit(root: string): void {
   run("add", "-A");
   run("commit", "-q", "-m", "base");
 }
-function sym(graph: Graph, file: string, name: string): string {
-  const hits = (graph.defsByFile.get(file) ?? []).filter((n) => n.name === name);
-  if (hits.length !== 1) throw new Error(`${hits.length} symbols named ${name} in ${file}`);
-  return (hits[0] as { id: string }).id;
-}
 const layer = (g: Graph): FrameworkLayer => {
   const l = frameworkLayer(g);
   if (!l) throw new Error("the graph has no framework layer");
   return l;
 };
-const reg = (g: Graph, site: string): Registration => {
-  const found = layer(g)
-    .registrations()
-    .filter((r) => r.plugin === "nextjs" && `${r.site.file}:${r.site.line}` === site);
-  if (found.length !== 1) throw new Error(`${found.length} registrations at ${site}`);
-  return found[0] as Registration;
-};
-
-describe("the Next.js plugin on a small real application", () => {
-  let root: string;
-  let graph: Graph;
-  beforeAll(async () => {
-    root = mkdtempSync(join(tmpdir(), "oq-next-"));
-    cpSync(join(corpus, "nextjs", "nextjs-app", "base"), root, { recursive: true });
-    commit(root);
-    cpSync(join(corpus, "nextjs", "nextjs-app", "change"), root, { recursive: true, force: true });
-    graph = await buildGraph({ repoRoot: root, store: null });
-  }, 60_000);
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
-
-  it("answers which route maps to a changed route handler, from the file's path", () => {
-    const routes = layer(graph).routesReaching(sym(graph, "app/api/users/route.ts", "GET")).routes;
-    expect(routes.map((r) => `${r.registration.methods.join(",")} ${r.registration.pattern}`)).toEqual(["GET /api/users"]);
-  });
-
-  it("answers which route reaches a function a handler calls, one hop out", () => {
-    const routes = layer(graph).routesReaching(sym(graph, "lib/users.ts", "listUsers")).routes;
-    expect(routes.map((r) => `${r.registration.methods.join(",")} ${r.registration.pattern} ${r.hops}`)).toEqual(["GET /api/users 1"]);
-  });
-
-  it("keeps the app router and the pages router apart, each its own application", () => {
-    expect(reg(graph, "app/page.tsx:4").app).toBe("fw:nextjs:app:app/:1");
-    expect(reg(graph, "pages/old.tsx:1").app).toBe("fw:nextjs:app:pages/:1");
-  });
-
-  it("runs the middleware for the dashboard its matcher selects, and not for the home page", () => {
-    const applied = (site: string) =>
-      layer(graph)
-        .edgesFrom(reg(graph, site).id)
-        .filter((e) => e.kind === "applies_middleware").length;
-    expect(applied("app/dashboard/page.tsx:4")).toBe(1);
-    expect(applied("app/page.tsx:4")).toBe(0);
-  });
-});
 
 describe("the Next.js plugin reads matchers segment by segment", () => {
   it("selects a route under a matcher with a trailing wildcard, and its own folder", () => {

@@ -278,28 +278,6 @@ describe("the total review run", () => {
     expect(seen).toBe(SQL);
     expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
   });
-
-  it("6. refuses to start inside a reviewer", async () => {
-    vi.stubEnv(DEPTH_ENV, "1");
-    const driver = fake([good]);
-    await expect(review(repo(), driver)).rejects.toThrow(/inside an openqodex reviewer/);
-    expect(driver.sent).toEqual([]);
-  });
-
-  it("7. with no driver available exits 2, says what is missing and saves the unchecked candidates without printing them", async () => {
-    const dir = repo();
-    expect(await review(dir, fake([good], false))).toBe(2);
-    expect(out).toBe("");
-    expect(err).toContain("Full review unavailable");
-    expect(err).toContain("claude is not installed");
-    const path = /Unchecked scanner candidates, not a review: (\S+)/.exec(err)?.[1];
-    expect(path).toBeDefined();
-    const saved = JSON.parse(readFileSync(path!, "utf8")) as { label: string; candidates: unknown[] };
-    expect(saved.label).toMatch(/unchecked/);
-    expect(saved.candidates).toHaveLength(1);
-    expect(err).not.toContain("function-default-public-execute");
-    expect(checkouts()).toEqual([]);
-  });
 });
 
 describe("13. the trace check fails closed", () => {

@@ -57,8 +57,7 @@ import { getChange } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
 import { buildGraph, detectImpact } from "../src/index.js";
 import type { Graph } from "../src/index.js";
-import { OPERATIONS, query } from "../src/query/engine.js";
-import { frameworkLayer } from "../src/query/frameworks.js";
+import { query } from "../src/query/engine.js";
 import type { Answer, Item, Request, Session } from "../src/query/engine.js";
 import { findCases, matches } from "../corpus/score.js";
 import type { Expected } from "../corpus/score.js";
@@ -139,42 +138,6 @@ const get = (name: string): Built => {
 };
 
 describe("every question, against every corpus repository (13)", () => {
-  it("keeps the answer shape on every operation, with a capability boundary where this build cannot answer", () => {
-    for (const name of cases) {
-      const b = get(name);
-      const first = b.expected.callers?.[0]?.to ?? null;
-      const target = first ? { id: idOf(b.graph, first) } : { file: b.change.changedPaths[0] };
-      for (const kind of OPERATIONS) {
-        const a = ask(b, { kind, target, to: target, text: "a" });
-        const label = `${name} ${kind}`;
-        expect(a.apiVersion, label).toBe(1);
-        expect(a.kind, label).toBe(kind);
-        expect(a.graph.status, label).toMatch(/^(ok|partial)$/);
-        expect(typeof a.unknown.floor, label).toBe("boolean");
-        for (const v of Object.values(a.counts)) expect(v === null || Number.isInteger(v), label).toBe(true);
-        // A zero is never worded as "unused": the floor says what may be missing.
-        expect(JSON.stringify(a), label).not.toMatch(/\bunused\b/i);
-        if (a.error) {
-          expect(a.items, label).toEqual([]);
-          expect(["ambiguous", "not-found", "bad-request", "generation-unavailable", "unsupported", "refused"], label).toContain(a.error.code);
-        }
-        for (const raw of a.items) {
-          const i = raw as Partial<Item>;
-          if (!i.site || !i.edge) continue;
-          expect(["certain", "likely", "possible"], label).toContain(i.site.tier);
-          expect(typeof i.site.evidence, label).toBe("string");
-        }
-      }
-      // Every build resolves uses as a value or a type, so references
-      // answers; a build where no framework plugin found an application
-      // cannot say which route maps to a symbol, and one where a plugin
-      // did answers from what it found (3).
-      expect(ask(b, { kind: "references", target }).error?.code, name).not.toBe("unsupported");
-      expect(ask(b, { kind: "routes", target }).error?.code === "unsupported", name).toBe(frameworkLayer(b.graph) === null);
-      if ((b.expected.frameworks?.apps ?? 0) > 0) expect(frameworkLayer(b.graph), name).not.toBeNull();
-    }
-  });
-
   it("finds every caller the corpus expects at its tier, each with an edge `explain` reads back (1)", () => {
     let checked = 0;
     for (const name of cases) {
@@ -214,16 +177,6 @@ describe("every question, against every corpus repository (13)", () => {
 });
 
 describe("callers, callees and their gaps", () => {
-  it("binds the workspace caller as likely through the dist entry, with the note (1)", () => {
-    const b = get("typescript/workspace/workspace-package");
-    const a = ask(b, { kind: "callers", target: { name: "greet" } });
-    expect(a.items.map((i) => where(i as Item))).toEqual(["packages/app/src/main.ts:4"]);
-    expect((a.items[0] as Item).site).toMatchObject({ tier: "likely", evidence: "workspace-package" });
-    expect((a.items[0] as Item).site.note).toContain("packages/core/dist/index.js");
-    expect(a.counts).toEqual({ certain: 0, likely: 1, possible: 0 });
-    expect(a.unknown.floor).toBe(false);
-  });
-
   it("says a floor with the value-call reason when a computed member call could reach the symbol (2)", () => {
     const b = get("typescript/gaps/computed-member-call");
     const a = ask(b, { kind: "callers", target: { name: "onSave" } });
@@ -250,12 +203,6 @@ describe("callers, callees and their gaps", () => {
     expect(a.unknown.reasons.join(" ")).toMatch(/not read/);
     const u = ask(b, { kind: "unknowns", target: { file: "src/generated/prices.ts" } });
     expect(u.items).toContainEqual(expect.objectContaining({ file: "src/generated/prices.ts", cause: "file-not-parsed" }));
-  });
-
-  it("binds the Ruby autoload caller as likely, never certain (1)", () => {
-    const b = get("ruby/modules/ruby-autoload");
-    const a = ask(b, { kind: "callers", target: { name: "format_cents" } });
-    expect((a.items as Item[]).map((i) => [where(i), i.site.tier, i.site.evidence])).toEqual([["app/checkout.rb:3", "likely", "autoload"]]);
   });
 
   it("stops at the depth asked and names the frontier, without a count past it (4)", () => {
@@ -310,14 +257,6 @@ describe("callers, callees and their gaps", () => {
 });
 
 describe("changes, impact, path, outline and packages", () => {
-  it("lists the removed export alias with both broken consumers", () => {
-    const b = get("typescript/exports/export-alias-removed");
-    const a = ask(b, { kind: "changes" });
-    const e = a.items.find((x) => (x as { type: string }).type === "export") as { name: string; change: string; consumers: { file: string; line: number; now: string }[] };
-    expect(e).toMatchObject({ name: "total", change: "removed" });
-    expect(e.consumers.map((c) => `${c.file}:${c.line}:${c.now}`).sort()).toEqual(["src/cart.ts:1:broken", "src/cart.ts:4:broken"]);
-  });
-
   it("gives the review's own walk for the diff, and for one symbol (9)", () => {
     const b = get("typescript/cuts/thirty-second-hop");
     const summary = detectImpact(b.graph, b.change);

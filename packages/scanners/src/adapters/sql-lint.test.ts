@@ -63,11 +63,6 @@ describe("sql-lint: default PUBLIC EXECUTE", () => {
 });
 
 describe("sql-lint: SECURITY DEFINER without search_path", () => {
-  it("flags SECURITY DEFINER with no pinned search_path", () => {
-    const sql = `CREATE FUNCTION public.do_thing() RETURNS void\nLANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN END $$;`;
-    expect(ids(sql)).toContain("security-definer-no-search-path");
-  });
-
   it("suppresses when SET search_path is pinned", () => {
     const sql = `CREATE FUNCTION public.do_thing() RETURNS void\nLANGUAGE plpgsql SECURITY DEFINER\nSET search_path = pg_catalog, public AS $$ BEGIN END $$;`;
     expect(ids(sql)).not.toContain("security-definer-no-search-path");

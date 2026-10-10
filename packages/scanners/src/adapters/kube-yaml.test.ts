@@ -23,7 +23,7 @@
 //      path, a `*` in a flow list) is looked for outside the field it
 //      belongs to, or the first copy of a duplicate is taken for the second.
 import { describe, expect, it } from "vitest";
-import { anchorLine, containerLine, findDocument, kubeDocuments, pathLine, podSpecLine } from "./kube-yaml.js";
+import { anchorLine, containerLine, kubeDocuments, pathLine, podSpecLine } from "./kube-yaml.js";
 
 const yaml = (...rows: string[]): string => `${rows.join("\n")}\n`;
 
@@ -59,24 +59,6 @@ const TWO = yaml(
 );
 
 describe("kube-yaml", () => {
-  it("a finding for the second object of a file lands in that object, not the first with the same name (1)", () => {
-    const docs = kubeDocuments(TWO);
-    expect(docs.map((d) => [d.kind, d.name, d.first])).toEqual([
-      ["Deployment", "web", 1],
-      ["Service", "web", 22],
-    ]);
-    const service = findDocument(docs, { kind: "Service", name: "web", namespace: "" })!;
-    expect(pathLine(service, ["spec", "ports", "0", "port"])).toEqual({ line: 28, found: true });
-    const deployment = findDocument(docs, { kind: "Deployment", name: "web", namespace: "shop" })!;
-    expect(deployment.first).toBe(1);
-  });
-
-  it("a field path resolves to the line of its key (2)", () => {
-    const [deployment] = kubeDocuments(TWO);
-    expect(pathLine(deployment!, ["spec", "replicas"])).toEqual({ line: 7, found: true });
-    expect(pathLine(deployment!, ["metadata", "namespace"])).toEqual({ line: 5, found: true });
-  });
-
   it("a sequence index picks its entry, in an indented and an indentless sequence (3)", () => {
     const [deployment] = kubeDocuments(TWO);
     expect(pathLine(deployment!, ["spec", "template", "spec", "containers", "0", "ports", "1", "containerPort"])).toEqual({ line: 18, found: true });

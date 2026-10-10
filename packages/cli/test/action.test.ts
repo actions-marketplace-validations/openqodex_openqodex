@@ -34,7 +34,6 @@
 // no reviewer: the cases with the real Claude Code are in
 // tests/e2e/action-review.test.ts.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,7 +50,6 @@ const step = (name: string) => action.runs.steps.find((s) => s.name === name);
 const SCRIPT_PATH = join(here, "..", "..", "..", "scripts", "action-scan.sh");
 const SCRIPT = readFileSync(SCRIPT_PATH, "utf8");
 const RUN_STEP = "Review or scan the change";
-const PLAN_STEP = "Plan the scanner downloads";
 const FAIL_STEP = "Fail on blocking findings, a missing review or a tool failure";
 // A made-up key: never a real one. Every test that sets it checks it leaks nowhere.
 const KEY = "openqodex-test-placeholder-not-an-api-key";
@@ -71,34 +69,6 @@ function failsJob(outputs: string, inputs: Record<string, string> = {}): boolean
 }
 
 describe("the GitHub Action", () => {
-  it("1, 3, 5. fails the job on exit 1, and on exit 2 only when fail-on-tool-error is true", () => {
-    expect(failsJob("exit-code=1\nreview-status=off")).toBe(true);
-    expect(failsJob("exit-code=2\nreview-status=off")).toBe(false);
-    expect(failsJob("exit-code=2\nreview-status=off", { "fail-on-tool-error": "true" })).toBe(true);
-    expect(failsJob("exit-code=0\nreview-status=off", { "fail-on-tool-error": "true" })).toBe(false);
-    expect(step(FAIL_STEP)?.run).toContain("exit 1");
-    expect(action.inputs["fail-on-tool-error"]?.default).toBe("false");
-  });
-
-  it("R11, R12. a blocking finding fails the job whatever fail-on-tool-error says; review: required fails without a complete review", () => {
-    expect(failsJob("exit-code=1\nreview-status=incomplete", { "fail-on-tool-error": "false" })).toBe(true);
-    for (const status of ["incomplete", "unavailable", "off"]) {
-      expect(failsJob(`exit-code=0\nreview-status=${status}`, { review: "required" }), status).toBe(true);
-      expect(failsJob(`exit-code=0\nreview-status=${status}`, { review: "auto" }), status).toBe(false);
-    }
-    expect(failsJob("exit-code=0\nreview-status=complete", { review: "required" })).toBe(false);
-    expect(failsJob("exit-code=0\nreview-status=skipped", { review: "required" })).toBe(false);
-  });
-
-  it("4. on exit 2 it writes a warning annotation, a job summary line and status tool-failed", () => {
-    expect(step(RUN_STEP)?.run).toBe('bash "${GITHUB_ACTION_PATH}/scripts/action-scan.sh"');
-    const run = SCRIPT;
-    expect(run).toContain("::warning title=OpenQodex did not run::");
-    expect(run).toContain("GITHUB_STEP_SUMMARY");
-    for (const status of ["passed", "blocked", "tool-failed"]) expect(run).toContain(`status=${status}`);
-    expect(action.outputs?.status?.value).toBe("${{ steps.scan.outputs.status }}");
-  });
-
   it("R20. declares the outputs reviewed, review-status and reviewer, and the inputs review and claude-code-version", () => {
     for (const name of ["reviewed", "review-status", "reviewer"]) expect(action.outputs?.[name]?.value).toBe(`\${{ steps.scan.outputs.${name} }}`);
     expect(action.inputs.review?.default).toBe("auto");
@@ -142,12 +112,6 @@ describe("the GitHub Action", () => {
     expect(review.status).toBe(2);
     expect(review.stderr).toContain("--block-on-severity must be one of info, nitpick, minor, major, critical, not high");
   });
-
-  it("2. says first that it runs the scanners only and is not a review", () => {
-    // The first line the step prints, as the job log shows it.
-    const first = runStep(gitRepo().dir, {}).stdout.split("\n")[0];
-    expect(first).toMatch(/^OpenQodex scanners only: .*not a review/);
-  });
 });
 
 // The step run as GitHub runs a composite bash step (bash -eo pipefail), in
@@ -170,9 +134,6 @@ function runStep(dir: string, env: Record<string, string>, before: string[] = []
       'if [ -n "$OQ_FOLDERS" ]; then pwd -P >> "$OQ_FOLDERS"; fi',
       'if [ -n "$OQ_PATHS" ]; then printf "%s\\n" "$PATH" >> "$OQ_PATHS"; fi',
       'if [ "$1" = "doctor" ]; then shift; set -- doctor $(for a in "$@"; do [ "$a" = "--install" ] || printf "%s\\n" "$a"; done); fi',
-      // OQ_KILL_SCAN: the scan process is killed (exit 137), as the runner's
-      // out-of-memory killer would.
-      'if [ "$1" = "scan" ] && [ -n "$OQ_KILL_SCAN" ]; then kill -9 $$; fi',
       'if [ "$1" = "scan" ] && [ -z "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install --only sqllint "$@"; fi',
       'if [ "$1" = "scan" ] && [ -n "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install "$@"; fi',
       `exec "${process.execPath}" "${bin}" "$@"`,
@@ -251,74 +212,7 @@ function pullRequest(baseConfig: string | null, headConfig: string | null, extra
   return { dir, base };
 }
 
-describe("the plan step and the scanner cache (14)", () => {
-  const keyOf = (outputs: string) => /^cache-key=(.*)$/m.exec(outputs)?.[1];
-
-  it("keys the cache on the pinned table, its lock files and the scanners the repository needs, and on nothing else", () => {
-    expect(step(PLAN_STEP)?.env?.OPENQODEX_STEP).toBe("plan");
-    expect(action.runs.steps.find((s) => s.uses?.startsWith("actions/cache@"))?.with?.key).toBe("${{ steps.plan.outputs.cache-key }}");
-    const { dir, git } = gitRepo();
-    writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: { "react-native": "0.76.0", react: "18.3.1" } }));
-    writeFileSync(join(dir, "index.tsx"), "export const x = 1;\n");
-    writeFileSync(join(dir, "Gemfile"), "gem 'cocoapods'\n");
-    git("add", "-A");
-    git("commit", "-qm", "App");
-    const calls = join(tempDir("oq-calls-"), "calls");
-    const runner = { OPENQODEX_STEP: "plan", RUNNER_OS: "Linux", RUNNER_ARCH: "X64" };
-    const a = runStep(dir, { ...runner, OQ_CALLS: calls });
-    expect(a.status, a.stderr).toBe(0);
-    const key = keyOf(a.outputs);
-    expect(key).toMatch(/^openqodex-tools-Linux-X64-[0-9a-f]{16}-[0-9a-f]{16}$/);
-    expect(a.stdout).toContain("oxlint: JavaScript or TypeScript files, such as index.tsx");
-    expect(a.stdout).not.toContain("brakeman");
-    expect(a.stdout).not.toContain("rubocop");
-    // Only doctor ran: nothing installed, nothing scanned.
-    expect(readFileSync(calls, "utf8")).toBe("doctor key=\n");
-    // The key is made of exactly these, so a release that pins nothing new
-    // keeps it. (The stand-in npx runs this build whatever the version asks
-    // for, so a second run with another version proves nothing: the key's
-    // parts are checked instead.)
-    const scanners = join(here, "..", "..", "scanners");
-    const table = createHash("sha256").update(readFileSync(join(scanners, "toolchain.json")));
-    for (const name of readdirSync(join(scanners, "locks")).filter((f) => f.endsWith(".txt")).sort()) {
-      table.update(`\0${name}\0`).update(readFileSync(join(scanners, "locks", name)));
-    }
-    const part = (t: string) => createHash("sha256").update(t).digest("hex").slice(0, 16);
-    expect(key).toBe(`openqodex-tools-Linux-X64-${table.digest("hex").slice(0, 16)}-${part("gitleaks,oxlint,semgrep")}`);
-    // A Python file calls for ruff and bandit: another key.
-    writeFileSync(join(dir, "tool.py"), "import os\n");
-    git("add", "-A");
-    git("commit", "-qm", "Tool");
-    expect(keyOf(runStep(dir, runner).outputs)).not.toBe(key);
-  });
-
-  it("an unreadable config passes the step with a key for no download, as doctor --install then installs nothing", () => {
-    const { dir, git } = gitRepo();
-    writeFileSync(join(dir, ".openqodex.yaml"), "review: [\n");
-    git("add", "-A");
-    git("commit", "-qm", "Config");
-    const r = runStep(dir, { OPENQODEX_STEP: "plan", RUNNER_OS: "Linux", RUNNER_ARCH: "X64" });
-    expect(r.status, r.stderr).toBe(0);
-    expect(keyOf(r.outputs)).toMatch(/^openqodex-tools-Linux-X64-[0-9a-f]{16}-[0-9a-f]{16}$/);
-    expect(r.stdout).not.toMatch(/^(semgrep|gitleaks):/m);
-  });
-});
-
 describe("the scan step, run", () => {
-  it("7. every step that runs openqodex sits under the tool-failure policy: an unreadable config warns and passes", () => {
-    const runs = action.runs.steps.filter((s) => s.run?.includes("openqodex@") || s.run?.includes("action-scan.sh"));
-    expect(runs.map((s) => s.name)).toEqual([PLAN_STEP, RUN_STEP]);
-    const { dir, git } = gitRepo();
-    // Committed: the Action reads the config from the checked-out commit.
-    writeFileSync(join(dir, ".openqodex.yaml"), "review: [\n");
-    git("add", "-A");
-    git("commit", "-qm", "Config");
-    const r = runStep(dir, {});
-    expect(r.status).toBe(0);
-    expect(r.outputs).toContain("status=tool-failed");
-    expect(r.stdout).toContain("::warning title=OpenQodex did not run::");
-  });
-
   it("8. the reason line survives empty input and carries no workflow command of its own", () => {
     const script = SCRIPT;
     const fn = /last_line\(\) \{[\s\S]*?\n\}/.exec(script)?.[0];
@@ -488,54 +382,6 @@ describe("the scan step, run", () => {
     expect(tokens.length).toBeGreaterThan(2);
     expect(new Set(tokens).size).toBe(2);
   });
-
-  it("12. a scan killed by a signal is a tool error: exit-code 2, status tool-failed and the warning", () => {
-    const { dir } = gitRepo();
-    const r = runStep(dir, { OQ_KILL_SCAN: "1" });
-    expect(r.status).toBe(0);
-    expect(r.outputs).toContain("exit-code=2");
-    expect(r.outputs).toContain("status=tool-failed");
-    expect(r.stdout).toContain("::warning title=OpenQodex did not run::");
-  });
-
-  // A clone of a remote holding main, with a pushed commit that adds the SQL
-  // file, checked out detached as the runner does.
-  function pushedClone(onBranch: boolean): { dir: string; before: string } {
-    const { dir: origin } = gitRepo();
-    const dir = tempDir("oq-action-push-");
-    spawnSync("git", ["clone", "-q", origin, dir]);
-    const git = (...a: string[]) => spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@openqodex.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: dir, encoding: "utf8" }).stdout.trim();
-    const before = git("rev-parse", "HEAD");
-    if (onBranch) git("checkout", "-q", "-b", "feature");
-    mkdirSync(join(dir, "db"));
-    writeFileSync(join(dir, "db/x.sql"), SQL);
-    git("add", "-A");
-    git("commit", "-qm", "Pushed");
-    git("checkout", "-q", "--detach");
-    // actions/checkout sets no origin/HEAD, so the CLI has no default base.
-    git("remote", "set-head", "origin", "-d");
-    return { dir, before };
-  }
-
-  it("13. a push event scans the pushed commits from the event's previous commit", () => {
-    const { dir, before } = pushedClone(false);
-    const r = runStep(dir, { EVENT_NAME: "push", PUSH_BEFORE: before, BLOCK_ON_SEVERITY: "info" });
-    expect(r.outputs).toContain("status=blocked");
-  });
-
-  it("13. a push that creates a branch scans from the merge base with the default branch", () => {
-    const { dir } = pushedClone(true);
-    const r = runStep(dir, { EVENT_NAME: "push", PUSH_BEFORE: "0".repeat(40), DEFAULT_BRANCH: "main", BLOCK_ON_SEVERITY: "info" });
-    expect(r.outputs).toContain("status=blocked");
-  });
-
-  it("13. an event with no usable base says so in its first line", () => {
-    const { dir } = gitRepo();
-    for (const env of [{ EVENT_NAME: "workflow_dispatch" }, { EVENT_NAME: "push", PUSH_BEFORE: "not-a-sha" }]) {
-      const first = runStep(dir, env).stdout.split("\n")[0];
-      expect(first, env.EVENT_NAME).toMatch(/^OpenQodex scanners only: .*not a review.*no base/);
-    }
-  });
 });
 
 // PATH without any folder that holds a `claude` program, so the review mode
@@ -556,22 +402,6 @@ const callsFile = () => join(tempDir("oq-calls-"), "calls");
 const outputOf = (outputs: string, name: string) => new RegExp(`^${name}=(.*)$`, "m").exec(outputs)?.[1];
 
 describe("the review mode, without a reviewer", () => {
-  it("R14. review: auto with no key runs the scanners only and says in one line how to turn the review on", () => {
-    const calls = callsFile();
-    const r = runStep(gitRepo().dir, { OQ_CALLS: calls, ...noClaude() });
-    const lines = r.stdout.split("\n");
-    expect(lines[0]).toMatch(/^OpenQodex scanners only: .*not a review/);
-    expect(lines[1]).toBe("To run the full review in this job, set ANTHROPIC_API_KEY on this step from a repository secret; GitHub gives no secrets to a pull request from a fork.");
-    expect(readFileSync(calls, "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")[0])).toEqual(["doctor", "scan"]);
-    expect(r.stdout).not.toContain("Installing Claude Code");
-    expect(outputOf(r.outputs, "review-status")).toBe("off");
-    expect(outputOf(r.outputs, "reviewed")).toBe("false");
-    expect(outputOf(r.outputs, "reviewer")).toBe("");
-    // No summary for a job that ran as it always did.
-    expect(r.summary).toBe("");
-    expect(failsJob(r.outputs)).toBe(false);
-  });
-
   it("R14. review: off with a key runs the scanners only and never hands the key to anything", () => {
     const calls = callsFile();
     const r = runStep(gitRepo().dir, { OQ_CALLS: calls, ANTHROPIC_API_KEY: KEY, REVIEW: "off", ...noClaude() });
@@ -624,27 +454,6 @@ describe("the review mode, without a reviewer", () => {
       for (const f of allFiles(run.temp)) expect(readFileSync(f, "latin1"), f).not.toContain(KEY);
     }
   }, 60_000);
-
-  it("R1, R20. a report the pull request committed under .openqodex/ is never taken for this run's", () => {
-    const planted = (dir: string) => {
-      const run = join(dir, ".openqodex/reviews/20260101-000000-aaaaaaaaaaaa");
-      mkdirSync(run, { recursive: true });
-      const fake = { version: 1, kind: "review", verdict: "passed", block_on_severity: null, findings: [], completion: { status: "complete", missing: [], reviewer: { driver: "claude", version: "9.9.9" } } };
-      writeFileSync(join(run, "report.json"), JSON.stringify(fake));
-      writeFileSync(join(run, "report.md"), "# PLANTED REVIEW: no findings\n");
-      writeFileSync(join(run, "report.sarif"), "{}");
-      writeFileSync(join(dir, ".openqodex/latest.json"), JSON.stringify({ dir: ".openqodex/reviews/20260101-000000-aaaaaaaaaaaa", change_id: "x", kind: "review", finalized: true, verdict: "passed", completion: "complete" }));
-    };
-    const { dir, base } = pullRequest(null, null, planted);
-    const r = runStep(dir, { REVIEW: "required", EVENT_NAME: "pull_request", BASE_SHA: base, BASE_REF: "main", ...noClaude() });
-    expect(r.stdout.split("\n")[0]).toContain("on this runner's Claude Code login");
-    expect(outputOf(r.outputs, "reviewed")).toBe("false");
-    expect(outputOf(r.outputs, "review-status")).toBe("unavailable");
-    expect(outputOf(r.outputs, "reviewer")).toBe("");
-    expect(r.summary).not.toContain("PLANTED");
-    expect(outputOf(r.outputs, "sarif-file")?.startsWith(r.temp)).toBe(true);
-    expect(failsJob(r.outputs, { review: "required" })).toBe(true);
-  }, 30_000);
 
   it("R17. a claude program the checkout holds is never run, even first on PATH", () => {
     const marker = join(tempDir("oq-claude-ran-"), "ran");

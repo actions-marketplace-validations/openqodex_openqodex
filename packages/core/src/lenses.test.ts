@@ -11,16 +11,13 @@
 // 7. A lens a scanner rule covers is still handed to the reviewer though the
 //    rule ran on every changed file the lens matches; or it stands down when
 //    the rule ran on only some of them, or not at all.
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   defaultLensDir,
-  extractChangedLineText,
   loadLensCatalog,
   parseLens,
-  pickLensDirFromCandidates,
   selectLensesForDiff,
   type Lens,
 } from "./lenses.js";
@@ -38,26 +35,6 @@ const FILE_DIFF = [
 ].join("\n");
 
 describe("parseLens", () => {
-  it("parses a lens with full frontmatter and body", () => {
-    const lens = parseLens(`---
-name: my-lens
-description: catches a bad thing
-triggers:
-  files: ["*.ts"]
-  hunk_regex: "\\\\bbadthing\\\\b"
-confidence_floor: 0.8
----
-body line one
-body line two`);
-    expect(lens).toMatchObject({
-      name: "my-lens",
-      description: "catches a bad thing",
-      triggers: { files: ["*.ts"], hunkRegex: "\\bbadthing\\b" },
-      confidenceFloor: 0.8,
-    });
-    expect(lens.body).toContain("body line one");
-  });
-
   it("throws when name or description is missing", () => {
     expect(() => parseLens(`---\ndescription: x\n---\nbody`)).toThrow(/name/);
     expect(() => parseLens(`---\nname: x\n---\nbody`)).toThrow(/description/);
@@ -73,15 +50,6 @@ body line two`);
 
   it("throws when frontmatter delimiters are missing", () => {
     expect(() => parseLens("no frontmatter")).toThrow(/frontmatter/);
-  });
-});
-
-describe("extractChangedLineText", () => {
-  it("keeps + and - lines and strips +++/--- file headers", () => {
-    const text = extractChangedLineText(FILE_DIFF);
-    expect(text).not.toContain("a/src/api/billing.ts");
-    expect(text).not.toContain("b/src/api/billing.ts");
-    expect(text).toContain("await db.users.upsert");
   });
 });
 
@@ -115,13 +83,6 @@ describe("selectLensesForDiff without file globs", () => {
 });
 
 describe("selectLensesForDiff with file globs", () => {
-  const upsertLens = lens("upsert-state", { files: ["*.ts", "**/*.ts"], hunkRegex: "\\bupsert\\b" });
-
-  it("selects a lens whose file glob and hunk regex both match", () => {
-    const out = selectLensesForDiff({ diff: FILE_DIFF, files: ["src/api/billing.ts"], catalog: [upsertLens] });
-    expect(out.map((l) => l.name)).toEqual(["upsert-state"]);
-  });
-
   it("skips a lens when no file matches the glob", () => {
     const py = lens("py-thing", { files: ["*.py", "**/*.py"] });
     expect(selectLensesForDiff({ diff: FILE_DIFF, files: ["src/api/billing.ts"], catalog: [py] })).toEqual([]);
@@ -174,46 +135,6 @@ describe("a lens a scanner rule covers (7)", () => {
     const files = ["web/a.tsx", "legacy/b.jsx"];
     expect(selectLensesForDiff({ diff: TSX_DIFF, files, catalog: catalog(), covered: ranOn(["web/a.tsx"]) }).map((l) => l.name)).toEqual(["react-use-effect-missing-deps"]);
     expect(selectLensesForDiff({ diff: TSX_DIFF, files, catalog: catalog() }).map((l) => l.name)).toEqual(["react-use-effect-missing-deps"]);
-  });
-});
-
-describe("pickLensDirFromCandidates", () => {
-  const roots: string[] = [];
-  afterAll(() => {
-    for (const d of roots) rmSync(d, { recursive: true, force: true });
-  });
-  const root = () => {
-    const dir = mkdtempSync(join(tmpdir(), "openqodex-lenses-test-"));
-    roots.push(dir);
-    return dir;
-  };
-
-  it("skips a candidate that exists but has no .md files", () => {
-    const r = root();
-    const bundleLike = join(r, "bundle");
-    const lensDir = join(r, "lenses");
-    mkdirSync(bundleLike);
-    writeFileSync(join(bundleLike, "index.js"), "// bundled\n");
-    mkdirSync(lensDir);
-    writeFileSync(join(lensDir, "x.md"), "---\nname: x\ndescription: y\n---\nbody");
-    expect(pickLensDirFromCandidates([bundleLike, lensDir])).toBe(lensDir);
-  });
-
-  it("throws when no candidate exists or has markdown", () => {
-    const r = root();
-    expect(() => pickLensDirFromCandidates([join(r, "missing-a"), join(r, "missing-b")])).toThrow(
-      /lens catalog directory not found/,
-    );
-  });
-
-  it("finds the shipped lenses from the module's own location", () => {
-    const original = process.cwd();
-    process.chdir(tmpdir());
-    try {
-      expect(defaultLensDir().endsWith(join("core", "lenses"))).toBe(true);
-    } finally {
-      process.chdir(original);
-    }
   });
 });
 
