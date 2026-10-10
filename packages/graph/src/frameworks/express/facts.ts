@@ -7,6 +7,10 @@
 // when a local name shadows an import or a module constant. Nothing here
 // knows which name is Express: that is decided in resolve, from the file's
 // imports, so a fact never claims what only another file can prove.
+//
+// The values and the scopes are kept only for a file whose values resolve
+// can read (`valuesRead`): most files hold neither an application nor a
+// route, and their values were most of every kept facts file.
 import type { Node } from "web-tree-sitter";
 import type { FactReader, FrameworkFactBase } from "../plugin.js";
 import { eitherPathText, eitherSegmentText, keepParts, ledForm } from "../shared/kept.js";
@@ -65,10 +69,38 @@ export function wants(): boolean {
 const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
 
 // The node types the reader is entered for (the function types besides,
-// scopedVisitor), and those of the ancestors it reads as nodes: what holds
-// a variable declarator, and what holds a parameter list.
-const TYPES: ReadonlySet<string> = new Set(["class_declaration", "catch_clause", "call_expression", "variable_declarator", "assignment_expression", "required_parameter", "optional_parameter"]);
+// scopedVisitor; an import or a re-export for the module it names), and
+// those of the ancestors it reads as nodes: what holds a variable
+// declarator, and what holds a parameter list.
+const TYPES: ReadonlySet<string> = new Set(["class_declaration", "catch_clause", "call_expression", "variable_declarator", "assignment_expression", "required_parameter", "optional_parameter", "import_statement", "export_statement"]);
 const KEEP: ReadonlySet<string> = new Set(["lexical_declaration", "variable_declaration", "function_signature", "method_signature", "abstract_method_signature", "call_signature", "construct_signature", "function_type", "constructor_type"]);
+
+// The modules whose values make an application, a router or a test agent.
+const MODULES = new Set(["express", "supertest"]);
+// The module a string names as the language facts read an import's
+// specifier: the string's text without its quotes (extract.ts).
+const specifier = (n: Node | null | undefined): string | null => (n?.type === "string" ? n.text.slice(1, -1) : null);
+
+// Whether resolve can read a file's values and scopes (resolve.ts reads
+// them for the receivers, paths and handlers of the file's own watched
+// calls, for the applications, routers and agents a file makes, and for a
+// value another file imports and follows): the file holds a watched call
+// or a createServer call, names express or supertest as a module (only
+// such a file makes an application, a router or an agent), or may give a
+// module-level name another name's value (`export const server = app`, an
+// alias that passes an imported application on: a declaration at module
+// level, or an assignment anywhere, which may write the module's name).
+// Any other file's values are never read: it has no call of its own to
+// resolve, none of its values is made by express, and a module-level value
+// resolve follows into it is not a name it can follow.
+function valuesRead(facts: readonly ExpressFact[], namesModule: boolean): boolean {
+  if (namesModule) return true;
+  for (const f of facts) {
+    if (f.kind === "call" || f.kind === "server") return true;
+    if (f.kind === "value" && f.value.t === "ref" && (f.scope === 0 || f.decl === "assign")) return true;
+  }
+  return false;
+}
 
 export function readFacts(root: Node): ExpressFact[] {
   return readAlone(root, reader(root));
@@ -80,6 +112,7 @@ export function reader(root: Node): FactReader<ExpressFact> {
   const out: ExpressFact[] = [];
   let firstBroken = 0;
   let broken = 0;
+  let namesModule = false;
   // Each function scope's parent and declared names, by the line it starts on.
   const scopes = new Map<number, { parent: number; names: Set<string>; all: boolean }>();
   const declare = (at: number, names: readonly string[]) => {
@@ -116,6 +149,10 @@ export function reader(root: Node): FactReader<ExpressFact> {
       declare(scope, names);
     }
     switch (type) {
+      case "import_statement":
+      case "export_statement":
+        if (!namesModule && MODULES.has(specifier(node.childForFieldName("source")) ?? "")) namesModule = true;
+        return;
       case "call_expression": {
         // A call the parser had to repair (a missing parenthesis) is no fact.
         if (node.hasError) return;
@@ -123,6 +160,8 @@ export function reader(root: Node): FactReader<ExpressFact> {
         // The arguments, read only for a call the reader keeps a fact of.
         let list: Node[] | null = null;
         const args = (): Node[] => (list ??= (node.childForFieldName("arguments")?.namedChildren ?? []).filter((c) => c.type !== "comment"));
+        // `require("express")`, `await import("supertest")`.
+        if (!namesModule && (fn?.type === "import" || (fn?.type === "identifier" && fn.text === "require")) && MODULES.has(specifier(args()[0]) ?? "")) namesModule = true;
         if (fn?.type === "member_expression") {
           const prop = fn.childForFieldName("property");
           const name = prop?.type === "property_identifier" ? identifierName(prop.text) : null;
@@ -206,7 +245,8 @@ export function reader(root: Node): FactReader<ExpressFact> {
     // it drops a scope: a name read in a function whose scope is missing would
     // otherwise bind to the module.
     const scopeFacts: ExpressFact[] = [...scopes].map(([line, s]) => ({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all }));
-    return keepRead([...scopeFacts, ...out]);
+    const facts = keepRead([...scopeFacts, ...out]);
+    return valuesRead(out, namesModule) ? facts : facts.filter((f) => f.kind !== "value" && f.kind !== "scope");
   };
   return { visitor, finish };
 }
