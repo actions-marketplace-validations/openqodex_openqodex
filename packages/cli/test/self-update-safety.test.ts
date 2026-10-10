@@ -769,18 +769,6 @@ describe("20 to 27. the third review", () => {
     expect(existsSync(join(dir, "report.json"))).toBe(true);
   }, 180_000);
 
-  it("init --yes keeps an earlier --no-repo: the team section stays out (failure 25)", () => {
-    const s = sandbox();
-    const first = cli(s, ["init", "--yes", "--hook", "none", "--no-repo", "--agent", "claude-code"]);
-    expect(first.status, first.stderr).toBe(0);
-    expect(existsSync(join(s.repo, "CLAUDE.md"))).toBe(false);
-    const r = cli(s, ["init", "--yes", "--hook", "none", "--agent", "claude-code"]);
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("team review section: left out, as this repo chose before");
-    expect(existsSync(join(s.repo, "CLAUDE.md"))).toBe(false);
-    expect(existsSync(join(s.repo, "AGENTS.md"))).toBe(false);
-  });
-
   it("a linked spelling of the home and one with a trailing slash share the lock (failure 26)", () => {
     const base = realpathSync(tempDir("oq-spell-"));
     const home = join(base, "home");

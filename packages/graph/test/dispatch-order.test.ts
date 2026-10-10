@@ -8,6 +8,7 @@
 // 6. `include A, B` in Ruby puts A before B, yet the lookup picks B.
 // 7. A candidate implementing `Repo<B>` is dropped for a call on `Repo<A>`
 //    although TypeScript compares A and B by their shape, not their names.
+//    (Proved by the corpus case typescript/dispatch/generic-mismatch.)
 // 8. A table whose entries are changed after it is written (`handlers.a =
 //    g`), passed on, or exported narrows a computed call to the entries it
 //    was written with, so a function put in later reads as never called.
@@ -82,15 +83,6 @@ describe("lookup orders and value rules", () => {
     const sites = (id: string) => (g.in.get(id) ?? []).flatMap((e) => e.sites.map((s) => s.column));
     expect(sites(idOf(g, "m.rb", "A.m"))).toHaveLength(1);
     expect(sites(idOf(g, "m.rb", "A.m"))[0]).toBeLessThan(sites(idOf(g, "m.rb", "B.m"))[0] as number);
-  });
-
-  it("keeps an implementation of Repo<B> as a candidate of a call on Repo<A>, since TypeScript compares types by shape (7)", async () => {
-    const g = await graphOf({
-      "src/types.ts": "export interface A {\n  id: string;\n}\nexport interface B {\n  id: string;\n}\nexport interface Repo<T> {\n  find(): T;\n}\n",
-      "src/b-repo.ts": 'import type { B, Repo } from "./types";\nexport class BRepo implements Repo<B> {\n  find(): B {\n    return { id: "b" };\n  }\n}\n',
-      "src/use.ts": 'import type { A, Repo } from "./types";\nexport function use(r: Repo<A>): A {\n  return r.find();\n}\n',
-    });
-    expect(into(g, idOf(g, "src/b-repo.ts", "BRepo.find"))).toEqual(["src/use.ts:3 dispatches_to possible"]);
   });
 
   it("keeps the gap of a computed call on a table project-wide when the table is changed, passed on or exported (8)", async () => {

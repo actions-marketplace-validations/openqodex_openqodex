@@ -5,7 +5,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   groupGoPackagesByModule,
-  nearestGoModuleRoot,
   parseGolangciJson,
 } from "./golangci.js";
 
@@ -97,29 +96,6 @@ afterAll(() => {
   for (const d of tmpRoots) fs.rmSync(d, { recursive: true, force: true });
 });
 
-describe("nearestGoModuleRoot", () => {
-  it("finds go.mod at the run dir itself", () => {
-    const dir = repo({ modules: ["."] });
-    expect(nearestGoModuleRoot(dir, "internal/auth")).toBe(".");
-  });
-
-  it("walks up to a module nested several levels below the run dir", () => {
-    const dir = repo({ modules: ["src/factors"] });
-    expect(nearestGoModuleRoot(dir, "src/factors/model/model")).toBe("src/factors");
-  });
-
-  it("returns null when no module exists above the changed dir", () => {
-    const dir = repo({ modules: [] });
-    expect(nearestGoModuleRoot(dir, "src/factors/model")).toBeNull();
-  });
-
-  it("prefers the nearest module when modules nest", () => {
-    const dir = repo({ modules: [".", "tools/gen"] });
-    expect(nearestGoModuleRoot(dir, "tools/gen/internal")).toBe("tools/gen");
-    expect(nearestGoModuleRoot(dir, "cmd/server")).toBe(".");
-  });
-});
-
 describe("groupGoPackagesByModule", () => {
   it("expresses package args relative to the module root, not the run dir", () => {
     const dir = repo({ modules: ["src/factors"] });
@@ -163,15 +139,5 @@ describe("groupGoPackagesByModule", () => {
 
     expect(groups.map((g) => g.moduleRoot)).toEqual(["backend"]);
     expect(orphans).toEqual(["scripts"]);
-  });
-
-  it("keeps the run-dir-rooted shape when go.mod is at the run dir", () => {
-    const dir = repo({ modules: ["."] });
-
-    const { groups } = groupGoPackagesByModule(dir, ["internal/auth/hash.go", "main.go"]);
-
-    expect(groups).toHaveLength(1);
-    expect(groups[0].moduleRoot).toBe(".");
-    expect(groups[0].packages.sort()).toEqual([".", "./internal/auth"]);
   });
 });

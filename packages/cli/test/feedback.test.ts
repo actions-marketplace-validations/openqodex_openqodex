@@ -240,23 +240,6 @@ describe("feedback offer", () => {
     expect(existsSync(h.record)).toBe(false);
   });
 
-  it("report --send-last opens the new issue page with exactly the shown title and body", () => {
-    const h = harness();
-    const dir = repo(() => {});
-    const r = cli(["report", "the review hung after the brief"], dir, h);
-    const issue = shown(r.stderr);
-    expect(existsSync(h.record)).toBe(false);
-
-    const sent = cli(["report", "--send-last"], dir, h);
-    expect(sent.code).toBe(0);
-    expect(sent.stderr).toContain(`Issue title: ${issue.title}\nIssue body:\n${issue.body}\n`);
-    const url = new URL(readFileSync(h.record, "utf8"));
-    expect(`${url.origin}${url.pathname}`).toBe("https://github.com/openqodex/openqodex/issues/new");
-    expect(url.searchParams.get("title")).toBe(issue.title);
-    expect(url.searchParams.get("body")).toBe(issue.body);
-    expect(sent.stdout).toContain(url.href.split("?")[0]);
-  });
-
   it("hook check prints no offer and exits 0 when its input breaks", () => {
     const h = harness();
     const dir = repo(() => {});

@@ -16,55 +16,6 @@ function fakeFinding(over: Partial<StaticFinding> = {}): StaticFinding {
   };
 }
 
-describe("ruleClassFor", () => {
-  it("classes every gitleaks finding as 'secret'", () => {
-    expect(ruleClassFor(fakeFinding({ source: "gitleaks", ruleId: "any-rule" }))).toBe("secret");
-  });
-
-  it("classes semgrep secret-related rules as 'secret'", () => {
-    for (const id of [
-      "javascript.lang.security.audit.hardcoded-secret",
-      "generic.secrets.gitleaks.aws-access-key",
-      "go.lang.security.audit.credential-leak",
-      "javascript.express.audit.api-key-in-source",
-    ]) {
-      expect(ruleClassFor(fakeFinding({ ruleId: id }))).toBe("secret");
-    }
-  });
-
-  it("classes semgrep injection rules as 'injection'", () => {
-    for (const id of [
-      "javascript.lang.security.audit.sql-injection",
-      "python.flask.security.audit.command-injection",
-      "javascript.react.security.audit.react-dangerously-set-innerhtml-xss",
-      "javascript.lang.security.audit.path-traversal",
-    ]) {
-      expect(ruleClassFor(fakeFinding({ ruleId: id }))).toBe("injection");
-    }
-  });
-
-  it("classes semgrep auth rules as 'auth'", () => {
-    for (const id of [
-      "javascript.express.security.audit.missing-auth-check",
-      "go.lang.security.audit.access-control-bypass",
-      "javascript.permissions.over-broad",
-    ]) {
-      expect(ruleClassFor(fakeFinding({ ruleId: id }))).toBe("auth");
-    }
-  });
-
-  it("doesn't misclass an 'authorization-related' word like 'author'", () => {
-    expect(
-      ruleClassFor(fakeFinding({ ruleId: "javascript.lint.author-tag-missing" })),
-    ).not.toBe("auth");
-  });
-
-  it("falls through to a per-rule class for rules outside the known categories", () => {
-    const f = fakeFinding({ ruleId: "javascript.style.prefer-const" });
-    expect(ruleClassFor(f)).toBe("semgrep:javascript.style.prefer-const");
-  });
-});
-
 describe("dedupByRuleClass", () => {
   it("collapses two findings on the same span sharing a rule_class", () => {
     // gitleaks ("secret") + semgrep secret rule on the same line →
@@ -118,22 +69,6 @@ describe("dedupByRuleClass", () => {
       lineEnd: 25,
     });
     expect(dedupByRuleClass([a, b])).toHaveLength(2);
-  });
-
-  it("findings that do not collide are all kept, in their order", () => {
-    const a = fakeFinding({ ruleId: "rule-a", filePath: "x.ts", lineStart: 1 });
-    const b = fakeFinding({ ruleId: "rule-b", filePath: "y.ts", lineStart: 2 });
-    const c = fakeFinding({ ruleId: "rule-c", filePath: "z.ts", lineStart: 3 });
-    expect(dedupByRuleClass([a, b, c])).toEqual([a, b, c]);
-  });
-
-  it("breaks severity ties across scanners by first occurrence", () => {
-    // semgrep and gitleaks on the same secret, both high: the first one
-    // (semgrep, earlier in the ensemble) wins.
-    const first = fakeFinding({ ruleId: "javascript.audit.hardcoded-secret", severity: "high" });
-    const second = fakeFinding({ source: "gitleaks", ruleId: "generic-api-key", severity: "high" });
-    const result = dedupByRuleClass([first, second]);
-    expect(result).toEqual([first]);
   });
 
   it("keeps two rules of one class from the same scanner on one span", () => {

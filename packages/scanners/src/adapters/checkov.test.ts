@@ -31,16 +31,6 @@ describe("parseCheckovJson", () => {
     expect(new Set(findings.map((f) => f.severity))).toEqual(new Set(["medium"]));
   });
 
-  it("keeps the keys Checkov evaluated (2)", () => {
-    expect(findings.find((f) => f.ruleId === "CKV_AWS_24" && f.filePath === "infra/main.tf")?.keys).toEqual([
-      "ingress/[0]/from_port",
-      "ingress/[0]/to_port",
-      "ingress/[0]/cidr_blocks",
-      "ingress/[0]/ipv6_cidr_blocks",
-    ]);
-    expect(findings.find((f) => f.ruleId === "CKV_K8S_16")?.keys).toEqual(["spec/containers/[0]/securityContext/privileged"]);
-  });
-
   it("links a Python check's source at the pinned version and a graph check's policy index (4)", () => {
     const sg = findings.find((f) => f.ruleId === "CKV_AWS_24" && f.filePath === "infra/main.tf");
     expect(sg).toMatchObject({

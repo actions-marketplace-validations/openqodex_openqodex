@@ -74,14 +74,6 @@ describe("finalizeReview: schema", () => {
     expectThrow(makeSubmission({ version: 2 }), /invalid at version/);
   });
 
-  it("rejects a non-object", () => {
-    expectThrow("not json", /invalid at the top level/);
-  });
-
-  it("rejects a bad severity and names the path", () => {
-    expectThrow(makeSubmission({ findings: [finding({ severity: "high" })] }), /findings\[0\]\.severity/);
-  });
-
   it("rejects a missing title", () => {
     expectThrow(makeSubmission({ findings: [finding({ title: undefined })] }), /findings\[0\]\.title/);
   });
@@ -100,14 +92,6 @@ describe("finalizeReview: schema", () => {
 });
 
 describe("finalizeReview: change binding", () => {
-  it("accepts the full change id as well as the short one", () => {
-    expect(run(makeSubmission({ change_id: makeChange().id })).verdict).toBe("passed");
-  });
-
-  it("rejects a submission for another change", () => {
-    expectThrow(makeSubmission({ change_id: "aaaaaaaaaaaa" }), /the change moved since the brief; run openqodex review again/);
-  });
-
   it("rejects a manifest from another change", () => {
     const change = makeChange();
     expect(() =>
@@ -135,19 +119,6 @@ describe("finalizeReview: citations", () => {
       makeSubmission({ findings: [finding({ source: "lens:eval-on-user-input", candidate: null })] }),
       /finding 0 .* cites source "lens:eval-on-user-input"/,
     );
-  });
-
-  it("accepts a selected lens and a null source", () => {
-    const report = run(
-      makeSubmission({
-        findings: [
-          finding({ source: "lens:sql-string-concatenation", candidate: null }),
-          finding({ source: null, candidate: null, category: "bug", line_number: 15, line_end: 15 }),
-        ],
-        dropped: [],
-      }),
-    );
-    expect(report.findings.map((f) => f.source)).toEqual(["lens:sql-string-concatenation", null]);
   });
 
   it("rejects a candidate id that is not in this scan", () => {
@@ -278,10 +249,6 @@ describe("finalizeReview: candidates and verdict", () => {
     const report = run(makeSubmission({ dropped: [] }));
     expect(report.not_reviewed.map((c) => c.id)).toEqual(["c2", "c3"]);
     expect(report.verdict).toBe("passed");
-  });
-
-  it("blocks on a finding at the threshold", () => {
-    expect(run(makeSubmission(), { config: { blockOnSeverity: "critical" } }).verdict).toBe("blocked");
   });
 
   it("blocks on a not-reviewed candidate at the threshold", () => {

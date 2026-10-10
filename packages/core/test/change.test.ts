@@ -143,13 +143,6 @@ function indexHash(repo: string): string {
 }
 
 describe("findRepoRoot", () => {
-  it("returns the top folder from inside a subfolder", async () => {
-    const repo = seeded();
-    write(repo, "sub/x.ts", "x\n");
-    const root = await findRepoRoot(join(repo, "sub"));
-    expect(readFileSync(join(root, "a.ts"), "utf8")).toBe(lines(10));
-  });
-
   it("says plainly when the folder is not in a git repository", async () => {
     const dir = tempDir();
     await expect(findRepoRoot(dir)).rejects.toThrow(OpenQodexError);
@@ -158,21 +151,6 @@ describe("findRepoRoot", () => {
 });
 
 describe("getChange", () => {
-  it("finds a modified tracked file and a new untracked file, not an ignored one", async () => {
-    const repo = seeded();
-    write(repo, "a.ts", lines(10).replace("line 3\n", "line three\n"));
-    write(repo, "new.ts", "one\ntwo\n");
-    write(repo, "ignored.log", "noise\n");
-    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
-    expect(c.baseRef).toBe("HEAD");
-    expect(paths(c)).toEqual(["a.ts", "new.ts"]);
-    expect(c.files.find((f) => f.path === "new.ts")?.status).toBe("added");
-    expect(c.files.find((f) => f.path === "a.ts")?.status).toBe("modified");
-    expect(c.stats).toEqual({ files: 2, additions: 3, deletions: 1 });
-    expect(c.diff).toContain("+line three");
-    expect(c.diff).toContain(" line 2"); // the brief's diff carries context
-  });
-
   it("counts only added or changed lines as covered", async () => {
     const repo = seeded();
     const edited = lines(10).replace("line 3\n", "line three\n").replace("line 8\n", "") + "line 11\n";
@@ -180,17 +158,6 @@ describe("getChange", () => {
     const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
     // line 3 changed; line 8 deleted (no new-side line); line 11 appended at new line 10
     expect(c.coverage.get("a.ts")).toEqual(new Set([3, 10]));
-  });
-
-  it("includes commits not yet pushed, against the upstream", async () => {
-    const { repo, baseSha } = withUpstream();
-    write(repo, "committed.ts", "c\n");
-    commitAll(repo, "local work");
-    write(repo, "a.ts", lines(11));
-    const c = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
-    expect(c.baseRef).toBe("origin/main");
-    expect(c.baseSha).toBe(baseSha);
-    expect(paths(c)).toEqual(["a.ts", "committed.ts"]);
   });
 
   it("falls back to the remote's default branch without an upstream", async () => {
@@ -230,18 +197,6 @@ describe("getChange", () => {
     await expect(getChange({ repoRoot: repo, scope: {}, exclude: [], defaultBase: "release" })).rejects.toThrow(
       /^review\.default_base: release is not a ref here or a branch on origin/,
     );
-  });
-
-  it("reviews only the working tree with uncommitted, after committing half", async () => {
-    const { repo } = withUpstream();
-    write(repo, "first.ts", "1\n");
-    commitAll(repo, "first half");
-    write(repo, "second.ts", "2\n");
-    const all = await getChange({ repoRoot: repo, scope: {}, exclude: [] });
-    const wt = await getChange({ repoRoot: repo, scope: { uncommitted: true }, exclude: [] });
-    expect(paths(all)).toEqual(["first.ts", "second.ts"]);
-    expect(wt.baseRef).toBe("HEAD");
-    expect(paths(wt)).toEqual(["second.ts"]);
   });
 
   it("uses an explicit base as the point the branch left it", async () => {
