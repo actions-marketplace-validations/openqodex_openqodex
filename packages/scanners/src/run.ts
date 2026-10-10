@@ -713,8 +713,10 @@ const WORD_CLASSED: ReadonlySet<string> = new Set<BuiltinScanner>([
 // first occurrence: semgrep precedes gitleaks in the input order, and its
 // rule message is the more descriptive). Two different rules from one
 // scanner on one span are two problems and both stay; only an exact repeat
-// (same scanner, same rule) collapses. Findings on different lines never
-// merge, even where their spans overlap.
+// (same scanner, same rule) collapses, to its highest-severity hit (ties go
+// to the first occurrence, which the fixed input order makes the first
+// message), so a repeat never lowers a candidate's severity. Findings on
+// different lines never merge, even where their spans overlap.
 //
 // `merged`, when given, receives for each finding kept the tokens
 // ("<source>:<ruleId>") of the other scanners' findings merged into it, in
@@ -733,7 +735,8 @@ export function dedupByRuleClass(findings: StaticFinding[], merged?: Map<StaticF
     const winner = [...bucket].sort(
       (a, b) => severityRank(b.severity) - severityRank(a.severity),
     )[0];
-    const seenRules = new Set<string>();
+    // The winner's scanner keeps one hit per rule: its highest severity.
+    const kept = new Map<string, StaticFinding>();
     const others: string[] = [];
     for (const f of bucket) {
       if (f.source !== winner.source) {
@@ -741,10 +744,10 @@ export function dedupByRuleClass(findings: StaticFinding[], merged?: Map<StaticF
         if (!others.includes(token)) others.push(token);
         continue;
       }
-      if (seenRules.has(f.ruleId)) continue;
-      seenRules.add(f.ruleId);
-      emitted.add(f);
+      const held = kept.get(f.ruleId);
+      if (!held || severityRank(f.severity) > severityRank(held.severity)) kept.set(f.ruleId, f);
     }
+    for (const f of kept.values()) emitted.add(f);
     if (merged && others.length > 0) merged.set(winner, others);
   }
   // Walk the input once so survivors keep their input order.

@@ -79,6 +79,10 @@
 //      rule id.
 //  37. Of two hits a scanner repeats with one rule on one span, the one kept
 //      depends on the order they were printed.
+// Added after the code review of the library branch:
+//  38. Of two hits a scanner repeats with one rule on one span, the one kept
+//      is the lower severity one because its message sorts first, so the
+//      candidate's severity drops (and with it a block).
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -1037,5 +1041,22 @@ describe("candidate order", () => {
       }).then((r) => r.scan.candidates.map((c) => c.message));
     expect(await twice(["second wording", "first wording"])).toEqual(["first wording"]);
     expect(await twice(["first wording", "second wording"])).toEqual(["first wording"]);
+  });
+
+  it("keeps the higher severity of two hits a scanner repeats with one rule on one span, whatever their messages (38)", async () => {
+    const dir = repo({ "a.sh": "x\n" });
+    const twice = (hits: Partial<StaticFinding>[]) =>
+      runScanners({
+        repoDir: dir,
+        changedPaths: ["a.sh"],
+        config: config(),
+        resolveTool: notInstalled(),
+        only: ["custom:demo"],
+        custom: [custom({ run: async () => ({ findings: hits.map((h) => finding({ filePath: "a.sh", ...h })), error: null, version: null }) })],
+      }).then((r) => r.scan.candidates.map((c) => [c.severity, c.message]));
+    const high = { severity: "high" as const, message: "Z: the serious wording" };
+    const low = { severity: "low" as const, message: "A: the mild wording" };
+    expect(await twice([high, low])).toEqual([["high", "Z: the serious wording"]]);
+    expect(await twice([low, high])).toEqual([["high", "Z: the serious wording"]]);
   });
 });
