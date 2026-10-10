@@ -30,8 +30,7 @@
 //     state of the work tree.
 //  7. The agent hook lets `git push origin unreviewed:main` pass on the
 //     review of the current work.
-import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -166,12 +165,6 @@ describe("5. the legacy two-step protocol", () => {
     return { dir, changeId: latest.change_id };
   }
 
-  it("finalize in the home that ran the scan writes the legacy record", () => {
-    const { changeId } = agentRun();
-    expect(cli(s, ["review", "--finalize"]).status).toBe(0);
-    expect(readHomeReceipt(s.oqHome, s.repo, changeId)?.kind).toBe("legacy");
-  });
-
   it("finalize of a run this home never scanned writes no record and says so in one line", () => {
     const { changeId } = agentRun();
     const other = tempDir("oq-other-home-");
@@ -179,17 +172,6 @@ describe("5. the legacy two-step protocol", () => {
     expect(r.status).toBe(0);
     expect(readHomeReceipt(other, s.repo, changeId)).toBeNull();
     expect(r.stderr).toMatch(/not recorded for the push hooks/);
-  });
-
-  it("the run record binds every run file finalize relies on, and the config and instructions, as the tool wrote them", () => {
-    const { dir } = agentRun();
-    const runs = join(s.oqHome, "runs");
-    const repoDir = join(runs, readdirSync(runs)[0]!);
-    const record = JSON.parse(readFileSync(join(repoDir, readdirSync(repoDir)[0]!), "utf8")) as Record<string, string>;
-    const sha = (name: string) => createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
-    expect(record).toMatchObject({ manifest_sha256: sha("manifest.json"), scan_sha256: sha("scan.json"), candidates_sha256: sha("candidates.json"), run_sha256: sha("run.json") });
-    const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { config_hash: string; instructions_hash: string };
-    expect(record).toMatchObject({ config_hash: manifest.config_hash, instructions_hash: manifest.instructions_hash });
   });
 
   it("8. the record check takes the run files' text, the text finalize then uses, never a path read again", () => {

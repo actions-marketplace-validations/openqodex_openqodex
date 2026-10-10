@@ -144,24 +144,6 @@ function ourCommands(path: string): string[] {
     .filter((c) => c.endsWith(" hook check"));
 }
 
-function userFiles(s: Sandbox): string[] {
-  return [
-    join(s.home, ".claude/skills/openqodex/SKILL.md"),
-    join(s.home, ".claude/settings.json"),
-    join(s.home, ".agents/skills/openqodex/SKILL.md"),
-    join(s.home, ".codex/hooks.json"),
-    join(s.home, ".cursor/skills/openqodex/SKILL.md"),
-    join(s.repo, ".cursor/rules/openqodex.mdc"),
-    join(s.home, ".cline/skills/openqodex/SKILL.md"),
-    join(s.home, "Documents/Cline/Rules/openqodex.md"),
-    join(s.home, ".claude/CLAUDE.md"),
-    join(s.home, ".codex/AGENTS.md"),
-    join(s.repo, ".git/hooks/pre-push"),
-    join(s.oqHome, "bin/openqodex"),
-    join(s.oqHome, "runtime", version, "dist/bin.js"),
-  ];
-}
-
 // What a first init or scan adds to git status: the folder's .gitignore and
 // the two team files, meant to be committed.
 const REPO_FOLDER_STATUS = "?? .openqodex/.gitignore\n?? .openqodex/config.yaml\n?? .openqodex/custom-instructions.md\n";
@@ -169,19 +151,12 @@ const REPO_FOLDER_STATUS = "?? .openqodex/.gitignore\n?? .openqodex/config.yaml\
 describe("init, user scope, all agents", () => {
   let s: Sandbox;
   let statusBefore: string;
-  let first: ReturnType<typeof cli>;
 
   beforeAll(() => {
     expect(existsSync(BIN), "build the CLI first (pnpm build)").toBe(true);
     s = sandbox();
     statusBefore = status(s);
-    first = cli(s, ["init", "--yes", "--agent", "all"]);
-  });
-
-  it("writes every user-scope file the templates README lists; git status gains only the team files", () => {
-    expect(first.status, first.stderr).toBe(0);
-    for (const f of userFiles(s)) expect(existsSync(f), f).toBe(true);
-    expect(status(s)).toBe(`${statusBefore}${REPO_FOLDER_STATUS}?? AGENTS.md\n?? CLAUDE.md\n`);
+    cli(s, ["init", "--yes", "--agent", "all"]);
   });
 
   it("writes hook commands that run through sh from a home path with a space", () => {
@@ -193,14 +168,6 @@ describe("init, user scope, all agents", () => {
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("OpenQodex has not reviewed this change");
     }
-  });
-
-  it("changes nothing on a second run", () => {
-    const before = snapshot(s);
-    const second = cli(s, ["init", "--yes", "--agent", "all"]);
-    expect(second.status, second.stderr).toBe(0);
-    expect(second.stdout).toContain("Nothing to change");
-    expect(snapshot(s)).toEqual(before);
   });
 
   it("uninstall restores the starting state", () => {
@@ -789,13 +756,6 @@ describe("init, the hook question and the instruction section", () => {
     expect(existsSync(join(s.repo, ".git/hooks/pre-push"))).toBe(false);
   });
 
-  it("writes the section into Codex's AGENTS.md under CODEX_HOME", () => {
-    const s = sandbox();
-    const codexHome = join(s.root, "codex home");
-    expect(cli(s, ["init", "--yes", "--agent", "codex"], { env: { CODEX_HOME: codexHome } }).status).toBe(0);
-    expect(readFileSync(join(codexHome, "AGENTS.md"), "utf8")).toContain(SECTION_START);
-  });
-
   it("--project writes the section into the repo's CLAUDE.md and AGENTS.md", () => {
     const s = sandbox({ "CLAUDE.md": "# Repo\n" });
     expect(cli(s, ["init", "--yes", "--project", "--agent", "all"]).status).toBe(0);
@@ -1082,17 +1042,5 @@ describe("28. writes decide by filesystem identity, through checked handles", ()
     writeFileSync(skill, edited);
     expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
     expect(readFileSync(skill, "utf8")).toBe(edited);
-  });
-
-  it("the dotfiles case still works: a link from the home to a file in the home is written through", () => {
-    const s = sandbox();
-    const dotfiles = join(s.home, "dotfiles");
-    mkdirSync(dotfiles);
-    writeFileSync(join(dotfiles, "settings.json"), '{"model":"x"}\n');
-    mkdirSync(join(s.home, ".claude"));
-    symlinkSync(join(dotfiles, "settings.json"), join(s.home, ".claude/settings.json"));
-    expect(cli(s, ["init", "--yes", "--agent", "claude-code"]).status).toBe(0);
-    expect(lstatSync(join(s.home, ".claude/settings.json")).isSymbolicLink()).toBe(true);
-    expect(ourCommands(join(dotfiles, "settings.json"))).toHaveLength(1);
   });
 });

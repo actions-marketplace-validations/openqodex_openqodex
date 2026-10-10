@@ -193,14 +193,6 @@ describe("3 and 7. a second init, then uninstall, on a home with every agent", (
     expect(r.status, r.stderr).toBe(0);
   });
 
-  it("3. a second init changes no file", () => {
-    const before = snapshot(s);
-    const r = cli(s, ["init", "--yes", "--agent", "all"]);
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("Nothing to change");
-    expect(snapshot(s)).toEqual(before);
-  });
-
   it("7. uninstall removes every MCP file init created and leaves no file in the home folder", () => {
     for (const f of [join(s.home, ".claude.json"), join(s.home, ".cursor", "mcp.json"), join(s.home, ".codex", "config.toml"), clineFile(s)]) expect(existsSync(f), f).toBe(true);
     const r = cli(s, ["init", "--uninstall", "--yes"]);

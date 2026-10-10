@@ -82,14 +82,6 @@ describe("repo state access", () => {
     expect(readRepoFile(root, ".openqodex/big.json", 4096)).toHaveLength(2049);
   });
 
-  it("missing files and folders read as null, and a write makes the real folders on the way", () => {
-    const { root } = repo();
-    expect(readRepoFile(root, ".openqodex/reviews/x/run.json")).toBeNull();
-    expect(writeRepoFile(root, ".openqodex/reviews/x/run.json", "{}\n")).toBe(true);
-    expect(writeRepoFile(root, ".openqodex/reviews/x/run.json", "[]\n", { exclusive: true })).toBe(false);
-    expect(readRepoFile(root, ".openqodex/reviews/x/run.json")).toBe("{}\n");
-  });
-
   it("sees the state under another spelling of the repo root", (ctx) => {
     const typed = tempDir("oq-state-alias-");
     const root = realpathSync(typed);

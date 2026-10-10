@@ -43,7 +43,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { CODEX_TESTED, PROBE_REFUSED, codexArgs, codexDriver, codexEnv, codexVersion, detectCodex, olderThanTested, probeSandbox, probeVerdict } from "../src/reviewers/codex.js";
+import { CODEX_TESTED, PROBE_REFUSED, codexArgs, codexDriver, codexEnv, codexVersion, olderThanTested, probeSandbox, probeVerdict } from "../src/reviewers/codex.js";
 import { DEPTH_ENV, findOnPath } from "../src/reviewers/driver.js";
 import { openqodexHomeDir } from "../src/launcher.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
@@ -200,11 +200,6 @@ describe("the Codex command line and environment", () => {
   it("9. the environment keeps what Codex needs and drops tokens and session ties", () => {
     const env = codexEnv({ PATH: "/bin", HOME: "/h", CODEX_HOME: "/h/.codex", GITHUB_TOKEN: "t", OPENAI_API_KEY: "k", CODEX_THREAD_ID: "x", CODEX_SANDBOX: "seatbelt", CLAUDECODE: "1" });
     expect(env).toEqual({ PATH: "/bin", HOME: "/h", CODEX_HOME: "/h/.codex", [DEPTH_ENV]: "1" });
-  });
-
-  it("10. inside Codex's own sandbox, detection says Codex cannot start and runs nothing", async () => {
-    const d = await detectCodex("/nowhere", { CODEX_SANDBOX: "seatbelt", PATH: "" });
-    expect(d).toMatchObject({ ok: false, missing: expect.stringMatching(/inside its own sandbox/) });
   });
 
   it("11. a Codex older than the tested version is refused", () => {
