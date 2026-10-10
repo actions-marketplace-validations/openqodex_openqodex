@@ -65,14 +65,16 @@ export function tflintConfig(pluginDir: string): string {
   ].join("\n");
 }
 
-// TFLint talks to its bundled ruleset over a Unix socket in TMPDIR, and a
-// socket path longer than about 100 bytes cannot be bound (macOS allows 104):
-// the ruleset then fails to start. The folder must be absolute: TFLint runs
-// each folder of a recursive run from inside it, so a relative one moves.
-// The run's temporary folder when it is short. Else, on the laptop, /tmp;
-// a server run writes nowhere outside its scratch root, so it gets null and
-// TFLint is not started.
-const SOCKET_DIR_MAX = 64;
+// TFLint talks to its bundled ruleset over a Unix socket in TMPDIR, named
+// "plugin" and up to ten digits, and a socket path longer than 103 bytes
+// cannot be bound on macOS (104 with the end byte; Linux allows 107): the
+// ruleset then fails to start. Measured with tflint 0.64.0 on macOS: a
+// folder of 86 characters works and one of 88 does not; 80 leaves room. The
+// folder must be absolute: TFLint runs each folder of a recursive run from
+// inside it, so a relative one moves. The run's temporary folder when it is
+// short. Else, on the laptop, /tmp; a server run writes nowhere outside its
+// scratch root, so it gets null and TFLint is not started.
+const SOCKET_DIR_MAX = 80;
 function socketDir(scratch: Scratch): string | null {
   if (scratch.temp.length <= SOCKET_DIR_MAX) return scratch.temp;
   return scratch.laptop ? "/tmp" : null;

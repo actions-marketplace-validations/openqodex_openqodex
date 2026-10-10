@@ -1,6 +1,6 @@
 import "./global-setup.js";
 import { afterAll, describe, expect, it } from "vitest";
-import { root, run, toolsHome } from "./support.js";
+import { root, run, rustHome, toolsHome } from "./support.js";
 import { removeTempDirs } from "../temp-dirs.mjs";
 
 // `doctor --install --all-scanners --require-all`: the image build's
@@ -19,7 +19,7 @@ type Required = { ok: boolean; missing: string[]; tools: { scanner: string; vers
 describe("doctor --require-all", () => {
   it("exits 0 exactly when no scanner is missing, with one stderr line and one JSON entry per missing scanner", () => {
     if (process.env.OPENQODEX_E2E_OFFLINE === "1") return;
-    const r = run("doctor-require-all", root, ["doctor", "--install", "--all-scanners", "--require-all", "--json"], { tools: toolsHome, timeout: 900_000 });
+    const r = run("doctor-require-all", root, ["doctor", "--install", "--all-scanners", "--require-all", "--json"], { tools: toolsHome, timeout: 900_000, env: rustHome() });
     const required = (JSON.parse(r.stdout) as { required: Required }).required;
     expect(r.status).toBe(required.missing.length === 0 ? 0 : 2);
     expect(required.ok).toBe(required.missing.length === 0);
