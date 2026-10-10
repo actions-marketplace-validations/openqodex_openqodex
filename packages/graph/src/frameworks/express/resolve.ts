@@ -34,7 +34,7 @@ import type { Detection, Entity, FrameworkEdge, FrameworkEvidence, FrameworkEvid
 import { appId, entityId } from "../plugin.js";
 import type { Tier } from "../../model/records.js";
 import type { ExpressFact } from "./facts.js";
-import { HTTP_METHODS } from "./facts.js";
+import { HTTP_METHODS, MAX_SCOPE_CHAIN } from "./facts.js";
 import type { Expr } from "./js.js";
 import { evaluate, isTestFile, JS_RUNNERS, MAX_ITEMS, MAX_SOURCE_BYTES, show } from "./js.js";
 
@@ -234,7 +234,6 @@ function run(index: PluginIndex<ExpressFact>): Analysis {
   // import). The chain is followed at most MAX_SCOPE_CHAIN functions out;
   // past that, or at a function whose scope record is missing (the fact cap
   // dropped it), the name counts as declared there, which proves nothing.
-  const MAX_SCOPE_CHAIN = 64;
   const bindingScope = (file: string, scope: number, name: string): number => {
     let s = scope;
     for (let steps = 0; s !== 0; steps++) {

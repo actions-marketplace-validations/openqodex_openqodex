@@ -158,7 +158,7 @@ class Resolver {
 
   private filesOf(app: App, folder: string): string[] {
     const prefix = under(app.root, folder);
-    return [...this.w.paths].filter((p) => p.startsWith(prefix) && p.endsWith(".rb") && this.w.appOf(p) === app).sort();
+    return this.w.rubyPaths.filter((p) => p.startsWith(prefix) && this.w.appOf(p) === app);
   }
 
   private classesUnder(app: App, folder: string): ClassInfo[] {
@@ -844,7 +844,7 @@ class Resolver {
     };
 
     for (const app of this.w.apps) {
-      for (const file of [...this.w.paths].filter((p) => p.endsWith(".rb")).sort()) {
+      for (const file of this.w.rubyPaths) {
         if (this.w.appOf(file) !== app) continue;
         const rel = relTo(app.root, file) as string;
         const spec = rspec && rel.startsWith("spec/") && rel.endsWith("_spec.rb");

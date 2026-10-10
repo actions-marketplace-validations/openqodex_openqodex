@@ -7,13 +7,18 @@
 // when a local name shadows an import or a module constant. Nothing here
 // knows which name is Express: that is decided in resolve, from the file's
 // imports, so a fact never claims what only another file can prove.
+//
+// A value is kept only where resolve can read it (`namesRead`), and the
+// scopes only for a file that holds a watched call or keeps a value: most
+// files hold neither an application nor a route, and their values were
+// most of every kept facts file.
 import type { Node } from "web-tree-sitter";
 import type { FactReader, FrameworkFactBase } from "../plugin.js";
 import { eitherPathText, eitherSegmentText, keepParts, ledForm } from "../shared/kept.js";
 import type { Expr } from "./js.js";
 import type { ScopedVisit } from "./js.js";
 import { exported, FN_TYPES, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, patternNames, pos, readExpr, scopedVisitor, stringValue } from "./js.js";
-import { readAlone } from "../shared/walk.js";
+import { readAlone } from "../../walk.js";
 
 // The member calls watched: the routing methods of an application and a
 // router, `use`, `route`, `listen`, and the requests of a test agent.
@@ -64,16 +69,104 @@ export function wants(): boolean {
 
 const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
 
+// The node types the reader is entered for (the function types besides,
+// scopedVisitor; an import or a re-export for the module it names), and
+// those of the ancestors it reads as nodes: what holds a variable
+// declarator, and what holds a parameter list.
+const TYPES: ReadonlySet<string> = new Set(["class_declaration", "catch_clause", "call_expression", "variable_declarator", "assignment_expression", "required_parameter", "optional_parameter", "import_statement", "export_statement"]);
+const KEEP: ReadonlySet<string> = new Set(["lexical_declaration", "variable_declaration", "function_signature", "method_signature", "abstract_method_signature", "call_signature", "construct_signature", "function_type", "constructor_type"]);
+
+// The modules whose values make an application, a router or a test agent.
+const MODULES = new Set(["express", "supertest"]);
+// The module a string names as the language facts read an import's
+// specifier: the string's text without its quotes (extract.ts).
+const specifier = (n: Node | null | undefined): string | null => (n?.type === "string" ? n.text.slice(1, -1) : null);
+
+// How many functions out resolve follows a name's binding (resolve.ts).
+export const MAX_SCOPE_CHAIN = 64;
+
+// The names whose values resolve can read in a file that does not name
+// express or supertest (resolve.ts): such a file makes no application,
+// router or agent, so resolve reads its values only to follow a name
+// through them. It follows the names its own watched and createServer
+// calls read (a receiver, a handler, a path's constants), and, from
+// another file that imports one, a module-level name given another name's
+// value (`export const server = app`: a declaration at module level, or an
+// assignment that writes the module's name). A name's value that is
+// another name leads on to that name. Every write of a name read is kept,
+// because two writes prove no value.
+function namesRead(facts: readonly ExpressFact[], scopes: ReadonlyMap<number, { parent: number; names: ReadonlySet<string>; all: boolean }>): Set<string> {
+  const read = new Set<string>();
+  const heads = (e: Expr): void => {
+    switch (e.t) {
+      case "ref":
+        read.add(e.path[0] as string);
+        return;
+      case "dyn":
+        for (const p of e.parts ?? []) if ("ref" in p) read.add(p.ref[0] as string);
+        return;
+      case "call":
+        heads(e.fn);
+        for (const a of e.args) heads(a);
+        return;
+      case "member":
+        heads(e.obj);
+        return;
+      case "array":
+        for (const a of e.items) heads(a);
+        return;
+      case "object":
+        for (const p of e.props) heads(p.value);
+        return;
+    }
+  };
+  // Whether a name written at a scope is the module's own: no function out
+  // to the module declares it (resolve's bindingScope, to the same depth).
+  const module = (name: string, scope: number): boolean => {
+    let s = scope;
+    for (let steps = 0; s !== 0; steps++) {
+      const info = scopes.get(s);
+      if (steps >= MAX_SCOPE_CHAIN || !info || info.all || info.names.has(name)) return false;
+      s = info.parent;
+    }
+    return true;
+  };
+  const values: Extract<ExpressFact, { kind: "value" }>[] = [];
+  for (const f of facts) {
+    if (f.kind === "call") {
+      heads(f.recv);
+      for (const a of f.args) heads(a);
+    } else if (f.kind === "server") for (const a of f.args) heads(a);
+    else if (f.kind === "value") {
+      values.push(f);
+      if (f.value.t === "ref" && (f.decl === "assign" ? module(f.name, f.scope) : f.scope === 0)) read.add(f.name);
+    }
+  }
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const v of values) {
+      if (v.value.t !== "ref" || !read.has(v.name)) continue;
+      const next = v.value.path[0] as string;
+      if (!read.has(next)) {
+        read.add(next);
+        grew = true;
+      }
+    }
+  }
+  return read;
+}
+
 export function readFacts(root: Node): ExpressFact[] {
   return readAlone(root, reader(root));
 }
 
-// The facts of one file as one reader of a shared walk (shared/walk.ts).
+// The facts of one file as one reader of a shared walk (walk.ts).
 export function reader(root: Node): FactReader<ExpressFact> {
   if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: ExpressFact[] = [];
   let firstBroken = 0;
   let broken = 0;
+  let namesModule = false;
   // Each function scope's parent and declared names, by the line it starts on.
   const scopes = new Map<number, { parent: number; names: Set<string>; all: boolean }>();
   const declare = (at: number, names: readonly string[]) => {
@@ -85,7 +178,7 @@ export function reader(root: Node): FactReader<ExpressFact> {
       else s.names.add(n);
     }
   };
-  const visit: ScopedVisit = (node, scope, up, type): void => {
+  const visit: ScopedVisit = (node, scope, up, type, upType): void => {
     if (FN_TYPES.has(type) || type === "function_declaration" || type === "generator_function_declaration" || type === "method_definition") {
       const own = node.startPosition.row + 1;
       if (!scopes.has(own)) scopes.set(own, { parent: scope, names: new Set(), all: false });
@@ -110,23 +203,34 @@ export function reader(root: Node): FactReader<ExpressFact> {
       declare(scope, names);
     }
     switch (type) {
+      case "import_statement":
+      case "export_statement":
+        if (!namesModule && MODULES.has(specifier(node.childForFieldName("source")) ?? "")) namesModule = true;
+        return;
       case "call_expression": {
         // A call the parser had to repair (a missing parenthesis) is no fact.
         if (node.hasError) return;
         const fn = node.childForFieldName("function");
-        const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((c) => c.type !== "comment");
+        // The arguments, read only for a call the reader keeps a fact of.
+        let list: Node[] | null = null;
+        const args = (): Node[] => (list ??= (node.childForFieldName("arguments")?.namedChildren ?? []).filter((c) => c.type !== "comment"));
+        // `require("express")`, `await import("supertest")`.
+        if (!namesModule && (fn?.type === "import" || (fn?.type === "identifier" && fn.text === "require")) && MODULES.has(specifier(args()[0]) ?? "")) namesModule = true;
         if (fn?.type === "member_expression") {
           const prop = fn.childForFieldName("property");
           const name = prop?.type === "property_identifier" ? identifierName(prop.text) : null;
           if (name !== null && WATCHED.has(name)) {
-            const fact: ExpressFact = { kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: name, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope };
-            if (args.length > MAX_ITEMS) fact.more = args.length - MAX_ITEMS;
+            const fact: ExpressFact = { kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: name, args: args().slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope };
+            if (args().length > MAX_ITEMS) fact.more = args().length - MAX_ITEMS;
             out.push(fact);
           }
+          // A member callee's name path ends in this name and holds two or
+          // more: it can only make a createServer fact.
+          if (name !== "createServer") return;
         }
         const path = namePath(fn);
-        if (path && path[path.length - 1] === "createServer") out.push({ kind: "server", ...pos(node), fn: path, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
-        if (path && path.length === 1 && TEST_FNS.has(path[0] as string)) out.push({ kind: "test-block", ...pos(node), fn: path[0] as string, name: stringValue(args[0] ?? null) });
+        if (path && path[path.length - 1] === "createServer") out.push({ kind: "server", ...pos(node), fn: path, args: args().slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
+        if (path && path.length === 1 && TEST_FNS.has(path[0] as string)) out.push({ kind: "test-block", ...pos(node), fn: path[0] as string, name: stringValue(args()[0] ?? null) });
         return;
       }
       case "variable_declarator": {
@@ -139,7 +243,7 @@ export function reader(root: Node): FactReader<ExpressFact> {
         if (id === null || !value || node.hasError) return;
         const holder = up(1);
         const decl = holder?.type === "variable_declaration" ? "var" : holder?.childForFieldName("kind")?.text === "let" ? "let" : "const";
-        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && up(2)?.type !== "for_statement", exported: exported(up), decl });
+        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && upType(2) !== "for_statement", exported: exported(upType), decl });
         return;
       }
       case "assignment_expression": {
@@ -181,16 +285,28 @@ export function reader(root: Node): FactReader<ExpressFact> {
       }
     }
   };
-  const visitor = scopedVisitor(visit, (line) => {
-    if (broken++ === 0) firstBroken = line;
-  });
+  const visitor = scopedVisitor(
+    visit,
+    (line) => {
+      if (broken++ === 0) firstBroken = line;
+    },
+    TYPES,
+    KEEP,
+  );
   const finish = (): ExpressFact[] => {
     if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
     // First, so the core's per-file fact cap drops calls and values before
     // it drops a scope: a name read in a function whose scope is missing would
     // otherwise bind to the module.
     const scopeFacts: ExpressFact[] = [...scopes].map(([line, s]) => ({ kind: "scope", line, column: 1, parent: s.parent, names: [...s.names], all: s.all }));
-    return keepRead([...scopeFacts, ...out]);
+    const facts = keepRead([...scopeFacts, ...out]);
+    if (namesModule) return facts;
+    // A file that holds a watched call keeps its scopes, which every name
+    // its calls read is bound through; one that keeps a value, too.
+    const read = namesRead(facts, scopes);
+    const calls = facts.some((f) => f.kind === "call" || f.kind === "server");
+    const kept = facts.filter((f) => f.kind !== "value" || read.has(f.name));
+    return calls || kept.some((f) => f.kind === "value") ? kept : kept.filter((f) => f.kind !== "scope");
   };
   return { visitor, finish };
 }

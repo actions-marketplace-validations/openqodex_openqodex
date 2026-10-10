@@ -49,11 +49,13 @@ import type { Node } from "web-tree-sitter";
 import type { ProjectModel } from "../discovery/projects.js";
 import type { Cause, Tier } from "../model/records.js";
 import type { FileFacts, GraphEdge, GraphNode, Lang } from "../types.js";
-import type { TreeVisitor } from "./shared/walk.js";
+import type { TreeVisitor } from "../walk.js";
 
 // 2: Registration.partial (appended).
 // 3: FrameworkPlugin.reader (appended).
-export const PLUGIN_API_VERSION = 3;
+// 4: TreeVisitor.types and TreeVisitor.keep (appended): a reader names the
+// node types it is entered for and the ancestors it reads as nodes.
+export const PLUGIN_API_VERSION = 4;
 
 // ---------- the facts a plugin reads from one file ----------
 
@@ -475,9 +477,11 @@ export interface FrameworkPlugin<F extends FrameworkFactBase = FrameworkFactBase
   // Never reads another file, the file's path or the environment.
   facts(root: Node, lang: Lang): F[];
 
-  // The same facts, read as one reader of a walk the plugins share
-  // (shared/walk.ts), so a file is walked once for all of them. Optional:
-  // a plugin without it is called through `facts`.
+  // The same facts, read as one reader of the language extractor's own
+  // walk of the tree (walk.ts), so a file is walked once for the extractor
+  // and every such plugin. A reader that names its node types (`types`,
+  // `keep`) has node objects made only for those. Optional: a plugin
+  // without it is called through `facts`.
   reader?(root: Node, lang: Lang): FactReader<F>;
 
   // A shape check for one cached fact: facts are read back from disk and

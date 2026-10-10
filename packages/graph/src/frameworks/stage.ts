@@ -108,10 +108,12 @@ export function emptyFrameworkData(fingerprint = ""): FrameworkData {
   return { version: FRAMEWORK_DATA_VERSION, plugins: [], apps: [], roles: [], entities: [], edges: [], unknowns: [], fingerprint };
 }
 
-function makeIndex(input: StageInput, out: Map<string, GraphEdge[]>, plugin: FrameworkPlugin, dropped: FrameworkUnknown[]): PluginIndex {
-  const facts = new Map<string, FileFacts>();
-  for (const f of input.files) facts.set(f.path, f.facts);
-  const sortedPaths = [...input.paths].sort();
+// What every plugin's index reads alike, made once per build: each file's
+// language facts, and every path sorted.
+type Shared = { facts: Map<string, FileFacts>; sortedPaths: string[] };
+
+function makeIndex(input: StageInput, shared: Shared, out: Map<string, GraphEdge[]>, plugin: FrameworkPlugin, dropped: FrameworkUnknown[]): PluginIndex {
+  const { facts, sortedPaths } = shared;
   const valid = new Map<string, FrameworkFactBase[]>();
   for (const f of input.files) {
     const list = f.facts.frameworks?.[plugin.id];
@@ -180,6 +182,8 @@ export function runFrameworks(input: StageInput): FrameworkData {
   const data = emptyFrameworkData(contextFingerprint(input.paths, plugins));
   const out = new Map<string, GraphEdge[]>();
   for (const e of input.edges) if (e.kind === "calls") (out.get(e.from) ?? out.set(e.from, []).get(e.from))?.push(e);
+  const shared: Shared = { facts: new Map(), sortedPaths: [...input.paths].sort() };
+  for (const f of input.files) shared.facts.set(f.path, f.facts);
   for (const plugin of plugins) {
     const started = performance.now();
     const run: PluginRun = { id: plugin.id, version: plugin.version, status: "ok", reason: null, apps: 0, ms: 0, invalid: 0 };
@@ -191,7 +195,7 @@ export function runFrameworks(input: StageInput): FrameworkData {
     }
     const dropped: FrameworkUnknown[] = [];
     try {
-      const index = makeIndex(input, out, plugin, dropped);
+      const index = makeIndex(input, shared, out, plugin, dropped);
       const apps = plugin.detect(index);
       run.apps = apps.length;
       const result = plugin.resolve(index, apps);
