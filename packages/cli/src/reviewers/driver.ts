@@ -14,7 +14,7 @@ import type { ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ReviewerUsage } from "@openqodex/core";
-import type { ToolCall } from "./trace.js";
+import type { OwnFiles, ToolCall } from "./trace.js";
 
 // Set in every reviewer's environment. A `review` that starts with it set
 // refuses: a review never starts another review.
@@ -27,7 +27,10 @@ export type Detected = { ok: true; version: string; bin: string } | { ok: false;
 // it timed out, it started with more than it was given).
 // `calls`: every tool call of this answer, as the agent sent it; the run
 // decides from them, by script, what was read and where.
-export type Turn = { finalText: string; calls: ToolCall[]; usage: ReviewerUsage; sessionId: string | null; failure: string | null };
+// `own`: where the agent saves its own output for this session, so a call on
+// it is not taken for a read of the repository; left out when the driver
+// knows of no such place.
+export type Turn = { finalText: string; calls: ToolCall[]; usage: ReviewerUsage; sessionId: string | null; failure: string | null; own?: OwnFiles | null };
 
 // An open reviewer. `send` asks for one answer in the same session: the
 // brief first, then each correction round. A driver whose agent cannot keep a
