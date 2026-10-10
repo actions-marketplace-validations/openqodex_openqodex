@@ -55,7 +55,7 @@ const result = await reviewChange(
 ### Options
 
 - `profile`: `"server"`.
-- `workDir`: an absolute folder the review may write in: the snapshot and the scanners' scratch. Nothing is written anywhere else. Give each review its own folder and remove it afterwards.
+- `workDir`: an absolute folder the review may write in: the snapshot and the scanners' scratch. Nothing is written anywhere else. Give each review its own folder and remove it afterwards. Keep its path to about 50 characters: TFLint's plugin socket goes in `<workDir>/scratch/tmp`, which must be 64 characters or fewer, and TFLint is not run otherwise (the result names the length).
 - `installRoot`: the absolute folder the preinstalled scanners are read from (see "Preinstalling the scanners in an image"). It is only read.
 - `budget`: `{ authorize, deadlineMs }`, required. See "The budget".
 - `confidenceFloor` (optional): the lowest confidence a finding may have, from 0 to 1, 0.7 when left out. The brief tells the reviewer this floor and the check applies it. A lens with a higher floor of its own keeps it.
@@ -192,8 +192,8 @@ At install time, the release downloads need the network to github.com, and `tar`
 | semgrep, bandit, SQLFluff, Checkov | uv (from `PATH`, or the pinned uv installed into the root), which downloads Python 3.11 into the root, and PyPI | nothing |
 | brakeman | Ruby 3.0 or newer with `gem`, and rubygems.org | the same Ruby |
 | rubocop | Ruby 2.7 or newer with `gem`, and rubygems.org | the same Ruby |
-| golangci | Go on `PATH` | Go 1.26 on `PATH`, and the reviewed modules in the Go module cache: the module proxy is off |
-| cargo-deny | Cargo (Rust) | Cargo, and the crates of the reviewed `Cargo.lock` in the Cargo cache: Cargo runs offline |
+| golangci | Go on `PATH` | Go 1.26 on `PATH`, and the reviewed modules in the Go module cache: each review reads them from there into a module cache of its own, and nothing goes to the network |
+| cargo-deny | Cargo (Rust) | Cargo, and the crates of the reviewed `Cargo.lock` in the Cargo cache: each review copies what the lock needs from there into a Cargo home of its own, and Cargo runs offline |
 
 At review time, four scanners use the network: semgrep fetches its rule packs from the Semgrep registry, osv-scanner sends dependency names and versions to osv.dev, kubeconform fetches the schemas of the kinds it meets from raw.githubusercontent.com, and cargo-deny fetches the RustSec advisory database from github.com. On a server these caches live in the run's scratch, so each review fetches them again. golangci starts each review with an empty Go build cache, so a Go change takes longer to check than on a laptop.
 
@@ -251,7 +251,7 @@ The library finds its files from where it is installed: the lenses in `lenses/`,
 - `resolveTool`: from `createToolResolver`.
 - `only` and `skip` (optional): scanner names to run, or to leave out.
 - `onProgress` (optional): called with one line per step.
-- `scratchRoot` (optional): where the run writes. Left out, the laptop's places: caches under `~/.openqodex/cache` and temporary folders in the system temp folder. Given, every folder the run makes or fills is under this one: caches in `<scratchRoot>/cache`, temporary folders in `<scratchRoot>/tmp`, and every scanner process gets `HOME` `<scratchRoot>/home` and `TMPDIR` `<scratchRoot>/tmp`. Python scanners write no bytecode and Go keeps its build cache in the scratch, so the install root is only read. Two runs with two scratch roots share nothing. The caller removes the folder afterwards.
+- `scratchRoot` (optional): where the run writes. Left out, the laptop's places: caches under `~/.openqodex/cache` and temporary folders in the system temp folder. Given, every folder the run makes or fills is under this one: caches in `<scratchRoot>/cache`, temporary folders in `<scratchRoot>/tmp`, and every scanner process gets `HOME` `<scratchRoot>/home` and `TMPDIR` `<scratchRoot>/tmp`. Python scanners write no bytecode and Go keeps its build cache in the scratch, so the install root is only read. A Go tool gets a module cache of the run's own, filled from the machine's module cache read as files, and a Cargo tool a Cargo home of the run's own, filled with copies of what each changed `Cargo.lock` needs; the machine's caches are never written. A symbolic link anywhere under the scratch root, an existing folder included, is refused. `<scratchRoot>/tmp` must be 64 characters or fewer for TFLint, whose plugin socket goes there; TFLint fails with the reason otherwise. Two runs with two scratch roots share nothing. The caller removes the folder afterwards.
 - `custom` (optional): custom scanners that the command's trust step prepared. Leave it out.
 
 In the result, `scan.candidates` are the findings and `scan.scanners` has one summary per scanner: whether it ran, and why not when it did not. `secrets` holds the raw secrets the scanners matched, for redacting text; never store it. `checked` maps each scanner rule that ran to the files it checked.

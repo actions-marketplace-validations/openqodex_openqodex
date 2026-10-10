@@ -7,6 +7,8 @@
 // temp index with `--cached`, so the user's index, objects and hooks are never
 // touched and the whole thing works with `.git` read-only.
 import { spawn } from "node:child_process";
+import type { ChildProcessByStdio } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 import { createHash } from "node:crypto";
 import { copyFile, lstat, mkdir, mkdtemp, open, readlink, rm, stat, utimes, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -16,7 +18,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { createCoverageParser, unquoteDiffPath } from "./diff.js";
 import { matchesGlob } from "./glob.js";
 import { STATE_DIR } from "./report-files.js";
-import { safeGit } from "./safe-git.js";
+import { SERVER_GIT_ENV, safeGitEnv } from "./safe-git.js";
 import type { Change, ChangedFile, ChangeScope, DeletionPoint } from "./types.js";
 import { OpenQodexError } from "./types.js";
 
@@ -58,8 +60,9 @@ const DIFF_FLAGS = [
 
 type GitResult = { code: number; stdout: Buffer; stderr: string };
 
-// Settings for one call, on top of GIT_CONFIG.
-type GitOptions = { env?: NodeJS.ProcessEnv; config?: string[] };
+// Settings for one call, on top of GIT_CONFIG. `input`: what git reads on
+// its standard input; left out, it reads nothing.
+type GitOptions = { env?: NodeJS.ProcessEnv; config?: string[]; input?: string };
 
 function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
@@ -68,11 +71,11 @@ function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
-function spawnGit(cwd: string, args: string[], opts: GitOptions) {
+function spawnGit(cwd: string, args: string[], opts: GitOptions): ChildProcessByStdio<Writable | null, Readable, Readable> {
   const argv: string[] = [];
   for (const c of [...GIT_CONFIG, ...(opts.config ?? [])]) argv.push("-c", c);
   argv.push(...args);
-  return spawn("git", argv, { cwd, env: childEnv(opts.env ?? process.env), stdio: ["ignore", "pipe", "pipe"] });
+  return spawn("git", argv, { cwd, env: childEnv(opts.env ?? process.env), stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"] }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
 }
 
 function git(cwd: string, args: string[], opts: GitOptions = {}): Promise<GitResult> {
@@ -86,6 +89,7 @@ function git(cwd: string, args: string[], opts: GitOptions = {}): Promise<GitRes
     child.on("close", (code) =>
       done({ code: code ?? 1, stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8") }),
     );
+    if (opts.input !== undefined) child.stdin?.end(opts.input);
   });
 }
 
@@ -432,7 +436,7 @@ export async function getChange(args: {
       await args.onTree({ sha, objects: tmpObjects, alternates: objectsPath });
     }
 
-    return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], newSide: ":", env, exclude });
+    return await diffChange({ repoRoot, baseRef: base.ref, baseSha: base.sha, range: ["--cached", base.sha], env, exclude });
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -449,7 +453,7 @@ export async function getTreeChange(args: {
   headSha: string;
   exclude: string[];
 }): Promise<Change> {
-  return diffChange({ ...args, range: [args.baseSha, args.headSha], newSide: `${args.headSha}:`, env: process.env });
+  return diffChange({ ...args, range: [args.baseSha, args.headSha], env: process.env });
 }
 
 // A path a checkout may write: no empty, "." or ".." part and no ".git"
@@ -458,44 +462,74 @@ function checkoutSafe(path: string): boolean {
   return path.split("/").every((part) => part !== "" && part !== "." && part !== ".." && part.toLowerCase() !== ".git");
 }
 
-// One commit's tree with only the admitted paths, written into the temporary
-// object folder `objects` through a temporary index: git's own listing of the
+// A git folder of the server diff's own, made under `tmp`: no work tree, no
+// index, no info/attributes, no config of the clone, the machine or the
+// user, and no refs (so no replacement ref either). It reads the clone's
+// objects through `alternates` and writes new ones into `objects`. So no
+// .gitattributes decides how a file is diffed: a refused one, or one a pull
+// request adds, could mark admitted code -diff and hide its changed lines
+// from the review; git then tells a binary file by its content alone. The
+// variables to run git with in it are returned.
+async function isolatedGit(tmp: string, format: string, objects: string, alternates: string): Promise<NodeJS.ProcessEnv> {
+  const gitDir = join(tmp, "git");
+  const env: NodeJS.ProcessEnv = {
+    ...safeGitEnv(),
+    ...SERVER_GIT_ENV,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_ATTR_NOSYSTEM: "1",
+    // The user's own attributes file is found from these when no config
+    // names one.
+    HOME: tmp,
+    XDG_CONFIG_HOME: tmp,
+  };
+  await gitOk(tmp, ["init", "-q", "--bare", "--template=", `--object-format=${format}`, gitDir], { env });
+  return { ...env, GIT_DIR: gitDir, GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(alternates) };
+}
+
+// One commit's tree with only the admitted paths, written into the isolated
+// git folder's objects through a temporary index: git's own listing of the
 // commit, filtered, read back as an index and written as a tree. A missing
 // file object (a partial clone) is no obstacle here; the diff names it.
-async function admittedTree(repoRoot: string, sha: string, admit: (path: string) => boolean, tmp: string, objects: string, alternates: string): Promise<{ tree: string; refused: number }> {
-  const listed = await safeGit(repoRoot, ["ls-tree", "-r", "-z", "--full-tree", sha]);
-  if (listed.code !== 0) throw failure(["ls-tree"], listed.code, listed.stderr);
+// `ids`: every path of the commit and its object id; `refused`: the refused
+// file paths and their ids, which nothing reads.
+async function admittedTree(cwd: string, env: NodeJS.ProcessEnv, sha: string, admit: (path: string) => boolean, index: string): Promise<{ tree: string; ids: Map<string, string>; refused: Map<string, string> }> {
+  const listed = await gitOk(cwd, ["ls-tree", "-r", "-z", "--full-tree", sha], { env });
   const keep: string[] = [];
-  let refused = 0;
+  const ids = new Map<string, string>();
+  const refused = new Map<string, string>();
   // Each record is "<mode> <type> <id>\t<path>", the form --index-info reads.
-  for (const record of splitNul(listed.stdout)) {
-    const path = record.slice(record.indexOf("\t") + 1);
+  for (const record of splitNul(listed)) {
+    const tab = record.indexOf("\t");
+    const path = record.slice(tab + 1);
     if (!checkoutSafe(path)) {
       throw new OpenQodexError(`the commit ${sha.slice(0, 12)} holds a path no checkout may write (${JSON.stringify(path.slice(0, 200))}); the review stops`);
     }
+    const [, type = "", id = ""] = record.slice(0, tab).split(" ");
+    ids.set(path, id);
     if (admit(path)) keep.push(record);
-    else refused++;
+    else if (type === "blob") refused.set(path, id);
   }
-  const env = { GIT_INDEX_FILE: join(tmp, `index-${sha}`), GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(alternates) };
-  const filled = await safeGit(repoRoot, ["update-index", "-z", "--index-info"], keep.map((r) => `${r}\0`).join(""), env);
-  if (filled.code !== 0) throw failure(["update-index"], filled.code, filled.stderr);
-  const written = await safeGit(repoRoot, ["write-tree", "--missing-ok"], undefined, env);
-  if (written.code !== 0) throw failure(["write-tree"], written.code, written.stderr);
-  return { tree: written.stdout.toString("utf8").trim(), refused };
+  const withIndex = { ...env, GIT_INDEX_FILE: index };
+  await gitOk(cwd, ["update-index", "-z", "--index-info"], { env: withIndex, input: keep.map((r) => `${r}\0`).join("") });
+  const written = await gitOk(cwd, ["write-tree", "--missing-ok"], { env: withIndex });
+  return { tree: written.toString("utf8").trim(), ids, refused };
 }
 
 // The change between two commits over the admitted paths only (the server
 // review's folder scopes and review.paths.exclude, decided by `admit`). Both
-// commits' trees are rebuilt with only the admitted paths, in a temporary
-// index and object folder (the clone is never written), and diffed as
+// commits' trees are rebuilt with only the admitted paths, in a git folder
+// of its own (isolatedGit: the clone is never written, and no attributes,
+// config or replacement ref of the clone plays a part), and diffed as
 // getTreeChange diffs two commits. So a refused file is in no part of the
-// change, and a file renamed into the admitted paths from a refused one is a
-// new file: its earlier version is never read. `renamedIn` names each such
-// file. With every path admitted it is the change getTreeChange gives. A
-// commit holding a path no checkout may write is refused, as a checkout
-// would refuse it. `tempRoot`: the folder the temporary index and objects
-// are made in (a server review's scratch); the system temp folder when left
-// out.
+// change, and a file moved into the admitted paths from a refused one is a
+// new file: its earlier version is never read. `renamedIn` names each file
+// moved in unchanged, told from object ids alone (a file moved with edits
+// is told only by reading the outside file, which is refused). A commit
+// holding a path no checkout may write is refused, as a checkout would
+// refuse it. `tempRoot`: the folder the isolated git folder, its index and
+// objects are made in (a server review's scratch); the system temp folder
+// when left out.
 export async function getAdmittedTreeChange(args: {
   repoRoot: string;
   baseRef: string;
@@ -508,34 +542,48 @@ export async function getAdmittedTreeChange(args: {
   const { repoRoot, admit } = args;
   const objectsPath = (await gitOk(repoRoot, ["rev-parse", "--git-path", "objects"])).toString("utf8").trim();
   const alternates = isAbsolute(objectsPath) ? objectsPath : resolve(repoRoot, objectsPath);
+  const format = (await gitOk(repoRoot, ["rev-parse", "--show-object-format"])).toString("utf8").trim();
   const tmp = await mkdtemp(join(args.tempRoot ?? tmpdir(), "openqodex-scope-"));
   try {
     const objects = join(tmp, "objects");
     await mkdir(objects);
-    const base = await admittedTree(repoRoot, args.baseSha, admit, tmp, objects, alternates);
-    const head = await admittedTree(repoRoot, args.headSha, admit, tmp, objects, alternates);
-    const env = { ...process.env, GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: quoteAlternate(alternates) };
-    const change = await diffChange({ repoRoot, baseRef: args.baseRef, baseSha: args.baseSha, exclude: args.exclude, range: [base.tree, head.tree], newSide: `${head.tree}:`, env });
-    // A rename across the line, from the commits themselves: only needed
-    // when the admission refused a path of either side.
-    const renamedIn: string[] = [];
-    if (base.refused + head.refused > 0) {
-      const named = await gitOk(repoRoot, ["diff", ...DIFF_FLAGS, "--name-status", "-z", args.baseSha, args.headSha, "--", STATE_PATHSPEC]);
-      const kept = new Set(change.files.map((f) => f.path));
-      for (const f of parseNameStatus(named)) {
-        if (f.status === "renamed" && f.oldPath !== null && admit(f.path) && !admit(f.oldPath) && kept.has(f.path)) renamedIn.push(f.path);
-      }
-    }
+    const env = await isolatedGit(tmp, format, objects, alternates);
+    const base = await admittedTree(tmp, env, args.baseSha, admit, join(tmp, "index-base"));
+    const head = await admittedTree(tmp, env, args.headSha, admit, join(tmp, "index-head"));
+    const change = await diffChange({ repoRoot, cwd: tmp, baseRef: args.baseRef, baseSha: args.baseSha, exclude: args.exclude, range: [base.tree, head.tree], env });
+    // A file moved in from outside: one the change adds whose object is a
+    // refused base file's, where that base path is gone from the head.
+    const movedOut = new Set<string>();
+    for (const [path, id] of base.refused) if (!head.ids.has(path)) movedOut.add(id);
+    const renamedIn = change.files.filter((f) => f.status === "added" && movedOut.has(head.ids.get(f.path) ?? "")).map((f) => f.path);
     return { change, renamedIn };
+  } catch (error) {
+    // The isolated git folder knows nothing of the clone's promisor remote,
+    // so git names a file object a partial clone lacks as one it cannot read.
+    if (error instanceof OpenQodexError && /unable to read [0-9a-f]{40,64}/.test(error.message)) {
+      throw new OpenQodexError(`a file this change needs is not downloaded in this partial clone, and openqodex never fetches; run git fetch and try again (${error.message})`);
+    }
+    throw error;
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
 }
 
-// The line count of each named blob ("<rev>:<path>" or ":<path>"), from one
-// `git cat-file --batch` for all of them. Counted as the output streams, so
-// no blob is held whole.
-function lineCounts(repoRoot: string, specs: string[], env: NodeJS.ProcessEnv): Promise<number[]> {
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+// The line count of each blob, by its object id, from one `git cat-file
+// --batch` for all of them; 0 for no id. Only full object ids go to git, one
+// per line, so no file name (one holding a line break, say) can become a
+// request of its own.
+async function lineCounts(cwd: string, ids: (string | null)[], env: NodeJS.ProcessEnv): Promise<number[]> {
+  const asked = ids.map((id) => (id !== null && OBJECT_ID.test(id) && !/^0+$/.test(id) ? id : null));
+  const counted = await batchLineCounts(cwd, asked.filter((id): id is string => id !== null), env);
+  let k = 0;
+  return asked.map((id) => (id === null ? 0 : (counted[k++] as number)));
+}
+
+// Counted as the output streams, so no blob is held whole.
+function batchLineCounts(repoRoot: string, specs: string[], env: NodeJS.ProcessEnv): Promise<number[]> {
   if (specs.length === 0) return Promise.resolve([]);
   return new Promise((done, fail) => {
     const argv: string[] = [];
@@ -593,19 +641,34 @@ function lineCounts(repoRoot: string, specs: string[], env: NodeJS.ProcessEnv): 
   });
 }
 
+// `--raw -z --no-abbrev`: ":<mode> <mode> <id> <id> <status>\0<path>\0",
+// with the old path first for a rename or a copy. The new side's object id
+// of each file, by its new path.
+function newSideIds(buf: Buffer): Map<string, string> {
+  const parts = splitNul(buf);
+  const out = new Map<string, string>();
+  for (let i = 0; i < parts.length; ) {
+    const [, , , id = "", status = ""] = (parts[i++] as string).split(" ");
+    if (status.startsWith("R") || status.startsWith("C")) i++;
+    out.set(parts[i++] as string, id);
+  }
+  return out;
+}
+
 // Everything after the two sides are known: the file list, the id, the
-// changed lines and the brief's diff, from `git diff <range>`.
+// changed lines and the brief's diff, from `git diff <range>`. `cwd`: where
+// git runs, `repoRoot` when left out.
 async function diffChange(args: {
   repoRoot: string;
+  cwd?: string;
   baseRef: string;
   baseSha: string;
   range: string[];
-  // How git names a file on the new side: ":" (the index) or "<sha>:".
-  newSide: string;
   env: NodeJS.ProcessEnv;
   exclude: string[];
 }): Promise<Change> {
   const { repoRoot, exclude, env } = args;
+  const cwd = args.cwd ?? repoRoot;
   const diffArgs = (extra: string[], skip: string[] = []): string[] => [
     "diff",
     ...DIFF_FLAGS,
@@ -616,9 +679,9 @@ async function diffChange(args: {
     ...skip,
   ];
   const [nameStatus, numstatBuf, raw] = await Promise.all([
-    gitOk(repoRoot, diffArgs(["--name-status", "-z"]), { env }),
-    gitOk(repoRoot, diffArgs(["--numstat", "-z"]), { env }),
-    gitOk(repoRoot, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
+    gitOk(cwd, diffArgs(["--name-status", "-z"]), { env }),
+    gitOk(cwd, diffArgs(["--numstat", "-z"]), { env }),
+    gitOk(cwd, diffArgs(["--raw", "-z", "--no-abbrev"]), { env }),
   ]);
 
   const id = createHash("sha256").update(`${args.baseSha}\n`).update(raw).digest("hex");
@@ -672,7 +735,7 @@ async function diffChange(args: {
   await streamPatch(
     (onLine) =>
       gitLines(
-        repoRoot,
+        cwd,
         // A file left out of the brief keeps its coverage: its changed lines
         // must then be read through the tools, or they count as unread.
         diffArgs(["-U0", ...textArgs], skipPathspecs([...skipped, ...uncoverable])),
@@ -692,7 +755,8 @@ async function diffChange(args: {
   // A deleted file keeps line 1 of its path as its one anchor.
   const deletionPoints = new Map<string, DeletionPoint[]>();
   const withPoints = [...parser.deletionPoints()].filter(([path]) => covered.has(path));
-  const counts = await lineCounts(repoRoot, withPoints.map(([path]) => `${args.newSide}${path}`), env);
+  const ids = newSideIds(raw);
+  const counts = await lineCounts(cwd, withPoints.map(([path]) => ids.get(path) ?? null), env);
   for (const [i, [path, points]] of withPoints.entries()) {
     const count = counts[i] as number;
     deletionPoints.set(
@@ -715,7 +779,7 @@ async function diffChange(args: {
   await streamPatch(
     (onLine) =>
       gitLines(
-        repoRoot,
+        cwd,
         diffArgs(["-U3", ...textArgs], skipPathspecs([...skipped, ...tooLarge])),
         opts,
         DIFF_CAP_BYTES + 1,

@@ -14,9 +14,20 @@
 //     behind.
 //  3. A commit holding a path no checkout may write (a ".git" or ".." part)
 //     is diffed with that path quietly dropped, instead of being refused.
+//  4. A changed file whose name holds a line break reaches git cat-file
+//     --batch as two requests: another object is read (one named on the
+//     second line, a refused file's), or the change fails.
+//  5. A .gitattributes decides how an admitted text file is diffed (one in
+//     the clone's work tree or info/attributes, or one in either commit, in
+//     or out of the admitted paths): marked -diff or binary, its changed
+//     lines lose their patch and coverage, so a review can pass without
+//     being shown them.
+//  6. Telling a file moved in from outside the admitted paths reads the
+//     outside file: a refused file object is read, so a clone that lacks it
+//     fails the change. A move of the same bytes is still named.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -47,10 +58,12 @@ function write(dir: string, path: string, text: string): void {
 }
 
 const OLD_BODY = Array.from({ length: 30 }, (_, i) => `export const outsideValue${i} = "OLD-OUTSIDE-${i}";`).join("\n") + "\n";
+const SAME_BODY = "export const same = 1;\n";
 
 // A base commit, then a head commit that changes a root file, an excluded
 // file inside the admitted folder and a file inside it, renames a file
-// inside it, and moves a file from outside into it with one line changed.
+// inside it, moves a file from outside into it with one line changed, and
+// moves another from outside into it unchanged.
 function repo(): { dir: string; base: string; head: string } {
   const dir = tempDir("oq-admit-");
   git(dir, "init", "-q", "-b", "main");
@@ -59,6 +72,7 @@ function repo(): { dir: string; base: string; head: string } {
   write(dir, "services/api/generated/g.ts", "export const g = 1;\n");
   write(dir, "services/api/old-name.ts", Array.from({ length: 20 }, (_, i) => `export const inside${i} = ${i};`).join("\n") + "\n");
   write(dir, "legacy/moved.ts", OLD_BODY);
+  write(dir, "legacy/same.ts", SAME_BODY);
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "base");
   const base = git(dir, "rev-parse", "HEAD");
@@ -68,6 +82,7 @@ function repo(): { dir: string; base: string; head: string } {
   git(dir, "mv", "services/api/old-name.ts", "services/api/new-name.ts");
   git(dir, "mv", "legacy/moved.ts", "services/api/moved.ts");
   write(dir, "services/api/moved.ts", OLD_BODY.replace('"OLD-OUTSIDE-3"', '"NEW-INSIDE-3"'));
+  git(dir, "mv", "legacy/same.ts", "services/api/same.ts");
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "head");
   return { dir, base, head: git(dir, "rev-parse", "HEAD") };
@@ -118,5 +133,61 @@ describe("the change over the admitted paths", () => {
       const bad = git(r.dir, "commit-tree", root, "-p", r.base, "-m", "bad");
       await expect(getAdmittedTreeChange({ repoRoot: r.dir, baseRef: "main", baseSha: r.base, headSha: bad, exclude: [], admit: scoped([]) })).rejects.toThrow(/a path no checkout may write/);
     }
+  });
+
+  it("4. a file name holding a line break reaches git as one object id, never as a request of its own", async () => {
+    const dir = tempDir("oq-admit-nl-");
+    git(dir, "init", "-q", "-b", "main");
+    write(dir, "canary.txt", "refused canary\n");
+    // The second line of the name is the refused file's object id.
+    const name = `services/api/n\n${git(dir, "hash-object", "canary.txt")}`;
+    write(dir, name, ["one", "two", "three", "four", "five", "six"].join("\n") + "\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "base");
+    const base = git(dir, "rev-parse", "HEAD");
+    write(dir, name, ["one", "two", "four", "five", "six"].join("\n") + "\n");
+    git(dir, "commit", "-qam", "head");
+    const head = git(dir, "rev-parse", "HEAD");
+    const { change } = await getAdmittedTreeChange({ repoRoot: dir, baseRef: "main", baseSha: base, headSha: head, exclude: [], admit: scoped([]) });
+    expect(change.files.map((f) => f.path)).toEqual([name]);
+    expect(change.deletionPoints.get(name)).toEqual([{ after: 2, lines: 1, anchors: [2, 3] }]);
+  });
+
+  it("5. no .gitattributes decides how an admitted file is diffed: not the clone's work tree or info/attributes, and not either commit's", async () => {
+    const dir = tempDir("oq-admit-attr-");
+    git(dir, "init", "-q", "-b", "main");
+    // Refused: a root file the commits carry and the work tree holds.
+    write(dir, ".gitattributes", "services/api/** -diff\n");
+    // Admitted: one inside the folder.
+    write(dir, "services/api/.gitattributes", "b.ts binary\n");
+    for (const name of ["a", "b", "c"]) write(dir, `services/api/${name}.ts`, `export const ${name} = 1;\n`);
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "base");
+    const base = git(dir, "rev-parse", "HEAD");
+    for (const name of ["a", "b", "c"]) write(dir, `services/api/${name}.ts`, `export const ${name} = 2;\nexport const ${name}2 = 3;\n`);
+    git(dir, "commit", "-qam", "head");
+    const head = git(dir, "rev-parse", "HEAD");
+    // The clone's own attributes file, which no commit carries.
+    write(dir, ".git/info/attributes", "*.ts -diff\n");
+    const { change } = await getAdmittedTreeChange({ repoRoot: dir, baseRef: "main", baseSha: base, headSha: head, exclude: [], admit: scoped([]) });
+    const paths = ["services/api/a.ts", "services/api/b.ts", "services/api/c.ts"];
+    expect(change.files.map((f) => [f.path, f.binary])).toEqual(paths.map((p) => [p, false]));
+    expect([...change.coverage.keys()].sort()).toEqual(paths);
+    for (const p of paths) expect(change.diff).toContain(`+++ b/${p}`);
+  });
+
+  it("6. a file moved in from outside is told from object ids alone: the outside file is never read, and a move of the same bytes is named", async () => {
+    const r = repo();
+    // A copy of the clone without the refused files' objects: any read of
+    // one fails.
+    const copy = join(tempDir("oq-admit-copy-"), "clone");
+    cpSync(r.dir, copy, { recursive: true });
+    for (const spec of [`${r.base}:legacy/moved.ts`, `${r.base}:canary.txt`, `${r.head}:canary.txt`]) {
+      const id = git(copy, "rev-parse", spec);
+      rmSync(join(copy, ".git", "objects", id.slice(0, 2), id.slice(2)));
+    }
+    const { change, renamedIn } = await getAdmittedTreeChange({ repoRoot: copy, baseRef: "main", baseSha: r.base, headSha: r.head, exclude: ["**/generated/**"], admit: scoped(["**/generated/**"]) });
+    expect(renamedIn).toEqual(["services/api/same.ts"]);
+    expect(change.files.find((f) => f.path === "services/api/moved.ts")?.status).toBe("added");
   });
 });

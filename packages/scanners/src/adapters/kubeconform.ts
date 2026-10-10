@@ -36,7 +36,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AdapterResult, ResolvedTool, ScannerSeverity, StaticFinding } from "@openqodex/core";
-import { lstatSync } from "node:fs";
 import type { RepoFacts } from "../detect.js";
 import { describeFailure, execTool, isOffline, runInChunks, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
@@ -86,25 +85,11 @@ export function kubeconformArgs(pin: SchemaPin, cacheDir: string, files: string[
 }
 
 // The schema cache, one folder per pinned commit under the run's scratch
-// root (the OpenQodex home on the laptop), made through the scratch's
-// guarded writer if it is not there. kubeconform requires it to exist.
+// root (the OpenQodex home on the laptop), made or checked through the
+// scratch's guarded writer (a link on the way is refused, even when the
+// folder is already there). kubeconform requires it to exist.
 function cacheFolder(scratch: Scratch, pin: SchemaPin): string {
-  const dir = path.join(scratch.root, "cache", "kubeconform", pin.commit);
-  let there = false;
-  try {
-    there = lstatSync(dir).isDirectory();
-  } catch {
-    // Not there yet.
-  }
-  if (!there) {
-    try {
-      scratch.guard().makeFolder(dir);
-    } catch (err) {
-      // Another run made it in between.
-      if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw err;
-    }
-  }
-  return dir;
+  return scratch.cache("kubeconform", pin.commit);
 }
 
 export async function runKubeconform(args: {

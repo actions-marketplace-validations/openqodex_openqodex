@@ -19,16 +19,20 @@
 //     half-made folder is left in the work folder.
 //  5. A base version outside the scopes is read through the base reader,
 //     an admitted one is not, or a refused read is not recorded.
+//  6. A replacement ref in the clone (refs/replace) swaps what is read for a
+//     commit: the snapshot, the scoped change or a base version holds the
+//     replacement's files instead of the commit's own.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { getAdmittedTreeChange } from "@openqodex/core";
 import { addTargetCheckout, removeCheckout } from "../../cli/src/checkout.js";
 import { materialize, scopedBaseReader } from "../src/materialize.js";
 import { admitted } from "../src/scopes.js";
 import { hashSnapshot, snapshotFiles } from "../src/snapshot.js";
-import { EXCLUDE, SCOPES, decisiveFixture, git, write } from "./scope-fixture.js";
+import { EXCLUDE, SCOPES, commit, decisiveFixture, git, write } from "./scope-fixture.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -129,7 +133,7 @@ describe("the materialised snapshot", () => {
     const blob = git(clone, "rev-parse", `${f.head}:services/api/handler.ts`);
     const work = tempDir("oq-mat-work-");
     await expect(materialize({ clonePath: clone, headSha: f.head, workDir: work, admit })).rejects.toThrow(
-      /^missing objects: 4 files of the head commit [0-9a-f]{12} are not in the clone \(a partial clone made with a blob filter\), and openqodex fetches nothing; .*git checkout --detach [0-9a-f]{40}.*services\/api\/db\/q\.sql/,
+      /^missing objects: 5 files of the head commit [0-9a-f]{12} are not in the clone \(a partial clone made with a blob filter\), and openqodex fetches nothing; .*git checkout --detach [0-9a-f]{40}.*services\/api\/db\/q\.sql/,
     );
     expect(readdirSync(work)).toEqual([]);
     // Still not in the clone: nothing was fetched.
@@ -149,5 +153,32 @@ describe("the base reader", () => {
     expect([...refused].sort()).toEqual(["../canary.txt", "canary.txt", "legacy/util.ts", "services/api/../../canary.txt", "services/api/generated/client.sql"]);
     // Within the cap only, as the graph asks for it.
     expect(await read("services/api/handler.ts", 10)).toBeNull();
+  });
+});
+
+describe("replacement refs", () => {
+  it("6. swap none of the files read for a commit: the snapshot, the scoped change and a base version are the commit's own", async () => {
+    const dir = tempDir("oq-mat-replace-");
+    git(dir, "init", "-q", "-b", "main");
+    write(dir, "s/a.ts", "base\n");
+    const base = commit(dir, "base");
+    write(dir, "s/a.ts", "head\n");
+    const head = commit(dir, "head");
+    // Two other commits, and refs that put them in the place of both.
+    git(dir, "checkout", "-q", "--orphan", "fake");
+    write(dir, "s/a.ts", "REPLACED-BASE-CANARY\n");
+    const fakeBase = commit(dir, "fake base");
+    write(dir, "s/a.ts", "REPLACED-HEAD-CANARY\n");
+    const fakeHead = commit(dir, "fake head");
+    git(dir, "replace", base, fakeBase);
+    git(dir, "replace", head, fakeHead);
+    const all = admitted(undefined, []);
+    const snap = await materialize({ clonePath: dir, headSha: head, workDir: tempDir("oq-mat-replace-work-"), admit: all });
+    expect(readFileSync(join(snap.tree, "s/a.ts"), "utf8")).toBe("head\n");
+    rmSync(snap.folder, { recursive: true, force: true });
+    expect((await scopedBaseReader({ clonePath: dir, baseSha: base, admit: all })("s/a.ts", 1 << 20))?.toString("utf8")).toBe("base\n");
+    const { change } = await getAdmittedTreeChange({ repoRoot: dir, baseRef: "main", baseSha: base, headSha: head, exclude: [], admit: all });
+    expect(change.diff).toContain("-base\n+head\n");
+    expect(change.diff).not.toContain("REPLACED");
   });
 });

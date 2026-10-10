@@ -409,9 +409,10 @@ async function runBuiltin(
   if (!IN_PROCESS.has(source)) {
     const resolution = await args.resolveTool(source);
     if (!resolution.ok) return skippedOutcome(source, resolution.status, resolution.reason, started);
-    // The scratch's variables on top of the tool's own (none on the laptop).
-    const extra = args.scratch.env;
-    tool = Object.keys(extra).length === 0 ? resolution.tool : { ...resolution.tool, env: { ...resolution.tool.env, ...extra } };
+    // The tool's own environment on the laptop; on a scratch root, the
+    // scratch's variables on top and a Go or Cargo tool's caches moved into
+    // it (scratch.ts).
+    tool = args.scratch.laptop ? resolution.tool : { ...resolution.tool, env: args.scratch.toolEnv(resolution.tool.env) };
   }
 
   const ranFrom = Date.now();

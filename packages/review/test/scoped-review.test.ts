@@ -144,7 +144,7 @@ describe("a scoped server review of the decisive fixture", () => {
     if (result.ended !== "reviewed") throw new Error(`the review ended ${result.ended}: ${JSON.stringify(result)}`);
 
     // 1. The snapshot: the admitted regular files and the packet, no more.
-    expect(seen.snapshot.filter((p) => !p.startsWith(".openqodex-review/"))).toEqual(["services/api/db/q.sql", "services/api/handler.ts", "services/api/run.sh", "services/api/util.ts"]);
+    expect(seen.snapshot.filter((p) => !p.startsWith(".openqodex-review/"))).toEqual(["services/api/db/q.sql", "services/api/handler.ts", "services/api/run.sh", "services/api/same.ts", "services/api/util.ts"]);
     expect(leaks(seen.snapshotText)).toEqual([]);
     expect(readdirSync(work)).toEqual([]);
 
@@ -190,9 +190,11 @@ describe("a scoped server review of the decisive fixture", () => {
     };
     for (const [name, text] of Object.entries(outputs)) expect(leaks(text), name).toEqual([]);
 
-    // 7. What the review could not hold is recorded.
+    // 7. What the review could not hold is recorded. A move is told from the
+    // object ids alone, since telling a move with edits would read the
+    // outside file: util.ts, moved with a line removed, is a new file.
     expect(server.notes()).toEqual([
-      "services/api/util.ts was renamed in from a path outside the review's scopes: it is reviewed as a new file, and its earlier version is not read",
+      "services/api/same.ts was renamed in from a path outside the review's scopes: it is reviewed as a new file, and its earlier version is not read",
       "services/api/link-out is a link, which the snapshot does not hold",
     ]);
   });

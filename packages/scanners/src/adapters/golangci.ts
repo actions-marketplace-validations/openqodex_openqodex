@@ -219,7 +219,7 @@ export async function runGolangci(args: GolangciRunArgs): Promise<AdapterResult>
 
     let stdout: string;
     try {
-      stdout = await execGolangci(args.tool, cliArgs, cwd, remaining, args.scratch.root);
+      stdout = await execGolangci(args.tool, cliArgs, cwd, remaining, args.scratch);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notes.push(`${group.moduleRoot}: ${message.slice(0, 200)}`);
@@ -277,13 +277,13 @@ async function execGolangci(
   cliArgs: string[],
   cwd: string,
   timeoutMs: number,
-  cacheRoot: string,
+  scratch: Scratch,
 ): Promise<string> {
   const result = await execTool(tool.path, cliArgs, {
     cwd,
     timeoutMs,
     maxBytes: GOLANGCI_OUTPUT_MAX_BYTES,
-    env: { ...tool.env, GOTOOLCHAIN: "local", GOLANGCI_LINT_CACHE: golangciCacheDir(cacheRoot, cwd) },
+    env: { ...tool.env, GOTOOLCHAIN: "local", GOLANGCI_LINT_CACHE: golangciCacheDir(scratch, cwd) },
   });
   // golangci-lint exit codes: 0 = no issues, 1 = issues found,
   // higher = config / analysis error. It writes the JSON report
@@ -307,8 +307,9 @@ async function execGolangci(
 // changed line and are dropped. One cache folder per module checkout keeps
 // the speed of a warm cache without replaying another folder's paths. The
 // folders live under the run's scratch root (scratch.ts): the OpenQodex
-// home on the laptop.
-function golangciCacheDir(root: string, moduleDir: string): string {
+// home on the laptop; each is made or checked through the scratch's guarded
+// writer, so a link on the way is refused.
+function golangciCacheDir(scratch: Scratch, moduleDir: string): string {
   let real = moduleDir;
   try {
     real = fs.realpathSync(moduleDir);
@@ -316,7 +317,7 @@ function golangciCacheDir(root: string, moduleDir: string): string {
     // The run itself reports a missing folder.
   }
   const key = createHash("sha256").update(real).digest("hex").slice(0, 16);
-  return path.join(root, "cache", "golangci", key);
+  return scratch.cache("golangci", key);
 }
 
 type GolangciIssue = {

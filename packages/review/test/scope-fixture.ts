@@ -10,6 +10,8 @@
 //   legacy/util.ts -> services/api/util.ts
 //                                     a rename whose old path is outside, with
 //                                     one old-only line removed
+//   legacy/same.ts -> services/api/same.ts
+//                                     a move from outside of the same bytes
 //   services/api/link-out             an unchanged link to the root canary
 //   services/api/handler.ts           a changed file inside the scope
 //   services/api/db/q.sql             an added SQL function inside the scope
@@ -84,6 +86,7 @@ export function decisiveFixture(): Fixture {
   write(dir, "services/api/handler.ts", HANDLER_BASE.replace('"./util"', '"../../legacy/util"'));
   write(dir, "services/api/generated/client.sql", "-- EXCLUDED-CANARY-91be base\n");
   write(dir, "services/api/run.sh", "#!/bin/sh\necho run\n");
+  write(dir, "legacy/same.ts", "export const same = 1;\n");
   symlinkSync("../../canary.txt", join(dir, "services/api/link-out"));
   git(dir, "add", "-A");
   git(dir, "update-index", "--chmod=+x", "services/api/run.sh");
@@ -94,6 +97,7 @@ export function decisiveFixture(): Fixture {
   write(dir, "db/root.sql", `-- ROOT-SQL-CANARY-5d0c\n${SQL}`);
   write(dir, "services/api/generated/client.sql", `-- EXCLUDED-CANARY-91be head\n${SQL}`);
   git(dir, "mv", "legacy/util.ts", "services/api/util.ts");
+  git(dir, "mv", "legacy/same.ts", "services/api/same.ts");
   write(dir, "services/api/util.ts", UTIL_BASE.replace("// OLD-ONLY-CANARY-4c2d: this line is removed by the move\n", ""));
   write(dir, "services/api/handler.ts", HANDLER_BASE.replace("  return label(name);", "  const out = label(name);\n  return out.length > 64 ? out.slice(0, 64) : out;"));
   write(dir, "services/api/db/q.sql", SQL);

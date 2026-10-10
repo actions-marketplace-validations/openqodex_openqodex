@@ -199,10 +199,16 @@ const isBad = (v: unknown): v is { bad: string } => v !== null && typeof v === "
 // must not name the `.git` entry and, when `walk` is set, must reach a
 // regular file through no link, each step checked without following one.
 function placePath(box: ToolBox, tool: string, raw: string, field: "path" | "glob", walk: boolean): Placed {
-  const entry = classify(box.snapshotDir, { tool, input: { [field]: raw }, ok: true, read: null });
+  // One spelling for every check and for the read: a backslash is a
+  // separator here, as the model meant it, so "..\x" is checked as the
+  // "../x" it reads.
+  const spelled = raw.replaceAll("\\", "/");
+  const entry = classify(box.snapshotDir, { tool, input: { [field]: spelled }, ok: true, read: null });
   if (entry.inside !== true) return { refused: refusal("the path is outside the code under review", false, raw) };
-  if (isAbsolute(raw) || raw.startsWith("\\")) return { refused: refusal("give the path relative to the root of the code under review", true, null) };
-  const rel = posix.normalize(raw.replaceAll("\\", "/")).replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+  if (isAbsolute(spelled)) return { refused: refusal("give the path relative to the root of the code under review", true, null) };
+  const rel = posix.normalize(spelled).replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+  // A step out of the snapshot, whatever classify made of it.
+  if (rel === ".." || rel.startsWith("../")) return { refused: refusal("the path is outside the code under review", false, raw) };
   if (rel === "" || rel === ".") return field === "glob" ? { rel: "**" } : { refused: refusal("name a file, not the root folder", true, ".") };
   const parts = rel.split("/");
   if (parts[0]!.toLowerCase() === ".git") return { refused: refusal("the .git entry is not part of the code under review", true, rel) };
@@ -510,22 +516,69 @@ function findCallers(box: ToolBox, args: Args): Result {
   return { text, ok: true, path: rel, inside: true, range: null, reason: shown < body.length ? `cut at ${BOUND}: ${shown} of ${body.length} call sites sent` : null };
 }
 
+// The most bytes a call's arguments may hold. They are measured before
+// anything reads, logs or echoes them; a path, a pattern of 1,000
+// characters and a glob fit many times over.
+export const TOOL_ARGS_BYTES = 16 * 1024;
+const OVER = Symbol("over");
+
+// The arguments' size in UTF-8 bytes, measured with work bounded by `max`:
+// a string over it is never read whole. Null once the size passes `max`,
+// or when the arguments cannot be written as JSON.
+function argsBytes(raw: unknown, max: number): number | null {
+  if (typeof raw === "string") return raw.length > max || Buffer.byteLength(raw, "utf8") > max ? null : Buffer.byteLength(raw, "utf8");
+  let n = 0;
+  try {
+    JSON.stringify(raw ?? null, (key: string, value: unknown) => {
+      n += key.length > max ? max + 1 : Buffer.byteLength(key, "utf8") + 4;
+      n += typeof value === "string" ? (value.length > max ? max + 1 : Buffer.byteLength(value, "utf8") + 2) : 8;
+      if (n > max) throw OVER;
+      return value;
+    });
+  } catch {
+    return null;
+  }
+  return n;
+}
+
+// Text cut to at most `max` UTF-8 bytes, at a whole character.
+function capBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text, "utf8") <= max) return text;
+  let lo = 0;
+  let hi = Math.min(text.length, max);
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (Buffer.byteLength(text.slice(0, mid), "utf8") <= max) lo = mid;
+    else hi = mid - 1;
+  }
+  // Never end on half of a surrogate pair.
+  const end = lo > 0 && /[\ud800-\udbff]/.test(text[lo - 1]!) ? lo - 1 : lo;
+  return text.slice(0, end);
+}
+
 // Runs one tool call and returns the reply and its log fields. Never throws
 // for anything the reviewer sent: a call it cannot run is refused with the
-// reason. The last step redacts the reply once more; a reply that would
-// still hold a secret is replaced by a refusal.
+// reason. Arguments over TOOL_ARGS_BYTES are refused before they are read
+// or logged. The last step redacts the reply once more (a reply that would
+// still hold a secret is replaced by a refusal) and holds every reply, a
+// refusal included, to the 32 KB bound.
 export async function runTool(box: ToolBox, name: string, raw: unknown): Promise<ToolOutcome> {
   const tool = typeof name === "string" ? name.slice(0, 100) : "(no name)";
+  const size = argsBytes(raw, TOOL_ARGS_BYTES);
   // The arguments as the log keeps them: redacted like every reply, then cut.
-  let detail = "";
-  try {
-    detail = redactSecrets(typeof raw === "string" ? raw : (JSON.stringify(raw ?? null) ?? ""), box.secrets).slice(0, MAX_DETAIL_CHARS);
-  } catch {
-    detail = "(arguments that could not be written as JSON)";
+  let detail = `(arguments over ${TOOL_ARGS_BYTES / 1024} KB, not kept)`;
+  if (size !== null) {
+    try {
+      detail = redactSecrets(typeof raw === "string" ? raw : (JSON.stringify(raw ?? null) ?? ""), box.secrets).slice(0, MAX_DETAIL_CHARS);
+    } catch {
+      detail = "(arguments that could not be written as JSON)";
+    }
   }
   let out: Result;
   if (!(TOOL_NAMES as readonly string[]).includes(tool)) {
     out = refusal(`${tool} is not a tool the brain defined; the tools are ${TOOL_NAMES.join(", ")}`, null, null);
+  } else if (size === null) {
+    out = badArgs(`the arguments are over ${TOOL_ARGS_BYTES / 1024} KB, or cannot be written as JSON`);
   } else {
     const args = argsOf(raw);
     if (args === null) out = badArgs("the arguments are not a JSON object");
@@ -535,10 +588,11 @@ export async function runTool(box: ToolBox, name: string, raw: unknown): Promise
     else if (tool === "read_diff_for_file") out = readDiff(box, args);
     else out = findCallers(box, args);
   }
-  const text = redactSecrets(out.text, box.secrets);
-  // A path as the reviewer asked for it (an attempt outside) is redacted too.
-  const path = out.path === null ? null : redactSecrets(out.path, box.secrets);
-  const reason = out.reason === null ? null : redactSecrets(out.reason, box.secrets);
+  const text = capBytes(redactSecrets(out.text, box.secrets), TOOL_REPLY_BYTES);
+  // A path as the reviewer asked for it (an attempt outside) is redacted
+  // too; a refused one, and every reason, is cut like the arguments.
+  const path = out.path === null ? null : redactSecrets(out.path, box.secrets).slice(0, out.ok ? undefined : MAX_DETAIL_CHARS);
+  const reason = out.reason === null ? null : redactSecrets(out.reason, box.secrets).slice(0, MAX_DETAIL_CHARS);
   // Asked of the path before its redaction; a listing or a search ("."), or
   // a call that named no path, asked for nothing outside the scopes.
   const scoped = box.admit === undefined || out.inside !== true ? null : out.path === null || out.path === "." ? true : inScope(box, out.path);

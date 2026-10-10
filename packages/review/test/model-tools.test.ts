@@ -6,8 +6,9 @@
 // Ways it could fail, written before the code:
 //  1. read_file hands out lines numbered differently from the snapshot, or
 //     records a range other than the lines it carried.
-//  2. A path outside the snapshot (a `..` step, an absolute path, `~`) is
-//     read, or is refused without being marked outside.
+//  2. A path outside the snapshot (a `..` step, an absolute path, `~`, a
+//     `..` step spelled with a backslash) is read, or is refused without
+//     being marked outside.
 //  3. A link is followed: to a file outside, or to one inside.
 //  4. The `.git` entry of the snapshot (it names the clone's folder) is read.
 //  5. A reply passes the 32 KB bound, or a cut reply does not say which lines
@@ -35,22 +36,24 @@
 //     pretends to answer when there is no graph.
 // 13. A tool name the brain did not define is run or is logged as inside.
 // 14. Bad arguments are run, or are logged as an attempt outside.
-// 15. A pattern or a glob makes the brain do unbounded work: a 65 KB
-//     pattern, a pattern that backtracks without end elsewhere, a glob of
+// 15. A pattern or a glob makes the brain do unbounded work: a pattern
+//     over its length limit, a pattern that backtracks without end elsewhere, a glob of
 //     100 brace lists or of many `**` steps, a listing or a search over a
 //     snapshot of 20,000 files. Each must end under a fixed time, and a call
 //     that stops at a bound must say so in its reply and its log reason.
 // 16. With folder scopes, a tool reads, lists, searches or finds callers in
 //     a path outside them, logs such a call as in scope, or refuses the
 //     graph's packet folder the brief tells the reviewer to read.
+// 17. A call's arguments of any size are read, logged or echoed whole, or a
+//     refusal that echoes an argument passes the 32 KB bound.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getTreeChange } from "@openqodex/core";
 import type { Change } from "@openqodex/core";
 import { buildGraph } from "@openqodex/graph";
-import { TOOL_DEFINITIONS, TOOL_REPLY_BYTES, WALK_FILES, runTool } from "../src/tools/index.js";
+import { TOOL_ARGS_BYTES, TOOL_DEFINITIONS, TOOL_REPLY_BYTES, WALK_FILES, runTool } from "../src/tools/index.js";
 import { compileGlob, compilePattern, matchesLine } from "../src/tools/pattern.js";
 import type { ToolBox } from "../src/tools/index.js";
 import { admitted } from "../src/scopes.js";
@@ -118,7 +121,9 @@ describe("read_file", () => {
   });
 
   it("2. refuses a path outside the snapshot and marks the attempt outside", async () => {
-    for (const path of ["../x.ts", join(outside, "secret.txt"), "~/.ssh/id_rsa", "src/../../x"]) {
+    // The outside folder is the snapshot's sibling, so a backslash step reaches it.
+    const sibling = `..\\${basename(outside)}\\secret.txt`;
+    for (const path of ["../x.ts", join(outside, "secret.txt"), "~/.ssh/id_rsa", "src/../../x", sibling, `src\\..\\${sibling}`]) {
       const r = await runTool(box, "read_file", { path });
       expect(r, path).toMatchObject({ ok: false, inside: false, range: null });
       expect(r.reason, path).toMatch(/outside/);
@@ -328,8 +333,10 @@ describe("15. the bounds on the work one call may ask for", () => {
     return { r, ms: performance.now() - started };
   };
 
-  it("refuses a 65 KB pattern or glob at once", async () => {
-    const big = "a".repeat(65 * 1024);
+  it("refuses a pattern or glob over 1,000 characters at once", async () => {
+    // Under the arguments' own bound (failure 17 covers a 64 KB argument),
+    // so the field's limit is what refuses it.
+    const big = "a".repeat(2 * 1024);
     for (const [name, args] of [
       ["search_code", { pattern: big }],
       ["search_code", { pattern: "x", glob: big }],
@@ -443,5 +450,27 @@ describe("the review's folder scopes", () => {
     expect(searched.text).not.toContain("lib/b.ts");
     // With no folder scopes the field stays null.
     expect((await runTool({ ...scoped, admit: undefined }, "read_file", { path: "lib/b.ts" })).inScope).toBeNull();
+  });
+});
+
+describe("the size of a call", () => {
+  it("17. refuses arguments over the bound before reading or logging them, and holds every refusal to 32 KB", async () => {
+    const huge = "x".repeat(64 * 1024);
+    for (const [tool, args] of [
+      ["find_callers", { symbol: huge, file: "src/math.ts" }],
+      ["read_file", { path: `src/${huge}` }],
+      ["search_code", JSON.stringify({ pattern: huge })],
+    ] as const) {
+      const r = await runTool(box, tool, args);
+      expect(r, tool).toMatchObject({ ok: false, reason: `bad arguments: the arguments are over ${TOOL_ARGS_BYTES / 1024} KB, or cannot be written as JSON` });
+      expect(r.detail, tool).toBe(`(arguments over ${TOOL_ARGS_BYTES / 1024} KB, not kept)`);
+      expect(Buffer.byteLength(r.text), tool).toBeLessThanOrEqual(TOOL_REPLY_BYTES);
+    }
+    // Under the argument bound, a refusal that echoes the argument stays in bounds too.
+    const long = "y".repeat(TOOL_ARGS_BYTES - 100);
+    const missing = await runTool(box, "find_callers", { symbol: long, file: "src/math.ts" });
+    expect(missing.ok).toBe(false);
+    expect(Buffer.byteLength(missing.text)).toBeLessThanOrEqual(TOOL_REPLY_BYTES);
+    expect(missing.reason!.length).toBeLessThanOrEqual(2000);
   });
 });

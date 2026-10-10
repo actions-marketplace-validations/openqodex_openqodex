@@ -42,8 +42,9 @@
 // All errors are captured into the result; the runner never throws on a
 // scanner failure.
 
-import { lstatSync, realpathSync } from "node:fs";
+import { constants, copyFileSync, lstatSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import type { AdapterResult, ResolvedTool, ScannerSeverity, StaticFinding } from "@openqodex/core";
 import { describeFailure, execTool, isOffline, type ExecResult } from "../exec.js";
@@ -104,23 +105,90 @@ export function metadataFailure(stderr: string, folder: string): string {
 }
 
 // The folder that holds the advisory database, under the run's scratch root
-// (the OpenQodex home on the laptop), made through the scratch's guarded
-// writer when it is not there; its real path, since git compares
+// (the OpenQodex home on the laptop), made or checked through the scratch's
+// guarded writer (a link on the way is refused, even when the folder is
+// already there); its real path, since git compares
 // GIT_CEILING_DIRECTORIES with real paths.
 function databaseRoot(scratch: Scratch): string {
-  const dir = path.join(scratch.root, "cache", "cargo-deny", "advisory-dbs");
-  if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
-    try {
-      scratch.guard().makeFolder(dir);
-    } catch (err) {
-      // Another run made it in between.
-      if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw err;
-    }
-  }
-  return realpathSync(dir);
+  return realpathSync(scratch.cache("cargo-deny", "advisory-dbs"));
 }
 
 type Project = { lock: string; folder: string; manifest: string };
+
+// A server run's Cargo home is its own (scratch.ts). Cargo reads and writes
+// a home through the same folders (a lock file, a last-use record, the index
+// cache, unpacked crates), so it cannot be pointed at the preinstalled one
+// without writing there. Before `cargo metadata`, the run's home gets copies
+// of what a Cargo.lock's registry crates need from the preinstalled home
+// (`from`): each registry's settings files, and each crate's index entry and
+// archive. Cargo unpacks the archives into the run's home. Only regular
+// files are copied, never through a link, and a lock name that is not a
+// crate name, or a version with a character no version holds, is skipped.
+// The number of files copied.
+const CRATE_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+const CRATE_VERSION = /^[0-9A-Za-z.+-]{1,100}$/;
+
+export function seedCargoHome(args: { from: string; to: string; lockText: string }): number {
+  let parsed: { package?: unknown };
+  try {
+    parsed = parseToml(args.lockText) as { package?: unknown };
+  } catch {
+    return 0;
+  }
+  const crates: { name: string; version: string }[] = [];
+  for (const p of Array.isArray(parsed.package) ? (parsed.package as Record<string, unknown>[]) : []) {
+    const { name, version, source } = p ?? {};
+    if (typeof name !== "string" || typeof version !== "string" || typeof source !== "string") continue;
+    if (!/^(registry|sparse)\+/.test(source) || !CRATE_NAME.test(name) || !CRATE_VERSION.test(version)) continue;
+    crates.push({ name, version });
+  }
+  let copied = 0;
+  const copy = (from: string, to: string): void => {
+    if (!lstatSync(from, { throwIfNoEntry: false })?.isFile()) return;
+    mkdirSync(path.dirname(to), { recursive: true, mode: 0o700 });
+    copyFileSync(from, to, constants.COPYFILE_FICLONE);
+    copied++;
+  };
+  const folders = (dir: string): string[] =>
+    lstatSync(dir, { throwIfNoEntry: false })?.isDirectory() ? readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : [];
+  const filesIn = (dir: string): string[] =>
+    lstatSync(dir, { throwIfNoEntry: false })?.isDirectory() ? readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name) : [];
+  const indexes = path.join(args.from, "registry", "index");
+  for (const registry of folders(indexes)) {
+    const from = path.join(indexes, registry);
+    const to = path.join(args.to, "registry", "index", registry);
+    for (const name of filesIn(from)) copy(path.join(from, name), path.join(to, name));
+    for (const name of filesIn(path.join(from, ".cache"))) copy(path.join(from, ".cache", name), path.join(to, ".cache", name));
+    for (const crate of crates) {
+      const entry = indexEntryPath(crate.name);
+      copy(path.join(from, ".cache", entry), path.join(to, ".cache", entry));
+    }
+  }
+  const archives = path.join(args.from, "registry", "cache");
+  for (const registry of folders(archives)) {
+    for (const crate of crates) {
+      const file = `${crate.name}-${crate.version}.crate`;
+      copy(path.join(archives, registry, file), path.join(args.to, "registry", "cache", registry, file));
+    }
+  }
+  return copied;
+}
+
+// Where a registry index keeps a crate's entry: by the lowercased name's
+// length and first letters, as Cargo lays out its index cache.
+function indexEntryPath(name: string): string {
+  const n = name.toLowerCase();
+  if (n.length === 1) return path.join("1", n);
+  if (n.length === 2) return path.join("2", n);
+  if (n.length === 3) return path.join("3", n.slice(0, 1), n);
+  return path.join(n.slice(0, 2), n.slice(2, 4), n);
+}
+
+// The Cargo home the developer's Cargo uses: CARGO_HOME, else .cargo in the
+// home folder.
+function preinstalledCargoHome(): string {
+  return process.env.CARGO_HOME || path.join(homedir(), ".cargo");
+}
 
 export async function runCargoDeny(args: { repoDir: string; changedPaths: string[]; tool: ResolvedTool | null; scratch: Scratch }): Promise<AdapterResult> {
   const locks = args.changedPaths.filter(isCargoLock);
@@ -177,6 +245,16 @@ export async function runCargoDeny(args: { repoDir: string; changedPaths: string
 
       const out: StaticFinding[] = [];
       for (const [n, project] of projects.entries()) {
+        // A server run's own Cargo home gets the crates this lock needs.
+        const runHome = tool.env.CARGO_HOME;
+        if (!args.scratch.laptop && runHome) {
+          try {
+            const lockText = await readRepoFile(args.repoDir, project.lock, LOCK_MAX_BYTES);
+            seedCargoHome({ from: preinstalledCargoHome(), to: runHome, lockText });
+          } catch {
+            // Nothing copied: cargo metadata names the crates it misses.
+          }
+        }
         const metadata = await step(cargo, ["metadata", "--format-version", "1", "--frozen", "--manifest-path", project.manifest], work);
         const metaFailed = describeFailure("cargo metadata", metadata, CARGO_DENY_TIMEOUT_MS);
         if (metaFailed || metadata.exitCode !== 0) {

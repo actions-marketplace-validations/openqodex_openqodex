@@ -67,10 +67,15 @@ export function tflintConfig(pluginDir: string): string {
 
 // TFLint talks to its bundled ruleset over a Unix socket in TMPDIR, and a
 // socket path longer than about 100 bytes cannot be bound (macOS allows 104):
-// the ruleset then fails to start. The run's temporary folder (the system's
-// on the laptop) when it is short, else /tmp.
-function socketDir(tmp: string): string {
-  return tmp.length <= 64 ? tmp : "/tmp";
+// the ruleset then fails to start. The folder must be absolute: TFLint runs
+// each folder of a recursive run from inside it, so a relative one moves.
+// The run's temporary folder when it is short. Else, on the laptop, /tmp;
+// a server run writes nowhere outside its scratch root, so it gets null and
+// TFLint is not started.
+const SOCKET_DIR_MAX = 64;
+function socketDir(scratch: Scratch): string | null {
+  if (scratch.temp.length <= SOCKET_DIR_MAX) return scratch.temp;
+  return scratch.laptop ? "/tmp" : null;
 }
 
 export async function runTflint(args: { repoDir: string; changedPaths: string[]; tool: ResolvedTool | null; scratch: Scratch }): Promise<AdapterResult> {
@@ -79,6 +84,10 @@ export async function runTflint(args: { repoDir: string; changedPaths: string[];
   if (!args.tool) return { findings: [], error: "not installed" };
   const tool = args.tool;
   const folders = [...new Set(files.map(folderOf))].sort();
+  const socket = socketDir(args.scratch);
+  if (socket === null) {
+    return { findings: [], error: `the run's temporary folder is ${args.scratch.temp.length} characters long, and TFLint's plugin socket needs one of ${SOCKET_DIR_MAX} or fewer; give a shorter scratch root` };
+  }
 
   try {
     return await withStage(args.scratch.temp, args.repoDir, folders, [], async (stage) => {
@@ -91,7 +100,7 @@ export async function runTflint(args: { repoDir: string; changedPaths: string[];
         cwd: stage.tree,
         timeoutMs: TFLINT_TIMEOUT_MS,
         maxBytes: TFLINT_OUTPUT_MAX_BYTES,
-        env: { PATH: "", HOME: stage.home, TMPDIR: socketDir(args.scratch.temp) },
+        env: { PATH: "", HOME: stage.home, TMPDIR: socket },
       });
       const failed = describeFailure("tflint", result, TFLINT_TIMEOUT_MS);
       if (failed) throw new Error(failed);

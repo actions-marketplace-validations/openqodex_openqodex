@@ -13,7 +13,7 @@
 // the same hash.
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { OpenQodexError, safeGit } from "@openqodex/core";
+import { OpenQodexError, SERVER_GIT_ENV, safeGit } from "@openqodex/core";
 import { blobId, langOf, showBlob } from "@openqodex/graph";
 import type { ListedFile } from "@openqodex/graph";
 import type { Snapshot, SnapshotMaker } from "./review-change.js";
@@ -48,7 +48,7 @@ type Entry = { mode: string; type: string; id: string; path: string };
 // Every entry of the commit's tree, one level of folders flattened: "<mode>
 // <type> <id>\t<path>".
 async function listTree(clonePath: string, sha: string): Promise<Entry[]> {
-  const r = await safeGit(clonePath, ["ls-tree", "-r", "-z", "--full-tree", sha]);
+  const r = await safeGit(clonePath, ["ls-tree", "-r", "-z", "--full-tree", sha], undefined, { ...SERVER_GIT_ENV });
   if (r.code !== 0) {
     const why = r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`;
     if (/lazy fetch|promisor|missing|could not read|not a tree object|unable to read/i.test(r.stderr)) {
@@ -68,7 +68,7 @@ async function sizes(clonePath: string, ids: string[]): Promise<Map<string, numb
   const out = new Map<string, number | null>();
   if (ids.length === 0) return out;
   const unique = [...new Set(ids)];
-  const r = await safeGit(clonePath, ["cat-file", "--batch-check"], `${unique.join("\n")}\n`);
+  const r = await safeGit(clonePath, ["cat-file", "--batch-check"], `${unique.join("\n")}\n`, { ...SERVER_GIT_ENV });
   if (r.code !== 0) throw new OpenQodexError(`could not read the files of the clone: ${r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`}`);
   for (const line of r.stdout.toString("utf8").split("\n")) {
     if (line === "") continue;
@@ -81,7 +81,7 @@ async function sizes(clonePath: string, ids: string[]): Promise<Map<string, numb
 // The content of each id, from `git cat-file --batch`: "<id> <type>
 // <size>\n<content>\n" per id asked.
 async function contents(clonePath: string, ids: string[]): Promise<Map<string, Buffer>> {
-  const r = await safeGit(clonePath, ["cat-file", "--batch"], `${ids.join("\n")}\n`);
+  const r = await safeGit(clonePath, ["cat-file", "--batch"], `${ids.join("\n")}\n`, { ...SERVER_GIT_ENV });
   if (r.code !== 0) throw new OpenQodexError(`could not read the files of the clone: ${r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`}`);
   const out = new Map<string, Buffer>();
   let at = 0;
@@ -195,7 +195,7 @@ export function materializedSnapshots(workDir: string, admit: Admit): SnapshotMa
     async lfsPaths(tree, paths) {
       const snap = made.get(tree);
       if (!snap || paths.length === 0) return 0;
-      const r = await safeGit(snap.clonePath, ["check-attr", "-z", "--stdin", `--source=${snap.sha}`, "filter"], `${paths.join("\0")}\0`);
+      const r = await safeGit(snap.clonePath, ["check-attr", "-z", "--stdin", `--source=${snap.sha}`, "filter"], `${paths.join("\0")}\0`, { ...SERVER_GIT_ENV });
       if (r.code !== 0) return 0;
       const parts = r.stdout.toString("utf8").split("\0");
       let n = 0;
@@ -247,6 +247,6 @@ export function scopedBaseReader(args: { clonePath: string; baseSha: string; adm
       args.refused?.add(path);
       return null;
     }
-    return showBlob(args.clonePath, args.baseSha, path, maxBytes);
+    return showBlob(args.clonePath, args.baseSha, path, maxBytes, SERVER_GIT_ENV);
   };
 }

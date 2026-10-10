@@ -22,6 +22,9 @@
 //     diverged, or narrows the review.
 //  6. A previous commit the clone does not hold, or an id that is not a
 //     commit, narrows the review or throws.
+//  7. A replacement ref in the clone (refs/replace) forges a proof: a head
+//     that does not descend from the merge base passes, because the ref
+//     points it at a commit that does.
 //  8. A file previous..head changed but could not cover (a large merge of
 //     the base branch used the coverage limit up) is dropped from the
 //     obligation, so its changed lines go unreviewed or the review says
@@ -162,5 +165,23 @@ describe("an explicit full review, with its reason", () => {
       expect(n.decision.scope.kind, id).toBe("full");
       expect(n.decision.scope.reason, id).toMatch(/^not a commit: the previously reviewed commit .* the whole change is reviewed$/);
     }
+  });
+});
+
+describe("the proofs and replacement refs", () => {
+  it("7. a replacement ref cannot forge the ancestry: a head outside the merge base's history stays diverged", async () => {
+    const h = history();
+    // A head with no history in common with the base.
+    git(h.dir, "checkout", "-q", "--orphan", "unrelated");
+    write(h.dir, "s/a.ts", lines(40, { 1: "unrelated" }));
+    const unrelated = commit(h.dir, "unrelated");
+    // A commit that does descend from the base, and a ref that puts it in
+    // the unrelated head's place.
+    git(h.dir, "checkout", "-q", "-f", "main");
+    write(h.dir, "s/a.ts", lines(40, { 2: "descends" }));
+    const descends = commit(h.dir, "descends");
+    git(h.dir, "replace", unrelated, descends);
+    const d = await decideIncremental({ clonePath: h.dir, mergeBaseSha: h.base, headSha: unrelated });
+    expect(d.ok ? "the proof passed" : d.reason).toMatch(/^diverged: /);
   });
 });

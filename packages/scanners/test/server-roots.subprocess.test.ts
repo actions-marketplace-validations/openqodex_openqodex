@@ -26,13 +26,17 @@
 //    removed, the server's resolver installs it again, opens a connection
 //    or reads it from elsewhere; or a resolver with installs on takes a
 //    root other than the OpenQodex home's tools folder.
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+// Added after the code review of the library branch:
+// 6. A symbolic link under the scratch root is followed: a cache folder
+//    reached through a link is used because it is already there, so a
+//    scanner writes outside the root.
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { ADAPTERS, CHECK_CASES, IN_PROCESS, checkCase, createToolResolver, loadToolchain, preinstallScanners, runScanners } from "@openqodex/scanners";
-import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+import { adoptTempDir, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 // Points OPENQODEX_HOME at the end-to-end setup's home, whose tools folder
 // is the install root here.
 import { withLoggingProxy } from "./subprocess-support.js";
@@ -40,6 +44,16 @@ import { withLoggingProxy } from "./subprocess-support.js";
 afterAll(removeTempDirs);
 
 const offline = () => process.env.OPENQODEX_E2E_OFFLINE === "1";
+
+// A folder for scratch roots with a short path. TFLint's plugin socket goes
+// in <root>/tmp, which must be 64 characters or fewer, and a server run
+// refuses to start TFLint otherwise; the test run's own temp folder can be
+// longer than that (macOS's is), so these live directly under /tmp.
+function shortParent(): string {
+  const dir = mkdtempSync("/tmp/oq-ss-");
+  adoptTempDir(dir);
+  return dir;
+}
 const installRoot = join(process.env.OPENQODEX_HOME!, "tools");
 
 // Every entry under `dir`, with its kind, size and modification time, and
@@ -99,7 +113,7 @@ describe("server runs of the scanners", () => {
 
     const { repo, paths, coverage } = plantAll();
     const watched = { tmp: tempDir("oq-server-tmp-"), home: tempDir("oq-server-home-"), openqodex: tempDir("oq-server-oqhome-") };
-    const scratchParent = tempDir("oq-server-scratch-");
+    const scratchParent = shortParent();
     const roots = [join(scratchParent, "a"), join(scratchParent, "b")];
 
     const before = { repo: shape(repo), install: shape(installRoot) };
@@ -205,6 +219,41 @@ describe("server runs of the scanners", () => {
 
     // Installs on demand never go into a root other than the home's tools folder.
     expect(() => createToolResolver({ allowInstall: true, installRoot: root })).toThrow(/preinstallScanners/);
+  }, 300_000);
+
+  it("refuses a link under the scratch root, even on the way to a cache folder already there, and writes nothing through it (failure 6)", async () => {
+    if (offline()) {
+      process.stdout.write("server roots, links: skipped, kubeconform does not run with OPENQODEX_E2E_OFFLINE=1\n");
+      return;
+    }
+    // kubeconform's schema cache for the pinned commit, already there in a
+    // folder outside the root that the root's cache folder links to.
+    const recipe = loadToolchain().tools.kubeconform!;
+    const commit = recipe.method === "github-release" ? recipe.schemas!.commit : "";
+    const outside = tempDir("oq-server-link-outside-");
+    mkdirSync(join(outside, "kubeconform", commit), { recursive: true });
+    const scratchRoot = join(shortParent(), "run");
+    mkdirSync(scratchRoot);
+    symlinkSync(outside, join(scratchRoot, "cache"));
+    const repo = tempDir("oq-server-link-repo-");
+    const files = checkCase("kubeconform")!.files();
+    for (const [name, body] of Object.entries(files)) {
+      mkdirSync(dirname(join(repo, name)), { recursive: true });
+      writeFileSync(join(repo, name), body);
+    }
+    const result = await runScanners({
+      repoDir: repo,
+      changedPaths: Object.keys(files),
+      coverage: new Map(Object.entries(files).map(([name, body]) => [name, new Set(body.split("\n").map((_, i) => i + 1))])),
+      config: parseConfig("").config,
+      resolveTool: createToolResolver({ allowInstall: false, installRoot }),
+      only: ["kubeconform"],
+      scratchRoot,
+    });
+    const status = result.scan.scanners[0]!;
+    expect(status).toMatchObject({ scanner: "kubeconform", status: "failed" });
+    expect(status.reason).toMatch(/is a symbolic link/);
+    expect(readdirSync(join(outside, "kubeconform", commit))).toEqual([]);
   }, 300_000);
 });
 

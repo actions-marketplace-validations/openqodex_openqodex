@@ -15,7 +15,7 @@
 // previous commit, history unknown (a cut history or a commit the clone does
 // not hold), diverged (a rewritten branch), not a commit, or a git failure.
 import { readFileSync } from "node:fs";
-import { OpenQodexError, getAdmittedTreeChange, safeGit } from "@openqodex/core";
+import { OpenQodexError, SERVER_GIT_ENV, getAdmittedTreeChange, safeGit } from "@openqodex/core";
 import type { Change, DeletionPoint } from "@openqodex/core";
 import type { Admit } from "./scopes.js";
 
@@ -28,6 +28,10 @@ export type IncrementalDecision =
   | { ok: true; scope: ReviewScope; previousReviewedSha: string | null; mergeBase: { sha: string; suppliedBy: "host" } };
 
 const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+// Every git call on the clone ignores replacement refs (SERVER_GIT_ENV), so
+// a ref in the clone cannot forge an ancestry proof.
+const cloneGit = (clonePath: string, args: string[]) => safeGit(clonePath, args, undefined, { ...SERVER_GIT_ENV });
 const short = (sha: string) => sha.slice(0, 12);
 // More shallow commits than this are not each checked: the history is then
 // taken as unknown, which never narrows a review.
@@ -41,9 +45,9 @@ const gitFailed = (r: { code: number; stderr: string }): Proof => ({ ok: false, 
 // resolves to itself. A tag, a tree or a blob is not a commit.
 async function proveCommit(clonePath: string, name: string, sha: string): Promise<Proof> {
   if (typeof sha !== "string" || !FULL_ID.test(sha)) return { ok: false, key: "not a commit", detail: `${name} ${JSON.stringify(String(sha).slice(0, 80))} is not a full commit id` };
-  const peeled = await safeGit(clonePath, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${sha}^{commit}`]);
+  const peeled = await cloneGit(clonePath, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${sha}^{commit}`]);
   if (peeled.code === 0 && peeled.stdout.toString("utf8").trim() === sha) return { ok: true };
-  const type = await safeGit(clonePath, ["cat-file", "-t", sha]);
+  const type = await cloneGit(clonePath, ["cat-file", "-t", sha]);
   if (type.code === 0) return { ok: false, key: "not a commit", detail: `${name} ${short(sha)} is a ${type.stdout.toString("utf8").trim()}` };
   if (/not a valid object name|could not get object info|unable to read|missing/i.test(type.stderr)) return { ok: false, key: "missing commit", detail: `${name} ${short(sha)} is not in the clone` };
   return gitFailed(type);
@@ -53,10 +57,10 @@ async function proveCommit(clonePath: string, name: string, sha: string): Promis
 // it is not shallow, or "unreadable" when it is shallow but the list of
 // them cannot be read.
 async function shallowCommits(clonePath: string): Promise<string[] | null | "unreadable" | Proof> {
-  const r = await safeGit(clonePath, ["rev-parse", "--is-shallow-repository"]);
+  const r = await cloneGit(clonePath, ["rev-parse", "--is-shallow-repository"]);
   if (r.code !== 0) return gitFailed(r);
   if (r.stdout.toString("utf8").trim() !== "true") return null;
-  const listed = await safeGit(clonePath, ["rev-parse", "--path-format=absolute", "--git-path", "shallow"]);
+  const listed = await cloneGit(clonePath, ["rev-parse", "--path-format=absolute", "--git-path", "shallow"]);
   if (listed.code !== 0) return gitFailed(listed);
   try {
     return readFileSync(listed.stdout.toString("utf8").trim(), "utf8").split("\n").filter((l) => FULL_ID.test(l));
@@ -70,7 +74,7 @@ async function shallowCommits(clonePath: string): Promise<string[] | null | "unr
 // clone is reachable from the head (or the cuts cannot all be checked), it
 // is "history unknown".
 async function proveAncestor(clonePath: string, ancestor: string, head: string): Promise<Proof> {
-  const r = await safeGit(clonePath, ["merge-base", "--is-ancestor", ancestor, head]);
+  const r = await cloneGit(clonePath, ["merge-base", "--is-ancestor", ancestor, head]);
   if (r.code === 0) return { ok: true };
   if (r.code !== 1) return gitFailed(r);
   const unknown: Proof = { ok: false, key: "history unknown", detail: "" };
@@ -80,7 +84,7 @@ async function proveAncestor(clonePath: string, ancestor: string, head: string):
   if (shallow !== null) {
     if (shallow.length > MAX_SHALLOW_CHECKS) return unknown;
     for (const s of shallow) {
-      const cut = await safeGit(clonePath, ["merge-base", "--is-ancestor", s, head]);
+      const cut = await cloneGit(clonePath, ["merge-base", "--is-ancestor", s, head]);
       if (cut.code === 0) return unknown;
       if (cut.code !== 1) return gitFailed(cut);
     }
@@ -97,7 +101,7 @@ export async function decideIncremental(args: { clonePath: string; mergeBaseSha:
     for (const [name, sha] of [["the merge base", mergeBaseSha], ["the head", headSha]] as const) {
       if (typeof sha !== "string" || !FULL_ID.test(sha)) return { ok: false, reason: `not a commit: ${name} ${JSON.stringify(String(sha).slice(0, 80))} is not a full commit id` };
     }
-    const repo = await safeGit(clonePath, ["rev-parse", "--git-dir"]);
+    const repo = await cloneGit(clonePath, ["rev-parse", "--git-dir"]);
     if (repo.code !== 0) return { ok: false, reason: `git failed: ${repo.stderr.trim().split("\n")[0] || `exit ${repo.code}`}` };
     for (const [name, sha] of [["the merge base", mergeBaseSha], ["the head", headSha]] as const) {
       const p = await proveCommit(clonePath, name, sha);
