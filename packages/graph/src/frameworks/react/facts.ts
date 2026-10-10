@@ -9,8 +9,8 @@
 // step climbs the parents, so a deeply nested file stays linear.
 import type { Node } from "web-tree-sitter";
 import type { FactReader, FrameworkFactBase } from "../plugin.js";
-import { readAlone } from "../shared/walk.js";
-import type { TreeVisitor } from "../shared/walk.js";
+import { readAlone } from "../../walk.js";
+import type { TreeVisitor } from "../../walk.js";
 import { exported, identifierName, MAX_SOURCE_BYTES, namePath, pos } from "../express/js.js";
 
 export type ReactFact =
@@ -104,7 +104,7 @@ export function readFacts(root: Node): ReactFact[] {
   return readAlone(root, reader(root));
 }
 
-// The facts of one file as one reader of a shared walk (shared/walk.ts).
+// The facts of one file as one reader of a shared walk (walk.ts).
 export function reader(root: Node): FactReader<ReactFact> {
   if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: ReactFact[] = [];
@@ -139,7 +139,7 @@ export function reader(root: Node): FactReader<ReactFact> {
 
   let broken = 0;
   let firstBroken = 0;
-  // A region the parser could not read is never entered (shared/walk.ts):
+  // A region the parser could not read is never entered (walk.ts):
   // the language would not run such a file, so nothing in it is a fact.
   const visitor: TreeVisitor = {
     enter(node, type, field, depth, up, upType) {

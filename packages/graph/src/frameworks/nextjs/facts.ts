@@ -8,7 +8,7 @@ import type { Node } from "web-tree-sitter";
 import type { FactReader, FrameworkFactBase } from "../plugin.js";
 import { keptText } from "../shared/kept.js";
 import { identifierName, MAX_SOURCE_BYTES, pos, readExpr, scopedVisitor, stringValue } from "../express/js.js";
-import { readAlone } from "../shared/walk.js";
+import { readAlone } from "../../walk.js";
 
 export type NextFact =
   // A directive of the file's prologue.
@@ -53,7 +53,7 @@ export function readFacts(root: Node): NextFact[] {
   return readAlone(root, reader(root));
 }
 
-// The facts of one file as one reader of a shared walk (shared/walk.ts).
+// The facts of one file as one reader of a shared walk (walk.ts).
 export function reader(root: Node): FactReader<NextFact> {
   if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: NextFact[] = [];

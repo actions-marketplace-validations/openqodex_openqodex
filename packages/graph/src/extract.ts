@@ -8,6 +8,8 @@
 import { createHash } from "node:crypto";
 import type { Node, Tree } from "web-tree-sitter";
 import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TableFact, TypeRef, TypeUse, ValueRef } from "./types.js";
+import { walkTree } from "./walk.js";
+import type { TreeVisitor } from "./walk.js";
 
 // Bump when the facts change shape or meaning: every cached file is re-parsed.
 // 9: body hashes on definitions, computed-member calls as dynamic call
@@ -129,38 +131,6 @@ type Ident = { name: string; at: Scope | null; path: string[] };
 type Tagged = Receiver & { [IDENT]?: Ident };
 
 type Leave = () => void;
-
-// Depth-first walk with a cursor; only node types in `interesting` become
-// Node objects, which keeps a large file cheap. `visit` returns false to skip
-// the children or a function to run when the node is left.
-function walk(tree: Tree, interesting: ReadonlySet<string>, visit: (node: Node) => Leave | false | void): void {
-  const cursor = tree.walk();
-  const leaves: { depth: number; fn: Leave }[] = [];
-  let depth = 0;
-  for (;;) {
-    let descend = true;
-    if (interesting.has(cursor.nodeType)) {
-      const result = visit(cursor.currentNode);
-      if (result === false) descend = false;
-      else if (typeof result === "function") leaves.push({ depth, fn: result });
-    }
-    if (descend && cursor.gotoFirstChild()) {
-      depth++;
-      continue;
-    }
-    for (;;) {
-      while (leaves.length > 0 && (leaves[leaves.length - 1] as { depth: number }).depth === depth) {
-        (leaves.pop() as { fn: Leave }).fn();
-      }
-      if (cursor.gotoNextSibling()) break;
-      if (!cursor.gotoParent()) {
-        cursor.delete();
-        return;
-      }
-      depth--;
-    }
-  }
-}
 
 function pos(node: Node): { line: number; column: number } {
   return { line: node.startPosition.row + 1, column: node.startPosition.column + 1 };
@@ -1149,7 +1119,7 @@ function jsResults(fn: Node): TypeRef[] | undefined {
   return r ? [r] : undefined;
 }
 
-function extractJs(tree: Tree, lang: Lang): FileFacts {
+function extractJs(tree: Tree, lang: Lang, readers: readonly TreeVisitor[]): FileFacts {
   const ctx = new Ctx(lang);
   const fnFrame = (node: Node, def: number): Leave => {
     const locals = new Map<string, TypeRef | null>();
@@ -1185,7 +1155,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
     const object = fn.childForFieldName("object");
     if (object?.type === "identifier") ctx.tableCall(ctx.calls.length - 1, object.text);
   };
-  walk(tree, JS_TYPES, (node) => {
+  walkTree(tree.rootNode, readers, { interesting: JS_TYPES, visit: (node) => {
     switch (node.type) {
       case "import_statement":
         jsImport(ctx, node);
@@ -1516,7 +1486,7 @@ function extractJs(tree: Tree, lang: Lang): FileFacts {
         return;
       }
     }
-  });
+  } });
   // A definition is exported under its own name only through `export` on it
   // or `export { x }`; `export default` and `export { x as y }` export it
   // under another name, which the resolver reads from the export table.
@@ -1644,7 +1614,7 @@ function pyCallType(value: Node | null): TypeRef | null {
   return pyTypeRef(value.childForFieldName("function"));
 }
 
-function extractPython(tree: Tree): FileFacts {
+function extractPython(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   const ctx = new Ctx("python");
   const returned = (value: Node | null) => {
     const owner = ctx.top.fnDecl.def;
@@ -1659,7 +1629,7 @@ function extractPython(tree: Tree): FileFacts {
       if (owner >= 0) ((ctx.defs[owner] as DefFact).returns ??= []).push(ref);
     }
   };
-  walk(tree, PY_TYPES, (node) => {
+  walkTree(tree.rootNode, readers, { interesting: PY_TYPES, visit: (node) => {
     switch (node.type) {
       case "import_statement": {
         for (const n of node.namedChildren) {
@@ -1873,7 +1843,7 @@ function extractPython(tree: Tree): FileFacts {
         return;
       }
     }
-  });
+  } });
   return ctx.facts();
 }
 
@@ -2033,7 +2003,7 @@ function goReceiver(ctx: Ctx, operand: Node): Receiver {
   return { kind: "name", name: base.text, path, nesting: null };
 }
 
-function extractGo(tree: Tree): FileFacts {
+function extractGo(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   const ctx = new Ctx("go");
   const exported = (name: string) => /^[A-Z]/.test(name);
   const signatureUses = (node: Node, def: number) => {
@@ -2051,7 +2021,7 @@ function extractGo(tree: Tree): FileFacts {
     const body = inner?.type === "composite_literal" ? inner.childForFieldName("body") : null;
     if (body) ctx.pendingTables.set(body.startIndex, { name: name.text, line: name.startPosition.row + 1, scope: ctx.top.fnDecl });
   };
-  walk(tree, GO_TYPES, (node) => {
+  walkTree(tree.rootNode, readers, { interesting: GO_TYPES, visit: (node) => {
     switch (node.type) {
       case "package_clause":
         ctx.goPackage = node.firstNamedChild?.text ?? null;
@@ -2281,7 +2251,7 @@ function extractGo(tree: Tree): FileFacts {
         return;
       }
     }
-  });
+  } });
   return ctx.facts();
 }
 
@@ -2314,7 +2284,7 @@ function rbQualify(nesting: string | null, name: string): string {
   return nesting && !name.startsWith("::") ? `${nesting}::${n}` : n;
 }
 
-function extractRuby(tree: Tree): FileFacts {
+function extractRuby(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   const ctx = new Ctx("ruby");
   const nesting = () => ctx.cls()?.cls ?? null;
   const methodLocals = (node: Node): Map<string, TypeRef | null> => {
@@ -2341,7 +2311,7 @@ function extractRuby(tree: Tree): FileFacts {
     const def = ctx.addDef(node, nameNode, kind, { owner, topLevel: true, exported: true, bases, ...(dynamicBases.length > 0 ? { dynamicBases } : {}) });
     return ctx.push({ def, cls: full, locals: null });
   };
-  walk(tree, RB_TYPES, (node) => {
+  walkTree(tree.rootNode, readers, { interesting: RB_TYPES, visit: (node) => {
     switch (node.type) {
       case "class":
         return classLike(node, "class");
@@ -2437,13 +2407,16 @@ function extractRuby(tree: Tree): FileFacts {
         return false;
       }
     }
-  });
+  } });
   return ctx.facts();
 }
 
-export function extract(tree: Tree, lang: Lang): FileFacts {
-  if (lang === "python") return extractPython(tree);
-  if (lang === "go") return extractGo(tree);
-  if (lang === "ruby") return extractRuby(tree);
-  return extractJs(tree, lang);
+// `readers`: the framework plugins' fact readers of the same file
+// (frameworks/facts.ts), shown the tree on the extractor's own walk, so a
+// file is walked once for everything read from it.
+export function extract(tree: Tree, lang: Lang, readers: readonly TreeVisitor[] = []): FileFacts {
+  if (lang === "python") return extractPython(tree, readers);
+  if (lang === "go") return extractGo(tree, readers);
+  if (lang === "ruby") return extractRuby(tree, readers);
+  return extractJs(tree, lang, readers);
 }

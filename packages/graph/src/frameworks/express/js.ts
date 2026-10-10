@@ -13,7 +13,7 @@
 // walk over a tree is one pass with no step back up the parents.
 import type { Node } from "web-tree-sitter";
 import { assembledText } from "../shared/kept.js";
-import type { TreeVisitor, Up } from "../shared/walk.js";
+import type { TreeVisitor, Up } from "../../walk.js";
 
 // The largest file a JavaScript plugin reads, in bytes. A larger file gets
 // one fact of kind "too-large" and nothing else; resolve turns it into an
@@ -396,7 +396,7 @@ function read(node: Node | null, depth: number, budget: { left: number }): Expr 
 }
 
 // A reader of the one depth-first pass over a tree's named nodes that the
-// plugins share (shared/walk.ts). `visit` gets each node, the line of the
+// plugins share (walk.ts). `visit` gets each node, the line of the
 // innermost function around it (0 at module level), `up`, which gives the
 // node's ancestors (`up(1)` its parent, `up(2)` the one above), and the
 // node's type, read once. The function lines come from a stack kept as the
@@ -406,11 +406,11 @@ function read(node: Node | null, depth: number, budget: { left: number }): Expr 
 // A region the parser could not read (an ERROR node) is never visited: the
 // language would not run such a file, so nothing in it is a fact. `broken`
 // is told the line of each such region.
-export type { Up } from "../shared/walk.js";
+export type { Up } from "../../walk.js";
 
 export type ScopedVisit = (node: Node, scope: number, up: Up, type: string) => boolean | void;
 
-// `visit` as one reader of a shared walk (shared/walk.ts).
+// `visit` as one reader of a shared walk (walk.ts).
 export function scopedVisitor(visit: ScopedVisit, broken?: (line: number) => void): TreeVisitor {
   const scopes: { depth: number; line: number }[] = [];
   return {

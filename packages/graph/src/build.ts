@@ -30,7 +30,7 @@ import { discoverProjects } from "./discovery/projects.js";
 import { traceReads } from "./discovery/trace.js";
 import type { ProjectModel } from "./discovery/projects.js";
 import { EXTRACTOR_VERSION, extract } from "./extract.js";
-import { frameworkFacts } from "./frameworks/facts.js";
+import { frameworkReaders } from "./frameworks/facts.js";
 import { contextFingerprint, runFrameworks } from "./frameworks/stage.js";
 import { pluginsKey } from "./frameworks/registry.js";
 import { MODEL_VERSION } from "./model/records.js";
@@ -188,8 +188,10 @@ class Parsers {
       return null;
     }
     try {
-      const facts = extract(tree, lang);
-      const frameworks = frameworkFacts(tree.rootNode, lang, content);
+      // The plugins' readers ride on the extractor's walk: one walk of the tree for everything.
+      const reading = frameworkReaders(tree.rootNode, lang, content);
+      const facts = extract(tree, lang, reading.visitors);
+      const frameworks = reading.finish();
       if (frameworks) facts.frameworks = frameworks;
       return facts;
     } finally {

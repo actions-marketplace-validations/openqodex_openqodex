@@ -1,5 +1,5 @@
 // One walk of a parse tree that serves the Express, React and Next.js fact
-// readers at once (src/frameworks/shared/walk.ts). Ways it could fail,
+// readers at once (src/walk.ts). Ways it could fail,
 // written before the code:
 // 1. A reader sees other nodes, or the same nodes in another order, than
 //    its own walk showed it, so its facts change.
@@ -8,17 +8,23 @@
 //    called and throws again on every node.
 // 4. A reader is told it left a node at another point than its own walk
 //    told it, so a scope or a frame it keeps closes at the wrong node.
+// 5. A reader riding on the core extractor's walk sees other nodes than
+//    its own walk showed it, or the extractor's facts change when readers
+//    ride along: the extractor skips the children of a node the readers
+//    still read (an import, a type alias, an interface member) and walks
+//    into a region the parser could not read, which the readers never enter.
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Node } from "web-tree-sitter";
 import { langOf } from "../src/capture/inventory.js";
-import { frameworkFacts } from "../src/frameworks/facts.js";
+import { extract } from "../src/extract.js";
+import { frameworkFacts, frameworkReaders } from "../src/frameworks/facts.js";
 import type { FrameworkFactBase, FrameworkPlugin } from "../src/frameworks/plugin.js";
 import { PLUGINS } from "../src/frameworks/registry.js";
-import { walkTree } from "../src/frameworks/shared/walk.js";
-import type { TreeVisitor } from "../src/frameworks/shared/walk.js";
+import { walkTree } from "../src/walk.js";
+import type { TreeVisitor } from "../src/walk.js";
 import { parserFor } from "../src/parser.js";
 import type { Lang } from "../src/types.js";
 
@@ -43,6 +49,9 @@ function sources(): { path: string; lang: Lang; text: string }[] {
 
 // A region the parser cannot read, a skipped subtree and nested functions in one file.
 const BROKEN = 'export function a() {\n  const f = () => { return <div>{g(1}</div>; };\n  return f;\n}\nfunction b(x) {\n  if (x) { return x.y.z(); }\n}\nexport const c = { d: [1, 2, (3 + ] };\n';
+
+// Nodes the core extractor skips the children of, which the readers still read.
+const SKIPPED = 'import express, { Router } from "express";\ntype Mount = (app: Express, prefix: string) => void;\ninterface Setup { run(app: express.Express): void; }\nexport const setup = (app: Express) => { app.get("/x", (req, res) => res.send(<b>{f(1}</b>)); };\n';
 
 // Writes down what the walk tells it; skips the children of every node of `skip`.
 function recorder(skip: ReadonlySet<string> = new Set()): { visitor: TreeVisitor; log: string[] } {
@@ -118,6 +127,21 @@ describe("one walk for every JavaScript fact reader", () => {
           const alone = p.facts(t.rootNode, f.lang);
           expect(shared[p.id] ?? [], `${p.id} on ${f.path}`).toEqual(alone);
         }
+      } finally {
+        t.delete();
+      }
+    }
+  });
+
+  it("gives the readers riding on the core extractor's walk the facts they read alone, and the extractor its own (5)", async () => {
+    for (const f of [...sources(), { path: "broken.tsx", lang: "tsx" as Lang, text: BROKEN }, { path: "skipped.tsx", lang: "tsx" as Lang, text: SKIPPED }]) {
+      const t = await tree(f.lang, f.text);
+      try {
+        const reading = frameworkReaders(t.rootNode, f.lang, f.text);
+        expect(reading.visitors.length, f.path).toBeGreaterThan(0);
+        const together = extract(t, f.lang, reading.visitors);
+        expect(together, f.path).toEqual(extract(t, f.lang));
+        expect(reading.finish(), f.path).toEqual(frameworkFacts(t.rootNode, f.lang, f.text));
       } finally {
         t.delete();
       }

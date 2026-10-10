@@ -49,7 +49,7 @@ import type { Node } from "web-tree-sitter";
 import type { ProjectModel } from "../discovery/projects.js";
 import type { Cause, Tier } from "../model/records.js";
 import type { FileFacts, GraphEdge, GraphNode, Lang } from "../types.js";
-import type { TreeVisitor } from "./shared/walk.js";
+import type { TreeVisitor } from "../walk.js";
 
 // 2: Registration.partial (appended).
 // 3: FrameworkPlugin.reader (appended).
@@ -476,7 +476,7 @@ export interface FrameworkPlugin<F extends FrameworkFactBase = FrameworkFactBase
   facts(root: Node, lang: Lang): F[];
 
   // The same facts, read as one reader of a walk the plugins share
-  // (shared/walk.ts), so a file is walked once for all of them. Optional:
+  // (walk.ts), so a file is walked once for all of them. Optional:
   // a plugin without it is called through `facts`.
   reader?(root: Node, lang: Lang): FactReader<F>;
 

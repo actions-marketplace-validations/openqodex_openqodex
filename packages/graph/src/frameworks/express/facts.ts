@@ -13,7 +13,7 @@ import { eitherPathText, eitherSegmentText, keepParts, ledForm } from "../shared
 import type { Expr } from "./js.js";
 import type { ScopedVisit } from "./js.js";
 import { exported, FN_TYPES, identifierName, isExpr, MAX_ITEMS, MAX_SOURCE_BYTES, namePath, paramCount, patternNames, pos, readExpr, scopedVisitor, stringValue } from "./js.js";
-import { readAlone } from "../shared/walk.js";
+import { readAlone } from "../../walk.js";
 
 // The member calls watched: the routing methods of an application and a
 // router, `use`, `route`, `listen`, and the requests of a test agent.
@@ -68,7 +68,7 @@ export function readFacts(root: Node): ExpressFact[] {
   return readAlone(root, reader(root));
 }
 
-// The facts of one file as one reader of a shared walk (shared/walk.ts).
+// The facts of one file as one reader of a shared walk (walk.ts).
 export function reader(root: Node): FactReader<ExpressFact> {
   if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: ExpressFact[] = [];
