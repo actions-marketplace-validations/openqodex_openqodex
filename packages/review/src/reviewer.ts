@@ -162,7 +162,9 @@ export type ReviewChangeInput = {
 
 // `workDir`: the only folder the review writes in (the snapshot and its
 // scratch). `installRoot`: the folder the preinstalled scanners are read
-// from; nothing is installed. `confidenceFloor`: the lowest confidence a
+// from; nothing is installed. `budget`: required; `authorize` is asked
+// before every model call, and `deadlineMs`, counted from the call to
+// reviewChange, is checked before each authorize and each transport call. `confidenceFloor`: the lowest confidence a
 // finding may have, in the brief and in the check (0.7 when left out); a
 // lens's own higher floor still wins. `onProgress`: each progress line.
 // `secondReviewer`: a model that reviews the change again after the
@@ -171,7 +173,7 @@ export type ReviewChangeOptions = {
   profile: "server";
   workDir: string;
   installRoot: string;
-  budget?: Budget;
+  budget: Budget;
   confidenceFloor?: number;
   tools: { web: false; shell: false };
   scanners: "preinstalled";

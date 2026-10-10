@@ -41,11 +41,12 @@ export async function runSecondReviewer(args: {
   box: ToolBox;
   earlier: readonly CallRecord[];
   now: () => number;
+  deadline?: number;
   started: (session: ModelSession) => void;
   converse: (session: ModelSession) => Promise<Conversation>;
   evidence: (session: ModelSession, talk: Conversation, startedAt: string) => ModelReviewEvidence;
 }): Promise<SecondRun> {
-  const session = modelSession({ reviewer: args.reviewer, role: "second", box: args.box, budget: args.budget, now: args.now, earlier: args.earlier });
+  const session = modelSession({ reviewer: args.reviewer, role: "second", box: args.box, budget: args.budget, now: args.now, earlier: args.earlier, ...(args.deadline !== undefined ? { deadline: args.deadline } : {}) });
   args.started(session);
   const startedAt = new Date(args.now()).toISOString();
   const talk = await args.converse(session).finally(() => session.close());

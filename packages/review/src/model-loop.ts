@@ -56,6 +56,10 @@ export type ModelCaller = {
   stop(reason: string): void;
 };
 
+// The line a call that would start after the review's deadline ends with:
+// the conversation's own timeout line.
+export const DEADLINE_PASSED = "the reviewer timed out and was stopped";
+
 const firstLine = (error: unknown) => ((error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "").slice(0, 500);
 const count = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0;
 
@@ -102,8 +106,11 @@ function readMessage(response: unknown): ModelResponse["message"] | string {
 
 // `earlier`: the calls of the review made before this caller's (the
 // primary's, for the second reviewer), counted in the usage the budget sees.
-export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; budget?: Budget; now: () => number; tools?: ToolDefinition[]; earlier?: readonly CallRecord[] }): ModelCaller {
+// `deadline`: on the `now` clock; no budget is asked and no transport is
+// called once it has passed, however quickly the calls before it resolved.
+export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; budget?: Budget; now: () => number; tools?: ToolDefinition[]; earlier?: readonly CallRecord[]; deadline?: number }): ModelCaller {
   const { reviewer, role, budget, now } = args;
+  const late = () => args.deadline !== undefined && now() >= args.deadline;
   const tools = args.tools ?? TOOL_DEFINITIONS;
   const attempts: CallRecord[] = [];
   let n = 0;
@@ -120,6 +127,7 @@ export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; b
     },
     async call(purpose, messages, onInvoke) {
       if (stopped !== null) return { failure: stopped };
+      if (late()) return { failure: DEADLINE_PASSED };
       n++;
       const callId = `${role}-${n}`;
       const base = { callId, reviewer: role, purpose, attempt: 1 as const, model: reviewer.model };
@@ -138,6 +146,7 @@ export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; b
           return { failure: budgetRefusedLine(purpose, n) };
         }
       }
+      if (late()) return { failure: DEADLINE_PASSED };
       onInvoke();
       const record: CallRecord = { ...base, inputTokens: null, outputTokens: null, outcome: "failed", durationMs: 0 };
       attempts.push(record);
@@ -204,8 +213,8 @@ function runningUsage(attempts: CallRecord[]): ReviewerUsage {
   return { turns: t.invoked, input_tokens: t.inputTokens, output_tokens: t.outputTokens, cost_usd: t.costUsd };
 }
 
-export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole; box: ToolBox; budget?: Budget; now: () => number; earlier?: readonly CallRecord[] }): ModelSession {
-  const caller = callModel({ reviewer: args.reviewer, role: args.role, budget: args.budget, now: args.now, earlier: args.earlier });
+export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole; box: ToolBox; budget?: Budget; now: () => number; earlier?: readonly CallRecord[]; deadline?: number }): ModelSession {
+  const caller = callModel({ reviewer: args.reviewer, role: args.role, budget: args.budget, now: args.now, earlier: args.earlier, ...(args.deadline !== undefined ? { deadline: args.deadline } : {}) });
   const log: ToolLogEntry[] = [];
   const transcript: Message[] = [freeze({ role: "system", text: MODEL_SYSTEM })];
   // Results served and not yet carried by an invoked request.

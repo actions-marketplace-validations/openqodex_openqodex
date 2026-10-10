@@ -30,7 +30,7 @@ afterAll(removeTempDirs);
 
 function options(): ReviewChangeOptions {
   const workDir = tempDir("oq-mb-work-");
-  return { profile: "server", workDir, installRoot: workDir, tools: { web: false, shell: false }, scanners: "preinstalled" };
+  return { profile: "server", workDir, installRoot: workDir, budget: { deadlineMs: 120_000, authorize: async () => true }, tools: { web: false, shell: false }, scanners: "preinstalled" };
 }
 
 async function prove(clonePath: string, mergeBaseSha: string, headSha: string) {

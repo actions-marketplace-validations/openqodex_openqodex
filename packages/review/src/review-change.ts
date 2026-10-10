@@ -151,6 +151,9 @@ export type ReviewInputs = {
   // The deadline for the scan, the graph and every reviewer turn, fixed
   // this long after the reviewer is chosen and before anything is scanned.
   timeoutMs: number;
+  // The deadline itself, on the run's clock, when the host fixed it before
+  // any work (reviewChange, at its entry); it then replaces timeoutMs.
+  deadlineAt?: number;
   // The version the run's manifest names.
   runtimeVersion: string;
   // The lowest confidence a finding may have, in the brief and in the
@@ -409,7 +412,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
   // Refused whole, never cut, before anything runs.
   const contextItems = inputs.context ? checkContext(inputs.context) : null;
   const chosen: Chosen = deps.model ? { model: deps.model } : await chooseReviewer(inputs.reviewer, deps.drivers, repoRoot);
-  const deadline = deps.now() + inputs.timeoutMs;
+  const deadline = inputs.deadlineAt ?? deps.now() + inputs.timeoutMs;
 
   let snapshot: Snapshot | null = null;
   let session: (Speaker & { close(): Promise<void>; kill?(): void }) | null = null;
@@ -538,6 +541,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         budget: model.budget,
         box,
         now: deps.now,
+        deadline,
       });
       session = modelTalk;
       deps.onEvent({ type: "started", driver: "model", version: model.reviewer.model, pid: null });
@@ -577,6 +581,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         box,
         earlier: first.attempts,
         now: deps.now,
+        deadline,
         started: (s) => {
           session = s;
           say(`Second reviewer: model ${reviewer.model} started`);
@@ -671,7 +676,6 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
 // ---------- reviewChange: one change in a host's clone, server profile ----------
 
 // How long a review may run when the host gives no budget.
-const DEFAULT_DEADLINE_MS = 600_000;
 
 // Inputs and options this version does not take, or cannot use as given,
 // refused with what to do instead: nothing given is ever ignored.
@@ -688,8 +692,10 @@ function refuseUnsupported(input: ReviewChangeInput, reviewer: Reviewer, options
   }
   const floor = options.confidenceFloor;
   if (floor !== undefined && !(typeof floor === "number" && Number.isFinite(floor) && floor >= 0 && floor <= 1)) throw new OpenQodexError("reviewChange: confidenceFloor must be a number from 0 to 1");
-  if (options.budget !== undefined && (typeof options.budget.authorize !== "function" || !(typeof options.budget.deadlineMs === "number" && options.budget.deadlineMs > 0))) {
-    throw new OpenQodexError("reviewChange: budget needs an authorize function and a deadlineMs above 0");
+  // No model call is made that no budget authorized.
+  const budget = options.budget as Partial<Budget> | undefined;
+  if (budget === undefined || budget === null || typeof budget.authorize !== "function" || !(typeof budget.deadlineMs === "number" && budget.deadlineMs > 0)) {
+    throw new OpenQodexError("reviewChange: the server profile needs a budget: { authorize, deadlineMs } with an authorize function and a deadlineMs above 0");
   }
   if (reviewer?.kind !== "model") throw new OpenQodexError("the server profile takes a model reviewer (kind: \"model\"); agent reviewers run on the laptop");
   if (typeof reviewer.model !== "string" || reviewer.model === "" || !Number.isInteger(reviewer.maxOutputTokens) || reviewer.maxOutputTokens < 1 || typeof reviewer.complete !== "function") {
@@ -791,6 +797,8 @@ function dispositionsOf(report: Report, submission: unknown, scan: ScanResult, b
 // version the manifest names (the library entry passes the package's).
 export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer, options: ReviewChangeOptions, runtimeVersion = "unknown"): Promise<ReviewResult> {
   refuseUnsupported(input, reviewer, options);
+  // One deadline for the whole review, fixed before any work.
+  const deadlineAt = Date.now() + options.budget.deadlineMs;
   const model = reviewer as ModelReviewer;
   const say = options.onProgress ?? (() => {});
   const decision = await decideIncremental({
@@ -808,7 +816,7 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   const scratch = join(options.workDir, "scratch");
   mkdirSync(join(scratch, "tmp"), { recursive: true, mode: 0o700 });
   try {
-    return await reviewInScope(input, model, options, runtimeVersion, decision, config, scratch, say);
+    return await reviewInScope(input, model, options, runtimeVersion, decision, config, scratch, say, deadlineAt);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -825,6 +833,7 @@ async function reviewInScope(
   config: Config,
   scratch: string,
   say: (line: string) => void,
+  deadlineAt: number,
 ): Promise<ReviewResult> {
   const scope = serverScope({
     clonePath: input.clonePath,
@@ -845,7 +854,8 @@ async function reviewInScope(
         noGraph: false,
         reviewer: "auto",
         web: false,
-        timeoutMs: options.budget?.deadlineMs ?? DEFAULT_DEADLINE_MS,
+        timeoutMs: options.budget.deadlineMs,
+        deadlineAt,
         runtimeVersion,
         ...(options.confidenceFloor !== undefined ? { confidenceFloor: options.confidenceFloor } : {}),
         ...(input.context !== undefined ? { context: input.context } : {}),
@@ -862,7 +872,7 @@ async function reviewInScope(
           if (e.type === "progress" || e.type === "warning") say(e.line);
         },
         now: Date.now,
-        model: { reviewer: model, ...(options.budget ? { budget: options.budget } : {}), ...(options.secondReviewer ? { second: options.secondReviewer as ModelReviewer } : {}) },
+        model: { reviewer: model, budget: options.budget, ...(options.secondReviewer ? { second: options.secondReviewer as ModelReviewer } : {}) },
       },
     );
   } catch (error) {

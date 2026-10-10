@@ -57,7 +57,7 @@ const result = await reviewChange(
 - `profile`: `"server"`.
 - `workDir`: an absolute folder the review may write in: the snapshot and the scanners' scratch. Nothing is written anywhere else. Give each review its own folder and remove it afterwards.
 - `installRoot`: the absolute folder the preinstalled scanners are read from (see "Preinstalling the scanners in an image"). It is only read.
-- `budget` (optional): `{ authorize, deadlineMs }`. See "The budget".
+- `budget`: `{ authorize, deadlineMs }`, required. See "The budget".
 - `confidenceFloor` (optional): the lowest confidence a finding may have, from 0 to 1, 0.7 when left out. The brief tells the reviewer this floor and the check applies it. A lens with a higher floor of its own keeps it.
 - `tools`: `{ web: false, shell: false }`. The server reviewer gets the five tools below and no other.
 - `scanners`: `"preinstalled"`.
@@ -124,7 +124,7 @@ The host's adapter adds no prompt, no rule, no filter and no retry. What the rev
 
 ### The budget
 
-`budget.authorize(call)` is asked before every model attempt, with `{ callId, attempt, reviewer, purpose, model, maxOutputTokens, usageSoFar }`. When it returns false, or throws, nothing is sent and the whole review ends as incomplete, with the usage so far and the findings already checked. This holds for a correction round and for the second reviewer too. `budget.deadlineMs` is how long the review may run, from the call to `reviewChange`. Without a budget, every call is allowed and the deadline is 10 minutes.
+`budget.authorize(call)` is asked before every model attempt, with `{ callId, attempt, reviewer, purpose, model, maxOutputTokens, usageSoFar }`. When it returns false, or throws, nothing is sent and the whole review ends as incomplete, with the usage so far and the findings already checked. This holds for a correction round and for the second reviewer too. `budget.deadlineMs` is how long the review may run, from the call to `reviewChange`: once it has passed, the budget is not asked again and no model call starts. A call without a budget throws before any work.
 
 ### The five tools
 

@@ -34,6 +34,10 @@
 //     with a previously reviewed ancestor, the obligation is not the delta,
 //     a finding on a line of the whole change outside the delta is refused,
 //     or `result.scope` does not say which; the review writes in the clone.
+// 15. A server review runs with no budget, so a model call is made that no
+//     budget authorized.
+// 16. A model call starts after the review's deadline: the budget is asked,
+//     or the transport called, once the deadline has passed.
 import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -408,8 +412,41 @@ describe("scoped and incremental reviews through reviewChange", () => {
   });
 });
 
+describe("the budget and the deadline", () => {
+  it("15. refuses a server review with no budget before any work", async () => {
+    const repo = changeRepo();
+    const workDir = tempDir("oq-rc-work-");
+    const model = fixtureModel();
+    const options = { profile: "server" as const, workDir, installRoot: workDir, tools: { web: false as const, shell: false as const }, scanners: "preinstalled" as const };
+    await expect(reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, model, options as unknown as ReviewChangeOptions)).rejects.toThrow(/the server profile needs a budget/);
+    expect(model.requests).toEqual([]);
+    expect(readdirSync(workDir)).toEqual([]);
+  });
+
+  it("16. once the deadline has passed, the budget is not asked and the transport is not called", async () => {
+    // The deadline passes while the change is scanned and the graph built;
+    // the budget and the fixture answer at once, through promises only.
+    const repo = changeRepo();
+    const model = fixtureModel();
+    const asked: AuthorizeRequest[] = [];
+    const options: ReviewChangeOptions = {
+      profile: "server",
+      workDir: tempDir("oq-rc-work-"),
+      installRoot: tempDir("oq-rc-install-"),
+      tools: { web: false, shell: false },
+      scanners: "preinstalled",
+      budget: { deadlineMs: 1, authorize: async (call) => (asked.push(call), true) },
+    };
+    const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, model, options);
+    expect(asked).toEqual([]);
+    expect(model.requests).toEqual([]);
+    expect(result.status).toBe("incomplete");
+    expect(result.reason).toContain("the reviewer timed out and was stopped");
+  });
+});
+
 describe("what reviewChange refuses", () => {
-  const base = { profile: "server" as const, tools: { web: false as const, shell: false as const }, scanners: "preinstalled" as const };
+  const base = { profile: "server" as const, tools: { web: false as const, shell: false as const }, scanners: "preinstalled" as const, budget: { deadlineMs: 120_000, authorize: async () => true } };
 
   it("10. refuses malformed step-4 inputs and the laptop's options with a clear error", async () => {
     const repo = changeRepo();
