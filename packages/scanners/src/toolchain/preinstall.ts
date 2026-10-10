@@ -136,9 +136,14 @@ function markedVersion(root: string, tool: string, recipe: Recipe): string | nul
 }
 
 // The case's files in a fresh repository, every line changed, scanned by its
-// scanner alone with installs off and a scratch root of its own.
+// scanner alone with installs off and a scratch root of its own. The work
+// folder sits under the install root with short names, not under the
+// system's temporary folder: TFLint binds a Unix socket under the scratch
+// root's TMPDIR, and that path has a bound of about 100 bytes (tflint.ts),
+// which macOS's temporary folder alone takes half of.
 async function runCheckCase(c: CheckCase, root: string): Promise<{ ok: boolean; detail: string }> {
-  const work = mkdtempSync(join(tmpdir(), "openqodex-check-"));
+  mkdirSync(root, { recursive: true });
+  const work = mkdtempSync(join(root, ".c-"));
   try {
     const repo = join(work, "repo");
     const files = c.files();
@@ -155,7 +160,7 @@ async function runCheckCase(c: CheckCase, root: string): Promise<{ ok: boolean; 
       config: parseConfig("").config,
       resolveTool: createToolResolver({ allowInstall: false, installRoot: root }),
       only: [c.scanner],
-      scratchRoot: join(work, "scratch"),
+      scratchRoot: join(work, "s"),
     });
     const summary = scan.scanners.find((s) => s.scanner === c.scanner);
     const ran = summary?.status === "ran";
