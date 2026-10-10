@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, relative } from "node:path";
+import { userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Candidate, Report } from "@openqodex/core";
 import { cacheFolder, tempDir } from "../temp-dirs.mjs";
@@ -180,3 +181,16 @@ export function skipNetwork(name: string): boolean {
 }
 export function printReceipt(): void { process.stdout.write(`Receipt: ${receipt}\n`); }
 export function installed(): boolean { return existsSync(join(receipt, "doctor-install", "exit-code.txt")); }
+
+// Rust's folders under the real home, as a developer's shell names them,
+// when the environment does not name them already. Each command runs with
+// a throwaway HOME, where rustup finds no toolchain, so without these Cargo
+// reads as absent and cargo-deny neither installs nor runs.
+export function rustHome(): NodeJS.ProcessEnv {
+  const rust: NodeJS.ProcessEnv = {};
+  for (const [key, folder] of [["CARGO_HOME", ".cargo"], ["RUSTUP_HOME", ".rustup"]] as const) {
+    const real = join(userInfo().homedir, folder);
+    if (!process.env[key] && existsSync(real)) rust[key] = real;
+  }
+  return rust;
+}
