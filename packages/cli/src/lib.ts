@@ -7,7 +7,7 @@
 // Importing this file runs nothing: no command starts, nothing is printed,
 // no environment variable is written, no signal handler is added and no
 // update check starts. Every function does its work only when called.
-import { createToolResolver, loadToolchain, preinstallScanners, runScanners, toolchainHash } from "@openqodex/scanners";
+import { createToolResolver, isFixturePath, loadToolchain, preinstallScanners, ruleClassFor, runScanners, toolchainHash } from "@openqodex/scanners";
 import { buildGraph, detectImpact, extractFacts, PacketCollision, PacketLeak, writePacket } from "@openqodex/graph";
 import {
   defaultLensDir,
@@ -39,6 +39,8 @@ export {
   loadToolchain,
   toolchainHash,
   preinstallScanners,
+  isFixturePath,
+  ruleClassFor,
   // the code graph
   buildGraph,
   detectImpact,
@@ -64,7 +66,7 @@ export {
 };
 
 // The same functions grouped by what they belong to.
-export const scanners = { runScanners, createToolResolver, loadToolchain, toolchainHash, preinstallScanners };
+export const scanners = { runScanners, createToolResolver, loadToolchain, toolchainHash, preinstallScanners, isFixturePath, ruleClassFor };
 export const graph = { buildGraph, detectImpact, extractFacts, writePacket, PacketCollision, PacketLeak };
 export const lenses = { loadLensCatalog, selectLenses, selectLensesForDiff, defaultLensDir };
 export const render = { renderMarkdown, renderSarif, renderJson, renderReview };

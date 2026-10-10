@@ -22,6 +22,8 @@
 // 9. A bundled program with openqodex external cannot run one review with
 //    a model reviewer: reviewChange is missing, or a file it needs (lenses,
 //    toolchain table, grammars) is looked for beside the bundle.
+// 10. A host's code scan cannot tell a security lens from the others: the
+//     `security: true` of a lens file is not on the lens it loads.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -48,6 +50,7 @@ const VALUES = [
   "detectImpact",
   "extractFacts",
   "graph",
+  "isFixturePath",
   "lenses",
   "loadConfig",
   "loadLensCatalog",
@@ -63,6 +66,7 @@ const VALUES = [
   "renderSarif",
   "reviewChange",
   "reviewerContract",
+  "ruleClassFor",
   "runScanners",
   "scanners",
   "selectLenses",
@@ -139,7 +143,7 @@ const TYPES = [
 
 // What each namespace holds: the same functions as the named exports.
 const NAMESPACES: Record<string, string[]> = {
-  scanners: ["createToolResolver", "loadToolchain", "preinstallScanners", "runScanners", "toolchainHash"],
+  scanners: ["createToolResolver", "isFixturePath", "loadToolchain", "preinstallScanners", "ruleClassFor", "runScanners", "toolchainHash"],
   graph: ["buildGraph", "detectImpact", "extractFacts", "PacketCollision", "PacketLeak", "writePacket"],
   lenses: ["defaultLensDir", "loadLensCatalog", "selectLenses", "selectLensesForDiff"],
   render: ["renderJson", "renderMarkdown", "renderReview", "renderSarif"],
@@ -204,6 +208,7 @@ const report = JSON.parse(readFileSync(process.argv[2]!, "utf8"));
 const snippet = "export function add(a: number, b: number): number {\\n  return a + b;\\n}\\nadd(1, 2);\\n";
 const out = {
   lenses: await part(() => lenses.loadLensCatalog().length),
+  securityLenses: await part(() => lenses.loadLensCatalog().filter((l) => l.security === true).map((l) => l.name).sort()),
   toolchain: await part(() => ({ table: scanners.loadToolchain(), hash: scanners.toolchainHash() })),
   grammars: await part(async () => {
     const facts = await graph.extractFacts("typescript", snippet);
@@ -215,7 +220,7 @@ process.stdout.write(JSON.stringify(out));
 `;
 
 type Part = { ok: true; value: unknown } | { ok: false; error: string };
-type WorkerOut = { lenses: Part; toolchain: Part; grammars: Part; render: Part };
+type WorkerOut = { lenses: Part; securityLenses: Part; toolchain: Part; grammars: Part; render: Part };
 
 let project = "";
 let installed = "";
@@ -340,6 +345,16 @@ describe("a bundled program with openqodex external", () => {
 
   it("loads the 48 lenses from the installed package", () => {
     expect(out.lenses, "lenses").toEqual({ ok: true, value: 48 });
+  });
+
+  it("tells the security lenses apart: each lens file marked security: true, and no other", () => {
+    const folder = join(installed, "lenses");
+    const marked = readdirSync(folder)
+      .filter((f) => f.endsWith(".md") && /^security: true$/m.test(readFileSync(join(folder, f), "utf8").split("\n---\n")[0]!))
+      .map((f) => f.replace(/\.md$/, ""))
+      .sort();
+    expect(marked.length).toBeGreaterThan(0);
+    expect(out.securityLenses, "security lenses").toEqual({ ok: true, value: marked });
   });
 
   it("reads the toolchain table: every tool has a version and a checksum, and the hash covers the lock files", () => {
