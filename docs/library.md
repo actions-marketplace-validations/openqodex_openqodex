@@ -24,7 +24,7 @@ A review runs in one of two profiles. The profile is declared, never guessed.
 | | laptop (`openqodex review`) | server (`reviewChange`) |
 |---|---|---|
 | The change | the merge base worked out from your branch | `mergeBaseSha` from the host, proved in the host's clone |
-| What is read | a git work tree under `~/.openqodex/checkouts` | a snapshot of the head commit under `workDir` |
+| What is read | a git work tree under `~/.openqodex/checkouts` | the head commit's regular files (inside `scopes`), written under `workDir` from the clone's objects |
 | Where it writes | `~/.openqodex` and the repository's `.openqodex/` | only under `workDir` |
 | Scanners | installed on first use into `~/.openqodex/tools` | read from `installRoot`, filled beforehand; never installed |
 | Reviewer | Claude Code or Codex, with its own read tools | the host's model, with the brain's five tools; no web, no shell |
@@ -75,6 +75,10 @@ const result = await reviewChange(
 - `trace`: every tool call the reviewer made, as the brain ran it.
 - `usage`: `{ calls, totals }`. One record per model attempt: `callId`, `reviewer`, `purpose`, the model asked for and the model that answered, input, output, cache-read and cache-write tokens, the cost when the host reported one, the outcome (`ok`, `failed` or `refused`) and the measured duration. The totals add them up; a sum the host could not report is null, never zero.
 - `completion`: the model completion record, contract `openqodex-model-review-1`. Its proof is the brain's own data: the snapshot before and after, every changed range with how it was delivered, every tool call, every candidate raised or dropped, and every model attempt with its authorization and usage. Nothing in it comes from the reviewer.
+- `scope`: `{ kind, reason }`. `kind` is `delta` when only what changed since `previousReviewedSha` was the reviewer's to review, else `full`; `reason` says why. Null when a proof failed first.
+- `notes`: what the review could not hold, one plain line each: a file renamed into the scopes from outside them (reviewed as a new file), a link or a submodule the snapshot left out, a base version outside the scopes that was asked for and not read, and a second reviewer's failure that left the review complete.
+- `context`: every context item given, in order, with its hash, and why the brief left one out.
+- `disagreements`: the scanner candidates one reviewer raised and the other dropped, when a second reviewer ran.
 - `render`: `markdown()`, `sarif()` and `json()`, the report in each format.
 
 An incomplete review keeps every finding already checked.
@@ -132,7 +136,7 @@ The brain runs these over the frozen snapshot, never over the clone:
 - `read_diff_for_file`: one changed file's diff against the merge base.
 - `find_callers`: the callers of a function, method or class, from the code graph built for the review.
 
-Each call is checked before it runs. A path outside the snapshot is refused and logged as outside. A link is never followed, and the snapshot's `.git` entry is never read. Every reply is at most 32 KB, cut only at a whole line, and says so when it was cut. Every reply is redacted of the secrets the scanners found. No tool starts a program. Every call is logged with its path, its range and whether its result was sent to the model in a later request.
+Each call is checked before it runs. A path outside the snapshot is refused and logged as outside. With `scopes`, a path outside them is refused as outside the review's scopes, and a listing or a search returns only files inside them; the graph files the brief names, under `.openqodex-review/graph/`, stay readable. Either refusal leaves the review incomplete. A link is never followed, and the snapshot's `.git` entry is never read. Every reply is at most 32 KB, cut only at a whole line, and says so when it was cut. Every reply is redacted of the secrets the scanners found. No tool starts a program. Every call is logged with its path, its range and whether its result was sent to the model in a later request.
 
 ## What the server profile never does
 

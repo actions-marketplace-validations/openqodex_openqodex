@@ -123,11 +123,11 @@ A program that imports OpenQodex as a library (`library`) reviews a change with 
 What the model can read:
 
 - the review brief: the change's diff, the scanner candidates, the code graph's view of the change and the lenses, with the secrets the scanners found redacted;
-- through five tools, and nothing else: the lines of a file, a search of the files by regular expression, the list of files, the diff of one changed file, and the callers of a symbol from the code graph. They read a snapshot of the head commit made under the program's work folder, never the program's clone or any other folder. A link in the commit is a small plain file in the snapshot that holds the link's target text. Every reply is at most 32 KB and has the scanners' secrets redacted, and a search never answers on a line that holds one.
+- through five tools, and nothing else: the lines of a file, a search of the files by regular expression, the list of files, the diff of one changed file, and the callers of a symbol from the code graph. They read a snapshot of the head commit made under the program's work folder, never the program's clone or any other folder. The snapshot holds only the commit's regular files, written from the clone's objects: a link or a submodule is left out, and the result says so. With folder scopes, it holds only the files inside them. Every reply is at most 32 KB and has the scanners' secrets redacted, and a search never answers on a line that holds one.
 
 What the model cannot read or do:
 
-- anything outside the snapshot: the clone's `.git` folder, another folder of the machine, the program's environment or files. A path outside is refused, and the refusal is logged with the review.
+- anything outside the snapshot: the clone's `.git` folder, another folder of the machine, the program's environment or files. A path outside is refused, and the refusal is logged with the review. With folder scopes, a path outside them is refused the same way. Either refusal leaves the review incomplete.
 - the web, or a shell: it has no tool for either, and no tool starts a program.
 - change a rule of the review: context the program adds (earlier comments, lessons) is shown as quoted data, never as an instruction, and never grants a tool.
 
