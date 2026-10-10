@@ -365,7 +365,17 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
       const lfs = await deps.snapshots.lfsPaths(snapshot.tree, change.changedPaths);
       if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
       const runTarget: RunTarget = { spec: inputs.target, base_ref: t.baseRef, base_source: t.baseSource, base_sha: t.baseSha, merge_base: t.mergeBase, head_sha: t.headSha, repo_root: repoRoot, checkout: snapshot.tree };
-      const p = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, only, skip, host: scanHost, ...(deps.scoped ? { readBase: deps.scoped.readBase } : {}) });
+      const readBase = deps.scoped ? { readBase: deps.scoped.readBase } : {};
+      const scanned = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, only, skip, host: scanHost, ...readBase });
+      // A delta review scans only the delta, but the snapshot, the tools and
+      // the outputs hold the whole change: its secrets are collected over the
+      // whole change too (the secret scanner alone, quietly), so each one is
+      // redacted wherever the reviewer reads.
+      const secretScan = scoped !== null && scoped.full !== scoped.obligation && !(skip ?? []).includes("gitleaks") && (only === undefined || only.includes("gitleaks"));
+      const wholeSecrets = secretScan
+        ? (await scanChange({ repoRoot, workDir: snapshot.tree, config, change: scoped.full, only: ["gitleaks"], host: { resolveTool: scanHost.resolveTool, onProgress: () => {}, ...(scanHost.scratchRoot !== undefined ? { scratchRoot: scanHost.scratchRoot } : {}) }, ...readBase })).secrets
+        : [];
+      const p = wholeSecrets.length === 0 ? scanned : { ...scanned, secrets: [...new Set([...scanned.secrets, ...wholeSecrets])] };
       return { p, snapshot, tree: null, target: runTarget, ...(scoped ? { full: scoped.full } : {}) };
     } finally {
       await t.release();
@@ -590,7 +600,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         evidence: (s, t, startedAt) => modelEvidence({ role: "second", model: reviewer.model, session: s, talk: t, change, snapshot: { tree: prep.tree, before: first.snapshot.after ?? first.snapshot.before, after: hashSnapshot(prep.snapshot.tree) }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt }),
       });
     };
-    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], carried: [], startedAt: now, endedAt: now } : await converse({
+    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], carried: [], startedAt: now, endedAt: now } : await converse({
       session,
       snapshotDir: prep.snapshot.tree,
       brief: brief.text,
@@ -611,9 +621,9 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       const second = await secondReview(chosen.model, modelTalk, evidence);
       // The checked report, or an empty one; the model record goes in it
       // where the record is built (modelReport).
-      const report: Report = { ...(talk.report ?? incompleteReport(full, scan, config, deps.now())), impact };
+      const report: Report = { ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())), impact };
       const calls = [...evidence.attempts, ...(second?.evidence.attempts ?? [])];
-      return await finish({ ended: "model-reviewed", report, evidence, submission: talk.submission, change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
+      return await finish({ ended: "model-reviewed", report, evidence, submission: talk.report ? talk.submission : (talk.checked?.submission ?? talk.submission), change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
     }
 
     const reviewer: ReviewerRecord | null = session === null ? null : {
@@ -635,7 +645,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       candidates: { total: talk.required, disposed: talk.disposed },
       coverage,
       trace: talk.trace,
-      submissionErrors: talk.report ? [] : talk.errors,
+      submissionErrors: talk.errors,
       wholeRepo: prep.whole !== undefined,
       failure: talk.failure,
       tools: inputs.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS,
@@ -644,7 +654,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // An incomplete review keeps the findings of an answer that passed every
     // check: the report prints them as the findings so far.
     const report: Report = {
-      ...(talk.report ?? incompleteReport(full, scan, config, deps.now())),
+      ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())),
       impact: prep.whole ? null : impact,
       completion,
     };
@@ -896,19 +906,38 @@ async function reviewInScope(
   let checked = r.report;
   let foundBy = r.report.findings.map(() => [model.model]);
   let disagreements: ReviewResult["disagreements"] = [];
+  let secondDropped: Report["dropped"] | null = null;
   if (second) {
-    // The second reviewer's answer joins when it passed every check.
-    const theirs = second.report ? dispositionsOf(second.report, second.submission, r.scan, "second") : [];
-    if (second.report) {
-      const merged = mergeFindings({ name: model.model, findings: r.report.findings }, { name: second.name, findings: second.report.findings });
+    // The second reviewer's work joins only when its own review completed.
+    // One that failed is advisory: its record and a note stay, and nothing
+    // it answered changes the primary's findings, dispositions or verdict.
+    const joined = second.report !== null && completion.second?.status === "complete" ? second.report : null;
+    if (joined) {
+      const theirs = dispositionsOf(joined, second.submission, r.scan, "second");
+      const merged = mergeFindings({ name: model.model, findings: r.report.findings }, { name: second.name, findings: joined.findings });
       checked = { ...r.report, findings: merged.findings, ...(answered ? { verdict: verdictFor(config.blockOnSeverity, merged.findings.map((f) => f.severity)) } : {}) };
       foundBy = merged.foundBy;
       if (answered) disagreements = disagreementsOf({ name: model.model, dispositions }, { name: second.name, dispositions: theirs });
+      dispositions.push(...theirs);
+      secondDropped = joined.dropped;
     }
-    dispositions.push(...theirs);
     completion = withSecondReviewer(completion, disagreements, r.secrets);
   }
-  const report = modelReport(checked, completion);
+  const notes = [...(completion.notes ?? []), ...scope.notes()];
+  // Every renderer gets who found each finding, the second reviewer's
+  // dropped candidates and the notes, as the result holds them.
+  const report = modelReport(
+    redactStored(
+      {
+        ...checked,
+        findings: checked.findings.map((f, i) => ({ ...f, found_by: foundBy[i] ?? [] })),
+        ...(secondDropped ? { second_dropped: secondDropped } : {}),
+        ...(notes.length > 0 ? { notes } : {}),
+      },
+      r.secrets,
+    ),
+    completion,
+  );
   const complete = completion.status === "complete";
   return {
     status: complete ? (report.verdict === "blocked" ? "complete_blocking" : "complete") : "incomplete",
@@ -923,7 +952,7 @@ async function reviewInScope(
     usage: r.usage,
     evidence: r.evidence,
     completion,
-    notes: [...(completion.notes ?? []), ...scope.notes()],
+    notes: report.notes ?? [],
     disagreements: completion.disagreements ?? [],
     context: r.context ?? [],
     render: reviewRender(report),

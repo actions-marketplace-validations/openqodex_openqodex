@@ -38,7 +38,12 @@
 //     budget authorized.
 // 16. A model call starts after the review's deadline: the budget is asked,
 //     or the transport called, once the deadline has passed.
-import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
+// 17. A later answer that fails its checks erases the findings an earlier
+//     answer passed every check with, so the incomplete review shows none.
+// 18. In a delta review, a secret in the whole change but outside the delta
+//     reaches a tool reply unredacted, because only the delta was scanned.
+import { chmodSync, cpSync, existsSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reviewChange } from "../src/review-change.js";
@@ -46,7 +51,7 @@ import type { AuthorizeRequest, ReviewChangeOptions, ReviewResult } from "../src
 import { fixtureModel, recorded } from "./fixture-model.js";
 import type { Finding, Fixture, FixtureOptions } from "./fixture-model.js";
 import { changeRepo, git } from "./repos.js";
-import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+import { cacheFolder, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
@@ -409,6 +414,56 @@ describe("scoped and incremental reviews through reviewChange", () => {
     expect(brief).not.toContain("db/x.sql");
     expect(result.status).toBe("complete");
     expect(result.findings).toEqual([expect.objectContaining({ file: "src/math.ts", lineStart: 2, title: "Subtraction in add" })]);
+  });
+});
+
+describe("findings already checked", () => {
+  it("17. a malformed correction answer keeps the earlier checked findings as findings so far", async () => {
+    // Answer 1 passes every check but leaves b/second.txt unread; answer 2,
+    // in the correction round that carried those lines, is not JSON; the
+    // budget then refuses the next correction.
+    const r = await run({ big: true, fixture: { findings: [SUBTRACTION], answers: { 2: "not json" } }, refuseAt: 3 });
+    expect(r.model.requests).toHaveLength(2);
+    expect(r.result.status).toBe("incomplete");
+    expect(r.result.completion?.missing).toContain("budget refused before correction call 3");
+    expect(r.result.findings).toEqual([expect.objectContaining({ file: "src/math.ts", lineStart: 2, title: "Subtraction in add" })]);
+    expect(r.result.dispositions.length).toBeGreaterThan(0);
+    expect(r.result.render.markdown()).toContain("Findings so far");
+    expect(r.result.render.markdown()).toContain("Subtraction in add");
+  });
+});
+
+describe("secrets in a delta review", () => {
+  // The real secret scanner, from the end-to-end home or the developer's
+  // home; the test is skipped, saying so, when neither has it installed.
+  const gitleaks = [process.env.OPENQODEX_E2E_HOME ?? cacheFolder("openqodex-e2e-home"), join(homedir(), ".openqodex")].map((h) => join(h, "tools", "gitleaks")).find((p) => existsSync(p));
+  if (!gitleaks) process.stdout.write("secrets in a delta review: skipped, no installed gitleaks (set OPENQODEX_E2E_HOME to a home filled by doctor --install)\n");
+
+  it.skipIf(!gitleaks)("18. a secret added before the previous review is redacted in the tools' replies of a delta review", async () => {
+    const repo = changeRepo();
+    const key = ["sk", "live", "51HxYz8KqP2mN4vB7cR9tL3wQe6U"].join("_");
+    // The previous review's commit holds the secret; the next commit, the delta, does not touch it.
+    writeFileSync(join(repo.dir, "src/config.ts"), `export const stripeKey = "${key}";\n`);
+    git(repo.dir, "add", "-A");
+    git(repo.dir, "commit", "-q", "--amend", "--no-edit");
+    const previous = git(repo.dir, "rev-parse", "HEAD");
+    writeFileSync(join(repo.dir, "src/use.ts"), 'import { add } from "./math";\n\nexport function total(xs: number[]): number {\n  return xs.reduce((s, x) => add(s, x), 1);\n}\n');
+    git(repo.dir, "commit", "-qam", "Start the total at one");
+    const head = git(repo.dir, "rev-parse", "HEAD");
+    const installRoot = tempDir("oq-rc-install-");
+    cpSync(gitleaks!, join(installRoot, "gitleaks"), { recursive: true });
+    const model = fixtureModel({ probes: [{ name: "read_file", args: { path: "src/config.ts" } }, { name: "search_code", args: { pattern: "stripeKey" } }] });
+    const result = await reviewChange(
+      { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: head, previousReviewedSha: previous },
+      model,
+      { profile: "server", workDir: tempDir("oq-rc-work-"), installRoot, tools: { web: false, shell: false }, scanners: "preinstalled", budget: { deadlineMs: 120_000, authorize: async () => true } },
+    );
+    expect(result.scope?.kind).toBe("delta");
+    expect(result.scannerVersions.gitleaks).not.toBeNull();
+    const sent = JSON.stringify(model.requests);
+    expect(sent).not.toContain(key);
+    expect(sent).toContain("src/config.ts lines 1 to 1 of 1");
+    expect(result.render.json()).not.toContain(key);
   });
 });
 

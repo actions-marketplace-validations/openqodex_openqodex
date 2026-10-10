@@ -39,11 +39,14 @@ export type CallRecord = {
 };
 
 // The calls added up. `invoked`: calls handed to the transport (ok or
-// failed). Tokens and cost are summed over the calls that returned a
-// response; a failed call's usage is unknown to the brain and not in the
-// sums. A sum is null when a call that returned a response could not report
-// it (an agent driver that does not know), and `costUsd` is null unless
-// every such call reported a cost: an unknown is never added as zero.
+// failed). Tokens and cost are summed over every call that reported usage:
+// each one that returned a response, and each failed one that still
+// reported what it used (an agent round whose result event was an error).
+// A failed call that reported nothing (a transport that threw) is unknown to
+// the brain and not in the sums. A sum is null when a counted call could
+// not report that part (an agent driver that does not know), and `costUsd`
+// is null unless every counted call reported a cost: an unknown is never
+// added as zero.
 export type UsageTotals = {
   attempts: number;
   invoked: number;
@@ -56,8 +59,11 @@ export type UsageTotals = {
   costUsd: number | null;
 };
 
+// A failed call that reported any usage, as an agent round can.
+const reported = (c: CallRecord) => c.inputTokens !== null || c.outputTokens !== null || (c.costUsd !== undefined && c.costUsd !== null);
+
 export function usageTotals(calls: readonly CallRecord[]): UsageTotals {
-  const ok = calls.filter((c) => c.outcome === "ok");
+  const ok = calls.filter((c) => c.outcome === "ok" || (c.outcome === "failed" && reported(c)));
   const sum = (pick: (c: CallRecord) => number | null | undefined): number | null => {
     let total = 0;
     for (const c of ok) {

@@ -175,7 +175,12 @@ export type Conversation = {
   rounds: number;
   trace: TraceEntry[];
   usage: Turn["usage"];
+  // The latest answer's report, null when it failed a check; `errors` are
+  // that answer's. `checked`: the last answer that passed every check and
+  // its submission, kept when a later answer fails, so an incomplete
+  // review still shows the findings already checked.
   report: Report | null;
+  checked: { report: Report; submission: unknown } | null;
   errors: string[];
   required: number;
   disposed: number;
@@ -216,7 +221,7 @@ export async function converse(args: {
   now: () => number;
 }): Promise<Conversation> {
   const startedAt = args.now();
-  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
+  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
   const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
   heartbeat.unref();
   try {
@@ -248,6 +253,7 @@ export async function converse(args: {
       const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [] as Hunk[], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace, c.delivered);
       if ("value" in parsed) c.submission = parsed.value;
       c.report = result.report;
+      if (result.report !== null && "value" in parsed) c.checked = { report: result.report, submission: parsed.value };
       c.errors = result.errors;
       c.required = result.required;
       c.disposed = result.disposed;

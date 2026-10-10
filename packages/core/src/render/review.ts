@@ -61,6 +61,16 @@ function findingLines(f: ReportFinding, n: number): Line[] {
     { kind: "field", label: "Why it matters", text: f.consequence ?? "" },
     { kind: "field", label: "Fix", text: f.fix ?? "" },
     { kind: "field", label: "Source", text: f.source ?? "the reviewer" },
+    ...(f.found_by ? [{ kind: "field" as const, label: "Found by", text: f.found_by.join(", ") }] : []),
+  ];
+}
+
+// A dropped candidate, as one item and its source.
+function droppedLines(d: Report["dropped"][number]): Line[] {
+  const cited = d.cited ? ` (see ${d.cited.file_path}:${d.cited.line_number})` : "";
+  return [
+    { kind: "item", text: `${d.candidate.id} at ${candidateLocation(d.candidate)}: ${d.reason}${cited}` },
+    { kind: "field", label: "Source", text: d.candidate.token },
   ];
 }
 
@@ -94,11 +104,20 @@ function lines(report: Report): Line[] {
 
   if (report.dropped.length > 0) {
     out.push({ kind: "heading", text: `Dropped scanner candidates (${report.dropped.length})` });
-    for (const d of report.dropped) {
-      const cited = d.cited ? ` (see ${d.cited.file_path}:${d.cited.line_number})` : "";
-      out.push({ kind: "item", text: `${d.candidate.id} at ${candidateLocation(d.candidate)}: ${d.reason}${cited}` });
-      out.push({ kind: "field", label: "Source", text: d.candidate.token });
-    }
+    for (const d of report.dropped) out.push(...droppedLines(d));
+  }
+  if (report.second_dropped && report.second_dropped.length > 0) {
+    out.push({ kind: "heading", text: `Dropped by the second reviewer (${report.second_dropped.length})` });
+    for (const d of report.second_dropped) out.push(...droppedLines(d));
+  }
+  const disagreements = c?.contract === "openqodex-model-review-1" ? (c.disagreements ?? []) : [];
+  if (disagreements.length > 0) {
+    out.push({ kind: "heading", text: `Disagreements (${disagreements.length})` });
+    for (const d of disagreements) out.push({ kind: "item", text: `${d.candidate}: raised by ${d.raisedBy}, dropped by ${d.droppedBy}${d.reason ? ` (${d.reason})` : ""}` });
+  }
+  if (report.notes && report.notes.length > 0) {
+    out.push({ kind: "heading", text: "Notes" });
+    for (const n of report.notes) out.push({ kind: "text", text: n });
   }
   if (report.low_confidence.length > 0) {
     out.push({ kind: "heading", text: "Below the confidence floor (not counted)" });

@@ -22,6 +22,10 @@
 //     diverged, or narrows the review.
 //  6. A previous commit the clone does not hold, or an id that is not a
 //     commit, narrows the review or throws.
+//  8. A file previous..head changed but could not cover (a large merge of
+//     the base branch used the coverage limit up) is dropped from the
+//     obligation, so its changed lines go unreviewed or the review says
+//     there is nothing to review.
 // The merge base proofs themselves are tested once, through reviewChange
 // (merge-base.test.ts).
 import { join } from "node:path";
@@ -90,6 +94,26 @@ describe("the obligation of an incremental review", () => {
     expect(r.obligation.diff).not.toContain("fromMain");
     expect(r.obligation.diff).not.toContain("+changed on main");
   });
+});
+
+describe("a delta that could not be covered", () => {
+  it("8. a file the delta could not cover keeps its whole-change lines as the obligation", async () => {
+    const h = history();
+    // The base branch gains a file of exactly the coverage limit, which a
+    // merge brings into the feature branch after the previous review.
+    git(h.dir, "checkout", "-q", "main");
+    write(h.dir, "a/big.txt", "x\n".repeat(500_000));
+    const mainTip = commit(h.dir, "M");
+    git(h.dir, "checkout", "-q", "feature");
+    git(h.dir, "merge", "-q", "--no-edit", "main");
+    write(h.dir, "s/b.ts", lines(10, { 3: "changed since too", 7: "changed after the merge" }));
+    const head = commit(h.dir, "P3");
+    const r = await changes(h.dir, mainTip, head, h.previous);
+    expect(r.decision.scope.kind).toBe("delta");
+    expect(r.obligation.files.map((f) => f.path).sort()).toEqual(["s/a.ts", "s/b.ts"]);
+    expect(sorted(r.obligation.coverage.get("s/a.ts"))).toEqual([5, 25]);
+    expect(sorted(r.obligation.coverage.get("s/b.ts"))).toEqual([3, 7]);
+  }, 120_000);
 });
 
 describe("an explicit full review, with its reason", () => {

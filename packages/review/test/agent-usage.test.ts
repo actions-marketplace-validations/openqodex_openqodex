@@ -13,6 +13,9 @@
 //  4. Claude Code's model name is lost although its result event names it.
 //  5. A round that failed is recorded as answered, or not recorded at all.
 //  6. Metering changes what the conversation gets back from the driver.
+//  7. The totals leave out what a failed round reported it used (a result
+//     event that was an error), or count a failed call that reported
+//     nothing as zero or as unknown.
 import { chmodSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -122,5 +125,20 @@ process.stdin.on("end", () => {
     const before = { turns: 1, input_tokens: 500, output_tokens: 50, cost_usd: null };
     const turn: Turn = { finalText: "{}", calls: [], usage: { turns: 2, input_tokens: 400, output_tokens: null, cost_usd: null }, sessionId: null, failure: null };
     expect(agentRoundCall({ driver: "codex", round: 2, before, turn, durationMs: 1 })).toMatchObject({ inputTokens: null, outputTokens: null, costUsd: null, model: null });
+  });
+});
+
+describe("the totals of failed calls", () => {
+  it("7. add what a failed round reported, and leave out a failed call that reported nothing", () => {
+    const base = { reviewer: "primary" as const, purpose: "brief" as const, attempt: 1 as const, model: "claude-opus-5-5", durationMs: 1 };
+    const totals = usageTotals([
+      { ...base, callId: "claude-1", inputTokens: 1000, outputTokens: 100, costUsd: 0.01, outcome: "ok" },
+      // A round whose result event was an error, with what it used.
+      { ...base, callId: "claude-2", inputTokens: 500, outputTokens: 50, costUsd: 0.005, outcome: "failed" },
+      // A transport that threw: nothing reported.
+      { ...base, callId: "claude-3", inputTokens: null, outputTokens: null, outcome: "failed" },
+    ]);
+    expect(totals).toMatchObject({ attempts: 3, invoked: 3, failed: 2, inputTokens: 1500, outputTokens: 150 });
+    expect(totals.costUsd).toBeCloseTo(0.015, 10);
   });
 });

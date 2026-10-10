@@ -44,7 +44,7 @@ export function modelEvidence(args: {
       toolLog,
       attempts,
       rounds: talk.rounds,
-      submissionErrors: talk.report ? [] : talk.errors,
+      submissionErrors: talk.errors,
       failure: talk.failure,
       tools: [...TOOL_NAMES],
       startedAt: args.startedAt,

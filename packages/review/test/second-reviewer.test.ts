@@ -17,6 +17,11 @@
 //     failure is named neither in the notes nor in the record.
 //  5. A budget refusal during the second reviewer leaves the review
 //     complete, or drops the primary's findings or usage.
+//  6. A second reviewer that fails after an answer that passed its checks
+//     still joins with that answer: its findings, dispositions or
+//     disagreements change the primary's outcome.
+//  7. The rendered report (JSON, markdown, SARIF) leaves out who found each
+//     finding, the candidates the second reviewer dropped, or the notes.
 import { afterAll, describe, expect, it } from "vitest";
 import { reviewChange } from "../src/review-change.js";
 import type { AuthorizeRequest, ReviewChangeOptions } from "../src/reviewer.js";
@@ -41,8 +46,8 @@ const SUBTRACTION: Finding = {
   candidate: null,
 };
 
-async function run(second: FixtureOptions, refuseAt?: number) {
-  const repo = changeRepo();
+async function run(second: FixtureOptions, refuseAt?: number, big = false) {
+  const repo = changeRepo({ big });
   const primary = fixtureModel({ findings: [SUBTRACTION] });
   const other = fixtureModel({ model: "second-model", ...second });
   const asked: AuthorizeRequest[] = [];
@@ -118,5 +123,39 @@ describe("a second reviewer through reviewChange", () => {
       ["primary-1", "ok"],
       ["second-1", "refused"],
     ]);
+  });
+
+  it("6. a second reviewer that fails after a checked answer changes nothing in the primary's outcome", async () => {
+    // Its first answer passes every check with a critical finding but leaves
+    // b/second.txt unread; the correction call that would carry it fails.
+    const { result, other } = await run({ findings: [{ ...SUBTRACTION, severity: "critical" }], throwOn: 2 }, undefined, true);
+    expect(other.requests).toHaveLength(2);
+    expect(result.status).toBe("complete");
+    expect(result.findings.map((f) => [f.title, f.severity, f.foundBy])).toEqual([["Subtraction in add", "major", ["fixture-model"]]]);
+    expect(result.dispositions.every((d) => d.by === "primary")).toBe(true);
+    expect(result.disagreements).toEqual([]);
+    expect(result.notes).toEqual(["the second reviewer (second-model) did not complete: the model call failed: connection reset by the provider"]);
+  });
+
+  it("7. every rendering carries who found each finding, the second reviewer's drops and the notes", async () => {
+    // Both raise the subtraction; both drop the SQL candidate.
+    const joined = await run({ findings: [{ ...SUBTRACTION, severity: "critical" }] });
+    const json = JSON.parse(joined.result.render.json()) as { findings: { title: string; found_by: string[] }[]; dropped: unknown[]; second_dropped: { candidate: { id: string }; reason: string }[] };
+    expect(json.findings.map((f) => [f.title, f.found_by])).toEqual([["Subtraction in add", ["fixture-model", "second-model"]]]);
+    expect(json.second_dropped.length).toBe(json.dropped.length);
+    expect(json.second_dropped.length).toBeGreaterThan(0);
+    const markdown = joined.result.render.markdown();
+    expect(markdown).toContain("**Found by:** fixture-model, second-model");
+    expect(markdown).toContain(`## Dropped by the second reviewer \\(${json.second_dropped.length}\\)`);
+    const sarif = JSON.parse(joined.result.render.sarif()) as { runs: { results: { properties: { found_by?: string[] } }[] }[] };
+    expect(sarif.runs[0]!.results.map((r) => r.properties.found_by)).toContainEqual(["fixture-model", "second-model"]);
+    // A second reviewer that failed: its note in every rendering.
+    const failed = await run({ throwOn: 1 });
+    const note = "the second reviewer (second-model) did not complete: the model call failed: connection reset by the provider";
+    expect(JSON.parse(failed.result.render.json()).notes).toEqual([note]);
+    expect(failed.result.render.markdown()).toContain("## Notes");
+    // Markdown escapes the brackets around the model's name.
+    expect(failed.result.render.markdown()).toContain("did not complete: the model call failed: connection reset by the provider");
+    expect(JSON.parse(failed.result.render.sarif()).runs[0].properties.completion.notes).toEqual([note]);
   });
 });

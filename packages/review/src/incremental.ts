@@ -205,6 +205,9 @@ function keptHunks(text: string, keep: (h: Hunk) => boolean): { text: string; ad
 // change's: the brief and the check name the same change.
 export function deltaChange(full: Change, since: Change): Change {
   const sinceFiles = new Map(since.files.map((f) => [f.path, f]));
+  // Files previous..head changed but could not cover (past the coverage
+  // limit, as a large merge of the base branch makes it happen).
+  const sinceUncovered = new Set(since.uncovered ?? []);
   const coverage = new Map<string, Set<number>>();
   const deletionPoints = new Map<string, DeletionPoint[]>();
   const files = full.files.filter((f) => {
@@ -217,6 +220,14 @@ export function deltaChange(full: Change, since: Change): Change {
     }
     const was = full.coverage.get(f.path);
     if (f.binary || was === undefined) return true;
+    // What changed since cannot be told for this file: its whole-change
+    // lines stay the obligation, never an empty one.
+    if (sinceUncovered.has(f.path)) {
+      coverage.set(f.path, was);
+      const points = full.deletionPoints.get(f.path) ?? [];
+      if (points.length > 0) deletionPoints.set(f.path, points);
+      return true;
+    }
     const now = since.coverage.get(f.path) ?? new Set<number>();
     const lines = new Set([...was].filter((n) => now.has(n)));
     const at = new Set((since.deletionPoints.get(f.path) ?? []).map((p) => p.after));

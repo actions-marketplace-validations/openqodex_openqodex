@@ -661,6 +661,8 @@ export type ReportFinding = {
   problem?: string;
   consequence?: string;
   fix?: string;
+  // A model review only: the reviewers that raised it, the primary first.
+  found_by?: string[];
 };
 
 // "incomplete": a review `review` ran whose completion record is incomplete.
@@ -706,6 +708,11 @@ export type Report = {
   // A legacy review only: the line naming the coding agent as the
   // reviewer (SAME_AGENT_REVIEW). Every renderer prints it.
   reviewed_by?: string;
+  // A model review only: the candidates a second reviewer that completed
+  // dropped, as `dropped` holds the primary's; and what the review could
+  // not hold or a second reviewer's failure, one plain line each.
+  second_dropped?: { candidate: Candidate; reason: string; cited?: { file_path: string; line_number: number } }[];
+  notes?: string[];
 };
 
 // A piece of context a host gives a review with the change (reviewChange):
