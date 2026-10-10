@@ -480,7 +480,7 @@ describe("tflint", () => {
     });
     const status = result.scan.scanners[0]!;
     expect(status).toMatchObject({ scanner: "tflint", status: "failed" });
-    expect(status.reason).toMatch(/^the run's temporary folder is \d+ characters long, and TFLint's plugin socket needs one of 64 or fewer; give a shorter scratch root$/);
+    expect(status.reason).toMatch(/^the run's temporary folder is \d+ characters long, and TFLint's plugin socket needs one of 80 or fewer; give a shorter scratch root$/);
     // Nothing was staged: TFLint never started.
     expect(readdirSync(join(scratchRoot, "tmp"))).toEqual([]);
   }, 300_000);
