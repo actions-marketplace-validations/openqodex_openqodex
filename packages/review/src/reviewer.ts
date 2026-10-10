@@ -121,7 +121,10 @@ export function agentReviewer(driver: ReviewerDriver, opts: { snapshotDir: strin
 // Asked before every model attempt, with the usage of every attempt so far.
 // `false` (or a throw) refuses: nothing is sent, and the whole review ends
 // incomplete with the usage so far. `deadlineMs`: how long the review may
-// run, in milliseconds from the call to reviewChange.
+// run, in milliseconds from the call to reviewChange. `requestChars`: the
+// size of the request about to be sent, the characters of its messages and
+// its tool definitions written as JSON, so a host can price the call
+// before it is made; with `maxOutputTokens` it bounds what the call costs.
 export type AuthorizeRequest = {
   callId: string;
   attempt: 1;
@@ -129,6 +132,7 @@ export type AuthorizeRequest = {
   purpose: ModelPurpose;
   model: string;
   maxOutputTokens: number;
+  requestChars: number;
   usageSoFar: UsageTotals;
 };
 export type Budget = { authorize(call: AuthorizeRequest): Promise<boolean>; deadlineMs: number };
@@ -143,6 +147,11 @@ export type Budget = { authorize(call: AuthorizeRequest): Promise<boolean>; dead
 // `context`: lessons, comments, summaries, notes and earlier findings the
 // brief quotes as data (context.ts); an item over 32 KB, items over 128 KB
 // together, or a malformed item make the call throw, never cut.
+// `instructions`: the repository owners' own rules for the review, as the
+// host keeps them: the brief quotes them under the owners' heading with the
+// framing the laptop gives .openqodex/custom-instructions.md, so they can
+// widen what is flagged and never switch a check off; over 32 KB the call
+// throws, never cut. Advisory context belongs in `context`.
 // `previousReviewedSha`: the head of the last review; when the clone proves
 // it an ancestor of the head, only what changed since is the review's
 // obligation, and findings are still anchored on the whole change
@@ -158,6 +167,7 @@ export type ReviewChangeInput = {
   fullReviewRequested?: boolean;
   scopes?: string[];
   context?: ContextItem[];
+  instructions?: string;
 };
 
 // `workDir`: the only folder the review writes in (the snapshot and its
@@ -186,6 +196,8 @@ export type ReviewStatus = "complete" | "complete_blocking" | "incomplete";
 // A finding that passed every check. `foundBy`: the names of the reviewers
 // that raised it (the model's name), the primary first. `source`: null for
 // the reviewer's own finding, a candidate's token, or `lens:<name>`.
+// `suggestedChange`: the reviewer's literal replacement for the cited
+// lines, or null.
 export type ResultFinding = {
   file: string;
   lineStart: number;
@@ -194,6 +206,7 @@ export type ResultFinding = {
   problem: string;
   consequence: string;
   fix: string;
+  suggestedChange: string | null;
   severity: Severity;
   category: Category;
   confidence: number;

@@ -50,6 +50,7 @@ const result = await reviewChange(
 - `mergeBaseSha`: the merge base of the pull request, as the host's comparison gives it. It is not the target branch's tip. The library proves that both ids are full commit ids of commits in the clone and that the merge base is an ancestor of the head, then works out the change itself. A diff from the host is never an input.
 - `headSha`: the commit under review.
 - `config` (optional): a parsed `Config` (`parseConfig`). The defaults when left out. Nothing is read from the clone's own `.openqodex` files.
+- `instructions` (optional): the repository owners' own rules for the review, as text of at most 32 KB (more is refused, never cut). The brief quotes them under the owners' heading with the framing the laptop gives `.openqodex/custom-instructions.md`: they decide what to flag and what not to, and they never switch a check off, skip a candidate or change the answer's shape. Give advisory material, such as earlier comments, as `context`.
 - `previousReviewedSha`, `fullReviewRequested`, `scopes` and `context` (optional): an incremental review, a review limited to folders, and context items such as lessons and earlier comments. See "Incremental, scoped and context" below.
 
 ### Options
@@ -85,7 +86,7 @@ An incomplete review keeps every finding already checked.
 
 ### The finding shape
 
-Each finding has `file`, `lineStart`, `lineEnd`, `title`, `problem`, `consequence`, `fix`, `severity` (`critical`, `major`, `minor`, `nitpick` or `info`), `category`, `confidence` (0 to 1), `foundBy` (the reviewers that raised it), `source` (null for the reviewer's own finding, a scanner rule such as `semgrep:<rule>`, or `lens:<name>`) and `candidate` (the scanner candidate's id, or null).
+Each finding has `file`, `lineStart`, `lineEnd`, `title`, `problem`, `consequence`, `fix`, `suggestedChange` (the reviewer's literal replacement for the cited lines, or null), `severity` (`critical`, `major`, `minor`, `nitpick` or `info`), `category`, `confidence` (0 to 1), `foundBy` (the reviewers that raised it), `source` (null for the reviewer's own finding, a scanner rule such as `semgrep:<rule>`, or `lens:<name>`) and `candidate` (the scanner candidate's id, or null).
 
 ### Status reasons
 
@@ -124,7 +125,7 @@ The host's adapter adds no prompt, no rule, no filter and no retry. What the rev
 
 ### The budget
 
-`budget.authorize(call)` is asked before every model attempt, with `{ callId, attempt, reviewer, purpose, model, maxOutputTokens, usageSoFar }`. When it returns false, or throws, nothing is sent and the whole review ends as incomplete, with the usage so far and the findings already checked. This holds for a correction round and for the second reviewer too. `budget.deadlineMs` is how long the review may run, from the call to `reviewChange`: once it has passed, the budget is not asked again and no model call starts. A call without a budget throws before any work.
+`budget.authorize(call)` is asked before every model attempt, with `{ callId, attempt, reviewer, purpose, model, maxOutputTokens, requestChars, usageSoFar }`. `requestChars` is the size of the request about to be sent: the characters of its messages and its tool definitions written as JSON. With `maxOutputTokens` it bounds what the call can cost, so a host can hold a dollar cap before the call is made. When it returns false, or throws, nothing is sent and the whole review ends as incomplete, with the usage so far and the findings already checked. This holds for a correction round and for the second reviewer too. `budget.deadlineMs` is how long the review may run, from the call to `reviewChange`: once it has passed, the budget is not asked again and no model call starts. A call without a budget throws before any work.
 
 ### The five tools
 
@@ -195,7 +196,7 @@ At install time, the release downloads need the network to github.com, and `tar`
 | golangci | Go on `PATH` | Go 1.26 on `PATH`, and the reviewed modules in the Go module cache: each review reads them from there into a module cache of its own, and nothing goes to the network |
 | cargo-deny | Cargo (Rust) | Cargo, and the crates of the reviewed `Cargo.lock` in the Cargo cache: each review copies what the lock needs from there into a Cargo home of its own, and Cargo runs offline |
 
-At review time, four scanners use the network: semgrep fetches its rule packs from the Semgrep registry, osv-scanner sends dependency names and versions to osv.dev, kubeconform fetches the schemas of the kinds it meets from raw.githubusercontent.com, and cargo-deny fetches the RustSec advisory database from github.com. On a server these caches live in the run's scratch, so each review fetches them again. golangci starts each review with an empty Go build cache, so a Go change takes longer to check than on a laptop.
+At review time, four scanners use the network: semgrep fetches its rule packs from the Semgrep registry, osv-scanner sends dependency names and versions to osv.dev, kubeconform fetches the schemas of the kinds it meets from raw.githubusercontent.com, and cargo-deny fetches the RustSec advisory database from github.com. On a server these caches live in the run's scratch, so each review fetches them again. golangci starts each review with an empty Go build cache, so a Go change takes longer to check than on a laptop. The server profile downloads no Go module: a module whose dependencies are not already in the image's Go module cache is not linted by golangci there.
 
 ### A recipe
 

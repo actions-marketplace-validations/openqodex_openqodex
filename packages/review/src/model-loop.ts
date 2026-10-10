@@ -131,11 +131,14 @@ export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; b
       n++;
       const callId = `${role}-${n}`;
       const base = { callId, reviewer: role, purpose, attempt: 1 as const, model: reviewer.model };
+      // The request as it will be sent, so the budget prices what is sent.
+      const request = { callId, attempt: 1 as const, purpose, messages: [...messages], tools: structuredClone(tools), maxOutputTokens: reviewer.maxOutputTokens };
       if (budget) {
         // A budget check that throws refuses, as a "no" does.
         let yes = false;
         try {
-          yes = (await budget.authorize({ callId, attempt: 1, reviewer: role, purpose, model: reviewer.model, maxOutputTokens: reviewer.maxOutputTokens, usageSoFar: usageTotals([...(args.earlier ?? []), ...attempts]) })) === true;
+          const requestChars = JSON.stringify(request.messages).length + JSON.stringify(request.tools).length;
+          yes = (await budget.authorize({ callId, attempt: 1, reviewer: role, purpose, model: reviewer.model, maxOutputTokens: reviewer.maxOutputTokens, requestChars, usageSoFar: usageTotals([...(args.earlier ?? []), ...attempts]) })) === true;
         } catch {
           yes = false;
         }
@@ -155,7 +158,7 @@ export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; b
       let response: unknown;
       try {
         // One attempt: the contract allows no retry, here or in the host.
-        response = await reviewer.complete({ callId, attempt: 1, purpose, messages: [...messages], tools: structuredClone(tools), maxOutputTokens: reviewer.maxOutputTokens });
+        response = await reviewer.complete(request);
       } catch (error) {
         if (running?.record !== record) return { failure: stopped ?? "the review stopped" };
         running = null;

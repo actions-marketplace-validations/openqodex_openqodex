@@ -19,6 +19,7 @@ export type Finding = {
   fix: string;
   source: string | null;
   candidate: string | null;
+  suggested_change?: string | null;
 };
 
 export type FixtureOptions = {

@@ -21,6 +21,7 @@
 // review-run.ts). What it makes on disk it makes through the host's parts:
 // the snapshot through the snapshot maker, scanner installs through the tool
 // resolver, the graph's kept build through the graph store.
+import { createHash } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
@@ -197,7 +198,7 @@ export type ReviewDeps = {
   graphStore?: () => Promise<{ store: GraphStore | null; refused?: string }>;
   // The owners' instructions for the brief, redacted with the scan's
   // secrets, and the hash of the file they came from (null for none).
-  instructions: (secrets: string[]) => { text: string; hash: string | null };
+  instructions: (secrets: string[]) => { text: string; hash: string | null; from?: "host" };
   onEvent: (event: ReviewEvent) => void;
   // Receives the run's result before the run cleans up (the graph's lease,
   // the snapshot), so the host writes and prints everything from it first:
@@ -480,7 +481,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       const hot = await buildHotSpots(p, graphHost, inputs.noGraph);
       impact = hot.impact;
       lenses = wholeRepoLenses(prep.whole, ruleCoverage(p));
-      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) }, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
+      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) }, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
     } else {
       const run = await buildGraphRun(p, graphHost, inputs.noGraph);
       graphLease = run.lease;
@@ -498,7 +499,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         }
       }
       lenses = selectLenses(change, undefined, ruleCoverage(p));
-      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
+      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
     }
     const manifest: RunManifest = {
       version: MANIFEST_VERSION,
@@ -713,7 +714,15 @@ function refuseUnsupported(input: ReviewChangeInput, reviewer: Reviewer, options
   }
   refuseSecond(options.secondReviewer);
   if (input.context !== undefined) checkContext(input.context);
+  if (input.instructions !== undefined) {
+    if (typeof input.instructions !== "string") throw new OpenQodexError("reviewChange: instructions must be text");
+    const bytes = Buffer.byteLength(input.instructions, "utf8");
+    if (bytes > INSTRUCTIONS_MAX_BYTES) throw new OpenQodexError(`reviewChange: the instructions are ${bytes} bytes, over the ${INSTRUCTIONS_MAX_BYTES / 1024} KB limit; they are refused, never cut: shorten them so every instruction reaches the review`);
+  }
 }
+
+// The most the owners' instructions may hold, as on the laptop.
+const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
 
 // The second reviewer obeys the primary's rules: a model, in this profile.
 function refuseSecond(second: Reviewer | undefined): void {
@@ -764,6 +773,7 @@ function resultFindings(report: Report, foundBy: string[][]): ResultFinding[] {
     problem: f.problem ?? f.description,
     consequence: f.consequence ?? "",
     fix: f.fix ?? "",
+    suggestedChange: f.suggested_change,
     severity: f.severity,
     category: f.category,
     confidence: f.confidence ?? 0,
@@ -877,7 +887,9 @@ async function reviewInScope(
         scratchRoot: scratch,
         resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, installRoot: options.installRoot }),
         resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
-        instructions: () => ({ text: "", hash: null }),
+        // The owners' instructions the host gave, quoted as the laptop quotes
+        // its file; none read from the clone.
+        instructions: (secrets) => (input.instructions ? { text: redactSecrets(input.instructions, secrets), hash: createHash("sha256").update(input.instructions).digest("hex"), from: "host" as const } : { text: "", hash: null }),
         onEvent: (e) => {
           if (e.type === "progress" || e.type === "warning") say(e.line);
         },

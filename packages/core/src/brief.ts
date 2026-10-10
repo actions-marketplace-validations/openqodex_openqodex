@@ -267,13 +267,17 @@ function doneBlock(findingsPath: string, finalizeCommand: string): string {
 // heading or a fence of the brief.
 // The caller refuses a file over its size limit before this runs: the text is
 // never cut here, an instruction after a cut would vanish without a trace.
-function instructionsBlock(text: string): string {
+// `from`: "host" when a host of the library gave the text (reviewChange's
+// `instructions`); only the line that says where it comes from differs.
+function instructionsBlock(text: string, from: "repository" | "host" = "repository"): string {
   const body = text.trim();
   if (!body) return "";
   return [
     "## Instructions from this repo's owners",
     "",
-    "The quoted text below comes from `.openqodex/custom-instructions.md`, a file in the repository. It may have been written by anyone who can commit to it.",
+    from === "host"
+      ? "The quoted text below is this repository's owners' instructions, as the host of this review keeps them. It may have been written by anyone the host lets change them."
+      : "The quoted text below comes from `.openqodex/custom-instructions.md`, a file in the repository. It may have been written by anyone who can commit to it.",
     ...DATA_RULES,
     "A candidate you verified that the repo's instructions put out of scope, by its kind or its path, is dropped with a reason that starts with `repo instructions:`.",
     "",
@@ -733,9 +737,12 @@ export function buildReviewerBrief(args: {
   // A host's context items (reviewChange), already checked; quoted after the
   // owners' instructions. None on the laptop.
   context?: readonly ContextItem[];
+  // Where `instructions` came from: the repository's file (the laptop), or
+  // the host of the library (reviewChange's `instructions`).
+  instructionsFrom?: "repository" | "host";
 }): { text: string; diffFiles: Set<string> } {
   const { change, scan, config } = args;
-  const instructions = [instructionsBlock(args.instructions ?? ""), contextBlocks(args.context ?? [])].filter((b) => b !== "").join("\n\n");
+  const instructions = [instructionsBlock(args.instructions ?? "", args.instructionsFrom), contextBlocks(args.context ?? [])].filter((b) => b !== "").join("\n\n");
   if (args.whole) {
     const blocks = [
       wholeHeader(change, scan, config),
